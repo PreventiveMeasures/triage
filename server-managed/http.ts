@@ -29,6 +29,8 @@
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
 //   GET  /api/admin/repositories → admin repo list (each flagged selected) | 401/403
 //   POST /api/admin/repositories/select → admin selects/deactivates a repo | 401/403
+//   POST /api/admin/repositories/dependency-review → admin sets a repo's dependency review: enabled, the reviews each
+//        version needs, and the commit its lockfiles' versions need none since | 400/401/403/404
 //   GET /api/admin/repositories/impact → admin attached data summary
 //   GET /api/admin/repositories/{browsable,refs,contents} → view or above, within the reader's team grants, + GitHub read access
 //        (browsable: the names alone; these and the reads below are the code viewer's, open to every team member)
@@ -122,8 +124,8 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmVersionStore, pullDependencyStore, repositoryReadStore, riskLineStore,
-  scanReadStore } from './npm-kept.ts'
+import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmVersionStore, pullDependencyStore, repositoryReadStore,
+  reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -200,6 +202,9 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, pullDependencies } from './pull-dependencies.ts'
+import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
+import { type ReviewBaselineStore, baselineFor, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
+import type { ReviewedDependencies } from './reviewed-dependencies.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { type AgentMerges, agentCommits, agentMerges, directCommits, sameMerges } from './agent-merges.ts'
@@ -240,6 +245,7 @@ const REPO_PULL_DEPENDENCIES_PATH = '/api/admin/repositories/pull-dependencies'
 const REPO_PULSE_PATH = '/api/admin/repositories/pulse'
 const REPO_PULSE_ITEMS_PATH = '/api/admin/repositories/pulse/items'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
+const REPO_DEPENDENCY_REVIEW_PATH = '/api/admin/repositories/dependency-review'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
 const REPO_IMPACT_PATH = '/api/admin/repositories/impact'
@@ -414,6 +420,9 @@ export interface ManagedHttpDeps {
   serveStatic?: (req: IncomingMessage, res: ServerResponse) => boolean
   next?: Handler
   serverInfo?: ServerInfo
+  // The reviewed dependencies the host registered, as the server was
+  // assembled (reviewed-dependencies.ts).
+  reviewedDependencies?: ReviewedDependencies
 }
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
@@ -729,16 +738,19 @@ async function readWorkspaceSession(res: ServerResponse, deps: ManagedHttpDeps, 
 // Who am I? While an admin views as another user, that user, plus the admin
 // as `viewer`. A view that has ended (with the admin's session or role, or the
 // viewed account) is cleared, returning to the own session. Null signed out.
+// `dependencyReview` where they publish dependency reviews to some team.
 async function currentSession(config: ManagedConfig, db: ManagedDb, cookie: string | undefined): Promise<{ body: ManagedSessionInfo | null; headers: Record<string, string> }> {
   const now = Date.now()
   let s = await readSession(config, db, cookie, now)
   const ended = s == null && viewToken(config, cookie) != null
   if (ended) s = await readSession(config, db, cookie, now, { own: true })
+  const reviews = s != null && (await db.listDependencyReviewTeams(s.user.id)).length > 0
   return {
     body: s && {
       user: { id: s.user.id, login: s.user.login, name: s.user.name, role: s.user.role },
       csrfToken: s.session.csrfToken,
       ...(s.session.viewer ? { viewer: s.session.viewer } : {}),
+      ...(reviews ? { dependencyReview: true as const } : {}),
     },
     headers: ended ? { 'set-cookie': clearViewCookie(config) } : {},
   }
@@ -786,9 +798,11 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
   let tokenMissing = false
   let repositories
   if (scope === 'connected') {
+    const reviews = await deps.db.listRepoDependencyReviews()
     repositories = allRows.map((r) => ({
       id: r.repoId, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
       installed: r.installationId != null, selected: r.active, active: r.active,
+      dependencyReview: reviews.get(r.repoId) ?? { enabled: false, required: 1, since: null },
     }))
   } else {
     const showAll = scope === 'installed' && url.searchParams.get('showAll') === 'true'
@@ -818,6 +832,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
     inactiveCount: allRows.filter((r) => !r.active).length,
     total,
     tokenMissing,
+    ...deps.reviewedDependencies ? { reviewedDependencies: true } : {},
   })
 }
 
@@ -950,6 +965,36 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
     sendJson(res, 200, { ok: true, selected: false }); return
   }
   await selectRepository(res, deps, s.user, repoId, cookie)
+}
+
+// POST /api/admin/repositories/dependency-review — a repository's dependency
+// review (repository-dependency-reviews.ts): `enabled`, the published reviews
+// each version its pull requests' lockfiles lock needs (`required`, 1 to
+// MAX_REQUIRED_REVIEWS), and the commit whose lockfiles' versions need none
+// (`since`, a full commit id, or null; where the host registered reviewed
+// dependencies, which replace it, none, `400 since-unsupported`, the one
+// stored kept as it is). Answers the setting then. Admin, CSRF.
+async function handleRepositoryDependencyReview(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
+  if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
+  const s = await adminMutation(req, res, deps, cookie)
+  if (s == null) return
+  let body: Record<string, unknown> | null
+  try { body = await readJsonBody(req) as Record<string, unknown> | null } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const repoId = body?.['repoId']
+  const enabled = body?.['enabled']
+  const required = body?.['required']
+  const since = body?.['since'] ?? null
+  if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof enabled !== 'boolean'
+    || typeof required !== 'number' || !Number.isSafeInteger(required) || required < 1 || required > MAX_REQUIRED_REVIEWS
+    || (since !== null && (typeof since !== 'string' || !SINCE_COMMIT.test(since)))) {
+    sendJson(res, 400, { error: 'bad-request' }); return
+  }
+  if (since !== null && deps.reviewedDependencies) { sendJson(res, 400, { error: 'since-unsupported' }); return }
+  const repo = (await deps.db.listAllRepos()).find(row => row.repoId === repoId)
+  const setting = repo ? await deps.db.setRepoDependencyReview(repoId, { enabled, required, ...deps.reviewedDependencies ? {} : { since: since as string | null } }) : null
+  if (!repo || !setting) { sendJson(res, 404, { error: 'no-repository' }); return }
+  await activity(deps, s.user, 'repository', enabled ? 'enabled dependency review' : 'disabled dependency review', { repo: repo.fullName })
+  sendJson(res, 200, { ok: true, dependencyReview: setting })
 }
 
 async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[]): Promise<Set<string>> {
@@ -1880,7 +1925,7 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
 // else once access is checked again, with the app's users it names
 // (github-users.ts), never kept with it.
 async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
-  answer: (fullName: string, token: string) => Promise<{ value: object; kept: boolean }>): Promise<void> {
+  answer: (fullName: string, token: string, user: StoredUser) => Promise<{ value: object; kept: boolean }>): Promise<void> {
   const authorize = async () => {
     const access = await authorizeRepository(res, deps, cookie, repoId, '')
     if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
@@ -1892,7 +1937,7 @@ async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps,
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const token = reader.readToken()
     if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
-    const answered = await answer(access.repo.fullName, token)
+    const answered = await answer(access.repo.fullName, token, access.user)
     if (answered.kept) { sendJson(res, 200, await withAppUsers(deps.db, answered.value)); return }
     await reader.recheckAccess()
     const current = await authorize()
@@ -1956,14 +2001,41 @@ function itemNumber(query: URLSearchParams): number | null {
 // GET /api/admin/repositories/pull-dependencies: the package versions pull
 // request `number`'s lockfiles add (pull-dependencies.ts), what its base's and head's
 // commits tell kept by them (pullDependencyKept), its `number` with them.
-// They are the whole repository's (readWholeRepository), kept by its number
-// as its popup's item is, its head moving with each push.
+// They are the whole repository's (answerWholeRepository), kept by its number
+// as its popup's item is, its head moving with each push. With `review=1`,
+// as an open one's are asked, where the repository reviews dependencies,
+// each version's review (pull-dependency-reviews.ts), read afresh as each
+// asks, reviews being published meanwhile; its baseline kept, where the host
+// registered no reviewed dependencies, which are asked in its place.
 async function handleRepositoryPullDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   const number = itemNumber(query)
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || number === null) { sendJson(res, 400, { error: 'bad-request' }); return }
-  await readWholeRepository(res, deps, cookie, repoId, async (fullName, token) => ({ number, ...await pullDependencies(fullName, token, number, pullDependencyKept(deps, repoId)) }),
-    `pull-dependencies\0${PULL_DEPENDENCIES_READ}\0${number}`)
+  const review = query.get('review') === '1'
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || number === null || !['1', null].includes(query.get('review'))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
+    const answered = await keptAnswer(deps, `${repoId}\0pull-dependencies\0${PULL_DEPENDENCIES_READ}\0${number}`,
+      async () => ({ number, ...await pullDependencies(fullName, token, number, pullDependencyKept(deps, repoId)) }))
+    const told = answered.value
+    const state = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told)) : null
+    const reviewed = deps.reviewedDependencies ?? null
+    const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
+    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed }) },
+      kept: answered.kept }
+  })
+}
+
+// The versions repository lockfiles locked at the commits their dependencies
+// are reviewed since, kept by each (reviewBaselineStore).
+function baselineKept(deps: ManagedHttpDeps): ReviewBaselineStore {
+  const store = reviewBaselineStore(deps.db, deps.config.debug)
+  return {
+    async read(key) {
+      const value = (await store.read(key))?.value
+      const strings = (list: unknown) => Array.isArray(list) && list.every(item => typeof item === 'string')
+      return strings(value?.versions) && strings(value?.unread) ? value : null
+    },
+    write: (key, baseline) => store.write(key, baseline, Date.now()),
+  }
 }
 
 // What repository `repoId`'s pull requests' lockfiles add, kept by the
@@ -4169,6 +4241,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
+    if (path === REPO_DEPENDENCY_REVIEW_PATH) { await handleRepositoryDependencyReview(req, res, deps, cookie); return }
     if (path === ADD_PUBLIC_REPO_PATH) { await handleAddPublicRepository(req, res, deps, cookie); return }
     if (path === CONNECT_REPO_APP_PATH) { await handleConnectRepositoryApp(req, res, deps, cookie); return }
     // Reports: list / upload on the exact path, download / delete per-id on the

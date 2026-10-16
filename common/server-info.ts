@@ -26,6 +26,9 @@ export interface ManagedSessionInfo {
   user: { id: string; login: string; name: string | null; role: string }
   csrfToken: string
   viewer?: { id: string; login: string; name: string | null }
+  // Where the user publishes dependency reviews to some team: an npm
+  // version's Review tab is theirs (server-managed/dependency-reviews.ts).
+  dependencyReview?: true
 }
 
 // The `server-info` frame payload (the `type` discriminant is added at the

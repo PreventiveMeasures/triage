@@ -94,8 +94,13 @@ test('My reviews paginates tied timestamps without skipping or repeating sets', 
   t.after(() => db.close())
   const session = await createSession({ sessionCookieName: 'sid', sessionTtlMs: 3600000 }, db,
     { githubUserId: 100, login: 'author', name: null, avatarUrl: null }, Date.now())
-  await db.setUserRole(session.userId, 'triage')
+  await db.setUserRole(session.userId, 'admin')
   const id = hashToken(session.setCookie.split(';')[0].slice(4))
+  // A team to review in: drafts are begun by one who publishes to some team.
+  await db.createTeam('team', 'Team', 100)
+  await db.setTeamDependencyReview(id, 'team', true)
+  await db.setUserRole(session.userId, 'triage')
+  await db.setTeamMember('team', session.userId, { dependencies: true, security: false })
   for (let version = 0; version < 51; version++) {
     await db.changeDependencyReview({ ecosystem: 'npm', package: 'lib', version: `1.0.${version}`, integrity: `sha512-${version}`,
       basePackage: null, baseVersion: null, baseIntegrity: null }, id, { action: 'start', reviewId: null, revision: null }, 100)

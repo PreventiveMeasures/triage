@@ -138,15 +138,22 @@ function github(t, { compared = COMPARED, files = FILES, pullFiles = null, headA
   return asked
 }
 
+// A pull request's directories as what they add, without the versions they
+// lock at its head, nor what the reviews of each are held to, as the client
+// is told them.
+const withoutLocked = lockfiles => lockfiles.map(({ locked: _locked, moreLocked: _moreLocked, ...dir }) =>
+  dir.added ? { ...dir, added: dir.added.map(({ integrity: _integrity, lockfile: _lockfile, shasum: _shasum, ...pkg }) => pkg) } : dir)
+
 const memory = () => {
   const kept = new Map()
   return { kept, read: key => Promise.resolve(kept.get(key) ?? null), write: (key, value) => { kept.set(key, value); return Promise.resolve() } }
 }
 
-test('the lockfiles read are npm\'s, pnpm\'s and Yarn\'s, by name, none under a node_modules nor a test\'s fixtures', () => {
-  assert.deepEqual(['package-lock.json', 'a/npm-shrinkwrap.json', 'pnpm-lock.yaml', 'pnpm-lock.feature.yaml', 'b/yarn.lock', 'bun.lock', 'Cargo.lock', 'package.json',
-    'node_modules/x/package-lock.json', 'test/fixtures/app/yarn.lock', 'fixtures/yarn.lock', 'my-yarn.lock'].map(lockfileFormat),
-  ['npm', 'npm', 'pnpm', 'pnpm', 'yarn', null, null, null, null, null, 'yarn', null], 'fixtures outside a test directory are a project\'s')
+test('the lockfiles read are npm\'s ecosystem\'s, by name, Bun\'s told apart, none under a node_modules nor a test\'s fixtures', () => {
+  assert.deepEqual(['package-lock.json', 'a/npm-shrinkwrap.json', 'pnpm-lock.yaml', 'pnpm-lock.feature.yaml', 'shrinkwrap.yaml', 'b/yarn.lock', 'bun.lock', 'c/bun.lockb',
+    'Cargo.lock', 'deno.lock', 'package.json', 'node_modules/x/package-lock.json', 'test/fixtures/app/yarn.lock', 'fixtures/yarn.lock', 'my-yarn.lock'].map(lockfileFormat),
+  ['npm', 'npm', 'pnpm', 'pnpm', 'pnpm', 'yarn', 'bun', 'bun', null, null, null, null, null, 'yarn', null], 'fixtures outside a test directory are a project\'s')
+  assert.equal(touchesLockfile(['bun.lock'], 1), true, 'Bun\'s, which isn\'t read, too')
   assert.equal(touchesLockfile(['src/a.js', 'pnpm-lock.yaml'], 2), true)
   assert.equal(touchesLockfile(['src/a.js'], 1), false)
   assert.equal(touchesLockfile(['src/a.js'], 101), null, 'none among those listed, of more: it may')
@@ -159,7 +166,11 @@ test('a pull request\'s new package versions are those its head\'s lockfiles loc
   assert.equal(told.base, mergeBase, 'compared from where its branch left its base, not its base\'s tip')
   assert.equal(told.head, head)
   assert.equal(told.cut, false)
-  assert.deepEqual(told.lockfiles, [
+  assert.deepEqual(told.lockfiles[0].locked.map(pkg => `${pkg.name}@${pkg.version}`), ['ms@2.1.3', 'tool@1.0.0', 'plain-crypto-js@4.2.1', 'mine@1.0.0'],
+    'every version its lockfiles lock at the head kept, for those it doesn\'t add to be reviewed too')
+  assert.deepEqual([told.lockfiles[0].locked[0].integrity, told.lockfiles[0].added[1].integrity, told.lockfiles[0].moreLocked], [sri('ms@2.1.3'), sri('ms@2.1.3'), 0],
+    'each with the integrity it is locked with, which its reviews are held to')
+  assert.deepEqual(withoutLocked(told.lockfiles), [
     { paths: ['package-lock.json'], more: 0, added: [
       { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git' },
       { name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'] },
@@ -170,7 +181,7 @@ test('a pull request\'s new package versions are those its head\'s lockfiles loc
     { paths: ['gone/package-lock.json'], added: [], more: 0 },
     { paths: ['new/package-lock.json'], added: [{ name: 'left-pad', version: '1.3.0', source: 'registry' }], more: 0 },
     { paths: ['web/pnpm-lock.yaml', 'web/yarn.lock'], added: [{ name: 'is-number', version: '7.0.0', source: 'registry' }], more: 0 },
-  ], 'ms bumped, with the version it was; Yarn\'s lockfile replaced by pnpm\'s, left-pad@1.3.0 none; no integrity told')
+  ], 'ms bumped, with the version it was; Yarn\'s lockfile replaced by pnpm\'s, left-pad@1.3.0 none')
   const reads = asked.filter(at => at.includes('/contents/'))
   assert.ok(!reads.some(at => /fixtures|node_modules/u.test(at)), 'neither a test\'s fixture nor a node_modules\' read')
   assert.ok(reads.includes(`/repos/org/repo/contents/web/yarn.lock?ref=${mergeBase}`) && reads.includes(`/repos/org/repo/contents/web/pnpm-lock.yaml?ref=${head}`))
@@ -192,7 +203,7 @@ test('a new version beside one kept is new, with every version of it before, the
     [update.headAt]: { 'package-lock.json': npmLockfile({ [lockfile]: registry(lockfile, '1.0.0'), old: registry('old', '1.0.0'),
       [`old/node_modules/${lockfile}`]: registry(lockfile, '1.0.0-alpha.7'), mine: { version: '1.0.0', resolved: `git+ssh://git@github.com/org/mine.git#${'d'.repeat(40)}` } }) },
   } })
-  assert.deepEqual((await pullDependencies('org/repo', 'token', 5, memory())).lockfiles, [{ paths: ['package-lock.json'], more: 0, added: [
+  assert.deepEqual(withoutLocked((await pullDependencies('org/repo', 'token', 5, memory())).lockfiles), [{ paths: ['package-lock.json'], more: 0, added: [
     { name: lockfile, version: '1.0.0', source: 'registry', was: ['1.0.0-alpha.7', '0.9.0'] },
     { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', was: ['1.0.0'] },
   ] }], 'alpha.7, kept where old installs it, none')
@@ -204,7 +215,7 @@ test('a pull request\'s lockfiles changed but none new tells each directory\'s n
     [removal.baseAt]: { 'package-lock.json': npmLockfile({ ms: registry('ms', '2.1.2'), 'left-pad': registry('left-pad', '1.3.0') }) },
     [removal.headAt]: { 'package-lock.json': npmLockfile({ ms: registry('ms', '2.1.2') }) },
   } })
-  assert.deepEqual((await pullDependencies('org/repo', 'token', 5, memory())).lockfiles, [{ paths: ['package-lock.json'], added: [], more: 0 }], 'a package removed, none new')
+  assert.deepEqual(withoutLocked((await pullDependencies('org/repo', 'token', 5, memory())).lockfiles), [{ paths: ['package-lock.json'], added: [], more: 0 }], 'a package removed, none new')
   t.mock.restoreAll()
   const asked = github(t, { compared: [{ filename: 'src/a.js', status: 'modified' }] })
   assert.deepEqual((await pullDependencies('org/repo', 'token', 5, memory())).lockfiles, [])
@@ -234,8 +245,8 @@ test('of a lockfile adding more than are told, the first by name, the rest count
   const added = fresh()
   github(t, { ...added, compared: [{ filename: 'package-lock.json', status: 'added' }], files: { [added.headAt]: { 'package-lock.json': npmLockfile(packages) } } })
   const [dir] = (await pullDependencies('org/repo', 'token', 5, memory())).lockfiles
-  assert.equal(dir.added.length, MAX_ADDED)
-  assert.equal(dir.more, 3)
+  assert.equal(dir.added.length, MAX_ADDED + 3, 'every one kept, for its review')
+  assert.equal(dir.more, 3, 'those past MAX_ADDED, which aren\'t told, counted')
   assert.equal(dir.added[0].name, 'pkg-000')
 })
 

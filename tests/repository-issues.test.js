@@ -8,12 +8,13 @@ const state = {}
 const requests = []
 let answer = null
 const dependencyRequests = []
+const dependencyOptions = []
 let dependencies = () => new Promise(() => {})
 mock.module('../client/index.js', { exports: { state } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryIssues(repoId, kind, options) { requests.push([repoId, kind, options]); return answer(repoId, kind, options) },
   fetchRepositoryHistory: () => new Promise(() => {}),
-  fetchPullDependencies(repoId, number) { dependencyRequests.push([repoId, number]); return dependencies(repoId, number) },
+  fetchPullDependencies(repoId, number, options) { dependencyRequests.push([repoId, number]); dependencyOptions.push(options); return dependencies(repoId, number) },
 } })
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
 const opened = []
@@ -163,6 +164,47 @@ test('an open pull request changing a lockfile, or that may, shows the package v
   // Kept for the session: drawn again, none asked again.
   templateText(view.render())
   assert.equal(dependencyRequests.length, 4)
+})
+
+test('an open pull request\'s tile, where its repository reviews dependencies, shows whether they pass: how many want reviews, a check, or that its review fails, and why on hover', async () => {
+  dependencyOptions.length = 0
+  const terms = { required: 2, since: null, canReview: true }
+  const dir = (more = {}) => ({ paths: ['package-lock.json'], added: [], more: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, moreLocked: 0, ...more })
+  const mine = { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }
+  const replies = {
+    1: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 2 }, { name: 'tool', version: '1.0.0', source: 'registry', reviews: 1 },
+      { name: 'left-pad', version: '1.3.0', source: 'registry', baseline: true }, { name: 'vouched', version: '1.0.0', source: 'registry', reviewed: true },
+      { name: 'patched', version: '1.0.0', source: 'registry', patched: true }], unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 3 })],
+    2: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 2 }, { name: 'local', version: '1.0.0', source: 'file' }] })],
+    3: [dir({ added: [mine], unsupported: [mine, { name: 'mirrored', version: '1.0.0', source: 'mirror', unsupported: 'tarball' }], moreUnsupported: 1 })],
+    4: [{ paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' }],
+    5: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 2 }], unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 200 }),
+      dir({ paths: ['web/package-lock.json'], added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0 }],
+        unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 200 })],
+  }
+  // Two workspaces locking the same versions, which the server counts once.
+  const counts = { 5: { unreviewed: 201 } }
+  dependencies = (repoId, number) => Promise.resolve({ number, cut: false, review: { ...terms, ...counts[number] }, lockfiles: replies[number] })
+  answer = () => Promise.resolve({ items: [1, 2, 3, 4, 5].map(number => pull(number, { touchesLockfile: true })), counts: { open: 5, closed: 0 }, more: false })
+  const view = shown('pulls')
+  view.render()
+  await setImmediate()
+  templateText(view.render())
+  await setImmediate()
+  templateText(view.render())
+  await setImmediate()
+  templateText(view.render())
+  await setImmediate()
+  assert.ok(dependencyOptions.every(options => options.review === true), 'an open one\'s asked with their review')
+  const tiles = templateText(view.render()).split('<li ').slice(1)
+  assert.match(tiles[0], /data-tooltip=New in its lockfiles: tool@1\.0\.0 \(new, 1\/2 reviews\), left-pad@1\.3\.0 \(new, needs no review\), vouched@1\.0\.0 \(new, reviewed\), patched@1\.0\.0 \(new, patched, unreviewed\), ms@2\.1\.3 \(was 2\.1\.2, 2\/2 reviews\)\. 4 other versions in its lockfiles unreviewed>/u)
+  assert.match(tiles[0], /<span class="issue-deps-review is-wanted">2 to review · 4 unreviewed<\/span>/u, 'its own wanting reviews, a patched one with them, then the others its lockfiles lock')
+  assert.match(tiles[1], /<span class="issue-deps-review is-passed" role="img" aria-label="Every version reviewed"><svg/u, 'a file of the project\'s not reviewed')
+  assert.match(tiles[2], /<span class="issue-deps-review is-failed">3 can’t be reviewed<\/span>/u)
+  assert.match(tiles[2], /Its review fails: mine@1\.0\.0 \(from git\), mirrored@1\.0\.0 \(a tarball not npm’s registry’s\) and 1 more can’t be reviewed>/u)
+  assert.match(tiles[3], /data-tooltip=Its review fails: not every lockfile it changes was read>[^]*<span class="issue-deps-review is-failed">lockfiles unread<\/span>/u,
+    'shown with no version new, its lockfiles unread')
+  assert.match(tiles[4], /is-wanted">1 to review · 201 unreviewed</u, 'a version two directories lock as passing as the less passing of them; the others counted once, as the server tells')
 })
 
 test('a count of comments as narrow as the rail: whole below a thousand, else two digits at most and their unit', () => {

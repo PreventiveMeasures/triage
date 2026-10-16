@@ -126,6 +126,26 @@ svg .dotted { stroke-dasharray: 1 2.2; }
 .repo-item-version { color: var(--muted); }
 .repo-item-was { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 span.repo-item-row:hover { background: none; }
+/* A version's review: passed in green with its check, wanting in amber,
+   failing in red; what fails a pull request's, in red over its versions; and
+   the other versions wanting reviews, folded under the new ones. */
+.repo-item-review {
+  display: inline-flex; align-items: center; gap: .2rem; flex: none;
+  font-size: .75rem; font-variant-numeric: tabular-nums;
+  &.is-passed { color: var(--green); }
+  &.is-wanted { color: var(--medium); }
+  &.is-failed { color: var(--critical); }
+  & svg { width: 12px; height: 12px; }
+}
+.repo-item-failed {
+  margin-bottom: .6rem;
+  & > p { margin: 0 0 .3rem; color: var(--critical); }
+}
+.repo-item-unreviewed {
+  margin-top: .6rem;
+  & summary { color: var(--medium); cursor: default; }
+  & ul { margin-top: .3rem; }
+}
 .repo-item-tag {
   flex: none; padding: 0 .4rem; border: 1px solid var(--border); border-radius: 999px;
   color: var(--muted); font-size: .72rem; line-height: 1.5;

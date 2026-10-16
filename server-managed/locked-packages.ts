@@ -7,6 +7,7 @@ import { LockfileError, parseNpmLockfile } from '@preventive/lockfile/npm.js'
 import { parsePnpmLockfile } from '@preventive/lockfile/pnpm.js'
 import { parseYarn1Lockfile } from '@preventive/lockfile/yarn1.js'
 import type { LockfileFormat } from '@preventive/upstream/github.js'
+import type { ReviewedLockfile } from './reviewed-dependencies.ts'
 
 export interface LockedPackage {
   name: string
@@ -19,9 +20,16 @@ export interface LockedPackage {
   // Where one from elsewhere than npm's registry comes from, without any
   // credentials its URL has.
   from?: string
-  // A mirror's tarball's, as the lockfile has it: npm's package of its name
-  // and version only where npm's integrity is among it.
+  // As the lockfile has it: a mirror's tarball's, npm's package of its name
+  // and version only where npm's integrity is among it; and, where its
+  // reviews ask (`review`), npm's registry's too.
   integrity?: string
+  // Where its reviews ask: the sha1 Yarn 1 writes after a tarball's `#`, in
+  // hex (`shasum`); the hash of the patch pnpm applies to it
+  // (`patchHash`, its patchedDependencies'); and the lockfile's format.
+  shasum?: string
+  patchHash?: string
+  lockfile?: ReviewedLockfile
   // Where only the importers' devDependencies reach it, as npm's `dev` flag
   // says, and an install of no devDependencies leaves it out: in npm's and
   // pnpm's lockfiles. Yarn 1's says nothing of it, which only the
@@ -32,10 +40,10 @@ export interface LockedPackage {
 // A package as each reader resolves one, its name the one it is published
 // under, and a registry tarball's URL held to its name and version.
 type Resolution =
-  | { type: 'tarball'; tarball: string | undefined; integrity: string | undefined; gitHosted?: boolean }
+  | { type: 'tarball'; tarball: string | undefined; integrity: string | undefined; sha1?: string | undefined; gitHosted?: boolean }
   | { type: 'git'; repo: string }
   | { type: 'directory' }
-interface ReadPackage { name: string; version: string | undefined; resolution: Resolution | undefined; dev?: boolean | undefined }
+interface ReadPackage { name: string; version: string | undefined; resolution: Resolution | undefined; dev?: boolean | undefined; patchHash?: string | undefined }
 
 // The packages of a lockfile of `format`, as its reader resolves them.
 // Versions go unchecked against ranges, as only what is locked is asked for.
@@ -54,41 +62,54 @@ function packagesOf(format: LockfileFormat, text: string): ReadPackage[] {
 }
 
 // npm's registry, by either of its names, and yarn's mirror of it, as
-// @preventive/lockfile holds their tarballs to a package's name and version.
+// @preventive/lockfile holds their tarballs to a package's name and version:
+// its link to one, as it names it, a hash after it alone (Yarn 1's sha1).
 const REGISTRY_HOSTS = new Set(['registry.npmjs.org', 'registry.npmjs.com', 'registry.yarnpkg.com'])
-const isRegistry = (url: URL) => url.protocol === 'https:' && !url.port && !url.username && !url.password
+const isRegistry = (url: URL) => url.protocol === 'https:' && !url.port && !url.username && !url.password && !url.search
   && REGISTRY_HOSTS.has(url.hostname.replace(/\.+$/u, ''))
 // Where a URL is, as it may be shown: its credentials, query and fragment
 // left out.
 const shown = (url: URL | null) => url ? { from: `${url.protocol}//${url.host}${url.pathname}` } : {}
 
-// Where a package read comes from (LockedPackage); null for one a package
-// bundles, with no resolution, or one of the project's own directories.
-function locked({ name, version, resolution }: ReadPackage): LockedPackage | null {
+// Where a package read comes from (LockedPackage), with npm's registry's
+// integrity where `review`; null for one a package bundles, with no
+// resolution, or one of the project's own directories.
+function located({ name, version, resolution }: ReadPackage, review: boolean): LockedPackage | null {
   const at = { name, version: version ?? null }
   if (resolution === undefined || resolution.type === 'directory') return null
   if (resolution.type === 'git') return { ...at, source: 'git', ...shown(URL.parse(resolution.repo)) }
   const { tarball, integrity } = resolution
   if (resolution.gitHosted) return { ...at, source: 'git', ...shown(URL.parse(tarball ?? '')) }
-  if (tarball === undefined) return { ...at, source: 'registry' }
+  const registry = { ...at, source: 'registry' as const, ...review && integrity ? { integrity } : {} }
+  if (tarball === undefined) return registry
   if (tarball.startsWith('file:')) return { ...at, source: 'file' }
   const url = URL.parse(tarball)
-  if (url && isRegistry(url)) return { ...at, source: 'registry' }
+  if (url && isRegistry(url)) return registry
   return integrity ? { ...at, ...shown(url), source: 'mirror', integrity } : { ...at, ...shown(url), source: 'tarball' }
+}
+// As above, and with what its reviews ask (LockedPackage `shasum`,
+// `patchHash`, `lockfile`) where `review`.
+function locked(pkg: ReadPackage, format: LockfileFormat, review: boolean): LockedPackage | null {
+  const one = located(pkg, review)
+  if (!one || !review) return one
+  const sha1 = pkg.resolution?.type === 'tarball' ? pkg.resolution.sha1 : undefined
+  return { ...one, ...sha1 ? { shasum: sha1 } : {}, ...pkg.patchHash ? { patchHash: pkg.patchHash } : {}, lockfile: format === 'yarn' ? 'yarn1' : format as ReviewedLockfile }
 }
 
 // The packages a lockfile of `format` (npm, pnpm or yarn, as
 // findRepoLockfiles names them) locks, each once, in the lockfile's order:
 // `dev` only where it is wherever it is installed, at each path of npm's
-// tree, and with each of pnpm's peers. Throws the reader's LockfileError or
-// YamlError for one it refuses.
-export function lockedPackages(format: LockfileFormat, text: string): LockedPackage[] {
+// tree, and with each of pnpm's peers; with `review`, each with what its
+// reviews hold it to (LockedPackage `integrity`, `shasum`, `patchHash`),
+// each patch of it apart. Throws the reader's LockfileError or YamlError for
+// one it refuses.
+export function lockedPackages(format: LockfileFormat, text: string, { review = false } = {}): LockedPackage[] {
   const found = new Map<string, LockedPackage>()
   for (const pkg of packagesOf(format, text)) {
-    const one = locked(pkg)
+    const one = locked(pkg, format, review)
     if (!one) continue
     if (pkg.dev === true) one.dev = true
-    const key = `${one.source}\0${one.name}@${one.version ?? ''}\0${one.from ?? ''}\0${one.integrity ?? ''}`
+    const key = `${one.source}\0${one.name}@${one.version ?? ''}\0${one.from ?? ''}\0${one.integrity ?? ''}\0${one.shasum ?? ''}\0${one.patchHash ?? ''}`
     const had = found.get(key)
     if (!had) found.set(key, one)
     else if (had.dev && !one.dev) delete had.dev

@@ -1,6 +1,7 @@
 import { type LinkReportStore, linkReportMethods, linkRevision } from './link-reports.ts'
 import { type RepositoryAliasStore, repositoryAliasMethods } from './repository-aliases.ts'
 import { type DependencyReviewStore, dependencyReviewMethods } from './dependency-reviews.ts'
+import { type RepositoryDependencyReviewStore, repositoryDependencyReviewMethods } from './repository-dependency-reviews.ts'
 import { type TeamNpmScopeStore, teamNpmScopeMethods } from './team-npm-scopes.ts'
 import { type GithubLinkStore, githubLinkMethods } from './github-links.ts'
 import { createHash, randomUUID } from 'node:crypto'
@@ -367,7 +368,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends DependencyReviewStore, ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore, GithubLinkStore {
+export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyReviewStore, ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore, GithubLinkStore {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
@@ -918,10 +919,15 @@ function prepareStatements(db: ManagedSql) {
     renameTeamStmt: db.prepare(`UPDATE managed_team SET name = ?, updated_at = ? WHERE id = ?`),
     setTeamHiddenStmt: db.prepare(`UPDATE managed_team SET hidden = ?, updated_at = ? WHERE id = ?`),
     selectTeamsStmt: db.prepare(`SELECT id, slug, name, hidden FROM managed_team ORDER BY name ASC`),
+    // `dependencyReview` where the user reviews dependencies in the team
+    // (dependency-reviews.ts reviewsIn): one that reviews them, and a member
+    // who manages, or triages and may see its dependencies; an admin in any.
     selectTeamsForUserStmt: db.prepare(
-      `SELECT t.id AS id, t.slug AS slug, t.name AS name, t.dependency_review AS dependencyReview,
+      `SELECT t.id AS id, t.slug AS slug, t.name AS name,
+              CASE WHEN t.dependency_review = 1 AND (u.role IN ('admin', 'manage') OR (u.role = 'triage' AND tu.view_dependencies = 1))
+                THEN 1 ELSE 0 END AS dependencyReview,
               tu.view_dependencies AS dependencies, tu.view_security AS security
-         FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
+         FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id JOIN managed_user u ON u.id = tu.user_id
         WHERE tu.user_id = ? AND t.hidden = 0 ORDER BY t.name ASC, t.id ASC`,
     ),
     selectUserTeamScopesStmt: db.prepare(
@@ -1619,6 +1625,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...teamNpmScopeMethods(db),
     ...githubLinkMethods(db),
     ...dependencyReviewMethods(db),
+    ...repositoryDependencyReviewMethods(db),
     ...bundleBuildLeaseMethods(db),
     ...upstreamCacheMethods(db),
     async claimMaintenanceLease(owner, now, until, migration = false) {

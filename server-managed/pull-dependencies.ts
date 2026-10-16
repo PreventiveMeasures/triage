@@ -5,8 +5,9 @@
 // lockfile of npm's ecosystem that @preventive/lockfile reads
 // (package-lock.json and npm-shrinkwrap.json of `lockfileVersion: 3`,
 // pnpm-lock.yaml of pnpm 9 to 12 and Yarn 1's yarn.lock, locked-packages.ts),
-// none under a node_modules nor a test's fixtures (isTestFixture), which no
-// install takes. Its files are GitHub's comparison of its base with its head
+// and Bun's, which it doesn't (bun.lock and bun.lockb, its directory told
+// `lockfile-unsupported`); none under a node_modules nor a test's fixtures
+// (isTestFixture), which no install takes. Its files are GitHub's comparison of its base with its head
 // (GET /repos/:owner/:repo/compare/:base...:head), which names where its
 // branch left its base, its merge base, as GitHub's own Files changed
 // compares from it, and lists as many as a commit's files are read
@@ -38,24 +39,31 @@ export const PULL_FILES = 3000
 // (`cut`), and the packages told new of each, those past them counted.
 export const MAX_DIRECTORIES = 20
 export const MAX_ADDED = 200
+// The versions a directory's lockfiles lock at the head kept with what they
+// add, as many as MAX_LOCKED, those past them counted, for those not new to
+// be reviewed as well (pull-dependency-reviews.ts).
+export const MAX_LOCKED = 20_000
 // Lockfiles read at once.
 const READ_PARALLEL = 4
 // The rules what is told was told by, kept with it (http.ts
 // pullDependencyKept): one told by others is told again.
-export const PULL_DEPENDENCIES_READ = 2
+export const PULL_DEPENDENCIES_READ = 3
 const SHA = /^[a-f\d]{40}$/u
 
-type Format = 'npm' | 'pnpm' | 'yarn'
+type Format = 'npm' | 'pnpm' | 'yarn' | 'bun'
 
-// The format of the lockfile at `path` that is read here, as findRepoLockfiles
-// names it (with pnpm's of a branch, pnpm-lock.<branch>.yaml); null for
-// another file, and for one under a node_modules or of a test's fixtures.
+// The format of the lockfile of npm's ecosystem at `path`, as
+// findRepoLockfiles names it (with pnpm's of a branch,
+// pnpm-lock.<branch>.yaml, and of before pnpm 3, shrinkwrap.yaml, which its
+// reader refuses); null for another file, and for one under a node_modules or
+// of a test's fixtures. Bun's alone isn't read.
 export function lockfileFormat(path: string): Format | null {
   const dirs = path.split('/')
   const name = dirs.pop() ?? ''
   if (dirs.includes('node_modules') || isTestFixture(path)) return null
   if (name === 'package-lock.json' || name === 'npm-shrinkwrap.json') return 'npm'
-  if (/^pnpm-lock(?:\..+)?\.yaml$/u.test(name)) return 'pnpm'
+  if (/^pnpm-lock(?:\..+)?\.yaml$/u.test(name) || name === 'shrinkwrap.yaml') return 'pnpm'
+  if (name === 'bun.lock' || name === 'bun.lockb') return 'bun'
   return name === 'yarn.lock' ? 'yarn' : null
 }
 
@@ -67,17 +75,20 @@ export function touchesLockfile(paths: string[], changed: number): boolean | nul
   return changed > paths.length ? null : false
 }
 
-// A package version new to a directory, as its lockfile locks it, its
-// integrity left out; of a package its lockfiles locked before, the versions
-// of it they did (`was`, the highest first), none of one new to it.
-export type AddedPackage = Omit<LockedPackage, 'integrity'> & { was?: string[] }
+// A package version new to a directory, as its lockfile locks it, with its
+// integrity, which its reviews are held to; of a package its lockfiles locked
+// before, the versions of it they did (`was`, the highest first), none of one
+// new to it.
+export type AddedPackage = LockedPackage & { was?: string[] }
 // A directory's lockfiles the pull request changes (`paths`, those it adds,
 // modifies, removes or renames, by either name): the package versions they
-// lock new to it, as many as MAX_ADDED, by name and version, how many more
-// (`more`); or why they couldn't be told, a lockfile's reader refusing one
-// (`lockfile-unreadable`, with what it said) or GitHub having none at a
-// commit compared.
-export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage[]; more: number } | { error: string; detail?: string })
+// lock new to it, by name and version (as many as MAX_LOCKED, told as many
+// as MAX_ADDED, `more` past them), and all they lock (`locked`, as many as MAX_LOCKED, how many more
+// `moreLocked`); or why they couldn't be told, a lockfile's reader refusing one
+// (`lockfile-unreadable`, with what it said), one of a format not read
+// (`lockfile-unsupported`, Bun's) or GitHub having none at a commit compared.
+export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage[]; more: number; locked: LockedPackage[]; moreLocked: number }
+  | { error: string; detail?: string })
 // What a pull request's lockfiles add: the commits compared (`base`, its
 // merge base, and `head`); each directory's, of those it changes a lockfile
 // in; and `cut` where it changes more files than GitHub lists, or lockfiles
@@ -157,7 +168,8 @@ function lockfilesChanged(files: ChangedFile[]) {
 // A lockfile's packages at `ref`, as read in this instance, else of GitHub;
 // a lockfile its reader refuses, why. Any failure to read it of GitHub but
 // its having none there is the whole answer's, as it would be every file's.
-async function readLockfile(fullName: string, token: string, ref: string, { path, format }: { path: string; format: Format }): Promise<LockfileRead> {
+export async function readLockfile(fullName: string, token: string, ref: string, { path, format }: { path: string; format: Format }): Promise<LockfileRead> {
+  if (format === 'bun') return { error: 'lockfile-unsupported' }
   const key = `${fullName}\0${ref}\0${path}`
   const known = lockfileReads.get(key)
   if (known) return known
@@ -169,7 +181,7 @@ async function readLockfile(fullName: string, token: string, ref: string, { path
     throw err
   }
   let read: LockfileRead
-  try { read = { packages: lockedPackages(format, text) } } catch (error) {
+  try { read = { packages: lockedPackages(format, text, { review: true }) } } catch (error) {
     read = { error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} }
   }
   lockfileReads.set(key, read)
@@ -198,12 +210,18 @@ function byVersion(a: string, b: string) {
   return exactA ? -1 : 1
 }
 const byName = (a: AddedPackage, b: AddedPackage) => a.name < b.name ? -1 : a.name > b.name ? 1 : -byVersion(a.version ?? '', b.version ?? '')
-// A package as it is installed: its name and version, and where from.
-const lockedAs = (pkg: Omit<LockedPackage, 'integrity'>) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
+// A package as it is installed: its name and version, where from, and its
+// patch, a patched version's new where its patch is; and as it is locked,
+// with what its reviews are held to too.
+export const lockedAs = (pkg: LockedPackage) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}\0${pkg.patchHash ?? ''}`
+export const lockedWith = (pkg: LockedPackage) => `${lockedAs(pkg)}\0${pkg.integrity ?? ''}\0${pkg.shasum ?? ''}\0${pkg.lockfile ?? ''}`
 
 // What a directory's lockfiles add, from each read before and after: the
 // package versions after none before has, each once, by name and version,
-// each with the versions of its name before; or the first failure among them.
+// each with the versions of its name before, those past MAX_ADDED counted
+// (`more`), not told but reviewed as they are; and every one after, each
+// integrity it is locked with (`locked`), as many as MAX_LOCKED; or the first
+// failure among them.
 function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[]): DirectoryDependencies {
   const failed = [...before, ...after].find(read => 'error' in read)
   if (failed && 'error' in failed) return { paths, error: failed.error, ...failed.detail ? { detail: failed.detail } : {} }
@@ -215,9 +233,13 @@ function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[])
     if (pkg.version) of.add(pkg.version)
   }
   const added = new Map<string, AddedPackage>()
+  const locked = new Map<string, LockedPackage>()
   for (const read of after) {
-    for (const { integrity: _, ...pkg } of 'packages' in read ? read.packages : []) {
+    for (const pkg of 'packages' in read ? read.packages : []) {
       const key = lockedAs(pkg)
+      const held = locked.get(lockedWith(pkg))
+      if (!held) locked.set(lockedWith(pkg), { ...pkg })
+      else if (held.dev && !pkg.dev) delete held.dev
       if (known.has(key)) continue
       const had = added.get(key)
       const was = versions.get(pkg.name)
@@ -226,7 +248,8 @@ function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[])
     }
   }
   const all = [...added.values()].toSorted(byName)
-  return { paths, added: all.slice(0, MAX_ADDED), more: Math.max(0, all.length - MAX_ADDED) }
+  return { paths, added: all.slice(0, MAX_LOCKED), more: Math.max(0, all.length - MAX_ADDED),
+    locked: [...locked.values()].slice(0, MAX_LOCKED), moreLocked: Math.max(0, locked.size - MAX_LOCKED) }
 }
 
 // What pull request `number` adds to its lockfiles' packages (PullDependencies),

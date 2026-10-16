@@ -17,7 +17,7 @@ import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
-import { addedVersions, pullDependencies, readsDependencies, subscribePullDependencies } from './pull-dependencies.js'
+import { addedVersions, pullDependencies, readsDependencies, reviewFailures, reviewOf, subscribePullDependencies, unreviewedVersions } from './pull-dependencies.js'
 import { activityPicker } from './repository-activity.js'
 import { githubUser, githubUserName } from './github-users.js'
 import { reviewLine } from './pull-reviews.js'
@@ -134,22 +134,51 @@ function labelChips(item) {
   return html`${shown.length > 0 ? run(shown) : nothing}${total > shown.length ? html`<span class="issue-label is-more">+${total - shown.length}</span>` : nothing}`
 }
 
+// Why a version can't be reviewed, as a tile tells it.
+const UNSUPPORTED = { git: 'from git', tarball: 'a tarball not npm’s registry’s', integrity: 'locked with no integrity' }
+// What fails a pull request's review, as its tile tells it on hover.
+function failedTold({ versions, count, unread, unchecked, cut }) {
+  const rest = count - Math.min(versions.length, TOLD_PACKAGES)
+  return [count > 0 ? `${versions.slice(0, TOLD_PACKAGES).map(pkg => `${pkg.name}${pkg.version ? `@${pkg.version}` : ''} (${UNSUPPORTED[pkg.unsupported]})`).join(', ')}${rest > 0
+    ? ` and ${rest.toLocaleString('en-US')} more` : ''} can’t be reviewed` : null,
+  unread.length > 0 || unchecked > 0 || cut ? 'not every lockfile it changes was read' : null].filter(Boolean).join('; ')
+}
+
 // The package versions new to a pull request's lockfiles, once read, where
 // there are any: their icon, their packages' names, those new to them first,
 // as many as the tile's width shows, and how many are new packages and how
 // many new versions of others, "+" where there are more than were sent; each
 // version named on hover, with the versions it was, as many as TOLD_PACKAGES.
+// Where its review is in effect (an open one's in a repository reviewing
+// dependencies), whether they pass: that it fails, where a version its
+// lockfiles lock can't be reviewed or they couldn't all be read (`failed`,
+// reviewFailures); a check where every version they lock passes; else how
+// many of its own want reviews and how many others they lock do, the line
+// shown for those alone too.
 function dependencyLine(entry) {
   if (entry.status !== 'ready') return nothing
-  const { versions, fresh, updated, more } = addedVersions(entry)
-  if (versions.length === 0) return nothing
+  const { versions, fresh, updated, more, toReview } = addedVersions(entry)
+  const others = entry.review ? unreviewedVersions(entry).count : 0
+  const failed = reviewFailures(entry)
+  if (versions.length === 0 && others === 0 && !failed) return nothing
   const plus = more ? '+' : ''
-  const named = pkg => `${pkg.name}@${pkg.version ?? '?'}${pkg.was ? ` (was ${pkg.was.join(', ')})` : ' (new)'}`
+  const reviewed = pkg => {
+    const review = reviewOf(pkg, entry.review)
+    return review === 'unsupported' ? `, can’t be reviewed: ${UNSUPPORTED[pkg.unsupported]}` : review === 'baseline' ? ', needs no review'
+      : pkg.reviewed ? ', reviewed' : pkg.patched && review ? ', patched, unreviewed' : review ? `, ${pkg.reviews}/${entry.review.required} reviews` : ''
+  }
+  const named = pkg => `${pkg.name}@${pkg.version ?? '?'}${pkg.was ? ` (was ${pkg.was.join(', ')}${reviewed(pkg)})` : ` (new${reviewed(pkg)})`}`
   const rest = versions.length - TOLD_PACKAGES
-  const told = `New in its lockfiles: ${versions.slice(0, TOLD_PACKAGES).map(named).join(', ')}${rest > 0 ? ` and ${rest.toLocaleString('en-US')}${plus} more` : more ? ' and more' : ''}`
+  const told = [versions.length > 0 ? `New in its lockfiles: ${versions.slice(0, TOLD_PACKAGES).map(named).join(', ')}${rest > 0 ? ` and ${rest.toLocaleString('en-US')}${plus} more` : more ? ' and more' : ''}` : null,
+    others > 0 ? `${others.toLocaleString('en-US')} other ${others === 1 ? 'version' : 'versions'} in its lockfiles unreviewed` : null,
+    failed ? `Its review fails: ${failedTold(failed)}` : null].filter(Boolean).join('. ')
   const counted = [fresh ? `${fresh.toLocaleString('en-US')} new` : null, updated ? `${updated.toLocaleString('en-US')} updated` : null].filter(Boolean).join(', ')
+  const wanted = [toReview ? `${toReview.toLocaleString('en-US')} to review` : null, others ? `${others.toLocaleString('en-US')} unreviewed` : null].filter(Boolean).join(' · ')
   return html`<span class="issue-deps" data-tooltip=${told}>${PACKAGE_ICON}<span class="issue-deps-names">${[...new Set(versions.map(pkg => pkg.name))].join(', ')}</span>
-    <span class="issue-deps-count">${counted}${plus}</span></span>`
+    ${counted ? html`<span class="issue-deps-count">${counted}${plus}</span>` : nothing}
+    ${failed ? html`<span class="issue-deps-review is-failed">${failed.count > 0 ? `${failed.count.toLocaleString('en-US')} can’t be reviewed` : 'lockfiles unread'}</span>`
+      : entry.review ? wanted ? html`<span class="issue-deps-review is-wanted">${wanted}</span>`
+      : html`<span class="issue-deps-review is-passed" role="img" aria-label="Every version reviewed">${CHECKS.success[1]}</span>` : nothing}</span>`
 }
 
 // The tab's body, for the repository a directory shown (`repository`, an
@@ -275,7 +304,7 @@ class RepositoryIssues extends LitElement {
   // reviews (pull-reviews.js) and package versions new to its lockfiles.
   renderTile(item, stateClass, stateName) {
     const pulls = this.kind === 'pulls'
-    const dependencies = pulls && item.state === 'open' && readsDependencies(item) ? pullDependencies(this.repository.repoId, item.number) : null
+    const dependencies = pulls && item.state === 'open' && readsDependencies(item) ? pullDependencies(this.repository.repoId, item.number, true) : null
     const time = item.updatedAt == null ? null : new Date(item.updatedAt)
     const checks = pulls && item.checks ? CHECKS[item.checks] : null
     const review = pulls && item.state === 'open' && item.review ? REVIEWS[item.review] : null

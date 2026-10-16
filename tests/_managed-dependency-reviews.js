@@ -5,24 +5,41 @@ import { hashToken } from '../server-managed/crypto.ts'
 export const reviewContext = { ecosystem: 'npm', package: '@scope/pkg', version: '2.0.0', integrity: 'sha512-target',
   basePackage: '@scope/pkg', baseVersion: '1.0.0', baseIntegrity: 'sha512-base' }
 const config = { sessionCookieName: 'sid', sessionTtlMs: 3600000 }
+// Who reviews dependencies in a team: a member who triages and may see its
+// dependencies, a member who manages it, or an admin, of any team; one that
+// reviews dependencies to publish to, not hidden.
 export async function checkDependencyReviews(db) {
   const users = {}
-  for (const [i, login] of ['alice', 'bob', 'outsider', 'admin'].entries()) {
+  const roles = { admin: 'admin', manager: 'manage', viewer: 'view' }
+  for (const [i, login] of ['alice', 'bob', 'outsider', 'admin', 'carol', 'manager', 'viewer'].entries()) {
     const session = await createSession(config, db, { githubUserId: i + 100, login, name: null, avatarUrl: null }, Date.now())
-    await db.setUserRole(session.userId, login === 'admin' ? 'admin' : 'triage')
+    await db.setUserRole(session.userId, roles[login] ?? 'triage')
     users[login] = { ...session, sid: hashToken(session.setCookie.split(';')[0].slice(4)) }
   }
+  const dependencies = { dependencies: true, security: false }
   for (const id of ['one', 'two', 'disabled', 'not-member', 'hidden']) {
     await db.createTeam(id, id, Date.now())
-    if (id !== 'not-member') await db.setTeamMember(id, users.alice.userId, { dependencies: false, security: false })
+    if (id !== 'not-member') await db.setTeamMember(id, users.alice.userId, dependencies)
     if (id !== 'disabled') await db.setTeamDependencyReview(users.admin.sid, id, true)
   }
   await db.setTeamHidden('hidden', true, Date.now())
-  await db.setTeamMember('one', users.bob.userId, { dependencies: false, security: false })
-  assert.deepEqual((await db.listDependencyReviewTeams(users.alice.userId)).map(team => team.id), ['one', 'two'])
+  await db.setTeamMember('one', users.bob.userId, dependencies)
+  await db.setTeamMember('one', users.carol.userId, { dependencies: false, security: true })
+  await db.setTeamMember('one', users.manager.userId, { dependencies: false, security: false })
+  await db.setTeamMember('one', users.viewer.userId, dependencies)
+  const reviewTeams = async who => (await db.listDependencyReviewTeams(users[who].userId)).map(team => team.id)
+  assert.deepEqual(await reviewTeams('alice'), ['one', 'two'])
+  assert.deepEqual(await reviewTeams('carol'), [], 'a member who triages without Dependencies reviews none')
+  assert.deepEqual(await reviewTeams('viewer'), [], 'one who views reviews none, with Dependencies')
+  assert.deepEqual(await reviewTeams('manager'), ['one'], 'a member who manages reviews in their team without Dependencies')
+  assert.deepEqual(await reviewTeams('admin'), ['not-member', 'one', 'two'], 'an admin reviews in every team that reviews dependencies, a member or not, but a hidden one')
   const catalog = await db.getUserTeamFeedSnapshot(users.alice.sid, Date.now())
   assert.deepEqual(catalog.teams.filter(team => team.dependencyReview).map(team => team.id), ['one', 'two'])
-  assert.deepEqual((await db.listTeamsForUser(users.admin.userId)).filter(team => team.dependencyReview), [], 'admins do not gain review access without membership')
+  for (const [who, teams] of [['carol', []], ['viewer', []], ['manager', ['one']]]) {
+    assert.deepEqual((await db.listTeamsForUser(users[who].userId)).filter(team => team.dependencyReview).map(team => team.id), teams, `${who}'s catalog marks the teams they review in`)
+  }
+  await assert.rejects(db.changeDependencyReview(reviewContext, users.carol.sid, { action: 'start', reviewId: null, revision: null }, Date.now()), /review-access-required/u,
+    'a draft is begun by one who publishes to some team')
   await assert.rejects(db.setTeamDependencyReview(users.alice.sid, 'one', false), /forbidden/u)
   const change = (action, who = 'alice', context = reviewContext) => db.changeDependencyReview(context, users[who].sid,
     action.action === 'publish' ? { files: ['index.js', 'other.js', 'README.md', 'package.json'], nonTextFiles: [], final: null, ...action } : action, Date.now())
@@ -69,6 +86,12 @@ export async function checkDependencyReviews(db) {
   assert.deepEqual((await db.listDependencyReviews(emptyBase, users.bob.userId, true)).map(row => row.id), [review.id], 'version lists include team publications against other bases')
   assert.deepEqual(await db.listDependencyReviews(emptyBase, users.outsider.userId, true), [])
   assert.deepEqual(await db.listDependencyReviews(reviewContext, users.outsider.userId), [])
+  for (const who of ['carol', 'viewer']) assert.deepEqual(await db.listDependencyReviews(reviewContext, users[who].userId), [], `${who}, a member who reviews none, reads none`)
+  for (const who of ['manager', 'admin']) {
+    const [read] = await db.listDependencyReviews(reviewContext, users[who].userId)
+    assert.equal(read?.id, review.id, `${who} reads the team's reviews`)
+    assert.deepEqual(read.teams.map(team => team.id), ['one'])
+  }
   await assert.rejects(change(save(review, 'index.js', 'accept', 'Edit frozen', review.entries[0].id)), /review-conflict/u)
   review = await change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['one', 'two'] })
   assert.deepEqual(review.teams.map(team => team.id), ['one', 'two'])
@@ -125,7 +148,7 @@ export async function checkDependencyReviews(db) {
   const restarted = await change({ action: 'start', reviewId: null, revision: null })
   assert.deepEqual(restarted.entries, [])
   await db.discardDependencyReview(users.alice.sid, restarted.id, restarted.revision)
-  await db.setTeamMember('one', users.outsider.userId, { dependencies: false, security: false })
+  await db.setTeamMember('one', users.outsider.userId, dependencies)
   await checkCoverage(db, users.outsider.sid)
 }
 

@@ -65,6 +65,15 @@ export async function selectRepository(repoId, selected, csrfToken) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
+// A repository's dependency review: `enabled`, the reviews each version
+// needs (`required`), and the commit whose lockfiles' versions need none
+// (`since`, or null).
+export async function setRepositoryDependencyReview(repoId, { enabled, required, since }, csrfToken) {
+  const res = await postJson('/api/admin/repositories/dependency-review', csrfToken, { repoId, enabled, required, since })
+  if (!res.ok) throw new Error(res.status === 400 ? 'Enter 1 to 10 required reviews, and the commit as its full 40-character id.' : `HTTP ${res.status}`)
+  return (await res.json()).dependencyReview
+}
+
 export async function addPublicRepository(repository, csrfToken) {
   const res = await managedFetch('/api/admin/repositories/add-public', {
     method: 'POST', credentials: 'same-origin',

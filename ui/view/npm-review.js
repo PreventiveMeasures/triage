@@ -53,11 +53,15 @@ export class NpmReview extends LitElement {
       started: true, user: this.session?.id }
   }
   get _writable() { return ['triage', 'manage', 'admin'].includes(this.session?.role) && !this.session?.viewer }
+  // Writes and publishes reviews: writable, with a team to publish to, as
+  // the server says (dependency-reviews.ts reviewsIn). Their own published
+  // review revoked, and a draft discarded, writable alone.
+  get _reviewer() { return this._writable && this._teams.length > 0 }
   get _activeReview() { return this._reviews.find(review => review.user === this.session?.id && review.publishedAt === null && sameReviewContext(review, this._context))
     ?? (this._continuation && this._continuation.review.user === this.session?.id ? this._continuation.review : null) }
   get _ownPublished() { return this._reviews.filter(review => review.user === this.session?.id && review.publishedAt !== null && sameReviewContext(review, this._context)).toSorted((a, b) => b.publishedAt - a.publishedAt) }
   get _shownReview() { return this._selectedReview ? this._reviews.find(review => review.id === this._selectedReview) : this._activeReview ?? this._ownPublished[0] ?? null }
-  get _canEdit() { return this._writable && !this._selectedReview && (this._activeReview !== null || this._ownPublished.length === 0) }
+  get _canEdit() { return this._reviewer && !this._selectedReview && (this._activeReview !== null || this._ownPublished.length === 0) }
   _isDirty(file, editor) { return !this._nonTextFiles.includes(file) && (editor.comment !== (editor.edit?.comment ?? '') || editor.status !== (editor.edit?.status ?? '')) }
   get _dirtyFiles() { return [...this._editors].filter(([file, editor]) => this._isDirty(file, editor)).map(([file]) => file) }
   get _blocked() { return this._saving || this._saveBlocked }
@@ -246,7 +250,7 @@ export class NpmReview extends LitElement {
   }
   _continue(reviewId, revision) {
     const source = this._reviews.find(review => review.id === reviewId && review.revision === revision && review.user === this.session?.id && review.publishedAt !== null && sameReviewContext(review, this._context))
-    if (!source || this._activeReview) return null
+    if (!source || this._activeReview || !this._reviewer) return null
     this._continuation = { source, review: { ...source, publishedAt: null, revokedAt: null, status: null, teams: [] } }
     this._selectedTeams = new Set(this._teams.length === 1 ? this._teams.map(team => team.id) : [])
     this._selectedReview = null; this._panel = null; this._editors.clear(); this._resetEditor(this._path)

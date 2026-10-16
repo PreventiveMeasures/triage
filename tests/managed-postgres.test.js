@@ -5,6 +5,7 @@ import { checkHiddenTeams } from './_managed-hidden-teams.js'
 import { checkViewSessions } from './_managed-view-sessions.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 import { checkGithubLinks, checkUsersByAccount } from './_managed-github-links.js'
+import { checkRepositoryDependencyReviews, reviewedRepo } from './_managed-repository-dependency-reviews.js'
 import { checkBundleBuildConditions, checkBundleProvenance } from './_managed-bundle-provenance.js'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -293,6 +294,27 @@ test('Postgres adds linked GitHub accounts to existing installations, keeping na
   assert.equal(await upgraded.upsertUser(identity(2), 3), null)
   await upgraded.setProfileChoice('session', { name: id }, 3)
   assert.equal((await upgraded.sessionWithUser('session', 3)).user.name, 'Work')
+})
+
+test('Postgres repository dependency reviews share their SQLite semantics', async t => {
+  const { db } = await database(t)
+  await checkRepositoryDependencyReviews(db)
+})
+
+test('Postgres adds dependency review to existing repositories, off', async t => {
+  const { db, connect } = await database(t)
+  await db.selectRepo(reviewedRepo, 1)
+  const legacy = await connect()
+  try {
+    await legacy.query(`ALTER TABLE managed_selected_repo DROP COLUMN dependency_review, DROP COLUMN dependency_reviews_required, DROP COLUMN dependency_review_since;
+      DELETE FROM managed_schema_version WHERE version = 29;`)
+  } finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  assert.deepEqual((await upgraded.listRepoDependencyReviews()).get(1), { enabled: false, required: 1, since: null })
+  assert.deepEqual(await upgraded.setRepoDependencyReview(1, { enabled: true, required: 2, since: null }), { enabled: true, required: 2, since: null })
+  assert.deepEqual((await upgraded.listRepoDependencyReviews()).get(1), { enabled: true, required: 2, since: null })
 })
 
 test('Postgres repository aliases share matching, validation and authorization semantics', async t => {

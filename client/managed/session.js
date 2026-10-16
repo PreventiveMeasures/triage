@@ -61,6 +61,7 @@ function sessionFrom(body) {
     ...(typeof body.viewer?.login === 'string' ? { viewer: {
       id: body.viewer.id, login: body.viewer.login, name: typeof body.viewer.name === 'string' ? body.viewer.name : null,
     } } : {}),
+    ...(!getPublicShare() && body.dependencyReview === true ? { dependencyReview: true } : {}),
   }
 }
 

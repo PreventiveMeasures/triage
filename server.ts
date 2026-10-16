@@ -2,6 +2,13 @@ import { parseArgs } from 'node:util'
 import type { Server } from 'node:http'
 import { startServer } from './server-common/standalone.ts'
 
+// The reviewed dependencies a host keeps beyond the app, registered before
+// init() (server-managed/reviewed-dependencies.ts): one async method telling
+// whether a dependency, as a lockfile locks it, is reviewed there. They
+// replace a repository's commit its dependencies are reviewed since.
+export { registerReviewedDependencies } from './server-managed/reviewed-dependencies.ts'
+export type { ReviewedDependencies, ReviewedDependency, ReviewedLockfile } from './server-managed/reviewed-dependencies.ts'
+
 const modes = ['e2e', 'managed', 'managed-e2e', 'e2e-managed'] as const
 export type ServerMode = typeof modes[number]
 

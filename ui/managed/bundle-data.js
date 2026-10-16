@@ -236,9 +236,12 @@ const PULL_DEPENDENCIES_ERRORS = {
 }
 
 // The package versions a pull request's lockfiles lock that they didn't where
-// its branch left its base, by directory, an update's with those it was.
-export function fetchPullDependencies(repoId, number, { signal } = {}) {
-  return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number })}`, PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
+// its branch left its base, by directory, an update's with those it was; with
+// `review`, as an open one's are asked, each's review where its repository
+// reviews dependencies, and the other versions wanting reviews.
+export function fetchPullDependencies(repoId, number, { review = false, signal } = {}) {
+  return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number, ...review ? { review: '1' } : {} })}`,
+    PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
 }
 
 const REPOSITORY_PULSE_ERRORS = {
