@@ -155,6 +155,13 @@ test('a commit dated before the year whose parent is dated in it, its clock behi
   assert.equal(read.complete, true)
   assert.ok(read.commits.some(commit => commit.sha === shaOf(100)))
   assert.equal(read.commits.length, 97)
+  // Those it was read on past, the four between them among them: the branch
+  // followed through them, the commit beneath pushed directly.
+  assert.deepEqual([96, 97, 98, 99].map(at => read.passed.some(commit => commit.sha === shaOf(at))), [true, true, true, true])
+  assert.ok(read.passed.every(commit => commit.committedAt < now - 95 * DAY && commit.committedAt >= now - 125 * DAY))
+  const none = { merges: [], rebases: [], through: 0, next: null, pulls: [], pullRebases: [] }
+  assert.equal(directCommits(none, read.commits, shaOf(0)).has(shaOf(100)), false)
+  assert.equal(directCommits(none, [...read.commits, ...read.passed], shaOf(0)).has(shaOf(100)), true)
 })
 
 test('a year counted from its commits: a week a row from its first Sunday, merges left out; its lines; contributors by login, else name; hours in each author\'s own time zone', () => {

@@ -341,14 +341,15 @@ export function contributorStats(stats, key) {
 }
 
 // The commits pushed to the branch directly from `from` till `until`
-// (`now` in the last day), and of one contributor alone (`person`, by
-// contributorKey) where one is: how many, by the days they were counted on,
-// and the latest of them listed; null where they aren't counted.
+// (`now` in the last day, none dated past it listed either), and of one
+// contributor alone (`person`, by contributorKey) where one is: how many, by
+// the days they were counted on, and the latest of them listed; null where
+// they aren't counted.
 export function directIn(stats, from, until, person = null, now = Date.now()) {
   const scope = person === null ? stats : contributorStats(stats, person)
   if (!stats?.direct || !scope.direct) return null
   const last = Math.min(until - DAY_MS, Math.floor(now / DAY_MS) * DAY_MS)
-  const items = stats.directCommits.filter(item => item.at >= from && item.at < until && (person === null || contributorKey(item) === person))
+  const items = stats.directCommits.filter(item => item.at >= from && item.at < last + DAY_MS && (person === null || contributorKey(item) === person))
   return { count: commitsBetween(scope.weeks, from, last, 'directDays'), items }
 }
 

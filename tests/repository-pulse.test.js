@@ -460,8 +460,10 @@ test('commits pushed directly the server doesn\'t list said, a shorter period\'s
   // server lists a week's, then none.
   const direct = directCommits => stats({ weeks: year().map(row => ({ ...row, directDays: row.days.map((count, day) => day === 1 ? count : 0) })), directCommits })
   let month
+  // One dated tomorrow, a clock ahead, counted on no day: not listed either.
+  const ahead = { sha: 'f'.repeat(40), at: NOW + DAY, subject: 'Ahead of time', login: 'ada', id: null, name: 'Ada' }
   answer = (repoId, weeks) => weeks === 1
-    ? Promise.resolve(pulse({ weeks, since: week, stats: direct([{ sha: 'b'.repeat(40), at: week + DAY, subject: 'Fix by hand', login: 'ada', id: null, name: 'Ada' }]) }))
+    ? Promise.resolve(pulse({ weeks, since: week, stats: direct([ahead, { sha: 'b'.repeat(40), at: week + DAY, subject: 'Fix by hand', login: 'ada', id: null, name: 'Ada' }]) }))
     : new Promise(resolve => { month = resolve })
   const view = shown()
   view.pick(1)
@@ -469,7 +471,7 @@ test('commits pushed directly the server doesn\'t list said, a shorter period\'s
   await setImmediate()
   let text = templateText(view.render())
   assert.match(text, /Direct commits<\/h3><span class="pulse-count">1<\/span>[^]*Fix by hand/u)
-  assert.doesNotMatch(text, /not listed/u)
+  assert.doesNotMatch(text, /not listed|Ahead of time/u)
   view.pick(4)
   text = templateText(view.render())
   assert.match(text, /Direct commits<\/h3><span class="pulse-count">4<\/span>[^]*Fix by hand[^]*<p class="pulse-note">3 older commits not listed\.<\/p>/u,

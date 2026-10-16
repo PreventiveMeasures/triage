@@ -84,7 +84,7 @@ export interface PulseLines { weeks: [number, number, number][]; contributors: {
 export interface PulseNarrowing { from: number; to: number | null; authors: string[] }
 // The year's commits read so far: all of them (`commits`), else how many
 // (`read`), and whether past YEAR_COMMITS (`tooMany`).
-export type YearCommits = { complete: true; commits: HistoryCommit[] } | { complete: false; read: number; tooMany: boolean }
+export type YearCommits = { complete: true; commits: HistoryCommit[]; passed: HistoryCommit[] } | { complete: false; read: number; tooMany: boolean }
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 const timeOf = (value: unknown) => {
@@ -193,13 +193,16 @@ export async function defaultHead(fullName: string, token: string, fetchImpl: ty
 // till none is left; the pages kept read
 // of the store, those not of GitHub, as many queries of them as
 // YEAR_QUERIES, the rest left for the next to ask (`complete` false, how
-// many are `read`); more than YEAR_COMMITS, too many (`tooMany`).
+// many are `read`); more than YEAR_COMMITS, too many (`tooMany`). Read
+// whole, those it was read on past besides (`passed`): undated, or dated
+// before it, a clock behind, the branch's commits since beneath them.
 export async function yearCommits(fullName: string, token: string, head: string, since: number, pages: HistoryPages,
   fetchImpl: typeof fetch = globalThis.fetch): Promise<YearCommits> {
   const found = new Map<string, HistoryCommit>()
   const tried = new Set<string>()
   const within = (commit: HistoryCommit) => commit.committedAt === null || commit.committedAt >= since - YEAR_SKEW_MS
-  const read = () => [...found.values()].filter(commit => commit.committedAt !== null && commit.committedAt >= since).length
+  const dated = (commit: HistoryCommit) => commit.committedAt !== null && commit.committedAt >= since
+  const read = () => [...found.values()].filter(dated).length
   let queries = 0
   let starts = [head]
   while (starts.length > 0) {
@@ -212,7 +215,7 @@ export async function yearCommits(fullName: string, token: string, head: string,
     if (read() > YEAR_COMMITS) return { complete: false, read: read(), tooMany: true }
     starts = [...new Set([...found.values()].filter(within).flatMap(commit => commit.parents))].filter(sha => !found.has(sha) && !tried.has(sha))
   }
-  return { complete: true, commits: [...found.values()].filter(commit => commit.committedAt !== null && commit.committedAt >= since) }
+  return { complete: true, commits: [...found.values()].filter(dated), passed: [...found.values()].filter(commit => !dated(commit) && within(commit)) }
 }
 
 // Whether an agent made `commit` or co-authored it: its author one of

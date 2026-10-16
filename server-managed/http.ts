@@ -2070,10 +2070,13 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
     const [merges, releases] = await Promise.all([agentMerges(fullName, token, first, kept), releaseCommits(fullName, token, first, historyChanges(deps, repoId))])
     return { ...merges, releases }
   }
-  // The year counted from `commits` as `read` tells whose they are and which
-  // were pushed directly, kept by its head and as the year last counted.
-  const count = async (commits: HistoryCommit[], read: Attribution) => {
-    const stats = commitStats(commits, first, agentCommits(read, commits), new Set(read.releases), directCommits(read, commits, sha))
+  // The year counted from its `commits` as `read` tells whose they are and
+  // which were pushed directly, the branch followed through those it was
+  // read on past (`passed`, yearCommits) too; kept by its head and as the
+  // year last counted.
+  const count = async ({ commits, passed }: { commits: HistoryCommit[]; passed: HistoryCommit[] }, read: Attribution) => {
+    const walked = [...commits, ...passed]
+    const stats = commitStats(commits, first, agentCommits(read, walked), new Set(read.releases), directCommits(read, walked, sha))
     await Promise.all([store.write(key, stats, Date.now()), store.write(lastKey, { first, stats }, Date.now())])
     return stats
   }
@@ -2091,7 +2094,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
       const same = kept && !kept.next && sameMerges(read, kept) && read.releases!.join() === (kept.releases ?? []).join()
       if (read.next || same) return read
       const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true))
-      if (year.complete) recounted.stats = await count(year.commits, read)
+      if (year.complete) recounted.stats = await count(year, read)
       return read
     }, () => true).catch((err: unknown) => { console.warn('managed: pulse attribution read failed:', err) })
     return recounted.stats ?? stats
@@ -2104,7 +2107,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
       const read = await attribution(await keptAttribution())
       await store.write(mergesKey, read, Date.now())
       if (read.next) return { stats: await last(), reading: null, pulls: read.next.read, pending: false, kept: false }
-      return { stats: await count(year.commits, read), reading: null, pulls: null, pending: false, kept: false }
+      return { stats: await count(year, read), reading: null, pulls: null, pending: false, kept: false }
     }
     if (!year.tooMany) return { stats: await last(), reading: year.read, pulls: null, pending: false, kept: false }
     await store.write(key, { tooMany: true }, Date.now())
