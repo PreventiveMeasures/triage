@@ -39,12 +39,15 @@ const KINDS = 8
 // How near the canvas's edges the tree comes (clear of the day over it and
 // the commit under it), how far it zooms in at most, how many files' names
 // show at once at most, those who made a commit drawn how wide and how far
-// apart, and how long after the last commit it stops.
+// apart, how often the tree is laid out again at most as it changes (a large
+// one takes tens of milliseconds), and how long after the last commit it
+// stops.
 const MARGIN = { side: 40, top: 64, bottom: 40 }
 const MAX_ZOOM = 3
 const NAMES = 10
 const FACE = 11
 const SPREAD = 72
+const LAYOUT_MS = 250
 const END_S = 2
 const STATUS = new Set(['A', 'M', 'D', 'R'])
 const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
@@ -270,6 +273,7 @@ class RepositoryReplay extends LitElement {
     this._colors = null
     this._themes = null
     this._restless = 0
+    this._laidOut = Number.NEGATIVE_INFINITY
     this._pointer = null
     this._hovered = null
     this._shownNext = -1
@@ -392,7 +396,11 @@ class RepositoryReplay extends LitElement {
     if (!this._colors) this.readColors()
     if (replay.playing || time < this._restless) {
       advanceScene(replay.scene, replay.clock)
-      if (replay.scene.layout) layoutScene(replay.scene)
+      // Laid out again as the tree changes, LAYOUT_MS apart at most.
+      if (replay.scene.layout && time - this._laidOut >= LAYOUT_MS) {
+        layoutScene(replay.scene)
+        this._laidOut = time
+      }
       // Those who made commits kept apart on the canvas as far as their names
       // need, however far it is zoomed out.
       moveScene(replay.scene, dt, Math.max(SPACE, SPREAD / (this._camera?.zoom ?? 1)))

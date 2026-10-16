@@ -76,10 +76,10 @@ export function createScene() {
   return { root, dirs: new Map([['', root]]), files: new Map(), going: new Set(), users: new Map(), beams: [], due: [], layout: true }
 }
 
-// A directory, grown out of its parent's place.
+// A directory, grown out of its parent's place, and there till laid out.
 function directory(path, parent) {
   return { path, name: path.slice(path.lastIndexOf('/') + 1), parent, dirs: [], files: [], depth: parent ? parent.depth + 1 : 0,
-    x: parent?.x ?? 0, y: parent?.y ?? 0, tx: 0, ty: 0, cluster: 0, ring: 0, extent: 0, touched: Number.NEGATIVE_INFINITY }
+    x: parent?.x ?? 0, y: parent?.y ?? 0, tx: parent?.tx ?? 0, ty: parent?.ty ?? 0, cluster: 0, ring: 0, extent: 0, touched: Number.NEGATIVE_INFINITY }
 }
 
 // The directory `path` names, made with those above it where it isn't,
@@ -211,12 +211,72 @@ export function fileOffset(index) {
 // the middle, its directories on a ring about it all the way round, each
 // other's on a ring about it facing away from its parent, half a turn wide;
 // each ring clear of its directory's files, and wide enough for the trees on
-// it, each in a share of it as wide as its tree is seen from there, never on
-// another.
+// it, each in a share of it about as wide as its tree is seen from there;
+// then any directories' files the shares, being near, left on another's
+// moved apart (separate).
 export function layoutScene(scene) {
   measure(scene.root)
   place(scene.root, 0, 0, -Math.PI / 2, 2 * Math.PI)
+  separate([...scene.dirs.values()])
   scene.layout = false
+}
+
+// Directories' files, `dirs` (each after its parent, as a scene holds them),
+// moved off one another: round after round, any two whose files and the
+// gap about them overlap pushed apart along the line between them, half
+// each, or, one under the other, the one under alone, each tree moved with
+// its directory and the root where it is, till none overlap, or as many
+// rounds as SEPARATE_ROUNDS; an overlap of less than SLACK, the pushes'
+// own rounding, none. Those that may overlap are found sweeping across
+// them, by where each begins, left to right.
+const SEPARATE_ROUNDS = 40
+const SLACK = 0.5
+function separate(dirs) {
+  const under = (dir, above) => {
+    for (let at = dir.parent; at && at.depth >= above.depth; at = at.parent) if (at === above) return true
+    return false
+  }
+  for (let round = 0; round < SEPARATE_ROUNDS; round++) {
+    const pushes = new Map()
+    const push = (dir, x, y) => {
+      const held = pushes.get(dir)
+      if (held) {
+        held[0] += x
+        held[1] += y
+      } else pushes.set(dir, [x, y])
+    }
+    const swept = dirs.toSorted((a, b) => a.tx - a.cluster - (b.tx - b.cluster))
+    for (const [at, one] of swept.entries()) {
+      for (let next = at + 1; next < swept.length && swept[next].tx - swept[next].cluster < one.tx + one.cluster; next++) {
+        const other = swept[next]
+        const need = one.cluster + other.cluster
+        const [dx, dy] = [other.tx - one.tx, other.ty - one.ty]
+        if (Math.abs(dy) >= need - SLACK) continue
+        const apart = Math.hypot(dx, dy)
+        if (apart >= need - SLACK) continue
+        const angle = apart > 1e-6 ? Math.atan2(dy, dx) : keyAngle(other.path)
+        const [ux, uy] = [Math.cos(angle) * (need - apart), Math.sin(angle) * (need - apart)]
+        if (under(other, one)) push(other, ux, uy)
+        else if (under(one, other)) push(one, -ux, -uy)
+        else {
+          push(one, -ux / 2, -uy / 2)
+          push(other, ux / 2, uy / 2)
+        }
+      }
+    }
+    if (pushes.size === 0) return
+    // Each directory by its own push and those of the directories above it.
+    const moved = new Map()
+    for (const dir of dirs) {
+      const own = pushes.get(dir)
+      const above = dir.parent ? moved.get(dir.parent) : null
+      const by = own && above ? [own[0] + above[0], own[1] + above[1]] : own ?? above
+      if (!by) continue
+      moved.set(dir, by)
+      dir.tx += by[0]
+      dir.ty += by[1]
+    }
+  }
 }
 
 // How far a directory's files reach from it, half a gap past (`cluster`),
@@ -242,7 +302,8 @@ function measure(dir) {
 // The angle the tree of `dir` takes on a ring of `radius`, and the trees of
 // `dirs` all together: a tree is seldom as wide as its extent's half disc,
 // so a share is a little narrower (TIGHT), trees' empty edges overlapping
-// where they are; never narrower than its own files.
+// where they are, and any files that do moved apart after (separate); never
+// narrower than its own files.
 const TIGHT = 0.8
 const shareOf = (dir, radius) => 2 * Math.max(TIGHT * Math.atan(dir.extent / radius), Math.asin(Math.min(1, dir.cluster / radius)))
 const shares = (dirs, radius) => dirs.reduce((sum, dir) => sum + shareOf(dir, radius), 0)

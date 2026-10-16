@@ -87,6 +87,23 @@ test('the tree is laid out from the root, its directories\' files never on anoth
   assert.ok(Math.max(...steps) < 2 * Math.min(...steps), String(steps))
 })
 
+test('broad, deep trees\' directories are laid out with no two directories\' files on one another, however their shares fall', () => {
+  // Seeded trees of 300 files, each as many as seven directories deep, three
+  // a directory, as the review that found them overlapping generated.
+  for (let seed = 1; seed <= 40; seed++) {
+    let state = seed
+    const random = () => (state = (state * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+    const scene = createScene()
+    settleCommit(scene, Array.from({ length: 300 }, (_, at) => [[...Array.from({ length: 1 + Math.floor(random() * 7) }, () => `d${Math.floor(random() * 3)}`),
+      `f${at}.js`].join('/'), 'A']))
+    layoutScene(scene)
+    const dirs = [...scene.dirs.values()]
+    for (const [index, one] of dirs.entries()) {
+      for (const other of dirs.slice(index + 1)) assert.equal(overlap(one, other), false, `seed ${seed}: ${one.path || '/'} and ${other.path}`)
+    }
+  }
+})
+
 test('the scene moves toward where it sits, and a replay sought is drawn there at once', () => {
   const scene = createScene()
   settleCommit(scene, [['src/a.js', 'A'], ['lib/b.js', 'A']])
