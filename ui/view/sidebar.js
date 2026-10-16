@@ -892,6 +892,16 @@ async function onSidebarClick(e) {
     await renderSidebar()
     return
   }
+  // Team row — anywhere on it that isn't one of its buttons (its name's,
+  // which opens it itself, Share, and its reports' and bundles' toggles)
+  // opens the team, its collapsed second row included, as a workspace row
+  // does.
+  const teamRow = e.target.closest('.file-item.team-item[data-team-id]')
+  if (teamRow) {
+    const team = e.target.closest('button') ? null : state.managedTeams.find(t => t.id === teamRow.dataset.teamId)
+    if (team) void switchToManagedTeam(team)
+    return
+  }
   const sectionButton = e.target.closest('[data-workspace-section]')
   if (sectionButton) {
     if (searchActive || sectionButton.disabled) return
