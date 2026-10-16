@@ -233,6 +233,21 @@ test('a pull request labelled for an agent is an agent\'s, whatever its branch; 
   assert.deepEqual(read.merges.map(([sha]) => sha).toSorted(), [1, 2, 3].map(shaOf).toSorted())
 })
 
+test('a pull request whose agent\'s label is taken off is read again, none of what it brought an agent\'s', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const [merged, later] = [new Date(since + DAY).toISOString(), new Date(since + 2 * DAY).toISOString()]
+  const pull = (merge, labels, own = [], parents = 1, updatedAt = merged) => ({ updatedAt, mergedAt: merged, headRefName: 'fix/review',
+    labels: { nodes: labels.map(name => ({ name })) }, mergeCommit: { oid: shaOf(merge), parents: { totalCount: parents } },
+    commits: { nodes: own.map(oid => ({ commit: { oid: shaOf(oid), messageHeadline: `Commit ${oid}`, changedFilesIfAvailable: 1 } })) } })
+  const pulls = [pull(1, ['codex'], [2, 3], 2), pull(4, ['codex'], [5, 6]), pull(7, ['codex'])]
+  github(t, { graphql: mergedPulls(pulls) })
+  const first = await agentMerges('org/repo', 'token', since, null)
+  assert.deepEqual([first.merges.map(([sha]) => sha).toSorted(), first.rebases.map(([sha]) => sha)], [[1, 2, 3, 4, 7].map(shaOf).toSorted(), [shaOf(4)]])
+  pulls.splice(0, pulls.length, pull(1, ['bug'], [2, 3], 2, later), pull(4, [], [5, 6], 1, later), pull(7, ['codex']))
+  const second = await agentMerges('org/repo', 'token', since, first)
+  assert.deepEqual([second.merges.map(([sha]) => sha), second.rebases], [[shaOf(7)], []])
+})
+
 test('an agent\'s pull request merged with a merge commit brings its own commits, the merge itself counting none; one squashed, its merge commit alone', async t => {
   const since = Date.UTC(2025, 9, 19)
   const when = new Date(since + DAY).toISOString()

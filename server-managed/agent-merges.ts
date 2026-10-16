@@ -67,7 +67,8 @@ const agentPull = (node: MergedNode) => agentBranch(node.headRefName) || labelAg
 // first (a pull request is updated when merged, or after), on from what was
 // `kept`: till one updated before the year, or before the newest read before
 // was, as many queries an answer as MERGED_QUERIES, a read not finished
-// going on from where it was left by the next.
+// going on from where it was left by the next; one read again whose label
+// no longer names an agent, what it was read to bring forgotten.
 export async function agentMerges(fullName: string, token: string, since: number, kept: AgentMerges | null,
   fetchImpl: typeof fetch = globalThis.fetch): Promise<AgentMerges> {
   const [owner, name] = fullName.split('/') as [string, string]
@@ -87,10 +88,18 @@ export async function agentMerges(fullName: string, token: string, since: number
       from ??= updated
       read++
       const [merged, merge] = [timeOf(node?.mergedAt), node?.mergeCommit?.oid]
-      if (!node || merged === null || merged < since || !agentPull(node) || typeof merge !== 'string' || !SHA.test(merge)) continue
-      const own = (node?.commits?.nodes ?? []).map(item => item?.commit)
-      const merging = count(node?.mergeCommit?.parents?.totalCount) > 1
-      for (const oid of [merge, ...merging ? own.map(commit => commit?.oid) : []]) if (typeof oid === 'string' && SHA.test(oid)) merges.set(oid, merged)
+      if (!node || merged === null || merged < since || typeof merge !== 'string' || !SHA.test(merge)) continue
+      const own = (node.commits?.nodes ?? []).map(item => item?.commit)
+      const merging = count(node.mergeCommit?.parents?.totalCount) > 1
+      const brought = [merge, ...merging ? own.map(commit => commit?.oid) : []].filter((oid): oid is string => typeof oid === 'string' && SHA.test(oid))
+      // One an agent's no more, its label taken off (which updates it), what
+      // it was read to bring none of an agent's.
+      if (!agentPull(node)) {
+        for (const oid of brought.filter(sha => merges.get(sha) === merged)) merges.delete(oid)
+        if (rebases.get(merge)?.[0] === merged) rebases.delete(merge)
+        continue
+      }
+      for (const oid of brought) merges.set(oid, merged)
       const rebased = own.filter(commit => commit?.changedFilesIfAvailable !== 0)
       if (!merging && rebased.length > 1 && rebased.every(commit => typeof commit?.messageHeadline === 'string')) {
         rebases.set(merge, [merged, rebased.map(commit => commit!.messageHeadline as string)])
