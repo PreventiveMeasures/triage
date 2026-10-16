@@ -13,8 +13,8 @@ const THEME_KEY = 'deepview.theme'
 
 // Canonical theme list. `dark` is the default (no body class). The
 // rest map to `body.theme-${name}` blocks in styles/theme.css.
-const THEMES = Object.freeze(['dark', 'light', 'green', 'pink', 'paper'])
-const UNLOCKED_CYCLE = Object.freeze(['dark', 'green', 'pink', 'paper', 'light'])
+const THEMES = Object.freeze(['dark', 'light', 'green', 'pink', 'w95', 'paper'])
+const UNLOCKED_CYCLE = Object.freeze(['dark', 'green', 'pink', 'w95', 'paper', 'light'])
 
 // Per-theme `<meta name="theme-color">` values. `base` paints the
 // WCO title-bar / Android browser chrome normally. `dim` swaps in
@@ -32,6 +32,9 @@ const THEME_COLOR = {
   // the overlay strip keeps its existing --theme-bar color.
   green: { base: '#0a140a', dim: '#050a05', sidebar: '#0f1e0f' },
   pink:  { base: '#ffe4ee', dim: '#a3727f', sidebar: '#ffe0f0' },
+  // W95's is its title bar's navy, the strip an installed app's own
+  // controls sit on.
+  w95:   { base: '#000080', dim: '#000033' },
   paper: { base: '#ffffff', dim: '#666666' },
 }
 
@@ -40,12 +43,12 @@ const standaloneMode = window.matchMedia?.('(display-mode: standalone)')
 const windowControlsOverlay = window.navigator?.windowControlsOverlay
 
 // The glyph reflects the active theme.
-const ICONS = { light: '☀', dark: '☾', green: '🕶️', pink: '✿', paper: '📄' }
+const ICONS = { light: '☀', dark: '☾', green: '🕶️', pink: '✿', w95: '⊞', paper: '📄' }
 
 // Fires on every applyTheme call (including the boot-time replay).
 // The toggle button listens so its icon stays in sync when an
 // external `DeepView.setTheme(...)` swaps the theme out from under it.
-const THEME_CHANGED = 'deepview-theme-changed'
+export const THEME_CHANGED = 'deepview-theme-changed'
 
 let currentTheme = 'dark'
 let printDialogOpen = false

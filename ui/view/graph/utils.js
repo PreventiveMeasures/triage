@@ -87,12 +87,12 @@ const PKG_PALETTE_LIGHT = [
 ]
 function isLightTheme() {
   // "Light" for the canvas's purposes means the light G2_THEMES
-  // palette (light backdrop, dark text). Light, pink, and paper
+  // palette (light backdrop, dark text). Light, pink, w95 and paper
   // qualify; theme-green and the default dark theme use the
   // dark palette. Mirrors the predicate in view/graph/canvas.js.
   if (typeof document === 'undefined') return false
   const c = document.body?.classList
-  return !!c && (c.contains('theme-light') || c.contains('theme-pink') || c.contains('theme-paper'))
+  return !!c && (c.contains('theme-light') || c.contains('theme-pink') || c.contains('theme-w95') || c.contains('theme-paper'))
 }
 // Cache is keyed by `${theme}:${pkg}` so the dark + light variants
 // don't collide. Toggling the theme doesn't invalidate the cache — we

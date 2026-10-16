@@ -289,7 +289,7 @@ test('canvas filters invalidate both layers, and borders cover at most half a ba
 test('theme changes repaint both layers with the Layers colors without reparsing ribbons', t => {
   const { chart, host, root, base, bars, frame, paths, theme } = mounted(t)
   const parsed = paths()
-  for (const [name, background] of [['theme-light', '#f6f8fa'], ['theme-paper', '#fff'], ['theme-pink', '#fff0f7'], ['', '#0c0c0c']]) {
+  for (const [name, background] of [['theme-light', '#f6f8fa'], ['theme-paper', '#fff'], ['theme-pink', '#fff0f7'], ['theme-w95', '#fff'], ['', '#0c0c0c']]) {
     const before = [base.clears(), bars.clears()]
     theme(name); chart.update(root); frame()
     assert.equal(graphBackground(), background)

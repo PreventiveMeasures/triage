@@ -122,6 +122,60 @@ header h3 {
   &:disabled { opacity: .5; }
 }
 
+/* W95 (styles/theme.css): a dialog is a Windows 95 window — a raised
+   frame over no dimming, its heading lifted into the navy title bar
+   along its top (an empty block making the room for it, whichever
+   padding the dialog has), a close × as the bar's caption button,
+   bevelled buttons with the default one ringed in black, and sunken
+   fields. */
+:host-context(body.theme-w95) {
+  & dialog {
+    border: 0;
+    box-shadow: var(--w95-raised);
+
+    &::before { content: ''; display: block; flex: none; height: 20px; }
+    &::backdrop { background: none; backdrop-filter: none; }
+  }
+  & header h3 {
+    position: absolute; top: 3px; right: 3px; left: 3px;
+    display: flex; align-items: center; gap: 4px;
+    height: 18px; margin: 0; padding: 0 24px 0 4px;
+    overflow: hidden; background: var(--w95-title); color: #fff;
+    font-size: 12px; font-weight: 700; line-height: 18px; white-space: nowrap;
+
+    & svg { flex: none; width: 14px; height: 14px; }
+  }
+  & button[aria-label^='Close'] {
+    position: absolute; top: 5px; right: 5px; z-index: 1;
+    display: grid; place-items: center;
+    width: 16px; height: 14px; padding: 0;
+    border: 0; border-radius: 0;
+    background: var(--w95-face); color: #000;
+    box-shadow: var(--w95-raised);
+    font-size: 13px; line-height: 1;
+
+    &:hover { background: var(--w95-face); color: #000; }
+    &:active { box-shadow: var(--w95-sunken); }
+  }
+  & .nwd-actions button {
+    border-color: transparent;
+    background: var(--w95-face); color: #000;
+    box-shadow: var(--w95-raised);
+
+    &:hover:not(:disabled) { border-color: transparent; color: #000; }
+    &:active:not(:disabled) { box-shadow: var(--w95-sunken); }
+    &.primary, &.primary:hover:not(:disabled) { border-color: #000; color: #000; filter: none; }
+    &.quiet { box-shadow: none; }
+    &.danger, &.danger:hover:not(:disabled) { color: var(--critical); }
+  }
+  & .nwd-input {
+    border-color: transparent;
+    box-shadow: var(--w95-sunken);
+
+    &:focus { border-color: transparent; box-shadow: var(--w95-sunken); }
+  }
+}
+
 /* WCO PWA mode — theme.css makes <body> a drag region and opts
    interactive elements back out via `app-region: no-drag`, but those
    light-DOM rules can't reach the shadow. Without this mirror the

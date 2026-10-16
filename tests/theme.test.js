@@ -102,7 +102,7 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
   await setImmediate()
   assert.equal(page.button.getAttribute('aria-disabled'), 'false')
   assert.equal(page.button.render(), '🕶️', 'the active green theme shows the sunglasses glyph')
-  for (const expected of ['pink', 'paper', 'light', 'dark', 'green', 'pink', 'paper', 'light', 'dark', 'green']) {
+  for (const expected of ['pink', 'w95', 'paper', 'light', 'dark', 'green', 'pink', 'w95', 'paper', 'light', 'dark', 'green']) {
     click(page.button)
     assert.equal(page.api.getTheme(), expected)
   }
@@ -173,6 +173,18 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
   await setImmediate()
   page.button.disconnectedCallback()
 
+  page.api.setTheme('w95')
+  assert.deepEqual([...page.classes], ['theme-w95'], 'w95 replaces the previous theme class')
+  assert.equal(page.meta.getAttribute('content'), '#000080', 'w95 colors the browser chrome as its title bar')
+  window.dispatchEvent(new Event('beforeprint'))
+  assert.equal(page.meta.getAttribute('content'), '#000033')
+  window.dispatchEvent(new Event('afterprint'))
+  assert.equal(stored.get('deepview.theme'), 'w95')
+  page = await boot()
+  assert.equal(page.api.getTheme(), 'w95', 'w95 persists across reloads')
+  assert.equal(page.button.render(), '⊞')
+  page.button.disconnectedCallback()
+
   page.api.setTheme('paper')
   assert.deepEqual([...page.classes], ['theme-paper'], 'paper replaces the previous theme class')
   assert.equal(page.meta.getAttribute('content'), '#ffffff')
@@ -222,7 +234,7 @@ test('the first activation from dark at or after eight presses unlocks a page-lo
   page.overlay.visible = false
   page.overlay.dispatchEvent(new Event('geometrychange'))
   assert.equal(page.meta.getAttribute('content'), '#ffe0f0')
-  for (const [theme, color] of [['dark', '#1a1a1b'], ['light', '#f6f6fa'], ['paper', '#ffffff']]) {
+  for (const [theme, color] of [['dark', '#1a1a1b'], ['light', '#f6f6fa'], ['w95', '#000080'], ['paper', '#ffffff']]) {
     page.api.setTheme(theme)
     assert.equal(page.meta.getAttribute('content'), color, 'other themes retain their native title-bar colors')
   }
