@@ -126,7 +126,7 @@ describe('decodeUtf8', () => {
     // strips it; we want byte-exact round-trips so callers can
     // hash / sign / compare without an invisible-character mismatch.
     const withBom = decodeUtf8(new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69]))
-    assert.equal(withBom, '﻿hi')
+    assert.equal(withBom, '\uFEFFhi')
     assert.equal(withBom.length, 3, 'BOM is included as a regular character')
     // Encode round-trip preserves the BOM bytes.
     assert.deepEqual(encodeUtf8(withBom), new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69]))
@@ -137,7 +137,7 @@ describe('decodeUtf8', () => {
     // (ZERO WIDTH NO-BREAK SPACE) and the default decoder leaves
     // it alone too — pinned here for completeness.
     const text = decodeUtf8(new Uint8Array([0x68, 0xef, 0xbb, 0xbf, 0x69]))
-    assert.equal(text, 'h﻿i')
+    assert.equal(text, 'h\uFEFFi')
   })
 })
 

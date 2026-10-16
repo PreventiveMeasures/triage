@@ -123,7 +123,7 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
   ], 'pax lengths count bytes, not characters')
   assert.equal(npmFileText(files[1].bytes), null, 'binary has no text')
   assert.equal(npmFileText(Buffer.from([0xff, 0xfe])), null)
-  assert.equal(npmFileText(Buffer.from('﻿text')), '﻿text', 'a BOM is kept, as the bytes have it')
+  assert.equal(npmFileText(Buffer.from('\uFEFFtext')), '\uFEFFtext', 'a BOM is kept, as the bytes have it')
   assert.throws(() => readNpmTar(tar([{ name: 'package/a', data: 'abc' }]).subarray(0, 514)), (err) => err instanceof NpmPackageError && err.message === 'bad-tarball')
   assert.throws(() => readNpmTar(tar([{ name: 'package/a', data: Buffer.alloc(MAX_NPM_PACKAGE_BYTES + 1) }])), /package-too-large/u)
 })
