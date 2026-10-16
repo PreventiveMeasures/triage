@@ -2062,8 +2062,10 @@ how many pass it; `baseline`, needing none; or `unsupported`, `git`,
 (`unreviewed`, two hundred at most, `moreUnreviewed` the rest), those that
 can't be reviewed (`unsupported`, `moreUnsupported`) and how many it locks
 past those checked (`moreLocked`); and the answer, its terms (`review`:
-`required`, `since`, `canReview`, and `baselineError` where the commit's
-versions couldn't be read). The tile shows a check where every version
+`required`, `since`, `canReview`, how many versions across its directories
+want reviews and can't be reviewed, each once, `unreviewed` and
+`unsupported`, and `baselineError` where the commit's versions couldn't be
+read). The tile shows a check where every version
 passes, how many want reviews (`1 to review · 4 unreviewed`), or, in red,
 that its review fails; the popup its terms, what fails it, each version's
 review (`2/2`, **baseline** or **can't review**), and the other versions

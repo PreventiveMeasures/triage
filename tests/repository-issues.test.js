@@ -177,9 +177,13 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
     2: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 2 }, { name: 'local', version: '1.0.0', source: 'file' }] })],
     3: [dir({ added: [mine], unsupported: [mine, { name: 'mirrored', version: '1.0.0', source: 'mirror', unsupported: 'tarball' }], moreUnsupported: 1 })],
     4: [{ paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' }],
-    5: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 2 }] }), dir({ paths: ['web/package-lock.json'], added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0 }] })],
+    5: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 2 }], unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 200 }),
+      dir({ paths: ['web/package-lock.json'], added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0 }],
+        unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 200 })],
   }
-  dependencies = (repoId, number) => Promise.resolve({ number, cut: false, review: terms, lockfiles: replies[number] })
+  // Two workspaces locking the same versions, which the server counts once.
+  const counts = { 5: { unreviewed: 201 } }
+  dependencies = (repoId, number) => Promise.resolve({ number, cut: false, review: { ...terms, ...counts[number] }, lockfiles: replies[number] })
   answer = () => Promise.resolve({ items: [1, 2, 3, 4, 5].map(number => pull(number, { touchesLockfile: true })), counts: { open: 5, closed: 0 }, more: false })
   const view = shown('pulls')
   view.render()
@@ -199,7 +203,7 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
   assert.match(tiles[2], /Its review fails: mine@1\.0\.0 \(from git\), mirrored@1\.0\.0 \(a tarball not npm’s registry’s\) and 1 more can’t be reviewed>/u)
   assert.match(tiles[3], /data-tooltip=Its review fails: not every lockfile it changes was read>[^]*<span class="issue-deps-review is-failed">lockfiles unread<\/span>/u,
     'shown with no version new, its lockfiles unread')
-  assert.match(tiles[4], /is-wanted">1 to review</u, 'a version two directories lock as passing as the less passing of them')
+  assert.match(tiles[4], /is-wanted">1 to review · 201 unreviewed</u, 'a version two directories lock as passing as the less passing of them; the others counted once, as the server tells')
 })
 
 test('a count of comments as narrow as the rail: whole below a thousand, else two digits at most and their unit', () => {

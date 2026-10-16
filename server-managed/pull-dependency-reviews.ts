@@ -105,9 +105,9 @@ function shown<T extends LockedPackage>(pkg: T): Omit<T, 'integrity'> {
 
 // A directory as the client is told it: what it adds, each version with its
 // review; the others its lockfiles lock that want reviews, and every one
-// that can't be reviewed, as many of each as MAX_UNREVIEWED, how many more;
-// and how many it locks past those read (`moreLocked`), which aren't
-// checked; without `state`, what it adds alone.
+// that can't be reviewed (as many of each as MAX_UNREVIEWED, how many more,
+// once `capped`); and how many it locks past those read (`moreLocked`),
+// which aren't checked; without `state`, what it adds alone.
 function reviewedDirectory(dir: DirectoryDependencies, state: RepoReviewState | null, reviews: ReviewsOf, baseline: Set<string> | null) {
   if ('error' in dir) return dir
   const { locked, moreLocked, added, ...told } = dir
@@ -122,22 +122,36 @@ function reviewedDirectory(dir: DirectoryDependencies, state: RepoReviewState | 
   const others = locked.filter(pkg => !adds.has(lockedWith(pkg))).map(pkg => ({ ...shown(pkg), ...review(pkg, 'any') }))
   const unreviewed = others.filter(pkg => 'reviews' in pkg && pkg.reviews < state.required)
   const unsupported = locked.flatMap(pkg => { const as = reviewedAs(pkg); return as === 'version' || as === 'skip' ? [] : [{ ...shown(pkg), unsupported: as }] })
-  return { ...told, added: added.map((pkg: AddedPackage) => ({ ...shown(pkg), ...review(pkg, pkg.was ?? []) })),
-    unreviewed: unreviewed.slice(0, MAX_UNREVIEWED), moreUnreviewed: Math.max(0, unreviewed.length - MAX_UNREVIEWED),
-    unsupported: unsupported.slice(0, MAX_UNREVIEWED), moreUnsupported: Math.max(0, unsupported.length - MAX_UNREVIEWED), moreLocked }
+  return { ...told, added: added.map((pkg: AddedPackage) => ({ ...shown(pkg), ...review(pkg, pkg.was ?? []) })), unreviewed, unsupported, moreLocked }
 }
+function capped<T extends { unreviewed: unknown[]; unsupported: unknown[] }>(dir: T) {
+  return { ...dir, unreviewed: dir.unreviewed.slice(0, MAX_UNREVIEWED), moreUnreviewed: Math.max(0, dir.unreviewed.length - MAX_UNREVIEWED),
+    unsupported: dir.unsupported.slice(0, MAX_UNREVIEWED), moreUnsupported: Math.max(0, dir.unsupported.length - MAX_UNREVIEWED) }
+}
+// How many versions of `lists` there are, each once across them, by `key`,
+// as the client tells them once: one wanting reviews by its name and
+// version, one that can't be reviewed by where it is from too.
+const distinct = (lists: Omit<LockedPackage, 'integrity'>[][], key: (pkg: Omit<LockedPackage, 'integrity'>) => string) => new Set(lists.flat().map(key)).size
+const versionKey = (pkg: Omit<LockedPackage, 'integrity'>) => `${pkg.name}@${pkg.version ?? ''}`
+const sourceKey = (pkg: Omit<LockedPackage, 'integrity'>) => `${pkg.source}\0${versionKey(pkg)}\0${pkg.from ?? ''}`
 
 // A pull request's dependencies as the client is told them: without the
 // versions its directories lock; with `state`, a repository's review in
 // effect, each version's review (reviewedDirectory), and the review's terms
-// (`review`), where its baseline couldn't be read, why (`baselineError`),
+// (`review`), with how many versions across its directories want reviews
+// (`unreviewed`, those it adds aside) and can't be reviewed (`unsupported`),
+// each once; where its baseline couldn't be read, why (`baselineError`),
 // every version then wanting its reviews. It fails where a version can't be
 // reviewed, a directory's lockfiles couldn't be read or lock more than are
 // checked, or the pull request changes more lockfiles than are read (`cut`).
 export function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null, baseline: Set<string> | null, baselineError: string | null = null) {
   const reviews = reviewsByVersion(state?.reviews ?? [])
-  return { ...told, lockfiles: told.lockfiles.map(dir => reviewedDirectory(dir, state, reviews, baseline)),
-    ...state ? { review: { required: state.required, since: state.since, canReview: state.canReview, ...baselineError ? { baselineError } : {} } } : {} }
+  const dirs = told.lockfiles.map(dir => reviewedDirectory(dir, state, reviews, baseline))
+  if (!state) return { ...told, lockfiles: dirs }
+  const listed = dirs.flatMap(dir => 'unreviewed' in dir ? [dir] : [])
+  return { ...told, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required, since: state.since, canReview: state.canReview,
+    unreviewed: distinct(listed.map(dir => dir.unreviewed), versionKey), unsupported: distinct(listed.map(dir => dir.unsupported), sourceKey),
+    ...baselineError ? { baselineError } : {} } }
 }
 
 // The packages a pull request's lockfiles lock that are reviewed, whose

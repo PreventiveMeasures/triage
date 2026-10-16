@@ -60,7 +60,8 @@ const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : 
 
 // A server's answer, its directories those it names by their lockfiles'
 // paths, each's versions those it names (checkedVersion), and its review's
-// terms, where it tells them.
+// terms, where it tells them, with how many versions across its directories
+// want reviews and can't be reviewed.
 function checked(answer) {
   if (!Array.isArray(answer?.lockfiles)) throw new Error('The server answered with no lockfiles.')
   const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? dir
@@ -70,6 +71,7 @@ function checked(answer) {
   const review = answer.review
   return { lockfiles, cut: answer.cut === true, ...count(review?.required) > 0 ? { review: { required: review.required,
     since: typeof review.since === 'string' ? review.since : null, canReview: review.canReview === true,
+    ...count(review.unreviewed) === null ? {} : { unreviewed: review.unreviewed }, ...count(review.unsupported) === null ? {} : { unsupported: review.unsupported },
     ...typeof review.baselineError === 'string' ? { baselineError: review.baselineError } : {} } } : {} }
 }
 
@@ -158,19 +160,21 @@ export function reviewOf(pkg, review) {
 
 // The other versions an answer's lockfiles lock that want reviews, each once
 // across its directories, and how many it counts in all (`count`), those it
-// didn't send among them.
-export function unreviewedVersions({ lockfiles }) {
+// didn't send among them: as its review tells, each once, else as its
+// directories do.
+export function unreviewedVersions({ lockfiles, review }) {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.unreviewed ?? [])) {
     const key = `${pkg.name}@${pkg.version ?? ''}`
     if (!all.has(key)) all.set(key, pkg)
   }
-  return { versions: [...all.values()], count: all.size + lockfiles.reduce((more, dir) => more + (dir.moreUnreviewed ?? 0), 0) }
+  return { versions: [...all.values()], count: review?.unreviewed ?? all.size + lockfiles.reduce((more, dir) => more + (dir.moreUnreviewed ?? 0), 0) }
 }
 
 // What fails a pull request's review, where it is in effect: the versions
 // its lockfiles lock that can't be reviewed, each once across its
-// directories, and how many it counts in all (`count`); the directories
+// directories, and how many it counts in all (`count`, as its review tells,
+// else as its directories do); the directories
 // whose lockfiles couldn't be read (`unread`); how many versions they lock
 // past those checked (`unchecked`); and whether it changes lockfiles left
 // unread (`cut`). Null where nothing does.
@@ -182,6 +186,6 @@ export function reviewFailures({ lockfiles, cut, review }) {
     if (!all.has(key)) all.set(key, pkg)
   }
   const sum = field => lockfiles.reduce((total, dir) => total + (dir[field] ?? 0), 0)
-  const failed = { versions: [...all.values()], count: all.size + sum('moreUnsupported'), unread: lockfiles.filter(dir => dir.error), unchecked: sum('moreLocked'), cut }
+  const failed = { versions: [...all.values()], count: review.unsupported ?? all.size + sum('moreUnsupported'), unread: lockfiles.filter(dir => dir.error), unchecked: sum('moreLocked'), cut }
   return failed.count > 0 || failed.unread.length > 0 || failed.unchecked > 0 || cut ? failed : null
 }

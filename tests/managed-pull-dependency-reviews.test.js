@@ -10,15 +10,13 @@ import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import { test } from 'node:test'
-import { hashToken } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { lockedPackages } from '../server-managed/locked-packages.ts'
 import { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages } from '../server-managed/pull-dependency-reviews.ts'
-import { createSession } from '../server-managed/session.ts'
+import { checkRepositoryDependencyReviews, context, people, publish } from './_managed-repository-dependency-reviews.js'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000 }
-const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
 const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
 const [tip, head, mergeBase, since] = ['a', 'b', 'c', 'd'].map(char => char.repeat(40))
 
@@ -87,7 +85,7 @@ test('each version a pull request adds is told its review: how many pass it, of 
     passing(mirrored, 'u1'), passing(mirrored, 'u2'),
   ] }
   const answer = reviewedDependencies(told, state, new Set([`kept@1.0.0\0${sri('kept@1.0.0')}`]))
-  assert.deepEqual(answer.review, { required: 2, since, canReview: true })
+  assert.deepEqual(answer.review, { required: 2, since, canReview: true, unreviewed: 2, unsupported: 3 })
   assert.deepEqual(answer.lockfiles[0], { paths: ['package-lock.json'], more: 0, moreLocked: 0,
     added: [{ ...strip(ms), reviews: 2 }, { ...strip(tool), reviews: 1 }, { ...strip(kept), baseline: true }, { ...mine, unsupported: 'git' }, local],
     unreviewed: [{ ...strip(other), reviews: 0 }, { ...strip(msElse), reviews: 0 }], moreUnreviewed: 0,
@@ -104,12 +102,16 @@ test('each version a pull request adds is told its review: how many pass it, of 
     told.lockfiles[1]] }, 'where none is in effect, what it adds alone')
 })
 
-test('of a directory\'s other versions wanting reviews and those that can\'t be reviewed, as many as MAX_UNREVIEWED are told, the rest counted; those past the versions read told', () => {
+test('of a directory\'s other versions wanting reviews and those that can\'t be reviewed, as many as MAX_UNREVIEWED are told, the rest counted, each once across directories; those past the versions read told', () => {
   const locked = [...Array.from({ length: MAX_UNREVIEWED + 2 }, (_, n) => at(`pkg-${n}`, '1.0.0')),
     ...Array.from({ length: MAX_UNREVIEWED + 1 }, (_, n) => ({ name: `git-${n}`, version: '1.0.0', source: 'git' }))]
-  const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, added: [], locked, moreLocked: 7 }] }
-  const [dir] = reviewedDependencies(told, { required: 1, since: null, canReview: false, reviews: [] }, null).lockfiles
-  assert.deepEqual([dir.unreviewed.length, dir.moreUnreviewed, dir.unsupported.length, dir.moreUnsupported, dir.moreLocked], [MAX_UNREVIEWED, 2, MAX_UNREVIEWED, 1, 7])
+  const dir = paths => ({ paths, more: 0, added: [], locked, moreLocked: 7 })
+  const told = { base: mergeBase, head, cut: false, lockfiles: [dir(['a/package-lock.json']), dir(['b/package-lock.json'])] }
+  const answer = reviewedDependencies(told, { required: 1, since: null, canReview: false, reviews: [] }, null)
+  for (const one of answer.lockfiles) {
+    assert.deepEqual([one.unreviewed.length, one.moreUnreviewed, one.unsupported.length, one.moreUnsupported, one.moreLocked], [MAX_UNREVIEWED, 2, MAX_UNREVIEWED, 1, 7])
+  }
+  assert.deepEqual([answer.review.unreviewed, answer.review.unsupported], [MAX_UNREVIEWED + 2, MAX_UNREVIEWED + 1], 'two workspaces locking the same versions count them once')
 })
 
 // Git's id of an object, as GitHub names a commit's trees and blobs.
@@ -193,73 +195,10 @@ test('the versions the repository\'s lockfiles locked at the commit reviews are 
   assert.deepEqual(asked, [], 'kept beyond it')
 })
 
-// Users and teams for a repository's reviews: `alice` and `bob` review in
-// team `one`, which has the repository; `manager` manages team `two`, which
-// doesn't; `carol` triages in none; and `admin`.
-async function people(db) {
-  const users = {}
-  for (const [n, [login, role]] of [['admin', 'admin'], ['alice', 'triage'], ['bob', 'triage'], ['carol', 'triage'], ['manager', 'manage']].entries()) {
-    const session = await createSession(config, db, { githubUserId: n + 1, login, name: null, avatarUrl: null }, Date.now())
-    await db.setUserRole(session.userId, role)
-    await db.setUserTokens(session.userId, { accessToken: 'token', refreshToken: null, expiresAt: null })
-    users[login] = { ...session, sid: hashToken(session.setCookie.split(';')[0].slice(4)) }
-  }
-  await db.selectRepo(repo, Date.now())
-  for (const id of ['one', 'two', 'off', 'hidden']) {
-    await db.createTeam(id, id, Date.now())
-    if (id !== 'two') await db.setTeamRepo(id, repo.repoId, null)
-    if (id !== 'off') await db.setTeamDependencyReview(users.admin.sid, id, true)
-  }
-  await db.setTeamHidden('hidden', true, Date.now())
-  for (const who of ['alice', 'bob']) await db.setTeamMember('one', users[who].userId, { dependencies: true, security: false })
-  await db.setTeamMember('two', users.manager.userId, { dependencies: false, security: false })
-  return users
-}
-
-// Publishes `who`'s review of `context` to `teams`: every one of `files`
-// checked, else those of `checked`, with `status`.
-async function publish(db, user, context, teams, { files = ['index.js', 'package.json'], checked = files, status = 'accept' } = {}) {
-  let review = null
-  for (const file of checked) {
-    review = await db.changeDependencyReview(context, user.sid, { action: 'save', reviewId: review?.id ?? null, revision: review?.revision ?? null, entryId: null,
-      entry: { file, status, comment: '' } }, Date.now())
-  }
-  return db.changeDependencyReview(context, user.sid, { action: 'publish', reviewId: review.id, revision: review.revision, teamIds: teams, files, nonTextFiles: [],
-    final: { status, comment: '' } }, Date.now())
-}
-const context = (name, version, base = null) => ({ ecosystem: 'npm', package: name, version, integrity: sri(`${name}@${version}`),
-  basePackage: base ? name : null, baseVersion: base, baseIntegrity: base ? sri(`${name}@${base}`) : null })
-
 test('a repository\'s review is in effect once enabled and a team that reviews dependencies has it; its passing reviews are full, accepting, published to such a team and not revoked', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
-  const users = await people(db)
-  assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, ['pkg']), null, 'not enabled')
-  assert.equal(await db.setRepoDependencyReview(999, { enabled: true, required: 2, since: null }), false)
-  assert.equal(await db.setRepoDependencyReview(1, { enabled: true, required: 2, since }), true)
-  assert.deepEqual((await db.listRepoDependencyReviews()).get(1), { enabled: true, required: 2, since })
-
-  await publish(db, users.alice, context('pkg', '1.0.0'), ['one'])
-  await publish(db, users.bob, context('pkg', '1.0.0'), ['one'], { status: 'accept-with-nits' })
-  await publish(db, users.alice, context('pkg', '1.0.0', '0.9.0'), ['one'], { files: ['index.js', 'package.json'], checked: ['package.json'] })
-  await publish(db, users.bob, context('pkg', '1.0.0', '0.9.0'), ['one'], { status: 'reject' })
-  await publish(db, users.manager, context('pkg', '1.0.0', '0.8.0'), ['two'])
-  const revoked = await publish(db, users.alice, context('pkg', '1.0.0', '0.7.0'), ['one'])
-  await db.changeDependencyReview(context('pkg', '1.0.0', '0.7.0'), users.alice.sid, { action: 'revoke', reviewId: revoked.id, revision: revoked.revision }, Date.now())
-  await db.changeDependencyReview(context('pkg', '1.0.0', '0.6.0'), users.bob.sid, { action: 'save', reviewId: null, revision: null, entryId: null,
-    entry: { file: 'index.js', status: 'accept', comment: '' } }, Date.now())
-  await publish(db, users.alice, context('elsewhere', '1.0.0'), ['one'])
-
-  const state = await db.repoDependencyReviewState(1, users.alice.userId, ['pkg', 'pkg'])
-  assert.deepEqual({ ...state, reviews: state.reviews.toSorted((a, b) => a.reviewer < b.reviewer ? -1 : 1) }, { required: 2, since, canReview: true, reviews: [
-    { package: 'pkg', version: '1.0.0', integrity: sri('pkg@1.0.0'), basePackage: null, baseVersion: null, reviewer: users.alice.userId },
-    { package: 'pkg', version: '1.0.0', integrity: sri('pkg@1.0.0'), basePackage: null, baseVersion: null, reviewer: users.bob.userId },
-  ].toSorted((a, b) => a.reviewer < b.reviewer ? -1 : 1) }, 'neither a partial review, a rejecting one, one to a team without the repository, a revoked one, a draft, nor another package\'s')
-  for (const [who, canReview] of [['admin', true], ['bob', true], ['carol', false], ['manager', false]]) {
-    assert.equal((await db.repoDependencyReviewState(1, users[who].userId, [])).canReview, canReview, `${who} ${canReview ? 'publishes' : 'publishes none'} to a team that counts`)
-  }
-  await db.setTeamDependencyReview(users.admin.sid, 'one', false)
-  assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, ['pkg']), null, 'no team reviewing dependencies has it but a hidden one')
+  await checkRepositoryDependencyReviews(db)
 })
 
 // The app's API as `who` asks it: GET, or POST of `body`.
@@ -309,7 +248,7 @@ test('an open pull request\'s dependencies, asked with their review, tell each v
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
   const answer = await ask({ review: '1' })
   assert.equal(answer.status, 200)
-  assert.deepEqual(answer.body.review, { required: 1, since, canReview: true })
+  assert.deepEqual(answer.body.review, { required: 1, since, canReview: true, unreviewed: 1, unsupported: 1 })
   assert.deepEqual(answer.body.lockfiles, [{ paths: ['package-lock.json'], more: 0, moreLocked: 0,
     added: [{ name: 'left-pad', version: '1.3.0', source: 'registry', baseline: true }, { name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 1 }],
     unreviewed: [{ name: 'kept', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 0,
