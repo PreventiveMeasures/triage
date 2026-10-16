@@ -1890,10 +1890,15 @@ title, author, labels or branch. Fifty are read at a time, the next as the
 but not while a filter picks among them, nor after a page failed. Like
 Commits, neither tab reads the directory's files: at a commit, each opens
 alone. What they read is kept in the page for the session five minutes, and
-on the server for every reader (below).
+on the server for every reader (below). Each issue or pull request shows as
+read latest, by its list or its popup, whichever the server read from GitHub
+last (`ui/view/repository-items.js`, the app's store): one its popup read as
+merged shows merged on its tile too, where the tile was, the counts of open
+and closed moving with it, and a list read before shows one read since in its
+state among those it lists, by when it was updated, where it reaches it.
 
 `GET /api/admin/repositories/issues?repoId=…&kind=issues|pulls&state=open|closed[&after=…]`
-answers `{ kind, state, items, counts: { open, closed }, more, after }` from
+answers `{ kind, state, items, counts: { open, closed }, more, after, readAt }` from
 GraphQL (`repository-issues.ts`): a page of fifty, `after` the cursor reading
 the next where `more`. Each item is `{ number, title, author, createdAt,
 updatedAt, closedAt, comments, labels: [{ name, color }], moreLabels, state }`,
@@ -1912,7 +1917,8 @@ being, mostly, those lately opened), the first five comments and the last
 twenty for Codex's summary, its hidden `codex-review-state:v1` marker, which
 it posts as it is first asked, and the last twenty for asking it again and
 its failures since; a closed page reads none, keeping its query as cheap as
-it was. The item (`GET …/item`) has its pull request's `reviews` whether open
+it was. `readAt` is when it was read from GitHub, a kept one as old as it was
+kept, as the item's is. The item (`GET …/item`) has its pull request's `reviews` whether open
 or not, its threads' `list` (the latest hundred read) with each open one's `severity`,
 `title`, `path`, `line`, `outdated`, `author` and `url`. They are
 the whole repository's, so they are read only where the reader's grants

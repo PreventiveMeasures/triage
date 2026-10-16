@@ -1830,11 +1830,13 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
   // others are written), is none.
   const stored = await store.read(key)
   const held = stored && Date.now() - stored.at < REPOSITORY_READ_KEPT_MS ? stored : null
+  // Read, and kept as read when it was, which it is said read at.
   const readKept = async () => {
     try {
       const value = await read()
-      await store.write(key, value, Date.now())
-      return value
+      const at = Date.now()
+      await store.write(key, value, at)
+      return { value, at }
     } catch (err) {
       if (refusedRead(err)) await store.remove(key)
       throw err
@@ -1846,7 +1848,7 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
       reading = readKept().finally(() => repositoryRereads.delete(key))
       repositoryRereads.set(key, reading)
     }
-    return reading as Promise<T>
+    return reading as Promise<{ value: T; at: number }>
   }
   const age = held ? Date.now() - held.at : Infinity
   const now = fresh && age >= REPOSITORY_READ_FLOOR_MS
@@ -1858,7 +1860,7 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
     return { value: held.value as T, kept: true, at: held.at }
   }
   try {
-    return { value: now ? await reread() : await readKept(), kept: false, at: Date.now() }
+    return { ...now ? await reread() : await readKept(), kept: false }
   } catch (err) {
     if (held && ((now && !refusedRead(err)) || keepThrough(err))) return { value: held.value as T, kept: true, at: held.at }
     throw err
@@ -1913,11 +1915,16 @@ function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
 // name and a token), read as browsing is, with the reader's own GitHub
 // access: only by a reader whose grants reach all of it, with a token, and
 // sent once access is checked again after it is read; what `key` names kept
-// (keptAnswer), sent as kept, its reader's access checked as they ask.
+// (keptAnswer), sent as kept, its reader's access checked as they ask; with
+// `readAt`, when it was read from GitHub, one kept as old as it was kept, so
+// that a reader holding two reads of the same can tell the later.
 async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
-  read: (fullName: string, token: string) => Promise<object>, key: string | null = null): Promise<void> {
-  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => key === null ? { value: await read(fullName, token), kept: false }
-    : keptAnswer(deps, `${repoId}\0${key}`, () => read(fullName, token)))
+  read: (fullName: string, token: string) => Promise<object>, key: string | null = null, readAt = false): Promise<void> {
+  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
+    const { value, kept, at } = key === null ? { value: await read(fullName, token), kept: false, at: Date.now() }
+      : await keptAnswer(deps, `${repoId}\0${key}`, () => read(fullName, token))
+    return { value: readAt ? { ...value, readAt: at } : value, kept }
+  })
 }
 
 // What `answer` gives of the whole of repository `repoId` (with its name and
@@ -1962,7 +1969,7 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
     || (after !== null && !ISSUES_CURSOR.test(after))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await readWholeRepository(res, deps, cookie, repoId, async (fullName, token) => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }),
-    `issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}`)
+    `issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}`, true)
 }
 
 // GET /api/admin/repositories/agents: what the code viewer's Agents tab
@@ -1988,7 +1995,7 @@ async function handleRepositoryItem(res: ServerResponse, deps: ManagedHttpDeps, 
   const repoId = Number(query.get('repoId'))
   const number = itemNumber(query)
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || number === null) { sendJson(res, 400, { error: 'bad-request' }); return }
-  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryItem(fullName, token, number), `item\0${ISSUES_READ_VERSION}\0${number}`)
+  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryItem(fullName, token, number), `item\0${ISSUES_READ_VERSION}\0${number}`, true)
 }
 
 // The issue's or pull request's number a request names, as GraphQL takes one

@@ -62,8 +62,10 @@ test('issues read a page of those open, the most recently updated first, each as
       author: null, comments: { totalCount: 0 }, labels: { totalCount: 0, nodes: [{ name: ' ', color: 'zzz' }] } },
     { number: 'x', title: 'not an issue' }, null,
   ], { hasNextPage: true, endCursor: cursor }))
-  const { status, body } = await request({ repoId: '1', kind: 'issues' })
+  const before = Date.now()
+  const { status, body: { readAt, ...body } } = await request({ repoId: '1', kind: 'issues' })
   assert.equal(status, 200)
+  assert.ok(readAt >= before && readAt <= Date.now(), 'when it was read from GitHub')
   assert.deepEqual(body, {
     kind: 'issues', state: 'open', counts: { open: 3, closed: 40 }, more: true, after: cursor,
     items: [
@@ -78,6 +80,10 @@ test('issues read a page of those open, the most recently updated first, each as
   assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', after: null })
   assert.match(asked[0].query, /page: issues\(states: \[OPEN\], first: 50, after: \$after, orderBy: \{ field: UPDATED_AT, direction: DESC \}\)/u)
   assert.match(asked[0].query, /author \{ login \.\.\. on User \{ databaseId \} \.\.\. on Bot \{ databaseId \} \}/u, 'a user\'s account id, or a bot\'s')
+  // Answered again as it was kept, said read when it was, which a reader holding a later read of one of its items can tell is older.
+  const again = await request({ repoId: '1', kind: 'issues' })
+  assert.equal(asked.length, 1)
+  assert.equal(again.body.readAt, readAt)
   // Closed, on from a cursor.
   await request({ repoId: '1', kind: 'issues', state: 'closed', after: cursor })
   assert.deepEqual(asked[1].variables, { owner: 'org', name: 'repo', after: cursor })
@@ -240,8 +246,11 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
   const asked = github(t, ({ variables }) => ({ data: { repository: { item: items[variables.number] ?? null } } }))
   const request = await fixture(t)
   const item = number => request({ repoId: '1', number }, { path: 'item' })
-  const pull = await item('7')
+  const before = Date.now()
+  const { status, body: { readAt, ...body } } = await item('7')
+  const pull = { status, body }
   assert.equal(pull.status, 200)
+  assert.ok(readAt >= before && readAt <= Date.now(), 'when it was read from GitHub')
   assert.deepEqual(pull.body, { kind: 'pulls', number: 7, title: 'Fix the chips', author: 'grace', authorId: 6, createdAt: Date.parse(common.createdAt), updatedAt: Date.parse(common.updatedAt),
     closedAt: Date.parse(common.closedAt), comments: 2, labels: [{ name: 'bug', color: 'd73a4a' }], moreLabels: 1, state: 'merged', draft: false,
     mergedAt: Date.parse('2026-10-02T00:00:00Z'), review: 'approved', checks: 'success', additions: 30, deletions: 4, head: 'claude/fix-chips', base: 'main',

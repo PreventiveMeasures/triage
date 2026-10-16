@@ -7,8 +7,11 @@
 // to its lockfiles, where it changes any (pull-dependencies.js); it opens on
 // GitHub. The server reads them with the reader's own GitHub access (GET
 // /api/admin/repositories/issues); what it answered is kept a while, for the
-// session that read it.
-import { LitElement, html, nothing } from 'lit'
+// session that read it. Each tile shows its issue or pull request as read
+// latest, by its list or its popup (repository-items.js), so that one read
+// since in another state shows so, and the counts with it.
+import { html, nothing } from 'lit'
+import { StateElement } from '@rray/frontend/state-element'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from './style-map.js'
 import { state } from '#client/index.js'
@@ -21,6 +24,7 @@ import { addedVersions, pullDependencies, readsDependencies, reviewFailures, rev
 import { activityPicker } from './repository-activity.js'
 import { githubUser, githubUserName } from './github-users.js'
 import { reviewLine } from './pull-reviews.js'
+import { groupAt, groupOf, knowItems, knownItem, knownItems, readAtOf } from './repository-items.js'
 
 export { issueState }
 
@@ -48,25 +52,79 @@ function sessionLists() {
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
 subscribePullDependencies(repaint)
 
-// A server's answer, its items those it names by number.
+// A server's answer, its items those it names by number, and when it read
+// them from GitHub.
 function checked(answer) {
   if (!Array.isArray(answer?.items)) throw new Error('The server answered with no list.')
   const items = answer.items.filter(item => Number.isSafeInteger(item?.number) && typeof item.title === 'string' && Array.isArray(item.labels))
-  return { items, counts: { open: answer.counts?.open ?? 0, closed: answer.counts?.closed ?? 0 }, more: answer.more === true, after: answer.more === true ? answer.after : null }
+  return { items, counts: { open: answer.counts?.open ?? 0, closed: answer.counts?.closed ?? 0 }, more: answer.more === true, after: answer.more === true ? answer.after : null,
+    readAt: readAtOf(answer) }
+}
+
+// A list of `kind` of repository `repoId`, those open or closed (`listState`),
+// as now known (repository-items.js): each it lists as read latest, one read
+// since in the other state left where it was, as it shows now; where the list
+// reaches them, those read since it was that are now in its state, among them
+// by when each was last updated; and its counts, each of the repository's of
+// `kind` known moved between open and closed where it is now in the other of
+// the two than they counted it in (counted): as recorded as they were adopted,
+// unless GitHub closed one now closed, or updated one now open, no later than
+// they were read (`countsAt`), which counted it as it is.
+export function listedNow(repoId, kind, listState, entry) {
+  const belongs = item => (item.state === 'open') === (listState === 'open')
+  const latest = entry.items.map(item => knownItem(repoId, item.number) ?? { item, readAt: entry.readAt })
+  const items = latest.map(({ item }) => item)
+  const listed = new Set(items.map(item => item.number))
+  const oldest = entry.more ? entry.items.at(-1)?.updatedAt ?? 0 : null
+  const arrived = knownItems(repoId, kind).filter(({ item, readAt }) => readAt > entry.readAt && !listed.has(item.number) && belongs(item)
+    && (oldest === null || (item.updatedAt ?? 0) >= oldest)).toSorted((a, b) => (b.item.updatedAt ?? 0) - (a.item.updatedAt ?? 0))
+  for (const { item } of arrived) {
+    const at = items.findIndex(other => (other.updatedAt ?? 0) < (item.updatedAt ?? 0))
+    items.splice(at === -1 ? items.length : at, 0, item)
+  }
+  const countsAt = entry.countsAt ?? entry.readAt
+  const counted = held => {
+    const now = groupOf(held.item)
+    const closedAt = held.item.closedAt ?? held.item.mergedAt ?? null
+    if (now === 'closed' ? closedAt !== null && closedAt <= countsAt : (held.item.updatedAt ?? Number.POSITIVE_INFINITY) <= countsAt) return now
+    return entry.counted?.get(held.item.number) ?? groupAt(held, countsAt)
+  }
+  const all = new Map(knownItems(repoId, kind).map(held => [held.item.number, held]))
+  for (const held of latest) if (!all.has(held.item.number)) all.set(held.item.number, held)
+  let moved = 0
+  for (const held of all.values()) {
+    const then = counted(held)
+    if (then !== groupOf(held.item)) moved += then === listState ? 1 : -1
+  }
+  const other = listState === 'open' ? 'closed' : 'open'
+  const counts = { [listState]: Math.max(0, entry.counts[listState] - moved), [other]: Math.max(0, entry.counts[other] + moved) }
+  return { items, counts }
+}
+
+// What a list's counts, as it adopts them, counted each known one of its
+// repository and kind in, open or closed, as best known then (groupAt at
+// `countsAt`): one moving after, either way, moves them (listedNow).
+function rebase(repoId, kind, entry) {
+  const counted = new Map(knownItems(repoId, kind).map(held => [held.item.number, groupAt(held, entry.countsAt)]))
+  for (const item of entry.items) if (!counted.has(item.number)) counted.set(item.number, groupOf(item))
+  entry.counted = counted
 }
 
 // The list `key` names, as held, else read: `{ status }`, 'loading', then
 // 'ready' with its `items`, `counts`, and where more follow, the cursor
 // reading them (`after`), or 'error' with its `error`; read again once old,
-// or an error's retry is due.
-function listRead(key, ask) {
+// or an error's retry is due. `adopt` records what its counts counted.
+function listRead(key, ask, adopt) {
   const data = sessionLists()
   const held = data.get(key)
   if (held && Date.now() < held.until) return held
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
   ask(null).then(answer => {
-    if (data.get(key) === loading) data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, ...answer, loadingMore: false, moreError: null })
+    if (data.get(key) !== loading) return null
+    const entry = { status: 'ready', until: Date.now() + KEEP_MS, ...answer, countsAt: answer.readAt, loadingMore: false, moreError: null }
+    adopt(entry)
+    data.set(key, entry)
     return null
   }, err => {
     if (data.get(key) !== loading) return null
@@ -78,7 +136,7 @@ function listRead(key, ask) {
 }
 
 // The next page of a list, after those it holds.
-function readMore(key, entry, ask) {
+function readMore(key, entry, ask, adopt) {
   if (entry.loadingMore || !entry.more) return
   entry.loadingMore = true
   entry.moreError = null
@@ -89,7 +147,13 @@ function readMore(key, entry, ask) {
     if (sessionLists().get(key) !== entry) return null
     const held = new Set(entry.items.map(item => item.number))
     entry.items = [...entry.items, ...answer.items.filter(item => !held.has(item.number))]
-    entry.counts = answer.counts
+    // Its counts, the latest read: a page the server kept from before the
+    // one they came with leaves them.
+    if (answer.readAt >= entry.countsAt) {
+      entry.counts = answer.counts
+      entry.countsAt = answer.readAt
+      adopt(entry)
+    }
     entry.more = answer.more
     entry.after = answer.after
     entry.until = Date.now() + KEEP_MS
@@ -185,7 +249,7 @@ function dependencyLine(entry) {
 // entry's) is in, by its full name (`repo`, repository-code.js
 // repositoryFullName, once known): its issues, or its pull requests (`kind`
 // 'pulls').
-class RepositoryIssues extends LitElement {
+class RepositoryIssues extends StateElement {
   static properties = { repository: { attribute: false }, repo: { attribute: false }, kind: {}, _filter: { state: true } }
 
   createRenderRoot() { return this }
@@ -231,9 +295,13 @@ class RepositoryIssues extends LitElement {
     const { repoId } = this.repository
     const kind = this.kind
     const key = `${repoId}\0${kind}\0${listState}`
-    const ask = after => fetchRepositoryIssues(repoId, kind, { state: listState, after }).then(checked)
-    const entry = listRead(key, ask)
-    return { key, entry, more: () => readMore(key, entry, ask) }
+    const ask = after => fetchRepositoryIssues(repoId, kind, { state: listState, after }).then(checked).then(answer => {
+      knowItems(repoId, answer.items, answer.readAt, kind)
+      return answer
+    })
+    const adopt = held => rebase(repoId, kind, held)
+    const entry = listRead(key, ask, adopt)
+    return { key, entry, more: () => readMore(key, entry, ask, adopt) }
   }
 
   pick(listState) {
@@ -249,10 +317,12 @@ class RepositoryIssues extends LitElement {
     const noun = this.kind === 'pulls' ? 'pull requests' : 'issues'
     // How many are open and closed, as the list shown read them, else as the
     // other did, the same repository's: switching keeps them while it reads.
-    const other = sessionLists().get(`${this.repository.repoId}\0${this.kind}\0${listState === 'open' ? 'closed' : 'open'}`)
-    const counts = ready ? entry.counts : other?.status === 'ready' ? other.counts : null
+    const otherState = listState === 'open' ? 'closed' : 'open'
+    const other = sessionLists().get(`${this.repository.repoId}\0${this.kind}\0${otherState}`)
+    const now = ready ? listedNow(this.repository.repoId, this.kind, listState, entry) : null
+    const counts = now ? now.counts : other?.status === 'ready' ? listedNow(this.repository.repoId, this.kind, otherState, other).counts : null
     const counted = which => counts ? html`<span class="n">${counts[which].toLocaleString('en-US')}</span>` : nothing
-    const shown = ready ? filterIssues(entry.items, this._filter) : []
+    const shown = now ? filterIssues(now.items, this._filter) : []
     return html`<div class="history-bar issues-bar">
         ${activityPicker(this.kind)}
         <div class="history-modes" role="group" aria-label=${this.kind === 'pulls' ? 'Pull requests' : 'Issues'}>
@@ -261,16 +331,16 @@ class RepositoryIssues extends LitElement {
         </div>
         <input class="issues-filter" type="search" placeholder="Filter" aria-label=${`Filter the ${noun} read`} .value=${this._filter}
           @input=${event => { this._filter = event.target.value }}>
-        ${ready && this._filter.trim() ? html`<span class="history-summary">${shown.length} of ${entry.items.length} read</span>` : nothing}
+        ${now && this._filter.trim() ? html`<span class="history-summary">${shown.length} of ${now.items.length} read</span>` : nothing}
       </div>
-      ${ready ? this.renderTiles(entry, shown, more, `${listState} ${noun}`)
+      ${now ? this.renderTiles(entry, now.items, shown, more, `${listState} ${noun}`)
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
             <button type="button" @click=${() => { sessionLists().delete(key); repaint() }}>Retry</button></div>`
         : html`<div class="bundles-slide-placeholder" role="status">Reading the ${noun}…</div>`}`
   }
 
-  renderTiles(entry, shown, more, what) {
-    if (entry.items.length === 0) return html`<div class="bundles-slide-placeholder">No ${what}.</div>`
+  renderTiles(entry, items, shown, more, what) {
+    if (items.length === 0) return html`<div class="bundles-slide-placeholder">No ${what}.</div>`
     const repo = this.repo ?? this.repository.repo
     const path = this.kind === 'pulls' ? 'pull' : 'issues'
     return html`<div class="issues-scroll">
