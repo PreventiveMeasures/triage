@@ -471,10 +471,11 @@ describe('lineBlockSegments', () => {
       { level: 2, text: 'Summary' }, 'What changed.', { level: 3, text: 'Testing' }, { rule: true }, '_Signed._',
     ])
     assert.deepEqual(lineBlockSegments('## 1. A numbered one'), [{ level: 2, text: '1. A numbered one' }])
+    assert.deepEqual(lineBlockSegments('## Title\n---'), [{ level: 2, text: 'Title' }, { rule: true }], 'a rule under a heading')
   })
 
-  it('leaves the rest as it is: a reference, a hash with no space, seven hashes', () => {
-    for (const text of ['Plain prose.', '#972 fixed it', '#hashtag', '####### seven', '## ']) {
+  it('leaves the rest as it is: a reference, a hash with no space, seven hashes, a setext heading', () => {
+    for (const text of ['Plain prose.', '#972 fixed it', '#hashtag', '####### seven', '## ', 'Release notes\n---', 'Lead\nwrapped\n---']) {
       assert.deepEqual(lineBlockSegments(text), [text], text)
     }
   })

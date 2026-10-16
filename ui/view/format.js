@@ -821,7 +821,8 @@ export function listSegments(text) {
 // paragraph holding one splits around it: the prose before and after
 // come back as strings, a heading as `{ level, text }` (its closing
 // hashes dropped) and a rule as `{ rule: true }`. Only those two —
-// setext headings, block quotes and the rest of markdown stay text.
+// setext headings, block quotes and the rest of markdown stay text: a
+// `---` right under a line of prose underlines it, so it is no rule.
 //
 // A paragraph with neither comes back as a single-element array holding
 // it unchanged, the same fast path listSegments offers.
@@ -837,7 +838,7 @@ export function lineBlockSegments(text) {
   }
   lines.forEach((line, i) => {
     const heading = HEADING_RE.exec(line)
-    if (!heading && !HRULE_RE.test(line)) return
+    if (!heading && !(i === from && HRULE_RE.test(line))) return
     pushProse(i)
     out.push(heading ? { level: heading[1].length, text: heading[2] } : { rule: true })
     from = i + 1
