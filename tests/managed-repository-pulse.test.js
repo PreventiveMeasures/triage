@@ -9,7 +9,7 @@ import { historyFrom } from '../server-managed/repository-history.ts'
 import { PULSE_YEAR_VERSION, StatsPending, YEAR_COMMITS, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
   from '../server-managed/repository-pulse.ts'
 import { createSession } from '../server-managed/session.ts'
-import { agentCommits, agentMerges } from '../server-managed/agent-merges.ts'
+import { agentCommits, agentMerges, sameMerges } from '../server-managed/agent-merges.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
@@ -299,6 +299,54 @@ test('a year counts the commits merged from an agent\'s pull request with agents
     [50, 1])
 })
 
+test('a pull request labelled for an agent, or no longer, after its year was counted: the merged pull requests read again once those read are no longer fresh, the year counted again where what they bring changed', async t => {
+  const request = await fixture(t)
+  const commits = chain(50, Date.now())
+  const at = Date.now()
+  const pull = (updated, labels) => ({ updatedAt: new Date(at + updated).toISOString(), mergedAt: new Date(at).toISOString(), headRefName: 'fix/review',
+    labels: { nodes: labels.map(name => ({ name })) }, mergeCommit: { oid: commits[3].oid } })
+  const pulls = [pull(0, [])]
+  const asked = github(t, { commits, graphql: mergedPulls(pulls) })
+  const agents = async () => (await request({ repoId: '1' })).body.stats.weeks.flatMap(week => week.agentDays).reduce((sum, count) => sum + count, 0)
+  const store = repositoryReadStore(request.db)
+  const mergesKey = `1\0pulse-merges\0${PULSE_YEAR_VERSION}`
+  // The merged pull requests read three minutes ago, no longer fresh: what
+  // was kept removed first, the store keeping none older over it.
+  const age = async () => {
+    const { value } = await store.read(mergesKey)
+    await store.remove(mergesKey)
+    await store.write(mergesKey, value, Date.now() - 3 * 60_000)
+  }
+  assert.equal(await agents(), 0)
+  pulls[0] = pull(1000, ['codex'])
+  const before = mergedQueries(asked)
+  assert.equal(await agents(), 0, 'those read fresh, not read again')
+  assert.equal(mergedQueries(asked), before)
+  await age()
+  assert.equal(await agents(), 0, 'the year as kept answered while they are read again behind it')
+  await request.settled()
+  assert.equal(mergedQueries(asked), before + 1)
+  assert.equal(await agents(), 1, 'labelled, its commit with agents, the head where it was')
+  pulls[0] = pull(2000, [])
+  await age()
+  await agents()
+  await request.settled()
+  assert.equal(await agents(), 0, 'its label taken off, none')
+  const recounted = (await store.read(`1\0pulse-year-last`)).at
+  await age()
+  await agents()
+  await request.settled()
+  assert.equal(await agents(), 0)
+  assert.equal((await store.read(`1\0pulse-year-last`)).at, recounted, 'read again, nothing changed, not counted again')
+})
+
+test('two reads of the agents\' pull requests bring the same commits whatever order each read them in', () => {
+  const read = (merges, rebases = []) => ({ merges, rebases, through: 1, next: null })
+  assert.ok(sameMerges(read([['a', 1], ['b', 2]], [['c', 3, ['x', 'y']]]), read([['b', 2], ['a', 1]], [['c', 3, ['x', 'y']]])))
+  assert.ok(!sameMerges(read([['a', 1]]), read([['a', 1], ['b', 2]])))
+  assert.ok(!sameMerges(read([], [['c', 3, ['x', 'y']]]), read([], [['c', 3, ['x']]])))
+})
+
 test('when a period\'s commits are made, where counted from them: its last weeks\' alone; else, as GitHub\'s statistics count it, the year\'s or more', () => {
   const first = Date.UTC(2025, 9, 19)
   const at = (sha, committedAt) => ({ sha, parents: ['p'], subject: '', authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt, additions: 1, deletions: 0,
@@ -407,13 +455,15 @@ async function fixture(t, { role = 'admin', tokens = userTokens } = {}) {
   await db.createTeam('team', 'Team', Date.now())
   await db.setTeamRepo('team', 1, 'src/allowed')
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
-  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
+  // What is read behind an answer, kept to be waited for.
+  const tracked = []
+  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track(work) { tracked.push(work) } })
   const request = async (query, { method = 'GET' } = {}) => {
     const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
     await handler({ method, url: `/api/admin/repositories/pulse?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
     return { status: res.status, body: JSON.parse(res.body) }
   }
-  return Object.assign(request, { db })
+  return Object.assign(request, { db, settled: () => Promise.all(tracked.splice(0)) })
 }
 
 test('the pulse counts the year from the default branch\'s commits as Commits keeps them, read a few queries an answer, kept by its head; the period\'s pull requests and issues apart', async t => {

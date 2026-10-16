@@ -111,6 +111,13 @@ export async function agentMerges(fullName: string, token: string, since: number
   return result(kept?.through ?? null, { after: after!, from: from ?? stop, stop, read })
 }
 
+// Whether two reads of the agents' pull requests merged (agentMerges) bring
+// the same commits, whatever order each read them in.
+export function sameMerges(a: AgentMerges, b: AgentMerges) {
+  const brought = (read: AgentMerges) => JSON.stringify([read.merges.map(entry => entry.join()).toSorted(), read.rebases.map(entry => JSON.stringify(entry)).toSorted()])
+  return brought(a) === brought(b)
+}
+
 // A commit's subject as GitHub heads its message: whole, or, past what it
 // shows, cut short before an ellipsis.
 const headed = (subject: string, headline: string) => headline.endsWith('…') ? subject.startsWith(headline.slice(0, -1)) : subject === headline
