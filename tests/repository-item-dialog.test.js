@@ -173,3 +173,17 @@ test('a pull request whose lockfiles add none says so; one changing none, or an 
   assert.match(templateText(failing.render()), /<h4>New dependency versions<\/h4><p class="repo-item-quiet" role="alert">GitHub’s API rate limit has been reached\. Try again later\./u)
   assert.deepEqual(dependencyAsked.map(([, number]) => number), [22, 23, 25])
 })
+
+test('a popup\'s read is known as its item\'s latest, for its tile to show; one read later, by a list, it shows in turn', async () => {
+  const { knowItems, knownItem } = await import('../ui/view/repository-items.js')
+  answer = () => Promise.resolve({ ...tile, number: 40, state: 'merged', mergedAt: Date.UTC(2026, 9, 3), mergedBy: 'ada', body: '', closes: [], commits: 1, files: 1, readAt: 5000 })
+  const dialog = shown()
+  dialog.open({ number: 40, preview: { ...tile, number: 40 } })
+  await setImmediate()
+  assert.deepEqual([knownItem(7, 40).item.state, knownItem(7, 40).item.kind, knownItem(7, 40).readAt], ['merged', 'pulls', 5000])
+  assert.match(templateText(dialog.render()), /aria-label=Merged/u)
+  knowItems(7, [{ ...tile, number: 40, state: 'closed' }], 4000, 'pulls')
+  assert.match(templateText(dialog.render()), /aria-label=Merged/u, 'one read before it is no news')
+  knowItems(7, [{ ...tile, number: 40, state: 'closed' }], 6000, 'pulls')
+  assert.match(templateText(dialog.render()), /aria-label=Closed/u)
+})

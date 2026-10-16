@@ -9,6 +9,7 @@
 // request it names opens in its place, Back returning; each, and a commit or
 // branch, is a link to GitHub, and a session to where it ran.
 import { html, nothing, unsafeCSS } from 'lit'
+import { autorun } from '@rray/frontend/state-management'
 import { styleMap } from '../style-map.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { fetchRepositoryItem } from '../client-managed.js'
@@ -19,6 +20,7 @@ import { pullDependencies, readsDependencies, subscribePullDependencies } from '
 import { managedRoutePath } from '../../../common/managed/routes.js'
 import { githubUser, githubUsers } from '../github-users.js'
 import { reviewSections } from '../pull-reviews.js'
+import { knowItems, knownChanges, knownItem, readAtOf } from '../repository-items.js'
 import proseCSS from '../../styles/prose.css'
 import codeTokensCSS from '../../styles/code-tokens.css'
 import styles from './dialog-repository-item.css'
@@ -47,12 +49,18 @@ class RepositoryItemDialog extends AppDialog {
 
   // The target the helper set, shown from the first render, which the
   // dialog opens on (AppDialog.firstUpdated).
+  // Drawn again as what is known of the repository's issues and pull
+  // requests changes (repository-items.js), a list reading one of them since.
   connectedCallback() {
     super.connectedCallback()
     this._unsubscribe = subscribePullDependencies(() => this.requestUpdate())
+    this._unobserve = autorun(first => {
+      knownChanges()
+      if (!first) this.requestUpdate()
+    })
     if (this._trail.length === 0 && this.target) this.open(this.target)
   }
-  disconnectedCallback() { this._controller.abort(); this._unsubscribe?.(); super.disconnectedCallback() }
+  disconnectedCallback() { this._controller.abort(); this._unsubscribe?.(); this._unobserve?.(); super.disconnectedCallback() }
   focusInitial() { this.renderRoot.querySelector('.repo-item-body')?.focus() }
 
   // Shows `target`, an issue or pull request (`{ number, preview }`, the
@@ -63,8 +71,13 @@ class RepositoryItemDialog extends AppDialog {
     if (target.number == null || this._items.has(target.number)) return
     const number = target.number
     this._items = new Map(this._items).set(number, { status: 'loading' })
-    fetchRepositoryItem(this.repository.repoId, number, { signal: this._controller.signal }).then(
-      item => ({ status: 'ready', item }),
+    const { repoId } = this.repository
+    fetchRepositoryItem(repoId, number, { signal: this._controller.signal }).then(
+      item => {
+        // Known as the latest read of it, where none later is, for its tile.
+        knowItems(repoId, [item], readAtOf(item))
+        return { status: 'ready', item }
+      },
       err => err?.name === 'AbortError' ? null : { status: 'error', error: err?.message || 'It could not be read.' },
     ).then(held => {
       if (held) this._items = new Map(this._items).set(number, held)
@@ -96,7 +109,8 @@ class RepositoryItemDialog extends AppDialog {
   // new to a pull request's lockfiles; its description.
   renderItem({ number, preview }) {
     const held = this._items.get(number)
-    const item = held?.item ?? preview ?? null
+    // As read latest, by its popup or a list (repository-items.js).
+    const item = knownItem(this.repository.repoId, number)?.item ?? held?.item ?? preview ?? null
     const kind = item?.kind ?? 'issues'
     const repo = this.repository.repo
     const href = repo ? `https://github.com/${repo}/${kind === 'pulls' ? 'pull' : 'issues'}/${number}` : null

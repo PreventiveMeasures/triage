@@ -128,6 +128,36 @@ test('a pull request\'s tile names its branches, size, review and checks, and a 
   assert.match(templateText(unnamed.render()), /href=https:\/\/github\.com\/org\/named\/pull\/5/u)
 })
 
+test('a tile shows its item as read latest: one its popup read since as merged shows so where it was, the counts moved; the closed list read before has it', async () => {
+  const { knowItems } = await import('../ui/view/repository-items.js')
+  const hours = count => Date.now() - count * 3_600_000
+  answer = (repoId, kind, { state: listState }) => Promise.resolve(listState === 'open'
+    ? { items: [pull(21, { updatedAt: hours(2) }), pull(20, { updatedAt: hours(3) })], counts: { open: 11, closed: 967 }, more: false, readAt: 1000 }
+    : { items: [pull(15, { state: 'merged', updatedAt: hours(30) })], counts: { open: 11, closed: 967 }, more: true, readAt: 1000 })
+  const view = shown('pulls')
+  view.render()
+  await setImmediate()
+  // Its popup reads #20 later than its list did: merged.
+  knowItems(7, [{ ...pull(20, { state: 'merged', mergedAt: hours(1), updatedAt: hours(1) }), kind: 'pulls' }], 2000)
+  let text = templateText(view.render())
+  assert.match(text, /aria-label=Open>[^]*#21[^]*aria-label=Merged>[^]*#20/u, 'where it was, merged')
+  assert.match(text, /Open<span class="n">10<\/span>[^]*Closed<span class="n">968<\/span>/u)
+  // One read before its list was is no news of it.
+  knowItems(7, [{ ...pull(21, { state: 'closed' }), kind: 'pulls' }], 500)
+  assert.match(templateText(view.render()), /aria-label=Open>[^]*#21[^]*aria-label=Merged>/u)
+  // Closed, as its page kept on the server from before says, with #20 among them by when it was updated, counted as the open list counts it.
+  view.pick('closed')
+  view.render()
+  await setImmediate()
+  text = templateText(view.render())
+  assert.match(text, /#20[^]*#15/u)
+  assert.match(text, /Open<span class="n">10<\/span>[^]*Closed<span class="n">968<\/span>/u)
+  // One the closed list doesn't reach yet, updated before the oldest it read, waits for its page.
+  knowItems(7, [{ ...pull(9, { state: 'closed', updatedAt: hours(40) }), kind: 'pulls' }], 3000)
+  assert.doesNotMatch(templateText(view.render()), /#9</u)
+  view.pick('open')
+})
+
 test('an open pull request changing a lockfile, or that may, shows the package versions new to its lockfiles once read, two at a time; one changing none, or not open, asks none', async () => {
   dependencyRequests.length = 0
   const reads = []
