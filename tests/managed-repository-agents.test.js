@@ -79,6 +79,8 @@ const firstPage = () => ({ data: { repository: {
     commitNode(b, 'Fix a flaky test', { author: { email: 'noreply@anthropic.com', user: null } }),
     commitNode(c, `History (#901)\n\nClaude-Session: ${session}`, { associatedPullRequests: { totalCount: 1 } }),
     commitNode('d'.repeat(40), 'By hand'),
+    // One whoever ran Codex pushed, by Codex's co-author trailer.
+    commitNode('3'.repeat(40), 'Tidy the docs\n\nCo-authored-by: Codex <codex@openai.com>'),
     // One Neo pushed, by its line; one Copilot authored, its pull request
     // another repository's (as one moved has), told by its no-reply address
     // alone, as GitHub names no user for a bot.
@@ -121,23 +123,25 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   const asked = github(t, graphql)
   const { status, body } = await request({ repoId: '1' })
   assert.equal(status, 200)
-  const sessionSignals = { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true, agents: [] }
+  const sessionSignals = { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true, codex: false, agents: [] }
   assert.deepEqual(body.pulls.map(pull => [pull.number, pull.state, pull.head, pull.fork, pull.closes, pull.signals]), [
     [904, 'open', 'claude/magical-mayer-83oicz', null, [12], sessionSignals],
     [901, 'merged', 'feature/x', null, [], sessionSignals],
-    [830, 'merged', 'neo/fix-links', null, [], { sessions: [], tasks: [], claude: true, agents: ['neo'] }],
-    [845, 'merged', 'codex/review-defaults', 'ada', [], { sessions: [], tasks: ['task_e_68ecb1f0a2c88191'], claude: false, agents: [] }],
-    [50, 'merged', 'copilot/move-db', null, [], { sessions: [], tasks: [], claude: false, agents: ['copilot'] }],
-    [187, 'merged', 'dependabot/npm_and_yarn/ws-8.21.0', null, [], { sessions: [], tasks: [], claude: false, agents: ['dependabot'] }],
-    [188, 'merged', 'deps/ws', null, [], { sessions: [], tasks: [], claude: false, agents: [] }],
+    [830, 'merged', 'neo/fix-links', null, [], { sessions: [], tasks: [], claude: true, codex: false, agents: ['neo'] }],
+    [845, 'merged', 'codex/review-defaults', 'ada', [], { sessions: [], tasks: ['task_e_68ecb1f0a2c88191'], claude: false, codex: false, agents: [] }],
+    [50, 'merged', 'copilot/move-db', null, [], { sessions: [], tasks: [], claude: false, codex: false, agents: ['copilot'] }],
+    [187, 'merged', 'dependabot/npm_and_yarn/ws-8.21.0', null, [], { sessions: [], tasks: [], claude: false, codex: false, agents: ['dependabot'] }],
+    [188, 'merged', 'deps/ws', null, [], { sessions: [], tasks: [], claude: false, codex: false, agents: [] }],
     [921, 'merged', 'claude/apps', null, [], { ...sessionSignals, claude: false }],
   ], 'a fingerprint quoted is none')
   assert.deepEqual(body.pulls[0], { ...body.pulls[0], title: 'Pull 904', draft: false, author: 'ChristopherTuring', additions: 7, deletions: 2, commits: 3,
     createdAt: Date.parse('2026-10-14T00:00:00Z'), updatedAt: Date.parse('2026-10-15T00:00:00Z') })
   assert.deepEqual(body.commits.map(commit => [commit.oid, commit.title, commit.signals]), [[a, 'Fix it', sessionSignals],
-    [b, 'Fix a flaky test', { sessions: [], tasks: [], claude: true, agents: [] }], ['e'.repeat(40), 'Bump esbuild', { sessions: [], tasks: [], claude: false, agents: ['neo'] }],
-    ['f'.repeat(40), 'Move the database (#50)', { sessions: [], tasks: [], claude: false, agents: ['copilot'] }],
-    ['9'.repeat(40), 'Fix the build (#7)', { sessions: [], tasks: [], claude: false, agents: ['copilot'] }]],
+    [b, 'Fix a flaky test', { sessions: [], tasks: [], claude: true, codex: false, agents: [] }],
+    ['3'.repeat(40), 'Tidy the docs', { sessions: [], tasks: [], claude: false, codex: true, agents: [] }],
+    ['e'.repeat(40), 'Bump esbuild', { sessions: [], tasks: [], claude: false, codex: false, agents: ['neo'] }],
+    ['f'.repeat(40), 'Move the database (#50)', { sessions: [], tasks: [], claude: false, codex: false, agents: ['copilot'] }],
+    ['9'.repeat(40), 'Fix the build (#7)', { sessions: [], tasks: [], claude: false, codex: false, agents: ['copilot'] }]],
   'those no agent marked, or a pull request merged, are not; those the app agents authored however far back, each once')
   assert.deepEqual(asked.find(query => query.query.includes('author: { emails: $emails }')).variables.emails, ['198982749+Copilot@users.noreply.github.com',
     '198982749+copilot-swe-agent@users.noreply.github.com', '49699333+dependabot@users.noreply.github.com', '49699333+dependabot[bot]@users.noreply.github.com'])

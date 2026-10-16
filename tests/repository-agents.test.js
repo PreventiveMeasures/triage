@@ -32,8 +32,8 @@ beforeEach(() => {
   state.managedSession = { id: `s-${++session}`, role: 'admin' }
 })
 
-const none = { sessions: [], tasks: [], claude: false, agents: [] }
-const claude = id => ({ sessions: [id], tasks: [], claude: true, agents: [] })
+const none = { sessions: [], tasks: [], claude: false, codex: false, agents: [] }
+const claude = id => ({ sessions: [id], tasks: [], claude: true, codex: false, agents: [] })
 const pull = (number, head, signals, more = {}) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: 'ada', createdAt: number, updatedAt: Date.now() - 3 * 3_600_000 + number,
   head, additions: 1000, deletions: 5, commits: 2, closes: [], signals, ...more })
 const shown = repo => Object.assign(new Agents(), { repository: { repoId: 7, repo, commit: 'a'.repeat(40), path: '' } })
@@ -90,7 +90,7 @@ test('a tile says how many tasks only where its chips don\'t count them all: not
   const pushed = (char, id) => ({ oid: char.repeat(40), title: `Pushed ${char}`, at: Date.now(), author: 'ada', additions: 1, deletions: 1, signals: claude(id) })
   // And a Codex task's commit, more pull requests to read.
   answer = () => Promise.resolve({ pulls: [pull(9, 'claude/one', claude('session_P')), pull(8, 'claude/one', claude('session_P'))],
-    commits: [pushed('d', 'session_C'), pushed('e', 'session_C'), { ...pushed('f', null), signals: { sessions: [], tasks: ['task_e_123456'], claude: false, agents: [] } }],
+    commits: [pushed('d', 'session_C'), pushed('e', 'session_C'), { ...pushed('f', null), signals: { sessions: [], tasks: ['task_e_123456'], claude: false, codex: false, agents: [] } }],
     issues: [], branches: [], more: true, after: { pulls: 'p_1', commits: null } })
   const view = shown('org/repo')
   view.render()

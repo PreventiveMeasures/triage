@@ -20,6 +20,17 @@ test('a commit\'s co-authors are its trailers\', each the agent its account, add
   assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Mona <3+mona@users.noreply.github.com>\n\n', ada), [{ name: 'Mona', login: 'mona', id: 3 }], 'past blank lines')
 })
 
+test('Codex is its trailer\'s address, not the account GitHub names for that address, someone else\'s', () => {
+  const codex = { name: 'Codex', login: null, id: null, agent: 'codex' }
+  assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Codex <codex@openai.com>', ada), [codex])
+  assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Codex <codex@openai.com>', ada, [{ name: 'Codex', email: 'codex@openai.com', account: { login: 'someone', id: 42 } }]),
+    [codex], 'as GitHub\'s GraphQL API lists it')
+  assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Claude <noreply@anthropic.com>', ada, [{ name: 'Claude', email: 'noreply@anthropic.com',
+    account: { login: 'claude', id: 81847 } }]), [{ name: 'Claude', login: 'claude', id: 81847, agent: 'claude' }], 'an agent\'s own account, its')
+  assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Codex <codex@openai.com>', ada, []), [codex], 'by its trailer, GitHub listing none')
+  assert.deepEqual(coauthorsOf('Docs\n\nCo-authored-by: Codex <codex@openai.com> is the syntax\n\nMore docs', ada, []), [], 'not a line before its trailers showing one')
+})
+
 test('the agents a commit\'s message marks come after its trailers\', each once, none the author', () => {
   const claudeSession = '🤖 Generated with [Claude Code](https://claude.com/claude-code)\nClaude-Session: https://claude.ai/code/session_01Abcdef'
   assert.deepEqual(coauthorsOf(`Fix\n\n${claudeSession}`, ada), [{ name: 'Claude', login: null, id: null, agent: 'claude' }])

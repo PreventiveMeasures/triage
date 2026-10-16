@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { namedAccounts } from '../common/managed/github-logins.ts'
+import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { historyPageStore } from '../server-managed/npm-kept.ts'
@@ -313,7 +314,7 @@ test('pages kept without lines, as GitHub\'s REST API lists them, are read again
   const asked = github(t, { commits })
   const page = commits.map(node => ({ sha: node.oid, parents: node.parents.nodes.map(parent => parent.oid), subject: node.message, authorName: 'Ada', authorLogin: 'ada',
     coauthors: [], committedAt: Date.parse(node.committedDate), additions: null, deletions: null, authoredAt: null, authorZone: null }))
-  await historyPageStore(request.db).write(`1\0${commits[0].oid}`, page, Date.now())
+  await historyPageStore(request.db).write(`1\0${COAUTHORS_READ}\0${commits[0].oid}`, page, Date.now())
   const answer = await request({ repoId: '1', weeks: '4' })
   assert.equal(graphQueries(asked), 1, 'read again with its lines')
   assert.equal(answer.body.stats.weeks.reduce((sum, week) => sum + week.additions, 0), 100)

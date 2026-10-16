@@ -187,6 +187,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivat
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, changesAsked, changesWithin, repositoryChanges, repositoryTree, treeWithin } from './repository-changes.ts'
+import { COAUTHORS_READ } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, type SquashedPull, type Squashes, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
@@ -1779,14 +1780,15 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
 }
 
 // The pages of repository `repoId`'s history kept (historyPageStore), each by
-// the commit it starts at (repository-history.ts historyFrom), those telling
-// each commit's co-authors (kept since they are read), and with `graphql`,
-// only those read with GraphQL, telling its lines and the accounts its
-// co-authors' addresses are (a page GitHub's REST API listed tells neither);
-// the rest read again.
+// the commit it starts at (repository-history.ts historyFrom) and the rules
+// its co-authors were read by (commit-coauthors.ts COAUTHORS_READ), those
+// telling each commit's co-authors (kept since they are read), and with
+// `graphql`, only those read with GraphQL, telling its lines and the accounts
+// its co-authors' addresses are (a page GitHub's REST API listed tells
+// neither); the rest read again.
 function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false): HistoryPages {
   const store = historyPageStore<HistoryCommit[]>(deps.db, deps.config.debug)
-  const keyOf = (top: string) => `${repoId}\0${top}`
+  const keyOf = (top: string) => `${repoId}\0${COAUTHORS_READ}\0${top}`
   return {
     async read(tops) {
       const kept = await store.readMany(tops.map(keyOf))
@@ -1801,11 +1803,13 @@ function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false): H
 }
 
 // The pull requests squashed into repository `repoId`'s commits, kept by
-// each commit, null for one none was (repository-history.ts squashedPulls);
-// one kept before its commits' co-authors were read, read again.
+// each commit and the rules their commits' co-authors were read by
+// (COAUTHORS_READ), null for one none was (repository-history.ts
+// squashedPulls); one kept before its commits' co-authors were read, read
+// again.
 function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
   const store = historySquashStore<SquashedPull | null>(deps.db, deps.config.debug)
-  const keyOf = (sha: string) => `${repoId}\0${sha}`
+  const keyOf = (sha: string) => `${repoId}\0${COAUTHORS_READ}\0${sha}`
   return {
     async read(shas) {
       const kept = await store.readMany(shas.map(keyOf))

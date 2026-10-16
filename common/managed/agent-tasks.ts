@@ -37,9 +37,10 @@ export interface AgentAuthor { login: string; id: number }
 
 // What an artifact's texts say of the agents that made it: the Claude Code
 // sessions and Codex tasks they link, whether they carry Claude's marks,
-// its co-author trailer or its "Generated with" line, and the app agents
-// whose fingerprints they carry, or whose branch it is.
-export interface AgentSignals { sessions: string[]; tasks: string[]; claude: boolean; agents: string[] }
+// its co-author trailer or its "Generated with" line, and Codex's, its
+// co-author trailer, and the app agents whose fingerprints they carry, or
+// whose branch it is.
+export interface AgentSignals { sessions: string[]; tasks: string[]; claude: boolean; codex: boolean; agents: string[] }
 
 // Each by its author's login, and their account's numeric id (`authorId`)
 // where GitHub names it.
@@ -82,12 +83,31 @@ const CODEX_TASK = /https:\/\/chatgpt\.com\/codex\/tasks\/(task_[a-z]_[A-Za-z\d]
 // Claude's marks on its commits and pull requests: its co-author trailer,
 // its "Generated with" line, its session trailer.
 const CLAUDE_MARK = /^co-authored-by: claude\b|generated with \[claude code\]|^claude-session:/imu
+// Codex's: its co-author trailer, by its address, as Codex names itself
+// co-author of the commits it makes as whoever ran it; a trailer of a text's
+// trailers (trailerBlock), not a line before them that shows one.
+const CODEX_MARK = /^co-authored-by:[ \t]*[^<\n]*<codex@openai\.com>[ \t]*$/imu
 const MAX_LINKS = 8
 
-// The sessions and tasks `texts` link, whether they carry Claude's marks, and
-// the agents of `apps` whose fingerprints start a line of them (not one a
-// text quotes, as one describing it may), whose account `author` is, by its
-// id and login both, or whose prefix the branch `branch` is under.
+// A message's trailers, as git reads them (`git interpret-trailers`): its
+// last paragraph, past its subject's, where each of its lines is a trailer
+// (`Key: value`) or goes on with one (indented), or, where it holds git's
+// own `Signed-off-by:`, a quarter of them are; none where it isn't, as
+// lines a description or example holds, fenced or not, are not.
+const TRAILER_LINE = /^[A-Za-z\d-]+[ \t]*:/u
+export function trailerBlock(text: string): string {
+  const paragraphs = text.replaceAll('\r\n', '\n').trim().split(/\n[ \t]*\n/u)
+  const block = paragraphs.length > 1 ? paragraphs.at(-1)! : ''
+  const lines = block.split('\n')
+  const trailers = lines.filter(line => TRAILER_LINE.test(line)).length
+  const others = lines.filter((line, at) => !TRAILER_LINE.test(line) && !(at > 0 && /^[ \t]/u.test(line))).length
+  return others === 0 || (lines.some(line => /^signed-off-by[ \t]*:/iu.test(line)) && trailers * 3 >= others) ? block : ''
+}
+
+// The sessions and tasks `texts` link, whether they carry Claude's marks and
+// Codex's, and the agents of `apps` whose fingerprints start a line of them
+// (not one a text quotes, as one describing it may), whose account `author`
+// is, by its id and login both, or whose prefix the branch `branch` is under.
 export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = [], branch: string | null = null,
   author: AgentAuthor | null = null): AgentSignals {
   const strings = texts.filter((text): text is string => typeof text === 'string')
@@ -97,6 +117,7 @@ export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = 
   const authored = ({ account }: AppAgentMarks) => author !== null && account !== undefined && account.id === author.id
     && account.logins.some(name => name.toLowerCase() === login)
   return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: strings.some(text => CLAUDE_MARK.test(text)),
+    codex: strings.some(text => CODEX_MARK.test(trailerBlock(text))),
     agents: apps.filter(app => (app.fingerprint && lines.some(line => line.startsWith(app.fingerprint!)))
       || authored(app) || branch?.startsWith(app.prefix)).map(app => app.id) }
 }
@@ -114,7 +135,7 @@ export function agentBranch(name: string | null): { agent: Agent | null; issue: 
 const headName = (pull: AgentPull) => pull.head && pull.fork ? `${pull.fork}:${pull.head}` : pull.head
 
 const signalAgents = (signals: AgentSignals): Agent[] => [...signals.agents, ...signals.sessions.length > 0 || signals.claude ? ['claude'] : [],
-  ...signals.tasks.length > 0 ? ['codex'] : []]
+  ...signals.tasks.length > 0 || signals.codex ? ['codex'] : []]
 const TOOLS = new Set(['claude', 'codex'])
 
 type Artifacts = { pulls?: AgentPull[]; commits?: AgentCommit[]; issues?: AgentIssue[]; branches?: AgentBranch[] }

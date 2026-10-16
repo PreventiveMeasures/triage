@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { agentBranch, agentSessions, agentSignals } from '../common/managed/agent-tasks.ts'
 
-const none = { sessions: [], tasks: [], claude: false, agents: [] }
-const session = id => ({ sessions: [id], tasks: [], claude: true, agents: [] })
+const none = { sessions: [], tasks: [], claude: false, codex: false, agents: [] }
+const session = id => ({ sessions: [id], tasks: [], claude: true, codex: false, agents: [] })
 // An agent the server knows by its app, as it tells one, and its marks.
 const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
   { id: 'dependabot', account: { id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }, prefix: 'dependabot/' }]
@@ -17,9 +17,9 @@ const branch = (name, signals = none, at = 1) => ({ name, at, author: 'ada', sig
 test('an artifact\'s texts name the sessions and tasks they link, and Claude\'s marks', () => {
   const body = 'Fixes it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01MamW9SFrduHwBFipxyjRnn'
   const merge = 'Title (#9)\n\n* Work\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01MamW9SFrduHwBFipxyjRnn'
-  assert.deepEqual(agentSignals([body, merge, null], apps), { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true, agents: [] })
+  assert.deepEqual(agentSignals([body, merge, null], apps), { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true, codex: false, agents: [] })
   assert.deepEqual(agentSignals(['Codex ran it: https://chatgpt.com/codex/tasks/task_e_68a1b2c3d4e5f6']),
-    { sessions: [], tasks: ['task_e_68a1b2c3d4e5f6'], claude: false, agents: [] })
+    { sessions: [], tasks: ['task_e_68a1b2c3d4e5f6'], claude: false, codex: false, agents: [] })
   // An app agent's fingerprint, Claude Code's line with it or not, or its branch's prefix.
   assert.deepEqual(agentSignals(['Links.\n\n🤖 Generated with [Neo](https://neo.example)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)'], apps),
     { ...neo, claude: true })
@@ -42,6 +42,22 @@ test('an artifact\'s texts name the sessions and tasks they link, and Claude\'s 
   assert.deepEqual([agentSignals(['Bump ws'], apps, 'dependabot/npm_and_yarn/ws-8.21.0', { login: 'dependabot', id: 49699333 }),
     agentSignals(['Bump ws'], apps, null, { login: 'dependabot[bot]', id: 49699333 }), agentSignals(['@dependabot rebase'], apps, 'feature/ws', { login: 'ada', id: 1 })],
   [dependabot, dependabot, none])
+  // Codex's co-author trailer, by its address, whatever name it gives; not one a line quotes.
+  assert.deepEqual([agentSignals(['Tidy\n\nCo-authored-by: Codex <codex@openai.com>']), agentSignals(['Tidy\n\nco-authored-by: codex <Codex@OpenAI.com>'])],
+    [{ ...none, codex: true }, { ...none, codex: true }])
+  assert.deepEqual(agentSignals(['Credit it as `Co-authored-by: Codex <codex@openai.com>`', 'Co-authored-by: Codex Fan <fan@example.com>']), none)
+  // A trailer of its trailers, its last paragraph's: not a line before them showing one, nor one going on past the address.
+  assert.deepEqual([agentSignals(['Docs\n\nCo-authored-by: Codex <codex@openai.com>\n\nMore docs']), agentSignals(['Docs\n\nCo-authored-by: Codex <codex@openai.com> is the syntax']),
+    agentSignals(['Co-authored-by: Codex <codex@openai.com>'])], [none, none, none])
+  assert.deepEqual(agentSignals(['Tidy\r\n\r\nCo-authored-by: Codex <codex@openai.com>\r\n']), { ...none, codex: true }, 'after carriage returns')
+  // Its trailers as git reads them: a last paragraph of trailers alone, or with
+  // git's own Signed-off-by a quarter of them; not a fenced example, nor a note
+  // with a trailer under it.
+  const codex = { ...none, codex: true }
+  assert.deepEqual([agentSignals(['Docs\n\n```\nCo-authored-by: Codex <codex@openai.com>\n```']), agentSignals(['Docs\n\nA note\nCo-authored-by: Codex <codex@openai.com>'])],
+    [none, none])
+  assert.deepEqual([agentSignals(['Docs\n\nA note\nSigned-off-by: Ada <ada@example.com>\nCo-authored-by: Codex <codex@openai.com>']),
+    agentSignals(['Docs\n\nReviewed-by: Ada\n  <ada@example.com>\nCo-authored-by: Codex <codex@openai.com>'])], [codex, codex])
   // Claude Code's own page, or Codex's settings, is no task.
   assert.deepEqual(agentSignals(['[Claude Code](https://claude.ai/code)', 'https://chatgpt.com/codex/cloud/settings/general']), none)
   assert.deepEqual([agentBranch('claude/issue-12-20260101-1200'), agentBranch('claude/pr-7-x'), agentBranch('codex/fix-it'), agentBranch('feature/claude')], [
@@ -54,11 +70,11 @@ test('one session holds every pull request and commit to the default branch that
   const sessions = agentSessions({
     pulls: [pull(1, 'claude/magical-mayer', session('session_A')), pull(2, 'claude/magical-mayer', session('session_A'), { state: 'open' }),
       pull(3, 'claude/magical-mayer-history', session('session_A'), { additions: 5 }), pull(4, 'feature/by-hand')],
-    commits: [commit('a', session('session_A'), 100), commit('b', { ...none, claude: true }, 7)],
+    commits: [commit('a', session('session_A'), 100), commit('b', { ...none, claude: true }, 7), commit('c', { ...none, codex: true }, 6)],
     branches: [branch('claude/magical-mayer', session('session_A'), 50)],
   })
-  assert.equal(sessions.length, 2, 'a pull request without marks is none of them')
-  const [claude, alone] = sessions
+  assert.equal(sessions.length, 3, 'a pull request without marks is none of them')
+  const [claude, alone, codex] = sessions
   assert.deepEqual([claude.id, claude.agents, claude.sessions, claude.state], ['session_A', ['claude'], ['session_A'], 'open'])
   assert.deepEqual(claude.pulls.map(item => item.number), [3, 2, 1], 'the newest first')
   assert.deepEqual(claude.commits.map(item => item.title), ['Commit a'])
@@ -67,6 +83,7 @@ test('one session holds every pull request and commit to the default branch that
   assert.deepEqual([claude.commitCount, claude.additions, claude.deletions, claude.updatedAt], [4, 28, 7, 100])
   // A commit Claude marked, naming no session, is a session of its own, landed.
   assert.deepEqual([alone.id, alone.agents, alone.state, alone.title, alone.pulls], ['b'.repeat(40), ['claude'], 'merged', 'Commit b', []])
+  assert.deepEqual([codex.id, codex.agents, codex.title], ['c'.repeat(40), ['codex'], 'Commit c'], 'one Codex co-authored, Codex\'s')
 })
 
 test('without a session named, a branch\'s pull requests are one, an agent\'s branch without any its own, and an issue joins the session closing it or named for it', () => {

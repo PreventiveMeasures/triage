@@ -130,7 +130,7 @@ function directCommit(node: CommitNode | null): AgentCommit | null {
   const author = authorOf(node.author)
   const signals = agentSignals([node.message], APP_AGENTS, null, author)
   if (node.author?.email === CLAUDE_EMAIL) signals.claude = true
-  if (!signals.claude && signals.agents.length === 0 && signals.sessions.length === 0 && signals.tasks.length === 0) return null
+  if (!signals.claude && !signals.codex && signals.agents.length === 0 && signals.sessions.length === 0 && signals.tasks.length === 0) return null
   return { oid: node.oid, title: nameOf(node.messageHeadline, MAX_TITLE) ?? '', at: timeOf(node.committedDate),
     author: author?.login ?? loginOf(node.author?.user), authorId: author?.id ?? null,
     additions: count(node.additions), deletions: count(node.deletions), signals }
@@ -172,7 +172,7 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
 // What its answers are kept by, with their cursors (http.ts
 // handleRepositoryAgents): bumped as what a page reads, or how it tells an
 // agent, changes, so that no answer an older server kept is sent for a day.
-export const AGENTS_READ_VERSION = 3
+export const AGENTS_READ_VERSION = 4
 
 // A cursor of the default branch's commits: GitHub names one by a commit
 // and how many on from it, `<oid> <offset>`, a space between.

@@ -1,12 +1,16 @@
 // Who made a commit beside its author, as the Commits tab shows them
 // (repository-history.ts): its co-authors, as its `Co-authored-by:` trailers
 // name them, and the agents its message marks.
-import { agentSignals } from '../common/managed/agent-tasks.ts'
+import { agentSignals, trailerBlock } from '../common/managed/agent-tasks.ts'
 import { GITHUB_AGENTS, type GithubAgentId, emailAgent, githubAgent } from '../common/managed/github-agents.ts'
 import { APP_AGENTS } from './app-agents.ts'
 import { type NamedAccount, commitAccount } from './github-accounts.ts'
 
 export const MAX_COAUTHORS = 3
+// The rules co-authors are read by, the agents' addresses and names among
+// them: what was kept read by others (history pages, squashed pull requests)
+// read again by these, once raised.
+export const COAUTHORS_READ = 2
 const MAX_NAME = 256
 const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 
@@ -23,14 +27,6 @@ const COAUTHOR_TRAILER = /^co-authored-by:[ \t]*([^<\n]*?)[ \t]*<([^<>\s]+)>[ \t
 const CURSOR_AGENT = /https:\/\/cursor\.com\/(?:agents\?id=|background-agent\?bcId=)bc-/u
 const FINGERPRINTED = APP_AGENTS.filter(agent => agent.fingerprint)
 
-// A message's trailers, as git and GitHub read them: its last paragraph's,
-// where it has one past its subject's, not lines a description or example
-// before it holds.
-const trailerBlock = (text: string) => {
-  const paragraphs = text.trim().split(/\n[ \t]*\n/u)
-  return paragraphs.length > 1 ? paragraphs.at(-1)! : ''
-}
-
 // One named as a commit's author or co-author: by name, the address its
 // commit gives (where it is read), and account.
 export type Maker = { name: unknown; email?: unknown; account: NamedAccount }
@@ -44,7 +40,7 @@ const makerAgent = ({ name, email, account }: Maker): GithubAgentId | null => gi
 // Who made a commit, past its author (`author`), as its message names them:
 // its co-authors, those GitHub's GraphQL API lists past the author (`listed`,
 // the addresses its `Co-authored-by:` trailers give, by the accounts GitHub
-// knows them by), else its trailers (trailerBlock), an account's no-reply
+// knows them by), else its trailers (agent-tasks.ts trailerBlock), an account's no-reply
 // address naming it;
 // then the agents it marks, Claude's and Codex's as the Agents tab reads them
 // (agent-tasks.ts agentSignals: their sessions' and tasks' links, Claude's
@@ -57,7 +53,7 @@ export function coauthorsOf(message: unknown, author: Maker, listed: Maker[] | n
   const text = typeof message === 'string' ? message.replaceAll('\r\n', '\n') : ''
   const named = listed ?? [...trailerBlock(text).matchAll(COAUTHOR_TRAILER)].map(([, name, email]) => ({ name, email, account: commitAccount({ email }) }))
   const signals = agentSignals([text], FINGERPRINTED)
-  const marked = [...signals.claude || signals.sessions.length > 0 ? ['claude'] : [], ...signals.tasks.length > 0 ? ['codex'] : [],
+  const marked = [...signals.claude || signals.sessions.length > 0 ? ['claude'] : [], ...signals.tasks.length > 0 || signals.codex ? ['codex'] : [],
     ...CURSOR_AGENT.test(text) ? ['cursor'] : [], ...signals.agents]
   type Identity = { agent: string | null; login: string | null; email: string | null; name: string | null }
   const identity = (agent: string | null, login: string | null, name: string | null, email: unknown = null): Identity => ({ agent, login: login?.toLowerCase() ?? null,
@@ -74,7 +70,10 @@ export function coauthorsOf(message: unknown, author: Maker, listed: Maker[] | n
   }
   for (const maker of named) {
     const agent = makerAgent(maker)
-    add({ name: textOf(maker.name, MAX_NAME), login: maker.account.login, id: maker.account.id, ...agent ? { agent } : {} }, maker.email)
+    // An agent known by its address where GitHub names someone else's
+    // account for it (Codex's), as itself, not that account.
+    const { login, id } = agent && maker.account.login && githubAgent(maker.account.login, maker.account.id) !== agent ? { login: null, id: null } : maker.account
+    add({ name: textOf(maker.name, MAX_NAME), login, id, ...agent ? { agent } : {} }, maker.email)
   }
   for (const agent of marked) {
     const app = APP_AGENTS.find(known => known.id === agent && !Object.hasOwn(GITHUB_AGENTS, known.id))
