@@ -4029,7 +4029,7 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
    room for them a row with when commits are made: the plots twice the
    contributors, as before; each list a third of the plots, when commits
    are made as wide as the contributors, under them. Nine columns. */
-@container pulse (width >= 104rem) {
+@container pulse (width >= 86rem) {
   .pulse-grid.is-lists { grid-template-columns: repeat(9, minmax(0, 1fr)); }
   .pulse-grid.is-lists > * { grid-column: span 3; }
   .pulse-grid.is-lists > :is(.pulse-activity, .pulse-wide) { grid-column: span 6; }
@@ -4156,9 +4156,11 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
 .pulse-tip-note { font-size: .68rem; }
 .pulse-people { display: flex; flex-direction: column; }
 /* The column the contributors are of, a chip in the accent that, clicked,
-   leaves it for the whole period. */
+   leaves it for the whole period; the contributor the plots are of alike.
+   Its margins drawn in, the head no taller with it than without, nothing
+   under it moved. */
 .pulse-picked {
-  display: inline-flex; align-items: center; gap: .1rem; margin-left: auto; padding: 0 .1rem 0 .5rem;
+  display: inline-flex; align-items: center; gap: .1rem; margin-block: -.125rem; margin-left: auto; padding: 0 .1rem 0 .5rem;
   border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); font: inherit; font-size: .72rem; line-height: 1.5;
   & > span { padding: 0 .3rem; color: var(--muted); }
