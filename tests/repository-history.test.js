@@ -281,6 +281,24 @@ test('every branch\'s history as the server kept it, missing the commit a branch
   await setImmediate()
   assert.equal(freshReads, 2)
   assert.match(templateText(soon.render()), /id=history-subject-7{40}>Later</u)
+  // Read again for the commit shown, not for good: another commit a branch
+  // reaches since, those held missing it, reads them again, afresh, once.
+  const newest = '6'.repeat(40)
+  answer = (repoId, ref, path, options) => {
+    if (!options.fresh) return Promise.resolve(allAnswer)
+    freshReads++
+    return Promise.resolve({ ...allAnswer, commits: [commit(newest, [later], 60, 'Newest'), commit(later, [a], 50, 'Later'), ...allAnswer.commits],
+      branches: [{ name: 'main', sha: newest }] })
+  }
+  const next = shownAt(newest)
+  assert.doesNotMatch(templateText(next.render()), /isn’t among these commits/u, 'not while every branch is read again')
+  await setImmediate()
+  assert.equal(freshReads, 3)
+  assert.match(templateText(next.render()), /id=history-subject-6{40}>Newest<\/span>\s*<button [^>]*?aria-current=true/u)
+  shownAt(later).render()
+  next.render()
+  await setImmediate()
+  assert.equal(freshReads, 3, 'listed, not read again')
   // A read again that fails keeps those listed, and says what they miss.
   answer = (repoId, ref, path, options) => options.fresh ? Promise.reject(new Error('GitHub is down.')) : Promise.resolve(allAnswer)
   state.managedSession = { id: 'another', role: 'admin' }

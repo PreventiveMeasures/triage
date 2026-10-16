@@ -64,12 +64,12 @@ const repaint = () => { for (const element of shownElements) element.requestUpda
 // 'ready' with its `commits`, `more` and the `branches` and `tags` naming
 // them, or 'error' with its `error`; read again once old, or an error's retry
 // is due.
-// A history's first page as read, `fresh` where the server read every
-// branch then rather than answering with those it kept.
-function readEntry(answer, settle, fresh = false) {
+// A history's first page as read, `sought` the commits shown it was read
+// again, afresh, for (refreshHistory).
+function readEntry(answer, settle, sought = new Set()) {
   const entry = { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
     branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, cut: answer.cut === true,
-    pulls: answer.pulls, openPulls: answer.openPulls, loadingMore: false, moreError: null, fresh }
+    pulls: answer.pulls, openPulls: answer.openPulls, loadingMore: false, moreError: null, sought }
   settle?.(entry)
   return entry
 }
@@ -92,20 +92,22 @@ function historyRead(key, ask, settle) {
   return loading
 }
 
-// Every branch's history read again, afresh (`ask`'s third argument), its
-// branches read now rather than as the server kept them: the one held shown
-// meanwhile, `refreshing`, and kept where that read fails; once each, and
-// once more where the server, having read them just before, answered as it
-// kept them, when it may read them again (`retryIn`, `retryAt`).
-function refreshHistory(key, held, ask, settle) {
-  held.fresh = true
+// Every branch's history read again, afresh (`ask`'s third argument), for
+// the commit shown, its branches read now rather than as the server kept
+// them: the one held shown meanwhile, `refreshing`, and kept where that read
+// fails; once for each commit shown, and once more where the server, having
+// read them just before, answered as it kept them, when it may read them
+// again (`retryIn`, `retryAt`).
+function refreshHistory(key, held, ask, settle, commit) {
+  const sought = held.sought
+  held.sought = new Set(sought).add(commit)
   held.refreshing = true
   ask(1, null, true).then(answer => {
     if (sessionHistories().get(key) !== held) return null
-    const retryIn = held.retried ? 0 : Math.min(Number(answer.retryIn) || 0, RETRY_FRESH_MS)
-    const entry = readEntry(answer, settle, !(retryIn > 0))
+    const retryIn = held.retried === commit ? 0 : Math.min(Number(answer.retryIn) || 0, RETRY_FRESH_MS)
+    const entry = readEntry(answer, settle, retryIn > 0 ? sought : held.sought)
     if (retryIn > 0) {
-      Object.assign(entry, { retried: true, retryAt: Date.now() + retryIn })
+      Object.assign(entry, { retried: commit, retryAt: Date.now() + retryIn })
       setTimeout(repaint, retryIn)
     }
     sessionHistories().set(key, entry)
@@ -349,9 +351,9 @@ function readHistory(repository, mode) {
   // Every branch's, as the server kept them, missing the commit shown, those
   // of the pull requests squashed into them planted among them too, as they
   // do once a branch reaches it since: read again, afresh.
-  if (every && entry.status === 'ready' && !entry.fresh && !(entry.retryAt > Date.now())
+  if (every && entry.status === 'ready' && !entry.refreshing && !entry.sought.has(commit) && !(entry.retryAt > Date.now())
     && !plantedCommits(entry.commits, entry.pulls ?? []).some(item => item.sha === commit)) {
-    refreshHistory(key, entry, ask, settle)
+    refreshHistory(key, entry, ask, settle, commit)
   }
   if (every && entry.status === 'error' && entry.code === 'github-token-required') {
     allRefused.add(repoId)
