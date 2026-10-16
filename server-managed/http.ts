@@ -53,6 +53,8 @@
 //        the last year, its contributors and when in the period they commit, counted from its commits as Commits keeps them (how many are
 //        read while they are), and the pull requests
 //        merged and opened and the issues closed and opened in the last `weeks` weeks and the same days a period earlier | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/pulse/items?repoId=&weeks=&from=[&to=&authors=] → those pull requests and issues of the days
+//        `from` to `to` (YYYY-MM-DD, UTC; no `to`, on), and of any of `authors` (GitHub logins, comma-separated) | 400/401/403/404/409/429/502
 //        History, issues, item, agents and pulse each carry `users`: the app's users and agents the GitHub accounts they
 //        name are (github-users.ts), by login
 //   POST /api/admin/repositories/remove → admin permanently removes a repo
@@ -201,6 +203,7 @@ import { PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { type AgentMerges, agentCommits, agentMerges, sameMerges } from './agent-merges.ts'
+import { releaseCommits } from './release-commits.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -235,6 +238,7 @@ const REPO_AGENTS_PATH = '/api/admin/repositories/agents'
 const REPO_ITEM_PATH = '/api/admin/repositories/item'
 const REPO_PULL_DEPENDENCIES_PATH = '/api/admin/repositories/pull-dependencies'
 const REPO_PULSE_PATH = '/api/admin/repositories/pulse'
+const REPO_PULSE_ITEMS_PATH = '/api/admin/repositories/pulse/items'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
 const ADD_PUBLIC_REPO_PATH = '/api/admin/repositories/add-public'
 const CONNECT_REPO_APP_PATH = '/api/admin/repositories/connect-app'
@@ -2012,6 +2016,37 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
 // kept together as an issue's page is and through GitHub computing them
 // again, `pending` while it first computes them, the year last counted
 // beside it so too.
+// A day as a pulse's items are narrowed by (YYYY-MM-DD, UTC), when it starts;
+// a GitHub login, as many of them as PULSE_AUTHORS.
+const PULSE_DAY = /^\d{4}-\d{2}-\d{2}$/u
+const GITHUB_LOGIN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}(?:\[bot\])?$/iu
+const PULSE_AUTHORS = 10
+const pulseDay = (value: string | null) => {
+  const at = value !== null && PULSE_DAY.test(value) ? Date.parse(`${value}T00:00:00Z`) : Number.NaN
+  return Number.isSafeInteger(at) ? at : null
+}
+
+// GET /api/admin/repositories/pulse/items: the Pulse tab's pull requests and
+// issues narrowed to a picked day or week (`from` to `to`, else on from
+// `from`) and the GitHub accounts a picked contributor committed as
+// (`authors`), as repositoryActivity reads them, kept apart for each.
+async function handleRepositoryPulseItems(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const repoId = Number(query.get('repoId'))
+  const weeks = Number(query.get('weeks') ?? '4')
+  const [from, to] = [pulseDay(query.get('from')), query.has('to') ? pulseDay(query.get('to')) : null]
+  const logins = (query.get('authors') ?? '').split(',').filter(Boolean)
+  // Each once, whatever its case, as GitHub matches logins.
+  const authors = [...new Set(logins.map(login => login.toLowerCase()))].toSorted()
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks) || from === null || (query.has('to') && (to === null || to < from))
+    || authors.length > PULSE_AUTHORS || !logins.every(login => GITHUB_LOGIN.test(login))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
+    const narrowing = { from, to, authors }
+    const items = await keptAnswer(deps, `${repoId}\0pulse-items\0${weeks}\0${from}\0${to ?? ''}\0${narrowing.authors.join(',')}`,
+      () => repositoryActivity(fullName, token, weeks, Date.now(), globalThis.fetch, narrowing))
+    return { value: { weeks, ...items.value }, kept: items.kept }
+  })
+}
+
 async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string) {
   const first = pulseSince(52, Date.now())
   const head = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
@@ -2025,23 +2060,39 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
     return kept?.first === first ? kept.stats : null
   }
   const sha = head.value.sha
-  // A year kept by its head, the merged pull requests read again as an
-  // answer kept is (keptAnswer), a label changing whose one is without moving
-  // the head: counted again from its pages kept where what agents' bring
-  // changed, or a read of them left unfinished is finished; the year as kept
-  // answered meanwhile, and where reading them fails.
+  // What tells whose the year's commits are, kept as read: the agents' pull
+  // requests merged (agentMerges), and the commits that release the
+  // repository (`releases`, release-commits.ts releaseCommits).
+  type Attribution = AgentMerges & { releases?: string[] }
+  const keptAttribution = async () => ((await store.read(mergesKey))?.value as Attribution | undefined) ?? null
+  const attribution = async (kept: Attribution | null): Promise<Attribution> => {
+    const [merges, releases] = await Promise.all([agentMerges(fullName, token, first, kept), releaseCommits(fullName, token, first, historyChanges(deps, repoId))])
+    return { ...merges, releases }
+  }
+  // The year counted from `commits` as `read` tells whose they are, kept by
+  // its head and as the year last counted.
+  const count = async (commits: HistoryCommit[], read: Attribution) => {
+    const stats = commitStats(commits, first, agentCommits(read, commits), new Set(read.releases))
+    await Promise.all([store.write(key, stats, Date.now()), store.write(lastKey, { first, stats }, Date.now())])
+    return stats
+  }
+  // A year kept by its head, what tells whose its commits are read again as
+  // an answer kept is (keptAnswer), a label or a tag changing it without
+  // moving the head: counted again from its pages kept where what agents'
+  // pull requests bring, or the releases, changed, or a read of the pull
+  // requests left unfinished is finished; the year as kept answered
+  // meanwhile, and where reading them fails.
   const relabelled = async (stats: PulseStats) => {
     const recounted: { stats?: PulseStats } = {}
     await keptAnswer(deps, mergesKey, async () => {
-      const kept = ((await store.read(mergesKey))?.value as AgentMerges | undefined) ?? null
-      const merges = await agentMerges(fullName, token, first, kept)
-      if (merges.next || (kept && !kept.next && sameMerges(merges, kept))) return merges
+      const kept = await keptAttribution()
+      const read = await attribution(kept)
+      const same = kept && !kept.next && sameMerges(read, kept) && read.releases!.join() === (kept.releases ?? []).join()
+      if (read.next || same) return read
       const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true))
-      if (!year.complete) return merges
-      recounted.stats = commitStats(year.commits, first, agentCommits(merges, year.commits))
-      await Promise.all([store.write(key, recounted.stats, Date.now()), store.write(lastKey, { first, stats: recounted.stats }, Date.now())])
-      return merges
-    }, () => true).catch((err: unknown) => { console.warn('managed: pulse merges read failed:', err) })
+      if (year.complete) recounted.stats = await count(year.commits, read)
+      return read
+    }, () => true).catch((err: unknown) => { console.warn('managed: pulse attribution read failed:', err) })
     return recounted.stats ?? stats
   }
   const held = (await store.read(key))?.value as PulseStats | { tooMany: true } | undefined
@@ -2049,12 +2100,10 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   if (!held) {
     const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true))
     if (year.complete) {
-      const merges = await agentMerges(fullName, token, first, ((await store.read(mergesKey))?.value as AgentMerges | undefined) ?? null)
-      await store.write(mergesKey, merges, Date.now())
-      if (merges.next) return { stats: await last(), reading: null, pulls: merges.next.read, pending: false, kept: false }
-      const stats = commitStats(year.commits, first, agentCommits(merges, year.commits))
-      await Promise.all([store.write(key, stats, Date.now()), store.write(lastKey, { first, stats }, Date.now())])
-      return { stats, reading: null, pulls: null, pending: false, kept: false }
+      const read = await attribution(await keptAttribution())
+      await store.write(mergesKey, read, Date.now())
+      if (read.next) return { stats: await last(), reading: null, pulls: read.next.read, pending: false, kept: false }
+      return { stats: await count(year.commits, read), reading: null, pulls: null, pending: false, kept: false }
     }
     if (!year.tooMany) return { stats: await last(), reading: year.read, pulls: null, pending: false, kept: false }
     await store.write(key, { tooMany: true }, Date.now())
@@ -4107,6 +4156,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_PULSE_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryPulse(res, deps, cookie, url.searchParams); return
+    }
+    if (path === REPO_PULSE_ITEMS_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryPulseItems(res, deps, cookie, url.searchParams); return
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }

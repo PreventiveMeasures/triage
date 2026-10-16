@@ -549,12 +549,16 @@ function itemFixture(url: URL, res: ServerResponse): void {
 // Pull requests tabs list, in the last `weeks` weeks and the same days a
 // period earlier.
 // Repository 102's year is read over its first three answers, as one whose
-// commits are not kept yet is, a few pages of GitHub's an answer.
+// commits are not kept yet is, a few pages of GitHub's an answer. Narrowed
+// (`narrowed`, /pulse/items), the pull requests and issues of the days `from`
+// to `to` and of any of `authors` alone.
 let pulseReads = 0
 const WEEK_MS = 7 * 86_400_000
 
-function pulseFixture(url: URL, res: ServerResponse): void {
+function pulseFixture(url: URL, res: ServerResponse, narrowed = false): void {
   const now = Date.now()
+  const day = (name: string) => url.searchParams.has(name) ? Date.parse(`${url.searchParams.get(name)}T00:00:00Z`) : null
+  const authors = (url.searchParams.get('authors') ?? '').split(',').filter(Boolean).map(login => login.toLowerCase())
   const weeks = Number(url.searchParams.get('weeks') ?? '4')
   if (!PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
   const since = pulseSince(weeks, now)
@@ -564,18 +568,20 @@ function pulseFixture(url: URL, res: ServerResponse): void {
   const listed = (kind: 'pulls' | 'issues', at: (item: Tile) => unknown, from: number, to: number) => {
     const items = (issueTiles(kind, now) as Tile[]).flatMap(item => {
       const when = at(item)
-      return typeof when === 'number' && when >= from && when <= to ? [{ ...item, at: when }] : []
+      return typeof when === 'number' && when >= from && when <= to && (authors.length === 0 || authors.includes(item.author.toLowerCase())) ? [{ ...item, at: when }] : []
     })
     return items.toSorted((a, b) => b.at - a.at)
   }
+  const [from, to] = narrowed ? [day('from') ?? since, (day('to') ?? now) + 86_399_999] : [since, now]
   const told = (kind: 'pulls' | 'issues', at: (item: Tile) => unknown) => {
-    const current = listed(kind, at, since, now)
+    const current = listed(kind, at, from, to)
     return { count: current.length, previous: listed(kind, at, since - back, now - back).length,
       items: current.slice(0, 10).map(({ number, title, author, at: when, createdAt, state, draft, reason }) => ({ number, title, author, at: when, createdAt, kind, state,
         ...kind === 'pulls' ? { draft } : { reason } })) }
   }
   const activity = { since, previousSince: since - back, merged: told('pulls', item => item.mergedAt), opened: told('pulls', item => item.createdAt),
     closed: told('issues', item => item.closedAt), created: told('issues', item => item.createdAt) }
+  if (narrowed) { sendJson(res, 200, { weeks, ...activity }); return }
   if (url.searchParams.get('repoId') === '102' && pulseReads < 2) {
     pulseReads++
     sendJson(res, 200, { weeks, ...activity, stats: null, reading: pulseReads * 500, pending: false }); return
@@ -586,7 +592,8 @@ function pulseFixture(url: URL, res: ServerResponse): void {
 // The default branch's statistics over the year to `now`, as
 // repository-pulse.ts commitStats counts them and periodStats answers them
 // for a period of `span` weeks: each day's lines, the commits agents made or
-// co-authored and each contributor's days too, and when the period's commits
+// co-authored, the releases (every other week one of Linus's) and each
+// contributor's days too, and when the period's commits
 // are made: the agents' own all theirs, a share of everyone else's, a tenth
 // at the year's start, over half by its end.
 function pulseStats(now: number, span: number) {
@@ -595,7 +602,7 @@ function pulseStats(now: number, span: number) {
   const people = ['ChristopherTuring', 'ada', 'grace-hopper', 'claude[bot]', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]', '=Alan Kay']
   const shares = [34, 18, 12, 10, 7, 5, 4, 4, 3, 1]
   const first = pulseSince(52, now)
-  const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number, number][] }]))
+  const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number, number, number][] }]))
   const weeks = Array.from({ length: 52 }, (_, index) => {
     const week = first + index * WEEK_MS
     const holiday = index >= 10 && index <= 11
@@ -605,6 +612,7 @@ function pulseStats(now: number, span: number) {
     const total = days.reduce((sum, day) => sum + day, 0)
     const dayLines = days.map(() => [0, 0] as [number, number])
     const agentDays = days.map(() => 0)
+    const releaseDays = days.map(() => 0)
     let additions = 0, deletions = 0
     for (const [at, login] of people.entries()) {
       const theirCommits = Math.min(total, Math.round(total * shares[at]! / 100 * (0.4 + random() * 1.2)))
@@ -625,16 +633,23 @@ function pulseStats(now: number, span: number) {
         agentDays[busy[slot]!]!++
         withAgents[slot]!++
       }
+      // Every other week, one of Linus's commits without agents a release.
+      const released = busy.map(() => 0)
+      const releasing = login === 'linus' && index % 2 === 0 ? made.findIndex((count, slot) => count > withAgents[slot]!) : -1
+      if (releasing >= 0) {
+        released[releasing] = 1
+        releaseDays[busy[releasing]!]!++
+      }
       for (const [slot, day] of busy.entries()) {
         if (made[slot] === 0) continue
         const share = made[slot]! / theirCommits
         const [dayAdded, dayRemoved] = [Math.round(added * share), Math.round(removed * share)]
         dayLines[day]![0] += dayAdded
         dayLines[day]![1] += dayRemoved
-        theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved, withAgents[slot]!])
+        theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved, withAgents[slot]!, released[slot]!])
       }
     }
-    return { week, days, commits: total, additions, deletions, dayLines, agentDays: agentDays.map((count, day) => Math.min(count, days[day]!)) }
+    return { week, days, commits: total, additions, deletions, dayLines, agentDays: agentDays.map((count, day) => Math.min(count, days[day]!)), releaseDays }
   })
   // One whose commits name no GitHub account, by name.
   const contributors = people.map(login => ({ login: login.startsWith('=') ? null : login, name: login.startsWith('=') ? login.slice(1) : null, ...theirs.get(login)! }))
@@ -891,6 +906,7 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
   if (url.pathname.endsWith('/agents')) { agentsFixture(url, res); return }
   if (url.pathname.endsWith('/item')) { itemFixture(url, res); return }
   if (url.pathname.endsWith('/pulse')) { pulseFixture(url, res); return }
+  if (url.pathname.endsWith('/pulse/items')) { pulseFixture(url, res, true); return }
   // Main's and develop's heads, as the directory's reads below give them, a
   // release tagged at develop's and another at an older commit.
   const refs = url.pathname.endsWith('/refs') ? { defaultBranch: 'main', branches: ['main', 'develop', 'feature/bundle-picker'], tags: ['v1.0.0', ...Array.from({ length: 20 }, (_, index) => `v0.${19 - index}.0`)],

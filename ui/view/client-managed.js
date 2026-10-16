@@ -113,6 +113,10 @@ export function fetchRepositoryPulse(repoId, weeks, options) {
   return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options))
 }
 
+export function fetchRepositoryPulseItems(repoId, weeks, narrowing, options) {
+  return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryPulseItems(repoId, weeks, narrowing, options))
+}
+
 export async function fetchNpmVersions(name, options) {
   return (await loadManagedBundle()).fetchNpmVersions(name, options)
 }

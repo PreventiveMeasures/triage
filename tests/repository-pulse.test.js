@@ -7,12 +7,16 @@ import { templateText } from './_lit.js'
 const state = {}
 const requests = []
 let answer = null
+// What narrowed pull requests and issues were asked for, and answer them.
+const narrowedRequests = []
+let narrowedAnswer = () => new Promise(() => {})
 // The app's users and agents an answer names kept as client-managed.js keeps them.
 let knowing = read => read()
 mock.module('../client/index.js', { exports: { state } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryPulse(repoId, weeks) { requests.push([repoId, weeks]); return knowing(() => answer(repoId, weeks)) },
   fetchRepositoryHistory: () => new Promise(() => {}),
+  fetchRepositoryPulseItems(repoId, weeks, narrowing) { narrowedRequests.push([repoId, weeks, narrowing]); return knowing(() => narrowedAnswer(repoId, weeks, narrowing)) },
 } })
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
 const opened = []
@@ -67,12 +71,13 @@ const shown = (repo = 'org/repo') => Object.assign(new Pulse(), { repository: { 
 
 test('a period\'s figures: its commits, beside the same days of the week a period earlier where the year reaches back; its lines; who made commits', () => {
   const read = pulse()
-  assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, agents: null, previousAgents: null, additions: 40, deletions: 8, authors: 3 })
+  assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, agents: null, previousAgents: null, releases: null, previousReleases: null, additions: 40,
+    deletions: 8, authors: 3 })
   assert.equal(pulseSummary({ ...read, weeks: 52, since: FIRST }, NOW).previous, null, 'the year before the year GitHub counts')
   const large = pulseSummary({ ...read, stats: stats({ lines: false }) }, NOW)
   assert.deepEqual([large.additions, large.deletions], [null, null])
-  assert.deepEqual(pulseSummary({ ...read, stats: null, pending: true }, NOW), { commits: null, previous: null, agents: null, previousAgents: null, additions: null,
-    deletions: null, authors: null })
+  assert.deepEqual(pulseSummary({ ...read, stats: null, pending: true }, NOW), { commits: null, previous: null, agents: null, previousAgents: null, releases: null,
+    previousReleases: null, additions: null, deletions: null, authors: null })
 })
 
 test('the period\'s contributors, or a day\'s, the most commits first, and a scale\'s round ticks', () => {
@@ -89,21 +94,21 @@ test('the period\'s contributors, or a day\'s, the most commits first, and a sca
 })
 
 test('a contributor\'s year: their commits and lines each week, and each day and those with agents where their days are counted', () => {
-  const people = [{ login: 'ada', name: 'Ada', weeks: [[SINCE, 3, 30, 4], [SINCE + WEEK, 2, 5, 1]], days: [[SINCE, 3, 30, 4, 1], [SINCE + WEEK + DAY, 2, 5, 1, 2]] },
-    { login: 'grace', name: null, weeks: [[SINCE, 4, 1, 0]], days: [[SINCE, 4, 1, 0, 0]] }]
-  const ada = contributorStats(stats({ agents: true, contributors: people }), '@ada')
+  const people = [{ login: 'ada', name: 'Ada', weeks: [[SINCE, 3, 30, 4], [SINCE + WEEK, 2, 5, 1]], days: [[SINCE, 3, 30, 4, 1, 1], [SINCE + WEEK + DAY, 2, 5, 1, 2, 0]] },
+    { login: 'grace', name: null, weeks: [[SINCE, 4, 1, 0]], days: [[SINCE, 4, 1, 0, 0, 0]] }]
+  const ada = contributorStats(stats({ agents: true, releases: true, contributors: people }), '@ada')
   const none = Array.from({ length: 7 }, () => 0)
-  assert.deepEqual([ada.byDays, ada.agents, ada.weeks.length], [true, true, 52])
+  assert.deepEqual([ada.byDays, ada.agents, ada.releases, ada.weeks.length], [true, true, true, 52])
   assert.deepEqual(ada.weeks.find(row => row.week === SINCE), { week: SINCE, days: [3, ...none.slice(1)], dayLines: [[30, 4], ...none.slice(1).map(() => [0, 0])],
-    agentDays: [1, ...none.slice(1)], commits: 3, additions: 30, deletions: 4 })
+    agentDays: [1, ...none.slice(1)], releaseDays: [1, ...none.slice(1)], commits: 3, additions: 30, deletions: 4 })
   assert.deepEqual(ada.weeks.find(row => row.week === SINCE + WEEK).agentDays, [0, 2, 0, 0, 0, 0, 0])
   assert.equal(ada.weeks.reduce((sum, row) => sum + row.commits, 0), 5, 'none of anyone else\'s')
   assert.deepEqual(pulseColumns({ ...pulse(), stats: ada }, NOW).slice(0, 9).map(column => [column.commits, column.agents]),
     [[3, 1], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [2, 2]])
   const weekly = contributorStats(counted(), '@ada')
   assert.deepEqual([weekly.byDays, weekly.agents], [false, false])
-  assert.deepEqual(weekly.weeks.find(row => row.week === SINCE), { week: SINCE, days: none, dayLines: none.map(() => [0, 0]), agentDays: none, commits: 3, additions: 30,
-    deletions: 4 }, 'by their weeks where their days aren\'t counted')
+  assert.deepEqual(weekly.weeks.find(row => row.week === SINCE), { week: SINCE, days: none, dayLines: none.map(() => [0, 0]), agentDays: none, releaseDays: none,
+    commits: 3, additions: 30, deletions: 4 }, 'by their weeks where their days aren\'t counted')
   assert.equal(contributorStats(stats({ agents: true }), '@ada').agents, false, 'their commits with agents not counted where their days hold none')
   assert.ok(contributorStats(stats(), '@nobody').weeks.every(row => row.commits === 0))
 })
@@ -333,6 +338,107 @@ test('a contributor clicked: their commits alone in the plots, named over them, 
   assert.match(templateText(view.render()), /<span>a day by<\/span>[^]*<p class="pulse-note">No commits by grace in the period\.<\/p>/u, 'one with none in the period')
   view.showPerson(null)
   assert.equal(view._person, null, 'their name over the plots clicked, everyone\'s')
+})
+
+test('commits with agents counted, the year holding some: a period, or a contributor, with none all without, the legend said', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  // The year's first Monday's commits made with agents, none since; each
+  // contributor's days counting theirs.
+  const agents = stats({ weeks: year().map((row, at) => ({ ...row, agentDays: row.days.map((count, day) => at === 0 && day === 1 ? count : 0) })),
+    contributors: stats().contributors.map(person => ({ ...person, days: person.days.map(row => [...row, 0]) })) })
+  answer = () => Promise.resolve(pulse({ stats: agents }))
+  const view = shown()
+  view.render()
+  await setImmediate()
+  let text = templateText(view.render())
+  assert.match(text, /<h3>Commits<\/h3><span>a day<\/span><span class="pulse-legend"><span\s+class="pulse-key"><\/span>With agents<span class="pulse-key is-without"><\/span>Without/u)
+  assert.match(text.split('class=pulse-column').slice(1)[0],
+    /aria-label=Sun, Sep 20: 1 commit, 0 with agents[^]*<span class=pulse-bar is-split style=--value: 1><span class=pulse-part is-without style=--part: 1><\/span><\/span>/u)
+  view.showPerson('@ada')
+  text = templateText(view.render())
+  assert.match(text, /<span>a day by<\/span>[^]*With agents[^]*Without/u, 'a contributor\'s too')
+  assert.match(text.split('class=pulse-column').slice(1)[0], /<span class=pulse-part is-without style=--part: 3><\/span>/u)
+  view.showPerson('@ada')
+  answer = () => Promise.resolve(pulse({ stats: stats({ weeks: agents.weeks }) }))
+  state.managedSession = { id: 'other', role: 'admin' }
+  view.render()
+  await setImmediate()
+  view.showPerson('@ada')
+  text = templateText(view.render())
+  assert.doesNotMatch(text, /pulse-legend"><span\s+class="pulse-key"><\/span>With agents|pulse-part/u, 'a contributor whose commits with agents aren\'t counted, unsplit')
+})
+
+test('releases apart: atop each column\'s commits in their own color, named in the legend, its figures and words; the share with agents of the rest alone', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  const week = Date.UTC(2026, 9, 11)
+  // This week's Monday's commit a release, its Tuesday's made with an agent;
+  // last week's Monday's a release too.
+  const release = row => row.days.map((count, day) => (row.week === week || row.week === week - WEEK) && day === 1 ? count : 0)
+  const agents = stats({ weeks: year().map(row => ({ ...row, releaseDays: release(row), agentDays: row.days.map((count, day) => row.week === week && day === 2 ? count : 0) })) })
+  answer = (repoId, weeks) => Promise.resolve(pulse({ weeks, since: week, stats: agents }))
+  const view = shown()
+  view.pick(1)
+  view.render()
+  await setImmediate()
+  view.point(1)
+  const text = templateText(view.render())
+  view.pick(4)
+  assert.match(text, /<span class="pulse-legend"><span\s+class="pulse-key"><\/span>With agents<span class="pulse-key is-without"><\/span>Without<span\s+class="pulse-key is-release"><\/span>Releases<\/span>/u)
+  const columns = text.split('class=pulse-column').slice(1)
+  assert.match(columns[1], /aria-label=Mon, Oct 12: 1 commit, 0 with agents, 1 release, \+0 −0 lines [^]*<span class=pulse-bar is-split style=--value: 1><span class=pulse-part is-release style=--part: 1><\/span><\/span>/u)
+  assert.match(columns[2], /aria-label=Tue, Oct 13: 1 commit, 1 with agents, 0 releases[^]*<span class=pulse-part style=--part: 1><\/span><\/span>/u)
+  assert.match(columns[3], /<span class=pulse-part is-without style=--part: 1><\/span><\/span>/u)
+  assert.match(text, /<span class=pulse-tip-key is-none><\/span><strong>1<\/strong> commit<\/span>[^]*<strong>0<\/strong> with agents[^]*<span class="pulse-tip-row"><span class="pulse-tip-key is-release"><\/span><strong>1<\/strong> release<\/span>/u)
+  // Five commits, one a release: one of the other four with agents; the week
+  // before's (Sunday to Thursday) five, one a release, none of the other four.
+  assert.match(text, /With agents<\/span><\/span>\s*<span class="pulse-tile-value">25%<\/span>\s*<span class="pulse-tile-note">↑ from 0% the week before<\/span>\s*<span class="pulse-tile-note">1 of 4 commits, 1 release apart</u)
+})
+
+test('a contributor or a column picked narrows the pull requests and issues to theirs, so said, the rest on GitHub narrowed alike; one whose commits name no account, none', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  answer = (repoId, weeks) => Promise.resolve(pulse({ weeks, since: weeks === 4 ? SINCE : SINCE - 9 * WEEK }))
+  narrowedAnswer = () => Promise.resolve({ merged: { count: 14, items: [item(9, { title: 'Ada’s' })] }, opened: { count: 1, items: [] }, closed: { count: 0, items: [] },
+    created: { count: 0, items: [] } })
+  const view = shown()
+  view.render()
+  await setImmediate()
+  narrowedRequests.length = 0
+  const asked = () => narrowedRequests.map(([repoId, weeks, { from, to, authors }]) => [repoId, weeks, from, to, authors])
+  view.showPerson('@ada')
+  let text = templateText(view.render())
+  assert.deepEqual(asked(), [[7, 4, '2026-09-20', null, ['ada']]], 'one read for both lists')
+  assert.match(text, /<h3>Pull requests<\/h3>[^]*<p class="pulse-narrowed">By ada in the period<\/p>\s*<p class="pulse-note" role="status">Reading…/u)
+  await setImmediate()
+  text = templateText(view.render())
+  assert.match(text, /Merged<span class="n">14<\/span>[^]*Opened<span class="n">1<\/span>[^]*By ada in the period[^]*Ada’s/u)
+  assert.match(text, /href=https:\/\/github\.com\/org\/repo\/pulls\?q=is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-09-20%20author%3Aada [^>]*>All 14 on GitHub</u)
+  assert.match(text, /<h3>Issues<\/h3>[^]*<p class="pulse-note">None by ada in the period\.<\/p>/u)
+  view.pickColumn(pulseColumns(pulse(), NOW), 8)
+  text = templateText(view.render())
+  assert.deepEqual(asked().at(-1), [7, 4, '2026-09-28', '2026-09-28', ['ada']])
+  assert.match(text, /<p class="pulse-narrowed">By ada on Mon, Sep 28<\/p>/u)
+  view.showPerson('@ada')
+  text = templateText(view.render())
+  assert.deepEqual(asked().at(-1), [7, 4, '2026-09-28', '2026-09-28', []], 'the day\'s alone')
+  assert.match(text, /<p class="pulse-narrowed">On Mon, Sep 28<\/p>/u)
+  view.pickColumn(pulseColumns(pulse(), NOW), 8)
+  text = templateText(view.render())
+  assert.doesNotMatch(text, /pulse-narrowed/u)
+  assert.match(text, /Merged<span class="n">12<\/span>/u, 'neither picked, the period\'s')
+  const reads = narrowedRequests.length
+  view.showPerson('=Alan Kay')
+  text = templateText(view.render())
+  assert.match(text, /<p class="pulse-note">Alan Kay’s commits name no GitHub account to find their pull requests by\.<\/p>/u)
+  assert.equal(narrowedRequests.length, reads, 'none read')
+  view.showPerson(null)
+  view.pick(13)
+  view.render()
+  await setImmediate()
+  view.pickColumn(pulseColumns(pulse({ weeks: 13, since: SINCE - 9 * WEEK }), NOW), 10)
+  text = templateText(view.render())
+  view.pick(4)
+  assert.match(text, /<p class="pulse-narrowed">In the week of Sep 27<\/p>/u)
+  assert.deepEqual(asked().at(-1), [7, 13, '2026-09-27', '2026-10-03', []])
 })
 
 test('a quarter, a column a week, every other one named; this week\'s figures so far', async t => {

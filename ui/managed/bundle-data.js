@@ -256,6 +256,13 @@ export function fetchRepositoryPulse(repoId, weeks, { signal } = {}) {
   return request(`/api/admin/repositories/pulse?${new URLSearchParams({ repoId, weeks })}`, REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
 }
 
+// The Pulse tab's pull requests and issues of the days `from` to `to`
+// (YYYY-MM-DD; none, on) and of any of `authors` (GitHub logins).
+export function fetchRepositoryPulseItems(repoId, weeks, { from, to = null, authors = [] }, { signal } = {}) {
+  const query = new URLSearchParams({ repoId, weeks, from, ...to === null ? {} : { to }, ...authors.length > 0 ? { authors: authors.join(',') } : {} })
+  return request(`/api/admin/repositories/pulse/items?${query}`, REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
+}
+
 export function fetchNpmPackage(name, version, { signal } = {}) {
   return requestNpm('package', { name, version }, signal)
 }
