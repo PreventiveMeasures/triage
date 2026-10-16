@@ -97,17 +97,22 @@ const headed = (subject: string, headline: string) => headline.endsWith('…') ?
 // The commits of `commits` (a year's) the agents' pull requests brought
 // (`read`, agentMerges): those it names, and of one rebased, its commits'
 // copies, the last and those below it on their first parents, as long as
-// their subjects are its commits', from its last back, as Commits tells a
-// rebase (repository-history.ts squashedPulls); a squash merge's one commit
-// alone, its subject the pull request's own.
+// each one's subject is that of one of its commits older than the last
+// matched, as Commits tells a rebase (repository-history.ts squashedPulls),
+// past those of its commits the rebase left none of (an empty one GitHub
+// counted no files of); a squash merge's one commit alone, its subject the
+// pull request's own.
 export function agentCommits(read: AgentMerges, commits: HistoryCommit[]): Set<string> {
   const shas = new Set(read.merges.map(([sha]) => sha))
   const bySha = new Map(commits.map(commit => [commit.sha, commit]))
   for (const [last, , subjects] of read.rebases) {
     let commit = bySha.get(last)
-    for (let at = subjects.length - 1; commit && at >= 0 && headed(commit.subject, subjects[at]!); at--) {
+    for (let at = subjects.length - 1; commit && at >= 0; commit = bySha.get(commit.parents[0] ?? '')) {
+      const copied = commit
+      at = subjects.findLastIndex((subject, index) => index <= at && headed(copied.subject, subject))
+      if (at < 0) break
       shas.add(commit.sha)
-      commit = bySha.get(commit.parents[0] ?? '')
+      at--
     }
   }
   return shas
