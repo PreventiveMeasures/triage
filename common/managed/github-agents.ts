@@ -68,3 +68,11 @@ export function githubAgent(login: string | null, account: number | null = null,
   const known = byLogin.get(login.toLowerCase())
   return known && (account === null || known.ids.includes(undefined) || known.ids.includes(account)) ? known.agent : null
 }
+
+// Whether the accounts `ids` a login is named by are all one agent's, as
+// Copilot's coding agent's and its code review's, both named Copilot, are:
+// the login is that agent's whichever it is, rather than no one's.
+export function oneAgent(login: string, ids: Iterable<number>): boolean {
+  const theirs = new Set([...ids].map(id => githubAgent(login, id)))
+  return theirs.size === 1 && !theirs.has(null)
+}

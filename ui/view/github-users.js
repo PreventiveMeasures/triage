@@ -6,7 +6,7 @@
 // name they chose, an agent as the Agents tab draws it, for the session they
 // came to.
 import { html, nothing } from 'lit'
-import { GITHUB_AGENTS, githubAgent } from '../../common/managed/github-agents.ts'
+import { GITHUB_AGENTS, githubAgent, oneAgent } from '../../common/managed/github-agents.ts'
 import { namedAccounts } from '../../common/managed/github-logins.ts'
 import { providerIcon } from './provider-icons.js'
 
@@ -14,7 +14,8 @@ import { providerIcon } from './provider-icons.js'
 const known = new Map()
 // The account id answers name each login by, lowercased; those they name by
 // more than one, as what was kept of a repository's history may name a login
-// by an account GitHub named by it once, are no one's.
+// by an account GitHub named by it once, are no one's, unless those are all
+// one agent's (oneAgent).
 const accounts = new Map()
 const ambiguous = new Set()
 
@@ -27,7 +28,7 @@ export function knowGithubUsers(answer) {
   const users = told ?? {}
   for (const [login, id] of namedAccounts(rest)) {
     const key = login.toLowerCase()
-    if (id === 'ambiguous' || (id !== null && accounts.has(key) && accounts.get(key) !== id)) ambiguous.add(key)
+    if (id === 'ambiguous' || (id !== null && accounts.has(key) && accounts.get(key) !== id && !oneAgent(login, [id, accounts.get(key)]))) ambiguous.add(key)
     else if (id !== null) accounts.set(key, id)
     if (!Object.hasOwn(users, login) || ambiguous.has(key)) known.delete(key)
   }

@@ -62,6 +62,12 @@ test('a login an answer names beside more than one account, one GitHub named by 
   assert.deepEqual((await withAppUsers(db, answer)).users, {}, 'neither a user nor an agent')
   answer.commits.splice(1, 1)
   assert.deepEqual((await withAppUsers(db, answer)).users, { octo: { id: octo, login: 'octo', name: 'Octo' } }, 'one named once with its id and once without is that account')
+  // A pull request Copilot's coding agent opened, and Copilot's code review requested on another: both Copilot.
+  const copilot = { items: [{ author: 'Copilot', authorId: 198982749 }, { reviews: { reviewers: [{ login: 'Copilot', id: 175728472 }] } }] }
+  assert.deepEqual([...namedAccounts(copilot)], [['Copilot', null]], 'accounts all one agent\'s, that agent\'s by its login')
+  assert.deepEqual((await withAppUsers(db, copilot)).users, { Copilot: { agent: 'copilot' } })
+  copilot.items.push({ author: 'copilot', authorId: 3 })
+  assert.deepEqual([...namedAccounts(copilot)], [['Copilot', 'ambiguous'], ['copilot', 'ambiguous']], 'one no agent\'s beside them, no one\'s')
 })
 
 // The Issues tab's endpoint, read by an admin with a token, GitHub answering

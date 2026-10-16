@@ -5,6 +5,7 @@
 // app's users and agents (server-managed/github-users.ts), and the client
 // keeps those it answered with in place of what it held for them
 // (ui/view/github-users.js).
+import { oneAgent } from './github-agents.ts'
 
 // Where answers name a login, each with where the account's id is named
 // beside it.
@@ -14,18 +15,20 @@ const MAX_DEPTH = 8
 const accountId = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0 ? value as number : null
 
 // The logins `answer` names, each once, with the numeric id of the account
-// named beside them (null where none is); `ambiguous` where a login, GitHub
-// matching logins regardless of case, is named beside more than one: by an
-// account GitHub named by it once, as what was kept of the history says, and
-// one it names by it now, which is no telling whose each is.
+// named beside them (null where none is, or where those named are all one
+// agent's, oneAgent); `ambiguous` where a login, GitHub matching logins
+// regardless of case, is named beside more than one: by an account GitHub
+// named by it once, as what was kept of the history says, and one it names by
+// it now, which is no telling whose each is.
 export function namedAccounts(answer: unknown): Map<string, number | 'ambiguous' | null> {
   const named = new Map<string, Set<number>>()
   collect(answer, named, 0)
   const ids = new Map<string, Set<number>>()
   for (const [login, theirs] of named) ids.set(login.toLowerCase(), new Set([...ids.get(login.toLowerCase()) ?? [], ...theirs]))
-  return new Map([...named.keys()].map(login => {
+  return new Map([...named.keys()].map((login): [string, number | 'ambiguous' | null] => {
     const theirs = ids.get(login.toLowerCase())!
-    return [login, theirs.size > 1 ? 'ambiguous' : [...theirs][0] ?? null]
+    if (theirs.size <= 1) return [login, [...theirs][0] ?? null]
+    return [login, oneAgent(login, theirs) ? null : 'ambiguous']
   }))
 }
 

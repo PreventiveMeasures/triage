@@ -137,7 +137,9 @@ app draws itself, Dependabot by its avatar. Each is matched by its accounts' log
 confirming it wherever both are known, as the Agents tab tells them: Claude's
 `claude` (Claude Code's commits, authored as `Claude <noreply@anthropic.com>`)
 and `claude[bot]`, Codex's `chatgpt-codex-connector[bot]`, Copilot's coding
-agent's `Copilot` and Dependabot's `dependabot[bot]`
+agent's `Copilot`, its code review's bot's `Copilot` too (and
+`copilot-pull-request-reviewer` on its reviews), a login named by both of
+Copilot's accounts still Copilot's, and Dependabot's `dependabot[bot]`
 (`common/managed/github-agents.ts`). Commits GitHub names no account for are
 matched by the name they carry: Claude, Codex, Copilot or `dependabot[bot]`.
 Codex otherwise commits as whoever ran it, and those commits show as theirs,

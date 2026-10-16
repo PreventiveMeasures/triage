@@ -86,6 +86,12 @@ test('a login this session\'s answers name by more than one account, one GitHub 
   assert.deepEqual([appUser('octo'), commitAgent('dependabot')], [null, null], 'nor once an answer names one of them again; nor one an answer names by two')
   knowGithubUsers({ commits: [{ authorLogin: 'ada', authorId: 7 }, { authorLogin: 'ada', authorId: null }], users: { ada: { id: 'ada-id', login: 'ada', name: null } } })
   assert.equal(appUser('ada')?.id, 'ada-id', 'one named once with its id and once without is that account')
+  // Copilot's coding agent's account in one answer, its code review's in another, both Copilot: Copilot either way.
+  knowGithubUsers({ commits: [{ authorLogin: 'Copilot', authorId: 198982749 }], users: { Copilot: { agent: 'copilot' } } })
+  knowGithubUsers({ items: [{ reviews: { reviewers: [{ login: 'Copilot', id: 175728472 }] } }], users: { Copilot: { agent: 'copilot' } } })
+  assert.equal(commitAgent('Copilot'), 'copilot', 'accounts all one agent\'s are that agent')
+  knowGithubUsers({ items: [{ author: 'copilot', authorId: 3 }], users: {} })
+  assert.equal(commitAgent('Copilot'), null, 'one that is no agent\'s beside them is no one\'s')
   forgetGithubUsers()
   knowGithubUsers({ items: [{ author: 'Octo', authorId: 9 }], users: { Octo: { id: 'cat-id', login: 'cat', name: 'Cat' } } })
   assert.equal(appUser('octo')?.id, 'cat-id', 'another session\'s answers say anew')
