@@ -381,6 +381,19 @@ a.btn {
   font-size: .85rem;
   font-weight: 600;
 }
+/* A section's heading with its switch at the right, the section all of it
+   while off. */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .6rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: rgb(from var(--text) r g b / .025);
+  &:last-child { border-bottom: 0; }
+  & h2 { padding: 0; border: 0; background: none; }
+}
 .settings-row {
   display: flex;
   align-items: center;
@@ -435,6 +448,7 @@ a.btn {
   margin: 0;
   color: var(--muted);
   font-size: .76rem;
+  &.is-warning { color: var(--warning); }
 }
 .btn.danger {
   color: var(--critical, #e5534b);

@@ -2023,14 +2023,17 @@ github-status-403`, the popup saying so).
 ### A repository's dependency review
 
 An admin turns a connected repository's dependency review on in its page
-under Repositories (**Dependency review**), with how many reviews each
-version needs (one to ten) and, optionally, the commit it is reviewed since
-(its full id): `POST /api/admin/repositories/dependency-review` with
+under Repositories (**Dependency review**, its switch in the section's
+heading), with how many reviews each version needs (one to ten) and,
+optionally, the commit it is reviewed since (its full id), the page saying
+so where no team that would count its reviews has the repository, and the
+pull requests' reviews the page holds asked again once it is saved: `POST /api/admin/repositories/dependency-review` with
 `{ repoId, enabled, required, since }` (`400 bad-request` for another,
 `404 no-repository`), kept on `managed_selected_repo`
 (`dependency_review`, `dependency_reviews_required`,
 `dependency_review_since`) and listed with each connected repository
-(`GET /api/admin/repositories`, `dependencyReview`). It is in effect only
+(`GET /api/admin/repositories`, `dependencyReview`, with the teams whose
+reviews count for it, `reviewTeams`). It is in effect only
 where a visible team that reviews dependencies has the repository; the
 reviews that count are those published to such a team
 (`repository-dependency-reviews.ts`): full, every file checked (a partial

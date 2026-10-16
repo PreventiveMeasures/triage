@@ -205,6 +205,14 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
   assert.match(tiles[3], /data-tooltip=Its review fails: not every lockfile it changes was read>[^]*<span class="issue-deps-review is-failed">lockfiles unread<\/span>/u,
     'shown with no version new, its lockfiles unread')
   assert.match(tiles[4], /is-wanted">1 to review · 201 unreviewed</u, 'a version two directories lock as passing as the less passing of them; the others counted once, as the server tells')
+
+  // A repository's review set anew: each asked again.
+  const asked = dependencyOptions.length
+  globalThis.dispatchEvent(new Event('dependency-review-changed'))
+  templateText(view.render())
+  await setImmediate()
+  templateText(view.render())
+  assert.ok(dependencyOptions.length > asked, 'asked again, not held')
 })
 
 test('a count of comments as narrow as the rail: whole below a thousand, else two digits at most and their unit', () => {

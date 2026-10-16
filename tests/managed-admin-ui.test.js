@@ -107,14 +107,22 @@ test('a repository\'s dependency review is switched on or off at once, its requi
   page._detail = off
   page._data = { repositories: [off] }
   let text = templateText(page._dependencyReviewSection(off))
-  assert.match(text, /accessible-label="Review dependencies"/u)
-  assert.doesNotMatch(text, /Reviews each version needs/u, 'its terms only once on')
+  assert.match(text, /<div class="section-head"><h2>Dependency review<\/h2>\s*<mode-switch [^>]*accessible-label="Review dependencies"/u, 'its switch in its heading')
+  assert.doesNotMatch(text, /Reviews each version needs|settings-copy/u, 'its terms only once on, and nothing more')
+  const told = []
+  const changed = () => told.push('changed')
+  globalThis.addEventListener('dependency-review-changed', changed)
   await page._saveDependencyReview(off, { ...off.dependencyReview, enabled: true })
+  globalThis.removeEventListener('dependency-review-changed', changed)
+  assert.deepEqual(told, ['changed'], 'pull requests\' reviews read before asked again')
   assert.deepEqual(sent.at(-1), ['/api/admin/repositories/dependency-review', { repoId: 7, enabled: true, required: 1, since: null }, 'csrf'])
   assert.deepEqual(page._detail.dependencyReview, { enabled: true, required: 1, since: null })
   assert.deepEqual(page._data.repositories[0].dependencyReview, page._detail.dependencyReview)
   text = templateText(page._dependencyReviewSection(page._detail))
   assert.match(text, /Reviews each version needs[^]*Reviewed since commit[^]*Save[^]*With no commit, every version needs its reviews/u)
+  assert.match(templateText(page._dependencyReviewSection({ ...page._detail, reviewTeams: [] })),
+    /is-warning" role="status">No team that reviews\s+dependencies has this repository, so its pull requests show no review\./u)
+  assert.doesNotMatch(templateText(page._dependencyReviewSection({ ...page._detail, reviewTeams: [{ id: 'one', name: 'One' }] })), /No team that reviews/u)
   page._reviewDraft = { required: '2', since: 'A'.repeat(40) }
   assert.match(templateText(page._dependencyReviewSection(page._detail)), /need no review/u)
   await page._saveDependencyReview(page._detail, { enabled: true, required: 2, since: 'a'.repeat(40) })
