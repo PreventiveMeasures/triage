@@ -484,7 +484,7 @@ function reviewsFixture(index: number, number: number, now: number, detail = fal
   ]
   const { reviewers, threads, resolved, codex: summary } = variants[index % variants.length]!
   const counted = { open: threads.length, resolved, more: false, severity: threads.map(thread => thread.severity).filter(Boolean).toSorted()[0] ?? null }
-  return { head, reviewers, moreReviewers: index % variants.length === 3 ? 2 : 0, codex: summary, threads: detail ? { ...counted, list: threads } : counted }
+  return { head, reviewers, moreReviews: 0, moreRequests: index % variants.length === 3 ? 2 : 0, codex: summary, threads: detail ? { ...counted, list: threads } : counted }
 }
 
 // The issues' or pull requests' tiles, as of `now`.

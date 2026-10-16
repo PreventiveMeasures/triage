@@ -1875,11 +1875,12 @@ an issue's with its `reason` (`completed`, `not-planned` or `duplicate`), a
 pull request's with `draft`, `mergedAt`, `review`, `checks`, `additions`,
 `deletions`, `head` and `base`, its `state` `merged` where it was; an open
 one's with its `reviews` (`pull-reviews.ts`): `{ head, reviewers: [{ login,
-id, team?, state, requested, commit, at }], moreReviewers, threads: { open,
+id, team?, state, requested, commit, at }], moreReviews, moreRequests, threads: { open,
 resolved, more, severity }, codex: { login, id, code: { commit, status },
 security, requested, failed } | null }`, read from each reviewer's latest
 review (twenty, and ten reviews requested, how many more GitHub counts in
-`moreReviewers`, the tile saying `+N`), the latest fifty threads (open ones
+`moreReviews` and `moreRequests` apart, the tile saying `+N` of both, the
+latest commit unreviewed only where no review is unread), the latest fifty threads (open ones
 being, mostly, those lately opened), the first five comments and the last
 twenty for Codex's summary, its hidden `codex-review-state:v1` marker, which
 it posts as it is first asked, and the last twenty for asking it again and

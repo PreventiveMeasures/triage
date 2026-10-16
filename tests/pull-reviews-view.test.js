@@ -19,7 +19,7 @@ test('a tile\'s reviews mark each reviewer by how their latest review stands, di
   assert.match(text, /class=review-mark is-requested>[^]*aria-label=Review requested[^]*linus/u)
   assert.match(text, /@security/u, 'a team by its slug')
   assert.doesNotMatch(text, /Unreviewed/u, 'Codex reviewed the latest commit')
-  assert.match(templateText(reviewLine({ head, codex: null, threads: counted(), reviewers: [], moreReviewers: 3 })), /class="review-more" data-tooltip=3 more reviewers>\+3</u)
+  assert.match(templateText(reviewLine({ head, codex: null, threads: counted(), reviewers: [], moreReviews: 1, moreRequests: 2 })), /class="review-more" data-tooltip=3 more reviewers>\+3</u)
 })
 
 test('a tile says its open threads, the gravest by its badge, and that the latest commit is unreviewed where no review is on it', () => {
@@ -45,7 +45,8 @@ test('the latest commit is reviewed by a review on it, or Codex done with it; on
   assert.equal(reviewed([{ login: 'ada', state: null, requested: true, commit: null }]), false)
   assert.equal(reviewed([], { commit: head, status: 'running' }), false)
   assert.equal(reviewed([], { commit: head, status: 'done' }), true)
-  assert.equal(headReviewed({ head, codex: null, reviewers: [], moreReviewers: 2, threads: counted() }), true, 'more reviewers than read: perhaps one of them, not said unreviewed')
+  assert.equal(headReviewed({ head, codex: null, reviewers: [], moreReviews: 2, moreRequests: 0, threads: counted() }), true, 'more reviews than read: perhaps one on it, not said unreviewed')
+  assert.equal(headReviewed({ head, codex: null, reviewers: [], moreReviews: 0, moreRequests: 12, threads: counted() }), false, 'requests unread are no reviews')
 })
 
 test('a popup lists each review, Codex\'s code and security reviews apart, on which commit, linked; then each open thread by its badge, title and place', () => {

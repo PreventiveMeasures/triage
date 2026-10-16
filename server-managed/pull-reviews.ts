@@ -193,9 +193,11 @@ function threadsOf(node: ReviewNode, detail: boolean) {
 export function pullReviews(node: ReviewNode, author: string | null, detail = false) {
   if (node.headRefOid === undefined || node.latestReviews === null || node.reviewRequests === null || node.reviewThreads === null) return null
   const codex = codexOf(node)
-  // Those past the reviews and requests read, as many as GitHub counts.
+  // Those past the reviews and the requests read, as many as GitHub counts,
+  // apart: a review unread may be on the latest commit, a request never is.
   const past = (connection: { totalCount?: unknown; nodes?: unknown[] } | null | undefined) => Number.isSafeInteger(connection?.totalCount)
     ? Math.max(0, (connection!.totalCount as number) - (connection!.nodes?.length ?? 0)) : 0
   const { reviewers, unnamed } = reviewersOf(node, author, codex !== null)
-  return { head: commitOf(node.headRefOid), reviewers, moreReviewers: past(node.latestReviews) + past(node.reviewRequests) + unnamed, threads: threadsOf(node, detail), codex }
+  return { head: commitOf(node.headRefOid), reviewers, moreReviews: past(node.latestReviews), moreRequests: past(node.reviewRequests) + unnamed,
+    threads: threadsOf(node, detail), codex }
 }

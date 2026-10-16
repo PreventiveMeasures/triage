@@ -122,7 +122,7 @@ test('open pull requests are read with their reviews: each reviewer\'s latest, t
       body: `<!-- codex-review-state:v1 ${JSON.stringify({ code_review: { commit_sha: head, status: 'completed' }, security_review: { commit_sha: head, status: 'completed' } })} -->` }] },
     lastComments: { nodes: [] } }]))
   const { body } = await request({ repoId: '1', kind: 'pulls', state: 'open' })
-  assert.deepEqual(body.items[0].reviews, { head, reviewers: [{ login: 'ada', id: 5, state: null, requested: true, commit: null, at: null }], moreReviewers: 0,
+  assert.deepEqual(body.items[0].reviews, { head, reviewers: [{ login: 'ada', id: 5, state: null, requested: true, commit: null, at: null }], moreReviews: 0, moreRequests: 0,
     threads: { open: 1, resolved: 0, more: false, severity: 'p1' },
     codex: { login: 'chatgpt-codex-connector', id: 199175422, code: { commit: head, status: 'done' }, security: { commit: head, status: 'done' }, requested: false, failed: false } },
     'the author\'s own reply aside')
@@ -222,7 +222,7 @@ test('an item is one issue or pull request as its popup shows it: as its tile, w
     mergedAt: Date.parse('2026-10-02T00:00:00Z'), review: 'approved', checks: 'success', additions: 30, deletions: 4, head: 'claude/fix-chips', base: 'main',
     body: '    npm test\n\nFixes #3.\n\nhttps://claude.ai/code/session_X', bodyShortened: false, moreLinked: 0, closes: [{ number: 3, title: 'Chips unreadable', state: 'closed', reason: 'completed' }],
     commits: 4, files: 2, mergedBy: 'ada', mergedById: 5, reviews: { head: 'c'.repeat(40), codex: null,
-      reviewers: [{ login: 'ada', id: 5, state: 'approved', requested: false, commit: 'c'.repeat(40), at: Date.parse('2026-10-02T00:00:00Z') }], moreReviewers: 0,
+      reviewers: [{ login: 'ada', id: 5, state: 'approved', requested: false, commit: 'c'.repeat(40), at: Date.parse('2026-10-02T00:00:00Z') }], moreReviews: 0, moreRequests: 0,
       threads: { open: 1, resolved: 0, more: false, severity: null,
         list: [{ severity: null, title: 'Darker?', path: 'ui/chips.js', line: 3, outdated: false, author: 'ada', authorId: 5, url: 'https://github.com/org/repo/pull/7#discussion_r1' }] } },
     users: {} })
