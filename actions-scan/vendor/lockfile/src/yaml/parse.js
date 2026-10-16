@@ -133,7 +133,7 @@ function parseNode(doc, indent, depth) {
   const line = peek(doc)
   if (depth > MAX_DEPTH) throw new YamlError('nested too deep', line.number)
   if (isEntry(line)) return parseSequence(doc, indent, depth)
-  const first = line.text.startsWith('? ') ? undefined : readKey(line.text, line.number)
+  const first = line.text.startsWith('? ') ? undefined : keyOf(doc, line)
   if (first !== null) return parseMapping(doc, indent, depth, first)
   advance(doc)
   return doc.workflow ? workflowValue(doc, line.text, line.indent - 1, depth, line) : parseInline(line.text, line.number)
@@ -158,10 +158,12 @@ function parseMapping(doc, indent, depth, first) {
   let read = first
   parseBlock(doc, indent, (line) => {
     if (!line.text.startsWith('? ')) {
-      const entry = read ?? readKey(line.text, line.number)
+      const entry = read ?? keyOf(doc, line)
       read = undefined
       if (entry === null) throw new YamlError(`expected a mapping key, found ${excerpt(line.text)}`, line.number)
       advance(doc)
+      // An anchor before a key is the key's, as YAML has it, named before its value.
+      if (entry.anchor) doc.anchors.set(entry.anchor, entry.key)
       setKey(map, entry.key, parseValue(doc, entry.rest, indent, depth, line), line.number)
       lines?.set(entry.key, line.number)
       return
@@ -290,7 +292,7 @@ function workflowNode(doc, rest, indent, depth, owner) {
   if (next?.indent === indent && isEntry(next) && !isEntry(owner)) return parseSequence(doc, indent, depth + 1, true)
   if (next === undefined || next.indent <= indent) return null
   // A scalar on the lines below, its lines held deeper than its owner's.
-  if (!isEntry(next) && !next.text.startsWith('? ') && readKey(next.text, next.number) === null) {
+  if (!isEntry(next) && !next.text.startsWith('? ') && keyOf(doc, next) === null) {
     advance(doc)
     return workflowValue(doc, next.text, indent, depth + 1, next)
   }
@@ -302,16 +304,31 @@ function workflowNode(doc, rest, indent, depth, owner) {
 // though its line started there, or a value, its continuation lines held
 // deeper than the `-`'s own column.
 function workflowCompact(doc, line, indent, depth, spaces) {
-  const { anchor, rest } = readAnchor(line.text.slice(spaces), line.number)
-  const column = line.indent + line.text.length - rest.length
-  let value
-  if (rest !== '' && !rest.startsWith('#') && (isEntry({ text: rest }) || rest.startsWith('? ') || readKey(rest, line.number) !== null)) {
+  const text = line.text.slice(spaces)
+  const { anchor, rest } = readAnchor(text, line.number)
+  const column = line.indent + spaces
+  if (rest !== '' && !rest.startsWith('#') && (isEntry({ text: rest }) || rest.startsWith('? '))) {
+    if (anchor !== null) throw new YamlError('an anchor before a block on its own line is not supported', line.number)
     doc.line = { ...line, indent: column, text: rest }
-    value = parseNode(doc, column, depth + 1)
-  } else {
-    advance(doc)
-    value = workflowNode(doc, rest.startsWith('#') ? '' : rest, indent, depth, line)
+    return parseNode(doc, column, depth + 1)
   }
+  // A mapping, at the column after the indicator, an anchor before its
+  // first key that key's (keyOf).
+  if (rest !== '' && !rest.startsWith('#') && readKey(rest, line.number) !== null) {
+    doc.line = { ...line, indent: column, text }
+    return parseNode(doc, column, depth + 1)
+  }
+  advance(doc)
+  const value = workflowNode(doc, rest.startsWith('#') ? '' : rest, indent, depth, line)
   if (anchor !== null) doc.anchors.set(anchor, value)
   return value
+}
+
+// A mapping's key at the start of a line, and what follows it; with
+// `workflow`, an anchor before the key too, which is the key's.
+function keyOf(doc, line) {
+  if (!doc.workflow || !line.text.startsWith('&')) return readKey(line.text, line.number)
+  const { anchor, rest } = readAnchor(line.text, line.number)
+  const entry = readKey(rest, line.number)
+  return entry && { ...entry, anchor }
 }
