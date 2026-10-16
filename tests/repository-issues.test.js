@@ -184,6 +184,22 @@ test('counts read with a later page count one read before it, moved since its li
   assert.match(text, /#28/u)
 })
 
+test('one arriving in a list that no read knew in another state, only updated since, moves no counts', async () => {
+  const { knowItems } = await import('../ui/view/repository-items.js')
+  const hours = count => Date.now() - count * 3_600_000
+  answer = () => Promise.resolve({ items: [issue(41, { state: 'closed', reason: 'completed', updatedAt: hours(5) })], counts: { open: 11, closed: 967 }, more: true, readAt: 1000 })
+  const view = shown()
+  view.pick('closed')
+  view.render()
+  await setImmediate()
+  // Commented on since, its popup opened from another: closed as it was, now among the latest updated.
+  knowItems(7, [{ ...issue(39, { state: 'closed', reason: 'completed', updatedAt: hours(1) }), kind: 'issues' }], 2000)
+  const text = templateText(view.render())
+  assert.match(text, /#39[^]*#41/u)
+  assert.match(text, /Open<span class="n">11<\/span>[^]*Closed<span class="n">967<\/span>/u)
+  view.pick('open')
+})
+
 test('an open pull request changing a lockfile, or that may, shows the package versions new to its lockfiles once read, two at a time; one changing none, or not open, asks none', async () => {
   dependencyRequests.length = 0
   const reads = []

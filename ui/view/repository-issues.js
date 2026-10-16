@@ -67,7 +67,9 @@ function checked(answer) {
 // reaches them, those read since it was that are now in its state, among them
 // by when each was last updated; and its counts, those read since the page
 // its counts came with was (`countsAt`) moving between open and closed moved,
-// a later page's counting those read before it.
+// a later page's counting those read before it: one it lists, in its state as
+// it was read, and one arriving that a read before knew in the other; one
+// arriving that none did, perhaps only updated since, moves none.
 export function listedNow(repoId, kind, listState, entry) {
   const belongs = item => (item.state === 'open') === (listState === 'open')
   const latest = entry.items.map(item => knownItem(repoId, item.number) ?? { item, readAt: entry.readAt })
@@ -81,7 +83,8 @@ export function listedNow(repoId, kind, listState, entry) {
     items.splice(at === -1 ? items.length : at, 0, item)
   }
   const since = ({ readAt }) => readAt > (entry.countsAt ?? entry.readAt)
-  const moved = latest.filter(held => !belongs(held.item) && since(held)).length - arrived.filter(since).length
+  const moved = latest.filter(held => !belongs(held.item) && since(held)).length
+    - arrived.filter(held => since(held) && held.was !== null && !belongs({ state: held.was })).length
   const other = listState === 'open' ? 'closed' : 'open'
   const counts = { [listState]: Math.max(0, entry.counts[listState] - moved), [other]: Math.max(0, entry.counts[other] + moved) }
   return { items, counts }

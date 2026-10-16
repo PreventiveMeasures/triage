@@ -11,10 +11,14 @@ const pull = (number, more = {}) => ({ number, title: `Pull ${number}`, state: '
 test('an issue or pull request is known as the server read it latest: a read older than the one known is none, another repository\'s apart', () => {
   knowItems(7, [pull(5), pull(6)], 1000, 'pulls')
   knowItems(7, [{ ...pull(5, { state: 'merged' }), kind: 'pulls' }], 2000)
-  assert.deepEqual(knownItem(7, 5), { item: { ...pull(5, { state: 'merged' }), kind: 'pulls' }, readAt: 2000 }, 'its popup\'s read, later than its list\'s')
+  assert.deepEqual(knownItem(7, 5), { item: { ...pull(5, { state: 'merged' }), kind: 'pulls' }, readAt: 2000, was: 'open' },
+    'its popup\'s read, later than its list\'s, and the state its list read it in')
+  assert.equal(knownItem(7, 6).was, null, 'none known in another')
   knowItems(7, [pull(5), pull(6, { title: 'Renamed' })], 1500, 'pulls')
   assert.equal(knownItem(7, 5).item.state, 'merged', 'a list kept on the server from before, no news of it')
   assert.equal(knownItem(7, 6).item.title, 'Renamed', 'but of one read before')
+  knowItems(7, [pull(5, { state: 'merged', title: 'Again' })], 2500, 'pulls')
+  assert.equal(knownItem(7, 5).was, 'open', 'read again in the same state, the one before it still known')
   knowItems(8, [{ number: 5, title: 'An issue', state: 'open', kind: 'issues' }], 500)
   assert.deepEqual(knownItems(7, 'pulls').map(({ item }) => [item.number, item.state]), [[5, 'merged'], [6, 'open']])
   assert.deepEqual(knownItems(8, 'issues').map(({ item }) => item.title), ['An issue'])

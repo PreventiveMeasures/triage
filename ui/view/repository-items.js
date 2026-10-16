@@ -12,8 +12,9 @@ import { store } from '@rray/frontend/state-management'
 import { state } from '#client/index.js'
 
 // By the session, the repository and the number, which an issue and a pull
-// request of one repository never share: `{ item, readAt }`, the item with its
-// `kind`, 'issues' or 'pulls'; and how many times they changed, which what
+// request of one repository never share: `{ item, readAt, was }`, the item
+// with its `kind`, 'issues' or 'pulls', and the state a read before knew it in
+// where one knew it in another (`was`, else null); and how many times they changed, which what
 // reads them all observes, the store telling those that iterate them of none
 // replaced.
 const known = store({ items: new Map(), changes: 0 })
@@ -39,14 +40,15 @@ export function knowItems(repoId, items, readAt, kind = null) {
     const key = keyOf(session, repoId, item.number)
     const held = known.items.get(key)
     if (held && held.readAt > readAt) continue
-    known.items.set(key, { item: { ...item, kind: item.kind ?? kind ?? held?.item.kind ?? null }, readAt })
+    const was = held ? (held.item.state === item.state ? held.was : held.item.state) : null
+    known.items.set(key, { item: { ...item, kind: item.kind ?? kind ?? held?.item.kind ?? null }, readAt, was })
     changed = true
   }
   if (changed) known.changes++
 }
 
 // The latest read of issue or pull request `number` of repository `repoId`,
-// `{ item, readAt }`, else null.
+// `{ item, readAt, was }`, else null.
 export const knownItem = (repoId, number) => known.items.get(keyOf(sessionOf(), repoId, number)) ?? null
 
 // Those of `kind` known of repository `repoId`, each its latest read.
