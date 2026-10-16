@@ -227,10 +227,13 @@ test('a pull request labelled for an agent is an agent\'s, whatever its branch; 
   const when = new Date(since + DAY).toISOString()
   const pull = (merge, branch, labels) => ({ updatedAt: when, mergedAt: when, headRefName: branch, labels: { nodes: labels.map(name => ({ name })) },
     mergeCommit: { oid: shaOf(merge), parents: { totalCount: 1 } }, commits: { nodes: [] } })
-  github(t, { graphql: mergedPulls([pull(1, 'fix/review', ['bug', 'codex']), pull(2, 'ui/tabs', ['Agent: Claude']), pull(3, 'perf/reads', ['cursor']),
-    pull(4, 'fix/by-hand', ['bug', 'agent:', 'codex-ish']), pull(5, 'feat/none', [])]) })
+  const queries = []
+  const pulls = mergedPulls([pull(1, 'fix/review', ['bug', 'codex']), pull(2, 'ui/tabs', ['Agent: Claude']), pull(3, 'perf/reads', ['cursor']),
+    pull(4, 'fix/by-hand', ['bug', 'agent:', 'codex-ish']), pull(5, 'feat/none', [])])
+  github(t, { graphql: body => { queries.push(body.query); return pulls(body) } })
   const read = await agentMerges('org/repo', 'token', since, null)
   assert.deepEqual(read.merges.map(([sha]) => sha).toSorted(), [1, 2, 3].map(shaOf).toSorted())
+  assert.match(queries[0], /labels\(first: 100\) \{ nodes \{ name \} \}/u, 'as many of each one\'s labels as GitHub gives a page')
 })
 
 test('a pull request whose agent\'s label is taken off is read again, none of what it brought an agent\'s', async t => {

@@ -24,8 +24,9 @@ const AGENT_ISSUES = 100
 const AGENT_BRANCHES = 500
 const MAX_BRANCH_PAGES = 50
 const CLOSES = 5
-// A pull request's labels read, for one naming an agent.
-const LABELS = 20
+// A pull request's labels read, for one naming an agent: GitHub's most a
+// page.
+const LABELS = 100
 const MAX_TITLE = 1000
 const MAX_NAME = 256
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u

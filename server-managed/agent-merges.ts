@@ -15,9 +15,9 @@ import { type HistoryCommit, githubGraphql } from './repository-history.ts'
 const MERGED_PAGE = 100
 const MERGED_QUERIES = 5
 const MERGED_COMMITS = 100
-// Of each, as many labels as MERGED_LABELS, a label naming any agent the app
-// knows making it an agent's.
-const MERGED_LABELS = 20
+// Of each, as many labels as MERGED_LABELS, GitHub's most a page, a label
+// naming any agent the app knows making it an agent's.
+const MERGED_LABELS = 100
 const LABEL_AGENTS = [...new Set([...Object.keys(GITHUB_AGENTS), ...APP_AGENTS.map(agent => agent.id)])]
 const SHA = /^[a-f\d]{40}$/u
 
