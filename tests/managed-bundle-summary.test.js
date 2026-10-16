@@ -43,6 +43,19 @@ test('catalog commit details and tags survive the team probe into sidebar rows a
   assert.deepEqual(team.bundles.at(-1).commitInfo, { sha: commitInfo.sha, github: 'org/app', tags: ['v2'], details: null })
 })
 
+test("the team probe keeps each team's repositories, a whole one without a path, dropping malformed ones", async t => {
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams: [
+    { id: 'team', name: 'Team', reports: [], bundles: [], repos: [
+      { repoId: 1, fullName: 'org/app', path: null }, { repoId: 2, fullName: 'org/lib', path: 'packages/a' }, { repoId: 3, fullName: 'org/root', path: '' },
+      { repoId: '4', fullName: 'org/bad' }, { repoId: 5 }, { repoId: 0, fullName: 'org/zero' }, null,
+    ] },
+    { id: 'older', name: 'Older', reports: [], bundles: [] },
+  ] })))
+  const [team, older] = await probeTeams()
+  assert.deepEqual(team.repos, [{ repoId: 1, fullName: 'org/app', path: null }, { repoId: 2, fullName: 'org/lib', path: 'packages/a' }, { repoId: 3, fullName: 'org/root', path: null }])
+  assert.deepEqual(older.repos, [])
+})
+
 test('managed scan selectors show cached counts before opening bundles and preserve Code resource filtering', () => {
   const source = managedScanSource({ bundles: [bundle] })
   assert.equal(source.bundles[0].files, null)

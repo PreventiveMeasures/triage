@@ -103,7 +103,7 @@
      bar (proportional severity-color palette that prints as muddy
      noise). `display: none`, not `visibility: hidden`, so the row
      reflows without a phantom 200×8 gap. */
-  .page-head .meta-row .status-bar { display: none !important; }
+  .page-head .meta-row .status-bar, .team-slide-bar > .status-bar { display: none !important; }
   .page-head { break-after: avoid; }
 
   /* …but `break-after: avoid` cannot save the FIRST seam on its own.

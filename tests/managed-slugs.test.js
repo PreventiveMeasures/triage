@@ -140,6 +140,13 @@ test('managed routes use exact server slugs and resolve back to internal UUIDs',
         assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), teams), internal)
       }
     }
+    // A team's lists, by what each lists.
+    for (const kind of ['reports', 'bundles', 'repositories']) {
+      const internal = { view: `workspace-${kind}`, teamId: team.id }
+      const path = managedRoutePath(managedRouteForIds(internal, teams))
+      assert.equal(path, `/team/${team.slug}/${kind}`)
+      assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), teams), internal)
+    }
   }
   assert.equal(resolveManagedRoute({ view: 'findings', teamSlug: first }, teams), null, 'a UUID is not an alias for a different stored slug')
   assert.equal(resolveManagedRoute({ view: 'findings', teamSlug: short, reportSlug: second }, teams), null, 'report must belong to the selected team')

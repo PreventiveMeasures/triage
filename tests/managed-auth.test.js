@@ -1692,6 +1692,21 @@ test('GET /api/teams + db.listTeamsForUser: a user sees only their own teams', a
   assert.deepEqual((await db.listTeamsForUser(alice.id)).map((t) => t.name), ['Blue', 'Red'])
   assert.deepEqual((await db.listTeamsForUser(bob.id)).map((t) => t.name), ['Blue'])
 
+  // Each team names its own repositories, by name, nothing attached to them
+  // needed; a path grant is listed by its path.
+  for (const [repoId, fullName] of [[7, 'o/zeta'], [8, 'o/alpha']]) {
+    await db.selectRepo({ repoId, fullName, private: false, installationId: null, defaultBranch: 'main', htmlUrl: 'h', addedBy: alice.id }, now)
+  }
+  await db.setTeamRepo(blue, 7, null)
+  await db.setTeamRepo(blue, 8, 'packages/b')
+  await db.setTeamRepo(blue, 8, 'packages/a')
+  await db.setTeamRepo(red, 8, null)
+  assert.deepEqual((await db.listTeamsForUser(alice.id)).map((t) => [t.name, t.repos]), [
+    ['Blue', [{ repoId: 8, fullName: 'o/alpha', path: 'packages/a' }, { repoId: 8, fullName: 'o/alpha', path: 'packages/b' }, { repoId: 7, fullName: 'o/zeta', path: null }]],
+    ['Red', [{ repoId: 8, fullName: 'o/alpha', path: null }]],
+  ])
+  assert.deepEqual((await db.listTeamsForUser(bob.id)).map((t) => t.repos.map(repo => repo.fullName)), [['o/alpha', 'o/alpha', 'o/zeta']])
+
   let pending = Promise.resolve()
   const handler = createManagedRequestHandler({
     config, db, avatarStore: fakeAvatarStore(), reportStore: fakeBlobStore(), bundleStore: createBundleStore(fakeBlobStore(), fakeBlobStore()),

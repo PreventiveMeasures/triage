@@ -54,7 +54,7 @@ function setLandingModePending(pending) {
   if (pending) landing.dataset.serverModePending = 'true'
   else delete landing.dataset.serverModePending
 }
-import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, refreshManagedWorkspaceFileCount, resetForClientModeTransition, switchToFile, switchToManagedDeduplication, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
+import { beginViewNavigation, currentViewGeneration, deleteCurrent, deleteCurrentBundle, goHome, leaveWorkspace, persistLastBundle, resetForClientModeTransition, switchToFile, switchToManagedDeduplication, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { exportWorkspace } from './workspace-export.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
@@ -310,7 +310,7 @@ function workspaceRailTemplate(workspaces) {
 
 function teamIsCurrent(team) {
   return state.currentManagedTeam === team.id && Boolean(state.currentWorkspace)
-    && ['findings', 'files', 'workspace-reports', 'workspace-bundles'].includes(state.currentView)
+    && ['findings', 'files', 'workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(state.currentView)
 }
 
 function teamReportIsCurrent(team, r) {
@@ -2222,7 +2222,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
     }
     if (!isCurrent()) return false
   }
-  if (!managedNavigationPending && ['workspace-reports', 'workspace-bundles'].includes(state.currentView) && !teams.some(team => team.id === state.currentManagedTeam)) {
+  if (!managedNavigationPending && ['workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(state.currentView) && !teams.some(team => team.id === state.currentManagedTeam)) {
     const cleared = goHome({ history: false })
     const clearing = currentViewGeneration()
     await cleared
@@ -2232,10 +2232,6 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
   }
   if (!managedNavigationPending && (state.currentWorkspace || state.bundleDetails?.npm || previousTeamName !== teams.find(team => team.id === state.currentManagedTeam)?.name)) render({ animate: false })
   renderSidebar()
-  // Catalog invalidation above also evicts the cached team report response.
-  // Refresh list counts after every confirmed snapshot, including unchanged
-  // revisions on reconnect so a previous failed read can recover.
-  if (fresh !== null && !managedNavigationPending && !(await refreshManagedWorkspaceFileCount(signal))) return false
   return true
 }
 
@@ -2291,7 +2287,7 @@ async function restoreManagedPageContent(route, isCurrent) {
   beginViewNavigation()
   // The shared catalog is kept current by feed revisions. Do not read it again
   // just to resolve another route; changed versions invalidate cached content.
-  if ((['findings', 'files', 'bundles', 'workspace-reports', 'workspace-bundles'].includes(route?.view) || route?.finding)
+  if ((['findings', 'files', 'bundles', 'workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(route?.view) || route?.finding)
     && (!(await viewManagedTeams(isCurrent)) || !isCurrent())) return false
   let adminBundles = []
   if (route?.view === 'bundles' && route.teamSlug == null) {
@@ -2316,7 +2312,7 @@ async function restoreManagedPageContent(route, isCurrent) {
     startManagedTeamFeed()
     return managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport, finding: { id: route.finding.id } }, state.managedTeams)
   }
-  if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') return switchToWorkspaceContent(route.teamId, route.view.slice(10), { history: false })
+  if (['workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(route.view)) return switchToWorkspaceContent(route.teamId, route.view.slice(10), { history: false })
   if (route.view === 'bundles') {
     const entries = route.teamId == null ? adminBundles.map(managedBundleEntry) : managedTeamBundleEntries(state.managedTeams)
     if (!(await openManagedBundle(route, entries, isCurrent, renderSidebar))) return false
@@ -2429,11 +2425,14 @@ document.addEventListener('managed-admin-navigate', (event) => {
   if (typeof view === 'string') void navigateToAdminPage(view, { actor, scanMode: event.detail?.scanMode, linkId: event.detail?.linkId })
 })
 
-// A repository's code, from its row on the Repositories page: at its default
-// branch's head.
+// A repository's code, from its row on the Repositories page or a team's: at
+// its default branch's head, in the directory `path` where the row names one,
+// `repo` its name for the header while it opens.
 document.addEventListener('managed-repository-code-open', event => {
-  const repoId = event.detail?.repoId
-  if (isManagedUiMode() && Number.isSafeInteger(repoId) && repoId > 0) navigateToRepositoryCode({ repoId })
+  const { repoId, repo = null, path = '' } = event.detail ?? {}
+  if (isManagedUiMode() && Number.isSafeInteger(repoId) && repoId > 0) {
+    navigateToRepositoryCode({ repoId, repo: typeof repo === 'string' && repo ? repo : null, path: typeof path === 'string' ? path : '' })
+  }
 })
 
 // Cold-start mode detection. With nothing cached we don't yet know the server's

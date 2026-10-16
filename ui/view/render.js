@@ -52,7 +52,7 @@ import { managedHistory } from './managed-history.js'
 import { npmPackageInput, renderNpmLookup } from './npm-package.js'
 import { repositoryCodeName } from './repository-code.js'
 import { canViewFindingHistory } from './finding-history.js'
-import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
+import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import { createViewRenderer } from './render-transition.js'
 import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
@@ -250,14 +250,12 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   const ws = state.currentWorkspace
     ? listWorkspaces().find((w) => w.id === state.currentWorkspace)
     : null
-  const team = state.currentWorkspace && state.currentManagedTeam
-    ? state.managedTeams.find((t) => t.id === state.currentManagedTeam) : null
   const context = workspaceContent(state, ws ? [ws] : [], getKind)
-  const titleText = team ? `Team: ${team.name}` : ws
+  const titleText = ws
     ? `Workspace: ${ws.name}`
     : (singleSource ? sourceTitle(singleSource) : 'Findings')
 
-  // Workspace/team counts open their report list. Individual reports keep
+  // A workspace's counts open its report list. Individual reports keep
   // their branded filename button and click-to-copy behavior.
   const singleStickerKey = singleSource && FILE_ICONS[singleSource] ? singleSource : 'default'
   const singleSticker = appMarkup(FILE_ICONS[singleStickerKey])
@@ -308,6 +306,11 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
     }
   }
 
+  // A team's header is its tabs' (workspace-content.js), counting the
+  // findings loaded here; it names no repository, its Repositories tab
+  // listing them all.
+  if (context?.scope === 'team') return teamHeaderTemplate(context, state.currentView, { findings: totalCount, statusBar: statusBarTpl })
+
   // Report-declared repo — `"repo": { "github": "owner/name" }` at the
   // top of a native dump, lifted onto the report record at ingest.
   // Outranks the findings-derived `knownRepo`: a report naming its own
@@ -326,8 +329,9 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   // it's visually tied to the report identity, and operates on/off
   // like the Trash button: clicking flips state.currentView between
   // 'files' and the previous (saved) view. Gated on
-  // `treeFileCount > 1`; a single-file tree adds no value.
-  const filesBtnTpl = filesButtonTemplate(treeFileCount, state.currentView)
+  // `treeFileCount > 1`; a single-file tree adds no value. A report's
+  // alone: a workspace's Files opens from its graph.
+  const filesBtnTpl = context ? nothing : filesButtonTemplate(treeFileCount, state.currentView)
 
   return html`<header class="page-head">
     <div class="page-title">
@@ -1778,11 +1782,11 @@ function renderImpl() {
   // Lives before the reports-gate below because the bundles list is
   // independent of any loaded report; the user can browse OPFS
   // bundles even without a finding-bearing JSON open.
-  if (state.currentView === 'workspace-reports' || state.currentView === 'workspace-bundles') {
+  if (['workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(state.currentView)) {
     const kind = state.currentView.slice(10)
     const context = workspaceContent(state, listWorkspaces(), getKind)
     const slot = ensureReportSlot('workspace-content-slot')
-    if (slot) litRender(renderWorkspaceContent(context, kind, state.workspaceContentFileCount), slot)
+    if (slot) litRender(renderWorkspaceContent(context, kind), slot)
     document.title = context ? `${context.title} — ${kind}` : `DeepView — ${kind}`
     return
   }

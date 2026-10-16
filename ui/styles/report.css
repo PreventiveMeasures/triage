@@ -168,31 +168,6 @@
       border-radius: 50%;
       flex-shrink: 0;
     }
-    /* Severity status bar — flex-row of segments whose flex-grow is
-       set to each severity's group count (so widths divide
-       proportionally). Painted only in workspace-merged views; gives
-       a one-glance shape of how bad the workspace is at the same
-       resolution as the toolbar chips below. */
-    & .meta-row .status-bar {
-      display: inline-flex;
-      width: 200px; height: 8px;
-      border-radius: 3px;
-      overflow: hidden;
-      background: var(--border);
-      vertical-align: middle;
-    }
-    & .meta-row .status-seg {
-      display: block; height: 100%;
-      flex-basis: 0;
-      &.sev-critical      { background: var(--critical); }
-      &.sev-high          { background: var(--high); }
-      &.sev-medium        { background: var(--medium); }
-      &.sev-low           { background: var(--low); }
-      &.sev-high_bug      { background: var(--high-bug); }
-      &.sev-bug           { background: var(--bug); }
-      &.sev-informational { background: var(--info); }
-    }
-
     & .meta-row .tag {
       display: inline-flex; align-items: center;
       padding: 1px var(--header-tag-padding, .375rem);
@@ -286,6 +261,31 @@
       }
     }
   }
+}
+
+/* Severity status bar — flex-row of segments whose flex-grow is set to
+   each severity's group count (so widths divide proportionally). In the
+   header's meta-row, and in a team's header bar between its title and its
+   tabs: a one-glance shape of how bad the findings are at the same
+   resolution as the toolbar chips below. */
+.status-bar {
+  display: inline-flex;
+  width: 200px; height: 8px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--border);
+  vertical-align: middle;
+}
+.status-seg {
+  display: block; height: 100%;
+  flex-basis: 0;
+  &.sev-critical      { background: var(--critical); }
+  &.sev-high          { background: var(--high); }
+  &.sev-medium        { background: var(--medium); }
+  &.sev-low           { background: var(--low); }
+  &.sev-high_bug      { background: var(--high-bug); }
+  &.sev-bug           { background: var(--bug); }
+  &.sev-informational { background: var(--info); }
 }
 
 /* The uncapped header reserves the actual PWA window-control area,
@@ -406,7 +406,8 @@
   }
   .bundles-slide-header .bundles-tab { margin-bottom: 0; }
   .bundles-slide-header .bundles-slide-title,
-  .bundles-slide-header .bundles-slide-tabs {
+  .bundles-slide-header .bundles-slide-tabs,
+  .team-slide-bar > .status-bar {
     -webkit-app-region: no-drag;
     app-region: no-drag;
   }
@@ -470,6 +471,24 @@
   display: flex; gap: .25rem;
   flex-shrink: 0;
 }
+
+/* A team's header (workspace-content.js teamHeaderTemplate): its title,
+   its findings' severities between it and its tabs, and the tabs, each
+   counting what it opens (toolbar.css .team-slide-tab .n). Where they don't
+   fit side by side, the tabs wrap under them, at the right, as a
+   repository's do. */
+.team-slide-name {
+  flex: 0 1 auto; min-width: 0;
+  margin: 0;
+  font-size: .9rem; font-weight: 600; letter-spacing: -.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.team-slide-bar {
+  flex-wrap: wrap; row-gap: .4rem;
+  & > .status-bar { flex: 0 1 auto; min-width: 3rem; margin-inline: auto; }
+  & > .bundles-slide-tabs { margin-left: auto; }
+}
+.team-slide-tab { display: inline-flex; align-items: center; gap: .35rem; }
 
 .bundles-scan-button { flex-shrink: 0; }
 .bundles-scan-button[hidden] { display: none; }
@@ -1813,7 +1832,7 @@ bundle-search {
   text-align: left;
   font: inherit;
   cursor: default;
-  &:hover:not(:disabled) { background: var(--surface-active); }
+  &:is(button):hover:not(:disabled) { background: var(--surface-active); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   &:disabled { cursor: default; color: var(--muted); }
 }

@@ -4,7 +4,7 @@ import { probeTeams } from '../client/managed/session.js'
 import { createManagedTeamsProbe } from '../ui/view/managed-teams-probe.js'
 
 const session = { id: 'user', role: 'view' }
-const teams = [{ id: 'team', name: 'Team', slug: 'team', reports: [], bundles: [] }]
+const teams = [{ id: 'team', name: 'Team', slug: 'team', repos: [], reports: [], bundles: [] }]
 function fixture(t) {
   const calls = []
   t.mock.method(globalThis, 'fetch', (_url, { signal }) => {

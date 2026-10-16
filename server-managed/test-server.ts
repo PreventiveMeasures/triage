@@ -272,6 +272,7 @@ const currentTeams = () => teamFixtures.map((team) => ({
   slug: team.slug,
   name: team.name,
   permissions: { dependencies: true, security: true },
+  repos: team.repoLinks.map(link => ({ repoId: link.repoId, fullName: repoById(link.repoId)?.fullName ?? `repository-${link.repoId}`, path: link.path || null })),
   reports: teamReportRefs(team),
   bundles: bundles.filter(bundle => bundle.visible || role === 'admin' || role === 'manage').filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId && (!link.path || bundle.repoDirectory === link.path || bundle.repoDirectory.startsWith(link.path + '/')))).map((bundle) => ({ id: bundle.id, slug: bundle.slug, visible: bundle.visible, integrity: bundle.integrity, byteSize: bundle.byteSize, repoId: bundle.repoId!, repoDirectory: bundle.repoDirectory, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
 }))

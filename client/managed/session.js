@@ -86,8 +86,8 @@ function bundleCommitInfo(info) {
       authorLogin: text(details.authorLogin), authoredAt: time(details.authoredAt), committedAt: time(details.committedAt) } : null }
 }
 
-// GET /api/teams → the signed-in user's teams, each with the reports and bundles
-// attached to the team's repos ([{ id, slug, name, reports: [{ id, slug, filename, analyzer, repoFullName, repoDirectory }],
+// GET /api/teams → the signed-in user's teams, each with its repos and the reports and bundles
+// attached to them ([{ id, slug, name, repos: [{ repoId, fullName, path }], reports: [{ id, slug, filename, analyzer, repoFullName, repoDirectory }],
 // bundles: [{ id, slug, integrity, filename, byteSize, repoId, repoDirectory, repoFullName, commitInfo }] }]), or [] when
 // unauthenticated. A failed background refresh keeps the provided fallback.
 // Kept on `state.managedTeams` and shown in the
@@ -110,6 +110,8 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
       ...(t.permissions ? { permissions: { dependencies: t.permissions.dependencies === true, security: t.permissions.security === true } } : {}),
       ...(typeof t.cacheKey === 'string' ? { cacheKey: t.cacheKey } : {}),
       ...(teamApp(t.app) ? { app: teamApp(t.app) } : {}),
+      repos: Array.isArray(t.repos) ? t.repos.filter((r) => Number.isSafeInteger(r?.repoId) && r.repoId > 0 && typeof r.fullName === 'string')
+        .map((r) => ({ repoId: r.repoId, fullName: r.fullName, path: typeof r.path === 'string' && r.path ? r.path : null })) : [],
       reports: Array.isArray(t.reports)
         ? t.reports
           .filter((r) => r != null && typeof r.id === 'string' && typeof r.filename === 'string')
@@ -124,13 +126,7 @@ export async function probeTeams({ fallback = [], signal, onRevision } = {}) {
         ? t.bundles
           .filter((b) => b != null && typeof b.id === 'string' && typeof b.filename === 'string')
           .map((b) => ({
-            id: b.id,
-            slug: b.slug,
-            integrity: b.integrity,
-            byteSize: b.byteSize,
-            repoId: b.repoId,
-            filename: b.filename,
-            kind: b.kind,
+            id: b.id, slug: b.slug, integrity: b.integrity, byteSize: b.byteSize, repoId: b.repoId, filename: b.filename, kind: b.kind,
             visible: b.visible !== false,
             summary: b.summary ?? null,
             summaryRetryAt: Number.isSafeInteger(b.summaryRetryAt) && b.summaryRetryAt > 0 ? b.summaryRetryAt : null,
