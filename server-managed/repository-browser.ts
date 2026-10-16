@@ -53,10 +53,11 @@ export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryB
         if (!cached) tokens.set(repo.installationId, token)
         return token
       }
-      // Its Dependabot alerts, with its installation's token where the user's
-      // own access lets them see them (dependabot-access.ts).
+      // Its Dependabot alerts, with the token of the installation GitHub tells
+      // covers it, where the user's own access lets them see them
+      // (dependabot-access.ts).
       return repositoryReader(repo, user.token, installationToken, getIdentity, fetchImpl).then(reader => ({ ...reader,
-        dependabotAlerts: () => appDependabotAlerts(config, repo, { installationToken, identity: getIdentity, permission: reader.permission }, fetchImpl) }))
+        dependabotAlerts: () => appDependabotAlerts(config, repo, { identity: getIdentity, permission: reader.permission }, fetchImpl) }))
     },
   }
 }

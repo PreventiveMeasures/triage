@@ -6,7 +6,7 @@ import { GithubApiError } from '../server-managed/github-errors.ts'
 
 const config = { githubAppId: '1', githubAppPrivateKey: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }) }
 const ada = { id: 11, login: 'ada' }
-const repo = { repoId: 1, fullName: 'org/one', installationId: 7 }
+const repo = { repoId: 1, fullName: 'org/one' }
 const alert = { number: 1, state: 'dismissed', dismissed_reason: 'tolerable_risk', dependency: { package: { ecosystem: 'npm', name: 'lodash' }, manifest_path: 'package-lock.json' },
   security_advisory: { ghsa_id: 'GHSA-35jh-r3h4-6jhm', summary: 'Command Injection in lodash', identifiers: [], cwes: [] },
   security_vulnerability: { severity: 'high', vulnerable_version_range: '< 4.17.21' } }
@@ -16,7 +16,7 @@ const alert = { number: 1, state: 'dismissed', dismissed_reason: 'tolerable_risk
 // `token-<id>.<n>` as minted again; the account's
 // permission (`permission`, null for a 404) and of whom (`userId`); and the
 // alerts. What was asked noted, with the token it was asked with.
-function github({ installed = null, permission = 'admin', userId = ada.id } = {}) {
+function github({ installed = 7, permission = 'admin', userId = ada.id } = {}) {
   const asked = [], minted = new Map()
   const fetchImpl = (url, init = {}) => {
     const { pathname } = new URL(url)
@@ -36,11 +36,9 @@ function github({ installed = null, permission = 'admin', userId = ada.id } = {}
   }
   return { asked, fetchImpl }
 }
-// A repository's reader (repository-browser.ts): its installation's token, null
-// where it has none, the user's identity, and their permission level where its
-// gate asked it.
-const readerOf = ({ token = 'reader-token', identity = Promise.resolve(ada), permission = null } = {}) => ({
-  installationToken: () => Promise.resolve(token), identity: () => identity, permission: () => permission })
+// A repository's reader (repository-browser.ts): the user's identity, and their
+// permission level where its gate asked it.
+const readerOf = ({ identity = Promise.resolve(ada), permission = null } = {}) => ({ identity: () => identity, permission: () => permission })
 const tokensFor = (asked, path) => asked.filter(([pathname]) => pathname === path).map(([, token]) => token)
 const ALERTS = '/repos/org/one/dependabot/alerts', PERMISSION = '/repos/org/one/collaborators/ada/permission'
 
@@ -49,7 +47,7 @@ test('a repository\'s alerts are read with its installation\'s token once the ad
     const { asked, fetchImpl } = github({ permission })
     const { alerts } = await appDependabotAlerts(config, repo, readerOf(), fetchImpl)
     assert.deepEqual(alerts.map(({ number, dismissed }) => [number, dismissed]), [[1, { reason: 'tolerable_risk' }]], permission)
-    assert.deepEqual([tokensFor(asked, PERMISSION), tokensFor(asked, ALERTS)], [['token-7'], ['token-7']], 'the access asked by the reader\'s installation, the alerts read with its token')
+    assert.deepEqual([tokensFor(asked, PERMISSION), tokensFor(asked, ALERTS)], [['token-7'], ['token-7']], 'the access asked by the installation GitHub tells covers it, the alerts read with its token')
   }
   const { asked, fetchImpl } = github({ permission: 'read' })
   assert.equal((await appDependabotAlerts(config, repo, readerOf({ permission: 'admin' }), fetchImpl)).alerts.length, 1)
@@ -77,14 +75,16 @@ test('an admin whose sign-in can\'t be verified is refused so, nothing more aske
   assert.deepEqual([tokensFor(asked, PERMISSION), tokensFor(asked, ALERTS)], [[], []])
 })
 
-test('where the reader has no installation\'s token, the one GitHub tells the App of now is used; none, refused so', async () => {
-  const unkept = github({ installed: 8 })
-  assert.equal((await appDependabotAlerts(config, repo, readerOf({ token: null }), unkept.fetchImpl)).alerts.length, 1)
-  assert.deepEqual(tokensFor(unkept.asked, '/repos/org/one/installation'), ['jwt'], 'asked with the App\'s JWT')
-  assert.deepEqual(tokensFor(unkept.asked, ALERTS), ['token-8'])
-  const none = github({ installed: null })
-  await assert.rejects(appDependabotAlerts(config, repo, readerOf({ token: null }), none.fetchImpl), { message: 'dependabot-not-installed' })
-  assert.deepEqual(tokensFor(none.asked, PERMISSION), [])
+test('the installation is the one GitHub tells covers the repository now, never one its connection keeps; none, refused so, its admin not blamed', async () => {
+  const moved = github({ installed: 8 })
+  assert.equal((await appDependabotAlerts(config, { ...repo, installationId: 7 }, readerOf(), moved.fetchImpl)).alerts.length, 1)
+  assert.deepEqual(tokensFor(moved.asked, '/repos/org/one/installation'), ['jwt'], 'asked with the App\'s JWT')
+  assert.deepEqual([tokensFor(moved.asked, PERMISSION), tokensFor(moved.asked, ALERTS)], [['token-8'], ['token-8']])
+  for (const permission of [null, 'admin']) {
+    const none = github({ installed: null })
+    await assert.rejects(appDependabotAlerts(config, repo, readerOf({ permission }), none.fetchImpl), { message: 'dependabot-not-installed' }, permission)
+    assert.deepEqual([tokensFor(none.asked, PERMISSION), tokensFor(none.asked, ALERTS)], [[], []])
+  }
 })
 
 test('access to the alerts is checked again before they are told, asked of GitHub afresh, never as the reader kept it: withdrawn since, refused so', async () => {
