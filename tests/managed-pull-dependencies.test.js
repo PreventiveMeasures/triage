@@ -245,8 +245,8 @@ test('of a lockfile adding more than are told, the first by name, the rest count
   const added = fresh()
   github(t, { ...added, compared: [{ filename: 'package-lock.json', status: 'added' }], files: { [added.headAt]: { 'package-lock.json': npmLockfile(packages) } } })
   const [dir] = (await pullDependencies('org/repo', 'token', 5, memory())).lockfiles
-  assert.equal(dir.added.length, MAX_ADDED)
-  assert.equal(dir.more, 3)
+  assert.equal(dir.added.length, MAX_ADDED + 3, 'every one kept, for its review')
+  assert.equal(dir.more, 3, 'those past MAX_ADDED, which aren\'t told, counted')
   assert.equal(dir.added[0].name, 'pkg-000')
 })
 

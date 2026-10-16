@@ -82,8 +82,8 @@ export function touchesLockfile(paths: string[], changed: number): boolean | nul
 export type AddedPackage = LockedPackage & { was?: string[] }
 // A directory's lockfiles the pull request changes (`paths`, those it adds,
 // modifies, removes or renames, by either name): the package versions they
-// lock new to it, as many as MAX_ADDED, by name and version, how many more
-// (`more`), and all they lock (`locked`, as many as MAX_LOCKED, how many more
+// lock new to it, by name and version (as many as MAX_LOCKED, told as many
+// as MAX_ADDED, `more` past them), and all they lock (`locked`, as many as MAX_LOCKED, how many more
 // `moreLocked`); or why they couldn't be told, a lockfile's reader refusing one
 // (`lockfile-unreadable`, with what it said), one of a format not read
 // (`lockfile-unsupported`, Bun's) or GitHub having none at a commit compared.
@@ -218,7 +218,8 @@ export const lockedWith = (pkg: LockedPackage) => `${lockedAs(pkg)}\0${pkg.integ
 
 // What a directory's lockfiles add, from each read before and after: the
 // package versions after none before has, each once, by name and version,
-// each with the versions of its name before; and every one after, each
+// each with the versions of its name before, those past MAX_ADDED counted
+// (`more`), not told but reviewed as they are; and every one after, each
 // integrity it is locked with (`locked`), as many as MAX_LOCKED; or the first
 // failure among them.
 function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[]): DirectoryDependencies {
@@ -247,7 +248,7 @@ function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[])
     }
   }
   const all = [...added.values()].toSorted(byName)
-  return { paths, added: all.slice(0, MAX_ADDED), more: Math.max(0, all.length - MAX_ADDED),
+  return { paths, added: all.slice(0, MAX_LOCKED), more: Math.max(0, all.length - MAX_ADDED),
     locked: [...locked.values()].slice(0, MAX_LOCKED), moreLocked: Math.max(0, locked.size - MAX_LOCKED) }
 }
 

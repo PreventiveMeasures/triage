@@ -74,7 +74,9 @@ function checked(answer) {
   const review = answer.review
   return { lockfiles, cut: answer.cut === true, ...count(review?.required) > 0 ? { review: { required: review.required,
     since: typeof review.since === 'string' ? review.since : null, canReview: review.canReview === true,
+    ...count(review.toReview) === null ? {} : { toReview: review.toReview },
     ...count(review.unreviewed) === null ? {} : { unreviewed: review.unreviewed }, ...count(review.unsupported) === null ? {} : { unsupported: review.unsupported },
+    ...Array.isArray(review.baselineUnread) && review.baselineUnread.every(path => typeof path === 'string') ? { baselineUnread: review.baselineUnread } : {},
     ...review.reviewedDependencies === true ? { reviewedDependencies: true } : {}, ...count(review.unasked) > 0 ? { unasked: review.unasked } : {},
     ...typeof review.baselineError === 'string' ? { baselineError: review.baselineError } : {} } } : {} }
 }
@@ -119,11 +121,13 @@ export function pullDependencies(repoId, number, review = false) {
 
 // What an answer tells new: each package version once, across its
 // directories, those of packages new to them first (`fresh`, no `was`), then
-// the new versions of those they locked before; how many of each; and
-// whether it tells more than it sends (`more`). A version new to one
-// directory's lockfiles and an update in another's is an update, with the
-// versions it was in each, whichever directory comes first; and its review
-// the less passing of theirs (bothReviewed).
+// the new versions of those they locked before; how many of each; whether
+// it tells more than it sends (`more`); and how many want reviews
+// (`toReview`), as its review counts them, those it didn't send among
+// them. A version new to one directory's lockfiles and an update in
+// another's is an update, with the versions it was in each, whichever
+// directory comes first; and its review the less passing of theirs
+// (bothReviewed).
 export function addedVersions({ lockfiles, review }) {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.added ?? [])) {
@@ -136,7 +140,7 @@ export function addedVersions({ lockfiles, review }) {
   const versions = [...all.values()]
   const fresh = versions.filter(pkg => !pkg.was)
   return { versions: [...fresh, ...versions.filter(pkg => pkg.was)], fresh: fresh.length, updated: versions.length - fresh.length, more: lockfiles.some(dir => dir.more > 0),
-    toReview: versions.filter(pkg => reviewOf(pkg, review) === 'wanted').length }
+    toReview: review?.toReview ?? versions.filter(pkg => reviewOf(pkg, review) === 'wanted').length }
 }
 
 // The review of a version two directories lock, the less passing of theirs

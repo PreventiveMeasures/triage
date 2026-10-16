@@ -2016,8 +2016,9 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
     const told = answered.value
     const state = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told)) : null
     const reviewed = deps.reviewedDependencies ?? null
-    const { baseline, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, error: null }
-    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineError: error, reviewed }) }, kept: answered.kept }
+    const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
+    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed }) },
+      kept: answered.kept }
   })
 }
 
@@ -2028,9 +2029,10 @@ function baselineKept(deps: ManagedHttpDeps): ReviewBaselineStore {
   return {
     async read(key) {
       const value = (await store.read(key))?.value
-      return Array.isArray(value) ? value : null
+      const strings = (list: unknown) => Array.isArray(list) && list.every(item => typeof item === 'string')
+      return strings(value?.versions) && strings(value?.unread) ? value : null
     },
-    write: (key, versions) => store.write(key, versions, Date.now()),
+    write: (key, baseline) => store.write(key, baseline, Date.now()),
   }
 }
 

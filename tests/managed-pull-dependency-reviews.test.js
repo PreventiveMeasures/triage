@@ -14,6 +14,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { lockedPackages } from '../server-managed/locked-packages.ts'
 import { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages } from '../server-managed/pull-dependency-reviews.ts'
+import { MAX_ADDED } from '../server-managed/pull-dependencies.ts'
 import { checkRepositoryDependencyReviews, context, people, publish } from './_managed-repository-dependency-reviews.js'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000 }
@@ -115,7 +116,7 @@ test('each version a pull request adds is told its review: how many pass it, of 
     passing(mirrored, 'u1'), passing(mirrored, 'u2'),
   ] }
   const answer = await reviewedDependencies(told, state, { baseline: new Set([`kept@1.0.0\0${sri('kept@1.0.0')}\0`]) })
-  assert.deepEqual(answer.review, { required: 2, since, canReview: true, unreviewed: 2, unsupported: 3 })
+  assert.deepEqual(answer.review, { required: 2, since, canReview: true, toReview: 1, unreviewed: 2, unsupported: 3 })
   assert.deepEqual(answer.lockfiles[0], { paths: ['package-lock.json'], more: 0, moreLocked: 0,
     added: [{ ...strip(ms), reviews: 2 }, { ...strip(tool), reviews: 1 }, { ...strip(kept), baseline: true }, { ...mine, unsupported: 'git' }, local],
     unreviewed: [{ ...strip(other), reviews: 0 }, { ...strip(msElse), reviews: 0 }], moreUnreviewed: 0,
@@ -142,6 +143,18 @@ test('of a directory\'s other versions wanting reviews and those that can\'t be 
     assert.deepEqual([one.unreviewed.length, one.moreUnreviewed, one.unsupported.length, one.moreUnsupported, one.moreLocked], [MAX_UNREVIEWED, 2, MAX_UNREVIEWED, 1, 7])
   }
   assert.deepEqual([answer.review.unreviewed, answer.review.unsupported], [MAX_UNREVIEWED + 2, MAX_UNREVIEWED + 1], 'two workspaces locking the same versions count them once')
+})
+
+test('a version added past those told is judged as one added, against the versions it was, and counted as wanting a review', async () => {
+  const added = Array.from({ length: MAX_ADDED }, (_, n) => at(`new-${String(n).padStart(3, '0')}`, '1.0.0'))
+  const tail = at('zz-tail', '2.0.0', { was: ['1.0.0'] })
+  const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 1, moreLocked: 0, added: [...added, tail],
+    locked: [...added, bare(tail)] }] }
+  const reviews = [...added.map(pkg => passing(pkg, 'u1')), passing(tail, 'u1', '0.5.0')]
+  const answer = await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews })
+  const [dir] = answer.lockfiles
+  assert.deepEqual([dir.added.length, dir.more, dir.unreviewed.length], [MAX_ADDED, 1, 0], 'told as many as MAX_ADDED, the rest counted, none of them told another\'s')
+  assert.equal(answer.review.toReview, 1, 'a review against a version it never was passes none')
 })
 
 test('a patched version passes by no review here, only locked so at the commit reviewed since; registered reviewed dependencies, asked of every version wanting one, pass any in its place', async () => {
@@ -172,7 +185,7 @@ test('a patched version passes by no review here, only locked so at the commit r
   assert.deepEqual(answer.lockfiles[0].added, [{ ...shownAs(plain), reviewed: true }, shownAs(patched), { ...shownAs(vouched), reviewed: true }],
     'the commit reviewed since counts for nothing where reviewed dependencies are registered')
   assert.deepEqual(answer.lockfiles[0].unreviewed, [{ ...shownAs(failing), reviews: 0 }], 'one they failed to answer unreviewed')
-  assert.deepEqual(answer.review, { required: 2, since: null, canReview: true, reviewedDependencies: true, unreviewed: 1, unsupported: 0, unasked: 1 })
+  assert.deepEqual(answer.review, { required: 2, since: null, canReview: true, reviewedDependencies: true, toReview: 1, unreviewed: 1, unsupported: 0, unasked: 1 })
   assert.deepEqual(asked.toSorted((a, b) => a.name < b.name ? -1 : 1), [
     { ecosystem: 'npm', lockfile: 'npm', name: 'failing', version: '1.0.0', integrity: sri('failing@1.0.0') },
     { ecosystem: 'npm', lockfile: 'yarn1', name: 'other', version: '1.0.0', integrity: sri('other@1.0.0'), shasum: '5'.repeat(40) },
@@ -223,8 +236,8 @@ function contents(path, text) {
 // GitHub, as a pull request's lockfiles and those at the commit reviews are
 // counted since are read of it: pull request 5's base at `tip` and head at
 // `head`, compared from `mergeBase`, changing `compared`; `files` by commit;
-// `asked` what was asked of it.
-function github(t, { files, compared = [] }) {
+// `asked` what was asked of it; `missing` the files listed it has none of.
+function github(t, { files, compared = [], missing = [] }) {
   const asked = []
   const commits = Object.fromEntries(Object.entries(files).map(([commit, tree]) => [commit, gitTrees(tree)]))
   t.mock.method(globalThis, 'fetch', input => {
@@ -239,7 +252,7 @@ function github(t, { files, compared = [] }) {
     const listed = Object.values(commits).find(({ trees }) => trees.has(tree))
     if (listed) return Promise.resolve(Response.json({ sha: tree, tree: deepListing(listed.trees, tree), truncated: false }))
     const path = url.pathname.startsWith('/repos/org/repo/contents/') ? decodeURIComponent(url.pathname.slice('/repos/org/repo/contents/'.length)) : null
-    const text = path && files[url.searchParams.get('ref')]?.[path]
+    const text = path && !missing.includes(path) && files[url.searchParams.get('ref')]?.[path]
     if (text) return Promise.resolve(Response.json(contents(path, text)))
     return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
   })
@@ -249,22 +262,32 @@ function github(t, { files, compared = [] }) {
 const BASELINE = {
   'package-lock.json': npmLockfile({ ms: registry('ms', '2.1.2'), mine: gitDependency }),
   'web/yarn.lock': yarnLockfile,
+  'berry/yarn.lock': '__metadata:\n  version: 8\n',
+  'bun.lock': '{}\n',
   'src/index.js': 'export {}\n',
 }
 
 test('the versions the repository\'s lockfiles locked at the commit reviews are counted since are read once, of every lockfile there, those that can\'t be reviewed left out, and kept by the commit', async t => {
   const asked = github(t, { files: { [since]: BASELINE } })
   const kept = memory()
-  const versions = await reviewBaseline('org/repo', 'token', 1, since, kept)
-  assert.deepEqual([...versions].toSorted(), [`left-pad@1.3.0\0${sri('left-pad@1.3.0')}\0`, `ms@2.1.2\0${sri('ms@2.1.2')}\0`], 'a git dependency there needs its reviews all the same')
-  assert.deepEqual(kept.kept.get(`1\0${since}`), [...versions])
+  const baseline = await reviewBaseline('org/repo', 'token', 1, since, kept)
+  assert.deepEqual([...baseline.versions].toSorted(), [`left-pad@1.3.0\0${sri('left-pad@1.3.0')}\0`, `ms@2.1.2\0${sri('ms@2.1.2')}\0`], 'a git dependency there needs its reviews all the same')
+  assert.deepEqual(baseline.unread, ['berry/yarn.lock', 'bun.lock'], 'a later Yarn\'s, and Bun\'s, unread, their versions wanting reviews')
+  assert.deepEqual(kept.kept.get(`1\0${since}`), { versions: [...baseline.versions], unread: baseline.unread })
   assert.ok(asked.includes(`/repos/org/repo/contents/web/yarn.lock?ref=${since}`))
   asked.length = 0
-  assert.equal(await reviewBaseline('org/repo', 'token', 1, since, kept), versions)
+  assert.equal(await reviewBaseline('org/repo', 'token', 1, since, kept), baseline)
   assert.deepEqual(asked, [], 'held in this instance')
-  kept.kept.set(`2\0${since}`, [`x@1.0.0\0${sri('x@1.0.0')}\0`])
-  assert.deepEqual([...await reviewBaseline('org/repo', 'token', 2, since, kept)], [`x@1.0.0\0${sri('x@1.0.0')}\0`])
+  kept.kept.set(`2\0${since}`, { versions: [`x@1.0.0\0${sri('x@1.0.0')}\0`], unread: [] })
+  assert.deepEqual([...(await reviewBaseline('org/repo', 'token', 2, since, kept)).versions], [`x@1.0.0\0${sri('x@1.0.0')}\0`])
   assert.deepEqual(asked, [], 'kept beyond it')
+
+  // GitHub having none of a lockfile it lists there: the whole fails, kept nowhere.
+  t.mock.restoreAll()
+  const gone = 'f'.repeat(40)
+  github(t, { files: { [gone]: BASELINE }, missing: ['web/yarn.lock'] })
+  await assert.rejects(reviewBaseline('org/repo', 'token', 3, gone, kept), /github-not-found/u)
+  assert.equal(kept.kept.has(`3\0${gone}`), false)
 })
 
 test('a repository\'s review is in effect once enabled and a team that reviews dependencies has it; its passing reviews are full, accepting, published to such a team and not revoked', async t => {
@@ -325,7 +348,7 @@ test('an open pull request\'s dependencies, asked with their review, tell each v
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
   const answer = await ask({ review: '1' })
   assert.equal(answer.status, 200)
-  assert.deepEqual(answer.body.review, { required: 1, since, canReview: true, unreviewed: 1, unsupported: 1 })
+  assert.deepEqual(answer.body.review, { required: 1, since, canReview: true, toReview: 0, unreviewed: 1, unsupported: 1, baselineUnread: ['berry/yarn.lock', 'bun.lock'] })
   assert.deepEqual(answer.body.lockfiles, [{ paths: ['package-lock.json'], more: 0, moreLocked: 0,
     added: [{ name: 'left-pad', version: '1.3.0', source: 'registry', baseline: true }, { name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 1 }],
     unreviewed: [{ name: 'kept', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 0,
@@ -351,7 +374,7 @@ test('where the host registers reviewed dependencies, they replace the commit re
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, since })
   const read = github(t, PULL)
   const answer = await send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`)
-  assert.deepEqual(answer.body.review, { required: 1, since: null, canReview: true, reviewedDependencies: true, unreviewed: 0, unsupported: 1 },
+  assert.deepEqual(answer.body.review, { required: 1, since: null, canReview: true, reviewedDependencies: true, toReview: 2, unreviewed: 0, unsupported: 1 },
     'one stored before they were registered ignored')
   assert.deepEqual(answer.body.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviewed === true]), [['left-pad', false], ['ms', false]])
   assert.deepEqual(asked.toSorted(), ['kept@1.0.0', 'left-pad@1.3.0', 'ms@2.1.3'])

@@ -29,7 +29,7 @@ import { upstreamGithub } from './github-errors.ts'
 import { GithubApiError } from './github-app.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
-import { type AddedPackage, type DirectoryDependencies, type PullDependencies, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
+import { type AddedPackage, type DirectoryDependencies, MAX_ADDED, type PullDependencies, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
 import type { PassingReview, RepoReviewState } from './repository-dependency-reviews.ts'
 import { type ReviewedDependencies, type ReviewedDependency, askReviewed } from './reviewed-dependencies.ts'
 
@@ -39,8 +39,14 @@ import { type ReviewedDependencies, type ReviewedDependency, askReviewed } from 
 const MAX_BASELINE_LOCKFILES = 100
 export const MAX_UNREVIEWED = 200
 
-export interface ReviewBaselineStore { read(key: string): Promise<string[] | null>; write(key: string, versions: string[]): Promise<void> }
-const baselines: Lru<Set<string>> = lru(500_000, versions => versions.size + 1)
+// The versions a commit's lockfiles lock, and the lockfiles there that
+// couldn't be read (`unread`), whose versions want reviews all the same.
+export interface Baseline { versions: Set<string>; unread: string[] }
+export interface ReviewBaselineStore {
+  read(key: string): Promise<{ versions: string[]; unread: string[] } | null>
+  write(key: string, value: { versions: string[]; unread: string[] }): Promise<void>
+}
+const baselines: Lru<Baseline> = lru(500_000, baseline => baseline.versions.size + baseline.unread.length + 1)
 
 // Why a version can't be reviewed: from git, of a tarball not npm's
 // registry's of its version, or locked with no integrity.
@@ -60,24 +66,30 @@ const hashesOf = (pkg: LockedPackage) => (pkg.integrity ?? '').split(/\s+/u).fil
 const baselineKeys = (pkg: LockedPackage) => hashesOf(pkg).map(hash => `${pkg.name}@${pkg.version ?? ''}\0${hash}\0${pkg.patchHash ?? ''}`)
 
 // The versions the repository's lockfiles locked at commit `since` that are
-// reviewed (reviewedAs), as kept, else read of GitHub and kept.
-export async function reviewBaseline(fullName: string, token: string, repoId: number, since: string, kept: ReviewBaselineStore): Promise<Set<string>> {
+// reviewed (reviewedAs), as kept, else read of GitHub and kept; with the
+// lockfiles there its reader refuses, isn't one of, or past
+// MAX_BASELINE_LOCKFILES (`unread`). GitHub having none of a lockfile it
+// lists there is a failure of the whole, as of any file, never kept.
+export async function reviewBaseline(fullName: string, token: string, repoId: number, since: string, kept: ReviewBaselineStore): Promise<Baseline> {
   const key = `${repoId}\0${since}`
   const known = baselines.get(key)
   if (known) return known
   const stored = await kept.read(key)
-  if (stored) { const versions = new Set(stored); baselines.set(key, versions); return versions }
+  if (stored) { const baseline = { versions: new Set(stored.versions), unread: stored.unread }; baselines.set(key, baseline); return baseline }
   const { lockfiles } = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).findRepoLockfiles({ repo: fullName, sha: since }))
+  const read = lockfiles.flatMap(({ path }) => { const format = lockfileFormat(path); return format ? [{ path, format }] : [] })
   const versions = new Set<string>()
-  for (const { path } of lockfiles.slice(0, MAX_BASELINE_LOCKFILES)) {
-    const format = lockfileFormat(path)
-    if (!format) continue
-    const read = await readLockfile(fullName, token, since, { path, format })
-    for (const pkg of 'packages' in read ? read.packages : []) if (reviewedAs(pkg) === 'version') for (const held of baselineKeys(pkg)) versions.add(held)
+  const unread = read.slice(MAX_BASELINE_LOCKFILES).map(({ path }) => path)
+  for (const lockfile of read.slice(0, MAX_BASELINE_LOCKFILES)) {
+    const packages = await readLockfile(fullName, token, since, lockfile)
+    if ('error' in packages && packages.error === 'github-not-found') throw new GithubApiError(404, 'github-not-found')
+    if ('error' in packages) { unread.push(lockfile.path); continue }
+    for (const pkg of packages.packages) if (reviewedAs(pkg) === 'version') for (const held of baselineKeys(pkg)) versions.add(held)
   }
-  baselines.set(key, versions)
-  await kept.write(key, [...versions])
-  return versions
+  const baseline = { versions, unread: unread.toSorted() }
+  baselines.set(key, baseline)
+  await kept.write(key, { versions: [...versions], unread: baseline.unread })
+  return baseline
 }
 
 // Passing reviews by the version they are of, its name and version.
@@ -134,23 +146,26 @@ function judge(pkg: LockedPackage, bases: string[] | 'any', { state, reviews, ba
   return { review: { reviews: count }, wants: count < state.required }
 }
 
-// A directory as the client is told it: what it adds, each version with its
-// review (`review`, as judged); the others its lockfiles lock that want
-// reviews, and every one that can't be reviewed (as many of each as
-// MAX_UNREVIEWED, how many more, once `capped`); and how many it locks past
-// those read (`moreLocked`), which aren't checked; without `review`, what it
-// adds alone.
+// A directory as the client is told it: what it adds, as many as MAX_ADDED,
+// each version with its review (`review`, as judged), those past them judged
+// as they are, against the versions they were, and how many of all want one
+// (`toReview`); the others its lockfiles lock that want reviews, and every one
+// that can't be reviewed (as many of each as MAX_UNREVIEWED, how many more,
+// once `capped`); and how many it locks past those read (`moreLocked`), which
+// aren't checked; without `review`, what it adds alone.
 function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null) {
   if ('error' in dir) return dir
   const { locked, moreLocked, added, ...told } = dir
-  if (!review) return { ...told, added: added.map(shown) }
+  if (!review) return { ...told, added: added.slice(0, MAX_ADDED).map(shown) }
   const adds = new Set(added.map(lockedWith))
+  const own = added.map((pkg: AddedPackage) => ({ pkg, judged: review(pkg, pkg.was ?? []) }))
   const others = locked.filter(pkg => !adds.has(lockedWith(pkg))).map(pkg => ({ pkg, judged: review(pkg, 'any') }))
   const unsupported = locked.flatMap(pkg => { const as = reviewedAs(pkg); return as === 'version' || as === 'skip' ? [] : [{ ...shown(pkg), unsupported: as }] })
-  return { ...told, added: added.map((pkg: AddedPackage) => ({ ...shown(pkg), ...review(pkg, pkg.was ?? []).review })),
+  return { ...told, added: own.slice(0, MAX_ADDED).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review })),
+    toReview: own.filter(({ judged }) => judged.wants).map(({ pkg }) => shown(pkg)),
     unreviewed: others.filter(({ judged }) => judged.wants).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review })), unsupported, moreLocked }
 }
-function capped<T extends { unreviewed: unknown[]; unsupported: unknown[] }>(dir: T) {
+function capped<T extends { toReview: unknown[]; unreviewed: unknown[]; unsupported: unknown[] }>({ toReview: _toReview, ...dir }: T) {
   return { ...dir, unreviewed: dir.unreviewed.slice(0, MAX_UNREVIEWED), moreUnreviewed: Math.max(0, dir.unreviewed.length - MAX_UNREVIEWED),
     unsupported: dir.unsupported.slice(0, MAX_UNREVIEWED), moreUnsupported: Math.max(0, dir.unsupported.length - MAX_UNREVIEWED) }
 }
@@ -167,16 +182,18 @@ const sourceKey = (pkg: Shown) => `${pkg.source}\0${versionKey(pkg)}\0${pkg.from
 // effect, each version's review (reviewedDirectory), those wanting one asked
 // of the registered reviewed dependencies (`reviewed`), and the review's
 // terms (`review`), with how many versions across its directories want
-// reviews (`unreviewed`, those it adds aside) and can't be reviewed
-// (`unsupported`), each once; how many the reviewed dependencies failed to
+// reviews, of those it adds (`toReview`) and the rest (`unreviewed`), and
+// can't be reviewed (`unsupported`), each once; how many the reviewed dependencies failed to
 // answer (`unasked`), and whether they are registered (`reviewedDependencies`,
 // the commit reviewed since then none); and where the baseline couldn't be
-// read, why (`baselineError`), every version then wanting its reviews. It
+// read, why (`baselineError`), every version then wanting its reviews, or
+// the lockfiles there left unread (`baselineUnread`), whose versions do. It
 // fails where a version can't be reviewed, a directory's lockfiles couldn't
 // be read or lock more than are checked, or the pull request changes more
 // lockfiles than are read (`cut`).
 export async function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null,
-  { baseline = null, baselineError = null, reviewed = null }: { baseline?: Set<string> | null; baselineError?: string | null; reviewed?: ReviewedDependencies | null } = {}) {
+  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null }:
+  { baseline?: Set<string> | null; baselineUnread?: string[]; baselineError?: string | null; reviewed?: ReviewedDependencies | null } = {}) {
   if (!state) return { ...told, lockfiles: told.lockfiles.map(dir => reviewedDirectory(dir, null)) }
   const context = { state, reviews: reviewsByVersion(state.reviews), baseline: reviewed ? null : baseline }
   // What wants a review here, as the reviewed dependencies are asked of.
@@ -195,8 +212,10 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   const listed = dirs.flatMap(dir => 'unreviewed' in dir ? [dir] : [])
   return { ...told, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required,
     since: reviewed ? null : state.since, canReview: state.canReview, ...reviewed ? { reviewedDependencies: true } : {},
-    unreviewed: distinct(listed.map(dir => dir.unreviewed), versionKey), unsupported: distinct(listed.map(dir => dir.unsupported), sourceKey),
-    ...unasked > 0 ? { unasked } : {}, ...baselineError && !reviewed ? { baselineError } : {} } }
+    toReview: distinct(listed.map(dir => dir.toReview), versionKey), unreviewed: distinct(listed.map(dir => dir.unreviewed), versionKey),
+    unsupported: distinct(listed.map(dir => dir.unsupported), sourceKey),
+    ...unasked > 0 ? { unasked } : {}, ...baselineError && !reviewed ? { baselineError } : {},
+    ...baselineUnread.length > 0 && !reviewed ? { baselineUnread: baselineUnread.slice(0, MAX_UNREVIEWED) } : {} } }
 }
 
 // The packages a pull request's lockfiles lock that its reviews here may
@@ -204,14 +223,16 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
 export const reviewedPackages = (told: PullDependencies) => told.lockfiles
   .flatMap(dir => 'error' in dir ? [] : dir.locked.filter(pkg => reviewedAs(pkg) === 'version' && !pkg.patchHash).map(pkg => pkg.name))
 
-// A repository's baseline as read for a pull request: none where it reviews
-// since no commit, and where GitHub doesn't read it, none and why.
+// A repository's baseline as read for a pull request: its versions and the
+// lockfiles there left unread; none where it reviews since no commit; and
+// where GitHub doesn't read it, none and why.
 export async function baselineFor(fullName: string, token: string, repoId: number, state: RepoReviewState, kept: ReviewBaselineStore) {
-  if (!state.since) return { baseline: null, error: null }
+  if (!state.since) return { baseline: null, unread: [], error: null }
   try {
-    return { baseline: await reviewBaseline(fullName, token, repoId, state.since, kept), error: null }
+    const { versions, unread } = await reviewBaseline(fullName, token, repoId, state.since, kept)
+    return { baseline: versions, unread, error: null }
   } catch (err) {
-    if (err instanceof GithubApiError && err.status !== 429 && err.status !== 401) return { baseline: null, error: err.message }
+    if (err instanceof GithubApiError && err.status !== 429 && err.status !== 401) return { baseline: null, unread: [], error: err.message }
     throw err
   }
 }

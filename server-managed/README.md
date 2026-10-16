@@ -2053,15 +2053,18 @@ version pnpm patches (`patched`) passes by no review here, the app reviewing
 no patch yet: only by the reviewed dependencies the host registers (below),
 or, without them, locked so, its patch too, at the commit reviewed since. A version it adds passes
 with as many reviews as required, of it whole or compared with a version it
-was; and apart from them, every other version its lockfiles lock wants its
+was, those past the two hundred told judged so too and counted (`toReview`); and apart from them, every other version its lockfiles lock wants its
 reviews as well, of it whole or compared with any version of its package.
 Where the repository is reviewed since a commit, the versions its lockfiles
 locked there, of every lockfile of npm's ecosystem in it (a hundred at most)
 that can be reviewed, need none: read of GitHub once, and kept by the commit
 in the instance's memory and in the database (under
-`repository/review-baselines`, a month), never stored as reviews. Without
-that commit, every version wants its reviews. Where GitHub doesn't read it,
-every version wants them, and the popup says why.
+`repository/review-baselines`, a month), never stored as reviews. A lockfile
+there its reader refuses, of Bun's, or past the hundred read is told
+(`baselineUnread`), the versions it locked wanting reviews. Without that
+commit, every version wants its reviews. Where GitHub doesn't read it, or
+has none of a lockfile it lists there, every version wants them, the popup
+says why, and nothing is kept.
 
 Each directory then tells each version it adds with its review (`reviews`,
 how many pass it; `baseline`, needing none; or `unsupported`, `git`,

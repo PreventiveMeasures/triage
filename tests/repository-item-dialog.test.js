@@ -147,7 +147,7 @@ test('a pull request changing a lockfile, merged or closed as well as open, show
 
 test('an open pull request\'s dependencies, where its repository reviews them, show its terms, what fails it, each version\'s review linked to reviewing it, and the others wanting reviews apart', async () => {
   const mine = { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }
-  const reply = canReview => ({ cut: false, review: { required: 2, since: 'd'.repeat(40), canReview }, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0,
+  const reply = canReview => ({ cut: false, review: { required: 2, since: 'd'.repeat(40), canReview, baselineUnread: ['berry/yarn.lock'] }, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0,
     added: [{ name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 2 }, { name: 'tool', version: '1.0.0', source: 'registry', reviews: 1 },
       { name: 'left-pad', version: '1.3.0', source: 'registry', baseline: true }, mine, { name: 'local', version: '1.0.0', source: 'file' }],
     unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 2,
@@ -163,6 +163,7 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   const text = templateText(dialog.render())
   assert.deepEqual(dependencyOptions, [[31, { review: true }]], 'an open one\'s asked with their review')
   assert.match(text, /Each version needs 2 full, accepting reviews by as many reviewers; those the repository’s lockfiles locked at <code>ddddddd<\/code> need none\./u)
+  assert.match(text, /role="alert">At that commit, <code>berry\/yarn\.lock<\/code> couldn’t be read, so the versions it locked want reviews\./u)
   assert.match(text, /<div class="repo-item-failed" role="alert">\s*<p>Its review fails: 3 versions its lockfiles lock can’t be reviewed, as only npm’s registry’s, locked with an integrity, are\.<\/p>/u)
   const failed = text.slice(text.indexOf('repo-item-failed'), text.indexOf('repo-item-lockfiles'))
   assert.match(failed, /mirrored<span class="repo-item-version">@1\.0\.0<\/span>[^]*is-failed" data-tooltip=A tarball not npm’s registry’s of its version, which isn’t reviewed>can’t review<[^]*>mirror</u)

@@ -176,13 +176,18 @@ class RepositoryItemDialog extends AppDialog {
   // A review's terms: the reviews each version needs, by as many reviewers,
   // or the server's reviewed dependencies passing it, where they are
   // registered, else the commit at whose lockfiles' versions none is needed,
-  // where it is set; where those couldn't be read, or the reviewed
-  // dependencies answer, that the versions they would pass want reviews.
-  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError }) {
+  // where it is set; where those couldn't be read, or some of the
+  // lockfiles there (`baselineUnread`, the first few named), or the
+  // reviewed dependencies answer, that the versions they would pass want
+  // reviews.
+  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [] }) {
+    const named = baselineUnread.slice(0, 5)
     return html`<p class="repo-item-quiet">Each version needs ${plural(required, 'full, accepting review')} by as many reviewers${reviewedDependencies
       ? ', or the server’s reviewed dependencies to pass it; a patched one, those alone' : since
       ? html`; those the repository’s lockfiles locked at <code>${since.slice(0, 7)}</code> need none` : nothing}.</p>
       ${baselineError ? html`<p class="repo-item-quiet" role="alert">The versions its lockfiles locked at that commit couldn’t be read (${baselineError}), so every version wants its reviews.</p>` : nothing}
+      ${named.length > 0 ? html`<p class="repo-item-quiet" role="alert">At that commit, ${named.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}${baselineUnread.length > named.length
+        ? ` and ${(baselineUnread.length - named.length).toLocaleString('en-US')} more` : ''} couldn’t be read, so the versions ${baselineUnread.length === 1 ? 'it' : 'they'} locked want reviews.</p>` : nothing}
       ${unasked ? html`<p class="repo-item-quiet" role="alert">The server’s reviewed dependencies didn’t answer for ${plural(unasked, 'version')}, so ${unasked === 1 ? 'it wants' : 'they want'} reviews.</p>` : nothing}`
   }
 
