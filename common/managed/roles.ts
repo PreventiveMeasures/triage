@@ -26,3 +26,10 @@ export function roleAtLeast(role: Role, min: Role): boolean {
   const r = ROLES.indexOf(role)
   return r !== -1 && r <= ROLES.indexOf(min)
 }
+
+// Who reads connected repositories' code (the code viewer): a team member,
+// view or above, the server reading only what their team grants reach and
+// their own GitHub account may read. A public link reads none.
+export function canReadRepositoryCode(session: { role: Role; publicShare?: boolean } | null | undefined): boolean {
+  return session != null && !session.publicShare && roleAtLeast(session.role, 'view')
+}

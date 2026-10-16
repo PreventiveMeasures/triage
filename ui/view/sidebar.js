@@ -21,7 +21,7 @@ import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRep
 import { railLetters } from './sidebar-rail.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
-import { ROLES, isRole } from '../../common/managed/roles.ts'
+import { ROLES, canReadRepositoryCode, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import { setManagedTeamFeedRefresh, startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
 import sidebarCSS from './sidebar.css'
@@ -2322,8 +2322,9 @@ async function restoreManagedPageContent(route, isCurrent) {
   }
   if (route.view === 'home') return goHome({ history: false })
   if (route.view === 'npm') return openNpmRoute(route, isCurrent, renderSidebar)
-  // The code viewer reads repositories as Create a bundle browses them.
-  if (route.view === 'repository-code') return ['admin', 'manage'].includes(state.managedSession.role) && openRepositoryCodeRoute(route, isCurrent, renderSidebar)
+  // The code viewer reads repositories as Create a bundle browses them, for
+  // any team member (canReadRepositoryCode).
+  if (route.view === 'repository-code') return canReadRepositoryCode(state.managedSession) && openRepositoryCodeRoute(route, isCurrent, renderSidebar)
   if (route.view === 'reviews' || route.view === 'profile') {
     if (state.managedSession.publicShare) return false
     cleanupGraph2()
