@@ -28,13 +28,16 @@ const QUERY = `query($owner: String!, $name: String!, $number: Int!, $comments: 
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     comments(first: 100, after: $comments) @include(if: $readComments) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } }
     reviews(first: 50, after: $reviews) @include(if: $readReviews) { pageInfo { hasNextPage endCursor }
-      nodes { id author { ${ACTOR} } body state createdAt url comments(first: 100) { nodes { id author { ${ACTOR} } body createdAt url } } } }
+      nodes { id author { ${ACTOR} } body state createdAt url comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } } } }
   } } }`
+// A review's comments on lines of its diff, a page on from its cursor.
+const REVIEW_COMMENTS = `query($id: ID!, $after: String) { node(id: $id) { ... on PullRequestReview {
+  comments(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } } } } }`
 
 // A comment as read, and its author's account.
 interface Authored { comment: ReviewComment; account: { login: string | null; id: number | null } }
-type Node = { id?: unknown; author?: GraphAccount; body?: unknown; state?: unknown; createdAt?: unknown; url?: unknown; comments?: { nodes?: unknown } }
 type Page = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: unknown }
+type Node = { id?: unknown; author?: GraphAccount; body?: unknown; state?: unknown; createdAt?: unknown; url?: unknown; comments?: Page }
 
 const comments: Lru<{ at: number; read: Authored[] }> = lru(200)
 const answers: Lru<{ at: number; reviews: CommentReview[] }> = lru(2000)
@@ -49,8 +52,20 @@ const nodes = (list: unknown): Node[] => Array.isArray(list) ? list as Node[] : 
 // The cursor a page ends at, where more follow it.
 const next = (page: Page | undefined) => page?.pageInfo?.hasNextPage === true && typeof page.pageInfo.endCursor === 'string' ? page.pageInfo.endCursor : null
 
-// Pull request `number`'s comments, its reviews' and those on its diff, as
-// kept, else read of GitHub a page at a time.
+// Review `review`'s comments on lines of its diff: the page read with it,
+// then those after it read of GitHub, till as many as `room` are.
+async function inlineComments(review: Node, room: number, token: string, fetchImpl: typeof fetch): Promise<Authored[]> {
+  const read = nodes(review.comments?.nodes).flatMap(inline => authored(inline, 'review-comment'))
+  for (let after = typeof review.id === 'string' ? next(review.comments) : null; after !== null && read.length < room;) {
+    const data = await githubGraphql(REVIEW_COMMENTS, { id: review.id, after }, token, fetchImpl) as { node?: { comments?: Page } | null } | null
+    read.push(...nodes(data?.node?.comments?.nodes).flatMap(inline => authored(inline, 'review-comment')))
+    after = next(data?.node?.comments)
+  }
+  return read
+}
+
+// Pull request `number`'s comments, its reviews' and those on its diff, each
+// review's all of them, as kept, else read of GitHub a page at a time.
 export async function pullComments(fullName: string, token: string, number: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<Authored[]> {
   const key = `${fullName}\0${number}`
   const known = comments.get(key)
@@ -69,7 +84,7 @@ export async function pullComments(fullName: string, token: string, number: numb
     for (const node of nodes(pull.comments?.nodes)) read.push(...authored(node, 'comment'))
     for (const node of nodes(pull.reviews?.nodes)) {
       read.push(...authored(node, 'review'))
-      for (const inline of nodes(node.comments?.nodes)) read.push(...authored(inline, 'review-comment'))
+      read.push(...await inlineComments(node, MAX_COMMENTS - read.length, token, fetchImpl))
     }
     cursors = { comments: reading.comments ? next(pull.comments) : null, reviews: reading.reviews ? next(pull.reviews) : null }
     reading = { comments: cursors.comments !== null, reviews: cursors.reviews !== null }

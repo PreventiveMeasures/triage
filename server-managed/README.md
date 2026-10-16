@@ -2119,13 +2119,14 @@ or triages and sees its dependencies, or an admin)
 shows a **Dependencies** tab after Repositories (`/team/<slug>/dependencies`,
 `team-dependencies.js`). Of each of its repositories whose review is in
 effect for them (three read at once, one they may read only some of left
-out), it reads the open pull requests (three pages at most) and
+out), it reads the open pull requests (three pages at most, those updated
+latest, saying so where there are more) and
 the dependencies, with their review, of those changing a lockfile, as their
 tiles do, and lists the pull requests whose versions want reviews, or whose
 review fails, those adding fewest first, each a card opening its popup: how
 many versions it wants reviewed, and its versions with their review (`0/2`,
 **rejected**, **patched** or **can't review**), eight at most, the rest
-counted. A version is told under the first pull request adding it alone, of
+counted, those past the versions its answer lists too. A version is told under the first pull request adding it alone, of
 whichever repository, as one review passes it everywhere: another adding it
 too says so (`+1`), and a later one counts it as one a pull request above
 adds. Apart from them, folded, are every version wanting reviews, each once,
@@ -2174,7 +2175,7 @@ them). It is given the pull request (`repository`, `number`) and its
 comments (`comments`, a thousand at most, read of GitHub's GraphQL API and
 kept in the instance a minute): each with its `kind` (`comment`, `review`,
 whatever its state, which it tells, `state`, or `review-comment`, on a line
-of its diff), `id`, `author` (a login), `body`, `createdAt` and `url`. It
+of its diff, every one of each review's), `id`, `author` (a login), `body`, `createdAt` and `url`. It
 answers the reviews they make: `[{ user, time?, dependencies: [{ name,
 version, integrity, patchHash?, status }] }]`, `status` `accept`,
 `accept-with-nits`, `request-changes` or `reject`, each full, its answer to
