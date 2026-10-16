@@ -93,9 +93,12 @@ export const riskLineStore = <T>(db: UpstreamCacheStore, keptMs: number, debug =
 // What a scan read, each read for keptMs (repository-risk.ts): of GitHub, a
 // repository's lockfiles as listed at a commit (`listings`) and a lockfile's
 // packages by its blob (`lockfiles`), for SCAN_READ_KEPT_MS; of npm, a
-// lockfile's advisories by its blob (`advisories`), for RISK_KEPT_MS; and the
-// repositories a scan in parts told whole (`progress`).
-export const scanReadStore = <T>(db: UpstreamCacheStore, type: 'listings' | 'lockfiles' | 'advisories' | 'progress', keptMs: number, debug = false): KeptStore<T> =>
+// lockfile's advisories by its blob (`advisories`), for RISK_KEPT_MS; the
+// repositories a scan in parts told whole (`progress`); a repository's
+// Actions' files by the commit read (`action-files`), and the actions and
+// reusable workflows of others they name, each resolved (`actions`), of
+// public repositories alone (repository-actions.ts).
+export const scanReadStore = <T>(db: UpstreamCacheStore, type: 'listings' | 'lockfiles' | 'advisories' | 'progress' | 'action-files' | 'actions', keptMs: number, debug = false): KeptStore<T> =>
   keptStore<T>(db, `repository-risk/${type}`, keptMs, debug)
 // What the code viewer read of a repository (http.ts readWholeRepository), by
 // its id and what was asked, each kept REPOSITORY_READ_KEPT_MS.

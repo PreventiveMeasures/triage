@@ -261,3 +261,4 @@ td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
 .risk-scope-bar select { min-width: 14rem; }
 .risk-scope-bar repository-selector { flex: 0 1 20rem; min-width: 14rem; }
 .risk-tabs { width: fit-content; margin-bottom: .5rem; }
+.risk-in-code { color: var(--muted); font-size: .9em; }
