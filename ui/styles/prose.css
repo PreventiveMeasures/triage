@@ -55,6 +55,23 @@
    carries — under `.recommendation` that is green, and a grey marker
    beside green text would break the one thing that rule is for. */
 .md-list li::marker { color: rgb(from currentcolor r g b / .45); }
+/* A task item (render-finding.js listTemplate): its box where the
+   bullet would be, out of the flow so an item going on into a nested
+   list keeps it beside its first line. */
+.md-list li.md-task { list-style: none; position: relative; }
+.md-task > input {
+  position: absolute; inset-inline-start: -1.2em; top: calc((1lh - .9em) / 2);
+  width: .9em; height: .9em; margin: 0; font: inherit;
+}
+/* A description's `##` heading and `---` rule (render-finding.js
+   lineBlockTemplate): the heading bold, the top two levels a step
+   larger, with more room above than below so it sits with what it
+   heads; the rule the hairline every other divider here is. */
+.md-heading { font-weight: 600; }
+.md-heading:is([aria-level='1'], [aria-level='2']) { font-size: 1.15em; }
+.md-heading:not(:first-child) { margin-top: .75lh; }
+.md-heading + * { margin-top: .25lh; }
+.md-rule { margin: .75lh 0; border: 0; border-top: 1px solid var(--border); }
 /* Same story for the fenced code blocks a description carries — a
    light-DOM copy of finding-card.css's `.code-block` rules, so a
    snippet in a bundle-side description reads as the same box the card
