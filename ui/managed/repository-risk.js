@@ -80,6 +80,10 @@ const ERRORS = {
   'upstream-invalid': 'npm answered unexpectedly',
   'dependabot-disabled': 'Dependabot alerts off',
   'dependabot-forbidden': 'No access to Dependabot alerts',
+  'dependabot-app-permission': 'App lacks Dependabot alerts permission',
+  'dependabot-not-installed': 'App not installed',
+  'dependabot-unverified': 'Sign-in not verified, sign in again',
+  'github-app-not-configured': 'GitHub App not configured',
 }
 const errorText = code => ERRORS[code] ?? code
 const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only admins can scan repositories.',
