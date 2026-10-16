@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { filesButtonTemplate, renderWorkspaceContent, workspaceContent, workspaceContentButton, workspaceFileCount, workspaceTitleTemplate } from '../ui/view/workspace-content.js'
+import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from '../ui/view/workspace-content.js'
 import { templateText as text } from './_lit.js'
 
 test('workspace bundle count and list share membership, including unavailable bundles', () => {
@@ -42,19 +42,58 @@ test('workspace titles navigate from Files and bundle lists but are plain text i
   }
 })
 
-test('report and bundle lists retain the Files button with the merged source file count', () => {
-  const reports = [{ tree: { 'src/a.js': {}, 'src/shared.js': {} } }, { tree: { 'src/shared.js': {}, 'src/b.js': {} } }, null]
-  const count = workspaceFileCount(reports)
-  assert.equal(count, 3)
-  const context = { title: 'Workspace: App', reports: [], bundles: [] }
-  for (const kind of ['reports', 'bundles']) {
-    const list = text(renderWorkspaceContent(context, kind, count))
-    assert.match(list, /data-action="toggle-files" aria-pressed=false>3 files/u)
+test('report and bundle lists have no Files button, which a report keeps', () => {
+  const workspace = { scope: 'workspace', title: 'Workspace: App', reports: [], bundles: [] }
+  const team = { ...workspace, scope: 'team', title: 'Team: App', findings: 3, repositories: [] }
+  for (const context of [workspace, team]) {
+    for (const kind of ['reports', 'bundles']) assert.doesNotMatch(text(renderWorkspaceContent(context, kind)), /toggle-files|files</u)
   }
-  assert.match(text(filesButtonTemplate(count, 'files')), /aria-pressed=true>3 files/u)
-  assert.equal(text(filesButtonTemplate(1, 'workspace-reports')), '')
-  assert.equal(text(filesButtonTemplate(0, 'workspace-bundles')), '')
-  assert.equal(workspaceFileCount([null, { source: 'links', tree: { ignored: {} } }]), 0)
+  assert.match(text(filesButtonTemplate(3, 'files')), /aria-pressed=true>3 files/u)
+  assert.equal(text(filesButtonTemplate(1, 'findings')), '')
+})
+
+test('a team names its linked repositories, with their paths, reports and bundles, opening code where the reader may browse it', () => {
+  const team = { id: 'a', name: 'First',
+    repos: [{ repoId: 2, fullName: 'o/api', path: 'packages/a' }, { repoId: 2, fullName: 'o/api', path: 'packages/b' }, { repoId: 1, fullName: 'o/web', path: null }, { repoId: 3, fullName: 'o/empty', path: null }],
+    reports: [{ id: 'r1', filename: 'a.json', repoFullName: 'o/api' }, { id: 'r2', filename: 'b.json', repoFullName: 'o/api', visible: false },
+      { id: 'links', filename: 'links.json', analyzer: 'links', repoFullName: 'o/web' }, { id: 'r3', filename: 'c.json', repoFullName: 'o/elsewhere' }],
+    bundles: [{ id: 'b1', filename: 'web.stasis', repoId: 1, repoFullName: 'o/web' }] }
+  const read = role => workspaceContent({ currentWorkspace: 'managed-team:a', currentManagedTeam: 'a', managedTeams: [team], managedSession: role && { id: 's', role } }, [])
+  const context = read('manage')
+  assert.deepEqual(context.repositories.map(r => [r.name, r.paths, r.reports, r.bundles, r.available]), [
+    ['o/api', ['packages/a', 'packages/b'], 2, 0, true], ['o/web', [], 0, 1, true], ['o/empty', [], 0, 0, true],
+  ])
+  const list = text(renderWorkspaceContent(context, 'repositories'))
+  assert.match(list, /data-workspace-repository=2[\s\S]*data-repository-path=>[\s\S]*o\/api[\s\S]*packages\/a, packages\/b[\s\S]*2 reports/u)
+  assert.match(list, /data-workspace-repository=1\s+data-repository-name=o\/web data-repository-path=>/u)
+  assert.match(list, /1 bundle</u)
+  for (const role of ['view', 'triage', null]) {
+    const shown = text(renderWorkspaceContent(read(role), 'repositories'))
+    assert.doesNotMatch(shown, /data-workspace-repository|<button type="button" class="workspace-content-row"/u, `${role}: listed, not opened`)
+    assert.match(shown, /o\/empty/u)
+  }
+  assert.deepEqual(read('view').repositories.map(r => r.available), [false, false, false])
+  assert.equal(workspaceContent({ currentWorkspace: 'managed-team:a', currentManagedTeam: 'a', managedSession: { id: 's', role: 'admin', publicShare: true },
+    managedTeams: [team] }, []).repositories.some(r => r.available), false, 'a public share opens no code')
+  assert.match(text(renderWorkspaceContent(workspaceContent({ currentWorkspace: 'managed-team:a', currentManagedTeam: 'a', managedTeams: [{ id: 'a', name: 'None' }] }, []), 'repositories')),
+    /No repositories in this team/u)
+})
+
+test("a team's header is its title, its findings' bar and its tabs, each counting in a bubble", () => {
+  const context = { scope: 'team', title: 'Team: triage.space', findings: 40, reports: [{}, {}], bundles: [{}],
+    repositories: ['o/a', 'o/b', 'o/c'].map((name, repoId) => ({ repoId, name, paths: [], reports: 0, bundles: 0, available: false })) }
+  const header = text(teamHeaderTemplate(context, 'findings', { findings: 224, statusBar: 'BAR' }))
+  assert.match(header, /<bundle-slide-header[^>]*><header class="bundles-slide-bar team-slide-bar">/u)
+  assert.match(header, /<h1 class="team-slide-name"[^>]*>Team: triage.space<\/h1>\s*BAR\s*<div class="bundles-slide-tabs" role="tablist"/u)
+  const tabs = [...header.matchAll(/aria-selected=(true|false)\s+data-action=workspace-(\w+)>(\w+)<span class="n">(\d+)<\/span>/gu)].map(m => [m[2], m[3], m[4], m[1]])
+  assert.deepEqual(tabs, [['findings', 'Findings', '224', 'true'], ['reports', 'Reports', '2', 'false'], ['bundles', 'Bundles', '1', 'false'], ['repositories', 'Repositories', '3', 'false']])
+  assert.doesNotMatch(header, /repo-chip|toggle-files/u)
+  // Files is its findings' tab too; lists count the team's findings as its catalog does.
+  assert.match(text(teamHeaderTemplate(context, 'files')), /aria-selected=true\s+data-action=workspace-findings>Findings<span class="n">40</u)
+  const list = text(renderWorkspaceContent(context, 'repositories'))
+  assert.match(list, /aria-selected=true\s+data-action=workspace-repositories>Repositories<span class="n">3</u)
+  assert.match(list, /data-action=workspace-findings>Findings<span class="n">40</u)
+  assert.doesNotMatch(text(teamHeaderTemplate({ ...context, findings: null }, 'workspace-reports')), /Findings<span/u, 'an unknown count shows none')
 })
 
 test('report lists match workspace membership and expose missing local files without opening them', () => {

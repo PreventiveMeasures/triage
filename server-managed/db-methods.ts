@@ -359,6 +359,9 @@ export interface UserTeam {
   dependencyReview?: boolean
   permissions: TeamUserPermissions
   cacheKey?: string
+  // The team's repository links, by name: its Repositories, whether or not
+  // anything is attached to them yet.
+  repos: TeamRepoLink[]
   reports: UserTeamReport[]
   bundles: UserTeamBundle[]
 }
@@ -1518,6 +1521,8 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
         cacheKey: createHash('sha256').update(JSON.stringify([
           t.dependencies, t.security, links, scopes.filter(scope => scope.teamId === t.id),
         ])).digest('base64url'),
+        repos: scopes.filter(scope => scope.teamId === t.id).map(scope => ({ repoId: scope.repoId, fullName: scope.fullName, path: scope.path || null }))
+          .toSorted((a, b) => a.fullName.localeCompare(b.fullName) || (a.path ?? '').localeCompare(b.path ?? '')),
         reports: reportsByTeam.get(t.id) ?? [],
         bundles: bundlesByTeam.get(t.id) ?? [],
       }))

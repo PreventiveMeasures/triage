@@ -184,6 +184,7 @@ test('an anonymous token sees one published workspace, its annotations and no gl
   assert.deepEqual(bootstrap.body.team.reports.map(r => r.id), ['child', 'visible'])
   assert.deepEqual(bootstrap.body.team.reports.map(r => [r.repoFullName, r.repoDirectory]), [['org/repo1', 'app/child'], ['org/repo1', 'app']])
   assert.deepEqual(bootstrap.body.team.bundles, [])
+  assert.deepEqual(bootstrap.body.team.repos, [{ repoId: 1, fullName: 'org/repo1', path: 'app' }], 'the shared team names its repositories alone')
   assert.deepEqual((await h.request('/api/teams/team/reports', { token })).body.reports.map(r => r.id), ['child', 'visible'])
   await h.db.setTriage('visible-finding', { color: 'red' }, null, 'manager', Date.now())
   await h.db.setTriage('foreign-finding', { color: 'blue' }, null, 'manager', Date.now())

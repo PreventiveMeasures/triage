@@ -28,6 +28,9 @@ export const MANAGED_PAGES = Object.freeze({
   'manage-history': '/manage/history',
 })
 
+// A team's lists, each at /team/<slug>/<what it lists>.
+const WORKSPACE_CONTENT_VIEWS = new Set(['workspace-reports', 'workspace-bundles', 'workspace-repositories'])
+
 // Dot-only path components are normalised away by URL parsers, even escaped.
 function findingPath(id) {
   if (!isLinkableFindingId(id) || id === '.' || id === '..') return null
@@ -41,7 +44,7 @@ export function managedRoutePath(route) {
   if (route.view === 'profile') return '/my/profile'
   if (route.view === 'npm') return npmPackagePath(route)
   if (route.view === 'repository-code') return repositoryCodePath(route)
-  if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
+  if (WORKSPACE_CONTENT_VIEWS.has(route.view)) {
     return /^[A-Za-z0-9_-]+$/u.test(route.teamSlug ?? '') ? `/team/${route.teamSlug}/${route.view.slice(10)}` : null
   }
   if (route.view === 'bundles') {
@@ -238,7 +241,7 @@ export function parseManagedRoute(url) {
   if (npm !== undefined) return npm
   const code = parseRepositoryCodeRoute(url)
   if (code !== undefined) return code
-  const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles)$/u.exec(path)
+  const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles|repositories)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }
   const match = /^\/team\/([^/]+)(?:\/report\/([^/]+))?(?:\/(files)|\/finding\/([^/]+))?$/u.exec(path)
   if (!match) return null
@@ -256,7 +259,7 @@ export function parseManagedRoute(url) {
 // URL tokens are exact server-assigned slugs. Application state and API calls
 // continue to use UUIDs; never guess IDs from suffixes or accept ID aliases.
 export function resolveManagedRoute(route, teams, adminBundles = []) {
-  if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
+  if (WORKSPACE_CONTENT_VIEWS.has(route.view)) {
     const matches = teams.filter(team => team.slug === route.teamSlug)
     return matches.length === 1 ? { view: route.view, teamId: matches[0].id } : null
   }
@@ -289,7 +292,7 @@ export function resolveManagedRoute(route, teams, adminBundles = []) {
 }
 
 export function managedRouteForIds(route, teams, adminBundles = []) {
-  if (route.view === 'workspace-reports' || route.view === 'workspace-bundles') {
+  if (WORKSPACE_CONTENT_VIEWS.has(route.view)) {
     const team = teams.find(entry => entry.id === route.teamId)
     const result = { view: route.view, teamSlug: team?.slug }
     return team?.slug && resolveManagedRoute(result, teams) ? result : null

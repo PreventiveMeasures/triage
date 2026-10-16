@@ -954,7 +954,7 @@ report.addEventListener('click', (e) => {
     }
     return
   }
-  const workspaceContentButton = e.target.closest('[data-action="workspace-reports"], [data-action="workspace-bundles"]')
+  const workspaceContentButton = e.target.closest('[data-action="workspace-reports"], [data-action="workspace-bundles"], [data-action="workspace-repositories"]')
   if (workspaceContentButton) {
     const kind = workspaceContentButton.dataset.action.slice(10)
     if (state.currentView !== `workspace-${kind}`) void switchToWorkspaceContent(state.currentManagedTeam ?? state.currentWorkspace, kind)
@@ -978,6 +978,14 @@ report.addEventListener('click', (e) => {
     if (isManagedUiMode()) {
       void switchToManagedTeam(state.managedTeams.find(team => team.id === state.currentManagedTeam), workspaceReport.dataset.workspaceReport)
     } else void switchToFile(workspaceReport.dataset.workspaceReport, undefined, { workspaceId: state.currentWorkspace })
+    return
+  }
+  // A team's repository, from its Repositories list: its code, at the path
+  // the team links it by where it links one.
+  const workspaceRepository = e.target.closest('[data-workspace-repository]')
+  if (workspaceRepository) {
+    const { workspaceRepository: repoId, repositoryName: repo, repositoryPath: path } = workspaceRepository.dataset
+    document.dispatchEvent(new CustomEvent('managed-repository-code-open', { detail: { repoId: Number(repoId), repo, path } }))
     return
   }
   const workspaceBundle = e.target.closest('[data-workspace-bundle]')
@@ -1005,11 +1013,6 @@ report.addEventListener('click', (e) => {
   const filesToggle = e.target.closest('[data-action="toggle-files"]')
   if (filesToggle) {
     if (navigateManagedReportView(state.currentView === 'files' ? 'findings' : 'files')) return
-    if (state.currentView === 'workspace-reports' || state.currentView === 'workspace-bundles') {
-      state.currentView = 'files'
-      void switchToWorkspace(state.currentWorkspace)
-      return
-    }
     if (state.currentView === 'files') {
       state.currentView = 'findings'
     } else {

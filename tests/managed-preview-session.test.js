@@ -148,7 +148,7 @@ test('a session the server configuration sent spares the session request', async
 })
 
 test('background team refresh preserves the sidebar during an outage and clears revoked access', async (t) => {
-  const fallback = [{ id: 'team', slug: 'team-slug', name: 'Known team', reports: [], bundles: [] }]
+  const fallback = [{ id: 'team', slug: 'team-slug', name: 'Known team', repos: [], reports: [], bundles: [] }]
   let response = new Response('', { status: 503 })
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(response))
   assert.deepEqual(await probeTeams({ fallback }), fallback)
@@ -160,7 +160,7 @@ test('background team refresh preserves the sidebar during an outage and clears 
 
 
 test('the team catalogue preserves report locations, analyzer metadata, server slugs, and cache versions alongside UUIDs', async t => {
-  const teams = [{ id: 'team-uuid', slug: 'team-slug', name: 'Team', reports: [{ id: 'report-uuid', slug: 'report-slug', filename: 'r.json', visible: true, repoFullName: 'org/repo', repoDirectory: 'packages/app', cacheKey: 'access-and-assignment-v1' }], bundles: [] }]
+  const teams = [{ id: 'team-uuid', slug: 'team-slug', name: 'Team', repos: [{ repoId: 1, fullName: 'org/repo', path: 'packages' }], reports: [{ id: 'report-uuid', slug: 'report-slug', filename: 'r.json', visible: true, repoFullName: 'org/repo', repoDirectory: 'packages/app', cacheKey: 'access-and-assignment-v1' }], bundles: [] }]
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ teams })))
   for (const analyzer of ['claude-security', 'codex-security', 'deepsec', 'piolium', 'links', null, undefined]) {
     if (analyzer === undefined) delete teams[0].reports[0].analyzer
@@ -170,7 +170,7 @@ test('the team catalogue preserves report locations, analyzer metadata, server s
 })
 
 test('feed probes preserve team grant keys and report transient failures for retry', async t => {
-  const teams = [{ id: 'team', slug: 'team', name: 'Team', cacheKey: 'grants-v2', reports: [], bundles: [] }]
+  const teams = [{ id: 'team', slug: 'team', name: 'Team', cacheKey: 'grants-v2', repos: [], reports: [], bundles: [] }]
   let response = Response.json({ teams })
   const signal = new AbortController().signal
   t.mock.method(globalThis, 'fetch', (_url, options) => {

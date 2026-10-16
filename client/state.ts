@@ -37,7 +37,7 @@ export type FocusCodePos = {
 // count / sort preference — never alters report data. See ui/view/format.js
 // (displayedSeverity) and <severity-mode-switch>.
 export type SeverityMode = 'corrected' | 'original'
-export type CurrentView = 'findings' | 'files' | 'bundles' | 'workspace-reports' | 'workspace-bundles' | 'links' | 'scan' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams' | 'npm' | 'reviews' | 'profile'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'workspace-reports' | 'workspace-bundles' | 'workspace-repositories' | 'links' | 'scan' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams' | 'npm' | 'reviews' | 'profile'
 
 // The links file the 'links' view is showing: its OPFS name and the
 // links it declares, one `string[]` of finding ids per link (see
@@ -102,7 +102,6 @@ export interface State {
   workspaceMerges: Array<Set<string>>
   currentFile: string | null
   currentWorkspace: string | null
-  workspaceContentFileCount: number
   currentManagedTeam: string | null
   currentManagedReport: string | null
   currentReportWorkspace: string | null
@@ -536,7 +535,6 @@ export const state: State = store<State>({
   // workspace. Persists via the same LAST_FILE_KEY entry, prefixed
   // with `ws:` when set.
   currentWorkspace: null,
-  workspaceContentFileCount: 0,
   currentManagedTeam: null,
   currentManagedReport: null,
   // Parent of the selected report row, without enabling merged mode.
