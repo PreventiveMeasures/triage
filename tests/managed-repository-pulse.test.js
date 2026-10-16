@@ -220,6 +220,17 @@ test('the agents\' pull requests merged in the year: by their branches, the most
   assert.ok(later.merges.every(([, at]) => at >= since + 300 * 12 * HOUR))
 })
 
+test('a pull request labelled for an agent is an agent\'s, whatever its branch; one labelled for none, not', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const when = new Date(since + DAY).toISOString()
+  const pull = (merge, branch, labels) => ({ updatedAt: when, mergedAt: when, headRefName: branch, labels: { nodes: labels.map(name => ({ name })) },
+    mergeCommit: { oid: shaOf(merge), parents: { totalCount: 1 } }, commits: { nodes: [] } })
+  github(t, { graphql: mergedPulls([pull(1, 'fix/review', ['bug', 'codex']), pull(2, 'ui/tabs', ['Agent: Claude']), pull(3, 'perf/reads', ['cursor']),
+    pull(4, 'fix/by-hand', ['bug', 'agent:', 'codex-ish']), pull(5, 'feat/none', [])]) })
+  const read = await agentMerges('org/repo', 'token', since, null)
+  assert.deepEqual(read.merges.map(([sha]) => sha).toSorted(), [1, 2, 3].map(shaOf).toSorted())
+})
+
 test('an agent\'s pull request merged with a merge commit brings its own commits, the merge itself counting none; one squashed, its merge commit alone', async t => {
   const since = Date.UTC(2025, 9, 19)
   const when = new Date(since + DAY).toISOString()

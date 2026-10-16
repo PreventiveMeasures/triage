@@ -7,8 +7,9 @@
 // agent's prefix names is read, as many as fifty pages of each, and the newest
 // kept). Each artifact's own texts (never comments: an agent links its
 // session in a pull request's body and its commits' messages) are read here
-// for the marks an agent leaves, and those alone are answered, never the
-// texts. GraphQL alone gives them, so it needs a token.
+// for the marks an agent leaves, and a pull request's labels for one naming
+// an agent, and those alone are answered, never the texts. GraphQL alone
+// gives them, so it needs a token.
 import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AppAgent, agentSignals } from '../common/managed/agent-tasks.ts'
 import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
 import { GithubApiError } from './github-app.ts'
@@ -23,6 +24,8 @@ const AGENT_ISSUES = 100
 const AGENT_BRANCHES = 500
 const MAX_BRANCH_PAGES = 50
 const CLOSES = 5
+// A pull request's labels read, for one naming an agent.
+const LABELS = 20
 const MAX_TITLE = 1000
 const MAX_NAME = 256
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
@@ -61,7 +64,8 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
       nodes { number title state isDraft createdAt updatedAt author { ${ACTOR} } body headRefName isCrossRepository headRepositoryOwner { login } additions deletions
         commits(last: 1) { totalCount nodes { commit { message } } }
         mergeCommit { message }
-        closingIssuesReferences(first: ${CLOSES}) { nodes { number } } }
+        closingIssuesReferences(first: ${CLOSES}) { nodes { number } }
+        labels(first: ${LABELS}) { nodes { name } } }
     }
     defaultBranchRef { target { ... on Commit {
       history(first: ${AGENT_COMMITS_PAGE}, after: $commits) @include(if: $readCommits) {
@@ -78,7 +82,7 @@ const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $comm
 type Login = { login?: unknown; databaseId?: unknown } | null | undefined
 type PullNode = { number?: unknown; title?: unknown; state?: unknown; isDraft?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown
   headRefName?: unknown; isCrossRepository?: unknown; headRepositoryOwner?: Login; additions?: unknown; deletions?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: { message?: unknown } | null } | null)[] }
-  mergeCommit?: { message?: unknown } | null; closingIssuesReferences?: { nodes?: ({ number?: unknown } | null)[] } }
+  mergeCommit?: { message?: unknown } | null; closingIssuesReferences?: { nodes?: ({ number?: unknown } | null)[] }; labels?: { nodes?: ({ name?: unknown } | null)[] } }
 type GitActor = { email?: unknown; user?: Login }
 type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
   author?: GitActor | null; associatedPullRequests?: { totalCount?: unknown } }
@@ -110,7 +114,7 @@ function pull(node: PullNode | null): AgentPull | null {
     additions: count(node.additions), deletions: count(node.deletions), commits: count(node.commits?.totalCount),
     closes: (node.closingIssuesReferences?.nodes ?? []).flatMap(closed => number(closed?.number) ?? []),
     signals: agentSignals([node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message], APP_AGENTS, nameOf(node.headRefName),
-      author) }
+      author, (node.labels?.nodes ?? []).map(label => label?.name)) }
 }
 
 // An account as GitHub names it, by its login and id, both.
@@ -170,7 +174,7 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
 // What its answers are kept by, with their cursors (http.ts
 // handleRepositoryAgents): bumped as what a page reads, or how it tells an
 // agent, changes, so that no answer an older server kept is sent for a day.
-export const AGENTS_READ_VERSION = 4
+export const AGENTS_READ_VERSION = 5
 
 // A cursor of the default branch's commits: GitHub names one by a commit
 // and how many on from it, `<oid> <offset>`, a space between.

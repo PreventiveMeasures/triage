@@ -463,7 +463,7 @@ class RepositoryPulse extends LitElement {
           : html`<span class="is-added">+${number(summary.additions)}</span> <span class="is-removed">−${number(summary.deletions)}</span>`, linesCounting,
         'added and removed', summary.additions === null ? nothing : this.renderRatio(summary.additions, summary.deletions))}
         ${summary.agents === null || !answer.stats.weeks.some(week => week.agentDays.some(count => count > 0)) ? nothing
-          : this.renderTile(html`<span data-tooltip="Commits an agent made or co-authored, or merged from an agent’s branch">With agents</span>`,
+          : this.renderTile(html`<span data-tooltip="Commits an agent made or co-authored, or merged from an agent’s branch or a pull request labelled for one">With agents</span>`,
             summary.commits === 0 ? '–' : `${share(summary.agents, summary.commits)}%`, summary.previousAgents === null || summary.commits === 0 || summary.previous === 0
               ? null : versusShare(share(summary.agents, summary.commits), share(summary.previousAgents, summary.previous), before),
             summary.commits === 0 ? 'no commits' : `${number(summary.agents)} of ${plural(summary.commits, 'commit')}`)}

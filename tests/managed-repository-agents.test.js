@@ -70,6 +70,8 @@ const firstPage = () => ({ data: { repository: {
     // One by an account named as it, but another.
     pullNode(188, { author: { login: 'dependabot', databaseId: 1 }, headRefName: 'deps/ws', body: 'Bumps ws.' }),
     pullNode(921, { headRefName: 'claude/apps', body: `Apps.\n\n- Its fingerprint, \`🤖 Generated with [Neo](\`.\n\n${session}` }),
+    // Codex's, run as whoever ran it, unmarked but for the label they gave it.
+    pullNode(560, { headRefName: 'fix/review', labels: { nodes: [{ name: 'bug' }, { name: 'Codex' }, null] } }),
     null, { number: 'x' },
   ] },
   // GitHub's cursor of a commit's history, `<oid> <offset>`.
@@ -133,6 +135,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
     [187, 'merged', 'dependabot/npm_and_yarn/ws-8.21.0', null, [], { sessions: [], tasks: [], claude: false, codex: false, agents: ['dependabot'] }],
     [188, 'merged', 'deps/ws', null, [], { sessions: [], tasks: [], claude: false, codex: false, agents: [] }],
     [921, 'merged', 'claude/apps', null, [], { ...sessionSignals, claude: false }],
+    [560, 'merged', 'fix/review', null, [], { sessions: [], tasks: [], claude: false, codex: true, agents: [] }],
   ], 'a fingerprint quoted is none')
   assert.deepEqual(body.pulls[0], { ...body.pulls[0], title: 'Pull 904', draft: false, author: 'ChristopherTuring', additions: 7, deletions: 2, commits: 3,
     createdAt: Date.parse('2026-10-14T00:00:00Z'), updatedAt: Date.parse('2026-10-15T00:00:00Z') })
@@ -166,6 +169,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   // An agent links its session in its own texts: no comment is read, nor an issue's body.
   assert.doesNotMatch(page.query, /comments|issues\([^)]*\) [^]*body/u)
   assert.deepEqual(page.variables, { owner: 'org', name: 'repo', pulls: null, commits: null, first: true, readPulls: true, readCommits: true })
+  assert.match(page.query, /labels\(first: \d+\) \{ nodes \{ name \} \}/u, 'a pull request\'s labels read')
   assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: $prefix')).map(query => [query.variables.prefix, query.variables.after]).toSorted(),
     [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null], ['refs/heads/copilot/', null], ['refs/heads/dependabot/', null], ['refs/heads/neo/', null]])
   assert.ok(asked.every(query => query.auth === 'Bearer login-token'))

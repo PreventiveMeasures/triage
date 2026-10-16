@@ -2009,7 +2009,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   const store = repositoryReadStore(deps.db, deps.config.debug)
   const key = `${repoId}\0pulse-year\0${PULSE_YEAR_VERSION}\0${head.value.sha}\0${first}`
   const lastKey = `${repoId}\0pulse-year-last`
-  const mergesKey = `${repoId}\0pulse-merges`
+  const mergesKey = `${repoId}\0pulse-merges\0${PULSE_YEAR_VERSION}`
   const last = async () => {
     const kept = (await store.read(lastKey))?.value as { first: number; stats: PulseStats } | undefined
     return kept?.first === first ? kept.stats : null

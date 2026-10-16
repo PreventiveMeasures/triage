@@ -19,7 +19,7 @@ import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accoun
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
 // another are counted again.
-export const PULSE_YEAR_VERSION = 4
+export const PULSE_YEAR_VERSION = 5
 const WEEK_MS = 7 * 24 * 60 * 60_000
 const DAY_MS = 24 * 60 * 60_000
 const MAX_CONTRIBUTORS = 100
