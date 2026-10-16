@@ -427,7 +427,7 @@ test('where the host reads an open pull request\'s comments, the reviews they ma
   const send = api(db, users, { reviewedDependencies: { lookup: () => Promise.resolve(false), parseComments } })
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
   const comment = (id, login, databaseId) => ({ id, author: { login, databaseId }, body: 'LGTM', createdAt: '2026-10-01T00:00:00Z', url: '' })
-  github(t, { ...PULL, graphql: () => ({ repository: { pullRequest: {
+  github(t, { ...PULL, graphql: () => ({ repository: { pullRequest: { state: 'OPEN',
     comments: { pageInfo: { hasNextPage: false }, nodes: [comment('c1', 'bob', 3), comment('c2', 'outsider', 77)] },
     reviews: { pageInfo: { hasNextPage: false }, nodes: [] } } } }) })
   const answer = await send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`)

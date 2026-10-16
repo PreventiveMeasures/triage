@@ -2034,12 +2034,12 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
     const state = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told)) : null
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
-    // An open one's comments read for reviews, where the host reads them.
-    const parse = told.open ? reviewed?.parseComments : undefined
+    // Its comments read for reviews, where the host reads them, while it is
+    // open (pull-comment-reviews.ts reads whether it is with them).
+    const parse = reviewed?.parseComments
     const comments = state && parse ? commentReviews({ fullName, number, token, parse, reviewers: accounts => repoReviewers(deps, repoId, accounts) }) : null
-    const { open: _open, ...dependencies } = told
-    return { value: { ...await reviewedDependencies(dependencies, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: comments }),
-      number: told.number }, kept: answered.kept }
+    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: comments }) },
+      kept: answered.kept }
   })
 }
 

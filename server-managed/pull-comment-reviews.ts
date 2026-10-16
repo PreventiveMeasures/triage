@@ -1,8 +1,9 @@
 // The reviews of dependencies an open pull request's comments make, as the
 // host's parser reads them (reviewed-dependencies.ts `parseComments`): its
 // comments, its reviews' own, whatever their state, and those on lines of
-// its diff, read of GitHub's GraphQL API, as many as MAX_COMMENTS, kept in
-// this instance KEPT_MS; the parser's answer to the same kept PARSED_KEPT_MS.
+// its diff, read of GitHub's GraphQL API, as many as MAX_COMMENTS, with
+// whether it is open, kept in this instance KEPT_MS; none of one not open;
+// the parser's answer to the same kept PARSED_KEPT_MS.
 // A review counts only where its user is one of their authors and the app's
 // user that account is (by its numeric id, else its login, its linked
 // accounts' too) publishes reviews to a team counting for the repository
@@ -25,7 +26,7 @@ const VERDICTS = new Set<string>(['accept', 'accept-with-nits', 'request-changes
 // Its comments and its reviews, each a page on from its cursor, each only
 // while it has more (`readComments`, `readReviews`).
 const QUERY = `query($owner: String!, $name: String!, $number: Int!, $comments: String, $reviews: String, $readComments: Boolean!, $readReviews: Boolean!) {
-  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { state
     comments(first: 100, after: $comments) @include(if: $readComments) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } }
     reviews(first: 50, after: $reviews) @include(if: $readReviews) { pageInfo { hasNextPage endCursor }
       nodes { id author { ${ACTOR} } body state createdAt url comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { id author { ${ACTOR} } body createdAt url } } } }
@@ -39,7 +40,9 @@ interface Authored { comment: ReviewComment; account: { login: string | null; id
 type Page = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: unknown }
 type Node = { id?: unknown; author?: GraphAccount; body?: unknown; state?: unknown; createdAt?: unknown; url?: unknown; comments?: Page }
 
-const comments: Lru<{ at: number; read: Authored[] }> = lru(200)
+// A pull request's comments as read, and whether it is open.
+interface PullComments { open: boolean; read: Authored[] }
+const comments: Lru<{ at: number } & PullComments> = lru(200)
 const answers: Lru<{ at: number; reviews: CommentReview[] }> = lru(2000)
 
 function authored(node: Node, kind: ReviewComment['kind']): Authored[] {
@@ -65,22 +68,25 @@ async function inlineComments(review: Node, room: number, token: string, fetchIm
 }
 
 // Pull request `number`'s comments, its reviews' and those on its diff, each
-// review's all of them, as kept, else read of GitHub a page at a time.
-export async function pullComments(fullName: string, token: string, number: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<Authored[]> {
+// review's all of them, and whether it is open, as kept, else read of GitHub
+// a page at a time.
+export async function pullComments(fullName: string, token: string, number: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<PullComments> {
   const key = `${fullName}\0${number}`
   const known = comments.get(key)
-  if (known && Date.now() - known.at < KEPT_MS) return known.read
+  if (known && Date.now() - known.at < KEPT_MS) return known
   const [owner, name] = fullName.split('/') as [string, string]
   const read: Authored[] = []
+  let open: boolean | null = null
   // Each connection read on from its cursor till it has no more, the other
   // read on without it, never again from its first page.
   let cursors: { comments: string | null; reviews: string | null } = { comments: null, reviews: null }
   let reading = { comments: true, reviews: true }
   while ((reading.comments || reading.reviews) && read.length < MAX_COMMENTS) {
     const data = await githubGraphql(QUERY, { owner, name, number, ...cursors, readComments: reading.comments, readReviews: reading.reviews }, token, fetchImpl) as
-      { repository?: { pullRequest?: { comments?: Page; reviews?: Page } | null } | null } | null
+      { repository?: { pullRequest?: { state?: unknown; comments?: Page; reviews?: Page } | null } | null } | null
     const pull = data?.repository?.pullRequest
     if (!pull) break
+    open ??= pull.state === 'OPEN'
     for (const node of nodes(pull.comments?.nodes)) read.push(...authored(node, 'comment'))
     for (const node of nodes(pull.reviews?.nodes)) {
       read.push(...authored(node, 'review'))
@@ -89,8 +95,8 @@ export async function pullComments(fullName: string, token: string, number: numb
     cursors = { comments: reading.comments ? next(pull.comments) : null, reviews: reading.reviews ? next(pull.reviews) : null }
     reading = { comments: cursors.comments !== null, reviews: cursors.reviews !== null }
   }
-  const kept = read.slice(0, MAX_COMMENTS)
-  comments.set(key, { at: Date.now(), read: kept })
+  const kept = { open: open === true, read: read.slice(0, MAX_COMMENTS) }
+  comments.set(key, { at: Date.now(), ...kept })
   return kept
 }
 
@@ -129,7 +135,8 @@ function counted(answer: CommentReview[], read: Authored[], reviewers: Map<strin
 }
 
 // The reviews pull request `number`'s comments make, as the host's parser
-// reads them, of the versions still wanting one; `reviewers` the app's users
+// reads them, of the versions still wanting one, none where it isn't open
+// (the parser then not asked); `reviewers` the app's users
 // the accounts are, by their logins in lower case, of those whose reviews
 // count for the repository.
 export function commentReviews({ fullName, number, token, parse, reviewers, fetchImpl = globalThis.fetch }: {
@@ -138,7 +145,8 @@ export function commentReviews({ fullName, number, token, parse, reviewers, fetc
 }): CommentReviews {
   return async wanting => {
     try {
-      const read = await pullComments(fullName, token, number, fetchImpl)
+      const { open, read } = await pullComments(fullName, token, number, fetchImpl)
+      if (!open) return { reviews: [], failed: false }
       const accounts = new Map(read.flatMap(({ account }) => account.login ? [[account.login.toLowerCase(), { login: account.login, githubId: account.id }]] : []))
       const answer = await parsed(parse, { repository: fullName, number, comments: read.map(({ comment }) => comment), dependencies: wanting })
       return { reviews: counted(answer, read, await reviewers([...accounts.values()])), failed: false }

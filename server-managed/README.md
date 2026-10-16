@@ -2168,7 +2168,8 @@ none again, and the connected repositories' list tells
 it nor as many reviewers' reviews as required pass is unreviewed.
 
 Its `parseComments`, where it has one, reads the reviews an open pull
-request's comments make (`pull-comment-reviews.ts`), asked only where some
+request's comments make (`pull-comment-reviews.ts`), whether it is open read
+of GitHub with them, never kept with its dependencies, asked only where some
 version still wants reviews once its teams' reviews and the lookup are
 counted, of those versions (`dependencies`, as the lookup is asked of
 them). It is given the pull request (`repository`, `number`) and its

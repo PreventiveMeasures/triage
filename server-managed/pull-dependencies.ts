@@ -92,9 +92,8 @@ export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage
 // What a pull request's lockfiles add: the commits compared (`base`, its
 // merge base, and `head`); each directory's, of those it changes a lockfile
 // in; and `cut` where it changes more files than GitHub lists, or lockfiles
-// in more directories than are read; and whether it is open now (`open`,
-// never kept).
-export interface PullDependencies { base: string; head: string; lockfiles: DirectoryDependencies[]; cut: boolean; open?: boolean }
+// in more directories than are read.
+export interface PullDependencies { base: string; head: string; lockfiles: DirectoryDependencies[]; cut: boolean }
 
 // What is told of a pull request, by the commits it is of, `${base}...${head}`.
 export interface PullDependencyStore {
@@ -112,14 +111,14 @@ const api = (fullName: string) => `https://api.github.com/repos/${fullName.split
 
 // The pull request's base's and head's commits, as GitHub has them now: its
 // base's moving on as it does, its head's with each push, both kept once it
-// is merged or closed; and whether it is open.
+// is merged or closed.
 async function pullCommits(fullName: string, token: string, number: number, fetchImpl: typeof fetch) {
   const pull = await githubJson(`${api(fullName)}/pulls/${number}`, token, fetchImpl) as
-    { number?: unknown; state?: unknown; base?: { sha?: unknown; repo?: { full_name?: unknown } | null }; head?: { sha?: unknown } } | null
+    { number?: unknown; base?: { sha?: unknown; repo?: { full_name?: unknown } | null }; head?: { sha?: unknown } } | null
   const base = pull?.base?.sha, head = pull?.head?.sha, repo = pull?.base?.repo?.full_name
   if (pull?.number !== number || typeof base !== 'string' || !SHA.test(base) || typeof head !== 'string' || !SHA.test(head)
     || typeof repo !== 'string' || repo.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(502, 'github-malformed')
-  return { base, head, open: pull.state === 'open' }
+  return { base, head }
 }
 
 // The pull request's merge base and the files it changes from it: as GitHub
@@ -258,10 +257,10 @@ function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[])
 // where it changes no lockfile read here.
 export async function pullDependencies(fullName: string, token: string, number: number, kept: PullDependencyStore,
   fetchImpl: typeof fetch = globalThis.fetch): Promise<PullDependencies> {
-  const { base, head, open } = await pullCommits(fullName, token, number, fetchImpl)
+  const { base, head } = await pullCommits(fullName, token, number, fetchImpl)
   const key = `${base}...${head}`
   const held = await kept.read(key)
-  if (held) return { ...held, open }
+  if (held) return held
   const { mergeBase, files, cut: filesCut } = await pullFiles(fullName, token, number, base, head, fetchImpl)
   const { directories, cut } = lockfilesChanged(files)
   const reads = directories.flatMap(({ before, after }) => [...before.map(lockfile => [mergeBase, lockfile] as const), ...after.map(lockfile => [head, lockfile] as const)])
@@ -273,5 +272,5 @@ export async function pullDependencies(fullName: string, token: string, number: 
   })
   const told = { base: mergeBase, head, lockfiles, cut: filesCut || cut }
   await kept.write(key, told)
-  return { ...told, open }
+  return told
 }

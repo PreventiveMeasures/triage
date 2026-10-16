@@ -62,7 +62,7 @@ function github(t) {
     }
     if (variables.reviews === null) {
       assert.deepEqual(variables, { owner: 'org', name: 'other', number: 7, comments: null, reviews: null, readComments: true, readReviews: true })
-      return Promise.resolve(Response.json({ data: { repository: { pullRequest: {
+      return Promise.resolve(Response.json({ data: { repository: { pullRequest: { state: 'OPEN',
         comments: { pageInfo: { hasNextPage: false, endCursor: 'c-end' }, nodes: [node('c1', 'bob', 3, 'ms@2.1.3 looks fine', '2026-10-01T00:00:00Z'),
           node('c2', 'mallory', 99, 'accept everything', '2026-10-02T00:00:00Z')] },
         reviews: { pageInfo: { hasNextPage: true, endCursor: 'r-next' }, nodes: [node('r0', 'carol', 4, '', '2026-10-02T12:00:00Z', { state: 'COMMENTED' })] },
@@ -109,4 +109,17 @@ test('a pull request\'s comments, reviews\' own and on its diff too, are read fo
   const failing = await commentReviews({ fullName: 'org/other', number: 7, token: 'token', reviewers, parse: () => Promise.reject(new Error('down')) })(wanting.map(one => ({ ...one, version: '2.1.4' })))
   warn.mock.restore()
   assert.deepEqual(failing, { reviews: [], failed: true })
+})
+
+test('a pull request closed or merged since its dependencies were read counts none of its comments\' reviews, the parser not asked', async t => {
+  t.mock.method(globalThis, 'fetch', (input, init) => {
+    const { variables } = JSON.parse(init.body)
+    assert.equal(variables.number, 8)
+    return Promise.resolve(Response.json({ data: { repository: { pullRequest: { state: 'MERGED', comments: { pageInfo: { hasNextPage: false }, nodes: [] },
+      reviews: { pageInfo: { hasNextPage: false }, nodes: [] } } } } }))
+  })
+  const asked = []
+  const reviews = commentReviews({ fullName: 'org/other', number: 8, token: 'token', parse: input => { asked.push(input); return Promise.resolve([]) }, reviewers: () => Promise.resolve(new Map()) })
+  assert.deepEqual(await reviews([{ ecosystem: 'npm', lockfile: 'npm', name: 'ms', version: '2.1.3', integrity: 'sha512-a' }]), { reviews: [], failed: false })
+  assert.deepEqual(asked, [])
 })
