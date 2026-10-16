@@ -24,13 +24,13 @@
 // at once from the year last read, only its pull requests and issues
 // waited for; with no year read yet, the last period read is shown, faded,
 // till it is.
-import { LitElement, html, nothing } from 'lit'
+import { LitElement, html, nothing, svg } from 'lit'
 import { styleMap } from './style-map.js'
 import { state } from '#client/index.js'
 import { fetchRepositoryPulse, fetchRepositoryPulseItems } from './client-managed.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
-import { STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
+import { STATE_ICONS, icon, issueState, plainClick } from './repository-tiles.js'
 import { activityPicker } from './repository-activity.js'
 import { appUser, commitAgent, commitAuthor, commitAuthorName, githubUser } from './github-users.js'
 
@@ -73,6 +73,9 @@ const LISTS = {
   issues: ['Issues', [['closed', 'Closed', 'is:issue is:closed closed:'], ['created', 'Opened', 'is:issue created:']]],
 }
 const LIST_KINDS = ['merged', 'opened', 'closed', 'created']
+// A commit's mark, as the activity tabs draw Commits'.
+const COMMIT_ICON = icon(svg`<circle cx="8" cy="8" r="2.75"/><path d="M8 1v4.25M8 10.75V15"/>`)
+const DIRECT_SHOWN = 10
 // A narrowing's most authors, as the server takes them.
 const NARROWED_AUTHORS = 10
 
@@ -106,7 +109,8 @@ function checked(answer) {
   const dayLines = lines => Array.isArray(lines) && lines.length === 7 && lines.every(Array.isArray) ? lines.map(([added, removed]) => [counted(added), counted(removed)]) : null
   const dayCounts = days => Array.isArray(days) && days.length === 7 ? days.map(counted) : null
   const weeks = Array.isArray(answer.stats?.weeks) ? answer.stats.weeks.filter(week => Number.isSafeInteger(week?.week) && Array.isArray(week.days))
-    .map(week => ({ ...week, dayLines: dayLines(week.dayLines), agentDays: dayCounts(week.agentDays), releaseDays: dayCounts(week.releaseDays) })) : []
+    .map(week => ({ ...week, dayLines: dayLines(week.dayLines), agentDays: dayCounts(week.agentDays), releaseDays: dayCounts(week.releaseDays),
+      directDays: dayCounts(week.directDays) })) : []
   const stats = answer.stats && Array.isArray(answer.stats.weeks) && Array.isArray(answer.stats.contributors) && Array.isArray(answer.stats.punch) ? {
     weeks,
     contributors: answer.stats.contributors.filter(person => (typeof person?.login === 'string' || typeof person?.name === 'string') && Array.isArray(person.weeks))
@@ -119,6 +123,12 @@ function checked(answer) {
     // each day of the year.
     agents: weeks.length > 0 && weeks.every(week => week.agentDays !== null),
     releases: weeks.length > 0 && weeks.every(week => week.releaseDays !== null),
+    // And those pushed to the branch directly, each day, the latest listed.
+    direct: weeks.length > 0 && weeks.every(week => week.directDays !== null) && Array.isArray(answer.stats.directCommits),
+    directCommits: Array.isArray(answer.stats.directCommits) ? answer.stats.directCommits.filter(item => typeof item?.sha === 'string'
+      && Number.isSafeInteger(item.at)).map(item => ({ sha: item.sha, at: item.at, subject: typeof item.subject === 'string' ? item.subject : '',
+      login: typeof item.login === 'string' ? item.login : null, id: Number.isSafeInteger(item.id) ? item.id : null, name: typeof item.name === 'string' ? item.name : null }))
+      : [],
   } : null
   return { weeks: answer.weeks, since: answer.since, merged: told('merged'), opened: told('opened'), closed: told('closed'), created: told('created'),
     stats, reading: Number.isSafeInteger(answer.reading) ? answer.reading : null, pulls: Number.isSafeInteger(answer.pulls) ? answer.pulls : null,
@@ -301,14 +311,16 @@ export function periodContributors(contributors, since, until = Number.POSITIVE_
 
 // The year's statistics as one contributor's commits fill them (`key`,
 // contributorKey): each week's commits and lines, and each day's and those
-// with agents and releases where the server counted their days (`byDays`), else none of
+// with agents, releases and those pushed directly where the server counted
+// their days (`byDays`), else none of
 // a week's days.
 export function contributorStats(stats, key) {
   const theirs = stats.contributors.filter(person => contributorKey(person) === key)
   const byDays = theirs.length > 0 && theirs.every(person => person.days)
   const weeks = stats.weeks.map(({ week }) => ({ week, days: Array.from({ length: 7 }, () => 0), dayLines: Array.from({ length: 7 }, () => [0, 0]),
-    agentDays: Array.from({ length: 7 }, () => 0), releaseDays: Array.from({ length: 7 }, () => 0), commits: 0, additions: 0, deletions: 0 }))
-  for (const [at, commits, additions, deletions, agents, releases] of theirs.flatMap(person => byDays ? person.days : person.weeks)) {
+    agentDays: Array.from({ length: 7 }, () => 0), releaseDays: Array.from({ length: 7 }, () => 0), directDays: Array.from({ length: 7 }, () => 0), commits: 0,
+    additions: 0, deletions: 0 }))
+  for (const [at, commits, additions, deletions, agents, releases, direct] of theirs.flatMap(person => byDays ? person.days : person.weeks)) {
     const week = weeks[Math.floor((at - (weeks[0]?.week ?? 0)) / WEEK_MS)]
     if (!week) continue
     week.commits += counted(commits)
@@ -320,10 +332,25 @@ export function contributorStats(stats, key) {
     week.dayLines[weekday] = [week.dayLines[weekday][0] + counted(additions), week.dayLines[weekday][1] + counted(deletions)]
     week.agentDays[weekday] += counted(agents)
     week.releaseDays[weekday] += counted(releases)
+    week.directDays[weekday] += counted(direct)
   }
   const agents = stats.agents === true && byDays && theirs.every(person => person.days.every(row => row.length > 4))
   const releases = stats.releases === true && byDays && theirs.every(person => person.days.every(row => row.length > 5))
-  return { ...stats, weeks, agents, releases, byDays }
+  const direct = stats.direct === true && byDays && theirs.every(person => person.days.every(row => row.length > 6))
+  return { ...stats, weeks, agents, releases, direct, byDays }
+}
+
+// The commits pushed to the branch directly from `from` till `until`
+// (`now` in the last day, none dated past it listed either), and of one
+// contributor alone (`person`, by contributorKey) where one is: how many, by
+// the days they were counted on, and the latest of them listed; null where
+// they aren't counted.
+export function directIn(stats, from, until, person = null, now = Date.now()) {
+  const scope = person === null ? stats : contributorStats(stats, person)
+  if (!stats?.direct || !scope.direct) return null
+  const last = Math.min(until - DAY_MS, Math.floor(now / DAY_MS) * DAY_MS)
+  const items = stats.directCommits.filter(item => item.at >= from && item.at < last + DAY_MS && (person === null || contributorKey(item) === person))
+  return { count: commitsBetween(scope.weeks, from, last, 'directDays'), items }
 }
 
 // The period's columns, `now` in its last day: a day each in a week or a
@@ -450,6 +477,8 @@ class RepositoryPulse extends LitElement {
     // shown, or the first of them; and the one whose commits alone the plots
     // show, by contributorKey, whatever the period.
     _column: { state: true }, _typed: { state: true }, _picked: { state: true }, _everyone: { state: true }, _person: { state: true },
+    // All the commits pushed directly listed, or the first of them.
+    _allDirect: { state: true },
   }
 
   createRenderRoot() { return this }
@@ -463,6 +492,7 @@ class RepositoryPulse extends LitElement {
     this._picked = null
     this._everyone = false
     this._person = null
+    this._allDirect = false
   }
 
   connectedCallback() {
@@ -484,6 +514,7 @@ class RepositoryPulse extends LitElement {
     this._picked = null
     this._everyone = false
     this._person = null
+    this._allDirect = false
   }
 
   pick(weeks) {
@@ -491,6 +522,7 @@ class RepositoryPulse extends LitElement {
     this._column = null
     this._picked = null
     this._everyone = false
+    this._allDirect = false
     repaint()
   }
 
@@ -564,8 +596,7 @@ class RepositoryPulse extends LitElement {
       <div class="pulse-grid">
         ${answer.stats ? html`${this.renderActivity(entry, now)}${this.renderContributors(answer, now)}`
           : html`<div class="pulse-pending pulse-wide" role="status">${this.renderWaiting(entry, waitingTexts(answer))}</div>`}
-        ${this.renderList(answer, 'pulls', narrowing)}
-        ${this.renderList(answer, 'issues', narrowing)}
+        ${this.renderLists(answer, narrowing, now)}
         ${answer.stats ? this.renderPunch(answer.stats) : nothing}
       </div>`
   }
@@ -606,10 +637,9 @@ class RepositoryPulse extends LitElement {
   }
 
   // The period alone, a column a day or a week: commits over a scale of
-  // counts, releases atop them and those an agent made or co-authored over
-  // the rest where the year holds any, and under them lines added above a
-  // line and removed
-  // below it, one scale for both; each column named under them, today's
+  // counts, those an agent made or co-authored atop the rest, releases at
+  // their foot, where the year holds any, and under them lines added above
+  // a line and removed below it, one scale for both; each column named under them, today's
   // marked. A week's days each their figures written on them; a month's
   // weekends shaded. A column pointed at, or read with the arrow keys, is
   // marked in both, its figures and who made its commits beside it; clicked,
@@ -652,12 +682,13 @@ class RepositoryPulse extends LitElement {
     // A day's figure written on its bar, in a week.
     const figure = (item, text) => written && !item.future ? html`<span class="pulse-figure">${text}</span>` : nothing
     const bar = (kind, value, parts = nothing) => html`<span class=${`pulse-bar${kind}`} style=${styleMap({ '--value': `${value}` })}>${parts}</span>`
-    // Releases atop a column's, then commits with agents, those without them
-    // at its foot; commits with agents not apart, the rest under releases.
+    // Commits with agents atop a column's, those without them under them,
+    // releases at its foot, as the legend names them left to right; commits
+    // with agents not apart, the rest over releases.
     const parts = item => {
       const releases = apart.releases ? item.releases : 0
       const rest = item.commits - releases
-      return [[' is-release', releases], ...apart.agents ? [['', item.agents], [' is-without', rest - item.agents]] : [['', rest]]].map(([kind, count]) => count > 0
+      return [...apart.agents ? [['', item.agents], [' is-without', rest - item.agents]] : [['', rest]], [' is-release', releases]].map(([kind, count]) => count > 0
         ? html`<span class=${`pulse-part${kind}`} style=${styleMap({ '--part': `${count}` })}></span>` : nothing)
     }
     return html`<figure class=${`pulse-panel pulse-activity${written ? ' is-written' : ''}`} tabindex="0"
@@ -726,6 +757,7 @@ class RepositoryPulse extends LitElement {
   showPerson(key) {
     this._person = key === this._person ? null : key
     this._column = null
+    this._allDirect = false
   }
 
   // A column clicked, or picked with Enter, is the one the contributors are
@@ -735,6 +767,7 @@ class RepositoryPulse extends LitElement {
     if (!column || column.future) return
     this._picked = this._picked === column.from ? null : column.from
     this._everyone = false
+    this._allDirect = false
   }
 
   // The plots focused with the keyboard read the column picked, else the
@@ -826,23 +859,67 @@ class RepositoryPulse extends LitElement {
     </figure>`
   }
 
-  // What the pull requests and issues are narrowed to, where a column or a
-  // contributor is picked: the column's days (`from` to `to`, YYYY-MM-DD; no
-  // column, the period's on), named (`when`), and the GitHub accounts the
-  // contributor committed as (`authors`), them named (`who`), `nobody` where
-  // their commits name none; null, neither picked.
+  // The pull requests, the commits pushed to the branch directly where there
+  // are any, and the issues, two at least: the issues, where there are none,
+  // left out beside commits pushed directly; still read, shown.
+  renderLists(answer, narrowing, now) {
+    const direct = answer.stats ? directIn(answer.stats, narrowing?.since ?? answer.since, narrowing?.until ?? Number.POSITIVE_INFINITY, narrowing?.person ?? null, now)
+      : null
+    const told = narrowing ? narrowing.nobody ? { closed: { count: 0 }, created: { count: 0 } } : narrowedRead(this.repository.repoId, answer.weeks, narrowing).answer
+      : answer
+    const issues = told?.closed && told.created ? told.closed.count + told.created.count : null
+    const commits = direct !== null && direct.count > 0
+    return html`${this.renderList(answer, 'pulls', narrowing)}${commits ? this.renderDirect(direct, narrowing) : nothing}${commits && issues === 0 ? nothing
+      : this.renderList(answer, 'issues', narrowing)}`
+  }
+
+  // The latest commits pushed to the branch directly, of the period or as
+  // it is narrowed, so said beside the title, how many beside: each its
+  // subject, short id, author and when, linking to it on GitHub; as many as
+  // DIRECT_SHOWN, the rest a click away; those older than the server lists
+  // (the year's latest, as many as it lists, or a shorter period's while
+  // this one reads), how many.
+  renderDirect(direct, narrowing) {
+    const repo = this.repo ?? this.repository.repo
+    const who = narrowing?.who ? commitAuthorName(narrowing.who.login, narrowing.who.name) : null
+    const narrowedTo = narrowing ? [who && `by ${who}`, narrowing.when].filter(Boolean).join(' ') : ''
+    const shown = this._allDirect ? direct.items : direct.items.slice(0, DIRECT_SHOWN)
+    const unlisted = Math.max(0, direct.count - direct.items.length)
+    return html`<section class="pulse-panel pulse-list" aria-label="Direct commits">
+      <div class="pulse-head"><h3 data-tooltip="Commits pushed to the default branch, not merged from a pull request">Direct commits</h3>${narrowing
+        ? html`<span class="pulse-narrowed">${narrowedTo}</span>` : nothing}<span class="pulse-count">${number(direct.count)}</span></div>
+      <ol>${shown.map(item => html`<li><a class="pulse-item is-commit" href=${repo ? `https://github.com/${repo}/commit/${item.sha}` : nothing} target="_blank"
+        rel="noopener noreferrer"><span class="issue-state" role="img" aria-label="Commit">${COMMIT_ICON}</span>
+        <span class="pulse-item-title">${item.subject || '(no message)'}</span>
+        <span class="pulse-item-meta"><span>${item.sha.slice(0, 7)}</span><span>${contributor(item)}</span><time datetime=${new Date(item.at).toISOString()}>${compactTime(item.at)}</time></span>
+      </a></li>`)}</ol>
+      ${direct.items.length > DIRECT_SHOWN ? html`<button type="button" class="history-link pulse-more" @click=${() => { this._allDirect = !this._allDirect }}>${this._allDirect
+        ? 'Fewer' : `and ${plural(direct.items.length - DIRECT_SHOWN, 'more', 'more')}`}</button>` : nothing}
+      ${unlisted > 0 ? html`<p class="pulse-note">${direct.items.length > 0 ? plural(unlisted, 'older commit', 'older commits') : plural(unlisted, 'commit')} not listed.</p>`
+        : nothing}
+    </section>`
+  }
+
+  // What the pull requests, the commits pushed directly and the issues are
+  // narrowed to, where a column or a contributor is picked: the column's
+  // days (`from` to `to`, YYYY-MM-DD; no column, the period's on; `since`
+  // till `until`, the same by time), named (`when`), and the contributor
+  // (`person`, by contributorKey) and the GitHub accounts they committed as
+  // (`authors`), them named (`who`), `nobody` where their commits name none;
+  // null, neither picked.
   narrowing(answer, now) {
     const column = this._picked === null || !answer.stats ? null : pulseColumns(answer, now).find(item => item.from === this._picked) ?? null
     const people = this._person === null || !answer.stats ? null : answer.stats.contributors.filter(item => contributorKey(item) === this._person)
     if (!column && !people) return null
     const authors = [...new Set((people ?? []).flatMap(item => item.login ? [item.login] : []))].slice(0, NARROWED_AUTHORS)
     return { from: isoDay(column?.from ?? answer.since), to: column ? isoDay(column.to - DAY_MS) : null, authors, nobody: people !== null && authors.length === 0,
-      who: people?.[0] ?? null, when: column ? column.day ? `on ${columnName(column, now)}` : `in the w${columnName(column, now).slice(1)}` : null }
+      who: people?.[0] ?? null, when: column ? column.day ? `on ${columnName(column, now)}` : `in the w${columnName(column, now).slice(1)}` : null,
+      since: column?.from ?? answer.since, until: column?.to ?? Number.POSITIVE_INFINITY, person: people ? this._person : null }
   }
 
   // The latest pull requests merged or opened, or issues closed or opened,
   // as the reader picks, GitHub found in the period, or as it is narrowed
-  // (narrowing), so said over them, each its state, title, number, author
+  // (narrowing), so said beside their title, each its state, title, number, author
   // and when, opening its popup; where there were more, the rest on GitHub,
   // narrowed alike. None, while the period, or the narrowing, reads; none
   // narrowed to a contributor whose commits name no GitHub account.
@@ -858,13 +935,14 @@ class RepositoryPulse extends LitElement {
     const all = repo ? `https://github.com/${repo}/${items === 'pulls' ? 'pulls' : 'issues'}?q=${encodeURIComponent(`${search}${range}${by}`)}` : null
     const who = narrowing?.who ? commitAuthorName(narrowing.who.login, narrowing.who.name) : null
     const scope = narrowing ? [who && `by ${who}`, narrowing.when ?? 'in the period'].filter(Boolean).join(' ') : 'in the period'
+    // What they're narrowed to, beside the title, as the plots name theirs.
+    const narrowedTo = narrowing ? [who && `by ${who}`, narrowing.when].filter(Boolean).join(' ') : ''
     return html`<section class="pulse-panel pulse-list" aria-label=${title}>
-      <div class="pulse-head"><h3>${title}</h3>
+      <div class="pulse-head"><h3>${title}</h3>${narrowing ? html`<span class="pulse-narrowed">${narrowedTo}</span>` : nothing}
         <div class="history-modes" role="group" aria-label=${`${title} shown`}>${kinds.map(([name, label]) => html`<button type="button"
           aria-pressed=${String(name === kind)} @click=${() => this.showList(items, name)}>${label}<span class="n">${told?.[name] ? number(told[name].count)
             : '–'}</span></button>`)}</div>
       </div>
-      ${narrowing ? html`<p class="pulse-narrowed">${scope[0].toUpperCase()}${scope.slice(1)}</p>` : nothing}
       ${narrowing?.nobody ? html`<p class="pulse-note">${who}’s commits name no GitHub account to find their ${title.toLowerCase()} by.</p>`
         : narrowed?.status === 'error' ? html`<p class="pulse-note" role="alert">${narrowed.error}</p>`
         : listed === null ? html`<p class="pulse-note" role="status">Reading…</p>` : listed.length === 0 ? html`<p class="pulse-note">None ${scope}.</p>` : html`<ol>${listed.map(item => {
