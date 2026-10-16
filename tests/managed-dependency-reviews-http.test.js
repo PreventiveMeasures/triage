@@ -19,6 +19,11 @@ async function fixture(t) {
     await db.setUserRole(session.userId, role)
     sessions[role] = session
   }
+  // A team the triage user reviews in, as drafts are begun by one who
+  // publishes to some team.
+  await db.createTeam('reviewers', 'Reviewers', Date.now())
+  await db.setTeamMember('reviewers', sessions.triage.userId, { dependencies: true, security: false })
+  await db.setTeamDependencyReview(hashToken(sessions.admin.setCookie.split(';')[0].slice(4)), 'reviewers', true)
   const handler = createManagedRequestHandler({ db, config, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
   async function send(path, { body, who = 'triage', csrf = true, method = body ? 'POST' : 'GET' } = {}) {
     const session = sessions[who]
@@ -177,11 +182,11 @@ test('review API validates bytes and file scope, protects identity, and publishe
   assert.equal(review.entries[0].comment, body.comment, 'notes are stored exactly as typed')
   assert.equal((await h.send(url(context), { who: 'admin' })).body.reviews.length, 0, 'admin sees no other user private review')
   await h.db.createTeam('team', 'Team', Date.now())
-  await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: false, security: false })
+  await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: true, security: false })
   const toggle = { teamId: 'team', enabled: true }
   assert.equal((await h.send('/api/admin/teams/set-dependency-review', { body: toggle })).status, 403)
   assert.equal((await h.send('/api/admin/teams/set-dependency-review', { body: toggle, who: 'admin' })).status, 200)
-  assert.deepEqual((await h.send(url(context))).body.teams, [{ id: 'team', name: 'Team' }])
+  assert.deepEqual((await h.send(url(context))).body.teams, [{ id: 'reviewers', name: 'Reviewers' }, { id: 'team', name: 'Team' }])
   const publish = { ...context, action: 'publish', reviewId: review.id, revision: review.revision, teamIds: [], finalStatus: 'accept', finalComment: 'Removal checked.' }
   assert.equal((await h.send('/api/npm/reviews', { body: publish })).status, 400)
   const blocked = await h.send('/api/npm/reviews', { body: { ...publish, teamIds: ['team'], files: ['removed.js'], coverage: 'full' } })
@@ -215,7 +220,7 @@ test('reviews recheck private access to both packages, including before publicat
     basePackage: '@private/base', baseVersion: '1.0.0', baseIntegrity: before.doc.dist.integrity }
   assert.equal((await h.send(url(context))).status, 404)
   await h.db.createTeam('team', 'Team', Date.now())
-  await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: false, security: false })
+  await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: true, security: false })
   const adminId = hashToken(h.sessions.admin.setCookie.split(';')[0].slice(4))
   await h.db.setTeamNpmScopes(adminId, 'team', ['@private'])
   await h.db.setTeamDependencyReview(adminId, 'team', true)
@@ -239,7 +244,7 @@ test('final verdict is mandatory and constrained, while coverage is derived from
   const pkg = packageOf('all-files', '1.0.0', { 'package.json': '{}', 'b.js': 'b', 'c.bin': Buffer.from([0, 255]), 'empty': '' })
   registry(t, [pkg])
   await h.db.createTeam('team', 'Team', Date.now())
-  await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: false, security: false })
+  await h.db.setTeamMember('team', h.sessions.triage.userId, { dependencies: true, security: false })
   await h.send('/api/admin/teams/set-dependency-review', { who: 'admin', body: { teamId: 'team', enabled: true } })
   const context = { ecosystem: 'npm', package: 'all-files', version: '1.0.0', integrity: pkg.doc.dist.integrity }
   let review = (await h.send('/api/npm/reviews', { body: { ...context, action: 'start' } })).body.review
@@ -400,4 +405,18 @@ test('review lists recheck target access and session after registry reads, prese
     return listScopes(user)
   })
   assert.equal((await h.send('/api/npm/reviews/mine')).status, 401)
+})
+
+test('the session says who publishes reviews to some team: an admin, in no team, as well as a member who reviews', async t => {
+  const h = await fixture(t)
+  const session = async who => (await h.send('/api/auth/session', { who })).body
+  assert.equal((await session('triage')).dependencyReview, true)
+  assert.equal((await session('admin')).dependencyReview, true, 'an admin reviews in teams they aren\'t in')
+  assert.equal(Object.hasOwn(await session('view'), 'dependencyReview'), false)
+  await h.db.setTeamMember('reviewers', h.sessions.triage.userId, { dependencies: false, security: true })
+  assert.equal(Object.hasOwn(await session('triage'), 'dependencyReview'), false, 'a triage member without Dependencies reviews none')
+  const pkg = packageOf('lib', '1.0.0', { 'index.js': 'x' })
+  registry(t, [pkg])
+  const started = await h.send('/api/npm/reviews', { body: { ecosystem: 'npm', package: 'lib', version: '1.0.0', integrity: pkg.doc.dist.integrity, action: 'start' } })
+  assert.deepEqual([started.status, started.body], [403, { error: 'review-access-required' }], 'nor begins a draft')
 })

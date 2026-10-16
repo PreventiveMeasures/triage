@@ -3809,6 +3809,17 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
   color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .issue-deps-count { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
+/* Their review, where it is in effect: that it fails in red, how many want
+   reviews in amber, or a check in green where none does, after the count,
+   or in its place. */
+.issue-deps-review {
+  flex: none; font-variant-numeric: tabular-nums;
+  .issue-deps-names + & { margin-left: auto; }
+  &.is-failed { color: var(--critical); }
+  &.is-wanted { color: var(--medium); }
+  &.is-passed { display: inline-flex; color: var(--green); }
+  & svg { color: inherit; }
+}
 .is-added { color: var(--green); }
 .is-deleted { color: var(--critical); }
 /* A label's dot in its padding, its name clipped to its content, so that the

@@ -16,7 +16,7 @@ import { formatBytes } from '../scan/metrics.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
 import { fetchBundleOrigin } from './bundle-data.js'
-import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRole, uploadBundle, uploadReport } from './admin-api.js'
+import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRepositoryDependencyReview, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
 import { viewAs } from '../../client/managed/session.js'
 import localImportStyles from './styles/local-import.css'
@@ -412,6 +412,7 @@ class ManagedAdminRepos extends ManagedPage {
     _acknowledge: { state: true },
     _deleteTriage: { state: true },
     _confirmName: { state: true },
+    _reviewDraft: { state: true },
   }
 
   static styles = [unsafeCSS(reposStyles), unsafeCSS(commonStyles)]
@@ -518,6 +519,7 @@ class ManagedAdminRepos extends ManagedPage {
 
   _openDetail(repo) {
     this._detail = repo
+    this._reviewDraft = null
     this._actionError = null
     this._impact = this.appState.read(`repo-impact:${repo.id}`) ?? null
     this._impactFresh = false
@@ -717,6 +719,7 @@ class ManagedAdminRepos extends ManagedPage {
           <button type="button" class="btn" ?disabled=${this._busy != null} @click=${() => { void this._setActive(repo, !active) }}>${this._busy === repo.id && !this._connectingApp ? (active ? 'Deactivating…' : 'Reactivating…') : (active ? 'Deactivate' : 'Reactivate')}</button>
         </div>
       </section>
+      ${this._dependencyReviewSection(repo)}
       <section class="data-section" aria-label="Stored repository data">
         <h2>Stored data</h2>
         <div class="dialog-data" aria-busy=${this._impactLoading}>
@@ -736,6 +739,51 @@ class ManagedAdminRepos extends ManagedPage {
       </section>
       ${this._removeOpen && this._impact != null && !this._impactLoading ? this._removeDialog(repo, reports, bundles) : nothing}
     </div>`
+  }
+
+  // Its dependency review: on or off at once; the reviews each version needs
+  // and the commit whose lockfiles' versions need none, saved together.
+  _dependencyReviewSection(repo) {
+    const saved = repo.dependencyReview ?? { enabled: false, required: 1, since: null }
+    const draft = this._reviewDraft ?? { required: String(saved.required), since: saved.since ?? '' }
+    const changed = draft.required !== String(saved.required) || draft.since.trim() !== (saved.since ?? '')
+    const busy = this._busy != null
+    return html`<section class="section" aria-label="Dependency review">
+      <h2>Dependency review</h2>
+      <div class="settings-row"><div class="settings-copy"><strong>Review dependencies</strong><p>Open pull requests show whether each package version
+        their lockfiles lock has its reviews, published to a team that reviews dependencies and has this repository. One from git, a tarball other
+        than npm’s registry’s, or locked with no integrity fails the review; the project’s own files aren’t reviewed.</p></div>
+        <mode-switch label=${saved.enabled ? 'On' : 'Off'} accessible-label="Review dependencies" .checked=${saved.enabled} .disabled=${busy}
+          @click=${() => { if (!busy) void this._saveDependencyReview(repo, { ...saved, enabled: !saved.enabled }) }}></mode-switch>
+      </div>
+      ${saved.enabled ? html`<form class="settings-row dependency-review-settings" aria-label="Dependency review settings"
+        @submit=${event => { event.preventDefault(); void this._saveDependencyReview(repo, { enabled: true, required: Number(draft.required), since: draft.since.trim().toLowerCase() || null }) }}>
+        <label><span>Reviews each version needs</span><input type="number" min="1" max="10" required .value=${draft.required} ?disabled=${busy}
+          @input=${event => { this._reviewDraft = { ...draft, required: event.target.value } }}></label>
+        <label class="dependency-review-since"><span>Reviewed since commit</span><input type="text" placeholder="Full commit id, or none" autocomplete="off" spellcheck="false"
+          pattern="[0-9a-fA-F]{40}" .value=${draft.since} ?disabled=${busy} @input=${event => { this._reviewDraft = { ...draft, since: event.target.value } }}></label>
+        <button type="submit" class="btn" ?disabled=${busy || !changed}>Save</button>
+        <p class="dependency-review-hint">${draft.since.trim() ? 'Versions the repository’s lockfiles locked at this commit need no review.'
+          : 'With no commit, every version needs its reviews, those its lockfiles already locked as well.'}</p>
+      </form>` : nothing}
+    </section>`
+  }
+
+  async _saveDependencyReview(repo, setting) {
+    if (this._busy != null) return
+    this._busy = repo.id
+    this._actionError = null
+    try {
+      const dependencyReview = await this.appState.mutate(() => setRepositoryDependencyReview(repo.id, setting, this._csrf), ['repos'])
+      if (!this.isConnected) return
+      if (this._detail?.id === repo.id) this._detail = { ...this._detail, dependencyReview }
+      if (this._data) this._data = { ...this._data, repositories: this._data.repositories.map(entry => entry.id === repo.id ? { ...entry, dependencyReview } : entry) }
+      this._reviewDraft = null
+    } catch (err) {
+      this._actionError = `Couldn't save ${repo.fullName}'s dependency review: ${err?.message ?? err}`
+    } finally {
+      this._busy = null
+    }
   }
 
   _removeDialog(repo, reports, bundles) {

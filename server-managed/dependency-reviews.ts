@@ -71,6 +71,16 @@ const columns = `id, user_id AS user, user_login AS userLogin, ecosystem, packag
   time, revision, published_at AS publishedAt, revoked_at AS revokedAt, files, status, comment`
 const conflict = () => { throw new ManagedMutationError(409, 'review-conflict') }
 
+// Who reviews dependencies in team `t`, user `u` as the query joins them: an
+// admin, in any team; a member who manages, in theirs; a member who triages,
+// in theirs whose dependencies they may see (`view_dependencies`). Publishing
+// (`publishing`) needs the team to review dependencies; reading what was
+// published there, not, so what it published stays read once it stops. A
+// hidden team is no one's.
+export const reviewsIn = (publishing: boolean) => `t.hidden = 0${publishing ? ' AND t.dependency_review = 1' : ''} AND (u.role = 'admin' OR EXISTS (
+  SELECT 1 FROM managed_team_user m WHERE m.team_id = t.id AND m.user_id = u.id
+    AND (u.role = 'manage' OR (u.role = 'triage' AND m.view_dependencies = 1))))`
+
 // Fold legacy multi-note files into one text field without changing a frozen
 // snapshot's stored rows. Continuing or saving uses one row per file.
 function fileEntries(entries: ReviewEntry[]): ReviewEntry[] {
@@ -93,11 +103,18 @@ async function actor(db: ManagedSql, sessionId: string, admin = false) {
   if (!(admin ? ['admin'] : ['triage', 'manage', 'admin']).includes(user.role)) throw new ManagedMutationError(403, 'forbidden')
   return user
 }
+// The teams `user` publishes reviews to (reviewsIn).
 async function teams(db: ManagedSql, user: string): Promise<ReviewTeam[]> {
-  return await db.prepare(`SELECT t.id, t.name FROM managed_team t
-    JOIN managed_team_user m ON m.team_id = t.id AND m.user_id = ?
-    WHERE t.hidden = 0 AND t.dependency_review = 1 ORDER BY t.name, t.id`).all(user) as ReviewTeam[]
+  return await db.prepare(`SELECT t.id, t.name FROM managed_team t JOIN managed_user u ON u.id = ?
+    WHERE ${reviewsIn(true)} ORDER BY t.name, t.id`).all(user) as ReviewTeam[]
 }
+// A draft is begun or edited by one who publishes to some team; their own
+// published review revoked, or published to more teams, as `publish` checks
+// each, whoever they are now.
+async function requireReviewer(db: ManagedSql, user: string) {
+  if ((await teams(db, user)).length === 0) throw new ManagedMutationError(403, 'review-access-required')
+}
+
 async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Promise<DependencyReview[]> {
   const reviews = rows as (Omit<DependencyReview, 'files'> & { files: string | null })[]
   if (reviews.length === 0) return []
@@ -105,10 +122,9 @@ async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Pro
   const entries = await db.prepare(`SELECT review_id AS reviewId, id, file, comment, status, time
     FROM managed_dependency_file_review WHERE review_id IN (${placeholders}) ORDER BY time, id`).all(...ids) as (ReviewEntry & { reviewId: string })[]
   const linked = await db.prepare(`SELECT rt.review_id AS reviewId, t.id, t.name FROM managed_dependency_review_team rt
-    JOIN managed_dependency_review r ON r.id = rt.review_id JOIN managed_team t ON t.id = rt.team_id
-    WHERE rt.review_id IN (${placeholders}) AND (r.user_id = ? OR (t.hidden = 0 AND EXISTS (
-      SELECT 1 FROM managed_team_user m WHERE m.team_id = t.id AND m.user_id = ?)))
-    ORDER BY t.name, t.id`).all(...ids, user, user) as (ReviewTeam & { reviewId: string })[]
+    JOIN managed_dependency_review r ON r.id = rt.review_id JOIN managed_team t ON t.id = rt.team_id JOIN managed_user u ON u.id = ?
+    WHERE rt.review_id IN (${placeholders}) AND (r.user_id = u.id OR (${reviewsIn(false)}))
+    ORDER BY t.name, t.id`).all(user, ...ids) as (ReviewTeam & { reviewId: string })[]
   return reviews.map(review => {
     const snapshot = review.files === null ? null : JSON.parse(review.files) as string[] | { paths: string[]; nonTextFiles: string[] }
     const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
@@ -194,13 +210,14 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
     async listDependencyReviews(context, user, allBases = false) {
       const rows = await db.prepare(`SELECT ${columns} FROM managed_dependency_review r WHERE ${allBases ? targetWhere : contextWhere}
         AND (user_id = ? OR (published_at IS NOT NULL AND EXISTS (
-          SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id AND t.hidden = 0
-          JOIN managed_team_user m ON m.team_id = rt.team_id WHERE rt.review_id = r.id AND m.user_id = ?)))
+          SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id JOIN managed_user u ON u.id = ?
+          WHERE rt.review_id = r.id AND ${reviewsIn(false)})))
         ORDER BY time, id`).all(...values(context).slice(0, allBases ? 4 : 7), user, user)
       return expandReviews(db, rows, user)
     },
     async changeDependencyReview(context, sessionId, change, now) {
       const user = await actor(db, sessionId)
+      if (change.action !== 'revoke' && change.action !== 'publish') await requireReviewer(db, user.id)
       let id = change.reviewId
       let current: DependencyReview | undefined
       if (id) {

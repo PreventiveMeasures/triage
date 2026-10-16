@@ -6,7 +6,7 @@ import '../ui/client-managed.js'
 import './_scan-bundle.js'
 import { ManagedPage } from '../ui/managed/page.js'
 import { ManagedAppState, managedAppState } from '../ui/managed/state.js'
-import { templates } from './_lit.js'
+import { templateText, templates } from './_lit.js'
 
 function createPage(Page, appState = new ManagedAppState()) {
   const page = new Page()
@@ -91,6 +91,35 @@ test('repository removal requires valid impact and confirmation, including after
   page._confirmName = repo.fullName
   assert.equal(page._canRemove(repo), true)
   assert.equal(page._canRemove({ ...repo, id: 8 }), false, 'impact belongs to a specific repository')
+})
+
+test('a repository\'s dependency review is switched on or off at once, its required reviews and the commit reviewed since saved together', async (t) => {
+  const page = createPage(Repositories)
+  page.session = { csrfToken: 'csrf' }
+  Object.defineProperty(page, 'isConnected', { value: true })
+  const sent = []
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    sent.push([url, JSON.parse(init.body), init.headers['x-csrf-token']])
+    const { enabled, required, since } = JSON.parse(init.body)
+    return Promise.resolve(Response.json({ ok: true, dependencyReview: { enabled, required, since } }))
+  })
+  const off = { ...repo, dependencyReview: { enabled: false, required: 1, since: null } }
+  page._detail = off
+  page._data = { repositories: [off] }
+  let text = templateText(page._dependencyReviewSection(off))
+  assert.match(text, /accessible-label="Review dependencies"/u)
+  assert.doesNotMatch(text, /Reviews each version needs/u, 'its terms only once on')
+  await page._saveDependencyReview(off, { ...off.dependencyReview, enabled: true })
+  assert.deepEqual(sent.at(-1), ['/api/admin/repositories/dependency-review', { repoId: 7, enabled: true, required: 1, since: null }, 'csrf'])
+  assert.deepEqual(page._detail.dependencyReview, { enabled: true, required: 1, since: null })
+  assert.deepEqual(page._data.repositories[0].dependencyReview, page._detail.dependencyReview)
+  text = templateText(page._dependencyReviewSection(page._detail))
+  assert.match(text, /Reviews each version needs[^]*Reviewed since commit[^]*Save[^]*With no commit, every version needs its reviews/u)
+  page._reviewDraft = { required: '2', since: 'A'.repeat(40) }
+  assert.match(templateText(page._dependencyReviewSection(page._detail)), /need no review/u)
+  await page._saveDependencyReview(page._detail, { enabled: true, required: 2, since: 'a'.repeat(40) })
+  assert.deepEqual(page._detail.dependencyReview, { enabled: true, required: 2, since: 'a'.repeat(40) })
+  assert.equal(page._reviewDraft, null, 'saved, nothing left to save')
 })
 
 test('late report preview success and failure cannot overwrite a newer request, even for the same report', async (t) => {

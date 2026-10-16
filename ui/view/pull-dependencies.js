@@ -6,7 +6,10 @@
 // changes a lockfile, or may, its files more than it listed
 // (`touchesLockfile`), as many at once as READ_AT_ONCE, those asked first
 // read first, as a page of tiles asks of each in turn; and kept for the
-// session that read them a while, as the tiles are.
+// session that read them a while, as the tiles are. An open one's are asked
+// with their review, where the repository reviews dependencies
+// (server-managed/pull-dependency-reviews.ts): each version's, the other
+// versions its lockfiles lock that want reviews, and what fails it.
 import { state } from '#client/index.js'
 import { fetchPullDependencies } from './client-managed.js'
 
@@ -41,19 +44,33 @@ function sessionHeld() {
 // lockfile, or may.
 export const readsDependencies = item => item?.touchesLockfile === true || item?.touchesLockfile === null
 
+const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
+const UNSUPPORTED = new Set(['git', 'tarball', 'integrity'])
+
+// A version as an answer names it: the versions it was, those it names, and
+// its review, where it tells one: why it can't be reviewed (`unsupported`),
+// needing none (`baseline`), or how many pass it (`reviews`).
+function checkedVersion(pkg) {
+  if (typeof pkg?.name !== 'string') return []
+  const { was, reviews, baseline, unsupported, ...version } = pkg
+  return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {},
+    ...UNSUPPORTED.has(unsupported) ? { unsupported } : baseline === true ? { baseline: true } : count(reviews) === null ? {} : { reviews } }]
+}
+const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : []
+
 // A server's answer, its directories those it names by their lockfiles'
-// paths, each's package versions those it names, the versions each was
-// those it names.
+// paths, each's versions those it names (checkedVersion), and its review's
+// terms, where it tells them.
 function checked(answer) {
   if (!Array.isArray(answer?.lockfiles)) throw new Error('The server answered with no lockfiles.')
-  const versions = was => Array.isArray(was) && was.every(version => typeof version === 'string') && was.length > 0 ? { was } : {}
   const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? dir
-    : { ...dir, added: dir.added.flatMap(pkg => {
-      if (typeof pkg?.name !== 'string') return []
-      const { was, ...version } = pkg
-      return [{ ...version, ...versions(was) }]
-    }), more: Number.isSafeInteger(dir.more) ? dir.more : 0 })
-  return { lockfiles, cut: answer.cut === true }
+    : { ...dir, added: dir.added.flatMap(checkedVersion), more: count(dir.more) ?? 0, unreviewed: versionsOf(dir.unreviewed),
+      moreUnreviewed: count(dir.moreUnreviewed) ?? 0, unsupported: versionsOf(dir.unsupported), moreUnsupported: count(dir.moreUnsupported) ?? 0,
+      moreLocked: count(dir.moreLocked) ?? 0 })
+  const review = answer.review
+  return { lockfiles, cut: answer.cut === true, ...count(review?.required) > 0 ? { review: { required: review.required,
+    since: typeof review.since === 'string' ? review.since : null, canReview: review.canReview === true,
+    ...typeof review.baselineError === 'string' ? { baselineError: review.baselineError } : {} } } : {} }
 }
 
 // The next asked read as one is, as many at once as READ_AT_ONCE.
@@ -70,17 +87,18 @@ function readDone() {
 }
 
 // What pull request `number` of repository `repoId` adds, as held, else
-// asked: `{ status }`, 'loading', then 'ready' with its `lockfiles` and
-// `cut`, or 'error' with its `error`; asked again once old, or once an
-// error's retry is due.
-export function pullDependencies(repoId, number) {
+// asked: `{ status }`, 'loading', then 'ready' with its `lockfiles`, `cut`,
+// and with `review` (an open one's), its review's terms where in effect, or
+// 'error' with its `error`; asked again once old, or once an error's retry
+// is due.
+export function pullDependencies(repoId, number, review = false) {
   const data = sessionHeld()
-  const key = `${repoId}\0${number}`
+  const key = `${repoId}\0${number}\0${review}`
   const entry = data.get(key)
   if (entry && Date.now() < entry.until) return entry
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
-  waiting.push(() => fetchPullDependencies(repoId, number).then(checked).then(answer => {
+  waiting.push(() => fetchPullDependencies(repoId, number, { review }).then(checked).then(answer => {
     if (data.get(key) === loading) data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, ...answer })
     return null
   }, err => {
@@ -98,16 +116,72 @@ export function pullDependencies(repoId, number) {
 // the new versions of those they locked before; how many of each; and
 // whether it tells more than it sends (`more`). A version new to one
 // directory's lockfiles and an update in another's is an update, with the
-// versions it was in each, whichever directory comes first.
-export function addedVersions({ lockfiles }) {
+// versions it was in each, whichever directory comes first; and its review
+// the less passing of theirs (bothReviewed).
+export function addedVersions({ lockfiles, review }) {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.added ?? [])) {
     const key = `${pkg.name}@${pkg.version ?? ''}`
     const had = all.get(key)
-    if (!had) all.set(key, pkg)
-    else if (pkg.was) all.set(key, { ...had, was: [...new Set([...had.was ?? [], ...pkg.was])] })
+    if (!had) { all.set(key, pkg); continue }
+    const { reviews: _reviews, baseline: _baseline, unsupported: _unsupported, ...version } = had
+    all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...bothReviewed(had, pkg) })
   }
   const versions = [...all.values()]
   const fresh = versions.filter(pkg => !pkg.was)
-  return { versions: [...fresh, ...versions.filter(pkg => pkg.was)], fresh: fresh.length, updated: versions.length - fresh.length, more: lockfiles.some(dir => dir.more > 0) }
+  return { versions: [...fresh, ...versions.filter(pkg => pkg.was)], fresh: fresh.length, updated: versions.length - fresh.length, more: lockfiles.some(dir => dir.more > 0),
+    toReview: versions.filter(pkg => reviewOf(pkg, review) === 'wanted').length }
+}
+
+// The review of a version two directories lock, the less passing of theirs:
+// one that can't be reviewed, else the fewer reviews, needing none only
+// where both do.
+function bothReviewed(had, pkg) {
+  const unsupported = had.unsupported ?? pkg.unsupported
+  if (unsupported) return { unsupported }
+  if (had.baseline && pkg.baseline) return { baseline: true }
+  const counts = [had, pkg].filter(one => !one.baseline && one.reviews != null).map(one => one.reviews)
+  return counts.length > 0 ? { reviews: Math.min(...counts) } : had.baseline || pkg.baseline ? { baseline: true } : {}
+}
+
+// A version's review, where its pull request's is in effect (`review`):
+// 'unsupported', where it can't be reviewed, 'baseline', needing none,
+// 'passed', having as many reviews as required, or 'wanted'; null where it
+// tells none, a file of the project's, which isn't reviewed.
+export function reviewOf(pkg, review) {
+  if (!review) return null
+  if (pkg.unsupported) return 'unsupported'
+  if (pkg.baseline) return 'baseline'
+  if (pkg.reviews == null) return null
+  return pkg.reviews >= review.required ? 'passed' : 'wanted'
+}
+
+// The other versions an answer's lockfiles lock that want reviews, each once
+// across its directories, and how many it counts in all (`count`), those it
+// didn't send among them.
+export function unreviewedVersions({ lockfiles }) {
+  const all = new Map()
+  for (const pkg of lockfiles.flatMap(dir => dir.unreviewed ?? [])) {
+    const key = `${pkg.name}@${pkg.version ?? ''}`
+    if (!all.has(key)) all.set(key, pkg)
+  }
+  return { versions: [...all.values()], count: all.size + lockfiles.reduce((more, dir) => more + (dir.moreUnreviewed ?? 0), 0) }
+}
+
+// What fails a pull request's review, where it is in effect: the versions
+// its lockfiles lock that can't be reviewed, each once across its
+// directories, and how many it counts in all (`count`); the directories
+// whose lockfiles couldn't be read (`unread`); how many versions they lock
+// past those checked (`unchecked`); and whether it changes lockfiles left
+// unread (`cut`). Null where nothing does.
+export function reviewFailures({ lockfiles, cut, review }) {
+  if (!review) return null
+  const all = new Map()
+  for (const pkg of lockfiles.flatMap(dir => dir.unsupported ?? [])) {
+    const key = `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
+    if (!all.has(key)) all.set(key, pkg)
+  }
+  const sum = field => lockfiles.reduce((total, dir) => total + (dir[field] ?? 0), 0)
+  const failed = { versions: [...all.values()], count: all.size + sum('moreUnsupported'), unread: lockfiles.filter(dir => dir.error), unchecked: sum('moreLocked'), cut }
+  return failed.count > 0 || failed.unread.length > 0 || failed.unchecked > 0 || cut ? failed : null
 }

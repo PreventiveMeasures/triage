@@ -2004,7 +2004,10 @@ version, two hundred at most, the rest counted (`more`); or, where a
 lockfile there couldn't be read, its
 `error` (`lockfile-unreadable`, with its reader's `detail`, or
 `github-not-found`). `cut` is set where it changes more files than are
-listed, or lockfiles in more directories than are read. What a pull
+listed, or lockfiles in more directories than are read. With them is kept
+every version its head's lockfiles lock, each with its integrity (twenty
+thousand a directory at most, the rest counted), for its review (below);
+neither is told. What a pull
 request's base's and head's commits tell is kept in the database (under
 `repository/pull-dependencies`, a month), as what they hold never changes;
 each lockfile read, in the instance's memory by its commit, so that pull
@@ -2013,6 +2016,60 @@ page reads two at a time, those asked first first, and keeps them for the
 session five minutes, as it keeps the tiles. GitHub refusing the
 repository's contents or its pull request is the answer's failure (`502
 github-status-403`, the popup saying so).
+
+### A repository's dependency review
+
+An admin turns a connected repository's dependency review on in its page
+under Repositories (**Dependency review**), with how many reviews each
+version needs (one to ten) and, optionally, the commit it is reviewed since
+(its full id): `POST /api/admin/repositories/dependency-review` with
+`{ repoId, enabled, required, since }` (`400 bad-request` for another,
+`404 no-repository`), kept on `managed_selected_repo`
+(`dependency_review`, `dependency_reviews_required`,
+`dependency_review_since`) and listed with each connected repository
+(`GET /api/admin/repositories`, `dependencyReview`). It is in effect only
+where a visible team that reviews dependencies has the repository; the
+reviews that count are those published to such a team
+(`repository-dependency-reviews.ts`): full, every file checked (a partial
+review counts for nothing yet), accepting (**Accept** or **Accept with
+nits**), not revoked, each reviewer once.
+
+An open pull request's tile and popup ask its dependencies with their review
+(`review=1`, `pull-dependency-reviews.ts`). A version is reviewed as npm's
+registry has it, by its name, version and integrity: one locked of npm's
+registry, by its name or its very link to the version's tarball (a hash after
+it alone, as Yarn 1 writes its sha1), with an integrity; a review of it counts
+where its integrity is one it is locked with. One from git, a tarball another
+host serves (a mirror's too) or a link with a query, or one locked with no
+integrity can't be, and fails the pull request's review, wherever its
+lockfiles locked it before; so do a lockfile it changes that couldn't be read,
+lockfiles left unread (`cut`), and a directory locking more versions than are
+checked. A file of the project's isn't reviewed. A version it adds passes
+with as many reviews as required, of it whole or compared with a version it
+was; and apart from them, every other version its lockfiles lock wants its
+reviews as well, of it whole or compared with any version of its package.
+Where the repository is reviewed since a commit, the versions its lockfiles
+locked there, of every lockfile of npm's ecosystem in it (a hundred at most)
+that can be reviewed, need none: read of GitHub once, and kept by the commit
+in the instance's memory and in the database (under
+`repository/review-baselines`, a month), never stored as reviews. Without
+that commit, every version wants its reviews. Where GitHub doesn't read it,
+every version wants them, and the popup says why.
+
+Each directory then tells each version it adds with its review (`reviews`,
+how many pass it; `baseline`, needing none; or `unsupported`, `git`,
+`tarball` or `integrity`), the other versions wanting reviews
+(`unreviewed`, two hundred at most, `moreUnreviewed` the rest), those that
+can't be reviewed (`unsupported`, `moreUnsupported`) and how many it locks
+past those checked (`moreLocked`); and the answer, its terms (`review`:
+`required`, `since`, `canReview`, and `baselineError` where the commit's
+versions couldn't be read). The tile shows a check where every version
+passes, how many want reviews (`1 to review · 4 unreviewed`), or, in red,
+that its review fails; the popup its terms, what fails it, each version's
+review (`2/2`, **baseline** or **can't review**), and the other versions
+folded under them. For one who publishes reviews to a team that counts
+(`canReview`), each version links to its review, an update's against the
+version it was, in place of a comparison.
 
 
 ## Agents
@@ -3082,7 +3139,10 @@ link to the repository's issue list, never its new-issue form.
 A package's **Review** tab opens `/npm/<package>@<version>/review`. With no base,
 all package files are reviewed as additions. Append `/<basePackage>@<baseVersion>`
 to review an update; a bare base version is accepted as a same-package shortcut.
-The tab is shown only to users belonging to a visible team with dependency review enabled.
+The tab is shown to those who review dependencies in some visible team that
+reviews them: a member of it who triages with its **Dependencies**
+permission, a member who manages, or an admin, of any (the session's
+`dependencyReview`).
 Tags resolve to exact versions. Review uses the Compare header and stats.
 Clicking Review reopens the author's latest review for that exact package version
 and integrity, including its original base. Explicit review links keep their base.
@@ -3090,11 +3150,11 @@ Changed files totaling less than 50,000 lines and 2 MiB across both versions use
 the whole diff; larger reviews use the per-file Code view. Both views support
 file reviews and whole-diff notes (a null file path).
 
-Triage users and above can save private review sets with notes and optional
+Those reviewers can save private review sets with notes and optional
 verdicts: **Accept**, **Accept with nits (non-blocking)**, **Request changes**, or
 **Reject**. In Manage teams, the **Enable dependency review** switch follows the
-npm scopes count. Only enabled, visible teams the author belongs to are offered
-for publication. A sole eligible team is selected initially; with multiple teams none are preselected.
+npm scopes count. Only enabled, visible teams the author reviews in (any, for
+an admin) are offered for publication. A sole eligible team is selected initially; with multiple teams none are preselected.
 **Publish** requires at least one selected team.
 The account menu and review page link to **My reviews** (`/my/reviews`), a paginated
 list of the user's unpublished, published, and revoked review sets.
@@ -3131,13 +3191,14 @@ published original. Only one unpublished set per author and comparison is active
 
 `GET /api/npm/reviews` takes `ecosystem=npm`, `package`, exact `version`,
 `integrity`, and optional `basePackage`, `baseVersion`, `baseIntegrity`. It returns
-the author's own sets, published sets shared with their current visible teams,
-and eligible publication teams. Private npm access is checked for both sides.
+the author's own sets, published sets shared with the visible teams they
+review in, and eligible publication teams. Private npm access is checked for both sides.
 `POST` takes that context plus `action`: `start` (an empty private set), `save` (file, comment, optional status,
 optional reviewId/revision/entryId), `publish` (reviewId, revision, teamIds,
 and required finalStatus/optional finalComment on first publication),
 `revoke`, or `continue` (reviewId, revision). Every mutation requires a session,
-CSRF token and triage role. `GET /api/npm/reviews/mine` lists only the current
+CSRF token and triage role; all but `publish`, which is held to its teams, and
+`revoke`, one who reviews in some team (`403 review-access-required`). `GET /api/npm/reviews/mine` lists only the current
 user's sets in pages of 50, with an optional beforeTime/beforeId cursor.
 Revision conflicts return 409. Version and integrity
 mismatches also return 409; unknown file paths are refused, including paths not

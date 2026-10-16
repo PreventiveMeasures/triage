@@ -3,6 +3,7 @@ import { LINK_REPORT_SCHEMA } from './link-reports.ts'
 import { REPOSITORY_ALIAS_SCHEMA } from './repository-aliases.ts'
 import { TEAM_NPM_SCOPE_SCHEMA } from './team-npm-scopes.ts'
 import { GITHUB_LINK_SCHEMA, GITHUB_LINK_USER_COLUMNS } from './github-links.ts'
+import { REPOSITORY_DEPENDENCY_REVIEW_COLUMNS } from './repository-dependency-reviews.ts'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { WebSocket } from 'ws'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
@@ -152,6 +153,12 @@ async function migrateGithubLinks(db: PgConnection): Promise<void> {
   await db.query('INSERT INTO managed_schema_version VALUES (28)')
 }
 
+async function migrateRepositoryDependencyReviews(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 29')).rows.length > 0) return
+  await db.query(`ALTER TABLE managed_selected_repo ${REPOSITORY_DEPENDENCY_REVIEW_COLUMNS.map(([column, type]) => `ADD COLUMN IF NOT EXISTS ${column} ${type}`).join(', ')}`)
+  await db.query('INSERT INTO managed_schema_version VALUES (29)')
+}
+
 async function initialize(db: PgConnection): Promise<void> {
   if (await currentSchema(db)) return
   await db.query('BEGIN')
@@ -225,7 +232,7 @@ async function initialize(db: PgConnection): Promise<void> {
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
-    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes, migrateDependencyReviews, migrateGithubLinks]) await migrate(db)
+    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes, migrateDependencyReviews, migrateGithubLinks, migrateRepositoryDependencyReviews]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

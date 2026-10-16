@@ -122,3 +122,8 @@ export const historyTreeStore = <T>(db: UpstreamCacheStore, debug = false): Kept
 // (pull-dependencies.ts), by the commits of its base and head, which never
 // change: kept as its history's pages are.
 export const pullDependencyStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/pull-dependencies', HISTORY_PAGE_KEPT_MS, debug)
+// The versions a repository's lockfiles locked at the commit its dependencies
+// are reviewed since (pull-dependency-reviews.ts reviewBaseline), by the
+// commit, which never change: kept as its history's pages are, never stored
+// as reviews.
+export const reviewBaselineStore = (db: UpstreamCacheStore, debug = false): KeptStore<string[]> => keptStore<string[]>(db, 'repository/review-baselines', HISTORY_PAGE_KEPT_MS, debug)

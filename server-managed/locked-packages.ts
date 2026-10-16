@@ -19,8 +19,9 @@ export interface LockedPackage {
   // Where one from elsewhere than npm's registry comes from, without any
   // credentials its URL has.
   from?: string
-  // A mirror's tarball's, as the lockfile has it: npm's package of its name
-  // and version only where npm's integrity is among it.
+  // As the lockfile has it: a mirror's tarball's, npm's package of its name
+  // and version only where npm's integrity is among it; and, where its
+  // reviews ask (`integrities`), npm's registry's too.
   integrity?: string
   // Where only the importers' devDependencies reach it, as npm's `dev` flag
   // says, and an install of no devDependencies leaves it out: in npm's and
@@ -54,38 +55,42 @@ function packagesOf(format: LockfileFormat, text: string): ReadPackage[] {
 }
 
 // npm's registry, by either of its names, and yarn's mirror of it, as
-// @preventive/lockfile holds their tarballs to a package's name and version.
+// @preventive/lockfile holds their tarballs to a package's name and version:
+// its link to one, as it names it, a hash after it alone (Yarn 1's sha1).
 const REGISTRY_HOSTS = new Set(['registry.npmjs.org', 'registry.npmjs.com', 'registry.yarnpkg.com'])
-const isRegistry = (url: URL) => url.protocol === 'https:' && !url.port && !url.username && !url.password
+const isRegistry = (url: URL) => url.protocol === 'https:' && !url.port && !url.username && !url.password && !url.search
   && REGISTRY_HOSTS.has(url.hostname.replace(/\.+$/u, ''))
 // Where a URL is, as it may be shown: its credentials, query and fragment
 // left out.
 const shown = (url: URL | null) => url ? { from: `${url.protocol}//${url.host}${url.pathname}` } : {}
 
-// Where a package read comes from (LockedPackage); null for one a package
-// bundles, with no resolution, or one of the project's own directories.
-function locked({ name, version, resolution }: ReadPackage): LockedPackage | null {
+// Where a package read comes from (LockedPackage), with npm's registry's
+// integrity where `integrities`; null for one a package bundles, with no
+// resolution, or one of the project's own directories.
+function locked({ name, version, resolution }: ReadPackage, integrities: boolean): LockedPackage | null {
   const at = { name, version: version ?? null }
   if (resolution === undefined || resolution.type === 'directory') return null
   if (resolution.type === 'git') return { ...at, source: 'git', ...shown(URL.parse(resolution.repo)) }
   const { tarball, integrity } = resolution
   if (resolution.gitHosted) return { ...at, source: 'git', ...shown(URL.parse(tarball ?? '')) }
-  if (tarball === undefined) return { ...at, source: 'registry' }
+  const registry = { ...at, source: 'registry' as const, ...integrities && integrity ? { integrity } : {} }
+  if (tarball === undefined) return registry
   if (tarball.startsWith('file:')) return { ...at, source: 'file' }
   const url = URL.parse(tarball)
-  if (url && isRegistry(url)) return { ...at, source: 'registry' }
+  if (url && isRegistry(url)) return registry
   return integrity ? { ...at, ...shown(url), source: 'mirror', integrity } : { ...at, ...shown(url), source: 'tarball' }
 }
 
 // The packages a lockfile of `format` (npm, pnpm or yarn, as
 // findRepoLockfiles names them) locks, each once, in the lockfile's order:
 // `dev` only where it is wherever it is installed, at each path of npm's
-// tree, and with each of pnpm's peers. Throws the reader's LockfileError or
-// YamlError for one it refuses.
-export function lockedPackages(format: LockfileFormat, text: string): LockedPackage[] {
+// tree, and with each of pnpm's peers; with `integrities`, each of npm's
+// registry's with its integrity, as its reviews hold it to one. Throws the
+// reader's LockfileError or YamlError for one it refuses.
+export function lockedPackages(format: LockfileFormat, text: string, { integrities = false } = {}): LockedPackage[] {
   const found = new Map<string, LockedPackage>()
   for (const pkg of packagesOf(format, text)) {
-    const one = locked(pkg)
+    const one = locked(pkg, integrities)
     if (!one) continue
     if (pkg.dev === true) one.dev = true
     const key = `${one.source}\0${one.name}@${one.version ?? ''}\0${one.from ?? ''}\0${one.integrity ?? ''}`

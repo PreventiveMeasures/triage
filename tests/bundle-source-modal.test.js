@@ -69,7 +69,7 @@ test('losing security access removes the advisory tab and restores Overview', t 
   assert.equal(state.bundleDetailsTab, 'overview')
 })
 
-test('npm Review tab requires membership in a team with dependency review enabled', t => {
+test('npm Review tab shows where the reader reviews dependencies in some team, as their session or a team of theirs says', t => {
   const previous = { managedSession: state.managedSession, managedTeams: state.managedTeams }
   t.after(() => Object.assign(state, previous))
   const entry = { name: 'lib@1.0.0', integrity: 'npm-review-tabs', npm: { name: 'lib', version: '1.0.0' } }
@@ -82,6 +82,10 @@ test('npm Review tab requires membership in a team with dependency review enable
     [{ role: 'view' }, [{ dependencyReview: true }], true],
     [{ role: 'triage' }, [{}, { dependencyReview: true }], true],
     [{ role: 'view', publicShare: true }, [{ dependencyReview: true }], false],
+    // An admin reviews in teams they aren't in, which their session says.
+    [{ role: 'admin', dependencyReview: true }, [], true],
+    [{ role: 'triage', dependencyReview: 'true' }, [], false],
+    [{ role: 'view', publicShare: true, dependencyReview: true }, [], false],
   ]) {
     Object.assign(state, { managedSession: session, managedTeams: teams })
     assert.equal(/data-bundle-tab="review"/u.test(renderText(renderBundlesList([entry]))), shown)

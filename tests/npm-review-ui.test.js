@@ -7,7 +7,9 @@ import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 import { prepareComparison } from '../common/bundle-comparison.js'
 
 const requests = [], state = {}
-let answer = { reviews: [], teams: [] }
+// Teams the reader publishes to: two, so that neither is chosen for them.
+const TEAMS = [{ id: 'one', name: 'One' }, { id: 'two', name: 'Two' }]
+let answer = { reviews: [], teams: TEAMS }
 let latestAnswer = null
 const latestRequests = [], loadedBases = []
 let discardConfirmation = { confirmed: false }
@@ -79,8 +81,27 @@ function component() {
   page._context = context
   page._key = JSON.stringify(['alice', 'triage', context])
   page._reviews = [review]
+  // As its load would leave it: the teams the reader publishes to.
+  page._teams = TEAMS
   return page
 }
+
+test('a reader who publishes to no team reads reviews but neither edits nor revises, and is told why', () => {
+  const page = component()
+  page._teams = []
+  assert.equal(page._reviewer, false)
+  assert.equal(page._canEdit, false)
+  const published = { ...review, publishedAt: 200, status: 'accept', coverage: 'full', teams: [{ id: 'one', name: 'One' }] }
+  page._reviews = [published]
+  assert.equal(page._continue(published.id, published.revision), null, 'no new draft to continue in')
+  const entryText = text(renderReviewEntry(page, published))
+  assert.doesNotMatch(entryText, /Revise/u)
+  assert.match(entryText, />Revoke</u, 'their own published review revoked all the same')
+  page._file = 'index.js'
+  assert.match(text(renderReviewEditor(page, 'index.js')), /Reviewing needs a team that reviews dependencies, where you manage or have Dependencies\./u)
+  page.session = { ...page.session, role: 'view' }
+  assert.match(text(renderReviewEditor(page, 'index.js')), /Triage access is required to add a review\./u)
+})
 
 test('non-text files stay visible and unchecked in both review modes, with disabled verdicts and no notes', async () => {
   const page = component()
@@ -89,7 +110,7 @@ test('non-text files stay visible and unchecked in both review modes, with disab
   page._base = { ...base, kind: 'sourcemap', json: { sources: ['package.json'], sourcesContent: ['old'] },
     npmBinaries: new Map([['index.js', { size: 12, digest: 'sha256-old' }]]) }
   const saved = { ...review, entries: ['package.json', 'asset.bin', 'index.js'].map((path, i) => ({ ...file, id: String(i), file: path, status: 'accept', comment: '' })) }
-  answer = { reviews: [saved], teams: [] }
+  answer = { reviews: [saved], teams: TEAMS }
   page._key = null
   page._ensureContext(page._base, prepareComparison(page._base, page.details))
   await Promise.resolve()
@@ -422,7 +443,7 @@ test('a review without a base compares every package file against an empty packa
   page.details = { kind: 'sourcemap', npm: entry.npm,
     json: { version: 3, sources: ['index.js', 'empty.txt', 'image.png'], sourcesContent: ['export const n = 1', '', null] },
     npmBinaries: new Map([['image.png', { digest: 'sha256-image', size: 20 }]]) }
-  answer = { reviews: [], teams: [] }
+  answer = { reviews: [], teams: TEAMS }
   await page._loadBase('(empty)')
   const empty = page._base
   assert.deepEqual(comparisonsAsked.at(-1), [empty, page.details], 'its files paired as the server pairs them, before it opens')
@@ -439,7 +460,7 @@ test('review file kinds distinguish a moved comparison root from a renamed file'
   const sources = (paths, contents) => ({ kind: 'sourcemap', json: { version: 3, sources: paths, sourcesContent: contents } })
   page._key = null
   page.details = sources(['lib/index.js', 'lib/helper.ts'], ['new entry', 'helper'])
-  answer = { reviews: [], teams: [] }
+  answer = { reviews: [], teams: TEAMS }
   const old = { ...sources(['index.js', 'helper.js'], ['old entry', 'helper']), ...base }
   page._ensureContext(old, prepareComparison(old, page.details))
   assert.deepEqual(page._files, ['lib/helper.ts', 'lib/index.js'])
@@ -452,7 +473,7 @@ test('Review resumes the latest saved base while explicit links and new reviews 
   page.details = { kind: 'sourcemap', json: { version: 3, sources: [], sourcesContent: [] } }
   latestRequests.length = 0; loadedBases.length = 0
   latestAnswer = review
-  answer = { reviews: [review], teams: [] }
+  answer = { reviews: [review], teams: TEAMS }
   await page._loadBase('(empty)', true)
   assert.deepEqual(loadedBases, [['@scope/lib', '1.0.0']])
   assert.equal(page._context.baseVersion, '1.0.0')
@@ -672,7 +693,7 @@ test('viewing a frozen set never loads or overwrites private unsaved buffers', (
 test('opening a specific published list row selects that snapshot even with an active review', async () => {
   const page = component(), published = { ...review, id: 'published', publishedAt: 200 }
   selectReviewOnOpen(published)
-  answer = { reviews: [review, published], teams: [] }
+  answer = { reviews: [review, published], teams: TEAMS }
   await page._refresh()
   assert.equal(page._shownReview.id, 'published')
   assert.equal(page._canEdit, false)
@@ -688,7 +709,7 @@ test('version-wide reviews keep bases separate when opening, continuing and shar
   await page._openReview(published, true)
   assert.equal(navigations[0].reviewSpec, '0.8.0')
   page._context = { ...context, baseVersion: published.baseVersion, baseIntegrity: published.baseIntegrity }
-  answer = { reviews: page._reviews, teams: [] }
+  answer = { reviews: page._reviews, teams: TEAMS }
   await page._refresh()
   assert.equal(requests.at(-1)[0].allBases, true)
   assert.equal(page._continuation.source, published)

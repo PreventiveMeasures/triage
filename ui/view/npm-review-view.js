@@ -80,7 +80,8 @@ export function renderReviewEditor(page, file = page._file, inline = false) {
       : html`${inline ? nothing : html`<header><strong>File review</strong><span class="npm-review-muted">${isFrozen(page) ? 'Frozen' : 'Read only'}</span></header>`}
         ${saved?.status && !nonText ? html`${verdictLabel(saved.status)}${reviewNote(saved.comment)}`
           : html`<p class="npm-review-muted">This file was not reviewed.</p>`}
-        ${page._writable ? nothing : html`<p class="npm-review-help">Triage access is required to add a review.</p>`}`}
+        ${page._reviewer || page._loading ? nothing : html`<p class="npm-review-help">${page._writable
+          ? 'Reviewing needs a team that reviews dependencies, where you manage or have Dependencies.' : 'Triage access is required to add a review.'}</p>`}`}
   </section>`
 }
 
@@ -140,7 +141,7 @@ export function renderReviewEntry(page, review) {
     <p class="npm-review-help">${review.teams.length > 0 ? `${review.teams.map(team => team.name).join(', ')} · ` : ''}${reviewDate(review.publishedAt ?? review.time)}</p>${reviewNote(review.comment)}
     <div class="npm-review-entry-actions">
       <button type="button" class="npm-review-button" ?disabled=${busy(page)} @click=${() => void page._openReview(review)}>Open ${NEXT_ICON}</button>
-      ${published && own && !hasPrivate && page._writable ? html`<button type="button" class="npm-review-button" aria-label="Revise in a new draft" ?disabled=${busy(page)}
+      ${published && own && !hasPrivate && page._reviewer ? html`<button type="button" class="npm-review-button" aria-label="Revise in a new draft" ?disabled=${busy(page)}
         @click=${() => void page._openReview(review, true)}>Revise</button>` : nothing}
       ${published && own && page._writable && review.revokedAt === null ? html`<button type="button" class="npm-review-button npm-review-danger" ?disabled=${busy(page)}
         @click=${() => page._change({ action: 'revoke', reviewId: review.id, revision: review.revision })}>Revoke</button>` : nothing}

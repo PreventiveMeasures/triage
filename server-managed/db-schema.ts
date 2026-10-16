@@ -65,7 +65,13 @@ CREATE TABLE IF NOT EXISTS managed_selected_repo (
   added_by        TEXT REFERENCES managed_user(id) ON DELETE SET NULL,
   added_at        INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
-  active          INTEGER NOT NULL DEFAULT 1
+  active          INTEGER NOT NULL DEFAULT 1,
+  -- Its pull requests' dependencies reviewed (repository-dependency-reviews.ts):
+  -- as many published reviews required of each version, and the commit at
+  -- whose lockfiles' versions none is (null for none).
+  dependency_review INTEGER NOT NULL DEFAULT 0,
+  dependency_reviews_required INTEGER NOT NULL DEFAULT 1,
+  dependency_review_since TEXT
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS selected_repo_full_name_idx ON managed_selected_repo(full_name);

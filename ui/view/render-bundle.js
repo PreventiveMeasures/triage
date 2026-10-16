@@ -1994,10 +1994,12 @@ const bundleTab = (key, label, tab, opening = false, onTab = null) => onTab
   : html`<button type="button" class=${classMap({ 'bundles-tab': true, active: tab === key })}
   data-bundle-tab="${key}" aria-selected=${String(tab === key)} role="tab" ?disabled=${opening}>${label}</button>`
 
-// The tabs an npm version shows, each `[key, label]`: Review where a team
-// the reader is in reviews dependencies.
+// The tabs an npm version shows, each `[key, label]`: Review where the reader
+// publishes dependency reviews to some team, as their session says (an
+// admin's to any), or as one of their teams does, read since.
 const npmTabs = () => [['treemap', 'Treemap'], ['code', 'Code'], ['search', 'Search'], ['compare', 'Compare'],
-  ...state.managedSession && !state.managedSession.publicShare && state.managedTeams?.some(team => team.dependencyReview === true) ? [['review', 'Review']] : [],
+  ...state.managedSession && !state.managedSession.publicShare
+    && (state.managedSession.dependencyReview === true || state.managedTeams?.some(team => team.dependencyReview === true)) ? [['review', 'Review']] : [],
   ['overview', 'Overview']]
 
 // The tabs a repository's directory shows (repository-code.js), `tab` the

@@ -13,9 +13,10 @@ const asked = []
 let answer = null
 mock.module('../ui/view/dialogs/app-dialog.js', { namedExports: { AppDialog: TestDialog, openAppDialog() {} } })
 const dependencyAsked = []
+const dependencyOptions = []
 let dependencies = () => new Promise(() => {})
 mock.module('../ui/view/client-managed.js', { namedExports: { fetchRepositoryItem(repoId, number) { asked.push([repoId, number]); return answer(number) },
-  fetchPullDependencies(repoId, number) { dependencyAsked.push([repoId, number]); return dependencies(number) } } })
+  fetchPullDependencies(repoId, number, options) { dependencyAsked.push([repoId, number]); dependencyOptions.push([number, options]); return dependencies(number) } } })
 mock.module('../ui/view/render-finding.js', { namedExports: { renderHighlighted: text => text } })
 mock.module('../ui/view/format.js', { namedExports: { flowText: text => `[flowed]${text}` } })
 await import('../ui/view/dialogs/repository-item-dialog.js')
@@ -142,6 +143,50 @@ test('a pull request changing a lockfile, merged or closed as well as open, show
   assert.doesNotMatch(text, /gone\/package-lock\.json/u, 'a directory none is new to left out')
   assert.match(text, /<code>web\/pnpm-lock\.yaml<\/code>, <code>web\/yarn\.lock<\/code>[^]*role="alert">A lockfile here couldn’t be read: a yarn\.lock of Yarn 2 or later, which is not read</u)
   assert.match(text, /more directories, than are read/u)
+})
+
+test('an open pull request\'s dependencies, where its repository reviews them, show its terms, what fails it, each version\'s review linked to reviewing it, and the others wanting reviews apart', async () => {
+  const mine = { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }
+  const reply = canReview => ({ cut: false, review: { required: 2, since: 'd'.repeat(40), canReview }, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0,
+    added: [{ name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 2 }, { name: 'tool', version: '1.0.0', source: 'registry', reviews: 1 },
+      { name: 'left-pad', version: '1.3.0', source: 'registry', baseline: true }, mine, { name: 'local', version: '1.0.0', source: 'file' }],
+    unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 2,
+    unsupported: [mine, { name: 'mirrored', version: '1.0.0', source: 'mirror', from: 'https://mirror.example/m.tgz', unsupported: 'tarball' }], moreUnsupported: 1 }] })
+  const unread = { cut: true, review: { required: 1, since: null, canReview: true }, lockfiles: [{ paths: ['yarn.lock'], error: 'lockfile-unreadable' }] }
+  dependencies = number => Promise.resolve({ number, ...number === 33 ? unread : reply(number === 31) })
+  answer = () => new Promise(() => {})
+  dependencyOptions.length = 0
+  const dialog = shown()
+  dialog.open({ number: 31, preview: { ...tile, number: 31, touchesLockfile: true } })
+  templateText(dialog.render())
+  await setImmediate()
+  const text = templateText(dialog.render())
+  assert.deepEqual(dependencyOptions, [[31, { review: true }]], 'an open one\'s asked with their review')
+  assert.match(text, /Each version needs 2 full, accepting reviews; those the repository’s lockfiles locked at <code>ddddddd<\/code> need none\./u)
+  assert.match(text, /<div class="repo-item-failed" role="alert">\s*<p>Its review fails: 3 versions its lockfiles lock can’t be reviewed, as only npm’s registry’s, locked with an integrity, are\.<\/p>/u)
+  const failed = text.slice(text.indexOf('repo-item-failed'), text.indexOf('repo-item-lockfiles'))
+  assert.match(failed, /mirrored<span class="repo-item-version">@1\.0\.0<\/span>[^]*is-failed" data-tooltip=A tarball not npm’s registry’s of its version, which isn’t reviewed>can’t review<[^]*>mirror</u)
+  assert.match(failed, /and 1 more/u)
+  assert.match(text, /href=\/npm\/ms@2\.1\.3\/review\/ms@2\.1\.2 [^]*class=repo-item-review is-passed data-tooltip=2 full, accepting reviews of 2 required><svg[^]*<\/svg>2\/2</u,
+    'an update reviewed against the version it was, passed')
+  assert.match(text, /href=\/npm\/tool@1\.0\.0\/review [^]*class=repo-item-review is-wanted data-tooltip=1 full, accepting review of 2 required>1\/2</u, 'a new one reviewed whole, wanting one more')
+  assert.match(text, /left-pad<span class="repo-item-version">@1\.3\.0[^]*>baseline</u)
+  const own = text.slice(text.indexOf('repo-item-lockfiles'))
+  assert.match(own, /<span class="repo-item-row">[^]*mine[^]*is-failed" data-tooltip=From git, which isn’t reviewed>can’t review</u)
+  assert.doesNotMatch(own.slice(own.indexOf('>local<'), own.indexOf('</li>', own.indexOf('>local<'))), /repo-item-review/u, 'a file of the project\'s not reviewed')
+  assert.match(text, /<details class="repo-item-unreviewed"><summary>3 other versions in its lockfiles want reviews<\/summary>[^]*href=\/npm\/other@1\.0\.0\/review [^]*and 2 more/u)
+  const reader = shown()
+  reader.open({ number: 32, preview: { ...tile, number: 32, touchesLockfile: true } })
+  templateText(reader.render())
+  await setImmediate()
+  const read = templateText(reader.render())
+  assert.match(read, /href=\/npm\/ms@2\.1\.3\/compare\/2\.1\.2 /u, 'one who reviews in none of its teams compares it')
+  assert.doesNotMatch(read, /\/review/u)
+  const cut = shown()
+  cut.open({ number: 33, preview: { ...tile, number: 33, touchesLockfile: true } })
+  templateText(cut.render())
+  await setImmediate()
+  assert.match(templateText(cut.render()), /<div class="repo-item-failed" role="alert">\s*<p>Its review fails: not every lockfile it changes was read\.<\/p>/u)
 })
 
 test('a pull request whose lockfiles add none says so; one changing none, or an issue, shows nothing of them; one failing says why', async () => {

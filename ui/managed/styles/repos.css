@@ -404,6 +404,38 @@ a.btn {
 .settings-row + .settings-row {
   border-top: 1px solid var(--border);
 }
+/* A repository's dependency review: its two settings beside each other, a
+   commit id as wide as its 40 characters, then Save, and under them what the
+   commit means. */
+.dependency-review-settings {
+  flex-wrap: wrap;
+  align-items: end;
+}
+.dependency-review-settings label {
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+  color: var(--muted);
+  font-size: .76rem;
+}
+.dependency-review-settings input {
+  padding: .35rem .5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 6px);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: .83rem;
+}
+.dependency-review-settings input[type='number'] { width: 5rem; }
+.dependency-review-since { flex: 1; min-width: min(100%, 22rem); }
+.dependency-review-since input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dependency-review-hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: .76rem;
+}
 .btn.danger {
   color: var(--critical, #e5534b);
 }
