@@ -3,10 +3,9 @@
 
    The app is one window on the desktop, laid out as Explorer is: a navy
    title bar, a sunken white tree pane on the left (the sidebar), the page
-   beside it, a status bar along its foot; desktop icons to its left and
-   the taskbar under it all (view/w95-desktop.js). The title and status
-   bars are the sidebar's header and actions, pinned along the window's
-   edges (view/sidebar.css). Dialogs are Windows 95 dialogs
+   beside it, a status bar along its foot. The title and status bars are
+   the sidebar's header and actions, pinned along the window's edges
+   (view/sidebar.css). Dialogs are Windows 95 dialogs
    (view/dialogs/dialog-base.css).
 
    Its look is Windows 95's: silver chrome, white wells, navy where
@@ -31,7 +30,6 @@
 
   body.theme-w95 {
     color-scheme: light;
-    --w95-desktop: #008080;
     --w95-face: #c0c0c0;
     --w95-light: #dfdfdf;
     --w95-shadow: #808080;
@@ -66,11 +64,9 @@
       linear-gradient(#000, #000) 8px 4px / 1px 4px no-repeat,
       linear-gradient(#000, #000) 9px 3px / 1px 3px no-repeat;
     --w95-gap: 8px;
-    --w95-window-left: var(--w95-gap);
     --w95-frame: 4px;
     --w95-title-height: 20px;
     --w95-status-height: 22px;
-    --w95-taskbar-height: 30px;
     --bg: #fff;
     --theme-bar: var(--w95-face);
     --surface: var(--w95-face);
@@ -136,8 +132,8 @@
     accent-color: var(--w95-title);
     /* The window: its frame, then room inside for the pinned title and
        status bars, the two panes side by side between them. */
-    height: calc(100dvh - 2 * var(--w95-gap) - var(--w95-taskbar-height));
-    margin: var(--w95-gap) var(--w95-gap) calc(var(--w95-gap) + var(--w95-taskbar-height)) var(--w95-window-left);
+    height: calc(100dvh - 2 * var(--w95-gap));
+    margin: var(--w95-gap);
     padding:
       calc(var(--w95-frame) + var(--w95-title-height) + 3px) var(--w95-frame)
       calc(var(--w95-frame) + var(--w95-status-height) + 3px);
@@ -415,13 +411,11 @@
     /* Pulse's tiles and panels are group boxes. */
     & :is(.pulse-tile, .pulse-panel) { border: 0; background: var(--w95-face); box-shadow: var(--w95-etched); }
 
-    /* The graph's fullscreen maximizes the window over the taskbar.
-       The zeros keep their unit: they are summed in calc(). */
+    /* The graph's fullscreen maximizes the window. The zeros keep
+       their unit: they are summed in calc(). */
     /* stylelint-disable length-zero-no-unit */
     &.report-fullscreen {
       --w95-gap: 0px;
-      --w95-window-left: 0px;
-      --w95-taskbar-height: 0px;
       padding: var(--w95-frame);
     }
   }
@@ -439,12 +433,6 @@
   body.theme-w95 ::-webkit-scrollbar-button:single-button:horizontal:decrement { background: var(--w95-arrow-left), var(--w95-face); }
   body.theme-w95 ::-webkit-scrollbar-button:single-button:horizontal:increment { background: var(--w95-arrow-right), var(--w95-face); }
 
-  /* With room beside it, the window leaves the desktop's icons a column
-     on its left (view/w95-desktop.css). */
-  @media (width >= 960px) {
-    body.theme-w95 { --w95-window-left: 88px; }
-  }
-
   /* An installed app drawing its own title bar maximizes the window:
      its frame leaves the screen, as Windows 95's does, and the title
      bar is the strip the OS draws its controls on. */
@@ -452,7 +440,6 @@
   @media (display-mode: window-controls-overlay) {
     body.theme-w95 {
       --w95-gap: 0px;
-      --w95-window-left: 0px;
       --w95-frame: 0px;
       --w95-title-height: var(--wco-titlebar-height);
     }

@@ -48,7 +48,7 @@ const ICONS = { light: '☀', dark: '☾', green: '🕶️', pink: '✿', w95: '
 // Fires on every applyTheme call (including the boot-time replay).
 // The toggle button listens so its icon stays in sync when an
 // external `DeepView.setTheme(...)` swaps the theme out from under it.
-export const THEME_CHANGED = 'deepview-theme-changed'
+const THEME_CHANGED = 'deepview-theme-changed'
 
 let currentTheme = 'dark'
 let printDialogOpen = false
