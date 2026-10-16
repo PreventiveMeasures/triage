@@ -219,6 +219,19 @@ test('the agents\' pull requests merged in the year: by their branches, the most
   assert.ok(later.merges.every(([, at]) => at >= since + 300 * 12 * HOUR))
 })
 
+test('an agent\'s pull request merged with a merge commit brings its own commits, the merge itself counting none; one squashed, its merge commit alone', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const when = new Date(since + DAY).toISOString()
+  const pull = (branch, merge, parents, own) => ({ updatedAt: when, mergedAt: when, headRefName: branch, mergeCommit: { oid: shaOf(merge), parents: { totalCount: parents } },
+    commits: { nodes: own.map(oid => ({ commit: { oid: shaOf(oid) } })) } })
+  github(t, { graphql: mergedPulls([pull('codex/merged', 1, 2, [2, 3]), pull('codex/squashed', 4, 1, [5]), pull('feature/merged', 6, 2, [7])]) })
+  const read = await agentMerges('org/repo', 'token', since, null)
+  assert.deepEqual(read.merges.map(([sha]) => sha).toSorted(), [1, 2, 3, 4].map(shaOf).toSorted())
+  const commit = (at, parents = ['p']) => ({ sha: shaOf(at), parents, subject: '', authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt: since + DAY, coauthors: [] })
+  const counted = commitStats([commit(1, ['p', 'q']), commit(2), commit(3), commit(7)], since, new Set(read.merges.map(([sha]) => sha)))
+  assert.deepEqual([counted.weeks[0].days[1], counted.weeks[0].agentDays[1]], [3, 2], 'the merge itself left out')
+})
+
 test('a year counts the commits merged from an agent\'s pull request with agents, their messages marking none; the pull requests merged read a few queries an answer', async t => {
   const request = await fixture(t)
   const commits = chain(50, Date.now())

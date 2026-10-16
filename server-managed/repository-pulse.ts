@@ -41,9 +41,11 @@ const YEAR_STARTS = 10
 // parent dated in it.
 const YEAR_SKEW_MS = 30 * DAY_MS
 // The merged pull requests read for the agents' an answer, a page a query,
-// as many queries as MERGED_QUERIES, the rest left for the next to ask.
+// as many queries as MERGED_QUERIES, the rest left for the next to ask; of
+// each, as many of its latest commits as MERGED_COMMITS.
 const MERGED_PAGE = 100
 const MERGED_QUERIES = 5
+const MERGED_COMMITS = 100
 const MAX_TITLE = 1000
 const SHA = /^[a-f\d]{40}$/u
 
@@ -206,7 +208,7 @@ export async function yearCommits(fullName: string, token: string, head: string,
 }
 
 // The agents' pull requests merged since a year's start, as read so far
-// (agentMerges): each by its merge commit, and when it was merged; when the
+// (agentMerges): the commits each brought, and when it was merged; when the
 // newest read was last updated, those updated since read again (`through`,
 // null till all are read once); and a read not finished: where it goes on
 // (`after`), when the newest it began with was updated (`from`), the oldest
@@ -217,18 +219,22 @@ const MERGED_QUERY = `query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: MERGED, first: ${MERGED_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
-      nodes { updatedAt mergedAt headRefName mergeCommit { oid } }
+      nodes { updatedAt mergedAt headRefName mergeCommit { oid parents { totalCount } } commits(last: ${MERGED_COMMITS}) { nodes { commit { oid } } } }
     }
   }
 }`
 type MergedPage = { repository?: { pullRequests?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }
-  nodes?: ({ updatedAt?: unknown; mergedAt?: unknown; headRefName?: unknown; mergeCommit?: { oid?: unknown } | null } | null)[] } | null } | null }
+  nodes?: ({ updatedAt?: unknown; mergedAt?: unknown; headRefName?: unknown; mergeCommit?: { oid?: unknown; parents?: { totalCount?: unknown } | null } | null
+    commits?: { nodes?: ({ commit?: { oid?: unknown } | null } | null)[] } | null } | null)[] } | null } | null }
 const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_PREFIXES.some(prefix => name.startsWith(prefix))
 
-// The pull requests merged since `since` from an agent's branch
-// (app-agents.ts AGENT_BRANCH_PREFIXES), as the Agents tab tells an agent's
-// work: an agent that commits as whoever ran it (Codex's own) leaves its
-// commits no mark, its branch alone naming it. Those merged are read the most
+// The commits the pull requests merged since `since` from an agent's branch
+// (app-agents.ts AGENT_BRANCH_PREFIXES) brought, as the Agents tab tells an
+// agent's work: an agent that commits as whoever ran it (Codex's own) leaves
+// its commits no mark, its branch alone naming it. Each its merge commit: a
+// squash merge's one commit, or a rebase's last; and where it was merged with
+// a merge commit, which a year counts none of, its own commits, its latest
+// MERGED_COMMITS. Those merged are read the most
 // recently updated first (a pull request is updated when merged, or after),
 // on from what was `kept`: till one updated before the year, or before the
 // newest read before was, as many queries an answer as MERGED_QUERIES, a read
@@ -245,14 +251,13 @@ export async function agentMerges(fullName: string, token: string, since: number
     for (const node of page?.nodes ?? []) {
       const updated = timeOf(node?.updatedAt)
       if (updated === null) continue
-      if (updated < stop) {
-        done = true
-        break
-      }
+      if (updated < stop) { done = true; break }
       from ??= updated
       read++
-      const [merged, oid] = [timeOf(node?.mergedAt), node?.mergeCommit?.oid]
-      if (merged !== null && merged >= since && typeof oid === 'string' && SHA.test(oid) && agentBranch(node?.headRefName)) merges.set(oid, merged)
+      const merged = timeOf(node?.mergedAt)
+      if (merged === null || merged < since || !agentBranch(node?.headRefName)) continue
+      const own = count(node?.mergeCommit?.parents?.totalCount) > 1 ? (node?.commits?.nodes ?? []).map(item => item?.commit?.oid) : []
+      for (const oid of [node?.mergeCommit?.oid, ...own]) if (typeof oid === 'string' && SHA.test(oid)) merges.set(oid, merged)
     }
     if (done) return { merges: [...merges], through: from ?? stop, next: null }
     after = page!.pageInfo!.endCursor as string
