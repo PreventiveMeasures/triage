@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { historyPageStore } from '../server-managed/npm-kept.ts'
 import { HISTORY_GLUED, historyFrom } from '../server-managed/repository-history.ts'
 import { createSession } from '../server-managed/session.ts'
 
@@ -72,8 +73,8 @@ test('a revision\'s history reads a page of its commits, each with its parents, 
   assert.deepEqual(body, {
     commit: a, path: '', page: 1, more: true,
     commits: [
-      { sha: a, parents: [b, c], subject: 'Merge feature', authorName: 'octo name', authorLogin: 'octo', authorId: 2, committedAt: Date.parse('2026-10-02T10:00:00Z') },
-      { sha: b, parents: [d], subject: 'Main work', authorName: 'someone name', authorLogin: null, authorId: null, committedAt: Date.parse('2026-10-02T10:00:00Z') },
+      { sha: a, parents: [b, c], subject: 'Merge feature', authorName: 'octo name', authorLogin: 'octo', authorId: 2, coauthors: [], committedAt: Date.parse('2026-10-02T10:00:00Z') },
+      { sha: b, parents: [d], subject: 'Main work', authorName: 'someone name', authorLogin: null, authorId: null, coauthors: [], committedAt: Date.parse('2026-10-02T10:00:00Z') },
     ],
     branches: [{ name: 'main', sha: a }, { name: 'feature', sha: c }], tags: [{ name: 'v1', sha: d }],
     users: {},
@@ -112,7 +113,7 @@ test('with a token, a revision\'s commits are named by every branch All branches
       tags: { nodes: [{ name: 'v2', target: { __typename: 'Commit', oid: b } }] },
       branches: { pageInfo: { hasNextPage: variables.after === null, endCursor: 'p1' },
         nodes: variables.after === null ? [{ name: 'main', target: { oid: a, committedDate: null } }] : [{ name: 'zz-past-the-first-hundred', target: { oid: c, committedDate: null } }] } }
-    : { b0: { history: { nodes: [{ oid: a, messageHeadline: 'Work', committedDate: '2026-10-02T10:00:00Z', author: { name: 'Ada', user: null }, parents: { nodes: [] } }] } } } } })
+    : { b0: { history: { nodes: [{ oid: a, message: 'Work', committedDate: '2026-10-02T10:00:00Z', author: { name: 'Ada', user: null }, parents: { nodes: [] } }] } } } } })
   const request = await fixture(t, { tokens: userTokens })
   const asked = github(t, { graphql })
   const { body } = await request({ repoId: '1', ref: 'heads/main' })
@@ -154,18 +155,20 @@ test('all branches reads the 25 most recently committed to, the default branch f
   }
   const histories = {
     b0: { history: { pageInfo: { hasNextPage: false }, nodes: [
-      { oid: a, messageHeadline: 'Merge feature', committedDate: '2026-10-02T10:00:00Z', author: { name: 'Octo', user: { login: 'octo', databaseId: 2 } },
+      { oid: a, message: 'Merge feature', committedDate: '2026-10-02T10:00:00Z', author: { name: 'Octo', user: { login: 'octo', databaseId: 2 } },
         parents: { nodes: [{ oid: b }, { oid: c }] } },
       // A GitHub App's bot's, named no user, by its noreply address.
-      { oid: b, messageHeadline: 'Main work', committedDate: '2026-10-01T10:00:00Z', author: { name: 'dependabot[bot]', email: '49699333+dependabot[bot]@users.noreply.github.com',
+      { oid: b, message: 'Main work', committedDate: '2026-10-01T10:00:00Z', author: { name: 'dependabot[bot]', email: '49699333+dependabot[bot]@users.noreply.github.com',
         user: null }, parents: { nodes: [{ oid: d }] } },
     ] } },
     b1: { history: { pageInfo: { hasNextPage: true }, nodes: [
-      { oid: c, messageHeadline: 'Feature', committedDate: '2026-10-01T12:00:00Z', author: null, parents: { nodes: [{ oid: d }] } },
-      { oid: d, messageHeadline: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } },
+      { oid: c, message: 'Feature', committedDate: '2026-10-01T12:00:00Z', author: null, parents: { nodes: [{ oid: d }] } },
+      { oid: d, message: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } },
     ] } },
-    b2: { history: { pageInfo: { hasNextPage: false }, nodes: [{ oid: d, messageHeadline: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } }] } },
+    b2: { history: { pageInfo: { hasNextPage: false }, nodes: [{ oid: d, message: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } }] } },
   }
+  // Each commit's lines, as GitHub's GraphQL API tells them.
+  for (const { history } of Object.values(histories)) for (const node of history.nodes) Object.assign(node, { additions: 1, deletions: 0 })
   const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
     ? { defaultBranchRef: head('main', a, '2026-10-02T10:00:00Z'), ...heads[variables.after] } : histories } })
   const request = await fixture(t, { tokens: userTokens })
@@ -201,7 +204,7 @@ test('all branches reads the 25 most recently committed to, the default branch f
 
 test('the pull requests squashed into the history come with it, each with its own commits and its head as merged; a rebase, a commit no pull request merged, none', async t => {
   const [squash, rebased2, rebased1, tidy, direct, p1, p2, r1, r2, t1, open] = ['5', '6', '4', '3', '7', '8', '9', 'e', '2', '1', 'f'].map(char => char.repeat(40))
-  const node = (oid, parents, messageHeadline, committedDate = '2026-10-01T00:00:00Z') => ({ oid, messageHeadline, committedDate, author: { name: 'Octo', date: committedDate, user: { login: 'octo' } },
+  const node = (oid, parents, message, committedDate = '2026-10-01T00:00:00Z') => ({ oid, message, committedDate, author: { name: 'Octo', date: committedDate, user: { login: 'octo' } },
     parents: { nodes: parents.map(parent => ({ oid: parent })) } })
   // main: a squash of #2; #3's two commits rebased onto it; #5's one commit
   // squashed, titled as that commit, as GitHub does by default; a commit
@@ -227,8 +230,8 @@ test('the pull requests squashed into the history come with it, each with its ow
   const asked = github(t, { graphql })
   const { status, body } = await request({ repoId: '1', all: 'true' })
   assert.equal(status, 200)
-  const shown = commit => ({ sha: commit.oid, parents: commit.parents.nodes.map(parent => parent.oid), subject: commit.messageHeadline, authorName: 'Octo', authorLogin: 'octo', authorId: null,
-    committedAt: Date.parse(commit.committedDate) })
+  const shown = commit => ({ sha: commit.oid, parents: commit.parents.nodes.map(parent => parent.oid), subject: commit.message, authorName: 'Octo', authorLogin: 'octo', authorId: null,
+    coauthors: [], committedAt: Date.parse(commit.committedDate) })
   assert.deepEqual(body.pulls, [{ merge: squash, number: 2, head: p2, commits: pullCommits[2].map(shown), more: false },
     { merge: tidy, number: 5, head: t1, commits: pullCommits[5].map(shown), more: false }], 'a rebase, its commits copied onto main, none; one commit squashed, its title its commit\'s, as it was')
   assert.deepEqual(body.openPulls, [{ number: 4, sha: open }])
@@ -244,7 +247,7 @@ test('the pull requests squashed into the history come with it, each with its ow
 
 test('a rebase whose commits go on past those listed is told, and kept, once they are listed', async t => {
   const [rebased2, rebased1, r1, r2, root] = ['6', '4', 'e', '2', '1'].map(char => char.repeat(40))
-  const node = (oid, parents, messageHeadline) => ({ oid, messageHeadline, committedDate: '2026-10-01T00:00:00Z', author: null, parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  const node = (oid, parents, message) => ({ oid, message, committedDate: '2026-10-01T00:00:00Z', author: null, parents: { nodes: parents.map(parent => ({ oid: parent })) } })
   // #3's two commits rebased onto main, the first of them past the page read at first.
   let history = [node(rebased2, [rebased1], 'Fix, part 2')]
   const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
@@ -273,7 +276,7 @@ test('a history is sent all the same where the pull requests squashed into it ca
   const graphql = ({ query }) => query.includes('associatedPullRequests') || query.includes('pullRequests(') ? { errors: [{ type: 'FORBIDDEN' }] }
     : { data: { repository: query.includes('refs/heads/')
       ? { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: '2026-10-01T00:00:00Z' } }, branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] }, tags: { nodes: [] } }
-      : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [{ oid: a, messageHeadline: 'Only', committedDate: '2026-10-01T00:00:00Z', author: null, parents: { nodes: [{ oid: b }] } }] } } } } }
+      : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [{ oid: a, message: 'Only', committedDate: '2026-10-01T00:00:00Z', author: null, parents: { nodes: [{ oid: b }] } }] } } } } }
   const request = await fixture(t, { tokens: userTokens })
   github(t, { graphql })
   const { status, body } = await request({ repoId: '1', all: 'true' })
@@ -286,7 +289,7 @@ test('all branches names the branches it didn\'t read, newest first, and reads o
   // main and 24 others read; of those not, stale's tip isn't listed, older's is.
   const recent = Array.from({ length: 24 }, (_, index) => head(`recent-${index}`, a, '2026-10-01T00:00:00Z'))
   const branches = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [head('older', b, '2019-01-01T00:00:00Z'), ...recent, head('stale', c, '2020-01-01T00:00:00Z')] }
-  const node = (oid, parents) => ({ oid, messageHeadline: `Commit ${oid[0]}`, committedDate: '2026-10-01T00:00:00Z', author: null, parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  const node = (oid, parents) => ({ oid, message: `Commit ${oid[0]}`, committedDate: '2026-10-01T00:00:00Z', author: null, parents: { nodes: parents.map(parent => ({ oid: parent })) } })
   const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
     ? { defaultBranchRef: head('main', a, '2026-10-02T10:00:00Z'), branches, tags: { nodes: [] } }
     : variables.o0 === a ? { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [node(a, [b]), node(b, [c])] } } }
@@ -300,7 +303,7 @@ test('all branches names the branches it didn\'t read, newest first, and reads o
   const later = await request({ repoId: '1', all: 'true', page: '2', from: `${c},${d},${c}` })
   assert.equal(later.status, 200)
   assert.deepEqual(later.body, { all: true, page: 2, commits: [node(c, [d]), node(d, [])].map(item => ({ sha: item.oid, parents: item.parents.nodes.map(parent => parent.oid),
-    subject: item.messageHeadline, authorName: null, authorLogin: null, authorId: null, committedAt: Date.parse(item.committedDate) })), more: true, users: {} })
+    subject: item.message, authorName: null, authorLogin: null, authorId: null, coauthors: [], committedAt: Date.parse(item.committedDate) })), more: true, users: {} })
   const query = historyQueries(asked).at(-1)
   assert.deepEqual(query.body.variables, { owner: 'org', name: 'repo', o0: c, o1: d })
   assert.match(query.body.query, /b1: object\(oid: \$o1\) \{ \.\.\. on Commit \{ history\(first: 100\)/u)
@@ -392,4 +395,60 @@ test('gluing stops at as many commits as it goes to, looking up fifty tops at a 
   assert.equal(commits.length, HISTORY_GLUED)
   assert.equal(more, true)
   assert.ok(lookups.slice(1).every(count => count <= 50), JSON.stringify(lookups))
+})
+
+test('a commit\'s co-authors: its trailers\' (GitHub\'s GraphQL API\'s by the accounts it knows them by), then the agents its message marks, each once, the author none', async () => {
+  const pages = { read: () => Promise.resolve(new Map()), write: () => Promise.resolve() }
+  // GitHub's REST API: its trailers' names and no-reply addresses; Claude once, by its trailer and its line.
+  const rest = () => Promise.resolve(Response.json([restCommit(a, [], 'Work\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n'
+    + 'Co-authored-by: Grace <12+grace@users.noreply.github.com>\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nco-authored-by: octo name <octo@example.com>')]))
+  const [listed] = (await historyFrom('org/repo', null, [a], pages, rest)).commits
+  assert.equal(listed.subject, 'Work')
+  assert.deepEqual(listed.coauthors, [{ name: 'Grace', login: 'grace', id: 12 }, { name: 'Claude Opus 5.5', login: null, id: null, agent: 'claude' }])
+  // Its GraphQL API: its authors past the first, as GitHub knows them, and its whole message.
+  const asked = []
+  const node = { oid: a, message: 'Work\n\nhttps://chatgpt.com/codex/tasks/task_e_abcdef12\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>', committedDate: '2026-10-01T00:00:00Z',
+    author: { name: 'Octo', email: 'octo@example.com', user: { login: 'octo', databaseId: 2 } }, parents: { nodes: [] },
+    authors: { nodes: [{ name: 'Octo', email: 'octo@example.com', user: { login: 'octo', databaseId: 2 } }, { name: 'Claude', email: 'noreply@anthropic.com', user: { login: 'claude', databaseId: 81847 } },
+      { name: 'Cursor Agent', email: 'cursoragent@cursor.com', user: null }] } }
+  const graph = (input, options) => {
+    asked.push(JSON.parse(options.body).query)
+    return Promise.resolve(Response.json({ data: { repository: { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [node] } } } } }))
+  }
+  const [read] = (await historyFrom('org/repo', 'token', [a], pages, graph)).commits
+  assert.match(asked[0], /\bmessage\b[^]*authors\(first: 4\) \{ nodes \{ name email user \{ login databaseId \} \} \}/u)
+  assert.deepEqual(read.coauthors, [{ name: 'Claude', login: 'claude', id: 81847, agent: 'claude' }, { name: 'Cursor Agent', login: null, id: null, agent: 'cursor' },
+    { name: 'Codex', login: null, id: null, agent: 'codex' }], 'Codex by its task\'s link')
+})
+
+test('pages kept before their commits\' co-authors were read are read again, then kept', async t => {
+  const request = await fixture(t)
+  const read = linear(t)
+  await request({ repoId: '1', ref: chain(100) })
+  assert.deepEqual(read, [100])
+  const store = historyPageStore(request.db)
+  const key = `1\0${chain(100)}`
+  const kept = (await store.readMany([key])).get(key).value
+  assert.ok(kept.every(commit => Array.isArray(commit.coauthors)))
+  await store.write(key, kept.map(({ coauthors: _coauthors, ...commit }) => commit), Date.now())
+  await request({ repoId: '1', ref: chain(100) })
+  await request({ repoId: '1', ref: chain(100) })
+  assert.deepEqual(read, [100, 100], 'read again once')
+})
+
+test('with a token, pages kept as GitHub\'s REST API listed them, which tell no co-author\'s account, are read again with GraphQL', async t => {
+  const graphql = ({ query }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: null } }, tags: { nodes: [] },
+      branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ name: 'main', target: { oid: a, committedDate: null } }] } }
+    : { b0: { history: { nodes: [{ oid: a, message: 'Work\n\nCo-authored-by: Mona <mona@example.com>', committedDate: '2026-10-02T10:00:00Z', additions: 1, deletions: 0,
+      author: { name: 'Ada', user: null }, authors: { nodes: [{ name: 'Ada', user: null }, { name: 'Mona', email: 'mona@example.com', user: { login: 'mona', databaseId: 3 } }] },
+      parents: { nodes: [] } }] } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  await historyPageStore(request.db).write(`1\0${a}`, [{ sha: a, parents: [], subject: 'Work', authorName: 'Ada', authorLogin: null, authorId: null,
+    coauthors: [{ name: 'Mona', login: null, id: null }], committedAt: 1, additions: null, deletions: null, authoredAt: null, authorZone: null }], Date.now())
+  const { body } = await request({ repoId: '1', ref: 'heads/main' })
+  assert.deepEqual(body.commits[0].coauthors, [{ name: 'Mona', login: 'mona', id: 3 }], 'by the account GitHub knows her address by')
+  await request({ repoId: '1', ref: 'heads/main' })
+  assert.equal(historyQueries(asked).filter(entry => !entry.body.query.includes('refs/heads/')).length, 1, 'read again once, then kept')
 })

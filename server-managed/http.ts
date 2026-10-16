@@ -1584,7 +1584,8 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const repo = access.repo.fullName
     const token = reader.readToken()
-    const pages = historyPages(deps, repoId)
+    // With a token, as GraphQL reads them.
+    const pages = historyPages(deps, repoId, token !== null)
     let body: object
     if (all) {
       if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
@@ -1627,10 +1628,10 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const current = await authorize()
     if (!current) return
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    // Each commit as the tab draws it: what Pulse counts of it (its lines, its
-    // author's time) not sent.
-    const shown = ({ sha, parents, subject, authorName, authorLogin, authorId, committedAt }: HistoryCommit) =>
-      ({ sha, parents, subject, authorName, authorLogin, authorId: authorId ?? null, committedAt })
+    // Each commit as the tab draws it, its co-authors with it: what Pulse
+    // counts of it (its lines, its author's time) not sent.
+    const shown = ({ sha, parents, subject, authorName, authorLogin, authorId, coauthors, committedAt }: HistoryCommit) =>
+      ({ sha, parents, subject, authorName, authorLogin, authorId: authorId ?? null, coauthors: coauthors ?? [], committedAt })
     sendJson(res, 200, await withAppUsers(deps.db, { ...body, commits: listed.map(shown),
       ...pulls.length > 0 ? { pulls: pulls.map(pull => ({ ...pull, commits: pull.commits.map(shown) })) } : {}, ...openPulls?.length ? { openPulls } : {} }))
   } catch (err) {
@@ -1693,10 +1694,12 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
 }
 
 // The pages of repository `repoId`'s history kept (historyPageStore), each by
-// the commit it starts at (repository-history.ts historyFrom); with `lines`,
-// only those telling each commit's lines (read with GraphQL since it reads
-// them), the rest read again.
-function historyPages(deps: ManagedHttpDeps, repoId: number, lines = false): HistoryPages {
+// the commit it starts at (repository-history.ts historyFrom), those telling
+// each commit's co-authors (kept since they are read), and with `graphql`,
+// only those read with GraphQL, telling its lines and the accounts its
+// co-authors' addresses are (a page GitHub's REST API listed tells neither);
+// the rest read again.
+function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false): HistoryPages {
   const store = historyPageStore<HistoryCommit[]>(deps.db, deps.config.debug)
   const keyOf = (top: string) => `${repoId}\0${top}`
   return {
@@ -1704,7 +1707,8 @@ function historyPages(deps: ManagedHttpDeps, repoId: number, lines = false): His
       const kept = await store.readMany(tops.map(keyOf))
       return new Map(tops.flatMap(top => {
         const page = kept.get(keyOf(top))?.value
-        return Array.isArray(page) && (!lines || page.every(commit => commit.additions != null)) ? [[top, page] as const] : []
+        return Array.isArray(page) && page.every(commit => Array.isArray(commit.coauthors)) && (!graphql || page.every(commit => commit.additions != null))
+          ? [[top, page] as const] : []
       }))
     },
     write: (top, commits) => store.write(keyOf(top), commits, Date.now()),
@@ -1712,7 +1716,8 @@ function historyPages(deps: ManagedHttpDeps, repoId: number, lines = false): His
 }
 
 // The pull requests squashed into repository `repoId`'s commits, kept by
-// each commit, null for one none was (repository-history.ts squashedPulls).
+// each commit, null for one none was (repository-history.ts squashedPulls);
+// one kept before its commits' co-authors were read, read again.
 function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
   const store = historySquashStore<SquashedPull | null>(deps.db, deps.config.debug)
   const keyOf = (sha: string) => `${repoId}\0${sha}`
@@ -1721,7 +1726,8 @@ function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
       const kept = await store.readMany(shas.map(keyOf))
       return new Map(shas.flatMap(sha => {
         const entry = kept.get(keyOf(sha))
-        return entry && (entry.value === null || Array.isArray(entry.value.commits)) ? [[sha, entry.value] as const] : []
+        return entry && (entry.value === null || (Array.isArray(entry.value.commits) && entry.value.commits.every(commit => Array.isArray(commit.coauthors))))
+          ? [[sha, entry.value] as const] : []
       }))
     },
     write: (sha, pull) => store.write(keyOf(sha), pull, Date.now()),
