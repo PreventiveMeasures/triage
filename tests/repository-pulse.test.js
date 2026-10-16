@@ -17,7 +17,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
 const opened = []
 mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
-const { niceScale, periodContributors, pulseColumns, pulseSummary } = await import('../ui/view/repository-pulse.js')
+const { contributorStats, niceScale, periodContributors, pulseColumns, pulseSummary } = await import('../ui/view/repository-pulse.js')
 const { knowGithubUsers, knowingGithubUsers } = await import('../ui/view/github-users.js')
 knowing = knowingGithubUsers
 const Pulse = customElements.get('repository-pulse')
@@ -77,14 +77,35 @@ test('a period\'s figures: its commits, beside the same days of the week a perio
 
 test('the period\'s contributors, or a day\'s, the most commits first, and a scale\'s round ticks', () => {
   assert.deepEqual(periodContributors(stats().contributors, SINCE), [
-    { login: 'ada', name: 'Ada', commits: 5, additions: 35, deletions: 5 }, { login: 'claude[bot]', name: null, commits: 5, additions: 2000, deletions: 10 },
-    { login: null, name: 'Alan Kay', commits: 1, additions: 3, deletions: 0 }])
+    { key: '@ada', login: 'ada', name: 'Ada', commits: 5, additions: 35, deletions: 5 },
+    { key: '@claude[bot]', login: 'claude[bot]', name: null, commits: 5, additions: 2000, deletions: 10 },
+    { key: '=Alan Kay', login: null, name: 'Alan Kay', commits: 1, additions: 3, deletions: 0 }])
   assert.deepEqual(periodContributors(counted().contributors, SINCE), periodContributors(stats().contributors, SINCE), 'by their weeks where their days aren\'t counted')
   assert.deepEqual(periodContributors(stats().contributors, SINCE + WEEK + DAY, SINCE + WEEK + 2 * DAY), [
-    { login: 'ada', name: 'Ada', commits: 2, additions: 5, deletions: 1 }, { login: null, name: 'Alan Kay', commits: 1, additions: 3, deletions: 0 }])
+    { key: '@ada', login: 'ada', name: 'Ada', commits: 2, additions: 5, deletions: 1 }, { key: '=Alan Kay', login: null, name: 'Alan Kay', commits: 1, additions: 3, deletions: 0 }])
   assert.deepEqual([niceScale(93), niceScale(7), niceScale(1), niceScale(0), niceScale(12_000)], [
     { top: 100, ticks: [0, 50, 100] }, { top: 10, ticks: [0, 5, 10] }, { top: 1, ticks: [0, 1] }, { top: 1, ticks: [0, 1] },
     { top: 15_000, ticks: [0, 5000, 10_000, 15_000] }])
+})
+
+test('a contributor\'s year: their commits and lines each week, and each day and those with agents where their days are counted', () => {
+  const people = [{ login: 'ada', name: 'Ada', weeks: [[SINCE, 3, 30, 4], [SINCE + WEEK, 2, 5, 1]], days: [[SINCE, 3, 30, 4, 1], [SINCE + WEEK + DAY, 2, 5, 1, 2]] },
+    { login: 'grace', name: null, weeks: [[SINCE, 4, 1, 0]], days: [[SINCE, 4, 1, 0, 0]] }]
+  const ada = contributorStats(stats({ agents: true, contributors: people }), '@ada')
+  const none = Array.from({ length: 7 }, () => 0)
+  assert.deepEqual([ada.byDays, ada.agents, ada.weeks.length], [true, true, 52])
+  assert.deepEqual(ada.weeks.find(row => row.week === SINCE), { week: SINCE, days: [3, ...none.slice(1)], dayLines: [[30, 4], ...none.slice(1).map(() => [0, 0])],
+    agentDays: [1, ...none.slice(1)], commits: 3, additions: 30, deletions: 4 })
+  assert.deepEqual(ada.weeks.find(row => row.week === SINCE + WEEK).agentDays, [0, 2, 0, 0, 0, 0, 0])
+  assert.equal(ada.weeks.reduce((sum, row) => sum + row.commits, 0), 5, 'none of anyone else\'s')
+  assert.deepEqual(pulseColumns({ ...pulse(), stats: ada }, NOW).slice(0, 9).map(column => [column.commits, column.agents]),
+    [[3, 1], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [2, 2]])
+  const weekly = contributorStats(counted(), '@ada')
+  assert.deepEqual([weekly.byDays, weekly.agents], [false, false])
+  assert.deepEqual(weekly.weeks.find(row => row.week === SINCE), { week: SINCE, days: none, dayLines: none.map(() => [0, 0]), agentDays: none, commits: 3, additions: 30,
+    deletions: 4 }, 'by their weeks where their days aren\'t counted')
+  assert.equal(contributorStats(stats({ agents: true }), '@ada').agents, false, 'their commits with agents not counted where their days hold none')
+  assert.ok(contributorStats(stats(), '@nobody').weeks.every(row => row.commits === 0))
 })
 
 test('a user of the app is one contributor whichever of their GitHub accounts committed', () => {
@@ -93,13 +114,15 @@ test('a user of the app is one contributor whichever of their GitHub accounts co
   const week = (commits, additions) => [[SINCE, commits, additions, 1]]
   assert.deepEqual(periodContributors([{ login: 'mona-work', name: 'M', weeks: week(4, 10) }, { login: 'other', name: null, weeks: week(5, 1) },
     { login: 'mona', name: 'Mona', weeks: week(2, 5) }, { login: null, name: 'Mona', weeks: week(1, 1) }], SINCE), [
-    { login: 'mona-work', name: 'M', commits: 6, additions: 15, deletions: 2 }, { login: 'other', name: null, commits: 5, additions: 1, deletions: 1 },
-    { login: null, name: 'Mona', commits: 1, additions: 1, deletions: 1 }], 'one known by name alone is no user\'s')
+    { key: 'user:mona-id', login: 'mona-work', name: 'M', commits: 6, additions: 15, deletions: 2 },
+    { key: '@other', login: 'other', name: null, commits: 5, additions: 1, deletions: 1 },
+    { key: '=Mona', login: null, name: 'Mona', commits: 1, additions: 1, deletions: 1 }], 'one known by name alone is no user\'s')
   assert.deepEqual(periodContributors([{ login: 'claude', name: 'Claude', weeks: week(1, 1) }, { login: 'claude[bot]', name: null, weeks: week(2, 2) },
     { login: null, name: 'Claude', weeks: week(3, 3) }, { login: null, name: 'Codex', weeks: week(1, 1) },
     { login: 'dependabot[bot]', name: 'dependabot[bot]', weeks: week(4, 4) }, { login: null, name: 'dependabot[bot]', weeks: week(1, 1) }], SINCE), [
-    { login: 'claude', name: 'Claude', commits: 6, additions: 6, deletions: 3 }, { login: 'dependabot[bot]', name: 'dependabot[bot]', commits: 5, additions: 5, deletions: 2 },
-    { login: null, name: 'Codex', commits: 1, additions: 1, deletions: 1 }],
+    { key: 'agent:claude', login: 'claude', name: 'Claude', commits: 6, additions: 6, deletions: 3 },
+    { key: 'agent:dependabot', login: 'dependabot[bot]', name: 'dependabot[bot]', commits: 5, additions: 5, deletions: 2 },
+    { key: 'agent:codex', login: null, name: 'Codex', commits: 1, additions: 1, deletions: 1 }],
   'an agent is one contributor whichever of its identities committed')
 })
 
@@ -138,10 +161,11 @@ test('the pulse reads a month first: its figures beside the month before, the mo
   assert.deepEqual([...axis.matchAll(/>([^<]+)<\/span>/gu)].map(([, label]) => label), ['Sep 20', 'Sep 27', 'Oct 4', 'Oct 11'], 'each week by its Sunday')
   assert.doesNotMatch(text, /class=pulse-tip/u, 'no column\'s figures till one is pointed at')
   assert.match(text, /<h3>Contributors<\/h3><span>by their commits in the period<\/span>/u)
-  assert.match(text, /href=https:\/\/github\.com\/ada [^>]*>ada<\/a>[^]*--value: 1[^]*>5<\/span>[^]*<span class="is-added">\+35<\/span> <span\s+class="is-removed">−5</u)
-  assert.match(text, /href=https:\/\/github\.com\/apps\/claude [^>]*><span class="app-user" data-tooltip=@claude\[bot\] on GitHub>[^]*?is-claude[^]*?app-user-name">Claude</u,
+  assert.match(text, /class=pulse-ranks><li\s+class=>\s*<span class="pulse-rank-who"><button type="button" class="pulse-rank-name" aria-pressed=false\s+@click=\(\) => this\.showPerson\(person\.key\)>ada<\/button>\s*<a class="pulse-rank-profile" href=https:\/\/github\.com\/ada [^>]*aria-label=ada on GitHub>[^]*--value: 1[^]*>5<\/span>[^]*<span class="is-added">\+35<\/span> <span\s+class="is-removed">−5</u,
+    'each a button picking them, their profile a link beside')
+  assert.match(text, /<span class="app-user" data-tooltip=@claude\[bot\] on GitHub>[^]*?is-claude[^]*?app-user-name">Claude<[^]*?<\/button>\s*<a class="pulse-rank-profile" href=https:\/\/github\.com\/apps\/claude /u,
     'an app by its page, Claude\'s by its mark')
-  assert.match(text, /<span class="pulse-rank-name">Alan Kay<\/span>/u, 'one GitHub names no account for, by name, unlinked')
+  assert.match(text, /class="pulse-rank-name" aria-pressed=false\s+@click=\(\) => this\.showPerson\(person\.key\)>Alan Kay<\/button>\s*<\/span>/u, 'one GitHub names no account for, by name, unlinked')
   assert.doesNotMatch(text, />grace</u, 'none of the period\'s')
   assert.match(text, /<h3>When commits are made<\/h3><span>by day and hour, in each author’s own time zone<\/span>/u, 'the period\'s')
   assert.match(text, /class=pulse-cell is-6 role="img" aria-label=Tuesdays, 14:00–15:00: 12 commits/u)
@@ -189,7 +213,7 @@ test('a column pointed at, or read with the arrow keys, shows its figures and wh
   text = templateText(view.render())
   assert.match(text, /class=pulse-column is-picked role=img\s+aria-label=Mon, Sep 28/u)
   assert.match(text, /<h3>Contributors<\/h3><button type="button" class="pulse-picked" aria-label=Mon, Sep 28: show the whole period’s/u)
-  assert.match(text, />ada<\/a>[^]*>2<\/span>[^]*Alan Kay/u)
+  assert.match(text, />ada<\/button>[^]*>2<\/span>[^]*Alan Kay/u)
   assert.doesNotMatch(text, /apps\/claude/u, 'not the day\'s')
   view.pickColumn(columns, 8)
   assert.match(templateText(view.render()), /by their commits in the period/u, 'picked again, none is')
@@ -227,14 +251,14 @@ test('a column pointed at, or read with the arrow keys, shows its figures and wh
 
 test('another repository\'s pulse in the same element: none of its columns pointed at or picked, its contributors the first of them', () => {
   const view = shown()
-  const picked = () => Object.assign(view, { _column: 3, _picked: SINCE, _everyone: true })
+  const picked = () => Object.assign(view, { _column: 3, _picked: SINCE, _everyone: true, _person: '@ada' })
   picked()
   view.repository = { ...view.repository, commit: 'b'.repeat(40) }
   view.willUpdate(new Map([['repository', { repoId: 7 }]]))
-  assert.deepEqual([view._column, view._picked, view._everyone], [3, SINCE, true], 'the same repository\'s kept')
+  assert.deepEqual([view._column, view._picked, view._everyone, view._person], [3, SINCE, true, '@ada'], 'the same repository\'s kept')
   view.repository = { ...view.repository, repoId: 8 }
   view.willUpdate(new Map([['repository', { repoId: 7 }]]))
-  assert.deepEqual([view._column, view._picked, view._everyone], [null, null, false])
+  assert.deepEqual([view._column, view._picked, view._everyone, view._person], [null, null, false, null])
   picked()
   view.willUpdate(new Map([['_column', null]]))
   assert.equal(view._picked, SINCE, 'its own state changed alone, kept')
@@ -269,6 +293,46 @@ test('a week, each day\'s figures written on it, today\'s named; the commits age
   assert.deepEqual([...axis.matchAll(/>([^<]+)<\/span>/gu)].map(([, label]) => label), ['Sun 11', 'Mon 12', 'Tue 13', 'Wed 14', 'Thu 15', 'Fri 16', 'Sat 17'])
   assert.match(axis, /class=is-today>Thu 15</u)
   assert.match(text, /<span class=pulse-tip-key is-none><\/span><strong>1<\/strong> commit<\/span>\s*<span class="pulse-tip-row"><span class="pulse-tip-key"><\/span><strong>1<\/strong> with agents/u)
+})
+
+test('a contributor clicked: their commits alone in the plots, named over them, the rest of the contributors faded, whatever the period; again, or their name over the plots, everyone\'s', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  answer = (repoId, weeks) => Promise.resolve(pulse({ weeks, since: weeks === 4 ? SINCE : SINCE - 9 * WEEK }))
+  const view = shown()
+  view.render()
+  await setImmediate()
+  view.point(8)
+  view.showPerson('@ada')
+  assert.equal(view._column, null, 'no column pointed at')
+  view.point(8)
+  let text = templateText(view.render())
+  assert.match(text, /aria-label=Commits and lines a day by ada: the arrow keys/u)
+  assert.match(text, /<h3>Commits<\/h3><span>a day by<\/span><button type="button" class="pulse-picked is-person" aria-label=ada’s: show everyone’s\s[^]*?>ada<span aria-hidden="true">×<\/span><\/button>/u)
+  const columns = text.split('class=pulse-column').slice(1)
+  assert.match(columns[0], /aria-label=Sun, Sep 20: 3 commits, \+30 −4 lines /u)
+  assert.match(columns[1], /aria-label=Mon, Sep 21: 0 commits, \+0 −0 lines /u)
+  assert.match(columns[8], /aria-label=Mon, Sep 28: 2 commits, \+5 −1 lines /u)
+  assert.match(text, /style=--at: 1><span>3<\/span>/u, 'their commits\' own scale')
+  assert.match(text, /class="pulse-tip-when">Mon, Sep 28<\/span>[^]*<strong>2<\/strong> commits/u)
+  assert.doesNotMatch(text, /pulse-tip-people/u, 'no one else named')
+  assert.match(text, /class=pulse-ranks is-picking><li\s+class=is-person>\s*<span class="pulse-rank-who"><button type="button" class="pulse-rank-name" aria-pressed=true\s/u)
+  assert.equal(text.match(/aria-pressed=false\s+@click=\(\) => this\.showPerson/gu).length, 2, 'the rest not')
+  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">26</u, 'the figures everyone\'s')
+  // Another period, theirs still.
+  view.pick(13)
+  view.render()
+  await setImmediate()
+  text = templateText(view.render())
+  view.pick(4)
+  assert.match(text, /<span>a week by<\/span>[^]*aria-label=Week of Sep 20: 3 commits/u)
+  view.showPerson('@ada')
+  text = templateText(view.render())
+  assert.match(text, /<h3>Commits<\/h3><span>a day<\/span>/u, 'clicked again, everyone\'s')
+  assert.doesNotMatch(text, /is-picking|is-person|class="pulse-rank-name" aria-pressed=true/u)
+  view.showPerson('@grace')
+  assert.match(templateText(view.render()), /<span>a day by<\/span>[^]*<p class="pulse-note">No commits by grace in the period\.<\/p>/u, 'one with none in the period')
+  view.showPerson(null)
+  assert.equal(view._person, null, 'their name over the plots clicked, everyone\'s')
 })
 
 test('a quarter, a column a week, every other one named; this week\'s figures so far', async t => {
@@ -478,12 +542,15 @@ test('where GitHub\'s statistics count the year: a day\'s lines a week\'s, its c
   view.pickColumn(pulseColumns(pulse({ stats: counted() }), NOW), 8)
   text = templateText(view.render())
   assert.match(text, /class="pulse-picked" aria-label=Week of Sep 27: show the whole period’s/u)
+  view.showPerson('@ada')
+  assert.match(templateText(view.render()), /<span>a day by<\/span>[^]*<p class="pulse-note">GitHub counts each contributor’s commits a week, not a day, in a repository this large: the quarter and the year show theirs\.<\/p>/u)
   view.pick(13)
   view.render()
   await setImmediate()
   text = templateText(view.render())
   view.pick(4)
   assert.match(text, /is-diverging/u, 'a week\'s lines by the week')
+  assert.match(text, /<span>a week by<\/span>[^]*aria-label=Week of Sep 20: 3 commits, \+30 −4 lines/u, 'a contributor\'s by their weeks')
 })
 
 test('a repository GitHub counts no lines for shows none, nor its contributors\'', async t => {

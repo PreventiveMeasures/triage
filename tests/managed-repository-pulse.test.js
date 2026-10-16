@@ -169,8 +169,8 @@ test('a year counted from its commits: a week a row from its first Sunday, merge
   assert.deepEqual(read.weeks[1], { week: first + WEEK, days: [1, 0, 1, 0, 0, 0, 0], commits: 2, additions: 11, deletions: 1,
     dayLines: [[1, 1], none, [10, 0], none, none, none, none], agentDays: noAgents })
   assert.deepEqual(read.contributors, [
-    { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]], days: [[first + DAY, 1, 3, 1], [first + WEEK, 1, 1, 1]] },
-    { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]], days: [[first + WEEK + 2 * DAY, 1, 10, 0]] },
+    { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]], days: [[first + DAY, 1, 3, 1, 0], [first + WEEK, 1, 1, 1, 0]] },
+    { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]], days: [[first + WEEK + 2 * DAY, 1, 10, 0, 0]] },
   ])
   assert.equal(read.punch[1][12], 2, 'Ada\'s Monday 10:00 UTC and Sunday 10:00 UTC… two hours east')
   assert.equal(read.punch[2][23], 1, 'one whose author told no time zone, in UTC')
@@ -193,6 +193,8 @@ test('a year counts each day the commits an agent made or co-authored: one of Gi
   ], first)
   assert.deepEqual(read.weeks.slice(0, 2).map(week => [week.days, week.agentDays]), [
     [[0, 3, 2, 0, 0, 0, 0], [0, 1, 1, 0, 0, 0, 0]], [[2, 0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0]]])
+  assert.deepEqual(read.contributors.find(person => person.login === 'ada').days.map(([at, commits, , , agents]) => [at, commits, agents]),
+    [[first + DAY, 3, 1], [first + WEEK, 1, 0]], 'each contributor\'s days, those with agents too')
 })
 
 test('the agents\' pull requests merged in the year: by their branches, the most recently updated read first, a few queries an answer, on from what was read', async t => {
