@@ -59,7 +59,7 @@ function waitForHydration(promise, signal) {
 export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   const session = state.managedSession, view = currentViewSignal()
   const focused = ['findings', 'files', 'links'].includes(state.currentView)
-  const contentList = ['workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(state.currentView)
+  const contentList = ['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)
   const teamId = (contentList || focused && (!catalogOnly || active?.teamId === state.currentManagedTeam && !active.signal.aborted))
     ? state.currentManagedTeam : null
   if (!isManagedUiMode() || !session || session.role === 'none' || session.publicShare && !teamId) {

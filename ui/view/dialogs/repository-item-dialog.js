@@ -196,16 +196,19 @@ class RepositoryItemDialog extends AppDialog {
   // where it is set; where those couldn't be read, or some of the
   // lockfiles there (`baselineUnread`, the first few named), or the
   // reviewed dependencies answer, that the versions they would pass want
-  // reviews.
-  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [] }) {
+  // reviews. By how many reviewers its comments review its versions, which
+  // count while it is open, or that they couldn't be read.
+  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [], commentReviews, commentsFailed }) {
     const named = baselineUnread.slice(0, 5)
     return html`<p class="repo-item-quiet">Each version needs ${plural(required, 'full, accepting review')} by as many reviewers${reviewedDependencies
-      ? ', or the server’s reviewed dependencies to pass it; a patched one, those alone' : since
+      ? ', or the server’s reviewed dependencies to pass it; a patched one, not reviews here' : since
       ? html`; those the repository’s lockfiles locked at <code>${since.slice(0, 7)}</code> need none` : nothing}.</p>
       ${baselineError ? html`<p class="repo-item-quiet" role="alert">The versions its lockfiles locked at that commit couldn’t be read (${baselineError}), so every version wants its reviews.</p>` : nothing}
       ${named.length > 0 ? html`<p class="repo-item-quiet" role="alert">At that commit, ${named.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}${baselineUnread.length > named.length
         ? ` and ${(baselineUnread.length - named.length).toLocaleString('en-US')} more` : ''} couldn’t be read, so the versions ${baselineUnread.length === 1 ? 'it' : 'they'} locked want reviews.</p>` : nothing}
-      ${unasked ? html`<p class="repo-item-quiet" role="alert">The server’s reviewed dependencies didn’t answer for ${plural(unasked, 'version')}, so ${unasked === 1 ? 'it wants' : 'they want'} reviews.</p>` : nothing}`
+      ${unasked ? html`<p class="repo-item-quiet" role="alert">The server’s reviewed dependencies didn’t answer for ${plural(unasked, 'version')}, so ${unasked === 1 ? 'it wants' : 'they want'} reviews.</p>` : nothing}
+      ${commentReviews ? html`<p class="repo-item-quiet">Reviews in its comments by ${plural(commentReviews, 'reviewer')} count too while it is open, a patched version’s of its patch.</p>` : nothing}
+      ${commentsFailed ? html`<p class="repo-item-quiet" role="alert">Its comments couldn’t be read for reviews, so none of theirs count.</p>` : nothing}`
   }
 
   // What fails a review (reviewFailures), where anything does: each version
@@ -263,8 +266,11 @@ class RepositoryItemDialog extends AppDialog {
     if (pkg.reviewed && state === 'passed') {
       return html`<span class="repo-item-review is-passed" data-tooltip="The server’s reviewed dependencies pass it">${CHECKS.success[1]}reviewed</span>`
     }
+    if (pkg.rejected) {
+      return html`<span class="repo-item-review is-failed" data-tooltip="A reviewer rejects it: it wants their newer accepting review">rejected</span>`
+    }
     if (pkg.patched && state === 'wanted') {
-      return html`<span class="repo-item-review is-wanted" data-tooltip="Reviews here pass no patch: it needs the server’s reviewed dependencies to pass it">unreviewed</span>`
+      return html`<span class="repo-item-review is-wanted" data-tooltip="Reviews here pass no patch: the server’s reviewed dependencies, or reviews of its patch in the pull request’s comments, pass it">unreviewed</span>`
     }
     if (state === 'baseline') return html`<span class="repo-item-tag" data-tooltip="Locked at the commit reviews are counted since: it needs none">baseline</span>`
     if (!state) return nothing

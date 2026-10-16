@@ -141,7 +141,7 @@ test('managed routes use exact server slugs and resolve back to internal UUIDs',
       }
     }
     // A team's lists, by what each lists.
-    for (const kind of ['reports', 'bundles', 'repositories']) {
+    for (const kind of ['reports', 'bundles', 'repositories', 'dependencies']) {
       const internal = { view: `workspace-${kind}`, teamId: team.id }
       const path = managedRoutePath(managedRouteForIds(internal, teams))
       assert.equal(path, `/team/${team.slug}/${kind}`)

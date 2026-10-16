@@ -2045,7 +2045,11 @@ reviews that count are those published to such a team
 (`repository-dependency-reviews.ts`): full, every file checked (a partial
 review counts for nothing yet), accepting (**Accept** or **Accept with
 nits**), not revoked, each reviewer once: one person's several reviews of a
-version count as one.
+version count as one. A reviewer's latest review of a version tells where
+they stand: one whose latest is **Reject** holds it unreviewed (`rejected`),
+however many others pass it, till they accept it anew. The commit reviewed
+since and the host's reviewed dependencies (below) pass a version all the
+same: the app's reviews judge only what is new since.
 
 An open pull request's tile and popup ask its dependencies with their review
 (`review=1`, `pull-dependency-reviews.ts`). A version is reviewed as npm's
@@ -2060,7 +2064,8 @@ lockfiles left unread (`cut`), a directory locking more versions than are
 checked, and a lockfile of Bun's. A file of the project's isn't reviewed. A
 version pnpm patches (`patched`) passes by no review here, the app reviewing
 no patch yet: only by the reviewed dependencies the host registers (below),
-or, without them, locked so, its patch too, at the commit reviewed since. A version it adds passes
+reviews of its patch in an open pull request's comments that they read, or,
+without them, locked so, its patch too, at the commit reviewed since. A version it adds passes
 with as many reviews as required, of it whole or compared with a version it
 was, those past the two hundred told judged so too and counted (`toReview`),
 as is every one its lockfiles lock of it (another integrity, say), its row
@@ -2078,7 +2083,7 @@ has none of a lockfile it lists there, every version wants them, the popup
 says why, and nothing is kept.
 
 Each directory then tells each version it adds with its review (`reviews`,
-how many pass it; `baseline`, needing none; or `unsupported`, `git`,
+how many pass it, and `rejected` where a reviewer rejects it; `baseline`, needing none; or `unsupported`, `git`,
 `tarball` or `integrity`), the other versions wanting reviews
 (`unreviewed`, two hundred at most, `moreUnreviewed` the rest), those that
 can't be reviewed (`unsupported`, `moreUnsupported`) and how many it locks
@@ -2089,12 +2094,43 @@ want reviews and can't be reviewed, each once, `unreviewed` and
 read). Where the host registered reviewed dependencies, a version
 they pass is `reviewed`, the terms tell `reviewedDependencies` and how many
 versions they failed to answer (`unasked`), and `since` is none. The tile
-shows a check where every version passes, how many want reviews (`1 to review · 4 unreviewed`), or, in red,
+shows a check where every version passes, how many want reviews, its own and then the others its lockfiles lock
+(`1 + 4 to review`), shortened where the tile is narrower still, or, in red,
 that its review fails; the popup its terms, what fails it, each version's
-review (`2/2`, **baseline** or **can't review**), and the other versions
+review (`2/2`, **rejected**, **baseline** or **can't review**), and the other versions
 folded under them. For one who publishes reviews to a team that counts
 (`canReview`), each version links to its review, an update's against the
 version it was, in place of a comparison; a patched one never.
+
+`GET /api/admin/repositories/branch-dependencies?repoId=…` answers the same
+of the repository's default branch, for its team's Dependencies tab (below):
+every lockfile of npm's ecosystem at its head (`commit-lockfiles.ts`, a
+hundred at most, those its reader refuses or past them told, `unread`), the
+versions they lock told as one directory's, none added, each wanting
+reviews among `unreviewed`; `{ head, review: null }` where none is in effect
+for the reader, `head` none where the branch has no commit.
+
+#### A team's Dependencies
+
+A team whose reader reviews dependencies in it (`dependencyReview`, its
+**Enable dependency review** switch on, and they a member who manages it,
+or triages and sees its dependencies, or an admin)
+shows a **Dependencies** tab after Repositories (`/team/<slug>/dependencies`,
+`team-dependencies.js`). Of each of its repositories whose review is in
+effect for them (three read at once, one they may read only some of left
+out), it reads the open pull requests (three pages at most) and
+the dependencies, with their review, of those changing a lockfile, as their
+tiles do, and lists the pull requests whose versions want reviews, or whose
+review fails, those adding fewest first, each a card opening its popup: how
+many versions it wants reviewed, and its versions with their review (`0/2`,
+**rejected**, **patched** or **can't review**), eight at most, the rest
+counted. A version is told under the first pull request adding it alone, of
+whichever repository, as one review passes it everywhere: another adding it
+too says so (`+1`), and a later one counts it as one a pull request above
+adds. Apart from them, folded, are every version wanting reviews, each once,
+with the pull requests adding it, and, of each repository, what its default
+branch locks that wants reviews or fails it. What it reads is held for the
+session two minutes, and read again once a repository's review is set.
 
 #### Reviewed dependencies of the host
 
@@ -2104,11 +2140,15 @@ throws):
 
 ```js
 import { init, registerReviewedDependencies } from '@preventive/triage/server'
-registerReviewedDependencies(async ({ ecosystem, lockfile, name, version, integrity, shasum, patchHash }) => isReviewed(...))
+registerReviewedDependencies({
+  async lookup({ ecosystem, lockfile, name, version, integrity, shasum, patchHash }) { return isReviewed(...) },
+  // Optional: the reviews an open pull request's comments make.
+  async parseComments({ repository, number, comments, dependencies }) { return reviewsIn(comments) },
+})
 const server = await init('managed')
 ```
 
-It is asked of each version an open pull request's lockfiles lock that its
+Its `lookup` is asked of each version an open pull request's lockfiles lock that its
 teams' reviews don't pass, as the lockfile locks it: `ecosystem` (`npm`),
 `lockfile` (`npm`, `pnpm` or `yarn1`), `name`, `version` and `integrity`,
 always, as a version locked with none fails the review instead; `shasum`, the
@@ -2124,6 +2164,30 @@ the page saving its other settings without it, for a server registering
 none again, and the connected repositories' list tells
 `reviewedDependencies`. The endpoint answers the setting as stored. Every version that neither
 it nor as many reviewers' reviews as required pass is unreviewed.
+
+Its `parseComments`, where it has one, reads the reviews an open pull
+request's comments make (`pull-comment-reviews.ts`), asked only where some
+version still wants reviews once its teams' reviews and the lookup are
+counted, of those versions (`dependencies`, as the lookup is asked of
+them). It is given the pull request (`repository`, `number`) and its
+comments (`comments`, a thousand at most, read of GitHub's GraphQL API and
+kept in the instance a minute): each with its `kind` (`comment`, `review`,
+whatever its state, which it tells, `state`, or `review-comment`, on a line
+of its diff), `id`, `author` (a login), `body`, `createdAt` and `url`. It
+answers the reviews they make: `[{ user, time?, dependencies: [{ name,
+version, integrity, patchHash?, status }] }]`, `status` `accept`,
+`accept-with-nits`, `request-changes` or `reject`, each full, its answer to
+the same kept ten minutes. A review counts only where its `user` wrote one
+of the comments and the app's user that GitHub account is (by its id, else
+its login, a linked account's too) publishes reviews to a team counting for
+the repository: as that user's, as of its `time`, else their latest
+comment's, each reviewer once among their reviews here, their latest
+telling where they stand; a patched version's, of its patch. They count for
+the open pull request alone and are never stored: the host is to merge one
+reviewed so only once those reviews reach what its lookup reads, so a
+closed one's comments are never read. The terms tell how many reviewers
+its comments count (`commentReviews`), or that they couldn't be read
+(`commentsFailed`, its error logged).
 
 
 ## Agents

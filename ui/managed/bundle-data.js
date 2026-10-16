@@ -244,6 +244,19 @@ export function fetchPullDependencies(repoId, number, { review = false, signal }
     PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
 }
 
+// The versions the repository's default branch's lockfiles lock that want
+// review, where its review is in effect for the reader (`review`, else none).
+const BRANCH_DEPENDENCIES_ERRORS = {
+  ...REPOSITORY_ITEM_ERRORS,
+  'github-not-found': 'GitHub has none of a lockfile it lists on the default branch.',
+  'github-malformed': 'GitHub answered with a lockfile that couldn’t be read.',
+  'github-status-403': 'GitHub refused to read its lockfiles. The GitHub App reading this repository needs Contents: read, which an owner of its installation approves.',
+  400: 'Not a repository.',
+}
+export function fetchBranchDependencies(repoId, { signal } = {}) {
+  return request(`/api/admin/repositories/branch-dependencies?${new URLSearchParams({ repoId })}`, BRANCH_DEPENDENCIES_ERRORS, response => response.json(), signal)
+}
+
 const REPOSITORY_PULSE_ERRORS = {
   ...REPOSITORY_ISSUES_ERRORS,
   'no-directory': 'Pulse shows only with access to the whole repository.',

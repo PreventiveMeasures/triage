@@ -29,7 +29,7 @@ export const MANAGED_PAGES = Object.freeze({
 })
 
 // A team's lists, each at /team/<slug>/<what it lists>.
-const WORKSPACE_CONTENT_VIEWS = new Set(['workspace-reports', 'workspace-bundles', 'workspace-repositories'])
+const WORKSPACE_CONTENT_VIEWS = new Set(['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'])
 
 // Dot-only path components are normalised away by URL parsers, even escaped.
 function findingPath(id) {
@@ -242,7 +242,7 @@ export function parseManagedRoute(url) {
   if (npm !== undefined) return npm
   const code = parseRepositoryCodeRoute(url)
   if (code !== undefined) return code
-  const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles|repositories)$/u.exec(path)
+  const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles|repositories|dependencies)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }
   const match = /^\/team\/([^/]+)(?:\/report\/([^/]+))?(?:\/(files)|\/finding\/([^/]+))?$/u.exec(path)
   if (!match) return null

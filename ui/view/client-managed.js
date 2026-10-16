@@ -109,6 +109,10 @@ export async function fetchPullDependencies(repoId, number, options) {
   return (await loadManagedBundle()).fetchPullDependencies(repoId, number, options)
 }
 
+export async function fetchBranchDependencies(repoId, options) {
+  return (await loadManagedBundle()).fetchBranchDependencies(repoId, options)
+}
+
 export function fetchRepositoryPulse(repoId, weeks, options) {
   return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options))
 }

@@ -310,7 +310,7 @@ function workspaceRailTemplate(workspaces) {
 
 function teamIsCurrent(team) {
   return state.currentManagedTeam === team.id && Boolean(state.currentWorkspace)
-    && ['findings', 'files', 'workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(state.currentView)
+    && ['findings', 'files', 'workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)
 }
 
 function teamReportIsCurrent(team, r) {
@@ -2232,7 +2232,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
     }
     if (!isCurrent()) return false
   }
-  if (!managedNavigationPending && ['workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(state.currentView) && !teams.some(team => team.id === state.currentManagedTeam)) {
+  if (!managedNavigationPending && ['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView) && !teams.some(team => team.id === state.currentManagedTeam)) {
     const cleared = goHome({ history: false })
     const clearing = currentViewGeneration()
     await cleared
@@ -2297,7 +2297,7 @@ async function restoreManagedPageContent(route, isCurrent) {
   beginViewNavigation()
   // The shared catalog is kept current by feed revisions. Do not read it again
   // just to resolve another route; changed versions invalidate cached content.
-  if ((['findings', 'files', 'bundles', 'workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(route?.view) || route?.finding)
+  if ((['findings', 'files', 'bundles', 'workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(route?.view) || route?.finding)
     && (!(await viewManagedTeams(isCurrent)) || !isCurrent())) return false
   let adminBundles = []
   if (route?.view === 'bundles' && route.teamSlug == null) {
@@ -2322,7 +2322,7 @@ async function restoreManagedPageContent(route, isCurrent) {
     startManagedTeamFeed()
     return managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport, finding: { id: route.finding.id } }, state.managedTeams)
   }
-  if (['workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(route.view)) return switchToWorkspaceContent(route.teamId, route.view.slice(10), { history: false })
+  if (['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(route.view)) return switchToWorkspaceContent(route.teamId, route.view.slice(10), { history: false })
   if (route.view === 'bundles') {
     const entries = route.teamId == null ? adminBundles.map(managedBundleEntry) : managedTeamBundleEntries(state.managedTeams)
     if (!(await openManagedBundle(route, entries, isCurrent, renderSidebar))) return false
