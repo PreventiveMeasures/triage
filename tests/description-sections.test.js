@@ -481,6 +481,8 @@ describe('lineBlockSegments', () => {
     for (const rule of ['***', '___', '- - -']) {
       assert.deepEqual(lineBlockSegments(`Prose\n${rule}`), ['Prose', { rule: true }], `${rule}, which can't underline prose`)
     }
+    assert.deepEqual(lineBlockSegments('## Summary\n  \n---\n_Signed_'), [{ level: 2, text: 'Summary' }, { rule: true }, '_Signed_'], 'after a line of spaces')
+    assert.deepEqual(lineBlockSegments('Prose\n \n---'), ['Prose', { rule: true }], 'a line of spaces is no underlined prose')
   })
 
   it('leaves the rest as it is: a reference, a hash with no space, seven hashes, a setext heading', () => {
