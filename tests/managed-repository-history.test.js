@@ -204,8 +204,10 @@ test('all branches reads the 25 most recently committed to, the default branch f
   assert.equal(historyQueries(asked).length, 3, 'read too lately to read again')
   const later = Date.now() + 30_000
   t.mock.method(Date, 'now', () => later)
-  assert.deepEqual((await request({ repoId: '1', all: 'true', fresh: 'true' })).body, body)
-  assert.deepEqual(historyQueries(asked).slice(3).map(query => query.body.variables.after), [null, 'p2'], 'its branches read again, alone')
+  // Asked so by two at once, read once, both answered by it.
+  const both = await Promise.all([request({ repoId: '1', all: 'true', fresh: 'true' }), request({ repoId: '1', all: 'true', fresh: 'true' })])
+  assert.deepEqual(both.map(answer => answer.body), [body, body])
+  assert.deepEqual(historyQueries(asked).slice(3).map(query => query.body.variables.after), [null, 'p2'], 'its branches read again, once, alone')
 
   const anonymous = await fixture(t)
   assert.deepEqual(await anonymous({ repoId: '1', all: 'true' }), { status: 403, body: { error: 'github-token-required' } })

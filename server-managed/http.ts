@@ -1734,8 +1734,9 @@ function historyChanges(deps: ManagedHttpDeps, repoId: number): ChangesStore {
 // and how long one read is answered as kept even where it is asked for afresh.
 const REPOSITORY_READ_FRESH_MS = 2 * 60_000
 const REPOSITORY_READ_FLOOR_MS = 10_000
-// The repositories' reads being read again behind a kept answer, by key.
-const repositoryRereads = new Set<string>()
+// The repositories' reads being read again, behind a kept answer or as asked
+// for afresh, by key: one at a time, those asking meanwhile answered by it.
+const repositoryRereads = new Map<string, Promise<unknown>>()
 // A read GitHub refused, not failed: its credential or the GitHub App's
 // permission for it withdrawn (Issues, Pull requests, Checks), the
 // repository or what was asked of it gone. What was kept of it goes too.
@@ -1769,19 +1770,25 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
       throw err
     }
   }
+  const reread = () => {
+    let reading = repositoryRereads.get(key)
+    if (!reading) {
+      reading = readKept().finally(() => repositoryRereads.delete(key))
+      repositoryRereads.set(key, reading)
+    }
+    return reading as Promise<T>
+  }
   const age = held ? Date.now() - held.at : Infinity
   const now = fresh && age >= REPOSITORY_READ_FLOOR_MS
   if (held && !now && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {
     if (age >= REPOSITORY_READ_FRESH_MS && !repositoryRereads.has(key)) {
-      repositoryRereads.add(key)
       // Its failure leaves the kept answer sent until it is a day old, so it is said.
-      deps.track(readKept().catch((err: unknown) => { console.warn('managed: repository read failed:', err) })
-        .finally(() => repositoryRereads.delete(key)))
+      deps.track(reread().catch((err: unknown) => { console.warn('managed: repository read failed:', err) }))
     }
     return { value: held.value as T, kept: true }
   }
   try {
-    return { value: await readKept(), kept: false }
+    return { value: now ? await reread() : await readKept(), kept: false }
   } catch (err) {
     if (held && ((now && !refusedRead(err)) || keepThrough(err))) return { value: held.value as T, kept: true }
     throw err
