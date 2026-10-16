@@ -53,19 +53,28 @@
     --w95-etched: inset 1px 1px var(--w95-shadow), inset -1px -1px #fff, inset 2px 2px #fff, inset -2px -2px var(--w95-shadow);
     /* Behind a toggle held down, and in a scrollbar's track. */
     --w95-dither: repeating-conic-gradient(#fff 0 25%, var(--w95-face) 0 50%) 0 0 / 2px 2px;
-    /* A scrollbar button's arrows, for a 16px button. */
+    /* A scrollbar button's arrows, pixel by pixel for a 16px button: a
+       base of 7, and 4 to the point. */
     --w95-arrow-up:
-      linear-gradient(to bottom right, transparent 50%, #000 50%) 4px 6px / 4px 4px no-repeat,
-      linear-gradient(to bottom left, transparent 50%, #000 50%) 8px 6px / 4px 4px no-repeat;
+      linear-gradient(#000, #000) 7px 6px / 1px 1px no-repeat,
+      linear-gradient(#000, #000) 6px 7px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 5px 8px / 5px 1px no-repeat,
+      linear-gradient(#000, #000) 4px 9px / 7px 1px no-repeat;
     --w95-arrow-down:
-      linear-gradient(to top right, transparent 50%, #000 50%) 4px 6px / 4px 4px no-repeat,
-      linear-gradient(to top left, transparent 50%, #000 50%) 8px 6px / 4px 4px no-repeat;
+      linear-gradient(#000, #000) 4px 6px / 7px 1px no-repeat,
+      linear-gradient(#000, #000) 5px 7px / 5px 1px no-repeat,
+      linear-gradient(#000, #000) 6px 8px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 7px 9px / 1px 1px no-repeat;
     --w95-arrow-left:
-      linear-gradient(to bottom right, transparent 50%, #000 50%) 6px 4px / 4px 4px no-repeat,
-      linear-gradient(to top right, transparent 50%, #000 50%) 6px 8px / 4px 4px no-repeat;
+      linear-gradient(#000, #000) 6px 7px / 1px 1px no-repeat,
+      linear-gradient(#000, #000) 7px 6px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 8px 5px / 1px 5px no-repeat,
+      linear-gradient(#000, #000) 9px 4px / 1px 7px no-repeat;
     --w95-arrow-right:
-      linear-gradient(to bottom left, transparent 50%, #000 50%) 6px 4px / 4px 4px no-repeat,
-      linear-gradient(to top left, transparent 50%, #000 50%) 6px 8px / 4px 4px no-repeat;
+      linear-gradient(#000, #000) 6px 4px / 1px 7px no-repeat,
+      linear-gradient(#000, #000) 7px 5px / 1px 5px no-repeat,
+      linear-gradient(#000, #000) 8px 6px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 9px 7px / 1px 1px no-repeat;
     /* Caption glyphs, pixel by pixel, for a 16x14 caption button: close,
        maximize, restore, and the lock, shut and open. */
     --w95-glyph-close:
@@ -477,18 +486,85 @@
       &:hover { background: var(--w95-face); color: #000; }
       &:active, &[aria-pressed='true'] { background: var(--w95-dither); box-shadow: var(--w95-pressed); color: #000; }
     }
+
+    /* The finding's column is a side panel of the finding's window, as
+       a wizard's picture is of its own: the window widens to take it
+       along its right, under the window's title bar, and grows no
+       shorter than a wizard. The window and the panel share one grid
+       cell, the window's width the cell's; the panel stretches to the
+       window's height and asks none of its own. Filling the screen,
+       the window takes the panel with it. */
+    @media (width >= 1400px) {
+      & .kanban-detail-backdrop:has(> .kanban-detail-side) {
+        grid-template-columns: min(calc(1100px + var(--kanban-side-w) + 12px), 100%);
+        place-content: center;
+        padding: 1rem;
+
+        & > .kanban-detail-modal {
+          grid-area: 1 / 1; justify-self: stretch;
+          width: auto; min-height: min(560px, 100vh - 2rem);
+          padding-right: calc(var(--kanban-side-w) + 12px);
+        }
+        & > .kanban-detail-side { grid-area: 1 / 1; }
+      }
+      & .kanban-detail-backdrop:has(> .kanban-detail-side):has(> .kanban-detail-modal.fullscreen) {
+        grid-template-columns: 100%;
+        place-content: stretch;
+        padding: 0;
+      }
+    }
     & .kanban-detail-side {
+      position: relative; inset: auto;
+      place-self: stretch end;
+      margin: 26px 6px 6px 0; padding: 0;
       border-left: 0;
-      background: #fff;
-      box-shadow: var(--w95-window);
+      background: none;
+      box-shadow: none;
+      contain: size;
+    }
+
+    /* A side panel's head sits on the window's face — the column picked
+       in a combo box, or the queue's name, then the arrows and where
+       they are — over its list, a white well. */
+    & :is(.kanban-detail-side-header, .focus-sidebar-header) {
+      min-height: 0; gap: 4px;
+      padding: 0 0 4px;
+      border-bottom: 0;
+      color: #000; font-size: 11px; font-weight: 400;
+
+      & .count { padding: 0 2px; background: none; color: #000; font-size: 11px; font-weight: 400; }
     }
     & .kanban-detail-side-header {
-      border-bottom: 0;
-      background: var(--w95-face);
-      color: #000; font-weight: 400;
-
       & .kanban-detail-side-pick::after { display: none; }
-      & .count { background: none; color: #000; }
+      & .kanban-detail-side-select { height: 21px; padding: 0 22px 0 3px; }
+    }
+    & .focus-sidebar {
+      border: 0;
+      background: none; backdrop-filter: none;
+    }
+    & :is(.kanban-detail-side-body, .focus-sidebar-body) {
+      padding: 2px;
+      background: #fff;
+      box-shadow: var(--w95-sunken);
+    }
+    /* The arrows are a toolbar's buttons, their glyphs a scroll bar's,
+       nudged a pixel down and right while pressed, etched in grey while
+       there is nowhere further to go. */
+    & .focus-nav-btn {
+      width: 22px; height: 21px;
+      border: 0;
+      background: var(--w95-face);
+      box-shadow: var(--w95-raised);
+
+      & svg { display: none; }
+      /* 15px tall, so the glyph lands on whole pixels in the 21px button. */
+      &::before { content: ''; width: 16px; height: 15px; background: var(--w95-arrow-left); }
+      &[data-focus-nav='next']::before, &[data-kanban-nav='next']::before { background: var(--w95-arrow-right); }
+      &:hover:not(:disabled) { border-color: transparent; }
+      &:active:not(:disabled) { box-shadow: var(--w95-pressed); }
+      &:active:not(:disabled)::before { translate: 1px 1px; }
+      &:disabled { opacity: 1; }
+      &:disabled::before { filter: invert(50%) drop-shadow(1px 1px #fff); }
     }
 
     /* The landing is the Welcome dialog: a window of its own, its
