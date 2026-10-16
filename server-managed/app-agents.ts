@@ -25,3 +25,6 @@ export const APP_AGENTS: readonly (AppAgent & AppAgentMarks)[] = [
   { id: 'copilot', name: copilot.name, account: copilot.accounts[0], prefix: 'copilot/' },
   { id: 'dependabot', name: dependabot.name, avatar: dependabot.avatar, account: dependabot.accounts[0], prefix: 'dependabot/' },
 ]
+// The prefixes of the branches agents work on: Claude Code's and Codex's,
+// and the app agents'.
+export const AGENT_BRANCH_PREFIXES = ['claude/', 'codex/', ...APP_AGENTS.map(agent => agent.prefix)]

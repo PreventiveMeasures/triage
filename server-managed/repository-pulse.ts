@@ -13,13 +13,14 @@
 // week `weeks` weeks earlier, the pull requests merged and opened and the
 // issues closed and opened, how many and the latest of each.
 import { githubAgent } from '../common/managed/github-agents.ts'
+import { AGENT_BRANCH_PREFIXES } from './app-agents.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
 import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accountOf, actorOf, githubGraphql, historyFrom } from './repository-history.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
 // another are counted again.
-export const PULSE_YEAR_VERSION = 3
+export const PULSE_YEAR_VERSION = 4
 const WEEK_MS = 7 * 24 * 60 * 60_000
 const DAY_MS = 24 * 60 * 60_000
 const MAX_CONTRIBUTORS = 100
@@ -39,6 +40,10 @@ const YEAR_STARTS = 10
 // not always later than its parents': one dated before the year may have a
 // parent dated in it.
 const YEAR_SKEW_MS = 30 * DAY_MS
+// The merged pull requests read for the agents' an answer, a page a query,
+// as many queries as MERGED_QUERIES, the rest left for the next to ask.
+const MERGED_PAGE = 100
+const MERGED_QUERIES = 5
 const MAX_TITLE = 1000
 const SHA = /^[a-f\d]{40}$/u
 
@@ -200,17 +205,74 @@ export async function yearCommits(fullName: string, token: string, head: string,
   return { complete: true, commits: [...found.values()].filter(commit => commit.committedAt !== null && commit.committedAt >= since) }
 }
 
+// The agents' pull requests merged since a year's start, as read so far
+// (agentMerges): each by its merge commit, and when it was merged; when the
+// newest read was last updated, those updated since read again (`through`,
+// null till all are read once); and a read not finished: where it goes on
+// (`after`), when the newest it began with was updated (`from`), the oldest
+// it reads to (`stop`) and how many it has read (`read`).
+export interface AgentMerges { merges: [string, number][]; through: number | null; next: { after: string; from: number; stop: number; read: number } | null }
+
+const MERGED_QUERY = `query($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: MERGED, first: ${MERGED_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      pageInfo { hasNextPage endCursor }
+      nodes { updatedAt mergedAt headRefName mergeCommit { oid } }
+    }
+  }
+}`
+type MergedPage = { repository?: { pullRequests?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }
+  nodes?: ({ updatedAt?: unknown; mergedAt?: unknown; headRefName?: unknown; mergeCommit?: { oid?: unknown } | null } | null)[] } | null } | null }
+const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_PREFIXES.some(prefix => name.startsWith(prefix))
+
+// The pull requests merged since `since` from an agent's branch
+// (app-agents.ts AGENT_BRANCH_PREFIXES), as the Agents tab tells an agent's
+// work: an agent that commits as whoever ran it (Codex's own) leaves its
+// commits no mark, its branch alone naming it. Those merged are read the most
+// recently updated first (a pull request is updated when merged, or after),
+// on from what was `kept`: till one updated before the year, or before the
+// newest read before was, as many queries an answer as MERGED_QUERIES, a read
+// not finished going on from where it was left by the next.
+export async function agentMerges(fullName: string, token: string, since: number, kept: AgentMerges | null,
+  fetchImpl: typeof fetch = globalThis.fetch): Promise<AgentMerges> {
+  const [owner, name] = fullName.split('/') as [string, string]
+  const merges = new Map((kept?.merges ?? []).filter(([, at]) => at >= since))
+  const stop = kept?.next?.stop ?? Math.max(since, kept?.through ?? since)
+  let { after = null, from = null, read = 0 }: { after?: string | null; from?: number | null; read?: number } = kept?.next ?? {}
+  for (let queries = 0; queries < MERGED_QUERIES; queries++) {
+    const page = (await githubGraphql(MERGED_QUERY, { owner, name, after }, token, fetchImpl) as MergedPage | null)?.repository?.pullRequests
+    let done = page?.pageInfo?.hasNextPage !== true || typeof page.pageInfo.endCursor !== 'string'
+    for (const node of page?.nodes ?? []) {
+      const updated = timeOf(node?.updatedAt)
+      if (updated === null) continue
+      if (updated < stop) {
+        done = true
+        break
+      }
+      from ??= updated
+      read++
+      const [merged, oid] = [timeOf(node?.mergedAt), node?.mergeCommit?.oid]
+      if (merged !== null && merged >= since && typeof oid === 'string' && SHA.test(oid) && agentBranch(node?.headRefName)) merges.set(oid, merged)
+    }
+    if (done) return { merges: [...merges], through: from ?? stop, next: null }
+    after = page!.pageInfo!.endCursor as string
+  }
+  return { merges: [...merges], through: kept?.through ?? null, next: { after: after!, from: from ?? stop, stop, read } }
+}
+
 // Whether an agent made `commit` or co-authored it: its author one of
 // GitHub's agents (common/managed/github-agents.ts githubAgent), or any of
 // its co-authors an agent (commit-coauthors.ts coauthorsOf), as Commits
-// marks them.
-const withAgent = (commit: HistoryCommit) => githubAgent(commit.authorLogin, commit.authorId ?? null, commit.authorName) !== null
-  || (commit.coauthors ?? []).some(coauthor => coauthor.agent)
+// marks them; or the pull request it merged an agent's (`merges`,
+// agentMerges).
+const withAgent = (commit: HistoryCommit, merges: ReadonlySet<string>) => merges.has(commit.sha)
+  || githubAgent(commit.authorLogin, commit.authorId ?? null, commit.authorName) !== null || (commit.coauthors ?? []).some(coauthor => coauthor.agent)
 
 // The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
 // statistics count them, merges left out: a week a row, its commits each day
 // (UTC) and in all and the lines they added and removed, in all and each day,
-// and those an agent made or co-authored (withAgent) each day;
+// and those an agent made or co-authored, or merged from an agent's pull
+// request (`merges`, withAgent), each day;
 // its contributors,
 // by account (its id, by the login it committed as first listed, the newest,
 // whatever it was renamed from; a login's commits read before ids were, the
@@ -220,7 +282,7 @@ const withAgent = (commit: HistoryCommit) => githubAgent(commit.authorLogin, com
 // and their weeks and days; and its commits by day of the week and hour, in
 // each author's own time zone (else UTC, where GitHub told none), the year's
 // and each period's (PULSE_WEEKS, its last weeks).
-export function commitStats(commits: HistoryCommit[], first: number): PulseStats {
+export function commitStats(commits: HistoryCommit[], first: number, merges: ReadonlySet<string> = new Set()): PulseStats {
   const weeks = Array.from({ length: 52 }, (_, at) => ({ week: first + at * WEEK_MS, days: Array.from({ length: 7 }, () => 0), commits: 0, additions: 0, deletions: 0,
     dayLines: Array.from({ length: 7 }, () => [0, 0] as [number, number]), agentDays: Array.from({ length: 7 }, () => 0) }))
   type Counts = Map<number, [number, number, number]>
@@ -243,7 +305,7 @@ export function commitStats(commits: HistoryCommit[], first: number): PulseStats
     week.commits++
     week.additions += additions
     week.deletions += deletions
-    if (withAgent(commit)) week.agentDays[weekday]!++
+    if (withAgent(commit, merges)) week.agentDays[weekday]!++
     const local = new Date(commit.authoredAt != null && commit.authorZone != null ? commit.authoredAt + commit.authorZone * 60_000 : commit.committedAt)
     for (const span of PULSE_WEEKS) if (at >= 52 - span) punches[span]![local.getUTCDay()]![local.getUTCHours()]!++
     const key = commit.authorLogin && commit.authorId != null ? `#${commit.authorId}` : commit.authorLogin ? `@${commit.authorLogin.toLowerCase()}`

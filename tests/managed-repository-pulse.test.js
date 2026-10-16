@@ -6,7 +6,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { historyPageStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { historyFrom } from '../server-managed/repository-history.ts'
-import { PULSE_YEAR_VERSION, StatsPending, YEAR_COMMITS, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
+import { PULSE_YEAR_VERSION, StatsPending, YEAR_COMMITS, agentMerges, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
   from '../server-managed/repository-pulse.ts'
 import { createSession } from '../server-managed/session.ts'
 
@@ -85,6 +85,15 @@ const memoryPages = () => {
 }
 const pages = () => memoryPages()
 const graphQueries = asked => asked.filter(item => typeof item === 'object' && item.query.includes('history(first:')).length
+const mergedQueries = asked => asked.filter(item => typeof item === 'object' && item.query.includes('pullRequests(states: MERGED')).length
+// The pull requests merged, the most recently updated first, as GitHub lists
+// them a hundred a page from the cursor asked (a position here); else
+// `other` answers.
+const mergedPulls = (pulls, other = () => ({ data: {} })) => body => {
+  if (!body.query.includes('pullRequests(states: MERGED')) return other(body)
+  const from = Number(body.variables.after ?? 0)
+  return { data: { repository: { pullRequests: { pageInfo: { hasNextPage: from + 100 < pulls.length, endCursor: String(from + 100) }, nodes: pulls.slice(from, from + 100) } } } }
+}
 
 test('a commit read with GraphQL tells the lines it adds and removes, and when its author made it in their own time zone', async t => {
   const now = Date.UTC(2026, 9, 15, 12)
@@ -183,6 +192,47 @@ test('a year counts each day the commits an agent made or co-authored: one of Gi
   ], first)
   assert.deepEqual(read.weeks.slice(0, 2).map(week => [week.days, week.agentDays]), [
     [[0, 3, 2, 0, 0, 0, 0], [0, 1, 1, 0, 0, 0, 0]], [[2, 0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0]]])
+})
+
+test('the agents\' pull requests merged in the year: by their branches, the most recently updated read first, a few queries an answer, on from what was read', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  // Twelve hours apart, the 600th updated as the year starts, each merged an hour before.
+  const pull = (at, updated = since + (600 - at) * 12 * HOUR) => ({ updatedAt: new Date(updated).toISOString(), mergedAt: new Date(updated - HOUR).toISOString(),
+    headRefName: [`codex/${at}`, `feature/${at}`, `claude/${at}`, `dependabot/npm/${at}`][at % 4], mergeCommit: { oid: shaOf(at + 1) } })
+  const pulls = Array.from({ length: 650 }, (_, at) => pull(at))
+  const asked = github(t, { graphql: mergedPulls(pulls) })
+  const read = await agentMerges('org/repo', 'token', since, null)
+  assert.equal(mergedQueries(asked), 5)
+  assert.deepEqual([read.through, read.next], [null, { after: '500', from: since + 600 * 12 * HOUR, stop: since, read: 500 }], 'five pages, the rest left')
+  const whole = await agentMerges('org/repo', 'token', since, read)
+  assert.equal(mergedQueries(asked), 7, 'on till one updated before the year')
+  assert.deepEqual([whole.through, whole.next], [since + 600 * 12 * HOUR, null])
+  const agents = Array.from({ length: 600 }, (_, at) => at).filter(at => at % 4 !== 1)
+  assert.deepEqual(whole.merges.map(([sha]) => sha).toSorted(), agents.map(at => shaOf(at + 1)).toSorted(), 'those of agents\' branches merged in the year')
+  // One merged since, read alone, from the newest on to the newest read before.
+  pulls.unshift({ ...pull(1000, since + 700 * 12 * HOUR), headRefName: 'codex/new' })
+  const again = await agentMerges('org/repo', 'token', since, whole)
+  assert.equal(mergedQueries(asked), 8)
+  assert.deepEqual([again.through, again.merges.length, again.merges.some(([sha]) => sha === shaOf(1001))], [since + 700 * 12 * HOUR, agents.length + 1, true])
+  // A year begun since, those merged before it left out.
+  const later = await agentMerges('org/repo', 'token', since + 300 * 12 * HOUR, again)
+  assert.ok(later.merges.every(([, at]) => at >= since + 300 * 12 * HOUR))
+})
+
+test('a year counts the commits merged from an agent\'s pull request with agents, their messages marking none; the pull requests merged read a few queries an answer', async t => {
+  const request = await fixture(t)
+  const commits = chain(50, Date.now())
+  const now = new Date().toISOString()
+  // Codex's, as it commits as whoever ran it; then many more, merged before the year.
+  const pulls = [{ updatedAt: now, mergedAt: now, headRefName: 'codex/fix', mergeCommit: { oid: commits[3].oid } },
+    ...Array.from({ length: 600 }, (_, at) => ({ updatedAt: now, mergedAt: '2020-01-01T00:00:00Z', headRefName: 'codex/old', mergeCommit: { oid: shaOf(at + 10_000) } }))]
+  github(t, { commits, graphql: mergedPulls(pulls) })
+  const first = await request({ repoId: '1' })
+  assert.deepEqual([first.body.stats, first.body.reading, first.body.pulls], [null, null, 500])
+  const second = await request({ repoId: '1' })
+  assert.equal(second.body.pulls, null)
+  assert.deepEqual([second.body.stats.weeks.reduce((sum, week) => sum + week.commits, 0), second.body.stats.weeks.flatMap(week => week.agentDays).reduce((sum, count) => sum + count, 0)],
+    [50, 1])
 })
 
 test('when a period\'s commits are made, where counted from them: its last weeks\' alone; else, as GitHub\'s statistics count it, the year\'s or more', () => {

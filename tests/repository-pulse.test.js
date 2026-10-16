@@ -391,6 +391,33 @@ test('a year read again for a head moved on: the year as it was shown meanwhile,
   assert.equal(requests.length, 3, 'read whole, not asked again')
 })
 
+test('the pull requests merged in the year read a few pages an answer: how many so far, asked again a second apart while each answer reads more', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
+  let pulls = 500
+  answer = () => Promise.resolve(pulse({ stats: null, pulls }))
+  const view = shown()
+  view.render()
+  await setImmediate()
+  let text = templateText(view.render())
+  assert.match(text, /class="pulse-pending pulse-wide" role="status">Reading the pull requests merged in this repository… 500 so far</u)
+  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">–<\/span>\s*<span class="pulse-tile-note">Reading pull requests…/u)
+  // The year as it was told beside them, shown meanwhile.
+  answer = () => Promise.resolve(pulse({ pulls: (pulls += 500) }))
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  text = templateText(view.render())
+  assert.equal(requests.length, 2)
+  assert.match(text, /class="pulse-note pulse-updating" role="status">Reading the pull requests merged in this repository… 1,000 so far</u)
+  assert.equal(text.split('class=pulse-column').length - 1, 56)
+  answer = () => Promise.resolve(pulse())
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  assert.equal(requests.length, 3)
+  assert.doesNotMatch(templateText(view.render()), /pulse-updating/u)
+  t.mock.timers.tick(5000)
+  assert.equal(requests.length, 3, 'read whole, not asked again')
+})
+
 test('a year GitHub\'s statistics count, while GitHub computes them, or its lines: asked again a while apart, a dozen times, then left to the reader', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
   answer = () => Promise.resolve(pulse({ stats: null, pending: true }))
