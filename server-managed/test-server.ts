@@ -659,7 +659,7 @@ function historyFixture(url: URL, res: ServerResponse): void {
   const now = Date.now()
   const commitOf = ([label, subject, parents, hours, author]: [string, string, string[], number, string]) => ({
     sha: historySha(label), parents: parents.map(historySha), subject, authorName: author, authorLogin: null, committedAt: now - hours * 3_600_000,
-    coauthors: coauthorsOf(HISTORY_MESSAGES[label] ?? '', { name: author, account: { login: null, id: null } }),
+    coauthors: coauthorsOf(`${subject}\n\n${HISTORY_MESSAGES[label] ?? ''}`, { name: author, account: { login: null, id: null } }),
   })
   const commits = HISTORY_FIXTURE.map(commitOf)
   // A pull request's branch still at its head is read as any branch is.

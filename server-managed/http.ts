@@ -1584,7 +1584,8 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const repo = access.repo.fullName
     const token = reader.readToken()
-    const pages = historyPages(deps, repoId)
+    // With a token, as GraphQL reads them.
+    const pages = historyPages(deps, repoId, token !== null)
     let body: object
     if (all) {
       if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
@@ -1694,9 +1695,11 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
 
 // The pages of repository `repoId`'s history kept (historyPageStore), each by
 // the commit it starts at (repository-history.ts historyFrom), those telling
-// each commit's co-authors (kept since they are read), and with `lines`, its
-// lines (read with GraphQL since it reads them); the rest read again.
-function historyPages(deps: ManagedHttpDeps, repoId: number, lines = false): HistoryPages {
+// each commit's co-authors (kept since they are read), and with `graphql`,
+// only those read with GraphQL, telling its lines and the accounts its
+// co-authors' addresses are (a page GitHub's REST API listed tells neither);
+// the rest read again.
+function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false): HistoryPages {
   const store = historyPageStore<HistoryCommit[]>(deps.db, deps.config.debug)
   const keyOf = (top: string) => `${repoId}\0${top}`
   return {
@@ -1704,7 +1707,7 @@ function historyPages(deps: ManagedHttpDeps, repoId: number, lines = false): His
       const kept = await store.readMany(tops.map(keyOf))
       return new Map(tops.flatMap(top => {
         const page = kept.get(keyOf(top))?.value
-        return Array.isArray(page) && page.every(commit => Array.isArray(commit.coauthors)) && (!lines || page.every(commit => commit.additions != null))
+        return Array.isArray(page) && page.every(commit => Array.isArray(commit.coauthors)) && (!graphql || page.every(commit => commit.additions != null))
           ? [[top, page] as const] : []
       }))
     },

@@ -23,6 +23,14 @@ const COAUTHOR_TRAILER = /^co-authored-by:[ \t]*([^<\n]*?)[ \t]*<([^<>\s]+)>[ \t
 const CURSOR_AGENT = /https:\/\/cursor\.com\/(?:agents\?id=|background-agent\?bcId=)bc-/u
 const FINGERPRINTED = APP_AGENTS.filter(agent => agent.fingerprint)
 
+// A message's trailers, as git and GitHub read them: its last paragraph's,
+// where it has one past its subject's, not lines a description or example
+// before it holds.
+const trailerBlock = (text: string) => {
+  const paragraphs = text.trim().split(/\n[ \t]*\n/u)
+  return paragraphs.length > 1 ? paragraphs.at(-1)! : ''
+}
+
 // One named as a commit's author or co-author: by name, the address its
 // commit gives (where it is read), and account.
 export type Maker = { name: unknown; email?: unknown; account: NamedAccount }
@@ -36,7 +44,8 @@ const makerAgent = ({ name, email, account }: Maker): GithubAgentId | null => gi
 // Who made a commit, past its author (`author`), as its message names them:
 // its co-authors, those GitHub's GraphQL API lists past the author (`listed`,
 // the addresses its `Co-authored-by:` trailers give, by the accounts GitHub
-// knows them by), else its trailers, an account's no-reply address naming it;
+// knows them by), else its trailers (trailerBlock), an account's no-reply
+// address naming it;
 // then the agents it marks, Claude's and Codex's as the Agents tab reads them
 // (agent-tasks.ts agentSignals: their sessions' and tasks' links, Claude's
 // co-author and "Generated with" lines), the app agents' by their
@@ -46,7 +55,7 @@ const makerAgent = ({ name, email, account }: Maker): GithubAgentId | null => gi
 // two people of one name with accounts or addresses of their own two.
 export function coauthorsOf(message: unknown, author: Maker, listed: Maker[] | null = null): Coauthor[] {
   const text = typeof message === 'string' ? message.replaceAll('\r\n', '\n') : ''
-  const named = listed ?? [...text.matchAll(COAUTHOR_TRAILER)].map(([, name, email]) => ({ name, email, account: commitAccount({ email }) }))
+  const named = listed ?? [...trailerBlock(text).matchAll(COAUTHOR_TRAILER)].map(([, name, email]) => ({ name, email, account: commitAccount({ email }) }))
   const signals = agentSignals([text], FINGERPRINTED)
   const marked = [...signals.claude || signals.sessions.length > 0 ? ['claude'] : [], ...signals.tasks.length > 0 ? ['codex'] : [],
     ...CURSOR_AGENT.test(text) ? ['cursor'] : [], ...signals.agents]

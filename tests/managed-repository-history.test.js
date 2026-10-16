@@ -167,6 +167,8 @@ test('all branches reads the 25 most recently committed to, the default branch f
     ] } },
     b2: { history: { pageInfo: { hasNextPage: false }, nodes: [{ oid: d, message: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } }] } },
   }
+  // Each commit's lines, as GitHub's GraphQL API tells them.
+  for (const { history } of Object.values(histories)) for (const node of history.nodes) Object.assign(node, { additions: 1, deletions: 0 })
   const graphql = ({ query, variables }) => ({ data: { repository: query.includes('refs/heads/')
     ? { defaultBranchRef: head('main', a, '2026-10-02T10:00:00Z'), ...heads[variables.after] } : histories } })
   const request = await fixture(t, { tokens: userTokens })
@@ -432,4 +434,21 @@ test('pages kept before their commits\' co-authors were read are read again, the
   await request({ repoId: '1', ref: chain(100) })
   await request({ repoId: '1', ref: chain(100) })
   assert.deepEqual(read, [100, 100], 'read again once')
+})
+
+test('with a token, pages kept as GitHub\'s REST API listed them, which tell no co-author\'s account, are read again with GraphQL', async t => {
+  const graphql = ({ query }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: null } }, tags: { nodes: [] },
+      branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ name: 'main', target: { oid: a, committedDate: null } }] } }
+    : { b0: { history: { nodes: [{ oid: a, message: 'Work\n\nCo-authored-by: Mona <mona@example.com>', committedDate: '2026-10-02T10:00:00Z', additions: 1, deletions: 0,
+      author: { name: 'Ada', user: null }, authors: { nodes: [{ name: 'Ada', user: null }, { name: 'Mona', email: 'mona@example.com', user: { login: 'mona', databaseId: 3 } }] },
+      parents: { nodes: [] } }] } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  await historyPageStore(request.db).write(`1\0${a}`, [{ sha: a, parents: [], subject: 'Work', authorName: 'Ada', authorLogin: null, authorId: null,
+    coauthors: [{ name: 'Mona', login: null, id: null }], committedAt: 1, additions: null, deletions: null, authoredAt: null, authorZone: null }], Date.now())
+  const { body } = await request({ repoId: '1', ref: 'heads/main' })
+  assert.deepEqual(body.commits[0].coauthors, [{ name: 'Mona', login: 'mona', id: 3 }], 'by the account GitHub knows her address by')
+  await request({ repoId: '1', ref: 'heads/main' })
+  assert.equal(historyQueries(asked).filter(entry => !entry.body.query.includes('refs/heads/')).length, 1, 'read again once, then kept')
 })

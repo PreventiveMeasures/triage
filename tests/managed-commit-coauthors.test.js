@@ -14,6 +14,10 @@ test('a commit\'s co-authors are its trailers\', each the agent its account, add
     [{ name: 'Copilot', login: 'Copilot', id: 198982749, agent: 'copilot' }])
   assert.deepEqual(coauthorsOf('Fix\nCo-authored-by: no address\nCo-authored-by: <nameless@example.com>', ada), [], 'none without an address, nor one without a name or account')
   assert.deepEqual(coauthorsOf(null, ada), [])
+  // Its trailers as git reads them, its last paragraph's: not an example a description or a subject holds.
+  assert.deepEqual(coauthorsOf('Docs: credit co-authors\n\nAdd a line as\nCo-authored-by: Example <example@example.com>\n\nto credit them.', ada), [])
+  assert.deepEqual(coauthorsOf('Co-authored-by: Example <example@example.com>', ada), [], 'a subject is no trailer')
+  assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Mona <3+mona@users.noreply.github.com>\n\n', ada), [{ name: 'Mona', login: 'mona', id: 3 }], 'past blank lines')
 })
 
 test('the agents a commit\'s message marks come after its trailers\', each once, none the author', () => {
