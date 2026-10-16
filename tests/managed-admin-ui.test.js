@@ -141,6 +141,19 @@ test('a repository\'s dependency review is switched on or off at once, its requi
   assert.deepEqual(page._reviewSetting(true, 1, null), { enabled: true, required: 1, since: null })
 })
 
+test('a team\'s change reads its repositories again, which teams count reviews for, and pull requests\' reviews read before', async (t) => {
+  const page = createPage(customElements.get('managed-admin-teams'))
+  const mutate = t.mock.method(page.appState, 'mutate', work => work())
+  t.mock.method(page, '_load', () => Promise.resolve())
+  const told = []
+  const changed = () => told.push('changed')
+  globalThis.addEventListener('dependency-review-changed', changed)
+  await page._do(() => Promise.resolve())
+  globalThis.removeEventListener('dependency-review-changed', changed)
+  assert.ok(mutate.mock.calls[0].arguments[1].includes('repos'))
+  assert.deepEqual(told, ['changed'])
+})
+
 test('late report preview success and failure cannot overwrite a newer request, even for the same report', async (t) => {
   const page = createPage(Reports)
   const pending = []

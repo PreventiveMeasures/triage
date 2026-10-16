@@ -1496,12 +1496,19 @@ class ManagedAdminTeams extends ManagedPage {
     })
   }
 
-  // Run a mutation then reload; surfaces failures on the page.
+  // Run a mutation then reload; surfaces failures on the page. A team's
+  // repositories, visibility and dependency review decide which teams'
+  // reviews count for a repository (its page's `reviewTeams`), and whether
+  // its pull requests' reviews are in effect: those read before are read
+  // again.
   async _do(fn) {
     if (this._busy) return
     this._busy = true
     this._error = null
-    try { await this.appState.mutate(fn, ['teams', 'users', 'reports', 'history']) } catch (err) { this._error = String(err?.message ?? err) }
+    try {
+      await this.appState.mutate(fn, ['teams', 'users', 'reports', 'history', 'repos'])
+      globalThis.dispatchEvent?.(new Event('dependency-review-changed'))
+    } catch (err) { this._error = String(err?.message ?? err) }
     finally { this._busy = false; await this._load({ preserveError: true }) }
   }
 
