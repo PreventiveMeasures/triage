@@ -15,8 +15,9 @@ const SEES_ALERTS: ReadonlySet<string> = new Set(['admin', 'write'])
 const UNVERIFIED: ReadonlySet<string> = new Set(['no-repository', 'github-unauthorized'])
 
 // What of a repository's reader (repository-browser.ts) the alerts are asked
-// with: its installation's token, the user's verified identity, and their
-// permission level where its access gate asked GitHub of it already.
+// with: its installation's token, null where it reads with none or that one
+// is gone, the user's verified identity, and their permission level where its
+// access gate asked GitHub of it already.
 export interface AlertsReader {
   installationToken(): Promise<string | null>
   identity(): Promise<GithubIdentity>
@@ -29,18 +30,21 @@ export interface AlertsReader {
 export interface AlertsRead { alerts: DependabotAlert[]; recheck(): Promise<void> }
 
 // `repo`'s Dependabot alerts (dependabot-alerts.ts), read with the App's
-// installation token, the reader's, else the one GitHub tells the App of now,
-// once the user's own permission on it lets them see them; else refused, the
-// alerts not asked: `dependabot-not-installed`, `dependabot-unverified`, or
-// `dependabot-forbidden`, naming their permission.
-export async function appDependabotAlerts(config: ManagedConfig, repo: Pick<SelectedRepo, 'repoId' | 'fullName'>, reader: AlertsReader,
+// installation token, of the reader's installation, else the one GitHub tells
+// the App of now, once the user's own permission on it lets them see them;
+// else refused, the alerts not asked: `dependabot-not-installed`,
+// `dependabot-unverified`, or `dependabot-forbidden`, naming their permission.
+// The token is asked each time of repoAccessToken, which renews it before it
+// expires, as the recheck may come long after the alerts are read.
+export async function appDependabotAlerts(config: ManagedConfig, repo: Pick<SelectedRepo, 'repoId' | 'fullName' | 'installationId'>, reader: AlertsReader,
   fetchImpl: typeof fetch = globalThis.fetch): Promise<AlertsRead> {
-  let token = await reader.installationToken()
-  if (token == null) {
-    const id = await repositoryInstallation(config, repo.repoId, repo.fullName, fetchImpl)
-    token = id == null ? null : await repoAccessToken(config, id, fetchImpl)
+  const id = await reader.installationToken() == null ? await repositoryInstallation(config, repo.repoId, repo.fullName, fetchImpl) : repo.installationId
+  const tokenNow = async () => {
+    const token = await repoAccessToken(config, id, fetchImpl)
+    if (token == null) throw new GithubApiError(403, 'dependabot-not-installed')
+    return token
   }
-  if (token == null) throw new GithubApiError(403, 'dependabot-not-installed')
+  const token = await tokenNow()
   let who
   try { who = await reader.identity() } catch (error) {
     throw error instanceof GithubApiError && UNVERIFIED.has(error.message) ? new GithubApiError(403, 'dependabot-unverified') : error
@@ -52,5 +56,5 @@ export async function appDependabotAlerts(config: ManagedConfig, repo: Pick<Sele
   }
   seen(reader.permission() ?? await githubRepoPermission(repo.fullName, token, who, fetchImpl))
   const alerts = await dependabotAlerts(repo.fullName, token, fetchImpl)
-  return { alerts, recheck: async () => { seen(await githubRepoPermission(repo.fullName, token, who, fetchImpl)) } }
+  return { alerts, recheck: async () => { seen(await githubRepoPermission(repo.fullName, await tokenNow(), who, fetchImpl)) } }
 }
