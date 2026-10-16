@@ -24,18 +24,19 @@
    (print.css) and none of the window. */
 
 /* On a screen of exactly 2 or 3 device pixels to the CSS pixel, the grain
-   filter (ui/w95-grain.svg) draws the page in whole CSS pixels, each one
-   device-pixel sample copied across its square, as coarse as Windows 95
-   was on its screens. Other ratios have no whole grain to give, and keep
-   their sharp pixels. Popovers take it too, and dialogs (dialog-base.css):
-   they show in the top layer, out of the page's reach. */
+   filter draws the page in whole CSS pixels, each one device-pixel sample
+   copied across its square, as coarse as Windows 95 was on its screens.
+   Other ratios have no whole grain to give, and keep their sharp pixels.
+   Popovers take it too, and dialogs (dialog-base.css): they show in the
+   top layer, out of the page's reach. The filter is ui/w95-grain.svg,
+   named as served beside view.css (build-lit-svg.js leaves it so). */
 @media screen and (resolution: 2dppx) {
   :root:has(> body.theme-w95),
-  body.theme-w95 :popover-open { filter: url('../w95-grain.svg#w95-grain-2'); }
+  body.theme-w95 :popover-open { filter: url('./w95-grain.svg#w95-grain-2'); }
 }
 @media screen and (resolution: 3dppx) {
   :root:has(> body.theme-w95),
-  body.theme-w95 :popover-open { filter: url('../w95-grain.svg#w95-grain-3'); }
+  body.theme-w95 :popover-open { filter: url('./w95-grain.svg#w95-grain-3'); }
 }
 
 @media screen {
