@@ -117,30 +117,50 @@ export function readPlainLines(doc, first, indent) {
 }
 
 // Where a flow collection's brackets stand after `text`, `open` of them open
-// before it: how many are open (-1 where a quoted scalar doesn't close on
-// its line), its text without a comment (`kept`), and what follows where it
-// closes (`after`).
-function flowScan(text, open) {
+// before it, and `last`, what the text before it ends in: how many are open
+// (-1 where a quoted scalar doesn't close on its line), its text without a
+// comment (`kept`), whether a comment ended it (`comment`), what its last
+// token is (`last`: `plain` where it is a plain scalar's text, which a quote
+// is part of too), and what follows where it closes (`after`).
+function flowScan(text, open, last) {
   for (let at = 0; at < text.length; at++) {
     const char = text[at]
-    if (char === '"' || char === "'") {
+    if (char === ' ') continue
+    if ((char === '"' || char === "'") && last !== 'plain') {
       const end = closingQuote(text.slice(at))
-      if (end === -1) return { open: -1, kept: text }
+      if (end === -1) return { open: -1, kept: text, last, comment: false }
       at += end
-    } else if (char === '#' && (at === 0 || text[at - 1] === ' ')) return { open, kept: text.slice(0, at) }
-    else if (char === '[' || char === '{') open++
-    else if ((char === ']' || char === '}') && --open === 0) return { open, kept: text.slice(0, at + 1), after: text.slice(at + 1) }
+      last = 'quoted'
+    } else if (char === '#' && (at === 0 || text[at - 1] === ' ')) return { open, kept: text.slice(0, at), last, comment: true }
+    else if (char === '[' || char === '{') { open++; last = 'open' }
+    else if (char === ']' || char === '}') {
+      last = 'close'
+      if (--open === 0) return { open, kept: text.slice(0, at + 1), after: text.slice(at + 1), last, comment: false }
+    } else if (char === ',' || (char === ':' && /^(?:[ ,[\]{}]|$)/u.test(text[at + 1] ?? ''))) last = 'indicator'
+    else last = 'plain'
   }
-  return { open, kept: text }
+  return { open, kept: text, last, comment: false }
 }
 
 // A flow collection's text from its owner's line (`first`) to where it
-// closes, its lines joined by a space, comments off.
+// closes, its lines joined by a space, comments off; but a plain scalar's
+// lines folded as YAML folds them, an empty line among them a break, and
+// one a comment ended refused where it goes on, as js-yaml refuses it.
 export function readFlowLines(doc, first, owner) {
-  let scan = flowScan(first, 0), text = ''
+  let breaks = 0, ended = false, plain = false, scan = flowScan(first, 0, null), text = ''
   for (let line = owner; ;) {
     if (scan.open === -1) throw new YamlError('a quoted scalar in a flow collection does not close on its line', line.number)
-    text += scan.kept.replace(/ +$/u, '')
+    const kept = scan.kept.replace(/ +$/u, '')
+    if (kept !== '') {
+      const goesOn = plain && !/^(?:[,\]}]|:(?:[ ,[\]{}]|$))/u.test(kept)
+      if (goesOn && ended) throw new YamlError('a plain scalar in a flow collection goes on past a comment', line.number)
+      if (text !== '') text += goesOn && breaks > 1 ? '\n'.repeat(breaks - 1) : ' '
+      text += kept
+      breaks = 0
+      plain = scan.last === 'plain'
+      ended = false
+    }
+    ended ||= plain && scan.comment
     if (scan.after !== undefined) {
       if (!/^(?: +#.*| *)$/u.test(scan.after)) throw new YamlError(`unexpected ${excerpt(scan.after)} after the value`, line.number)
       if (line !== owner) doc.advance()
@@ -149,8 +169,8 @@ export function readFlowLines(doc, first, owner) {
     line = line === owner ? doc.line : doc.advance()
     if (line === undefined || doc.isMarker(line)) throw new YamlError('a flow collection that does not close', owner.number)
     noTab(line)
-    if (line.text !== '') text += ' '
-    scan = flowScan(line.text, scan.open)
+    breaks++
+    scan = flowScan(line.text, scan.open, plain && !ended ? 'plain' : null)
   }
 }
 
