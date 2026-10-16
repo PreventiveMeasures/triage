@@ -856,13 +856,19 @@ function replayChangesOf(asked: string) {
   return replayChanges.get(asked) ?? [[REPLAY_TREE[createHash('sha1').update(asked).digest()[0]! % 12]!, 'M']]
 }
 
+// `vendor`, the directory too large to open, holds a few packages' files,
+// each as large as its path's hash draws, for its Treemap to draw.
+const VENDOR_TREE = ['left-pad', 'lodash', 'react', 'typescript', 'zod'].flatMap(name => ['index.js', 'package.json', 'README.md', 'lib/core.js', 'lib/util.js', 'dist/bundle.min.js']
+  .map(file => `vendor/${name}/${file}`))
+const fixtureSize = (path: string) => 200 + createHash('sha1').update(path).digest().readUInt32BE(0) % (path.endsWith('.min.js') ? 400_000 : 40_000)
+
 function treeFixture(url: URL, res: ServerResponse): void {
   const commit = url.searchParams.get('commit') ?? ''
   const path = url.searchParams.get('path') ?? ''
   if (!/^[a-f\d]{40}$/u.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
   replayChangesOf(commit)
-  const files = replayTrees.get(commit)?.filter(file => path === '' || file.startsWith(`${path}/`)) ?? null
-  setTimeout(() => sendJson(res, 200, { commit, path, files, cut: false }), 400)
+  const files = path === 'vendor' ? VENDOR_TREE : replayTrees.get(commit)?.filter(file => path === '' || file.startsWith(`${path}/`)) ?? null
+  setTimeout(() => sendJson(res, 200, { commit, path, files, sizes: files?.map(fixtureSize) ?? null, cut: false }), 400)
 }
 
 function changesFixture(url: URL, res: ServerResponse): void {

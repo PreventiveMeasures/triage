@@ -19,7 +19,7 @@ mock.module('../ui/view/repository-code.js', { exports: {
   repositoryCodePending: () => null, repositoryCodeRoute: () => null, repositoryFullName: ({ repo }) => repo, repositoryRefs: () => ({ status: 'loading' }), navigateToRepositoryCode() {}, shownRevision: () => ({}),
 } })
 const { state } = await import('../client/state.ts')
-const { renderBundlesList } = await import('../ui/view/render-bundle.js')
+const { renderBundlesList, renderRepositoryCodeOpening } = await import('../ui/view/render-bundle.js')
 const { activityPicker } = await import('../ui/view/repository-activity.js')
 globalThis.document = { querySelector: () => null }
 
@@ -51,4 +51,19 @@ test('Activity\'s picker: an icon each, Replay\'s a play button, its name to rea
   assert.equal(text.split('<svg ').length - 1, 6)
   assert.match(text, /data-bundle-tab=replay [^>]*><svg [^>]*><path d="M5 3\.25v9\.5L12\.75 8z"\/><\/svg>/u, 'a play button\'s triangle')
   assert.doesNotMatch(text, /tooltip|title=/u)
+})
+
+test('a directory too large to open draws its Treemap from its files\' sizes as its tree lists them; its Code, and any other failure, say why', () => {
+  const tooLarge = { repoId: 7, repo: 'org/repo', commit: 'a'.repeat(40), path: 'vendor', revision: null, error: 'This directory is too large to open here.', code: 'directory-too-large' }
+  let text = templateText(renderRepositoryCodeOpening({ ...tooLarge, tab: 'treemap' }))
+  assert.match(text, /<repository-treemap \.repository=\[object Object\]><\/repository-treemap>/u)
+  assert.doesNotMatch(text, /Couldn't open/u)
+  text = templateText(renderRepositoryCodeOpening({ ...tooLarge, tab: 'code' }))
+  assert.match(text, /<p role="alert">Couldn't open org\/repo at aaaaaaa: This directory is too large to open here\.<\/p>/u)
+  assert.doesNotMatch(text, /<repository-treemap/u)
+  text = templateText(renderRepositoryCodeOpening({ ...tooLarge, tab: 'treemap', error: 'GitHub couldn’t be reached.', code: 'github-unreachable' }))
+  assert.match(text, /<p role="alert">Couldn't open org\/repo at aaaaaaa: GitHub couldn’t be reached\.<\/p>/u)
+  assert.doesNotMatch(text, /<repository-treemap/u)
+  // Still opening, it says so.
+  assert.match(templateText(renderRepositoryCodeOpening({ ...tooLarge, tab: 'treemap', error: null, code: null })), /Opening org\/repo at aaaaaaa…/u)
 })

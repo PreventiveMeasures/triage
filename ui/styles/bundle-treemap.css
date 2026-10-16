@@ -8,7 +8,13 @@
    view/bundle-treemap.js, which measures the plot and positions every
    node absolutely; these rules are paint only. Leaf/aggregate fill is
    the package hue with text color set inline for contrast. */
-.bundles-slide-body > bundle-treemap {
+.bundles-slide-body > repository-treemap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.bundles-slide-body > bundle-treemap, repository-treemap > bundle-treemap {
   display: flex;
   flex-direction: column;
   flex: 1;

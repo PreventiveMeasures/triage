@@ -22,9 +22,11 @@ const FILES = {
 }
 
 // A commit's tree as GitHub lists it with every tree under it: its
-// directories, a submodule, and its files.
-const TREE = [{ path: 'README.md', type: 'blob' }, { path: 'src', type: 'tree' }, { path: 'src/allowed', type: 'tree' }, { path: 'src/allowed/a.js', type: 'blob' },
-  { path: 'src/allowed/lib/b.ts', type: 'blob' }, { path: 'src/other/secret.ts', type: 'blob' }, { path: 'vendor/sub', type: 'commit' }]
+// directories, a submodule, and its files, with their bytes (an empty one's
+// and one GitHub names none for none).
+const TREE = [{ path: 'src/allowed/lib/b.ts', type: 'blob', size: 20 }, { path: 'README.md', type: 'blob', size: 300 }, { path: 'src', type: 'tree' },
+  { path: 'src/allowed', type: 'tree' }, { path: 'src/allowed/a.js', type: 'blob', size: 0 }, { path: 'src/other/secret.ts', type: 'blob' },
+  { path: 'vendor/sub', type: 'commit' }]
 
 // GitHub, as the reader and the changes read it: `asked` the commits whose
 // files were read of it, and the trees.
@@ -119,16 +121,17 @@ test('a request naming no commits, or what isn\'t one, is refused before GitHub 
   assert.deepEqual(asked, [])
 })
 
-test('the files a commit holds, which Replay starts from: its blobs, as GitHub lists its whole tree at once, kept by the commit, within the reader\'s directory', async t => {
+test('the files a commit holds, which Replay starts from, and their bytes: its blobs, as GitHub lists its whole tree at once, kept by the commit, within the reader\'s directory', async t => {
   const request = await fixture(t)
   const asked = github(t)
   const { status, body } = await request({ repoId: '1', path: '', commit: a }, 'tree')
   assert.equal(status, 200)
-  assert.deepEqual(body, { commit: a, path: '', files: ['README.md', 'src/allowed/a.js', 'src/allowed/lib/b.ts', 'src/other/secret.ts'], cut: false },
-    'no directories nor submodules')
-  assert.deepEqual((await request({ repoId: '1', path: 'src/allowed', commit: a }, 'tree')).body.files, ['src/allowed/a.js', 'src/allowed/lib/b.ts'])
+  assert.deepEqual(body, { commit: a, path: '', files: ['README.md', 'src/allowed/a.js', 'src/allowed/lib/b.ts', 'src/other/secret.ts'], sizes: [300, 0, 20, 0], cut: false },
+    'no directories nor submodules, by path, each with its bytes')
+  assert.deepEqual((await request({ repoId: '1', path: 'src/allowed', commit: a }, 'tree')).body, { commit: a, path: 'src/allowed', files: ['src/allowed/a.js', 'src/allowed/lib/b.ts'],
+    sizes: [0, 20], cut: false })
   assert.deepEqual(asked, [`tree:${a}:1`], 'read of GitHub once')
-  assert.deepEqual((await request({ repoId: '1', path: '', commit: b }, 'tree')).body, { commit: b, path: '', files: null, cut: false }, 'a commit GitHub has none of')
+  assert.deepEqual((await request({ repoId: '1', path: '', commit: b }, 'tree')).body, { commit: b, path: '', files: null, sizes: null, cut: false }, 'a commit GitHub has none of')
   for (const commit of ['', 'main', a.slice(1)]) assert.deepEqual((await request({ repoId: '1', path: '', commit }, 'tree')).status, 400, commit)
   const manager = await fixture(t, { role: 'manage' })
   assert.deepEqual((await manager({ repoId: '1', path: 'src/allowed', commit: a }, 'tree')).body.files, ['src/allowed/a.js', 'src/allowed/lib/b.ts'])
@@ -138,11 +141,12 @@ test('the files a commit holds, which Replay starts from: its blobs, as GitHub l
 test('a tree of more files than are answered keeps those nearest the root, told cut', async t => {
   const kept = new Map()
   const store = { read: sha => Promise.resolve(kept.get(sha) ?? null), write: (sha, tree) => { kept.set(sha, tree); return Promise.resolve() } }
-  const files = [...Array.from({ length: MAX_TREE_FILES - 1 }, (_, at) => ({ path: `f${at}`, type: 'blob' })), { path: 'a/b/c.js', type: 'blob' }, { path: 'a/d.js', type: 'blob' }]
+  const files = [...Array.from({ length: MAX_TREE_FILES - 1 }, (_, at) => ({ path: `f${at}`, type: 'blob', size: at + 1 })), { path: 'a/b/c.js', type: 'blob', size: 7 },
+    { path: 'a/d.js', type: 'blob', size: 9 }]
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ tree: files, truncated: false })))
   const many = await repositoryTree('org/repo', null, a, store)
-  assert.deepEqual([many.files.length, many.cut, many.files.includes('a/d.js'), many.files.includes('a/b/c.js')], [MAX_TREE_FILES, true, true, false])
-  assert.deepEqual(many.files.slice(0, 2), ['a/d.js', 'f0'], 'by path')
+  assert.deepEqual([many.files.length, many.sizes.length, many.cut, many.files.includes('a/d.js'), many.files.includes('a/b/c.js')], [MAX_TREE_FILES, MAX_TREE_FILES, true, true, false])
+  assert.deepEqual([many.files.slice(0, 2), many.sizes.slice(0, 2)], [['a/d.js', 'f0'], [9, 1]], 'by path, each with its bytes')
   assert.equal(kept.size, 1)
 })
 
@@ -155,10 +159,10 @@ test('a tree GitHub lists cut short, as a large repository\'s, is read a tree at
     [`${a}:1`]: { tree: [{ path: 'README.md', type: 'blob' }], truncated: true },
     [`${a}:`]: { tree: [{ path: 'README.md', type: 'blob' }, { path: 'deps', type: 'tree', sha: deps }, { path: 'src', type: 'tree', sha: src },
       { path: 'vendor', type: 'commit', sha: v8 }, { path: 'bad', type: 'tree', sha: 'main' }], truncated: false },
-    [`${src}:1`]: { tree: [{ path: 'a.js', type: 'blob' }, { path: 'lib', type: 'tree' }, { path: 'lib/b.js', type: 'blob' }], truncated: false },
+    [`${src}:1`]: { tree: [{ path: 'a.js', type: 'blob', size: 5 }, { path: 'lib', type: 'tree' }, { path: 'lib/b.js', type: 'blob', size: 6 }], truncated: false },
     [`${deps}:1`]: { tree: [], truncated: true },
     [`${deps}:`]: { tree: [{ path: 'x.c', type: 'blob' }, { path: 'v8', type: 'tree', sha: v8 }], truncated: false },
-    [`${v8}:1`]: { tree: [{ path: 'y.cc', type: 'blob' }], truncated: false },
+    [`${v8}:1`]: { tree: [{ path: 'y.cc', type: 'blob', size: 8 }], truncated: false },
     [`${b}:1`]: { tree: [], truncated: true },
     [`${b}:`]: { tree: [{ path: 'z.js', type: 'blob' }, { path: 'big', type: 'tree', sha: big }], truncated: false },
     [`${big}:1`]: { tree: [], truncated: true },
@@ -171,10 +175,10 @@ test('a tree GitHub lists cut short, as a large repository\'s, is read a tree at
     asked.push(`${key.slice(0, 1)}${key.slice(40)}`)
     return Promise.resolve(trees[key] ? Response.json(trees[key]) : Response.json({ message: 'Not Found' }, { status: 404 }))
   })
-  assert.deepEqual(await repositoryTree('org/repo', null, a, store), { files: ['README.md', 'deps/v8/y.cc', 'deps/x.c', 'src/a.js', 'src/lib/b.js'], cut: false },
-    'no directories, submodules nor trees named by no id')
+  assert.deepEqual(await repositoryTree('org/repo', null, a, store), { files: ['README.md', 'deps/v8/y.cc', 'deps/x.c', 'src/a.js', 'src/lib/b.js'], sizes: [0, 8, 0, 5, 6], cut: false },
+    'no directories, submodules nor trees named by no id; each file with its bytes, as each tree read lists them')
   assert.deepEqual(asked, ['a:1', 'a:', '2:1', '1:1', '2:', '3:1'], 'nearest the root first')
-  assert.deepEqual(await repositoryTree('org/repo', null, b, store), { files: ['big/w.js', 'z.js'], cut: true }, 'a tree\'s own entries cut short, cut')
+  assert.deepEqual(await repositoryTree('org/repo', null, b, store), { files: ['big/w.js', 'z.js'], sizes: [0, 0], cut: true }, 'a tree\'s own entries cut short, cut')
   assert.equal(kept.size, 2)
 })
 

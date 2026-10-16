@@ -111,7 +111,8 @@ export async function repositoryChanges(fullName: string, token: string | null, 
   return new Map(asked.map(sha => [sha, found.get(sha) ?? null]))
 }
 
-// The files a commit holds, as many as MAX_TREE_FILES, each by its path, as
+// The files a commit holds, as many as MAX_TREE_FILES, each by its path and
+// its bytes (`sizes`, in the same order), as
 // GitHub lists its tree and every tree under it at once
 // (GET /repos/:owner/:repo/git/trees/:tree?recursive=1); where GitHub cuts
 // that listing short (past 100,000 entries or 7 MB, as a large repository's
@@ -122,18 +123,21 @@ export async function repositoryChanges(fullName: string, token: string | null, 
 // left out: more files than MAX_TREE_FILES, a tree's own entries cut short,
 // or more trees to read than MAX_TREE_READS.
 // Null for a commit GitHub has none of. Kept by the commit and the rules it
-// is read by (TREES_READ), a tree kept by older ones read again.
+// is read by (TREES_READ), a tree kept by older ones (without sizes, the
+// last) read again.
 export const MAX_TREE_FILES = 75_000
-export const TREES_READ = 2
+export const TREES_READ = 3
 const MAX_TREE_READS = 400
 const TREES_PARALLEL = 6
-export interface CommitTree { files: string[]; cut: boolean }
+export interface CommitTree { files: string[]; sizes: number[]; cut: boolean }
 export interface TreeStore {
   read(commit: string): Promise<CommitTree | null>
   write(commit: string, tree: CommitTree): Promise<void>
 }
 
-type TreeEntry = { type?: unknown; path?: unknown; sha?: unknown }
+type TreeEntry = { type?: unknown; path?: unknown; sha?: unknown; size?: unknown }
+// A file read: its path and its bytes.
+type Blob = [path: string, size: number]
 type TreeListing = (tree: string, recursive: boolean) => Promise<{ entries: TreeEntry[]; truncated: boolean }>
 
 export async function repositoryTree(fullName: string, token: string | null, commit: string, kept: TreeStore,
@@ -154,20 +158,26 @@ export async function repositoryTree(fullName: string, token: string | null, com
     if (err instanceof GithubApiError && (err.message === 'github-not-found' || err.message === 'github-status-422')) return null
     throw err
   }
-  const files: string[] = []
+  const files: Blob[] = []
   let cut = false
   if (whole.truncated) cut = await treeByTrees(commit, listing, files)
   else blobsOf(whole.entries, '', files)
   const depth = (path: string) => path.split('/').length
-  const nearest = files.length > MAX_TREE_FILES ? files.toSorted((a, b) => depth(a) - depth(b) || (a < b ? -1 : 1)).slice(0, MAX_TREE_FILES) : files
-  const tree = { files: nearest.toSorted(), cut: cut || files.length > MAX_TREE_FILES }
+  const byPath = ([a]: Blob, [b]: Blob) => a < b ? -1 : a > b ? 1 : 0
+  const nearest = files.length > MAX_TREE_FILES ? files.toSorted((a, b) => depth(a[0]) - depth(b[0]) || byPath(a, b)).slice(0, MAX_TREE_FILES) : files
+  const sorted = nearest.toSorted(byPath)
+  const tree = { files: sorted.map(([path]) => path), sizes: sorted.map(([, size]) => size), cut: cut || files.length > MAX_TREE_FILES }
   await kept.write(commit, tree)
   return tree
 }
 
-// The blobs of a tree's entries, each its path under `prefix`, onto `files`.
-function blobsOf(entries: TreeEntry[], prefix: string, files: string[]) {
-  for (const item of entries) if (item?.type === 'blob' && pathOf(item.path)) files.push(`${prefix}${item.path as string}`)
+// The blobs of a tree's entries, each its path under `prefix` and its bytes
+// (none, as GitHub names none), onto `files`.
+function blobsOf(entries: TreeEntry[], prefix: string, files: Blob[]) {
+  for (const item of entries) {
+    if (item?.type !== 'blob' || !pathOf(item.path)) continue
+    files.push([`${prefix}${item.path as string}`, Number.isSafeInteger(item.size) && (item.size as number) > 0 ? item.size as number : 0])
+  }
 }
 
 // The files under the commit's tree, `commit`, onto `files`, its trees read
@@ -179,13 +189,13 @@ function blobsOf(entries: TreeEntry[], prefix: string, files: string[]) {
 // least a level deeper than it is). As many trees read in all as
 // MAX_TREE_READS, those of a round first in its order. Whether some were
 // left out.
-async function treeByTrees(commit: string, listing: TreeListing, files: string[]): Promise<boolean> {
+async function treeByTrees(commit: string, listing: TreeListing, files: Blob[]): Promise<boolean> {
   let cut = false, reads = 1, round = [{ tree: commit, prefix: '', recursive: false }]
   const atDepth: number[] = []
   let counted = 0
   while (round.length > 0) {
     for (; counted < files.length; counted++) {
-      const depth = files[counted]!.split('/').length
+      const depth = files[counted]![0].split('/').length
       atDepth[depth] = (atDepth[depth] ?? 0) + 1
     }
     // The depth no file deeper than is kept.
@@ -223,8 +233,11 @@ async function treeByTrees(commit: string, listing: TreeListing, files: string[]
 }
 
 // The files of a tree within the directory `path` ('' the whole repository).
-export const treeWithin = ({ files, cut }: CommitTree, path: string): CommitTree =>
-  ({ files: path === '' ? files : files.filter(file => file.startsWith(`${path}/`)), cut })
+export function treeWithin({ files, sizes, cut }: CommitTree, path: string): CommitTree {
+  if (path === '') return { files, sizes, cut }
+  const within = [...files.keys()].filter(at => files[at]!.startsWith(`${path}/`))
+  return { files: within.map(at => files[at]!), sizes: within.map(at => sizes[at]!), cut }
+}
 
 // The commits a request names (`shas`), each once, as many as
 // CHANGES_ASKED; null for none, or for one that isn't a commit id.

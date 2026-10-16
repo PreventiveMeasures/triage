@@ -31,7 +31,9 @@
 // (each ancestor is a button; the home crumb returns to the whole
 // bundle). File cells keep their existing behavior — a click opens
 // the source viewer via the `[data-bundle-view-source]` delegate —
-// save a resource's (image, font), which has no source to open.
+// save a resource's (image, font), which has no source to open, and
+// every file of a tree listed alone (`details.listedOnly`, a repository
+// directory too large to open: repository-treemap.js), none read.
 //
 // A header switch (top right, mirroring the Search tab's Context
 // pill) swaps the squarified projection for a sunburst over the same
@@ -504,7 +506,8 @@ class BundleTreemap extends LitElement {
       let leaf = node.children.get(base)
       if (leaf && !leaf.isFile) continue
       if (!leaf) {
-        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg: pkgs[i], group: groups.get(stripped[i]) ?? null, resource: kinds.get(origPaths[i]) === 'resource' }
+        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg: pkgs[i], group: groups.get(stripped[i]) ?? null,
+          resource: kinds.get(origPaths[i]) === 'resource' || this.details.listedOnly === true }
         node.children.set(base, leaf)
       }
       leaf.value += size
