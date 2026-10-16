@@ -741,10 +741,12 @@ class ManagedAdminRepos extends ManagedPage {
     </div>`
   }
 
-  // Its dependency review: on or off at once; the reviews each version needs
-  // and the commit whose lockfiles' versions need none, saved together; no
-  // commit where the server registers reviewed dependencies, which replace
-  // it, the one stored left as it is (`setting`).
+  // Its dependency review: on or off at once, by its header's switch; the
+  // reviews each version needs and the commit whose lockfiles' versions need
+  // none, saved together; no commit where the server registers reviewed
+  // dependencies, which replace it, the one stored left as it is
+  // (`setting`). On, where no team that reviews dependencies has it, which
+  // its pull requests then show no review for, it says so.
   _dependencyReviewSection(repo) {
     const registered = this._data?.reviewedDependencies === true
     const saved = repo.dependencyReview ?? { enabled: false, required: 1, since: null }
@@ -753,10 +755,7 @@ class ManagedAdminRepos extends ManagedPage {
     const setting = (enabled, required, since) => this._reviewSetting(enabled, required, since)
     const busy = this._busy != null
     return html`<section class="section" aria-label="Dependency review">
-      <h2>Dependency review</h2>
-      <div class="settings-row"><div class="settings-copy"><strong>Review dependencies</strong><p>Open pull requests show whether each package version
-        their lockfiles lock has its reviews, published to a team that reviews dependencies and has this repository. One from git, a tarball other
-        than npm’s registry’s, or locked with no integrity fails the review; the project’s own files aren’t reviewed.</p></div>
+      <div class="section-head"><h2>Dependency review</h2>
         <mode-switch label=${saved.enabled ? 'On' : 'Off'} accessible-label="Review dependencies" .checked=${saved.enabled} .disabled=${busy}
           @click=${() => { if (!busy) void this._saveDependencyReview(repo, setting(!saved.enabled, saved.required, saved.since)) }}></mode-switch>
       </div>
@@ -768,9 +767,11 @@ class ManagedAdminRepos extends ManagedPage {
           autocomplete="off" spellcheck="false" pattern="[0-9a-fA-F]{40}" .value=${draft.since} ?disabled=${busy}
           @input=${event => { this._reviewDraft = { ...draft, since: event.target.value } }}></label>`}
         <button type="submit" class="btn" ?disabled=${busy || !changed}>Save</button>
-        <p class="dependency-review-hint">${registered ? 'Versions this server’s reviewed dependencies pass need no reviews here; a patched one passes by them alone.'
+        ${Array.isArray(repo.reviewTeams) && repo.reviewTeams.length === 0 ? html`<p class="dependency-review-hint is-warning" role="status">No team that reviews
+          dependencies has this repository, so its pull requests show no review. Add it to such a team, or turn dependency review on for a team that has it.</p>`
+          : html`<p class="dependency-review-hint">${registered ? 'Versions this server’s reviewed dependencies pass need no reviews here; a patched one passes by them alone.'
           : draft.since.trim() ? 'Versions the repository’s lockfiles locked at this commit need no review.'
-          : 'With no commit, every version needs its reviews, those its lockfiles already locked as well.'}</p>
+          : 'With no commit, every version needs its reviews, those its lockfiles already locked as well.'}</p>`}
       </form>` : nothing}
     </section>`
   }
@@ -787,6 +788,9 @@ class ManagedAdminRepos extends ManagedPage {
     this._actionError = null
     try {
       const dependencyReview = await this.appState.mutate(() => setRepositoryDependencyReview(repo.id, setting, this._csrf), ['repos'])
+      // Pull requests' dependencies read with their review before, told
+      // again, the page left meanwhile or not.
+      globalThis.dispatchEvent?.(new Event('dependency-review-changed'))
       if (!this.isConnected) return
       if (this._detail?.id === repo.id) this._detail = { ...this._detail, dependencyReview }
       if (this._data) this._data = { ...this._data, repositories: this._data.repositories.map(entry => entry.id === repo.id ? { ...entry, dependencyReview } : entry) }
@@ -1493,12 +1497,19 @@ class ManagedAdminTeams extends ManagedPage {
     })
   }
 
-  // Run a mutation then reload; surfaces failures on the page.
+  // Run a mutation then reload; surfaces failures on the page. A team's
+  // repositories, visibility and dependency review decide which teams'
+  // reviews count for a repository (its page's `reviewTeams`), and whether
+  // its pull requests' reviews are in effect: those read before are read
+  // again.
   async _do(fn) {
     if (this._busy) return
     this._busy = true
     this._error = null
-    try { await this.appState.mutate(fn, ['teams', 'users', 'reports', 'history']) } catch (err) { this._error = String(err?.message ?? err) }
+    try {
+      await this.appState.mutate(fn, ['teams', 'users', 'reports', 'history', 'repos'])
+      globalThis.dispatchEvent?.(new Event('dependency-review-changed'))
+    } catch (err) { this._error = String(err?.message ?? err) }
     finally { this._busy = false; await this._load({ preserveError: true }) }
   }
 

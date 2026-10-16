@@ -28,6 +28,9 @@ export interface RepoReviewState extends Omit<RepoDependencyReview, 'enabled'> {
 
 export interface RepositoryDependencyReviewStore {
   listRepoDependencyReviews(): Promise<Map<number, RepoDependencyReview>>
+  // The teams whose published reviews count for each repository (COUNTING_TEAM),
+  // by name.
+  listRepoReviewTeams(): Promise<Map<number, { id: string; name: string }[]>>
   // Sets a repository's review, its commit too but where `since` is
   // undefined, which keeps it; the setting then, or null for no repository.
   setRepoDependencyReview(repoId: number, setting: Omit<RepoDependencyReview, 'since'> & { since?: string | null }): Promise<RepoDependencyReview | null>
@@ -79,6 +82,13 @@ export function repositoryDependencyReviewMethods(db: ManagedSql): RepositoryDep
     async listRepoDependencyReviews() {
       const rows = await db.prepare(`SELECT ${columns} FROM managed_selected_repo`).all() as SettingRow[]
       return new Map(rows.map(row => [row.repoId, setting(row)]))
+    },
+    async listRepoReviewTeams() {
+      const rows = await db.prepare(`SELECT DISTINCT tr.repo_id AS repoId, t.id AS id, t.name AS name FROM managed_team_repo tr
+        JOIN managed_team t ON t.id = tr.team_id WHERE t.hidden = 0 AND t.dependency_review = 1 ORDER BY t.name, t.id`).all() as { repoId: number; id: string; name: string }[]
+      const teams = new Map<number, { id: string; name: string }[]>()
+      for (const { repoId, id, name } of rows) teams.set(repoId, [...teams.get(repoId) ?? [], { id, name }])
+      return teams
     },
     async setRepoDependencyReview(repoId, { enabled, required, since }) {
       const { changes } = since === undefined

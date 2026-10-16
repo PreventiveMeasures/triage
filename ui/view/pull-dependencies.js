@@ -30,6 +30,14 @@ export function subscribePullDependencies(notify) {
 }
 const changed = () => { for (const notify of listeners) notify() }
 
+// A repository's review set anew (the admin's repository page): what is
+// held, of pull requests' reviews among it, asked again.
+globalThis.addEventListener?.('dependency-review-changed', () => {
+  held.clear()
+  waiting.length = 0
+  changed()
+})
+
 function sessionHeld() {
   const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
   if (session !== keptFor) {

@@ -73,9 +73,11 @@ export async function checkRepositoryDependencyReviews(db) {
     { package: 'pkg', version: '1.0.0', integrity: sri('pkg@1.0.0'), basePackage: null, baseVersion: null, reviewer: users.alice.userId },
     { package: 'pkg', version: '1.0.0', integrity: sri('pkg@1.0.0'), basePackage: null, baseVersion: null, reviewer: users.bob.userId },
   ].toSorted((a, b) => a.reviewer < b.reviewer ? -1 : 1) }, 'neither a partial review, a rejecting one, one to a team without the repository, a revoked one, a draft, nor another package\'s')
+  assert.deepEqual((await db.listRepoReviewTeams()).get(1), [{ id: 'one', name: 'one' }], 'the teams whose reviews count, neither one that reviews none nor a hidden one')
   for (const [who, canReview] of [['admin', true], ['bob', true], ['carol', false], ['manager', false]]) {
     assert.equal((await db.repoDependencyReviewState(1, users[who].userId, [])).canReview, canReview, `${who} ${canReview ? 'publishes' : 'publishes none'} to a team that counts`)
   }
   await db.setTeamDependencyReview(users.admin.sid, 'one', false)
   assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, ['pkg']), null, 'no team reviewing dependencies has it but a hidden one')
+  assert.equal((await db.listRepoReviewTeams()).get(1), undefined)
 }

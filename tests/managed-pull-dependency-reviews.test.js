@@ -331,7 +331,8 @@ test('an admin sets a repository\'s review: whether it is enabled, how many revi
   const path = '/api/admin/repositories/dependency-review'
   const setting = { repoId: 1, enabled: true, required: 3, since }
   assert.deepEqual((await send(path, { body: setting })).body, { ok: true, dependencyReview: { enabled: true, required: 3, since } })
-  assert.deepEqual((await send('/api/admin/repositories?scope=connected')).body.repositories[0].dependencyReview, { enabled: true, required: 3, since })
+  const listed = (await send('/api/admin/repositories?scope=connected')).body.repositories[0]
+  assert.deepEqual([listed.dependencyReview, listed.reviewTeams], [{ enabled: true, required: 3, since }, [{ id: 'one', name: 'one' }]], 'with the teams whose reviews count')
   for (const bad of [{ required: 0 }, { required: 11 }, { required: 1.5 }, { since: 'abc' }, { since: since.toUpperCase() }, { enabled: 'yes' }, { repoId: '1' }]) {
     assert.equal((await send(path, { body: { ...setting, ...bad } })).status, 400, JSON.stringify(bad))
   }

@@ -799,10 +799,12 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
   let repositories
   if (scope === 'connected') {
     const reviews = await deps.db.listRepoDependencyReviews()
+    const reviewTeams = await deps.db.listRepoReviewTeams()
     repositories = allRows.map((r) => ({
       id: r.repoId, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
       installed: r.installationId != null, selected: r.active, active: r.active,
       dependencyReview: reviews.get(r.repoId) ?? { enabled: false, required: 1, since: null },
+      reviewTeams: reviewTeams.get(r.repoId) ?? [],
     }))
   } else {
     const showAll = scope === 'installed' && url.searchParams.get('showAll') === 'true'
