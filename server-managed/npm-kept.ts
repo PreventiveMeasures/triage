@@ -10,7 +10,8 @@
 // of a repository's GitHub, its issues, pull requests and agents' work, for a
 // day (http.ts keptAnswer), and its history, a page from a commit at a time,
 // for a month (repository-history.ts historyFrom), as are the files each of
-// its commits changes and holds (repository-changes.ts). Each store removes its own rows kept longer
+// its commits changes and holds (repository-changes.ts), and the packages a
+// pull request's lockfiles add (pull-dependencies.ts). Each store removes its own rows kept longer
 // than that as it writes, at most once an hour a database (pruneKept), so
 // that rows no read will take again don't pile up.
 // The database is an optimization: a failure reads as a miss, and writes
@@ -117,3 +118,7 @@ export const historyChangeStore = <T>(db: UpstreamCacheStore, debug = false): Ke
 // repositoryTree), by the commit, which never change: kept as its history's
 // pages are.
 export const historyTreeStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/trees', HISTORY_PAGE_KEPT_MS, debug)
+// The packages a repository's pull request's lockfiles add
+// (pull-dependencies.ts), by the commits of its base and head, which never
+// change: kept as its history's pages are.
+export const pullDependencyStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/pull-dependencies', HISTORY_PAGE_KEPT_MS, debug)

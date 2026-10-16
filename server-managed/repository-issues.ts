@@ -3,10 +3,13 @@
 // closed (a pull request's merged among them), the most recently updated
 // first, a page at a time, each as one tile has room for, with how many are
 // open and closed. A pull request's tile names its branches, its size, its
-// review and its checks, which GraphQL alone gives, so it needs a token. A
-// nonpublic repository's are read with its GitHub App's installation, which
-// reads pull requests only with their own permission (README).
+// review and its checks, which GraphQL alone gives, so it needs a token; an
+// open one's, and its popup's, whether it changes a lockfile whose new
+// packages are told (pull-dependencies.ts touchesLockfile). A nonpublic
+// repository's are read with its GitHub App's installation, which reads
+// pull requests only with their own permission (README).
 import { GithubApiError } from './github-app.ts'
+import { touchesLockfile } from './pull-dependencies.ts'
 import { ACTOR, type GraphAccount, type GraphqlError, actorOf, githubGraphql } from './repository-history.ts'
 
 export const ISSUES_PAGE = 50
@@ -28,6 +31,10 @@ const fields = {
   pulls: `${shared} state isDraft mergedAt reviewDecision additions deletions headRefName baseRefName
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`,
 }
+// The files a pull request changes, as many as LISTED_FILES, as an open one's
+// tile and its popup tell whether it changes a lockfile by them.
+const LISTED_FILES = 100
+const files = `files(first: ${LISTED_FILES}) { totalCount nodes { path } }`
 const connection = { issues: 'issues', pulls: 'pullRequests' }
 const states = { issues: { open: '[OPEN]', closed: '[CLOSED]' }, pulls: { open: '[OPEN]', closed: '[CLOSED, MERGED]' } }
 
@@ -39,7 +46,7 @@ const pageQuery = (kind: IssuesKind, state: IssuesState) => `query($owner: Strin
     closed: ${connection[kind]}(states: ${states[kind].closed}) { totalCount }
     page: ${connection[kind]}(states: ${states[kind][state]}, first: ${ISSUES_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
-      nodes { ${fields[kind]} }
+      nodes { ${fields[kind]}${kind === 'pulls' && state === 'open' ? ` ${files}` : ''} }
     }
   }
 }`
@@ -47,7 +54,8 @@ const pageQuery = (kind: IssuesKind, state: IssuesState) => `query($owner: Strin
 type Node = { number?: unknown; title?: unknown; createdAt?: unknown; updatedAt?: unknown; closedAt?: unknown; mergedAt?: unknown; author?: GraphAccount
   comments?: { totalCount?: unknown }; labels?: { totalCount?: unknown; nodes?: { name?: unknown; color?: unknown }[] }; state?: unknown; stateReason?: unknown
   isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown
-  commits?: { nodes?: { commit?: { statusCheckRollup?: { state?: unknown } | null } | null }[] } }
+  commits?: { nodes?: { commit?: { statusCheckRollup?: { state?: unknown } | null } | null }[] }
+  files?: { totalCount?: unknown; nodes?: ({ path?: unknown } | null)[] } | null }
 type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }
   page?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (Node | null)[] } } | null }
 
@@ -76,15 +84,20 @@ function item(kind: IssuesKind, node: Node | null) {
     return { ...common, state: node.state === 'OPEN' ? 'open' : 'closed', reason: REASONS[String(node.stateReason)] ?? null }
   }
   const checks = node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state
+  const listed = node.files?.nodes
+  const paths = Array.isArray(listed) ? listed.flatMap(file => typeof file?.path === 'string' ? [file.path] : []) : null
   return { ...common, state: node.state === 'MERGED' ? 'merged' : node.state === 'OPEN' ? 'open' : 'closed', draft: node.isDraft === true, mergedAt: timeOf(node.mergedAt),
     review: REVIEWS[String(node.reviewDecision)] ?? null, checks: CHECKS[String(checks)] ?? null, additions: count(node.additions), deletions: count(node.deletions),
-    head: nameOf(node.headRefName), base: nameOf(node.baseRefName) }
+    head: nameOf(node.headRefName), base: nameOf(node.baseRefName),
+    ...paths ? { touchesLockfile: touchesLockfile(paths, count(node.files?.totalCount)) } : {} }
 }
 
 // A pull request's checks, which a GitHub App reads only with the Checks and
-// Commit statuses permissions, refused: its tile then shows none. Any other
+// Commit statuses permissions, refused: its tile then shows none; or its
+// files, whose lockfiles' new packages it then tells none of. Any other
 // field refused, the list is, as one without Pull requests: read is.
-const checksRefused = (error: GraphqlError) => error?.type === 'FORBIDDEN' && Array.isArray(error.path) && error.path.includes('statusCheckRollup')
+const checksRefused = (error: GraphqlError) => error?.type === 'FORBIDDEN' && Array.isArray(error.path)
+  && (error.path.includes('statusCheckRollup') || error.path.includes('files'))
 
 // One issue or pull request, as its popup shows it (GET
 // /api/admin/repositories/item): as its tile does, with its description, its
@@ -101,7 +114,7 @@ const ITEM_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
       __typename
       ... on Issue { ${shared} issueState: state stateReason body
         closedByPullRequestsReferences(first: ${LINKED}, includeClosedPrs: true) { totalCount nodes { number title pullState: state isDraft } } }
-      ... on PullRequest { ${shared} pullState: state isDraft mergedAt reviewDecision additions deletions headRefName baseRefName body changedFiles
+      ... on PullRequest { ${shared} pullState: state isDraft mergedAt reviewDecision additions deletions headRefName baseRefName body changedFiles ${files}
         commits(last: 1) { totalCount nodes { commit { statusCheckRollup { state } } } } mergedBy { ${ACTOR} }
         closingIssuesReferences(first: ${LINKED}) { totalCount nodes { number title issueState: state stateReason } } }
     }

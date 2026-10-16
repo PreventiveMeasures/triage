@@ -225,6 +225,20 @@ export function fetchRepositoryItem(repoId, number, { signal } = {}) {
   return request(`/api/admin/repositories/item?${new URLSearchParams({ repoId, number })}`, REPOSITORY_ITEM_ERRORS, response => response.json(), signal)
 }
 
+const PULL_DEPENDENCIES_ERRORS = {
+  ...REPOSITORY_ITEM_ERRORS,
+  'github-not-found': 'GitHub has no pull request of that number here.',
+  'github-malformed': 'GitHub answered with a pull request or lockfile that couldn’t be read.',
+  'github-status-403': 'GitHub refused to read its lockfiles. The GitHub App reading this repository needs Contents: read and Pull requests: read, which an owner of its installation approves.',
+  400: 'Not a pull request of a repository.',
+}
+
+// The packages a pull request's lockfiles lock that they locked none of where
+// its branch left its base, by directory.
+export function fetchPullDependencies(repoId, number, { signal } = {}) {
+  return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number })}`, PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
+}
+
 const REPOSITORY_PULSE_ERRORS = {
   ...REPOSITORY_ISSUES_ERRORS,
   'no-directory': 'Pulse shows only with access to the whole repository.',

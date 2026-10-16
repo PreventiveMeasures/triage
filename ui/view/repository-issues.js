@@ -3,8 +3,9 @@
 // a grid of compact tiles rather than a list, those open or those closed, a
 // page at a time as the end of the scroll nears. A tile shows its state,
 // number, author and age, its title and labels, and a pull request's
-// branches, size, review and checks; it opens on GitHub. The server reads
-// them with the reader's own GitHub access (GET
+// branches, size, review and checks, and an open one's packages new to its
+// lockfiles, where it changes any (pull-dependencies.js); it opens on
+// GitHub. The server reads them with the reader's own GitHub access (GET
 // /api/admin/repositories/issues); what it answered is kept a while, for the
 // session that read it.
 import { LitElement, html, nothing } from 'lit'
@@ -15,7 +16,8 @@ import { fetchRepositoryIssues } from './client-managed.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
-import { CHECKS, COMMENT_ICON, REVIEWS, STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
+import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
+import { addedNames, pullDependencies, readsDependencies, subscribePullDependencies } from './pull-dependencies.js'
 import { activityPicker } from './repository-activity.js'
 import { githubUser, githubUserName } from './github-users.js'
 
@@ -24,6 +26,8 @@ export { issueState }
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
 const MAX_LABELS = 8
+// The new packages a tile's tooltip names, those past them counted.
+const TOLD_PACKAGES = 20
 
 const lists = new Map()
 const shownElements = new Set()
@@ -41,6 +45,7 @@ function sessionLists() {
 }
 
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
+subscribePullDependencies(repaint)
 
 // A server's answer, its items those it names by number.
 function checked(answer) {
@@ -126,6 +131,20 @@ function labelChips(item) {
   const run = labels => html`${chip(labels[0])}${labels.length > 1
     ? html`<span class="issue-labels-rest" style=${styleMap({ '--labels': String(labels.length - 1) })}>${run(labels.slice(1))}</span>` : nothing}`
   return html`${shown.length > 0 ? run(shown) : nothing}${total > shown.length ? html`<span class="issue-label is-more">+${total - shown.length}</span>` : nothing}`
+}
+
+// The packages new to a pull request's lockfiles, once read, where there are
+// any: their icon, their names, as many as the tile's width shows, and how
+// many, "+" where there are more than were sent; each named on hover, as many
+// as TOLD_PACKAGES.
+function dependencyLine(entry) {
+  if (entry.status !== 'ready') return nothing
+  const { names, more } = addedNames(entry)
+  if (names.length === 0) return nothing
+  const rest = names.length - TOLD_PACKAGES
+  const told = `New dependencies: ${names.slice(0, TOLD_PACKAGES).join(', ')}${rest > 0 ? ` and ${rest.toLocaleString('en-US')}${more ? '+' : ''} more` : more ? ' and more' : ''}`
+  return html`<span class="issue-deps" data-tooltip=${told}>${PACKAGE_ICON}<span class="issue-deps-names">${names.join(', ')}</span>
+    <span class="issue-deps-count">${names.length.toLocaleString('en-US')}${more ? '+' : ''} new</span></span>`
 }
 
 // The tab's body, for the repository a directory shown (`repository`, an
@@ -247,9 +266,11 @@ class RepositoryIssues extends LitElement {
 
   // A tile: its state's icon, and under it a pull request's review and
   // checks and how many comments, as a rail beside its title, number, author
-  // and age, labels, and a pull request's branches and size.
+  // and age, labels, a pull request's branches and size, and an open one's
+  // packages new to its lockfiles.
   renderTile(item, stateClass, stateName) {
     const pulls = this.kind === 'pulls'
+    const dependencies = pulls && item.state === 'open' && readsDependencies(item) ? pullDependencies(this.repository.repoId, item.number) : null
     const time = item.updatedAt == null ? null : new Date(item.updatedAt)
     const checks = pulls && item.checks ? CHECKS[item.checks] : null
     const review = pulls && item.state === 'open' && item.review ? REVIEWS[item.review] : null
@@ -270,6 +291,7 @@ class RepositoryIssues extends LitElement {
         ${item.labels.length > 0 || item.moreLabels > 0 ? html`<span class="issue-labels">${labelChips(item)}</span>` : nothing}
         ${pulls && item.head ? html`<span class="issue-branch"><code>${item.head}</code>${item.base ? html`<span aria-hidden="true">→</span><code>${item.base}</code>` : nothing}
           <span class="issue-diff"><span class="is-added">+${item.additions.toLocaleString('en-US')}</span> <span class="is-deleted">−${item.deletions.toLocaleString('en-US')}</span></span></span>` : nothing}
+        ${dependencies ? dependencyLine(dependencies) : nothing}
       </span>`
   }
 }

@@ -3729,6 +3729,22 @@ body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, reposito
   & code:last-of-type { flex: none; max-width: 40%; }
 }
 .issue-diff { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
+/* An open pull request's packages new to its lockfiles, a line as its
+   branches are: a box, in the color of a finding to look at, their names,
+   shortened as the tile's width does, and how many, kept whole. */
+.issue-deps {
+  display: flex; align-items: center; gap: .3rem; min-width: 0;
+  color: var(--muted); font-size: .72rem; white-space: nowrap;
+  & svg {
+    flex: none; width: 12px; height: 12px;
+    color: var(--medium); fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linejoin: round;
+  }
+}
+.issue-deps-names {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.issue-deps-count { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
 .is-added { color: var(--green); }
 .is-deleted { color: var(--critical); }
 /* A label's dot in its padding, its name clipped to its content, so that the

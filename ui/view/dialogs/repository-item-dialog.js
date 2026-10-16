@@ -3,17 +3,20 @@
 // a kanban card opens: an issue or pull request with what its tile shows and
 // more, read as it opens (GET /api/admin/repositories/item), its description,
 // what it closes or what closed it, a pull request's commits, files and who
-// merged it; or an agent's session, its pull requests, commits, issues and
-// branches. An issue or pull request it names opens in its place, Back
-// returning; each, and a commit or branch, is a link to GitHub, and a session
-// to where it ran.
+// merged it, and, where it changes a lockfile, the packages new to its
+// lockfiles, open, merged or closed (pull-dependencies.js); or an agent's
+// session, its pull requests, commits, issues and branches. An issue or pull
+// request it names opens in its place, Back returning; each, and a commit or
+// branch, is a link to GitHub, and a session to where it ran.
 import { html, nothing, unsafeCSS } from 'lit'
 import { styleMap } from '../style-map.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { fetchRepositoryItem } from '../client-managed.js'
 import { flowText } from '../format.js'
 import { renderHighlighted } from '../render-finding.js'
-import { CHECKS, COMMENT_ICON, REVIEWS, STATE_ICONS, agentIcon, agentName, branchOnGithub, issueState, sessionOnGithub, sessionRan } from '../repository-tiles.js'
+import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, agentIcon, agentName, branchOnGithub, issueState, sessionOnGithub, sessionRan } from '../repository-tiles.js'
+import { pullDependencies, readsDependencies, subscribePullDependencies } from '../pull-dependencies.js'
+import { managedRoutePath } from '../../../common/managed/routes.js'
 import { githubUser, githubUsers } from '../github-users.js'
 import proseCSS from '../../styles/prose.css'
 import codeTokensCSS from '../../styles/code-tokens.css'
@@ -25,6 +28,10 @@ const date = at => at == null ? '' : new Date(at).toLocaleDateString('en-US', { 
 const plural = (count, noun) => `${count.toLocaleString('en-US')} ${noun}${count === 1 ? '' : 's'}`
 const external = (href, label, primary = false) => href
   ? html`<a class=${primary ? 'primary' : ''} href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : nothing
+// Where a package new to a lockfile is from, but npm's registry, and why a
+// directory's lockfiles couldn't tell what they add.
+const SOURCES = { mirror: 'mirror', git: 'git', tarball: 'tarball', file: 'file' }
+const LOCKFILE_ERRORS = { 'lockfile-unreadable': 'A lockfile here couldn’t be read', 'github-not-found': 'GitHub has none of a lockfile here at a commit compared' }
 
 class RepositoryItemDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(proseCSS), unsafeCSS(codeTokensCSS), unsafeCSS(appUserCSS), unsafeCSS(styles)]
@@ -41,9 +48,10 @@ class RepositoryItemDialog extends AppDialog {
   // dialog opens on (AppDialog.firstUpdated).
   connectedCallback() {
     super.connectedCallback()
+    this._unsubscribe = subscribePullDependencies(() => this.requestUpdate())
     if (this._trail.length === 0 && this.target) this.open(this.target)
   }
-  disconnectedCallback() { this._controller.abort(); super.disconnectedCallback() }
+  disconnectedCallback() { this._controller.abort(); this._unsubscribe?.(); super.disconnectedCallback() }
   focusInitial() { this.renderRoot.querySelector('.repo-item-body')?.focus() }
 
   // Shows `target`, an issue or pull request (`{ number, preview }`, the
@@ -82,7 +90,8 @@ class RepositoryItemDialog extends AppDialog {
 
   // An issue or pull request: its state, title and number; who opened it
   // when, its labels, a pull request's branches, size, commits and files,
-  // review and checks; what it closes or what closed it; its description.
+  // review and checks; what it closes or what closed it; the packages new to
+  // a pull request's lockfiles; its description.
   renderItem({ number, preview }) {
     const held = this._items.get(number)
     const item = held?.item ?? preview ?? null
@@ -113,11 +122,49 @@ class RepositoryItemDialog extends AppDialog {
         ${CHECKS[item.checks] ? marked(CHECKS[item.checks], item.checks) : nothing}
       </p>` : nothing}
       ${full ? this.renderLinked(pulls ? 'Closes' : 'Closed by', pulls ? 'issues' : 'pulls', pulls ? full.closes : full.closedBy, full.moreLinked) : nothing}
+      ${pulls && readsDependencies(item) ? this.renderDependencies(number) : nothing}
       ${full ? html`<div class="repo-item-description">${full.body ? renderHighlighted(flowText(full.body)) : html`<p class="repo-item-quiet">No description.</p>`}</div>
         ${full.bodyShortened ? html`<p class="repo-item-quiet">Shortened here; the rest of it is on GitHub.</p>` : nothing}`
         : held?.status === 'error' ? html`<p class="repo-item-quiet" role="alert">${held.error}</p>`
         : html`<p class="repo-item-quiet" role="status">Reading it…</p>`}`
     return [heading, body, external(href, 'Open on GitHub', true)]
+  }
+
+  // The packages new to a pull request's lockfiles, by the lockfiles of each
+  // directory, as they are read; none where it changes no lockfile after all.
+  renderDependencies(number) {
+    const entry = pullDependencies(this.repository.repoId, number)
+    if (entry.status === 'ready' && entry.lockfiles.length === 0 && !entry.cut) return nothing
+    const body = entry.status === 'loading' ? html`<p class="repo-item-quiet" role="status">Reading its lockfiles…</p>`
+      : entry.status === 'error' ? html`<p class="repo-item-quiet" role="alert">${entry.error}</p>`
+      : this.renderAdded(entry)
+    return html`<section class="repo-item-section"><h4>New dependencies</h4>${body}</section>`
+  }
+
+  // Each directory's lockfiles and the packages new to them, or why they
+  // couldn't tell; that none is, where none is; and where lockfiles were
+  // left unread, it changing more files or directories than are read.
+  renderAdded({ lockfiles, cut }) {
+    const told = lockfiles.filter(dir => dir.error || dir.added.length > 0)
+    return html`${told.length === 0 && lockfiles.length > 0 ? html`<p class="repo-item-quiet">None: its lockfiles lock no package they didn’t already.</p>` : nothing}
+      ${told.map(dir => html`<div class="repo-item-lockfiles">
+        <p>${dir.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}</p>
+        ${dir.error ? html`<p class="repo-item-quiet" role="alert">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
+          : html`<ul>${dir.added.map(pkg => html`<li>${this.renderPackage(pkg)}</li>`)}</ul>
+            ${dir.more > 0 ? html`<p class="repo-item-quiet">and ${dir.more.toLocaleString('en-US')} more</p>` : nothing}`}
+      </div>`)}
+      ${cut ? html`<p class="repo-item-quiet">It changes more files, or lockfiles in more directories, than are read; those past them aren’t told.</p>` : nothing}`
+  }
+
+  // A package new to a lockfile: its name and version, npm's opening in the
+  // app's npm viewer; whether only devDependencies need it; and where one
+  // not of npm's registry is from.
+  renderPackage({ name, version, source, from, dev }) {
+    const href = (source === 'registry' || source === 'mirror') && version ? managedRoutePath({ view: 'npm', packageName: name, packageSpec: version }) : null
+    const label = html`${PACKAGE_ICON}<span class="repo-item-title">${name}${version ? html`<span class="repo-item-version">@${version}</span>` : nothing}</span>
+      ${dev ? html`<span class="repo-item-tag" data-tooltip="Only devDependencies need it">dev</span>` : nothing}
+      ${SOURCES[source] ? html`<span class="repo-item-tag" data-tooltip=${from ?? nothing}>${SOURCES[source]}</span>` : nothing}`
+    return href ? html`<a class="repo-item-row" href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : html`<span class="repo-item-row">${label}</span>`
   }
 
   // The issues or pull requests (`kind`) an item or session names, each

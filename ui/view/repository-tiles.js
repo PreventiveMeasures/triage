@@ -38,6 +38,8 @@ export const REVIEWS = {
 export const PULL_ICON = icon(svg`<circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="12.5" r="1.5"/><path d="M4 5v6M12 11V6a2 2 0 0 0-2-2H7m1.5-1.5L7 4l1.5 1.5"/>`)
 export const BRANCH_ICON = icon(svg`<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="3" r="1.5"/><path d="M4 4.5v7m0-3h3a5 5 0 0 0 5-4"/>`)
 export const COMMIT_ICON = icon(svg`<circle cx="8" cy="8" r="3"/><path d="M1 8h4m6 0h4"/>`)
+// A package, as a box, for the packages a pull request's lockfiles add.
+export const PACKAGE_ICON = icon(svg`<path d="M8 1.75 2.25 4.5v7L8 14.25l5.75-2.75v-7z"/><path d="M2.25 4.5 8 7.25l5.75-2.75M8 7.25v7"/>`)
 
 // An issue's or pull request's state (`kind` 'issues' or 'pulls'), as its
 // icon and stripe show it, and as its icon is named.
