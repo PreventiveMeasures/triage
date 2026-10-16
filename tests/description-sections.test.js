@@ -487,7 +487,7 @@ describe('lineBlockSegments', () => {
   })
 
   it('leaves the rest as it is: a reference, a hash with no space, seven hashes, a setext heading', () => {
-    for (const text of ['Plain prose.', '#972 fixed it', '#hashtag', '####### seven', '## ', 'Release notes\n---', 'Lead\nwrapped\n---']) {
+    for (const text of ['Plain prose.', '#972 fixed it', '#hashtag', '####### seven', '## ', '##  ', '##\t\t', 'Release notes\n---', 'Lead\nwrapped\n---']) {
       assert.deepEqual(lineBlockSegments(text), [text], text)
     }
   })

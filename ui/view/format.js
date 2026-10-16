@@ -833,7 +833,7 @@ export function listSegments(text) {
 //
 // A paragraph with neither comes back as a single-element array holding
 // it unchanged, the same fast path listSegments offers.
-const HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/u
+const HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(\S.*?)(?:[ \t]+#+)?[ \t]*$/u
 const SETEXT_UNDERLINE_RE = /^ {0,3}-+[ \t]*$/u
 
 export function lineBlockSegments(text) {
