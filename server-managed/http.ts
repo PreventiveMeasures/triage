@@ -47,8 +47,8 @@
 //        the default branch no pull request merged, with issues, agents' branches and the app agents first | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/item?repoId=&number= → an issue or pull request, as its popup shows it, with its
 //        description's Markdown | 400/401/403/404/409/429/502
-//   GET /api/admin/repositories/pull-dependencies?repoId=&number= → the packages a pull request's npm, pnpm and Yarn 1
-//        lockfiles lock that they locked none of at its merge base, by directory | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/pull-dependencies?repoId=&number= → the package versions a pull request's npm, pnpm and
+//        Yarn 1 lockfiles lock that they didn't at its merge base, an update's with those it was, by directory | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week and a day over
 //        the last year, its contributors and when in the period they commit, counted from its commits as Commits keeps them (how many are
 //        read while they are), and the pull requests
@@ -1946,8 +1946,8 @@ function itemNumber(query: URLSearchParams): number | null {
   return /^[1-9]\d{0,9}$/u.test(query.get('number') ?? '') && number <= 2 ** 31 - 1 ? number : null
 }
 
-// GET /api/admin/repositories/pull-dependencies: the packages pull request
-// `number`'s lockfiles add (pull-dependencies.ts), what its base's and head's
+// GET /api/admin/repositories/pull-dependencies: the package versions pull
+// request `number`'s lockfiles add (pull-dependencies.ts), what its base's and head's
 // commits tell kept by them (pullDependencyKept), its `number` with them.
 // They are the whole repository's (readWholeRepository), kept by its number
 // as its popup's item is, its head moving with each push.

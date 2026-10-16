@@ -107,7 +107,7 @@ test('a session shows who, when and what it did: its pull requests and issues op
   assert.match(templateText(dialog.render()), /Open in Claude Code/u)
 })
 
-test('a pull request changing a lockfile, merged or closed as well as open, shows the packages new to its lockfiles as they are read, npm\'s opening in its viewer', async () => {
+test('a pull request changing a lockfile, merged or closed as well as open, shows the package versions new to its lockfiles as they are read, npm\'s opening in its viewer, an update compared', async () => {
   let told
   dependencies = () => new Promise(resolve => { told = resolve })
   answer = () => new Promise(() => {})
@@ -116,10 +116,10 @@ test('a pull request changing a lockfile, merged or closed as well as open, show
   dialog.open({ number: 21, preview: { ...tile, number: 21, state: 'merged', touchesLockfile: true } })
   let text = templateText(dialog.render())
   assert.deepEqual(dependencyAsked, [[7, 21]], 'asked as it opens, what its tile knew enough')
-  assert.match(text, /<h4>New dependencies<\/h4><p class="repo-item-quiet" role="status">Reading its lockfiles…<\/p>/u)
+  assert.match(text, /<h4>New dependency versions<\/h4><p class="repo-item-quiet" role="status">Reading its lockfiles…<\/p>/u)
   told({ number: 21, cut: true, lockfiles: [
-    { paths: ['package-lock.json'], more: 3, added: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git' },
-      { name: '@scope/tool', version: '2.0.0', source: 'registry', dev: true }] },
+    { paths: ['package-lock.json'], more: 3, added: [{ name: '@preventive/lockfile', version: '1.0.0', source: 'registry', was: ['1.0.0-alpha.7', '0.9.0'] },
+      { name: '@scope/tool', version: '2.0.0', source: 'registry', dev: true }, { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git' }] },
     { paths: ['gone/package-lock.json'], added: [], more: 0 },
     { paths: ['web/pnpm-lock.yaml', 'web/yarn.lock'], error: 'lockfile-unreadable', detail: 'a yarn.lock of Yarn 2 or later, which is not read' },
   ] })
@@ -127,7 +127,13 @@ test('a pull request changing a lockfile, merged or closed as well as open, show
   text = templateText(dialog.render())
   assert.match(text, /<code>package-lock\.json<\/code>[^]*<span class="repo-item-row"><svg[^]*mine<span class="repo-item-version">@1\.0\.0<\/span>[^]*data-tooltip=git\+ssh:\/\/github\.com\/org\/mine\.git>git</u,
     'one from git unlinked, by where it is from')
-  assert.match(text, /<a class="repo-item-row" href=\/npm\/@scope\/tool@2\.0\.0 target="_blank" rel="noopener noreferrer">[^]*@scope\/tool[^]*>dev</u)
+  assert.match(text, /<a class="repo-item-row" href=\/npm\/@scope\/tool@2\.0\.0 target="_blank" rel="noopener noreferrer">[^]*@scope\/tool[^]*is-new[^>]*>new<[^]*>dev</u,
+    'a package new to its lockfiles tagged new')
+  assert.match(text, /<a class="repo-item-row" href=\/npm\/@preventive\/lockfile@1\.0\.0\/compare\/1\.0\.0-alpha\.7 [^>]*>[^]*@1\.0\.0<\/span><\/span>\s*<span class="repo-item-was" [^>]*>from 1\.0\.0-alpha\.7, 0\.9\.0<\/span>/u,
+    'an update by the versions it was, compared with the highest of them')
+  assert.ok(text.indexOf('@preventive/lockfile@1.0.0') > text.indexOf('@scope/tool@2.0.0'), 'after the packages new to its lockfiles, whatever their names')
+  const update = text.slice(text.indexOf('@preventive/lockfile'))
+  assert.doesNotMatch(update.slice(0, update.indexOf('</li>')), /is-new/u, 'an update is not new')
   assert.match(text, /and 3 more/u)
   assert.doesNotMatch(text, /gone\/package-lock\.json/u, 'a directory none is new to left out')
   assert.match(text, /<code>web\/pnpm-lock\.yaml<\/code>, <code>web\/yarn\.lock<\/code>[^]*role="alert">A lockfile here couldn’t be read: a yarn\.lock of Yarn 2 or later, which is not read</u)
@@ -143,23 +149,23 @@ test('a pull request whose lockfiles add none says so; one changing none, or an 
   none.open({ number: 22, preview: { ...tile, number: 22, touchesLockfile: true } })
   templateText(none.render())
   await setImmediate()
-  assert.match(templateText(none.render()), /<h4>New dependencies<\/h4>[^]*None: its lockfiles lock no package they didn’t already\./u)
+  assert.match(templateText(none.render()), /<h4>New dependency versions<\/h4>[^]*None: every version its lockfiles lock, they locked before\./u)
   // Its tile knew nothing of its files (a closed one's): asked once it is read, that it may.
   const maybe = shown()
   maybe.open({ number: 23, preview: { ...tile, number: 23, state: 'closed' } })
-  assert.doesNotMatch(templateText(maybe.render()), /New dependencies/u)
+  assert.doesNotMatch(templateText(maybe.render()), /New dependency versions/u)
   await setImmediate()
   templateText(maybe.render())
   await setImmediate()
-  assert.doesNotMatch(templateText(maybe.render()), /New dependencies/u, 'it changed none after all')
+  assert.doesNotMatch(templateText(maybe.render()), /New dependency versions/u, 'it changed none after all')
   const changesNone = shown()
   changesNone.open({ number: 26, preview: { ...tile, number: 26, touchesLockfile: false } })
   await setImmediate()
-  assert.doesNotMatch(templateText(changesNone.render()), /New dependencies/u)
+  assert.doesNotMatch(templateText(changesNone.render()), /New dependency versions/u)
   const failing = shown()
   failing.open({ number: 25, preview: { ...tile, number: 25, touchesLockfile: true } })
   templateText(failing.render())
   await setImmediate()
-  assert.match(templateText(failing.render()), /<h4>New dependencies<\/h4><p class="repo-item-quiet" role="alert">GitHub’s API rate limit has been reached\. Try again later\./u)
+  assert.match(templateText(failing.render()), /<h4>New dependency versions<\/h4><p class="repo-item-quiet" role="alert">GitHub’s API rate limit has been reached\. Try again later\./u)
   assert.deepEqual(dependencyAsked.map(([, number]) => number), [22, 23, 25])
 })

@@ -1,4 +1,5 @@
-// The packages a pull request's lockfiles add, as an open pull request's tile
+// The package versions a pull request's lockfiles add, a package's new to them
+// or a new version of one they locked before, as an open pull request's tile
 // (repository-issues.js) and any one's popup
 // (dialogs/repository-item-dialog.js) show them (GET
 // /api/admin/repositories/pull-dependencies): read only of one GitHub says
@@ -41,11 +42,17 @@ function sessionHeld() {
 export const readsDependencies = item => item?.touchesLockfile === true || item?.touchesLockfile === null
 
 // A server's answer, its directories those it names by their lockfiles'
-// paths, each's packages those it names.
+// paths, each's package versions those it names, the versions each was
+// those it names.
 function checked(answer) {
   if (!Array.isArray(answer?.lockfiles)) throw new Error('The server answered with no lockfiles.')
+  const versions = was => Array.isArray(was) && was.every(version => typeof version === 'string') && was.length > 0 ? { was } : {}
   const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? dir
-    : { ...dir, added: dir.added.filter(pkg => typeof pkg?.name === 'string'), more: Number.isSafeInteger(dir.more) ? dir.more : 0 })
+    : { ...dir, added: dir.added.flatMap(pkg => {
+      if (typeof pkg?.name !== 'string') return []
+      const { was, ...version } = pkg
+      return [{ ...version, ...versions(was) }]
+    }), more: Number.isSafeInteger(dir.more) ? dir.more : 0 })
   return { lockfiles, cut: answer.cut === true }
 }
 
@@ -86,8 +93,17 @@ export function pullDependencies(repoId, number) {
   return loading
 }
 
-// The packages an answer tells new, each name once, in its directories'
-// order, and whether it tells more than it sends (`more`).
-export function addedNames({ lockfiles }) {
-  return { names: [...new Set(lockfiles.flatMap(dir => dir.added?.map(pkg => pkg.name) ?? []))], more: lockfiles.some(dir => dir.more > 0) }
+// What an answer tells new: each package version once, across its
+// directories, those of packages new to them first (`fresh`, no `was`), then
+// the new versions of those they locked before; how many of each; and
+// whether it tells more than it sends (`more`).
+export function addedVersions({ lockfiles }) {
+  const all = new Map()
+  for (const pkg of lockfiles.flatMap(dir => dir.added ?? [])) {
+    const key = `${pkg.name}@${pkg.version ?? ''}`
+    if (!all.has(key)) all.set(key, pkg)
+  }
+  const versions = [...all.values()]
+  const fresh = versions.filter(pkg => !pkg.was)
+  return { versions: [...fresh, ...versions.filter(pkg => pkg.was)], fresh: fresh.length, updated: versions.length - fresh.length, more: lockfiles.some(dir => dir.more > 0) }
 }
