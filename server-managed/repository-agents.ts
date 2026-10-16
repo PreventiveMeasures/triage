@@ -10,7 +10,7 @@
 // for the marks an agent leaves, and those alone are answered, never the
 // texts. GraphQL alone gives them, so it needs a token.
 import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AppAgent, agentSignals } from '../common/managed/agent-tasks.ts'
-import { APP_AGENTS } from './app-agents.ts'
+import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
 import { GithubApiError } from './github-app.ts'
 import { ACTOR, type NamedAccount, actorOf, commitAccount, githubGraphql } from './repository-history.ts'
 import { ISSUES_CURSOR } from './repository-issues.ts'
@@ -32,8 +32,6 @@ const CLAUDE_EMAIL = 'noreply@anthropic.com'
 
 // The app agents' accounts' no-reply addresses, by each login of theirs.
 const AGENT_EMAILS = APP_AGENTS.flatMap(({ account }) => account?.logins.map(login => `${account.id}+${login}@users.noreply.github.com`) ?? [])
-// Whose branches are read, by their prefixes.
-const BRANCH_PREFIXES = ['claude/', 'codex/', ...APP_AGENTS.map(agent => agent.prefix)]
 
 // An agent's branches, a page at a time, as GitHub lists them, by name;
 // each its tip commit's time, message and author.
@@ -196,7 +194,7 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
   const [data, branches, authored] = await Promise.all([
     githubGraphql(PAGE_QUERY, { owner, name, pulls: cursors.pulls, commits: cursors.commits, first,
       readPulls: first || cursors.pulls !== null, readCommits: first || cursors.commits !== null }, token, fetchImpl) as Promise<Page>,
-    first ? Promise.all(BRANCH_PREFIXES.map(prefix => agentBranches(owner, name, prefix, token, fetchImpl))) : [],
+    first ? Promise.all(AGENT_BRANCH_PREFIXES.map(prefix => agentBranches(owner, name, prefix, token, fetchImpl))) : [],
     first ? githubGraphql(AUTHORED_QUERY, { owner, name, emails: AGENT_EMAILS }, token, fetchImpl) as Promise<Page> : null,
   ])
   const repository = data?.repository
