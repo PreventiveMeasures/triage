@@ -134,9 +134,14 @@ test('managed landing omits empty teams and handles all-empty accounts', () => {
   updateManagedLanding({ serverMode: 'managed', session, teams: [empty,
     { id: 'active', name: 'Active team', reports: ['report'] },
     { id: 'bundle', name: 'Bundle team', reports: [], bundles: ['bundle'] },
+    { id: 'repository', name: 'Repository team', reports: [], repos: [{ repoId: 1, fullName: 'o/a', path: null }] },
+    { id: 'links', name: 'Links team', reports: [{ id: 'links', analyzer: 'links' }] },
   ] })
   assert.match(managedText(), /Active team/u)
   assert.match(managedText(), /Bundle team/u)
+  // A card has what it counts: a repository, but not a links document alone.
+  assert.match(managedText(), /Repository team<\/strong>\s*<span>1 repository<\/span>/u)
+  assert.doesNotMatch(managedText(), /Links team/u)
   assert.doesNotMatch(managedText(), /Empty team/u)
   updateManagedLanding({ serverMode: 'managed', session, teams: [empty] })
   assert.doesNotMatch(managedText(), /managed-team-list/u)

@@ -7,15 +7,18 @@ import { managedTeamFindings } from './managed-sidebar.js'
 
 let pendingLanding = null
 
-// A team's card counts what its header does (workspace-content.js): its
-// findings, where its catalog counts them, then each of its reports (links
-// documents aside), bundles and repositories it has.
+// What a team's header counts (workspace-content.js): its reports (links
+// documents aside), bundles and repositories. A team with any has a card,
+// which counts them, after its findings where its catalog counts them.
+function teamCounts(team) {
+  return { reports: team.reports.filter(report => report?.analyzer !== 'links').length, bundles: team.bundles?.length ?? 0,
+    repositories: new Set((team.repos ?? []).map(repo => repo.repoId)).size }
+}
+
 function teamStats(team) {
   const count = (n, noun, nouns = `${noun}s`) => `${n.toLocaleString()} ${n === 1 ? noun : nouns}`
   const findings = managedTeamFindings(team.app)
-  const reports = team.reports.filter(report => report?.analyzer !== 'links').length
-  const bundles = team.bundles?.length ?? 0
-  const repositories = new Set((team.repos ?? []).map(repo => repo.repoId)).size
+  const { reports, bundles, repositories } = teamCounts(team)
   return [findings == null ? null : count(findings, 'finding'), reports ? count(reports, 'report') : null,
     bundles ? count(bundles, 'bundle') : null, repositories ? count(repositories, 'repository', 'repositories') : null].filter(Boolean).join(' · ')
 }
@@ -47,7 +50,7 @@ export function updateManagedLanding(options) {
   if (localCopy) localCopy.textContent = local ? 'Review locally in your browser.' : 'Review locally in your browser. Sync across devices when you need it.'
   if (!managed || deferLanding) { render(nothing, slot); return }
   const canManage = session?.role === 'admin' || session?.role === 'manage'
-  const nonemptyTeams = teams.filter(team => team.reports.length > 0 || team.bundles?.length > 0)
+  const nonemptyTeams = teams.filter(team => Object.values(teamCounts(team)).some(Boolean))
   if (getPublicShare() && !session) {
     render(html`<section class="managed-login"><h1>Public link unavailable</h1><p>This link is invalid, has been revoked, or public sharing is disabled.</p></section>`, slot)
     return
