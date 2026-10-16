@@ -28,7 +28,9 @@ export interface RepoReviewState extends Omit<RepoDependencyReview, 'enabled'> {
 
 export interface RepositoryDependencyReviewStore {
   listRepoDependencyReviews(): Promise<Map<number, RepoDependencyReview>>
-  setRepoDependencyReview(repoId: number, setting: RepoDependencyReview): Promise<boolean>
+  // Sets a repository's review, its commit too but where `since` is
+  // undefined, which keeps it; the setting then, or null for no repository.
+  setRepoDependencyReview(repoId: number, setting: Omit<RepoDependencyReview, 'since'> & { since?: string | null }): Promise<RepoDependencyReview | null>
   repoDependencyReviewState(repoId: number, user: string, packages: string[]): Promise<RepoReviewState | null>
 }
 
@@ -79,9 +81,13 @@ export function repositoryDependencyReviewMethods(db: ManagedSql): RepositoryDep
       return new Map(rows.map(row => [row.repoId, setting(row)]))
     },
     async setRepoDependencyReview(repoId, { enabled, required, since }) {
-      const { changes } = await db.prepare(`UPDATE managed_selected_repo SET dependency_review = ?, dependency_reviews_required = ?,
-        dependency_review_since = ? WHERE repo_id = ?`).run(enabled ? 1 : 0, required, since, repoId)
-      return Number(changes) > 0
+      const { changes } = since === undefined
+        ? await db.prepare(`UPDATE managed_selected_repo SET dependency_review = ?, dependency_reviews_required = ? WHERE repo_id = ?`)
+          .run(enabled ? 1 : 0, required, repoId)
+        : await db.prepare(`UPDATE managed_selected_repo SET dependency_review = ?, dependency_reviews_required = ?,
+          dependency_review_since = ? WHERE repo_id = ?`).run(enabled ? 1 : 0, required, since, repoId)
+      if (Number(changes) === 0) return null
+      return setting(await db.prepare(`SELECT ${columns} FROM managed_selected_repo WHERE repo_id = ?`).get(repoId) as SettingRow)
     },
     async repoDependencyReviewState(repoId, user, packages) {
       const row = await db.prepare(`SELECT ${columns} FROM managed_selected_repo WHERE repo_id = ?`).get(repoId) as SettingRow | undefined

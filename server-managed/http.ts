@@ -971,8 +971,9 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
 // review (repository-dependency-reviews.ts): `enabled`, the published reviews
 // each version its pull requests' lockfiles lock needs (`required`, 1 to
 // MAX_REQUIRED_REVIEWS), and the commit whose lockfiles' versions need none
-// (`since`, a full commit id, or null; none, `400 since-unsupported`, where
-// the host registered reviewed dependencies, which replace it). Admin, CSRF.
+// (`since`, a full commit id, or null; where the host registered reviewed
+// dependencies, which replace it, none, `400 since-unsupported`, the one
+// stored kept as it is). Answers the setting then. Admin, CSRF.
 async function handleRepositoryDependencyReview(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
   const s = await adminMutation(req, res, deps, cookie)
@@ -990,9 +991,10 @@ async function handleRepositoryDependencyReview(req: IncomingMessage, res: Serve
   }
   if (since !== null && deps.reviewedDependencies) { sendJson(res, 400, { error: 'since-unsupported' }); return }
   const repo = (await deps.db.listAllRepos()).find(row => row.repoId === repoId)
-  if (!repo || !await deps.db.setRepoDependencyReview(repoId, { enabled, required, since: since as string | null })) { sendJson(res, 404, { error: 'no-repository' }); return }
+  const setting = repo ? await deps.db.setRepoDependencyReview(repoId, { enabled, required, ...deps.reviewedDependencies ? {} : { since: since as string | null } }) : null
+  if (!repo || !setting) { sendJson(res, 404, { error: 'no-repository' }); return }
   await activity(deps, s.user, 'repository', enabled ? 'enabled dependency review' : 'disabled dependency review', { repo: repo.fullName })
-  sendJson(res, 200, { ok: true, dependencyReview: { enabled, required, since } })
+  sendJson(res, 200, { ok: true, dependencyReview: setting })
 }
 
 async function repositoryFindingIds(deps: ManagedHttpDeps, reports: { id: string, filename: string }[]): Promise<Set<string>> {

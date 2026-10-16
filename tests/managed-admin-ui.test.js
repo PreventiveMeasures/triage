@@ -126,8 +126,11 @@ test('a repository\'s dependency review is switched on or off at once, its requi
   text = templateText(page._dependencyReviewSection(page._detail))
   assert.doesNotMatch(text, /Reviewed since commit/u)
   assert.match(text, /reviewed dependencies pass need no reviews here/u)
-  await page._saveDependencyReview(page._detail, { ...page._detail.dependencyReview, since: null, enabled: false })
-  assert.deepEqual(sent.at(-1)[1], { repoId: 7, enabled: false, required: 2, since: null })
+  assert.deepEqual(page._reviewSetting(false, 2, 'a'.repeat(40)), { enabled: false, required: 2 }, 'saved without its commit, the one stored kept')
+  await page._saveDependencyReview(page._detail, page._reviewSetting(false, 2, 'a'.repeat(40)))
+  assert.deepEqual(sent.at(-1)[1], { repoId: 7, enabled: false, required: 2 })
+  page._data = { ...page._data, reviewedDependencies: false }
+  assert.deepEqual(page._reviewSetting(true, 1, null), { enabled: true, required: 1, since: null })
 })
 
 test('late report preview success and failure cannot overwrite a newer request, even for the same report', async (t) => {

@@ -743,13 +743,14 @@ class ManagedAdminRepos extends ManagedPage {
 
   // Its dependency review: on or off at once; the reviews each version needs
   // and the commit whose lockfiles' versions need none, saved together; no
-  // commit where the server registers reviewed dependencies, which replace it.
+  // commit where the server registers reviewed dependencies, which replace
+  // it, the one stored left as it is (`setting`).
   _dependencyReviewSection(repo) {
     const registered = this._data?.reviewedDependencies === true
-    const stored = repo.dependencyReview ?? { enabled: false, required: 1, since: null }
-    const saved = registered ? { ...stored, since: null } : stored
+    const saved = repo.dependencyReview ?? { enabled: false, required: 1, since: null }
     const draft = this._reviewDraft ?? { required: String(saved.required), since: saved.since ?? '' }
-    const changed = draft.required !== String(saved.required) || draft.since.trim() !== (saved.since ?? '')
+    const changed = draft.required !== String(saved.required) || (!registered && draft.since.trim() !== (saved.since ?? ''))
+    const setting = (enabled, required, since) => this._reviewSetting(enabled, required, since)
     const busy = this._busy != null
     return html`<section class="section" aria-label="Dependency review">
       <h2>Dependency review</h2>
@@ -757,10 +758,10 @@ class ManagedAdminRepos extends ManagedPage {
         their lockfiles lock has its reviews, published to a team that reviews dependencies and has this repository. One from git, a tarball other
         than npm’s registry’s, or locked with no integrity fails the review; the project’s own files aren’t reviewed.</p></div>
         <mode-switch label=${saved.enabled ? 'On' : 'Off'} accessible-label="Review dependencies" .checked=${saved.enabled} .disabled=${busy}
-          @click=${() => { if (!busy) void this._saveDependencyReview(repo, { ...saved, enabled: !saved.enabled }) }}></mode-switch>
+          @click=${() => { if (!busy) void this._saveDependencyReview(repo, setting(!saved.enabled, saved.required, saved.since)) }}></mode-switch>
       </div>
       ${saved.enabled ? html`<form class="settings-row dependency-review-settings" aria-label="Dependency review settings"
-        @submit=${event => { event.preventDefault(); void this._saveDependencyReview(repo, { enabled: true, required: Number(draft.required), since: draft.since.trim().toLowerCase() || null }) }}>
+        @submit=${event => { event.preventDefault(); void this._saveDependencyReview(repo, setting(true, Number(draft.required), draft.since.trim().toLowerCase() || null)) }}>
         <label><span>Reviews each version needs</span><input type="number" min="1" max="10" required .value=${draft.required} ?disabled=${busy}
           @input=${event => { this._reviewDraft = { ...draft, required: event.target.value } }}></label>
         ${registered ? nothing : html`<label class="dependency-review-since"><span>Reviewed since commit</span><input type="text" placeholder="Full commit id, or none"
@@ -772,6 +773,12 @@ class ManagedAdminRepos extends ManagedPage {
           : 'With no commit, every version needs its reviews, those its lockfiles already locked as well.'}</p>
       </form>` : nothing}
     </section>`
+  }
+
+  // A review's setting as it is saved: without its commit where the server
+  // registers reviewed dependencies, the one stored kept.
+  _reviewSetting(enabled, required, since) {
+    return this._data?.reviewedDependencies === true ? { enabled, required } : { enabled, required, since }
   }
 
   async _saveDependencyReview(repo, setting) {

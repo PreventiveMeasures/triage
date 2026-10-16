@@ -313,7 +313,7 @@ test('Postgres adds dependency review to existing repositories, off', async t =>
   const upgraded = await openPostgresManagedDb(connect)
   t.after(() => upgraded.close())
   assert.deepEqual((await upgraded.listRepoDependencyReviews()).get(1), { enabled: false, required: 1, since: null })
-  assert.equal(await upgraded.setRepoDependencyReview(1, { enabled: true, required: 2, since: null }), true)
+  assert.deepEqual(await upgraded.setRepoDependencyReview(1, { enabled: true, required: 2, since: null }), { enabled: true, required: 2, since: null })
   assert.deepEqual((await upgraded.listRepoDependencyReviews()).get(1), { enabled: true, required: 2, since: null })
 })
 

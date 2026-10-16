@@ -52,8 +52,9 @@ export const context = (name, version, base = null) => ({ ecosystem: 'npm', pack
 export async function checkRepositoryDependencyReviews(db) {
   const users = await people(db)
   assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, ['pkg']), null, 'not enabled')
-  assert.equal(await db.setRepoDependencyReview(999, { enabled: true, required: 2, since: null }), false)
-  assert.equal(await db.setRepoDependencyReview(1, { enabled: true, required: 2, since }), true)
+  assert.equal(await db.setRepoDependencyReview(999, { enabled: true, required: 2, since: null }), null)
+  assert.deepEqual(await db.setRepoDependencyReview(1, { enabled: false, required: 3, since }), { enabled: false, required: 3, since })
+  assert.deepEqual(await db.setRepoDependencyReview(1, { enabled: true, required: 2 }), { enabled: true, required: 2, since }, 'its commit kept, none given')
   assert.deepEqual((await db.listRepoDependencyReviews()).get(1), { enabled: true, required: 2, since })
 
   await publish(db, users.alice, context('pkg', '1.0.0'), ['one'])

@@ -2108,8 +2108,10 @@ asked once a request, sixteen at once, its answer kept in the instance a
 minute. Registered, it replaces the commit a repository is reviewed since:
 the repository's page shows none, `POST
 /api/admin/repositories/dependency-review` refuses one (`400
-since-unsupported`), one stored before is left unread, and the connected
-repositories' list tells `reviewedDependencies`. Every version that neither
+since-unsupported`), one stored before is left unread and kept as it is,
+the page saving its other settings without it, for a server registering
+none again, and the connected repositories' list tells
+`reviewedDependencies`. The endpoint answers the setting as stored. Every version that neither
 it nor as many reviewers' reviews as required pass is unreviewed.
 
 

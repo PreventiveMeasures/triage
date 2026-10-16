@@ -372,6 +372,8 @@ test('where the host registers reviewed dependencies, they replace the commit re
   assert.equal((await send(path, { body: { repoId: 1, enabled: true, required: 1, since: null } })).status, 200)
   assert.equal((await send('/api/admin/repositories?scope=connected')).body.reviewedDependencies, true, 'the page told so, to hide the commit')
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, since })
+  assert.deepEqual((await send(path, { body: { repoId: 1, enabled: true, required: 1 } })).body.dependencyReview, { enabled: true, required: 1, since },
+    'the commit stored before they were registered kept, should they be no more')
   const read = github(t, PULL)
   const answer = await send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`)
   assert.deepEqual(answer.body.review, { required: 1, since: null, canReview: true, reviewedDependencies: true, toReview: 2, unreviewed: 0, unsupported: 1 },
