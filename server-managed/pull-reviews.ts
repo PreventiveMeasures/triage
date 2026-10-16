@@ -31,11 +31,13 @@ const MAX_PATH = 1000
 const COMMIT = /^[a-f\d]{40}$/u
 
 // The fields a pull request's reviews are read by, its threads' places and
-// links with them for its popup (`detail`).
+// links with them for its popup (`detail`). A reviewer requested is never an
+// EnterpriseTeam: GitHub's docs name one, its API knows none, and a query
+// naming one fails whole.
 export const reviewFields = (threads: number, detail: boolean) => `headRefOid
   latestReviews(first: ${REVIEWERS}) { totalCount nodes { author { ${ACTOR} } state submittedAt commit { oid }${detail ? ' body' : ''} } }
   reviewRequests(first: ${REQUESTS}) { totalCount nodes { requestedReviewer { __typename ... on User { login databaseId } ... on Bot { login databaseId }
-    ... on Mannequin { login databaseId } ... on Team { slug } ... on EnterpriseTeam { slug } } } }
+    ... on Mannequin { login databaseId } ... on Team { slug } } } }
   reviewThreads(last: ${threads}) { totalCount nodes { isResolved isOutdated${detail ? ' path line originalLine' : ''}
     comments(first: 1) { nodes { author { ${ACTOR} } body${detail ? ' url' : ''} } } } }
   firstComments: comments(first: ${FIRST_COMMENTS}) { nodes { author { ${ACTOR} } body updatedAt } }
@@ -131,7 +133,7 @@ type Reviewer = { login: string | null; id: number | null; team?: string; workfl
 // The reviewers, each once: by their latest review, its state and commit;
 // whose is requested (again, for one who reviewed), a user, a bot (Copilot's
 // code review, asked for, is its bot's) or an imported account's mannequin;
-// a team's, or an enterprise's team's, by its slug. Codex's reviews are its
+// a team's, by its slug. Codex's reviews are its
 // summary's where it has one (`codex`). How many requested GitHub named no
 // one for, as `unnamed`, counted with those past the ones read.
 function reviewersOf(node: ReviewNode, author: string | null, codex: boolean) {
@@ -146,7 +148,7 @@ function reviewersOf(node: ReviewNode, author: string | null, codex: boolean) {
   let unnamed = 0
   for (const request of node.reviewRequests?.nodes ?? []) {
     const reviewer = request?.requestedReviewer
-    if (reviewer?.__typename === 'Team' || reviewer?.__typename === 'EnterpriseTeam') {
+    if (reviewer?.__typename === 'Team') {
       if (typeof reviewer.slug === 'string' && reviewer.slug) reviewers.push({ login: null, id: null, team: reviewer.slug.slice(0, 100), state: null, requested: true, commit: null, at: null })
       else unnamed++
       continue

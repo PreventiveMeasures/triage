@@ -1910,7 +1910,13 @@ github-status-403`, the tab saying so, where GitHub refuses them) and reads a
 pull request's checks only with **Checks: read** and **Commit statuses:
 read**, its tiles showing none where GitHub refuses those alone (see GitHub
 App setup), and likewise its reviews, threads and comments where GitHub
-refuses those alone. Access is checked again before they are sent.
+refuses those alone. Access is checked again before they are sent. A list
+GitHub takes too long to read (it stops a query after ten seconds) is `502
+github-timeout`; one it answers with errors of no type GitHub names, as it
+rejects a query naming a field or type its API doesn't know, `502
+github-malformed`. GitHub's own words for those errors are logged on the
+server. Its API knows no `EnterpriseTeam`, though its docs' schema does, so a
+review requested of a team is read by `Team` alone.
 
 `GET /api/admin/repositories/item?repoId=…&number=…` answers one issue or
 pull request, as its popup shows it, read and checked as a page is: its
