@@ -48,6 +48,23 @@ describe('build: minifying Lit templates', () => {
     assert.equal(out, 'html`<div class="a"><span>hi</span></div>`')
   })
 
+  it('keeps a nested template\'s edge spaces beside text or an expression, which are a word\'s', () => {
+    // ui/view/dialogs/repository-item-dialog.js: a merged pull request
+    // read "mergedby Nikita", its branch "feature→ main".
+    assert.equal(minify('html`<span>merged${by ? html` by <strong>${by}</strong>` : nothing} ${at}</span>`'),
+      'html`<span>merged${by ? html` by <strong>${by}</strong>` : nothing} ${at}</span>`')
+    assert.equal(minify('html`<code>${head}</code>${base ? html` → <code>${base}</code>` : nothing}`'),
+      'html`<code>${head}</code>${base ? html` → <code>${base}</code>` : nothing}`')
+    assert.equal(minify('html`${n} items  `'), 'html`${n} items `', 'one space, at either edge')
+    assert.equal(minify('html`  ${n}`'), 'html` ${n}`')
+  })
+
+  it('still drops a template\'s edge whitespace beside a tag, or a line\'s break and indent', () => {
+    assert.equal(minify('html`\n    <li>${x}</li>\n  `'), 'html`<li>${x}</li>`')
+    assert.equal(minify('html` <li>${x}</li> `'), 'html`<li>${x}</li>`')
+    assert.equal(minify('html`\n      ${a}\n      ${b}\n    `'), 'html`${a} ${b}`')
+  })
+
   it('preserves SVG sibling shapes, labels, and dynamic fills in production', () => {
     const source = 'svg`<rect width="14" height="14" fill=${color}/><text fill=${ink}>${label}</text>`'
     assert.equal(minify(source), source)

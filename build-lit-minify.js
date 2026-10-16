@@ -35,12 +35,34 @@
 // Use esbuild for static CSS templates, just as for imported CSS files.
 // Leave interpolated CSS untouched: the library's semicolon placeholder
 // is not a valid stand-in for arbitrary CSS values, units, or selectors.
+//
+// A template is minified as a document of its own, so its edges are a
+// block's and the whitespace at them goes. But a nested template is a
+// fragment set inline among others, and whitespace at its edge beside
+// text or an expression is a word's space:
+//
+//     merged${by ? html` by <strong>${by}</strong>` : nothing}
+//                                    → "mergedby Nikita"
+//
+// So that whitespace is kept, as one space, where it is on the line of
+// what it is beside, as a word's space is. Beside a tag, or a line's
+// break and its indent, a template's own layout, it still goes, as the
+// rest of the collapsing does.
 import { transformSync } from 'esbuild'
 import { defaultShouldMinifyCSS, defaultStrategy, minifyHTMLLiterals } from 'minify-html-literals'
 
+const SPACED_START = /^[\t ]+[^\s<]/u
+const SPACED_END = /[^\s>][\t ]+$/u
+function minifyFragment(html, options = {}) {
+  const out = defaultStrategy.minifyHTML(html, { ...options, minifyCSS: false })
+  const start = SPACED_START.test(html) && !/^\s/u.test(out) ? ' ' : ''
+  const end = SPACED_END.test(html) && !/\s$/u.test(out) ? ' ' : ''
+  return `${start}${out}${end}`
+}
+
 const litStrategy = {
   ...defaultStrategy,
-  minifyHTML: (html, options = {}) => defaultStrategy.minifyHTML(html, { ...options, minifyCSS: false }),
+  minifyHTML: minifyFragment,
   minifyCSS: (css) => transformSync(css, { loader: 'css', minify: true }).code.trim(),
 }
 
