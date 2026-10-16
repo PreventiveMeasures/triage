@@ -1870,11 +1870,13 @@ texts, and anyone may name one in a comment. An issue is shown with a
 session whose pull request closes it, or whose branch the Claude GitHub App
 named for it (`claude/issue-12-…`). A tile, as Issues' are, is its agent's
 mark (Claude's burst, Codex's OpenAI mark), a rail beside a line each, none
-wrapping: its title (its first task's, of two lines at most); its author,
-age, how many tasks it holds (only where its pull requests' and commits'
-chips don't count them all; its popup always says) and its lines; its pull requests, commits and
-issues in their states' colors, as many as fit and how many more; and its
-branch. An app agent's mark is its GitHub App's or account's avatar, which the
+wrapping: its title (its first task's, of two lines at most); its author
+(a user's, none where only an agent's own account authored it, its mark
+saying who), age, how many tasks it holds (only where its pull requests'
+and commits' chips don't count them all; its popup always says) and its
+lines; its pull requests, commits and issues in their states' colors, as
+many as fit and how many more, a single task's age and lines at the end
+of their row rather than the line above; and its branch. An app agent's mark is its GitHub App's or account's avatar, which the
 server fetches from GitHub once and keeps (`/api/avatar/app-<id>` or
 `/api/avatar/user-<id>`, for those agents alone). A tile clicked opens its session's popup, as an issue's does: who,
 when, its state, tasks and size, its pull requests and issues, each opening

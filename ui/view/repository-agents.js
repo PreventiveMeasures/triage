@@ -18,7 +18,7 @@ import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, plainClick, sessionLink } from './repository-tiles.js'
 import { activityPicker } from './repository-activity.js'
-import { githubUser, githubUserName } from './github-users.js'
+import { commitAgent, githubUser, githubUserName } from './github-users.js'
 
 export { sessionLink }
 
@@ -328,8 +328,9 @@ class RepositoryAgents extends LitElement {
 
   // A tile: its agents' marks, a rail beside its lines, each one alone: its
   // title, of two at most, opening its popup (where it ran, as a link); its
-  // author, age, how many tasks (where its pull requests' and commits'
-  // chips don't count them all) and lines;
+  // author, a user, none for an agent's own account, its marks saying who it
+  // is; age, how many tasks (where its pull requests' and commits' chips
+  // don't count them all) and lines, those of a single task beside its chip;
   // its pull requests, commits and
   // issues, those that fit, each with how many follow it, seen only past the
   // last of them shown (report.css); and its branch.
@@ -337,10 +338,21 @@ class RepositoryAgents extends LitElement {
     const repo = this.repository.repo
     const link = sessionLink(session, repo)
     const time = session.updatedAt == null ? null : new Date(session.updatedAt)
+    const author = session.authors.find(login => !commitAgent(login))
     const tasks = session.pulls.length + session.commits.length
     // How many tasks, said only where its chips, its pull requests' and its
     // commits', don't count them all.
     const counted = tasks !== session.pulls.length + session.commits.length
+    const age = time ? html`<time datetime=${time.toISOString()}>${compactTime(session.updatedAt)}</time>` : nothing
+    const size = session.additions || session.deletions ? html`<span class="issue-diff"><span class="is-added">+${session.additions.toLocaleString('en-US')}</span>
+      <span class="is-deleted">−${session.deletions.toLocaleString('en-US')}</span></span>` : nothing
+    const single = tasks === 1
+    const meta = [
+      author ? html`<span class="issue-author">${githubUser(author)}</span>` : nothing,
+      single ? nothing : age,
+      tasks === 0 ? html`<span>no pull request</span>` : counted ? html`<span>${tasks} tasks</span>` : nothing,
+      single ? nothing : size,
+    ].filter(part => part !== nothing)
     const chips = [
       ...session.pulls.map(pull => [`is-${pull.draft && pull.state === 'open' ? 'draft' : pull.state}`, `pull/${pull.number}`, `#${pull.number}`,
         { kind: 'pulls', ...pull }]),
@@ -354,17 +366,12 @@ class RepositoryAgents extends LitElement {
       <span class="issue-lines">
         ${link ? html`<a class="issue-name" href=${link} target="_blank" rel="noopener noreferrer">${session.title || '(no title)'}</a>`
           : html`<button type="button" class="issue-name">${session.title || '(no title)'}</button>`}
-        <span class="issue-meta">
-          ${session.authors[0] ? html`<span class="issue-author">${githubUser(session.authors[0])}</span>` : nothing}
-          ${time ? html`<time datetime=${time.toISOString()}>${compactTime(session.updatedAt)}</time>` : nothing}
-          ${tasks === 0 ? html`<span>no pull request</span>` : counted ? html`<span>${tasks} tasks</span>` : nothing}
-          ${session.additions || session.deletions ? html`<span class="issue-diff"><span class="is-added">+${session.additions.toLocaleString('en-US')}</span>
-            <span class="is-deleted">−${session.deletions.toLocaleString('en-US')}</span></span>` : nothing}
-        </span>
-        ${chips.length > 0 ? html`<span class="agent-chips">${chips.slice(0, MAX_CHIPS).map(([kind, path, label, preview], index) => html`<a class=${`agent-chip ${kind}`}
+        ${meta.length > 0 ? html`<span class="issue-meta">${meta}</span>` : nothing}
+        ${chips.length > 0 ? html`<span class="agent-task-row"><span class="agent-chips">${chips.slice(0, MAX_CHIPS).map(([kind, path, label, preview], index) => html`<a class=${`agent-chip ${kind}`}
           href=${repo ? `https://github.com/${repo}/${path}` : nothing} target="_blank" rel="noopener noreferrer"
           @click=${preview ? event => this.openItem(event, preview.number, preview) : nothing}
-          data-rest=${index < chips.length - 1 ? chips.length - 1 - index : nothing}>${label}</a>`)}</span>` : nothing}
+          data-rest=${index < chips.length - 1 ? chips.length - 1 - index : nothing}>${label}</a>`)}</span>${single && (age !== nothing || size !== nothing)
+          ? html`<span class="issue-meta">${age}${size}</span>` : nothing}</span>` : nothing}
         ${session.branches[0] ? html`<span class="issue-branch"><code>${session.branches[0]}</code>${session.branches.length > 1
           ? html`<span>+${session.branches.length - 1}</span>` : nothing}</span>` : nothing}
       </span>
