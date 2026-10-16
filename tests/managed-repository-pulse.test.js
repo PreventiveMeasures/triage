@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { namedAccounts } from '../common/managed/github-logins.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { historyPageStore } from '../server-managed/npm-kept.ts'
+import { historyPageStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { historyFrom } from '../server-managed/repository-history.ts'
 import { StatsPending, YEAR_COMMITS, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
   from '../server-managed/repository-pulse.ts'
@@ -325,6 +325,22 @@ test('the pulse counts the year from the default branch\'s commits as Commits ke
   const last = (body, weeks) => body.stats.weeks.slice(-weeks).reduce((sum, week) => sum + week.commits, 0)
   assert.deepEqual([made(month.body), made(second.body)], [last(month.body, 4), last(second.body, 13)])
   assert.deepEqual([month.body.stats.periodPunch, 'punches' in month.body.stats], [true, false])
+})
+
+test('a head moved on, its year read anew, the year last counted answered meanwhile', async t => {
+  const request = await fixture(t)
+  const all = chain(1300, Date.now())
+  const commits = all.slice(600)
+  github(t, { commits })
+  const total = body => body.stats.weeks.reduce((sum, week) => sum + week.commits, 0)
+  await request({ repoId: '1' })
+  assert.equal(total((await request({ repoId: '1' })).body), 700)
+  commits.unshift(...all.slice(0, 600))
+  await repositoryReadStore(request.db).write('1\0pulse-head', { sha: all[0].oid }, Date.now())
+  const moved = await request({ repoId: '1', weeks: '1' })
+  assert.deepEqual([moved.body.reading, total(moved.body)], [500, 700], 'five pages read, the year as it was')
+  const counted = await request({ repoId: '1', weeks: '1' })
+  assert.deepEqual([counted.body.reading, total(counted.body)], [null, 1300])
 })
 
 test('pages kept without lines, as GitHub\'s REST API lists them, are read again for the pulse', async t => {

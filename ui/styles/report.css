@@ -3874,6 +3874,9 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   transition: opacity .15s;
   &.is-reading { opacity: .5; }
 }
+/* What the period reads still, another period's meanwhile, faded. */
+.pulse-panel.is-reading { opacity: .5; transition: opacity .15s; }
+.pulse-updating { margin: -.25rem 0; }
 /* The tiles a row where all fit, else three a row, two where narrower. */
 .pulse-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
 @container pulse (width >= 32rem) { .pulse-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

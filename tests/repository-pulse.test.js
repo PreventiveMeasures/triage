@@ -291,7 +291,7 @@ test('a quarter, a column a week, every other one named; this week\'s figures so
   assert.match(text, /class="pulse-tip-when">Week of Oct 11 <span>so far<\/span>/u)
 })
 
-test('another period is read for itself, the last one shown faded meanwhile; read, it is kept', async t => {
+test('another period is shown at once from the year read, its pull requests and issues read for it meanwhile; read, it is kept', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: NOW })
   let release
   answer = (repoId, weeks) => weeks === 4 ? Promise.resolve(pulse()) : new Promise(resolve => { release = () => resolve(pulse({ weeks, since: FIRST, stats: stats() })) })
@@ -302,14 +302,21 @@ test('another period is read for itself, the last one shown faded meanwhile; rea
   let text = templateText(view.render())
   assert.deepEqual(requests.at(-1), [7, 52])
   assert.match(text, /aria-pressed=true [^\n]*>Year</u)
-  assert.match(text, /class=pulse-scroll is-reading aria-busy=true/u)
-  assert.match(text, /Sep 20 – Oct 15/u)
+  assert.match(text, /class=pulse-scroll aria-busy=true/u, 'not faded')
+  assert.match(text, /Oct 19, 2025 – Oct 15, 2026/u)
+  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">369<\/span>/u, 'the year\'s commits, of the month\'s year')
+  assert.equal(text.split('class=pulse-column').length - 1, 104)
+  assert.match(text, /Pull requests merged<\/span>\s*<span class="pulse-tile-value">–<\/span>\s*<span class="pulse-tile-note">Reading…/u)
+  assert.match(text, /<h3>Pull requests<\/h3>[^]*?>Merged<span class="n">–<\/span>[^]*?<p class="pulse-note" role="status">Reading…<\/p>/u, 'listed once read')
+  assert.match(text, /<figure class=pulse-panel is-reading aria-busy=true>\s*<figcaption class="pulse-head"><h3>When commits are made/u, 'the month\'s hours faded')
   release()
   await setImmediate()
   text = templateText(view.render())
   assert.match(text, /class=pulse-scroll aria-busy=false/u)
   assert.match(text, /Oct 19, 2025 – Oct 15, 2026/u)
   assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">369<\/span>\s*<span class="pulse-tile-note">to the default branch/u, 'no year before it to compare')
+  assert.match(text, /Pull requests merged<\/span>\s*<span class="pulse-tile-value">12</u)
+  assert.match(text, /<figure class=pulse-panel aria-busy=false>\s*<figcaption class="pulse-head"><h3>When commits are made/u)
   assert.equal(text.split('class=pulse-column').length - 1, 104, 'a column a week in each plot')
   assert.match(text, /style=--at: 1><span>15<\/span>/u, 'commits\' scale to a round top over the most')
   const axis = text.match(/class=pulse-axis aria-hidden="true">[^]*?<\/div>/u)[0]
@@ -352,6 +359,36 @@ test('a year not read whole yet: the rest shown, how many commits are read, aske
   await setImmediate()
   assert.equal(requests.length, 15)
   assert.match(templateText(view.render()), /class=pulse-column/u)
+})
+
+test('a year read again for a head moved on: the year as it was shown meanwhile, the server\'s or the last read, asked again a second apart while each answer reads more', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
+  let read = 500
+  answer = () => Promise.resolve(pulse({ reading: read }))
+  const view = shown()
+  view.render()
+  await setImmediate()
+  let text = templateText(view.render())
+  assert.match(text, /class="pulse-note pulse-updating" role="status">Reading this repository’s latest commits… 500 of the last year so far</u)
+  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">26<\/span>\s*<span class="pulse-tile-note">↓ 21% from 33/u, 'the year as it was')
+  assert.equal(text.split('class=pulse-column').length - 1, 56)
+  // An answer telling no year, the last read shown.
+  answer = () => Promise.resolve(pulse({ stats: null, reading: (read += 500) }))
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  text = templateText(view.render())
+  assert.equal(requests.length, 2)
+  assert.match(text, /latest commits… 1,000 of the last year so far/u)
+  assert.equal(text.split('class=pulse-column').length - 1, 56)
+  assert.doesNotMatch(text, /pulse-pending/u)
+  answer = () => Promise.resolve(pulse())
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  text = templateText(view.render())
+  assert.equal(requests.length, 3)
+  assert.doesNotMatch(text, /pulse-updating/u)
+  t.mock.timers.tick(5000)
+  assert.equal(requests.length, 3, 'read whole, not asked again')
 })
 
 test('a year GitHub\'s statistics count, while GitHub computes them, or its lines: asked again a while apart, a dozen times, then left to the reader', async t => {
