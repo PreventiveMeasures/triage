@@ -18,7 +18,9 @@
 // or by its branches' prefix, the server's to read, and named to the client
 // by its id, name and avatar (AppAgent). Such an agent names no session:
 // a pull request of its is a session alone, with its branch; Claude's or
-// Codex's marks on its work show those as its tools.
+// Codex's marks on its work show those as its tools. A pull request labelled
+// for an agent (labelAgents) is that agent's too, where its own texts and
+// branch name none: the mark one who ran it gives work it left unmarked.
 
 // 'claude', 'codex', or an app agent's id.
 export type Agent = string
@@ -104,22 +106,35 @@ export function trailerBlock(text: string): string {
   return others === 0 || (lines.some(line => /^signed-off-by[ \t]*:/iu.test(line)) && trailers * 3 >= others) ? block : ''
 }
 
+// The agents of those whose ids are `ids` that `labels` name (a pull
+// request's): a label an agent's id, regardless of case, alone or after
+// `agent:` or `agent/` (`Codex`, `agent: claude`).
+const LABEL = /^(?:agent[:/] ?)?([a-z][a-z\d-]*)$/u
+export function labelAgents(labels: unknown[], ids: readonly string[]): Agent[] {
+  return [...new Set(labels.flatMap(label => {
+    const id = typeof label === 'string' ? LABEL.exec(label.trim().toLowerCase())?.[1] : undefined
+    return id !== undefined && ids.includes(id) ? [id] : []
+  }))]
+}
+
 // The sessions and tasks `texts` link, whether they carry Claude's marks and
 // Codex's, and the agents of `apps` whose fingerprints start a line of them
 // (not one a text quotes, as one describing it may), whose account `author`
-// is, by its id and login both, or whose prefix the branch `branch` is under.
+// is, by its id and login both, or whose prefix the branch `branch` is under;
+// Claude, Codex or the agents of `apps` its `labels` name (labelAgents).
 export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = [], branch: string | null = null,
-  author: AgentAuthor | null = null): AgentSignals {
+  author: AgentAuthor | null = null, labels: unknown[] = []): AgentSignals {
   const strings = texts.filter((text): text is string => typeof text === 'string')
   const found = (pattern: RegExp) => [...new Set(strings.flatMap(text => [...text.matchAll(pattern)].map(match => match[1]!)))].slice(0, MAX_LINKS)
   const lines = strings.flatMap(text => text.split('\n').map(line => line.trimStart()))
   const login = author?.login.toLowerCase()
   const authored = ({ account }: AppAgentMarks) => author !== null && account !== undefined && account.id === author.id
     && account.logins.some(name => name.toLowerCase() === login)
-  return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: strings.some(text => CLAUDE_MARK.test(text)),
-    codex: strings.some(text => CODEX_MARK.test(trailerBlock(text))),
+  const labelled = labelAgents(labels, ['claude', 'codex', ...apps.map(app => app.id)])
+  return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: labelled.includes('claude') || strings.some(text => CLAUDE_MARK.test(text)),
+    codex: labelled.includes('codex') || strings.some(text => CODEX_MARK.test(trailerBlock(text))),
     agents: apps.filter(app => (app.fingerprint && lines.some(line => line.startsWith(app.fingerprint!)))
-      || authored(app) || branch?.startsWith(app.prefix)).map(app => app.id) }
+      || authored(app) || branch?.startsWith(app.prefix) || labelled.includes(app.id)).map(app => app.id) }
 }
 
 // The agent a branch's name says made it, and the issue or pull request the

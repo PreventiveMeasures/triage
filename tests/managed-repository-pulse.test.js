@@ -9,7 +9,7 @@ import { historyFrom } from '../server-managed/repository-history.ts'
 import { PULSE_YEAR_VERSION, StatsPending, YEAR_COMMITS, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
   from '../server-managed/repository-pulse.ts'
 import { createSession } from '../server-managed/session.ts'
-import { agentCommits, agentMerges } from '../server-managed/agent-merges.ts'
+import { agentCommits, agentMerges, sameMerges } from '../server-managed/agent-merges.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
@@ -169,8 +169,8 @@ test('a year counted from its commits: a week a row from its first Sunday, merge
   assert.deepEqual(read.weeks[1], { week: first + WEEK, days: [1, 0, 1, 0, 0, 0, 0], commits: 2, additions: 11, deletions: 1,
     dayLines: [[1, 1], none, [10, 0], none, none, none, none], agentDays: noAgents })
   assert.deepEqual(read.contributors, [
-    { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]], days: [[first + DAY, 1, 3, 1], [first + WEEK, 1, 1, 1]] },
-    { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]], days: [[first + WEEK + 2 * DAY, 1, 10, 0]] },
+    { login: 'ada', id: 7, name: 'Ada', weeks: [[first, 1, 3, 1], [first + WEEK, 1, 1, 1]], days: [[first + DAY, 1, 3, 1, 0], [first + WEEK, 1, 1, 1, 0]] },
+    { login: null, id: null, name: 'Alan Kay', weeks: [[first + WEEK, 1, 10, 0]], days: [[first + WEEK + 2 * DAY, 1, 10, 0, 0]] },
   ])
   assert.equal(read.punch[1][12], 2, 'Ada\'s Monday 10:00 UTC and Sunday 10:00 UTC… two hours east')
   assert.equal(read.punch[2][23], 1, 'one whose author told no time zone, in UTC')
@@ -193,6 +193,8 @@ test('a year counts each day the commits an agent made or co-authored: one of Gi
   ], first)
   assert.deepEqual(read.weeks.slice(0, 2).map(week => [week.days, week.agentDays]), [
     [[0, 3, 2, 0, 0, 0, 0], [0, 1, 1, 0, 0, 0, 0]], [[2, 0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0]]])
+  assert.deepEqual(read.contributors.find(person => person.login === 'ada').days.map(([at, commits, , , agents]) => [at, commits, agents]),
+    [[first + DAY, 3, 1], [first + WEEK, 1, 0]], 'each contributor\'s days, those with agents too')
 })
 
 test('the agents\' pull requests merged in the year: by their branches, the most recently updated read first, a few queries an answer, on from what was read', async t => {
@@ -218,6 +220,35 @@ test('the agents\' pull requests merged in the year: by their branches, the most
   // A year begun since, those merged before it left out.
   const later = await agentMerges('org/repo', 'token', since + 300 * 12 * HOUR, again)
   assert.ok(later.merges.every(([, at]) => at >= since + 300 * 12 * HOUR))
+})
+
+test('a pull request labelled for an agent is an agent\'s, whatever its branch; one labelled for none, not', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const when = new Date(since + DAY).toISOString()
+  const pull = (merge, branch, labels) => ({ updatedAt: when, mergedAt: when, headRefName: branch, labels: { nodes: labels.map(name => ({ name })) },
+    mergeCommit: { oid: shaOf(merge), parents: { totalCount: 1 } }, commits: { nodes: [] } })
+  const queries = []
+  const pulls = mergedPulls([pull(1, 'fix/review', ['bug', 'codex']), pull(2, 'ui/tabs', ['Agent: Claude']), pull(3, 'perf/reads', ['cursor']),
+    pull(4, 'fix/by-hand', ['bug', 'agent:', 'codex-ish']), pull(5, 'feat/none', [])])
+  github(t, { graphql: body => { queries.push(body.query); return pulls(body) } })
+  const read = await agentMerges('org/repo', 'token', since, null)
+  assert.deepEqual(read.merges.map(([sha]) => sha).toSorted(), [1, 2, 3].map(shaOf).toSorted())
+  assert.match(queries[0], /labels\(first: 100\) \{ nodes \{ name \} \}/u, 'as many of each one\'s labels as GitHub gives a page')
+})
+
+test('a pull request whose agent\'s label is taken off is read again, none of what it brought an agent\'s', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const [merged, later] = [new Date(since + DAY).toISOString(), new Date(since + 2 * DAY).toISOString()]
+  const pull = (merge, labels, own = [], parents = 1, updatedAt = merged) => ({ updatedAt, mergedAt: merged, headRefName: 'fix/review',
+    labels: { nodes: labels.map(name => ({ name })) }, mergeCommit: { oid: shaOf(merge), parents: { totalCount: parents } },
+    commits: { nodes: own.map(oid => ({ commit: { oid: shaOf(oid), messageHeadline: `Commit ${oid}`, changedFilesIfAvailable: 1 } })) } })
+  const pulls = [pull(1, ['codex'], [2, 3], 2), pull(4, ['codex'], [5, 6]), pull(7, ['codex'])]
+  github(t, { graphql: mergedPulls(pulls) })
+  const first = await agentMerges('org/repo', 'token', since, null)
+  assert.deepEqual([first.merges.map(([sha]) => sha).toSorted(), first.rebases.map(([sha]) => sha)], [[1, 2, 3, 4, 7].map(shaOf).toSorted(), [shaOf(4)]])
+  pulls.splice(0, pulls.length, pull(1, ['bug'], [2, 3], 2, later), pull(4, [], [5, 6], 1, later), pull(7, ['codex']))
+  const second = await agentMerges('org/repo', 'token', since, first)
+  assert.deepEqual([second.merges.map(([sha]) => sha), second.rebases], [[shaOf(7)], []])
 })
 
 test('an agent\'s pull request merged with a merge commit brings its own commits, the merge itself counting none; one squashed, its merge commit alone', async t => {
@@ -266,6 +297,54 @@ test('a year counts the commits merged from an agent\'s pull request with agents
   assert.equal(second.body.pulls, null)
   assert.deepEqual([second.body.stats.weeks.reduce((sum, week) => sum + week.commits, 0), second.body.stats.weeks.flatMap(week => week.agentDays).reduce((sum, count) => sum + count, 0)],
     [50, 1])
+})
+
+test('a pull request labelled for an agent, or no longer, after its year was counted: the merged pull requests read again once those read are no longer fresh, the year counted again where what they bring changed', async t => {
+  const request = await fixture(t)
+  const commits = chain(50, Date.now())
+  const at = Date.now()
+  const pull = (updated, labels) => ({ updatedAt: new Date(at + updated).toISOString(), mergedAt: new Date(at).toISOString(), headRefName: 'fix/review',
+    labels: { nodes: labels.map(name => ({ name })) }, mergeCommit: { oid: commits[3].oid } })
+  const pulls = [pull(0, [])]
+  const asked = github(t, { commits, graphql: mergedPulls(pulls) })
+  const agents = async () => (await request({ repoId: '1' })).body.stats.weeks.flatMap(week => week.agentDays).reduce((sum, count) => sum + count, 0)
+  const store = repositoryReadStore(request.db)
+  const mergesKey = `1\0pulse-merges\0${PULSE_YEAR_VERSION}`
+  // The merged pull requests read three minutes ago, no longer fresh: what
+  // was kept removed first, the store keeping none older over it.
+  const age = async () => {
+    const { value } = await store.read(mergesKey)
+    await store.remove(mergesKey)
+    await store.write(mergesKey, value, Date.now() - 3 * 60_000)
+  }
+  assert.equal(await agents(), 0)
+  pulls[0] = pull(1000, ['codex'])
+  const before = mergedQueries(asked)
+  assert.equal(await agents(), 0, 'those read fresh, not read again')
+  assert.equal(mergedQueries(asked), before)
+  await age()
+  assert.equal(await agents(), 0, 'the year as kept answered while they are read again behind it')
+  await request.settled()
+  assert.equal(mergedQueries(asked), before + 1)
+  assert.equal(await agents(), 1, 'labelled, its commit with agents, the head where it was')
+  pulls[0] = pull(2000, [])
+  await age()
+  await agents()
+  await request.settled()
+  assert.equal(await agents(), 0, 'its label taken off, none')
+  const recounted = (await store.read(`1\0pulse-year-last`)).at
+  await age()
+  await agents()
+  await request.settled()
+  assert.equal(await agents(), 0)
+  assert.equal((await store.read(`1\0pulse-year-last`)).at, recounted, 'read again, nothing changed, not counted again')
+})
+
+test('two reads of the agents\' pull requests bring the same commits whatever order each read them in', () => {
+  const read = (merges, rebases = []) => ({ merges, rebases, through: 1, next: null })
+  assert.ok(sameMerges(read([['a', 1], ['b', 2]], [['c', 3, ['x', 'y']]]), read([['b', 2], ['a', 1]], [['c', 3, ['x', 'y']]])))
+  assert.ok(!sameMerges(read([['a', 1]]), read([['a', 1], ['b', 2]])))
+  assert.ok(!sameMerges(read([], [['c', 3, ['x', 'y']]]), read([], [['c', 3, ['x']]])))
 })
 
 test('when a period\'s commits are made, where counted from them: its last weeks\' alone; else, as GitHub\'s statistics count it, the year\'s or more', () => {
@@ -376,13 +455,15 @@ async function fixture(t, { role = 'admin', tokens = userTokens } = {}) {
   await db.createTeam('team', 'Team', Date.now())
   await db.setTeamRepo('team', 1, 'src/allowed')
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
-  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
+  // What is read behind an answer, kept to be waited for.
+  const tracked = []
+  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track(work) { tracked.push(work) } })
   const request = async (query, { method = 'GET' } = {}) => {
     const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
     await handler({ method, url: `/api/admin/repositories/pulse?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
     return { status: res.status, body: JSON.parse(res.body) }
   }
-  return Object.assign(request, { db })
+  return Object.assign(request, { db, settled: () => Promise.all(tracked.splice(0)) })
 }
 
 test('the pulse counts the year from the default branch\'s commits as Commits keeps them, read a few queries an answer, kept by its head; the period\'s pull requests and issues apart', async t => {

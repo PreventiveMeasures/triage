@@ -595,7 +595,7 @@ function pulseStats(now: number, span: number) {
   const people = ['ChristopherTuring', 'ada', 'grace-hopper', 'claude[bot]', 'linus', 'margaret', 'kenthompson', 'barbara-liskov', 'dependabot[bot]', '=Alan Kay']
   const shares = [34, 18, 12, 10, 7, 5, 4, 4, 3, 1]
   const first = pulseSince(52, now)
-  const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number][] }]))
+  const theirs = new Map(people.map(login => [login, { weeks: [] as [number, number, number, number][], days: [] as [number, number, number, number, number][] }]))
   const weeks = Array.from({ length: 52 }, (_, index) => {
     const week = first + index * WEEK_MS
     const holiday = index >= 10 && index <= 11
@@ -616,11 +616,14 @@ function pulseStats(now: number, span: number) {
       // Their commits on the week's days that had any, their lines with them.
       const busy = days.flatMap((count, day) => count > 0 ? [day] : [])
       const made = busy.map(() => 0)
+      const withAgents = busy.map(() => 0)
       const agent = login.endsWith('[bot]')
       for (let commit = 0; commit < theirCommits; commit++) {
         const slot = Math.floor(random() * busy.length)
         made[slot]!++
-        if (agent || random() < 0.1 + index / 52 * 0.5) agentDays[busy[slot]!]!++
+        if (!agent && random() >= 0.1 + index / 52 * 0.5) continue
+        agentDays[busy[slot]!]!++
+        withAgents[slot]!++
       }
       for (const [slot, day] of busy.entries()) {
         if (made[slot] === 0) continue
@@ -628,7 +631,7 @@ function pulseStats(now: number, span: number) {
         const [dayAdded, dayRemoved] = [Math.round(added * share), Math.round(removed * share)]
         dayLines[day]![0] += dayAdded
         dayLines[day]![1] += dayRemoved
-        theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved])
+        theirs.get(login)!.days.push([week + day * 86_400_000, made[slot]!, dayAdded, dayRemoved, withAgents[slot]!])
       }
     }
     return { week, days, commits: total, additions, deletions, dayLines, agentDays: agentDays.map((count, day) => Math.min(count, days[day]!)) }

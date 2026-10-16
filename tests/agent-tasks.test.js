@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { agentBranch, agentSessions, agentSignals } from '../common/managed/agent-tasks.ts'
+import { agentBranch, agentSessions, agentSignals, labelAgents } from '../common/managed/agent-tasks.ts'
 
 const none = { sessions: [], tasks: [], claude: false, codex: false, agents: [] }
 const session = id => ({ sessions: [id], tasks: [], claude: true, codex: false, agents: [] })
@@ -117,6 +117,18 @@ test('pull requests from forks, of one branch name, are a session each, apart fr
   // A fork's branch named for an issue is that issue's all the same.
   const [named] = agentSessions({ pulls: [pull(5, 'claude/issue-12-fix', none, { fork: 'ada' })], issues: [issue(12)] })
   assert.deepEqual([named.branches, named.issues.map(item => item.number)], [['ada:claude/issue-12-fix'], [12]])
+})
+
+test('a pull request labelled for an agent is its: a label its id, regardless of case, alone or after agent: or agent/', () => {
+  assert.deepEqual(labelAgents(['Codex', 'agent: claude', 'Agent/neo', ' copilot ', 'bug', 'codex-ish', 'agent:', null, 7], ['claude', 'codex', 'neo', 'copilot']),
+    ['codex', 'claude', 'neo', 'copilot'])
+  assert.deepEqual(labelAgents(['codex', 'Codex', 'cursor'], ['codex']), ['codex'], 'each once, of those known alone')
+  assert.deepEqual([agentSignals(['Work'], apps, 'fix/review', null, ['codex']), agentSignals(['Work'], apps, 'ui/tabs', null, ['Claude', 'enhancement']),
+    agentSignals(['Work'], apps, 'perf/reads', null, ['agent:neo']), agentSignals(['Work'], apps, 'fix/review', null, ['bug', 'cursor'])],
+  [{ ...none, codex: true }, { ...none, claude: true }, neo, none], 'Claude\'s, Codex\'s, or an app agent\'s; one the Agents tab knows no agent of, none')
+  // Its pull request a session of Codex's, with its branch.
+  const [labelled] = agentSessions({ pulls: [pull(560, 'fix/review', { ...none, codex: true })] })
+  assert.deepEqual([labelled.id, labelled.agents, labelled.branches], ['pull-560', ['codex'], ['fix/review']])
 })
 
 test('a Claude session a Codex task pushed to is both agents\'', () => {

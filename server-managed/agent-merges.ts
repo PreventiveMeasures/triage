@@ -2,8 +2,11 @@
 // branch, for its Pulse (repository-pulse.ts commitStats): an agent that
 // commits as whoever ran it (Codex's own) leaves its commits no mark, its
 // pull request's branch alone naming it (app-agents.ts
-// AGENT_BRANCH_PREFIXES), as the Agents tab tells an agent's work.
-import { AGENT_BRANCH_PREFIXES } from './app-agents.ts'
+// AGENT_BRANCH_PREFIXES), or a label one who ran it gave it naming the agent
+// (agent-tasks.ts labelAgents), as the Agents tab tells an agent's work.
+import { labelAgents } from '../common/managed/agent-tasks.ts'
+import { GITHUB_AGENTS } from '../common/managed/github-agents.ts'
+import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
 import { type HistoryCommit, githubGraphql } from './repository-history.ts'
 
 // The merged pull requests read an answer, a page a query, as many queries
@@ -12,6 +15,10 @@ import { type HistoryCommit, githubGraphql } from './repository-history.ts'
 const MERGED_PAGE = 100
 const MERGED_QUERIES = 5
 const MERGED_COMMITS = 100
+// Of each, as many labels as MERGED_LABELS, GitHub's most a page, a label
+// naming any agent the app knows making it an agent's.
+const MERGED_LABELS = 100
+const LABEL_AGENTS = [...new Set([...Object.keys(GITHUB_AGENTS), ...APP_AGENTS.map(agent => agent.id)])]
 const SHA = /^[a-f\d]{40}$/u
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
@@ -35,18 +42,23 @@ const MERGED_QUERY = `query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: MERGED, first: ${MERGED_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
-      nodes { updatedAt mergedAt headRefName mergeCommit { oid parents { totalCount } } commits(last: ${MERGED_COMMITS}) {
-        nodes { commit { oid messageHeadline changedFilesIfAvailable } } } }
+      nodes { updatedAt mergedAt headRefName labels(first: ${MERGED_LABELS}) { nodes { name } } mergeCommit { oid parents { totalCount } }
+        commits(last: ${MERGED_COMMITS}) { nodes { commit { oid messageHeadline changedFilesIfAvailable } } } }
     }
   }
 }`
 type MergedPage = { repository?: { pullRequests?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }
-  nodes?: ({ updatedAt?: unknown; mergedAt?: unknown; headRefName?: unknown; mergeCommit?: { oid?: unknown; parents?: { totalCount?: unknown } | null } | null
+  nodes?: ({ updatedAt?: unknown; mergedAt?: unknown; headRefName?: unknown; labels?: { nodes?: ({ name?: unknown } | null)[] } | null
+    mergeCommit?: { oid?: unknown; parents?: { totalCount?: unknown } | null } | null
     commits?: { nodes?: ({ commit?: { oid?: unknown; messageHeadline?: unknown; changedFilesIfAvailable?: unknown } | null } | null)[] } | null } | null)[] } | null } | null }
 const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_PREFIXES.some(prefix => name.startsWith(prefix))
+type MergedNode = NonNullable<NonNullable<NonNullable<NonNullable<MergedPage['repository']>['pullRequests']>['nodes']>[number]>
+// Whether a pull request is an agent's: by its branch, or a label naming one.
+const agentPull = (node: MergedNode) => agentBranch(node.headRefName) || labelAgents((node.labels?.nodes ?? []).map(label => label?.name), LABEL_AGENTS).length > 0
 
-// The commits the pull requests merged since `since` from an agent's branch
-// brought: each its merge commit, a squash merge's one commit; where it was
+// The commits the pull requests merged since `since` from an agent's branch,
+// or labelled for one, brought: each its merge commit, a squash merge's one
+// commit; where it was
 // merged with a merge commit, which a year counts none of, its own commits,
 // its latest MERGED_COMMITS; and of one of more commits whose merge commit
 // has one parent, its commits' subjects, for those it was rebased as to be
@@ -55,7 +67,8 @@ const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_
 // first (a pull request is updated when merged, or after), on from what was
 // `kept`: till one updated before the year, or before the newest read before
 // was, as many queries an answer as MERGED_QUERIES, a read not finished
-// going on from where it was left by the next.
+// going on from where it was left by the next; one read again whose label
+// no longer names an agent, what it was read to bring forgotten.
 export async function agentMerges(fullName: string, token: string, since: number, kept: AgentMerges | null,
   fetchImpl: typeof fetch = globalThis.fetch): Promise<AgentMerges> {
   const [owner, name] = fullName.split('/') as [string, string]
@@ -75,10 +88,18 @@ export async function agentMerges(fullName: string, token: string, since: number
       from ??= updated
       read++
       const [merged, merge] = [timeOf(node?.mergedAt), node?.mergeCommit?.oid]
-      if (merged === null || merged < since || !agentBranch(node?.headRefName) || typeof merge !== 'string' || !SHA.test(merge)) continue
-      const own = (node?.commits?.nodes ?? []).map(item => item?.commit)
-      const merging = count(node?.mergeCommit?.parents?.totalCount) > 1
-      for (const oid of [merge, ...merging ? own.map(commit => commit?.oid) : []]) if (typeof oid === 'string' && SHA.test(oid)) merges.set(oid, merged)
+      if (!node || merged === null || merged < since || typeof merge !== 'string' || !SHA.test(merge)) continue
+      const own = (node.commits?.nodes ?? []).map(item => item?.commit)
+      const merging = count(node.mergeCommit?.parents?.totalCount) > 1
+      const brought = [merge, ...merging ? own.map(commit => commit?.oid) : []].filter((oid): oid is string => typeof oid === 'string' && SHA.test(oid))
+      // One an agent's no more, its label taken off (which updates it), what
+      // it was read to bring none of an agent's.
+      if (!agentPull(node)) {
+        for (const oid of brought.filter(sha => merges.get(sha) === merged)) merges.delete(oid)
+        if (rebases.get(merge)?.[0] === merged) rebases.delete(merge)
+        continue
+      }
+      for (const oid of brought) merges.set(oid, merged)
       const rebased = own.filter(commit => commit?.changedFilesIfAvailable !== 0)
       if (!merging && rebased.length > 1 && rebased.every(commit => typeof commit?.messageHeadline === 'string')) {
         rebases.set(merge, [merged, rebased.map(commit => commit!.messageHeadline as string)])
@@ -88,6 +109,13 @@ export async function agentMerges(fullName: string, token: string, since: number
     after = page!.pageInfo!.endCursor as string
   }
   return result(kept?.through ?? null, { after: after!, from: from ?? stop, stop, read })
+}
+
+// Whether two reads of the agents' pull requests merged (agentMerges) bring
+// the same commits, whatever order each read them in.
+export function sameMerges(a: AgentMerges, b: AgentMerges) {
+  const brought = (read: AgentMerges) => JSON.stringify([read.merges.map(entry => entry.join()).toSorted(), read.rebases.map(entry => JSON.stringify(entry)).toSorted()])
+  return brought(a) === brought(b)
 }
 
 // A commit's subject as GitHub heads its message: whole, or, past what it

@@ -200,7 +200,7 @@ import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } 
 import { PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, pullDependencies } from './pull-dependencies.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
-import { type AgentMerges, agentCommits, agentMerges } from './agent-merges.ts'
+import { type AgentMerges, agentCommits, agentMerges, sameMerges } from './agent-merges.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
@@ -2001,11 +2001,13 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
 // (yearCommits): kept by the head it was read from (repositoryReadStore),
 // that head kept as an issue's page is; its commits merged from an agent's
 // pull request told by those merged (agentMerges), kept as read, the rest
-// read on by the next answer as the year's commits are. A year not read
-// whole yet is how many of its commits are (`reading`), or of the pull
-// requests merged (`pulls`), beside the year last counted from an
-// earlier head over the same weeks, where one is kept, so that a head moved
-// on shows the year as it was till it is counted again; one past
+// read on by the next answer as the year's commits are, and read again as
+// an answer kept is, a label changing whose a pull request is without
+// moving the head, the year counted again where what they bring changed.
+// A year not read whole yet is how many of its commits are (`reading`), or
+// of the pull requests merged (`pulls`), beside the year last counted from
+// an earlier head over the same weeks, where one is kept, so that a head
+// moved on shows the year as it was till it is counted again; one past
 // YEAR_COMMITS is GitHub's statistics' (repositoryStats, repositoryLines),
 // kept together as an issue's page is and through GitHub computing them
 // again, `pending` while it first computes them, the year last counted
@@ -2017,15 +2019,35 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   const store = repositoryReadStore(deps.db, deps.config.debug)
   const key = `${repoId}\0pulse-year\0${PULSE_YEAR_VERSION}\0${head.value.sha}\0${first}`
   const lastKey = `${repoId}\0pulse-year-last`
-  const mergesKey = `${repoId}\0pulse-merges`
+  const mergesKey = `${repoId}\0pulse-merges\0${PULSE_YEAR_VERSION}`
   const last = async () => {
     const kept = (await store.read(lastKey))?.value as { first: number; stats: PulseStats } | undefined
     return kept?.first === first ? kept.stats : null
   }
+  const sha = head.value.sha
+  // A year kept by its head, the merged pull requests read again as an
+  // answer kept is (keptAnswer), a label changing whose one is without moving
+  // the head: counted again from its pages kept where what agents' bring
+  // changed, or a read of them left unfinished is finished; the year as kept
+  // answered meanwhile, and where reading them fails.
+  const relabelled = async (stats: PulseStats) => {
+    const recounted: { stats?: PulseStats } = {}
+    await keptAnswer(deps, mergesKey, async () => {
+      const kept = ((await store.read(mergesKey))?.value as AgentMerges | undefined) ?? null
+      const merges = await agentMerges(fullName, token, first, kept)
+      if (merges.next || (kept && !kept.next && sameMerges(merges, kept))) return merges
+      const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true))
+      if (!year.complete) return merges
+      recounted.stats = commitStats(year.commits, first, agentCommits(merges, year.commits))
+      await Promise.all([store.write(key, recounted.stats, Date.now()), store.write(lastKey, { first, stats: recounted.stats }, Date.now())])
+      return merges
+    }, () => true).catch((err: unknown) => { console.warn('managed: pulse merges read failed:', err) })
+    return recounted.stats ?? stats
+  }
   const held = (await store.read(key))?.value as PulseStats | { tooMany: true } | undefined
-  if (held && !('tooMany' in held)) return { stats: held, reading: null, pulls: null, pending: false, kept: head.kept }
+  if (held && !('tooMany' in held)) return { stats: await relabelled(held), reading: null, pulls: null, pending: false, kept: head.kept }
   if (!held) {
-    const year = await yearCommits(fullName, token, head.value.sha, first, historyPages(deps, repoId, true))
+    const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true))
     if (year.complete) {
       const merges = await agentMerges(fullName, token, first, ((await store.read(mergesKey))?.value as AgentMerges | undefined) ?? null)
       await store.write(mergesKey, merges, Date.now())

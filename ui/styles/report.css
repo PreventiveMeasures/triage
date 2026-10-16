@@ -4137,17 +4137,40 @@ body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
   & > span { padding: 0 .3rem; color: var(--muted); }
   &:hover > span { color: var(--text); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  &.is-person { margin-left: 0; }
 }
 .pulse-more { align-self: flex-start; margin-top: .5rem; font-size: .72rem; }
+/* The contributors, a row each in the columns all rows share: who, their
+   commits' bar and their lines. A row clicked anywhere picks its contributor,
+   its name's button stretched over it, their profile's link over that, shown
+   as the row is pointed at; the row picked tinted in the accent, the rest
+   faded. */
 .pulse-ranks {
   display: grid; grid-template-columns: minmax(4rem, max-content) minmax(0, 1fr) max-content; align-items: center; gap: .45rem .6rem;
   margin: 0; padding: 0; list-style: none;
-  & > li { display: contents; }
+  & > li {
+    --row: transparent;
+    position: relative; display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center;
+    border-radius: 3px; background: var(--row); box-shadow: 0 0 0 .25rem var(--row);
+    &:hover { --row: color-mix(in srgb, var(--text) 7%, transparent); }
+    &.is-person { --row: color-mix(in srgb, var(--accent) 16%, transparent); }
+    &:has(.pulse-rank-name:focus-visible) { outline: 2px solid var(--accent); outline-offset: .25rem; }
+  }
+  &.is-picking > li:not(.is-person, :hover) { opacity: .5; }
 }
+.pulse-rank-who { display: flex; align-items: center; gap: .3rem; min-width: 0; }
 .pulse-rank-name {
-  max-width: 10rem; overflow: hidden; color: var(--text); text-decoration: none; text-overflow: ellipsis; white-space: nowrap;
-  &:hover { color: var(--accent); }
+  min-width: 0; max-width: 10rem; padding: 0; overflow: hidden; border: 0; background: none; color: var(--text); font: inherit;
+  text-align: left; text-overflow: ellipsis; white-space: nowrap;
+  &::after { position: absolute; inset: -.25rem; content: ''; }
+  &:focus-visible { outline: none; }
 }
+.pulse-rank-profile {
+  position: relative; display: inline-flex; flex: none; padding: .15rem; color: var(--muted); opacity: 0;
+  &:hover { color: var(--accent); }
+  &:focus-visible { outline: 2px solid var(--accent); opacity: 1; }
+}
+.pulse-ranks > li:hover .pulse-rank-profile { opacity: 1; }
 .pulse-rank-bar {
   display: flex; align-items: center; gap: .35rem; min-width: 0;
   & > span:first-child {
