@@ -928,10 +928,18 @@ test('a read no reader waits on leaves room for two version lists of readers\' o
 
 // npm's downloads API, GitHub and npm's bulk advisories, beside the registry
 // `registry` mocks; what each was asked, with its credentials.
-function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {}, osv = {}, socket = {}, badges = {}, provenance = {} }) {
+function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {}, repoAdvisories = {}, osv = {}, osvHits = {}, socket = {}, badges = {}, provenance = {} }) {
   const asked = [], registryFetch = globalThis.fetch
   t.mock.method(globalThis, 'fetch', (input, init = {}) => {
     const auth = new Headers(init.headers).get('authorization'), url = String(input)
+    // OSV's batch query, answering `osvHits` (`name@version` → ids).
+    if (url === OSV) {
+      const { queries } = JSON.parse(init.body)
+      return Promise.resolve(Response.json({ results: queries.map(({ package: { name }, version }) => {
+        const ids = osvHits[`${name}@${version}`] ?? []
+        return ids.length > 0 ? { vulns: ids.map(id => ({ id })) } : {}
+      }) }))
+    }
     const record = url.match(/^https:\/\/api\.osv\.dev\/v1\/vulns\/(.+)$/u)
     if (record) {
       asked.push(['osv', record[1], auth])
@@ -1085,6 +1093,25 @@ test('an advisory npm answers once a range it covers is one row, its ranges, ver
   const body = (await h.send('/api/npm/advisories?name=ranged')).json()
   assert.deepEqual(body.advisories, [{ id: 'GHSA-gpvr-g6gh-9mc2', source: 'registry', ghsa: 'GHSA-gpvr-g6gh-9mc2', url: 'https://github.com/advisories/GHSA-gpvr-g6gh-9mc2',
     title: 'No charset', severity: 'moderate', cvss: 6.1, cwe: ['CWE-79', 'CWE-20'], range: '>=4.0.0 <4.5.0 || <3.11.0', affected: [1, 2, 3] }])
+})
+
+test('an advisory OSV\'s record covers beyond npm\'s range for it is still one row, npm\'s, with the versions either covers', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('hermes-like', '0.5.2', { 'index.js': '' })
+  registry(t, [{ ...pkg, versions: ['0.4.3', '0.5.0', '0.5.2'] }])
+  // As hermes-engine's: npm's range ends at the last version known affected,
+  // OSV's record of the same GHSA at the one fixed.
+  const asked = insights(t, {
+    advisories: { 'hermes-like': [{ id: 1, url: 'https://github.com/advisories/GHSA-f5x2-xv93-4p23', title: 'Type confusion', severity: 'critical',
+      vulnerable_versions: '<=0.4.3', cwe: ['CWE-843'], cvss: { score: 9.8 } }] },
+    osvHits: { 'hermes-like@0.4.3': ['GHSA-f5x2-xv93-4p23'], 'hermes-like@0.5.0': ['GHSA-f5x2-xv93-4p23'] },
+    osv: { 'GHSA-f5x2-xv93-4p23': 'Prior to commit fe52854.' },
+  })
+  const body = (await h.send('/api/npm/advisories?name=hermes-like')).json()
+  assert.deepEqual(body.versions, ['0.5.2', '0.5.0', '0.4.3'])
+  assert.deepEqual(body.advisories, [{ id: 'GHSA-f5x2-xv93-4p23', source: 'registry', ghsa: 'GHSA-f5x2-xv93-4p23', url: 'https://github.com/advisories/GHSA-f5x2-xv93-4p23',
+    title: 'Type confusion', severity: 'critical', cvss: 9.8, cwe: ['CWE-843'], range: '<=0.4.3', details: 'Prior to commit fe52854.', affected: [1, 2] }])
+  assert.deepEqual(asked.filter(([what]) => what === 'osv'), [['osv', 'GHSA-f5x2-xv93-4p23', null]], 'its record read once')
 })
 
 test('advisories its repository publishes on GitHub join npm\'s, its listing kept as bundle advisories keep it', async t => {

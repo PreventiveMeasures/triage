@@ -362,25 +362,30 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
   }
   if (result.status !== 200) throw new NpmPackageError(502, 'upstream-unavailable')
   const index = new Map(versions.map((version, i) => [version, i]))
-  // npm's registry answers an advisory once a range it covers: here it is one
-  // row, its ranges joined as semver joins them, the versions and CWEs they
-  // cover together, and the highest score.
+  // npm's registry answers an advisory once a range it covers, and upstream
+  // answers the versions OSV's record of it, or its repository, covers beyond
+  // npm's under the same id, in a row of their own (as hermes-engine's
+  // GHSA-f5x2-xv93-4p23: npm's `<=0.4.3`, OSV's fixed in 0.5.2): here it is
+  // one row, the first's (npm's, then OSV's, then the repository's, as
+  // upstream orders them) with what it lacks taken from the rest, its ranges
+  // joined as semver joins them, the versions and CWEs they cover together,
+  // and the highest score.
   const merged = new Map<string, NpmAdvisory>()
   for (const row of result.body) {
     const affected = row.versions.map(version => index.get(version)).filter(at => at !== undefined)
-    const key = `${row.source}\0${row.id}`
-    const known = merged.get(key)
+    const own: NpmAdvisory = {
+      id: row.id, source: row.source, ...row.ghsa && { ghsa: row.ghsa }, ...row.url && { url: row.url }, ...row.title && { title: row.title },
+      ...row.severity && { severity: row.severity }, ...row.cvss !== undefined && { cvss: row.cvss }, cwe: row.cwe, ...row.range && { range: row.range },
+      ...row.details && { details: row.details }, affected,
+    }
+    const known = merged.get(row.id)
     if (!known) {
-      merged.set(key, {
-        id: row.id, source: row.source, ...row.ghsa && { ghsa: row.ghsa }, ...row.url && { url: row.url }, ...row.title && { title: row.title },
-        ...row.severity && { severity: row.severity }, ...row.cvss !== undefined && { cvss: row.cvss }, cwe: row.cwe, ...row.range && { range: row.range },
-        ...row.details && { details: row.details }, affected,
-      })
+      merged.set(row.id, own)
       continue
     }
     const range = [known.range, row.range].filter(Boolean).join(' || ')
     const cvss = Math.max(known.cvss ?? -1, row.cvss ?? -1)
-    merged.set(key, { ...known, ...range && { range }, ...cvss >= 0 && { cvss }, cwe: [...new Set([...known.cwe, ...row.cwe])], affected: [...known.affected, ...affected] })
+    merged.set(row.id, { ...own, ...known, ...range && { range }, ...cvss >= 0 && { cvss }, cwe: [...new Set([...known.cwe, ...row.cwe])], affected: [...known.affected, ...affected] })
   }
   return {
     versions, repository, ...keptAt && { keptAt },
