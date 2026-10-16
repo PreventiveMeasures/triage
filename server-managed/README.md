@@ -1610,7 +1610,11 @@ revision as it was opened. One opened by its commit (a link's) is named by
 the branch whose head it is, the default branch first, else by the tag on
 it, else by its commit: the repository's branches and tags are listed with
 their commits (`branchCommits`, `tagCommits`), the default branch's read
-apart where the first page of a hundred branches by name leaves it out. Between them,
+apart where the first page of a hundred branches by name leaves it out.
+They are read again each time a directory opens anew (another tab of a
+page opened on Commits, Issues, Pull requests, Agents, Pulse or Replay
+among them), the header naming the revision by those read before till
+GitHub answers, and still where that read fails. Between them,
 a directory's path in the repository, each part opening its own directory,
 and after them the commit, linking its tree on GitHub; none of the three
 shows on Issues, Pull requests, Agents or Pulse, which read the whole

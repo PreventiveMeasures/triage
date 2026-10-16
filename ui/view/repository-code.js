@@ -35,7 +35,8 @@ export const repositoryCodeName = ({ repo, path }) => path ? `${repo}/${path}` :
 
 // What the header reads, for the session and role that read it: the
 // repositories the reader may browse, each repository's branches and tags,
-// read again as its code opens anew, and the revision each commit was opened
+// read again as its code opens anew, those read before shown meanwhile, and
+// kept where that read fails, and the revision each commit was opened
 // by, to name it so again (`{ kind, name }`, `name` null for the default
 // branch), by repository and commit.
 const headerData = new Map()
@@ -54,23 +55,34 @@ function sessionData() {
 }
 
 // `{ status }`: 'loading', then 'ready' with its `value`, or 'error' until a
-// read after its retry is due; each a new object, so the header repaints.
+// read after its retry is due; each a new object, so the header repaints. One
+// read again (rereadHeader) is 'ready' with what it held meanwhile, kept
+// where the read fails, so the header names nothing else till GitHub tells
+// otherwise.
 function headerRead(key, ask) {
   const data = sessionData()
   const held = data.get(key)
-  if (held && !(held.status === 'error' && Date.now() >= held.retryAt)) return held
-  const loading = { status: 'loading' }
-  data.set(key, loading)
+  if (held && !held.stale && !(held.status === 'error' && Date.now() >= held.retryAt)) return held
+  const reading = held?.stale ? { status: 'ready', value: held.value } : { status: 'loading' }
+  data.set(key, reading)
   ask().then(value => ({ status: 'ready', value }), err => err?.name === 'AbortError' ? null : { status: 'error', retryAt: Date.now() + DATA_RETRY_MS })
     .then(answer => {
-      if (data.get(key) !== loading) return null
-      if (answer) data.set(key, answer)
-      else data.delete(key)
+      if (data.get(key) !== reading) return null
+      if (answer?.status === 'ready' || (answer && reading.status === 'loading')) data.set(key, answer)
+      else if (reading.status === 'loading') data.delete(key)
+      else return null
       render()
       return null
     })
     .catch(() => {})
-  return loading
+  return reading
+}
+
+// `key` read again when next asked for, what it holds shown meanwhile.
+function rereadHeader(key) {
+  const held = sessionData().get(key)
+  if (held?.status === 'ready') sessionData().set(key, { ...held, stale: true })
+  else sessionData().delete(key)
 }
 
 export const browsableRepositories = () => headerRead('repositories', () => fetchBrowsableRepositories())
@@ -228,7 +240,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   if (!entry && REPOSITORY_FILELESS_TABS.has(tab)) {
     const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
     // Its branches and tags as they are now, for its header and History.
-    headerData.delete(`refs\0${repoId}`)
+    rereadHeader(`refs\0${repoId}`)
     const known = browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
     const opening = { repoId, commit, ref: route.ref ?? null, path, tab, repo: route.repo ?? known ?? null, revision, error: null }
     let at = commit
@@ -260,7 +272,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     const known = browsableRepositories().value?.find(item => item.repoId === repoId)?.fullName
     const opening = { repoId, commit, ref: route.ref ?? null, path, tab, repo: route.repo ?? known ?? null, revision, error: null }
     // Its branches and tags as they are now, for its header.
-    headerData.delete(`refs\0${repoId}`)
+    rereadHeader(`refs\0${repoId}`)
     // Another directory, or revision, keeps the one shown, dimmed, until it
     // opens, its header naming it meanwhile (repositoryCodePending).
     const pending = shown ? { integrity: shown.integrity, generation: currentViewGeneration(), repository: { repoId, repo: opening.repo, commit, path, revision } } : null

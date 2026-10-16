@@ -10,6 +10,8 @@ import { beginViewNavigation } from '../ui/view/view-navigation.js'
 const state = {}
 const contentsRequests = [], navigations = [], requests = []
 let answer = null, contents = null, refsReads = 0
+const refsListed = { defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }
+let refsAnswer = () => Promise.resolve(refsListed)
 mock.module('../client/index.js', { exports: {
   state, isManagedUiMode: () => true, ensureBundleFindingsIndexed() {}, hasBundleFileHashes() {},
   readBundle() {}, readBundleIndex() {}, recordBundleFileHashes() {}, saveBundleIndex() {},
@@ -21,7 +23,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryCode(repoId, ref, path) { requests.push([repoId, ref, path]); return answer(repoId, ref, path) },
   fetchRepositoryContents(repoId, ref, path) { contentsRequests.push([repoId, ref, path]); return contents(repoId, ref, path) },
   fetchBrowsableRepositories: () => Promise.resolve([{ repoId: 7, fullName: 'org/repo' }, { repoId: 8, fullName: 'org/other' }]),
-  fetchRepositoryRefs: () => { refsReads++; return Promise.resolve({ defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }) },
+  fetchRepositoryRefs: () => { refsReads++; return refsAnswer() },
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
 const { openRepositoryCodeRoute, openRepositoryCodeTab, repositoryRefs, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
@@ -43,6 +45,7 @@ beforeEach(() => {
   navigations.length = 0
   answer = (repoId, ref, path) => Promise.resolve({ ...data, path })
   contents = () => Promise.resolve({ commit, entries: [] })
+  refsAnswer = () => Promise.resolve(refsListed)
   // A session of its own each, so nothing kept from another test answers.
   Object.assign(state, { currentView: 'findings', bundles: [], bundleDetails: null, selectedBundle: null, bundleDetailsTab: 'overview',
     bundleSourceFile: null, bundleCodeFileRequest: null, repositoryCodeOpening: null, reports: [], currentManagedTeam: 'team',
@@ -232,6 +235,35 @@ test('a directory that fails to open says why at its route, and lists its direct
   assert.notEqual(state.currentView, 'bundles')
   answer = () => Promise.reject(new DOMException('Managed session changed', 'AbortError'))
   assert.equal(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app' }, () => true, () => {}), false)
+})
+
+test('a repository\'s branches and tags read again as its code opens anew show those read before meanwhile, kept where that read fails', async () => {
+  const named = { ...refsListed, branchCommits: [{ name: 'main', sha: commit }] }
+  refsAnswer = () => Promise.resolve(named)
+  repositoryRefs(7)
+  await setImmediate()
+  const linked = { repoId: 7, commit, revision: null }
+  assert.deepEqual(shownRevision(linked, repositoryRefs(7)), { kind: 'branch', name: 'main' })
+  // Another tab opening reads them again; the header names the commit as before till they arrive.
+  let arrive
+  refsAnswer = () => new Promise(resolve => { arrive = resolve })
+  const read = refsReads
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'commits' }, () => true, () => {})
+  assert.deepEqual(shownRevision(linked, repositoryRefs(7)), { kind: 'branch', name: 'main' }, 'not the commit meanwhile')
+  assert.equal(refsReads, read + 1)
+  assert.equal(repositoryRefs(7).status, 'ready')
+  arrive({ ...refsListed, branchCommits: [{ name: 'develop', sha: commit }] })
+  await setImmediate()
+  assert.deepEqual(shownRevision(linked, repositoryRefs(7)), { kind: 'branch', name: 'develop' }, 'what GitHub tells now, once it does')
+  // One failing keeps them.
+  refsAnswer = () => Promise.reject(new Error('GitHub is down.'))
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'issues' }, () => true, () => {})
+  repositoryRefs(7)
+  await setImmediate()
+  assert.deepEqual(shownRevision(linked, repositoryRefs(7)), { kind: 'branch', name: 'develop' })
+  assert.equal(refsReads, read + 2)
+  repositoryRefs(7)
+  assert.equal(refsReads, read + 2, 'not read again till its code opens anew')
 })
 
 test('History at a commit opens alone, reading none of the directory\'s files, its other tabs opening them', async () => {
