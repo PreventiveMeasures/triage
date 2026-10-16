@@ -1687,6 +1687,25 @@ all the same, where its commit is known (a `413 directory-too-large` names the
 commit it was read at, its route then naming it). What it read is kept in
 the page for the session five minutes, and on the server for every reader:
 
+A commit made with others shows them as GitHub does: its author's avatar
+(their name's letter where the app has none of theirs), each other's tucked
+behind it in turn, as many as three, all named in its tooltip. They are its
+co-authors, as its `Co-authored-by:` trailers name them (GitHub's GraphQL API
+listing them by the accounts it knows their addresses by, its REST API by the
+trailers, an account's no-reply address naming it), then the agents its
+message marks: Claude by Claude Code's trailer (`Claude … <noreply@anthropic.com>`,
+the model in its name), its `🤖 Generated with [Claude Code]` line, its
+`Claude-Session:` trailer or a session's link; Codex by a task's link
+(`chatgpt.com/codex/tasks/…`); Cursor by its agents' trailer
+(`Cursor Agent <cursoragent@cursor.com>`) or link (`cursor.com/agents?id=bc-…`);
+an app agent by its fingerprint (as the Agents tab tells them, below). An
+agent shows by its mark (Claude's, OpenAI's for Codex, Copilot's), or its
+avatar (Dependabot's, an app agent's), Cursor, whose mark the app has none
+of, by its letter; the author none of them (`server-managed/commit-coauthors.ts`).
+The server reads each commit's message for them, keeping and answering
+those alone, never the message; a page kept before they were read is read
+again.
+
 - A whole repository's history, from a revision or all branches, is read a
   page from a commit at a time: the first hundred commits of the history
   from that commit, kept (`managed_upstream_cache`, under

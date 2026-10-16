@@ -37,7 +37,7 @@ const stats = {
 // each the parent of the one before, its lines and its author's time two
 // hours east of UTC; its head the first.
 const shaOf = at => at.toString(16).padStart(40, '0')
-const chain = (length, now, step = HOUR) => Array.from({ length }, (_, at) => ({ oid: shaOf(at), messageHeadline: `Commit ${at}`,
+const chain = (length, now, step = HOUR) => Array.from({ length }, (_, at) => ({ oid: shaOf(at), message: `Commit ${at}`,
   committedDate: new Date(now - at * step).toISOString(), additions: at % 5, deletions: 1,
   author: { name: 'Ada', date: new Date(now - at * step + 2 * HOUR).toISOString().replace('Z', '+02:00'), user: { login: 'ada', databaseId: 7 } },
   parents: { nodes: at + 1 < length ? [{ oid: shaOf(at + 1) }] : [] } }))
@@ -289,8 +289,8 @@ test('pages kept without lines, as GitHub\'s REST API lists them, are read again
   const request = await fixture(t)
   const commits = chain(50, Date.now())
   const asked = github(t, { commits })
-  const page = commits.map(node => ({ sha: node.oid, parents: node.parents.nodes.map(parent => parent.oid), subject: node.messageHeadline, authorName: 'Ada', authorLogin: 'ada',
-    committedAt: Date.parse(node.committedDate), additions: null, deletions: null, authoredAt: null, authorZone: null }))
+  const page = commits.map(node => ({ sha: node.oid, parents: node.parents.nodes.map(parent => parent.oid), subject: node.message, authorName: 'Ada', authorLogin: 'ada',
+    coauthors: [], committedAt: Date.parse(node.committedDate), additions: null, deletions: null, authoredAt: null, authorZone: null }))
   await historyPageStore(request.db).write(`1\0${commits[0].oid}`, page, Date.now())
   const answer = await request({ repoId: '1', weeks: '4' })
   assert.equal(graphQueries(asked), 1, 'read again with its lines')

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { templateText } from './_lit.js'
-import { appUser, commitAgent, commitAuthor, commitAuthorName, forgetGithubUsers, githubUser, githubUserName, githubUsers, knowGithubUsers, knowProfile, knowingGithubUsers } from '../ui/view/github-users.js'
+import { appUser, commitAgent, commitAuthor, commitAuthorName, commitAuthors, forgetGithubUsers, githubUser, githubUserName, githubUsers, knowGithubUsers, knowProfile, knowingGithubUsers } from '../ui/view/github-users.js'
 
 test('GitHub logins the server names as the app\'s users show by their avatar and chosen name, a linked account as its user; others as themselves', () => {
   const answer = { items: [], users: {
@@ -164,4 +164,27 @@ test('an answer read across the signed-in user\'s profile change keeps others\' 
   await knowingGithubUsers(() => Promise.resolve({ commits: [{ authorLogin: 'wil' }], users: { wil: { id: 'wil-id', login: 'wil', name: 'Wil Again' } } }))
   assert.equal(githubUserName('wil'), 'Wil Again')
   forgetGithubUsers()
+})
+
+test('a commit with co-authors shows its author\'s avatar, theirs tucked behind it in turn, agents by their marks, all named in its tooltip', () => {
+  forgetGithubUsers()
+  knowGithubUsers({ users: { mona: { id: 'mona-id', login: 'mona', name: 'Mona Lisa' } } })
+  const text = templateText(commitAuthors(null, 'Ada Lovelace', [{ name: 'M.', login: 'mona', id: 3 }, { name: 'Claude Opus 5.5', login: null, id: null, agent: 'claude' },
+    { name: 'Neo', login: null, id: null, agent: 'neo', avatar: 'app-3115942' }, { name: 'Fourth', login: null, id: null }]))
+  assert.match(text, /data-tooltip=Ada Lovelace, Mona Lisa, Claude Opus 5\.5 and Neo>/u, 'a user of the app as the app shows them, an agent as its commit names it')
+  const avatars = [...text.matchAll(/<span class=("commit-avatar"|commit-avatar is-\w+)>(.)/gu)].map(match => [match[1], match[2]])
+  assert.deepEqual(avatars, [['"commit-avatar"', 'A'], ['"commit-avatar"', 'M'], ['commit-avatar is-claude', '<'], ['"commit-avatar"', '<']],
+    'the author\'s on top, by their name\'s letter; Mona\'s, Claude\'s mark, Neo\'s avatar, three at most')
+  assert.match(text, /M<img src=\/api\/avatar\/mona-id /u)
+  assert.match(text, /<img src=\/api\/avatar\/app-3115942 /u)
+  assert.match(text, /<span class="app-user-name">Ada Lovelace<\/span><span class="sr-only"> with Mona Lisa, Claude Opus 5\.5 and Neo<\/span>/u)
+  assert.doesNotMatch(text, /Fourth/u)
+  // Cursor, the app having no mark of it, by its name's letter; an author by their account.
+  const cursor = templateText(commitAuthors('mona', 'M. L.', [{ name: 'Cursor Agent', login: null, id: null, agent: 'cursor' }]))
+  assert.match(cursor, /data-tooltip=Mona Lisa and Cursor Agent>[^]*M<img src=\/api\/avatar\/mona-id [^]*<span class=commit-avatar is-cursor>C<\/span>/u)
+  assert.match(templateText(commitAuthor(null, 'Cursor Agent')), /<span class="app-user-avatar" aria-hidden="true">C<\/span><span\s+class="app-user-name">Cursor<\/span>/u)
+  // None beside the author, or none told as one, the author alone.
+  assert.equal(commitAuthors('someone', 'Some One', []), 'Some One')
+  assert.equal(commitAuthors('someone', 'Some One', [null, 'x', { agent: 'claude' }]), 'Some One')
+  assert.equal(commitAuthors('someone', 'Some One', undefined), 'Some One')
 })

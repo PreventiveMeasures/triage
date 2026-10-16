@@ -18,7 +18,7 @@ import { PULL_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { navigateToRepositoryCode, shownRevision } from './repository-code.js'
 import { activityPicker } from './repository-activity.js'
-import { commitAuthor } from './github-users.js'
+import { commitAuthors } from './github-users.js'
 
 // The graph's geometry, in pixels: a lane's width, a line's height, and the
 // margin before the first lane and after the last.
@@ -470,7 +470,7 @@ class RepositoryHistory extends LitElement {
               <code class="history-sha">${commit.sha.slice(0, 7)}</code>
               ${refChips(refs, color, revision)}
               <span class="history-subject">${commit.subject || '(no message)'}</span>
-              <span class="history-author">${commitAuthor(commit.authorLogin, commit.authorName)}</span>
+              <span class="history-author">${commitAuthors(commit.authorLogin, commit.authorName, commit.coauthors)}</span>
               ${time ? html`<time class="history-time" datetime=${time.toISOString()}>${compactTime(commit.committedAt)}</time>` : html`<span class="history-time"></span>`}
             </button>
           </li>`

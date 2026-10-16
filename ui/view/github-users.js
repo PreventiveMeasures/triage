@@ -5,7 +5,7 @@
 // kept here as they come for each tab to show, a user by their avatar and the
 // name they chose, an agent as the Agents tab draws it, for the session they
 // came to.
-import { html } from 'lit'
+import { html, nothing } from 'lit'
 import { GITHUB_AGENTS, githubAgent } from '../../common/managed/github-agents.ts'
 import { namedAccounts } from '../../common/managed/github-logins.ts'
 import { providerIcon } from './provider-icons.js'
@@ -112,11 +112,17 @@ export function appUser(login) {
 // id confirming it where named); null for anyone else.
 const accountAgent = login => known.get(login.toLowerCase())?.agent ?? null
 
-// An agent as the Agents tab draws it, its mark or avatar bare, and its name.
+// An image the server serves at `src`, gone where it fails to load.
+const avatarImage = src => html`<img src=${src} alt="" loading="lazy" decoding="async" @error=${e => e.currentTarget.remove()}>`
+// A user's avatar, as they chose it, the address changing with it.
+const userImage = user => avatarImage(`/api/avatar/${encodeURIComponent(user.id)}${avatarRevisions.has(user.id) ? `?v=${avatarRevisions.get(user.id)}` : ''}`)
+
+// An agent as the Agents tab draws it, its mark or avatar bare, and its name;
+// one the app has neither of by its name's letter, on a disc.
 function agentBadge(agent, tooltip) {
   const { name, mark, avatar } = GITHUB_AGENTS[agent]
-  return html`<span class="app-user" data-tooltip=${tooltip}><span class=${`app-user-mark is-${agent}`} aria-hidden="true">${mark ? providerIcon(mark)
-    : html`<img src=${`/api/avatar/${avatar}`} alt="" loading="lazy" decoding="async" @error=${e => e.currentTarget.remove()}>`}</span><span
+  return html`<span class="app-user" data-tooltip=${tooltip}>${mark || avatar ? html`<span class=${`app-user-mark is-${agent}`} aria-hidden="true">${mark
+    ? providerIcon(mark) : avatarImage(`/api/avatar/${avatar}`)}</span>` : html`<span class="app-user-avatar" aria-hidden="true">${name[0]}</span>`}<span
     class="app-user-name">${name}</span></span>`
 }
 
@@ -137,8 +143,8 @@ export function githubUser(login, fallback = login) {
   if (agent) return agentBadge(agent, `@${login} on GitHub`)
   const user = appUser(login)
   if (!user) return fallback
-  return html`<span class="app-user" data-tooltip=${`@${login} on GitHub`}><span class="app-user-avatar" aria-hidden="true">${(user.name ?? user.login)[0].toUpperCase()}<img
-    src=${`/api/avatar/${encodeURIComponent(user.id)}${avatarRevisions.has(user.id) ? `?v=${avatarRevisions.get(user.id)}` : ''}`} alt="" loading="lazy" decoding="async" @error=${e => e.currentTarget.remove()}></span><span class="app-user-name">${user.name ?? user.login}</span></span>`
+  return html`<span class="app-user" data-tooltip=${`@${login} on GitHub`}><span class="app-user-avatar" aria-hidden="true">${(user.name ?? user.login)[0].toUpperCase()}${
+    userImage(user)}</span><span class="app-user-name">${user.name ?? user.login}</span></span>`
 }
 
 // The users `logins` name, each once, in their order: a user's sign-in and
@@ -175,4 +181,52 @@ export function commitAuthorName(login, name = null) {
   if (typeof login === 'string') return githubUserName(login)
   const agent = commitAgent(null, name)
   return agent ? GITHUB_AGENTS[agent].name : name
+}
+
+// An app agent's avatar, as the server serves it (server-managed/app-agents.ts).
+const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
+const MAX_COAUTHORS = 3
+const agentOf = agent => typeof agent === 'string' && Object.hasOwn(GITHUB_AGENTS, agent) ? agent : null
+const listed = names => names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0] ?? ''
+
+// One who made a commit, on a disc in Commits' stack of them: an agent by its
+// mark or avatar, one the app has neither of by its name's letter; an app
+// agent by its avatar; a user of the app by theirs, their name's letter under
+// it; anyone else by their name's letter.
+function commitAvatar({ login = null, name = null, agent = null, avatar = null }) {
+  const drawn = agentOf(agent) ?? commitAgent(login, name)
+  if (drawn) {
+    const { name: called, mark, avatar: image } = GITHUB_AGENTS[drawn]
+    return html`<span class=${`commit-avatar is-${drawn}`}>${mark ? providerIcon(mark) : image ? avatarImage(`/api/avatar/${image}`) : called[0]}</span>`
+  }
+  if (typeof avatar === 'string' && AGENT_AVATAR.test(avatar)) return html`<span class="commit-avatar">${avatarImage(`/api/avatar/${avatar}`)}</span>`
+  const user = appUser(login)
+  const letter = (user?.name ?? user?.login ?? name ?? login ?? '').trim()[0]?.toUpperCase() ?? '?'
+  return html`<span class="commit-avatar">${letter}${user ? userImage(user) : nothing}</span>`
+}
+
+// What one who made a commit shows as: an agent the commit names by the
+// name it gives it; a user of the app or an agent by their account as the
+// app shows them; anyone else by the name their commit gives them, else
+// their login.
+function makerName(login, name, agent = null) {
+  if (agentOf(agent) && name) return name
+  if (typeof login === 'string' && (appUser(login) || accountAgent(login))) return githubUserName(login)
+  return name ?? commitAuthorName(login, name) ?? login ?? ''
+}
+
+// A commit's author and those who made it with them (`coauthors`, as the
+// server read them: server-managed/repository-history.ts coauthorsOf), as
+// GitHub shows them: the author's avatar, their name's letter where the app
+// has none of theirs, those of the others tucked behind it in turn, and the
+// author's name, all of them named in its tooltip; without others, the
+// author as commitAuthor shows them. An agent by the name the commit gives it.
+export function commitAuthors(login, name = null, coauthors = []) {
+  const others = (Array.isArray(coauthors) ? coauthors : []).filter(other => typeof other?.name === 'string' || typeof other?.login === 'string')
+    .slice(0, MAX_COAUTHORS)
+  if (others.length === 0) return commitAuthor(login, name)
+  const author = makerName(login, name)
+  const names = others.map(other => makerName(other.login ?? null, other.name ?? null, other.agent))
+  return html`<span class="app-user commit-authors" data-tooltip=${listed([author, ...names])}><span class="commit-avatars" aria-hidden="true">${[{ login, name },
+    ...others].map(commitAvatar)}</span><span class="app-user-name">${author}</span><span class="sr-only"> with ${listed(names)}</span></span>`
 }

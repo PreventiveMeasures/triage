@@ -9,7 +9,11 @@
 // read a page from a commit at a time, each page kept by the commit it starts
 // at (historyFrom): a commit's history never changes, and where a commit read
 // starts a page kept, that page glues on, and those after it.
+import { type Coauthor, MAX_COAUTHORS, type Maker, coauthorsOf } from './commit-coauthors.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
+import { type GraphActor, accountOf, commitAccount } from './github-accounts.ts'
+
+export { ACTOR, type GraphAccount, type GraphActor, type NamedAccount, accountOf, actorOf, commitAccount } from './github-accounts.ts'
 
 export const HISTORY_PAGE = 100
 // The deepest page read, as far as Older commits goes.
@@ -26,15 +30,15 @@ const MAX_PARENTS = 8
 const MAX_SUBJECT = 1000
 const MAX_NAME = 256
 const SHA = /^[a-f\d]{40}$/u
-const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 
 // A commit, its author by name and by their account's login and numeric id
-// (`authorId`, absent from pages kept before it was read), with the lines it
-// adds and removes and when it was authored in its author's own time zone
+// (`authorId`, absent from pages kept before it was read), its co-authors
+// (coauthorsOf, absent from pages kept before they were read), with the lines
+// it adds and removes and when it was authored in its author's own time zone
 // (`authorZone`, minutes east of UTC), where GitHub's GraphQL API tells them
 // (null where its REST API lists it).
 export interface HistoryCommit { sha: string; parents: string[]; subject: string; authorName: string | null; authorLogin: string | null; authorId?: number | null
-  committedAt: number | null; additions?: number | null; deletions?: number | null; authoredAt?: number | null; authorZone?: number | null }
+  coauthors?: Coauthor[]; committedAt: number | null; additions?: number | null; deletions?: number | null; authoredAt?: number | null; authorZone?: number | null }
 export interface HistoryRef { name: string; sha: string }
 
 const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
@@ -50,41 +54,13 @@ const zoneOf = (value: unknown) => {
   return zone ? zone[1] ? (zone[1] === '-' ? -1 : 1) * (Number(zone[2]) * 60 + Number(zone[3])) : 0 : null
 }
 
-// An account as GitHub names it: its login, else null, and its numeric id
-// where GitHub names one with it.
-export interface NamedAccount { login: string | null; id: number | null }
-export function accountOf(account: { login?: unknown; id?: unknown } | null | undefined): NamedAccount {
-  const login = typeof account?.login === 'string' && LOGIN.test(account.login) ? account.login : null
-  const id = account?.id
-  return { login, id: login && Number.isSafeInteger(id) && (id as number) > 0 ? id as number : null }
-}
-
-// An actor (the author of an issue or a pull request, one who merged one) as
-// GitHub's GraphQL API names it: its login, and its account's numeric id, a
-// user's or a GitHub App's bot's.
-export const ACTOR = 'login ... on User { databaseId } ... on Bot { databaseId }'
-export type GraphAccount = { login?: unknown; databaseId?: unknown } | null | undefined
-export const actorOf = (actor: GraphAccount) => accountOf({ login: actor?.login, id: actor?.databaseId })
-
-// A commit's author's account, as GitHub's GraphQL API names it: the user
-// GitHub knows its address for; else, as GitHub's REST API does, the account
-// whose noreply address its address is, `<id>+<login>@users.noreply.github.com`:
-// a GitHub App's bot's, which is no user (GraphQL's `user` is a User's, never
-// a bot's).
-const NOREPLY = /^([1-9]\d{0,11})\+([^@]+)@users\.noreply\.github\.com$/iu
-export type GraphActor = { email?: unknown; user?: GraphAccount | null }
-export function commitAccount(author: GraphActor | null | undefined): NamedAccount {
-  const user = actorOf(author?.user)
-  const noreply = user.id === null && typeof author?.email === 'string' ? NOREPLY.exec(author.email) : null
-  return noreply ? accountOf({ login: noreply[2], id: Number(noreply[1]) }) : user
-}
-
 // A commit as the Commits tab reads it, its subject the message's first
-// line, as `--oneline` shows, its author by name and account; null for one
-// GitHub names no commit id for. With `stats`, the GraphQL API's, its lines
-// and its author's time.
-function historyCommit(sha: unknown, parents: unknown[], message: unknown, authorName: unknown, author: NamedAccount,
-  committedAt: unknown, stats: { additions?: unknown; deletions?: unknown; authoredAt?: unknown } | null = null): HistoryCommit | null {
+// line, as `--oneline` shows, its author by name and account, and its
+// co-authors (coauthorsOf, `listed` as GitHub's GraphQL API lists them); null
+// for one GitHub names no commit id for. With `stats`, the GraphQL API's, its
+// lines and its author's time.
+function historyCommit(sha: unknown, parents: unknown[], message: unknown, author: Maker, committedAt: unknown,
+  stats: { additions?: unknown; deletions?: unknown; authoredAt?: unknown } | null = null, listed: Maker[] | null = null): HistoryCommit | null {
   if (typeof sha !== 'string' || !SHA.test(sha)) return null
   const lines = stats ? { additions: lineCount(stats.additions), deletions: lineCount(stats.deletions), authoredAt: timeOf(stats.authoredAt),
     authorZone: zoneOf(stats.authoredAt) } : { additions: null, deletions: null, authoredAt: null, authorZone: null }
@@ -92,18 +68,19 @@ function historyCommit(sha: unknown, parents: unknown[], message: unknown, autho
     sha,
     parents: parents.filter((parent): parent is string => typeof parent === 'string' && SHA.test(parent)).slice(0, MAX_PARENTS),
     subject: typeof message === 'string' ? message.replaceAll('\r\n', '\n').split('\n', 1)[0]!.trim().slice(0, MAX_SUBJECT) : '',
-    authorName: textOf(authorName, MAX_NAME),
-    authorLogin: author.login,
-    authorId: author.id,
+    authorName: textOf(author.name, MAX_NAME),
+    authorLogin: author.account.login,
+    authorId: author.account.id,
+    coauthors: coauthorsOf(message, author, listed),
     committedAt: timeOf(committedAt),
     ...lines,
   }
 }
 
 type RestCommit = { sha?: unknown; parents?: { sha?: unknown }[]; author?: { login?: unknown; id?: unknown } | null
-  commit?: { message?: unknown; author?: { name?: unknown } | null; committer?: { date?: unknown } | null } }
+  commit?: { message?: unknown; author?: { name?: unknown; email?: unknown } | null; committer?: { date?: unknown } | null } }
 const restCommit = (item: RestCommit) => historyCommit(item?.sha, Array.isArray(item?.parents) ? item.parents.map(parent => parent?.sha) : [],
-  item?.commit?.message, item?.commit?.author?.name, accountOf(item?.author), item?.commit?.committer?.date)
+  item?.commit?.message, { name: item?.commit?.author?.name, email: item?.commit?.author?.email, account: accountOf(item?.author) }, item?.commit?.committer?.date)
 
 const repoApi = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
 
@@ -182,7 +159,8 @@ export interface HistoryPages {
 }
 
 // What a commit is read by in GraphQL.
-const COMMIT_FRAGMENT = `fragment historyCommit on Commit { oid messageHeadline committedDate additions deletions author { name email date user { login databaseId } } parents(first: ${MAX_PARENTS}) { nodes { oid } } }`
+const COMMIT_FRAGMENT = `fragment historyCommit on Commit { oid message committedDate additions deletions author { name email date user { login databaseId } }
+  authors(first: ${MAX_COAUTHORS + 1}) { nodes { name email user { login databaseId } } } parents(first: ${MAX_PARENTS}) { nodes { oid } } }`
 // A query's variables `$<prefix><n>` of `type`, as many as `count`.
 const variablesOf = (prefix: string, count: number, type: string) => Array.from({ length: count }, (_, at) => `$${prefix}${at}: ${type}`).join(', ')
 
@@ -194,8 +172,8 @@ const historiesQuery = (count: number) => `query($owner: String!, $name: String!
 }
 ${COMMIT_FRAGMENT}`
 
-type GraphCommit = { oid?: unknown; messageHeadline?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
-  author?: ({ name?: unknown; date?: unknown } & GraphActor) | null
+type GraphCommit = { oid?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
+  author?: ({ name?: unknown; date?: unknown } & GraphActor) | null; authors?: { nodes?: (({ name?: unknown } & GraphActor) | null)[] } | null
   parents?: { nodes?: { oid?: unknown }[] } }
 type GraphTarget = { __typename?: unknown; oid?: unknown; committedDate?: unknown; target?: GraphTarget | null }
 type GraphRef = { name?: unknown; target?: GraphTarget | null }
@@ -237,9 +215,12 @@ async function readPages(fullName: string, token: string | null, tops: string[],
   return new Map(tops.map((top, at) => [top, (data?.repository?.[`b${at}`]?.history?.nodes ?? []).flatMap(node => graphCommit(node) ?? [])]))
 }
 
+// Its authors past the first, the git author, GitHub lists from its
+// `Co-authored-by:` trailers.
 const graphCommit = (node: GraphCommit | null | undefined) => historyCommit(node?.oid, (node?.parents?.nodes ?? []).map(parent => parent?.oid),
-  node?.messageHeadline, node?.author?.name, commitAccount(node?.author), node?.committedDate,
-  { additions: node?.additions, deletions: node?.deletions, authoredAt: node?.author?.date })
+  node?.message, { name: node?.author?.name, email: node?.author?.email, account: commitAccount(node?.author) }, node?.committedDate,
+  { additions: node?.additions, deletions: node?.deletions, authoredAt: node?.author?.date },
+  Array.isArray(node?.authors?.nodes) ? node.authors.nodes.slice(1).map(actor => ({ name: actor?.name, email: actor?.email, account: commitAccount(actor) })) : null)
 
 // The history from each of `starts`, a page of each, kept (`pages`), or read
 // and then kept by its top; glued on to it, the pages kept that start at a

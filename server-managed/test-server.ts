@@ -26,6 +26,7 @@ import { NpmPackageError, readNpmVersion, readNpmVersions } from './npm-packages
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
+import { coauthorsOf } from './commit-coauthors.ts'
 import { APP_AGENTS } from './repository-agents.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
@@ -390,6 +391,15 @@ const HISTORY_FIXTURE: [string, string, string[], number, string][] = [
   ...Array.from({ length: 140 }, (_, index): [string, string, string[], number, string] =>
     [`o${index + 1}`, `Older work, part ${140 - index}`, index === 139 ? [] : [`o${index + 2}`], 1000 + index * 40, index % 3 === 0 ? 'Ada Lovelace' : 'Alan Turing']),
 ]
+// Some commits' messages past their subjects, as the server reads their
+// co-authors and the agents they mark of them (commit-coauthors.ts).
+const HISTORY_MESSAGES: Record<string, string> = {
+  cv3: 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>',
+  cv2: '🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Linus Torvalds <2+torvalds@users.noreply.github.com>',
+  bp2: 'Co-authored-by: Cursor Agent <cursoragent@cursor.com>',
+  m9: 'https://chatgpt.com/codex/tasks/task_e_fixture123',
+  t2: '🤖 Generated with [Neo](https://neo.example)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nCo-authored-by: Ken Thompson <ken@example.com>',
+}
 const historySha = (label: string) => label === 'main' ? 'a'.repeat(40) : label === 'develop' ? 'b'.repeat(40) : createHash('sha1').update(label).digest('hex')
 const HISTORY_BRANCHES = [['main', 'main'], ['develop', 'develop'], ['feature/bundle-picker', 'bp2'], ['feature/code-viewer', 'cv3'], ['fix/flaky-upload', 's43b']]
 // Pull requests squashed into main, each its own commits: #43's branch still
@@ -649,6 +659,7 @@ function historyFixture(url: URL, res: ServerResponse): void {
   const now = Date.now()
   const commitOf = ([label, subject, parents, hours, author]: [string, string, string[], number, string]) => ({
     sha: historySha(label), parents: parents.map(historySha), subject, authorName: author, authorLogin: null, committedAt: now - hours * 3_600_000,
+    coauthors: coauthorsOf(HISTORY_MESSAGES[label] ?? '', { name: author, account: { login: null, id: null } }),
   })
   const commits = HISTORY_FIXTURE.map(commitOf)
   // A pull request's branch still at its head is read as any branch is.
