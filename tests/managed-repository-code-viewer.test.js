@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { setImmediate } from 'node:timers/promises'
 import { beforeEach, mock, test } from 'node:test'
 import './_polyfills.js'
+import { templateText } from './_lit.js'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
@@ -117,6 +118,20 @@ test('a repository alone opens its default branch\'s head, its route then naming
   answer = (repoId, ref, path) => Promise.resolve({ ...data, commit: other, path })
   await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: other, path: '', bundleTab: 'code' }, () => true, () => {})
   assert.deepEqual(shownRevision(state.bundles[0].repository, null), { kind: 'commit', name: other })
+  // Once the repository's branches and tags arrive, by the branch whose head
+  // it is, the default branch first, else the tag on it.
+  const listed = (branchCommits, tagCommits = []) => ({ status: 'ready', value: { defaultBranch: 'main', branches: [], tags: [], branchCommits, tagCommits } })
+  const linked = state.bundles[0].repository
+  assert.deepEqual(shownRevision(linked, listed([{ name: 'develop', sha: other }, { name: 'main', sha: other }], [{ name: 'v1', sha: other }])),
+    { kind: 'branch', name: 'main' })
+  assert.deepEqual(shownRevision(linked, listed([{ name: 'develop', sha: other }, { name: 'main', sha: commit }])), { kind: 'branch', name: 'develop' })
+  assert.deepEqual(shownRevision(linked, listed([{ name: 'main', sha: commit }], [{ name: 'v2', sha: commit }, { name: 'v1', sha: other }])),
+    { kind: 'tag', name: 'v1' })
+  assert.deepEqual(shownRevision(linked, listed([{ name: 'main', sha: commit }])), { kind: 'commit', name: other })
+  assert.deepEqual(shownRevision(linked, { status: 'ready', value: { defaultBranch: 'main', branches: [], tags: [] } }), { kind: 'commit', name: other },
+    'a server answering no commits names none')
+  assert.deepEqual(shownRevision({ ...linked, revision: { kind: 'tag', name: 'v9' } }, listed([{ name: 'main', sha: other }])), { kind: 'tag', name: 'v9' },
+    'one opened by a name, by that')
 })
 
 test('opening a directory shows it in the bundle view at the file its route names; another tab keeps it; another revision keeps it until it opens', async () => {
@@ -287,6 +302,17 @@ test('the header opens another repository at its default branch, another revisio
     { view: 'repository-code', repoId: 7, commit: null, path: 'packages/app', bundleTab: 'search', ref: 'abcdef1', revision: { kind: 'commit', name: 'ABCDEF1' }, repo: 'org/repo' },
     { view: 'repository-code', repoId: 7, commit: 'f'.repeat(40), path: 'packages/app', bundleTab: 'search', repo: 'org/repo' },
   ], 'a commit that is not hex opens nothing; a full one opens by its own route')
+  // Issues, Pull requests, Agents and Pulse, the whole repository's whatever
+  // its revision, pick none, nor link the commit; the others do.
+  for (const tab of ['code', 'treemap', 'search', 'compare', 'commits', 'issues', 'pulls', 'agents', 'pulse']) {
+    header.tab = tab
+    header._edit = null
+    const text = templateText(header.render())
+    const shown = !['issues', 'pulls', 'agents', 'pulse'].includes(tab)
+    assert.equal(text.includes('<revision-select'), shown, tab)
+    assert.equal(text.includes('bundles-slide-commit'), shown, tab)
+    assert.match(text, /<repository-selector /u, tab)
+  }
 })
 
 test('Compare compares the directory with another revision of it, read as the directory is, named by the commit read, without packages or dependencies', async () => {

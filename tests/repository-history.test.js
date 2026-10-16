@@ -181,7 +181,7 @@ function shownAt(sha, path = '') {
     refs: { status: 'ready', value: { defaultBranch: 'main' } } })
 }
 
-test('the tab reads every branch at the root, marks the commit shown, and opens a commit\'s code by the branch naming it', async () => {
+test('the tab reads every branch at the root, marks the commit shown, and shows a commit clicked in its place by the branch naming it', async () => {
   answer = () => Promise.resolve(allAnswer)
   const view = shownAt(a)
   assert.match(templateText(view.render()), /Reading the history/u)
@@ -206,9 +206,9 @@ test('the tab reads every branch at the root, marks the commit shown, and opens 
   view.open(allAnswer.commits[0], historyRefs(allAnswer, 'main').get(a))
   view.open(allAnswer.commits[1], [])
   assert.deepEqual(navigations, [
-    { repoId: 7, repo: 'org/repo', path: '', commit: a, bundleTab: 'code', revision: { kind: 'branch', name: 'main' } },
-    { repoId: 7, repo: 'org/repo', path: '', commit: b, bundleTab: 'code' },
-  ])
+    { repoId: 7, repo: 'org/repo', path: '', commit: a, bundleTab: 'commits', revision: { kind: 'branch', name: 'main' } },
+    { repoId: 7, repo: 'org/repo', path: '', commit: b, bundleTab: 'commits' },
+  ], 'shown in its place, on Commits')
   // A commit older than those listed offers its own history.
   const older = shownAt(x)
   assert.match(templateText(older.render()), /fffffff<\/code> isn’t among these commits\.<\/p>/u)

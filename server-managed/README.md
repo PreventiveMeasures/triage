@@ -1605,9 +1605,16 @@ reader may browse, and the revision, a branch, a tag or a commit, as Create a
 bundle picks one (`ui/view/revision-select.js`, shared by both): another
 repository opens at its default branch, another revision opens the same
 directory there, on the same tab, a typed one on Enter, and Back names a
-revision as it was opened, else by its commit. Between them, a directory's
-path in the repository, each part opening its own directory, and after them
-the commit, linking its tree on GitHub; each file's head links it on GitHub at
+revision as it was opened. One opened by its commit (a link's) is named by
+the branch whose head it is, the default branch first, else by the tag on
+it, else by its commit: the repository's branches and tags are listed with
+their commits (`branchCommits`, `tagCommits`), the default branch's read
+apart where the first page of a hundred branches by name leaves it out. Between them,
+a directory's path in the repository, each part opening its own directory,
+and after them the commit, linking its tree on GitHub; neither the revision
+nor the commit shows on Issues, Pull requests, Agents or Pulse, which read
+the whole repository whatever its revision, the revision kept for the other
+tabs. Each file's head links it on GitHub at
 the commit, and admins have a breadcrumb back to the Repositories page. A
 directory too large to read whole, or one the reader's grants reach only part
 of, says so, and lists its directories to open instead (as browsing lists
@@ -1696,8 +1703,9 @@ commits read as their button nears the end of the scroll, a screen before it
 shows, as though clicked, and again while it stays near; after a page that
 failed, they wait for a click. The commit shown is marked, and, where every branch's latest commits don't reach
 it, a note says so. A directory lists the commits touching it, in a
-line, as GitHub doesn't rewrite their parents to those listed. A line opens its
-commit's code, named by the branch, else the tag, naming it. The view reads
+line, as GitHub doesn't rewrite their parents to those listed. A line shows
+its commit, the view staying on Commits, named in the header by the branch
+(the default first), else the tag, naming it. The view reads
 none of the directory's files: its route at a commit opens it alone, its other
 tabs then reading them. A directory whose files fail to open shows its Commits
 all the same, where its commit is known (a `413 directory-too-large` names the

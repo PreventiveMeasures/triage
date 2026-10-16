@@ -8,6 +8,21 @@ import { appDependabotAlerts } from './dependabot-access.ts'
 
 const REFS_PAGE = 100
 
+// Each branch or tag GitHub lists, by its name and commit, those it names
+// one for.
+const refCommits = (items: { name?: unknown; commit?: { sha?: unknown } }[]) => items.flatMap(item => typeof item?.name === 'string' && item.name
+  && typeof item.commit?.sha === 'string' && /^[a-f\d]{40}$/u.test(item.commit.sha) ? [{ name: item.name, sha: item.commit.sha }] : [])
+
+// Each branch GitHub lists, by its name and commit. Branches are listed by
+// name, a full page of them leaving the default branch out where many come
+// before it: its commit is read apart then, by its ref, none where that fails.
+async function branchCommits(read: (suffix: string) => Promise<unknown>, branches: { name?: unknown; commit?: { sha?: unknown } }[], defaultBranch: string) {
+  const listed = refCommits(branches)
+  if (!defaultBranch || branches.length < REFS_PAGE || listed.some(item => item.name === defaultBranch)) return listed
+  const ref = await read(`/git/ref/heads/${defaultBranch.split('/').map(encodeURIComponent).join('/')}`).catch(() => null) as { object?: { sha?: unknown } } | null
+  return typeof ref?.object?.sha === 'string' && /^[a-f\d]{40}$/u.test(ref.object.sha) ? [...listed, { name: defaultBranch, sha: ref.object.sha }] : listed
+}
+
 export interface RepositoryEntry { name: string; path: string; type: 'dir' | 'file' | 'symlink' | 'submodule' }
 
 // Restricted managers can walk the ancestors of their grants, without seeing
@@ -138,11 +153,11 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
       }
       const [branches, tags] = await Promise.all([list('branches'), list('tags')])
       const names = (items: { name?: unknown }[]) => items.flatMap(item => typeof item?.name === 'string' ? [item.name] : [])
-      // Each tag's commit, for the tag cache. A full page may leave tags
-      // out; only a shorter one lists every tag.
-      const tagCommits = tags.flatMap(item => typeof item?.name === 'string' && item.name && typeof item.commit?.sha === 'string'
-        && /^[a-f\d]{40}$/u.test(item.commit.sha) ? [{ name: item.name, sha: item.commit.sha }] : [])
-      return { defaultBranch, branches: names(branches), tags: names(tags), tagCommits, tagsComplete: tags.length < REFS_PAGE }
+      // Each branch's and tag's commit, for the code viewer's header to name a
+      // commit by, and each tag's for the tag cache. A full page may leave
+      // tags out; only a shorter one lists every tag.
+      return { defaultBranch, branches: names(branches), tags: names(tags), branchCommits: await branchCommits(read, branches, defaultBranch),
+        tagCommits: refCommits(tags), tagsComplete: tags.length < REFS_PAGE }
     },
     async commit(ref: string) {
       if (/^[a-f\d]{40}$/iu.test(ref)) return ref

@@ -420,11 +420,12 @@ class RepositoryHistory extends LitElement {
     repaint()
   }
 
-  // A commit's code, named by the branch, else the tag, naming it.
+  // A commit shown in its place, the view staying on Commits, named by the
+  // branch, the default first, else the tag, naming it.
   open(commit, refs) {
     const { repoId, repo, path } = this.repository
     const ref = refs?.find(item => item.kind === 'branch') ?? refs?.find(item => item.kind === 'tag')
-    navigateToRepositoryCode({ repoId, repo, path, commit: commit.sha, bundleTab: 'code', ...ref ? { revision: { kind: ref.kind, name: ref.name } } : {} })
+    navigateToRepositoryCode({ repoId, repo, path, commit: commit.sha, bundleTab: 'commits', ...ref ? { revision: { kind: ref.kind, name: ref.name } } : {} })
   }
 
   // Up and down move between lines' buttons, Home and End to the first's and

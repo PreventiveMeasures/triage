@@ -19,6 +19,27 @@ const appConfig = { ...config, githubAppId: '1', githubAppPrivateKey: generateKe
 const privateRepo = { ...repo, private: true, installationId: 7 }
 const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
 
+test('a full page of branches by name leaving the default branch out: its commit read apart, none where that fails', async () => {
+  const head = 'c'.repeat(40)
+  const calls = []
+  let answered = true
+  const reader = await createRepositoryBrowser(config, anonymous, async url => {
+    await Promise.resolve()
+    calls.push(url)
+    if (url === 'https://api.github.com/repos/org/repo') return Response.json(publicMetadata)
+    if (url.includes('/branches?')) return Response.json(Array.from({ length: 100 }, (_, at) => ({ name: `claude/b${at}`, commit: { sha: commit } })))
+    if (url.includes('/tags?')) return Response.json([])
+    if (url.endsWith('/git/ref/heads/main')) return answered ? Response.json({ ref: 'refs/heads/main', object: { sha: head, type: 'commit' } }) : new Response('{}', { status: 404 })
+    return Response.json([])
+  }).reader(repo)
+  const refs = await reader.refs()
+  assert.equal(refs.branchCommits.length, 101)
+  assert.deepEqual(refs.branchCommits.at(-1), { name: 'main', sha: head })
+  assert.ok(calls.includes('https://api.github.com/repos/org/repo/git/ref/heads/main'))
+  answered = false
+  assert.equal((await reader.refs()).branchCommits.length, 100, 'none where it fails, the rest listed all the same')
+})
+
 test('repository reader pins branches/tags to commits and only returns directory metadata', async () => {
   const calls = []
   const reader = await createRepositoryBrowser(config, anonymous, async (url, options) => {
@@ -28,7 +49,7 @@ test('repository reader pins branches/tags to commits and only returns directory
     assert.equal(options.redirect, 'error')
     if (url === 'https://api.github.com/repos/org/repo') return Response.json(publicMetadata)
     if (url.includes('/commits/')) return Response.json({ sha: commit })
-    if (url.includes('/branches?')) return Response.json([{ name: 'main' }, { name: 'feature/a' }])
+    if (url.includes('/branches?')) return Response.json([{ name: 'main', commit: { sha: commit } }, { name: 'feature/a' }])
     if (url.includes('/tags?')) return Response.json([{ name: 'v1', commit: { sha: commit } }, { name: 'v0', commit: { sha: 'short' } }, { name: 'bare' }])
     return Response.json([
       { name: 'a.ts', path: 'src/a.ts', type: 'file', content: 'never return source' },
@@ -37,7 +58,7 @@ test('repository reader pins branches/tags to commits and only returns directory
     ])
   }).reader(repo)
   assert.deepEqual(await reader.refs(), { defaultBranch: 'main', branches: ['main', 'feature/a'], tags: ['v1', 'v0', 'bare'],
-    tagCommits: [{ name: 'v1', sha: commit }], tagsComplete: true })
+    branchCommits: [{ name: 'main', sha: commit }], tagCommits: [{ name: 'v1', sha: commit }], tagsComplete: true })
   assert.equal(await reader.commit('heads/feature/a'), commit)
   assert.equal(await reader.commit('tags/v1'), commit)
   const count = calls.length
@@ -138,7 +159,7 @@ for (const first of ['refs', 'contents']) {
     if (first === 'refs') finishContents()
     else finishRefs()
     assert.deepEqual(await pending, { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: {
-      defaultBranch: 'main', branches: ['main'], tags: ['v1'], defaultContents: {
+      defaultBranch: 'main', branches: ['main'], tags: ['v1'], branchCommits: [], tagCommits: [], defaultContents: {
         entries: [{ name: 'entry.ts', path: 'entry.ts', type: 'file' }], limited: false, path: '', commit,
       },
     } })
@@ -215,11 +236,11 @@ test('refs withDefault populates a cold cache and can clear a missing default', 
   assert.equal(missing.body.defaultContents, null)
   assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, null)
   const plain = await request({ repoId: '1', withDefault: 'false' }, { route: 'refs' })
-  assert.deepEqual(plain.body, { defaultBranch: '', branches: [], tags: [] })
+  assert.deepEqual(plain.body, { defaultBranch: '', branches: [], tags: [], branchCommits: [], tagCommits: [] })
   assert.equal(commitReads, 2, 'plain refs does not fetch contents')
 })
 
-test('browsing for Create a bundle refreshes the tag cache without returning tag commits', async t => {
+test('browsing for Create a bundle refreshes the tag cache, and answers each branch\'s and tag\'s commit', async t => {
   const { db, request } = await fixture(t, { role: 'admin' })
   const tagged = 'b'.repeat(40)
   const keys = [`1:${commit}`, `1:${tagged}`]
@@ -233,7 +254,8 @@ test('browsing for Create a bundle refreshes the tag cache without returning tag
     return Promise.resolve(Response.json([]))
   })
   const refs = await request({ repoId: '1' }, { route: 'refs' })
-  assert.deepEqual(refs.body, { defaultBranch: 'main', branches: ['main'], tags: ['v1', 'v2'] })
+  assert.deepEqual(refs.body, { defaultBranch: 'main', branches: ['main'], tags: ['v1', 'v2'], branchCommits: [],
+    tagCommits: [{ name: 'v1', sha: commit }, { name: 'v2', sha: tagged }] })
   assert.deepEqual(await db.listGithubCommitTags(keys), [{ key: keys[0], name: 'v1' }, { key: keys[1], name: 'v2' }])
 
   tags = Array.from({ length: 100 }, (_, i) => ({ name: `t${i}`, commit: { sha: commit } }))

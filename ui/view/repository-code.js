@@ -324,12 +324,24 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
 }
 
 // The revision a directory shows, as it was opened: by its name, the default
-// branch's once the repository's branches arrive, else by its commit.
+// branch's once the repository's branches arrive; else, opened by its commit,
+// by the branch whose head it is, the default branch first, else the tag on
+// it, once they arrive (refs.value's `branchCommits` and `tagCommits`), else
+// by its commit.
 export function shownRevision({ revision, commit }, refs) {
   if (revision?.name) return revision
-  if (revision) return { kind: 'branch', name: refs?.status === 'ready' ? refs.value.defaultBranch ?? '' : '' }
-  return { kind: 'commit', name: commit ?? '' }
+  const listed = refs?.status === 'ready' ? refs.value : null
+  if (revision) return { kind: 'branch', name: listed?.defaultBranch ?? '' }
+  const at = kind => (Array.isArray(listed?.[kind]) ? listed[kind] : []).flatMap(item => item?.sha === commit && typeof item.name === 'string' ? [item.name] : [])
+  const branches = commit ? at('branchCommits') : []
+  const branch = branches.includes(listed?.defaultBranch) ? listed.defaultBranch : branches[0]
+  const tag = commit ? at('tagCommits')[0] : null
+  return branch ? { kind: 'branch', name: branch } : tag ? { kind: 'tag', name: tag } : { kind: 'commit', name: commit ?? '' }
 }
+
+// The tabs the revision shown changes nothing of, a whole repository's,
+// whose header picks none: another tab keeps it.
+const REVISIONLESS_TABS = new Set(['issues', 'pulls', 'agents', 'pulse'])
 
 // The revision a revision-select's change (`detail`) picks: a name picked or
 // entered, or a commit entered whole or as 7 hex digits at least; none while
@@ -345,7 +357,8 @@ export function revisionPicked({ how, kind, name }) {
 // may browse (`repos`, browsableRepositories); the directory's path in it,
 // each part opening that directory; the revision as it was opened, among the
 // repository's branches and tags (`refs`, repositoryRefs), as Create a bundle
-// picks one; and the commit, linking its tree on GitHub. Picking another
+// picks one; and the commit, linking its tree on GitHub, these two on the
+// tabs it changes something of (REVISIONLESS_TABS). Picking another
 // repository opens its default branch's head, on the same tab; picking another
 // revision, or entering one, opens the same directory there.
 class RepositoryCodeSource extends LitElement {
@@ -400,9 +413,9 @@ class RepositoryCodeSource extends LitElement {
           ? html`<span aria-current="location">${part}</span>`
           : html`<button type="button" @click=${() => openDirectory(this.repository, parts.slice(0, index + 1).join('/'), this.tab)}>${part}</button><span aria-hidden="true">/</span>`)}
       </nav>` : nothing}
-      <revision-select class="repository-code-revision" .refs=${this.refs?.status === 'ready' ? this.refs.value : null} .kind=${revision.kind} .name=${revision.name}
-        .installTooltips=${root => installShadowTooltipListener(root)} @revision-change=${this.revisionChanged}></revision-select>
-      ${tree ? html`<a class="bundles-slide-commit" href=${tree} data-tooltip=${commit} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer"
+      ${REVISIONLESS_TABS.has(this.tab) ? nothing : html`<revision-select class="repository-code-revision" .refs=${this.refs?.status === 'ready' ? this.refs.value : null}
+        .kind=${revision.kind} .name=${revision.name} .installTooltips=${root => installShadowTooltipListener(root)} @revision-change=${this.revisionChanged}></revision-select>`}
+      ${tree && !REVISIONLESS_TABS.has(this.tab) ? html`<a class="bundles-slide-commit" href=${tree} data-tooltip=${commit} data-tooltip-icon="commit" target="_blank" rel="noopener noreferrer"
         aria-label=${`View this directory at commit ${commit.slice(0, 7)} on GitHub`}>${appMarkup(COMMIT_ICON_SVG)}<span>${commit.slice(0, 7)}</span></a>` : nothing}`
   }
 }
