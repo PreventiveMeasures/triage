@@ -715,35 +715,37 @@ class ManagedAdminRepos extends ManagedPage {
       <div class="head">${this._back()}<h1>${repo.fullName}</h1></div>
       <p class="intro ui-hint">Repository settings and stored data.</p>
       ${this._actionError ? html`<p class="msg error" role="alert">${this._actionError}</p>` : nothing}
-      <section class="section" aria-label="Repository connection">
-        <h2>Connection</h2>
-        <div class="settings-row"><div class="settings-copy"><strong>${this._accessLabel(repo)}</strong><p>${active ? 'Active for new scans and uploads.' : 'Deactivated. Stored reports and bundles are retained.'}</p></div>
-          <span class=${`status-line ${active ? '' : 'inactive'}`}>${active ? 'Active' : 'Deactivated'}</span>
-          ${this._connectAppButton(repo)}
-          ${repo.htmlUrl ? html`<a class="btn" href=${repo.htmlUrl} target="_blank" rel="noopener noreferrer">View on GitHub</a>` : nothing}
-        </div>
-        <div class="settings-row"><div class="settings-copy"><strong>${active ? 'Deactivate repository' : 'Reactivate repository'}</strong><p>${active ? 'Pause new scans while preserving all stored data and attachments.' : 'Make this repository available for new scans and bundle attachments again.'}</p></div>
-          <button type="button" class="btn" ?disabled=${this._busy != null} @click=${() => { void this._setActive(repo, !active) }}>${this._busy === repo.id && !this._connectingApp ? (active ? 'Deactivating…' : 'Reactivating…') : (active ? 'Deactivate' : 'Reactivate')}</button>
-        </div>
-      </section>
-      ${this._dependencyReviewSection(repo)}
-      <section class="data-section" aria-label="Stored repository data">
-        <h2>Stored data</h2>
-        <div class="dialog-data" aria-busy=${this._impactLoading}>
-          ${[['Reports', reports], ['Bundles', bundles]].map(([label, items]) => html`<section>
-            <h3>${label} (${this._impact == null ? '…' : items.length})</h3>
-            ${this._impactLoading && this._impact == null ? html`<p class="data-empty" role="status">Loading ${label.toLowerCase()}…</p>` : this._impact == null
-              ? html`<p class="data-empty">Attached data could not be loaded.</p><button type="button" class="btn" @click=${() => this._openDetail(repo)}>Try again</button>`
-              : items.length > 0 ? html`<ul>${items.map(item => html`<li>${item.filename}${item.repoDirectory ? ` · ${item.repoDirectory}` : nothing}</li>`)}</ul>` : html`<p class="data-empty">No ${label.toLowerCase()} attached.</p>`}
-          </section>`)}
-        </div>
-      </section>
-      <section class="section" aria-label="Permanent repository removal">
-        <h2>Permanent removal</h2>
-        <div class="settings-row"><div class="settings-copy"><strong>Delete repository and stored data</strong><p>Deactivation is reversible. Permanent removal deletes this repository’s attached reports and bundles; it cannot be undone.</p></div>
-          <button type="button" class="btn danger" ?disabled=${this._busy != null || this._impactLoading || !this._impactFresh || this._impact == null} @click=${() => { this._removeOpen = true; this._acknowledge = false; this._deleteTriage = false; this._confirmName = '' }}>Remove permanently</button>
-        </div>
-      </section>
+      <div class="manage-list repository-detail">
+        <section class="section" aria-label="Repository connection">
+          <h2>Connection</h2>
+          <div class="settings-row"><div class="settings-copy"><strong>${this._accessLabel(repo)}</strong><p>${active ? 'Active for new scans and uploads.' : 'Deactivated. Stored reports and bundles are retained.'}</p></div>
+            <span class=${`status-line ${active ? '' : 'inactive'}`}>${active ? 'Active' : 'Deactivated'}</span>
+            ${this._connectAppButton(repo)}
+            ${repo.htmlUrl ? html`<a class="btn" href=${repo.htmlUrl} target="_blank" rel="noopener noreferrer">View on GitHub</a>` : nothing}
+          </div>
+          <div class="settings-row"><div class="settings-copy"><strong>${active ? 'Deactivate repository' : 'Reactivate repository'}</strong><p>${active ? 'Pause new scans while preserving all stored data and attachments.' : 'Make this repository available for new scans and bundle attachments again.'}</p></div>
+            <button type="button" class="btn" ?disabled=${this._busy != null} @click=${() => { void this._setActive(repo, !active) }}>${this._busy === repo.id && !this._connectingApp ? (active ? 'Deactivating…' : 'Reactivating…') : (active ? 'Deactivate' : 'Reactivate')}</button>
+          </div>
+        </section>
+        ${this._dependencyReviewSection(repo)}
+        <section class="data-section" aria-label="Stored repository data">
+          <h2>Stored data</h2>
+          <div class="dialog-data" aria-busy=${this._impactLoading}>
+            ${[['Reports', reports], ['Bundles', bundles]].map(([label, items]) => html`<section>
+              <h3>${label} (${this._impact == null ? '…' : items.length})</h3>
+              ${this._impactLoading && this._impact == null ? html`<p class="data-empty" role="status">Loading ${label.toLowerCase()}…</p>` : this._impact == null
+                ? html`<p class="data-empty">Attached data could not be loaded.</p><button type="button" class="btn" @click=${() => this._openDetail(repo)}>Try again</button>`
+                : items.length > 0 ? html`<ul>${items.map(item => html`<li>${item.filename}${item.repoDirectory ? ` · ${item.repoDirectory}` : nothing}</li>`)}</ul>` : html`<p class="data-empty">No ${label.toLowerCase()} attached.</p>`}
+            </section>`)}
+          </div>
+        </section>
+        <section class="section" aria-label="Permanent repository removal">
+          <h2>Permanent removal</h2>
+          <div class="settings-row"><div class="settings-copy"><strong>Delete repository and stored data</strong><p>Deactivation is reversible. Permanent removal deletes this repository’s attached reports and bundles; it cannot be undone.</p></div>
+            <button type="button" class="btn danger" ?disabled=${this._busy != null || this._impactLoading || !this._impactFresh || this._impact == null} @click=${() => { this._removeOpen = true; this._acknowledge = false; this._deleteTriage = false; this._confirmName = '' }}>Remove permanently</button>
+          </div>
+        </section>
+      </div>
       ${this._removeOpen && this._impact != null && !this._impactLoading ? this._removeDialog(repo, reports, bundles) : nothing}
     </div>`
   }

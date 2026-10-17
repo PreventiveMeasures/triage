@@ -106,6 +106,9 @@ test('a repository\'s dependency review is switched on or off at once, its requi
   const off = { ...repo, dependencyReview: { enabled: false, required: 1, since: null } }
   page._detail = off
   page._data = { repositories: [off] }
+  const whole = templateText(page._detailPage(off))
+  assert.match(whole, /<h1>[^<]+<\/h1><\/div>\s*<p class="intro ui-hint">[^]*<div class="manage-list repository-detail">\s*<section class="section" aria-label="Repository connection">[^]*Permanent removal[^]*<\/section>\s*<\/div>/u,
+    'its settings in a pane of their own under its title, as a list\'s rows, none under the page\'s header')
   let text = templateText(page._dependencyReviewSection(off))
   assert.match(text, /<div class="section-head"><h2>Dependency review<\/h2>\s*<mode-switch [^>]*accessible-label="Review dependencies"/u, 'its switch in its heading')
   assert.doesNotMatch(text, /Reviews each version needs|settings-copy/u, 'its terms only once on, and nothing more')
