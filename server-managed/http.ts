@@ -215,7 +215,7 @@ import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDep
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, heldTo, scopeOf } from './lockfile-scope.ts'
-import { type ReviewBaselineStore, baselineFor, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
+import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import type { ReviewedDependencies } from './reviewed-dependencies.ts'
 import { commentReviews } from './pull-comment-reviews.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
@@ -2043,8 +2043,15 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
     const answered = await keptAnswer(deps, `${repoId}\0pull-dependencies\0${PULL_DEPENDENCIES_READ}\0${number}`,
       async () => ({ number, ...await pullDependencies(fullName, token, number, pullDependencyKept(deps, repoId)) }))
-    const told = answered.value
-    const state = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told)) : null
+    // Where its review is on, those of lockfiles it leaves out told to none,
+    // whoever asks.
+    const setting = (await deps.db.listRepoDependencyReviews()).get(repoId)
+    const held = setting?.enabled ? heldDependencies(answered.value, setting.lockfiles) : answered.value
+    const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(held)) : null
+    // Its review by the lockfiles they were told by, though they have changed
+    // since; turned off meanwhile, all of them, as where it is off.
+    const state = now && setting?.enabled ? { ...now, lockfiles: setting.lockfiles } : now
+    const told = review && !now && setting?.enabled && !(await deps.db.listRepoDependencyReviews()).get(repoId)?.enabled ? answered.value : held
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
     // Its comments read for reviews, where the host reads them, while it is

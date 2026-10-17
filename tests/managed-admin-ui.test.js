@@ -125,7 +125,8 @@ test('a repository\'s dependency review is switched on or off at once, its requi
   assert.deepEqual(page._detail.dependencyReview, { enabled: true, required: 1, since: null })
   assert.deepEqual(page._data.repositories[0].dependencyReview, page._detail.dependencyReview)
   text = templateText(page._dependencyReviewSection(page._detail))
-  assert.match(text, /Reviews each version needs[^]*Reviewed since commit[^]*Save[^]*With no commit, every version needs its reviews/u)
+  assert.match(text, /Reviews each version needs[^]*Reviewed since commit \(optional\)[^]*Save/u)
+  assert.doesNotMatch(text, /need no review|With no commit/u, 'with no commit, no hint')
   assert.match(templateText(page._dependencyReviewSection({ ...page._detail, reviewTeams: [] })),
     /is-warning" role="status">No team that reviews\s+dependencies has this repository, so its pull requests show no review\./u)
   assert.doesNotMatch(templateText(page._dependencyReviewSection({ ...page._detail, reviewTeams: [{ id: 'one', name: 'One' }] })), /No team that reviews/u)
@@ -147,7 +148,7 @@ test('a repository\'s dependency review is switched on or off at once, its requi
   assert.deepEqual(page._reviewSetting(true, 1, null), { enabled: true, required: 1, since: null })
 })
 
-test('a repository\'s dependency review holds to every lockfile, all but those checked, or those alone, of its default branch\'s or named', async (t) => {
+test('a repository\'s dependency review holds to every lockfile, all but those selected, or those alone, of its default branch\'s or named', async (t) => {
   const page = createPage(Repositories)
   page.session = { csrfToken: 'csrf' }
   Object.defineProperty(page, 'isConnected', { value: true })
@@ -175,14 +176,14 @@ test('a repository\'s dependency review holds to every lockfile, all but those c
   text = templateText(page._dependencyReviewSection(on))
   const listed = [...text.matchAll(/<input type="checkbox" \.checked=(true|false)[^]*?<code>([^<]+)<\/code>(?:<span>([^<]+)<\/span>)?/gu)].map(m => [m[2], m[1], m[3] ?? null])
   assert.deepEqual(listed, [['docs/', 'true', 'every lockfile under it'], ['examples/app/yarn.lock', 'false', null], ['package-lock.json', 'false', null]])
-  assert.match(text, /changes to the lockfiles checked are listed, but not reviewed/u)
+  assert.doesNotMatch(text, /listed, but not reviewed/u)
   assert.match(text, /<button type="submit" class="btn" \?disabled=false>Save<\/button>/u, 'changed, to save')
 
   await page._saveDependencyReview(on, page._reviewSetting(true, 1, null, { mode: 'include', paths: ['package-lock.json'] }))
   assert.deepEqual(asked.at(-1), ['/api/admin/repositories/dependency-review', { repoId: 7, enabled: true, required: 1, since: null, lockfiles: { mode: 'include', paths: ['package-lock.json'] } }])
   assert.deepEqual(page._detail.dependencyReview.lockfiles, { mode: 'include', paths: ['package-lock.json'] })
   text = templateText(page._dependencyReviewSection(page._detail))
-  assert.match(text, /<option value="include">Only those checked<\/option>[^]*Only the lockfiles checked are reviewed/u, 'as saved')
+  assert.match(text, /aria-label="Lockfiles reviewed" \.value=include /u, 'as saved')
 })
 
 test('a team\'s change reads its repositories again, which teams count reviews for, and pull requests\' reviews read before', async (t) => {

@@ -2123,14 +2123,16 @@ it, none outside the repository; `lockfiles` left out of the request keeps
 those stored. The page lists the default branch's to check (`GET
 /api/admin/repositories/lockfiles?repoId=…`, `{ head, lockfiles: [{ path,
 format }] }`, of any reader of the whole repository), those named before
-though no longer there, and takes another path or directory typed in. A
-pull request's directory of lockfiles none of whose it holds to is told
-`excluded`, its versions with no review, neither asked of the host's
-reviewed dependencies nor, where it couldn't be read, failing the review,
-the popup saying it isn't reviewed; one with any it holds to is reviewed
-whole; one changing lockfiles in more directories than are read fails it
-only where it holds to a lockfile of those left unread (`omitted`, the
-paths kept with what the pull request adds, a thousand at most). The
+though no longer there, and takes another path or directory typed in.
+While the review is on, a pull request's directory of lockfiles none of
+whose it holds to is told to none, asked with its review or not
+(`heldDependencies`): neither listed, nor asked of the host's reviewed
+dependencies, nor, where it couldn't be read, failing the review, one
+changing only such lockfiles showing no dependencies at all; one with any
+it holds to is reviewed whole; one changing lockfiles in more directories
+than are read is cut only where it holds to a lockfile of those left unread
+(`omitted`, the paths kept with what the pull request adds, a thousand at
+most). The
 default branch's are read of those it holds to alone, the hundred read of
 them; the commit
 reviewed since passes the versions any of its lockfiles locked, but tells
@@ -2144,25 +2146,27 @@ A team whose reader reviews dependencies in it (`dependencyReview`, its
 or triages and sees its dependencies, or an admin)
 shows a **Dependencies** tab after Repositories (`/team/<slug>/dependencies`,
 `team-dependencies.js`), its sub-tabs **Pull requests**, **Versions**,
-**Default branch** (where any wants reviews) and **Reviews**, each counting
-what it lists, the one last picked opened again. Of each of its repositories whose review is in
+**Default branch** (where any wants reviews) and **Reviews**, drawn as a
+dialog's header tabs are, each counting what it lists, the one last picked
+opened again, held under the team's header while the one open scrolls. Of each of its repositories whose review is in
 effect for them (three read at once, one they may read only some of left
 out), it reads the open pull requests (three pages at most, those updated
 latest, saying so where there are more) and
 the dependencies, with their review, of those changing a lockfile, as their
 tiles do, and, under Pull requests, lists the pull requests whose versions want reviews, or whose
 review fails, those adding fewest first, then those held only by other
-versions their lockfiles lock (the default branch's mostly, counted, not
-listed), each a card opening its popup: how
-many versions it wants reviewed, and its versions with their review (`0/2`,
-**rejected**, **patched** or **can't review**), eight at most, the rest
-counted, those past the versions its answer lists too. A version is told under the first pull request adding it alone, of
+versions their lockfiles lock (the default branch's mostly), each a card
+opening its popup: how many versions it wants reviewed, and its versions
+with their review (`0/2`, **rejected**, **patched** or **can't review**), as
+many columns as fit, twelve at first, the rest shown as asked for, those
+past the versions its answer lists counted; and, each opened as asked for,
+the versions a pull request above adds too and those other versions. A version is told under the first pull request adding it alone, of
 whichever repository, as one review passes it everywhere: another adding it
 too says so (`+1`), and a later one counts it as one a pull request above
 adds. Versions lists every version they add wanting reviews, each once,
 with the pull requests adding it; Default branch, of each repository, what
 its default branch locks that wants reviews or fails it, its lockfiles left
-unread named; and Reviews the reviews published to the team, revoked ones
+unread named, each list forty-eight at first; and Reviews the reviews published to the team, revoked ones
 too, the latest published first, by whom, fifty a page (`GET
 /api/npm/reviews/team?teamId=…&beforeTime=&beforeId=`, `{ reviews, next }`,
 of one who reads reviews in it, else `404 no-team`, each held to the

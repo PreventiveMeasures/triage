@@ -64,7 +64,7 @@ svg .dotted { stroke-dasharray: 1 2.2; }
    one, while it shows nothing till then. */
 npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; }
 .npm-delta { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.npm-delta-typeless { opacity: .8; }
+.npm-delta-typeless { margin-left: .35em; opacity: .8; }
 .repo-item-labels { display: flex; flex-wrap: wrap; gap: .3rem; }
 .repo-item-label {
   padding: 0 .45rem; border: 1px solid var(--border); border-radius: 999px; font-size: .75rem; line-height: 1.5;

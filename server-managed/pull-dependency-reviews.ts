@@ -27,7 +27,7 @@
 import { lockedAt, lockedIn } from './commit-lockfiles.ts'
 import { GithubApiError } from './github-app.ts'
 import type { LockedPackage } from './locked-packages.ts'
-import { EVERY_LOCKFILE, heldTo, isEvery, reviewedIn } from './lockfile-scope.ts'
+import { EVERY_LOCKFILE, type LockfileScope, heldTo, isEvery, reviewedIn } from './lockfile-scope.ts'
 import { type Lru, lru } from './lru.ts'
 import { type DirectoryDependencies, MAX_ADDED, type PullDependencies, lockedAs, lockedWith } from './pull-dependencies.ts'
 import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
@@ -199,6 +199,15 @@ const sourceKey = (pkg: Shown) => `${pkg.source}\0${versionKey(pkg)}\0${pkg.from
 // and whether they couldn't be read.
 export type CommentReviews = (wanting: ReviewedDependency[]) => Promise<{ reviews: PublishedReview[]; failed: boolean }>
 
+// What a pull request's lockfiles lock, but in directories none of whose
+// lockfiles `scope` holds to, as they aren't reviewed: left out, as lockfiles
+// left unread are where it holds to none of them (`omitted`, told to none).
+export function heldDependencies<T extends PullDependencies>(told: T, scope: LockfileScope): Omit<T, 'omitted'> {
+  const { omitted, ...answered } = told
+  if (isEvery(scope)) return answered
+  return { ...answered, cut: told.cut && !(omitted && !omitted.some(path => heldTo(scope, path))), lockfiles: told.lockfiles.filter(dir => reviewedIn(scope, dir.paths)) }
+}
+
 // A pull request's dependencies as the client is told them: without the
 // versions its directories lock; with `state`, a repository's review in
 // effect, each version's review (reviewedDirectory), those wanting one asked
@@ -215,19 +224,16 @@ export type CommentReviews = (wanting: ReviewedDependency[]) => Promise<{ review
 // the lockfiles there left unread (`baselineUnread`), whose versions do. It
 // fails where a version can't be reviewed, a directory's lockfiles couldn't
 // be read or lock more than are checked, or the pull request changes more
-// lockfiles than are read (`cut`). A directory none of whose lockfiles the
-// review holds to (`lockfiles`, lockfile-scope.ts, told in its terms where
-// not every one) is told as unasked (`excluded`), failing it in nothing, as
-// directories left unread are where it holds to none of their lockfiles
-// (`omitted`, told to none).
+// lockfiles than are read (`cut`). Those of directories none of whose
+// lockfiles the review holds to (`lockfiles`, lockfile-scope.ts, told in its
+// terms where not every one) are left out (heldDependencies).
 export async function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null,
   { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null }: { baseline?: Set<string> | null; baselineUnread?: string[]
     baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null } = {}) {
-  const { omitted, ...answered } = told
-  if (!state) return { ...answered, lockfiles: told.lockfiles.map(dir => reviewedDirectory(dir, null)) }
-  const scope = state.lockfiles ?? EVERY_LOCKFILE
-  const cut = told.cut && !(omitted && !omitted.some(path => heldTo(scope, path)))
-  const held = told.lockfiles.filter(dir => reviewedIn(scope, dir.paths))
+  const scope = state?.lockfiles ?? EVERY_LOCKFILE
+  const answered = heldDependencies(told, scope)
+  if (!state) return { ...answered, lockfiles: answered.lockfiles.map(dir => reviewedDirectory(dir, null)) }
+  const { cut, lockfiles: held } = answered
   let context = { state, reviews: reviewsByVersion(state.reviews), baseline: reviewed ? null : baseline }
   // What wants a review, as `lookup` is asked of, each once.
   const wanting = () => {
@@ -257,10 +263,10 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
     context = { ...context, reviews: reviewsByVersion([...state.reviews, ...comments.reviews]) }
     await ask(new Map([...wanting()].filter(([key]) => !asked.has(key))))
   }
-  const dirs = told.lockfiles.map(dir => held.includes(dir) ? reviewedDirectory(dir, (pkg, bases) => {
+  const dirs = held.map(dir => reviewedDirectory(dir, (pkg, bases) => {
     const judged = judge(pkg, bases, context)
     return judged.wants && passed.has(askedOf(pkg)[0]) ? { review: { reviewed: true }, wants: false } : judged
-  }) : { ...reviewedDirectory(dir, null), excluded: true as const })
+  }))
   const unread = baselineUnread.filter(path => heldTo(scope, path))
   const listed = dirs.flatMap(dir => 'unreviewed' in dir ? [dir] : [])
   return { ...answered, cut, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required,

@@ -66,7 +66,7 @@
        scrolls its list of links the same way. */
     &:has(
       .bundles-view, .packages-view, .links-view,
-      .findings-content
+      .findings-content, team-dependencies
     ) { flex-shrink: 1; }
     &:has(> .managed-page-slot) { flex: 1; min-height: 0; }
   }
@@ -1866,51 +1866,71 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 .workspace-content-empty { color: var(--muted); padding: 1rem 0; }
 
 /* A team's dependencies to review (team-dependencies.js), a sub-tab each,
-   picked in its bar: its pull requests wanting reviews, each a card of the
-   versions it alone adds, every version wanting one, its default branches',
-   and the reviews published to it. Each version a row: its name, its review
-   in the color the tiles tell it in, and the pull requests adding it
-   besides. */
-.team-deps { display: flex; flex-direction: column; gap: 1rem; max-width: 1200px; }
-.team-deps-bar { padding-inline: 0; border-bottom: 0; }
+   drawn as a dialog's header tabs are (dialog-tabs.css), each with its
+   count, held under the team's header while the one open scrolls: its pull
+   requests wanting reviews, each a card of the versions it alone adds, the
+   rest of its lists opened from under them; every version wanting one; its
+   default branches'; and the reviews published to it. Versions fill as many
+   columns as fit, each a row: its name, then the lines it changes, its
+   review in the color the tiles tell it in, and the pull requests adding it
+   besides, at its end. */
+#workspace-content-slot:has(team-dependencies), .workspace-content-view:has(> team-dependencies), team-dependencies, .team-deps {
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
+}
+.workspace-content-view:has(> team-dependencies) > :not(team-dependencies) { flex: none; }
+.team-deps > .dlg-tabs { flex: none; }
+.team-deps-tab-n {
+  padding: 0 .4rem; border-radius: 999px; background: color-mix(in srgb, currentcolor 14%, transparent);
+  font-size: .7rem; line-height: 1.5; font-variant-numeric: tabular-nums;
+}
+.team-deps-panel {
+  display: flex; flex-direction: column; gap: .75rem;
+  flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+  /* Room for a focused row's outline, inside the scroller. */
+  padding: 2px 2px 1rem;
+}
 .team-deps-section {
   & > h2 { margin: 0 0 .25rem; font-size: .875rem; font-weight: 500; color: var(--text); }
-  & > .team-deps-quiet:first-child, & > h2 + .team-deps-quiet { margin: 0 0 .5rem; }
-  & > .team-deps-versions { padding: .25rem .5rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 10px); }
+  & > .team-deps-quiet:first-child, & > h2 + .team-deps-quiet { margin: 0 0 .25rem; }
 }
 .team-deps-pulls {
-  display: flex; flex-direction: column; gap: .5rem; margin: 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: .625rem; margin: 0; padding: 0; list-style: none;
 }
 .team-deps-pull {
-  min-width: 0; padding: .5rem .75rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 10px); background: var(--surface);
+  min-width: 0; padding: .625rem .875rem .5rem;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 10px); background: var(--surface);
 }
 .team-deps-pull-head {
-  display: flex; align-items: baseline; gap: .5rem; min-width: 0; color: var(--text); text-decoration: none;
-  &:hover .team-deps-pull-title { text-decoration: underline; }
+  display: flex; align-items: baseline; gap: .625rem; min-width: 0; color: var(--text); text-decoration: none;
+  &:hover .team-deps-pull-title { color: var(--accent); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 }
 .team-deps-pull-name { flex: none; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
 .team-deps-pull-title {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; font-weight: 500;
+  transition: color .12s;
 }
 .team-deps-count {
   flex: none; color: var(--medium); font-size: .75rem; font-variant-numeric: tabular-nums;
   &.is-failed { color: var(--critical); }
 }
 .team-deps-versions {
-  display: flex; flex-direction: column; margin: .375rem 0 0; padding: 0; list-style: none;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr)); column-gap: 1.5rem;
+  margin: .375rem 0 0; padding: 0; list-style: none;
 }
 .team-deps-row {
-  display: flex; align-items: center; gap: .375rem; min-width: 0; padding: .125rem 0;
+  display: flex; align-items: center; gap: .5rem; min-width: 0;
+  margin-inline: -.375rem; padding: .1875rem .375rem; border-radius: 6px;
   color: var(--text); font-size: .78rem; text-decoration: none;
-  &:is(a):hover .team-deps-name { text-decoration: underline; }
+  &:is(a):hover { background: var(--surface-active); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   & svg {
     flex: none; width: 12px; height: 12px;
     color: var(--medium); fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linejoin: round;
   }
 }
 .team-deps-name {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .team-deps-version { color: var(--muted); }
@@ -1920,18 +1940,29 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   &.is-failed { color: var(--critical); }
   &.is-wanted { color: var(--medium); }
 }
-.team-deps-also {
-  flex: none; margin-left: auto; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums;
-}
+.team-deps-also { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .team-deps-quiet { margin: .25rem 0 0; color: var(--muted); font-size: .75rem; }
+/* A list's toggle: rows past those shown, or a list apart, its chevron
+   turned while it is open. */
+.team-deps-more {
+  display: inline-flex; align-items: center; gap: .3rem;
+  margin: .25rem 0 0 -.375rem; padding: .125rem .375rem; border: 0; border-radius: 6px;
+  background: none; color: var(--muted); font: inherit; font-size: .75rem;
+  &:hover { color: var(--text); background: var(--surface-active); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  & svg { flex: none; width: 10px; height: 10px; fill: none; stroke: currentcolor; stroke-width: 1.75; transition: transform .12s; }
+  &[aria-expanded='true'] svg { transform: rotate(90deg); }
+}
+.team-deps-disclosed { display: flex; flex-direction: column; align-items: flex-start; & > .team-deps-versions { align-self: stretch; } }
 /* The lines a version wanting reviews changes (npm-delta.js), beside its
    review: added green, removed red, those but for declaration files changed
-   in types alone after them, muted; kept whole, as the row shortens its name.
+   in types alone after them, muted, apart by a space the template's edge
+   can't keep (build-lit-minify.js); kept whole, as the row shortens its name.
    Its element a box, however narrow, as its viewport's observer sees only
    one, while it shows nothing till then. */
 npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; }
 .npm-delta { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.npm-delta-typeless { opacity: .8; }
+.npm-delta-typeless { margin-left: .35em; opacity: .8; }
 
 @media (width < 600px) {
   .workspace-content-row { flex-wrap: wrap; gap: .5rem .75rem; }

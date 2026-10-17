@@ -13,7 +13,8 @@
 
    Mirrors the report view's `.bundles-tabs` chrome (styles/report.css),
    restated here because a shadow tree cannot see that light-DOM
-   sheet. */
+   sheet. The page imports it too (view.css), for a team's Dependencies
+   sub-tabs (team-dependencies.js), drawn as these are. */
 .dlg-tabs {
   display: flex; gap: .1rem;
   /* Air under the rule before the panel starts. It collapses with the

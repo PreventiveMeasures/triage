@@ -8,6 +8,7 @@
 @import './styles/drop-zone.css';
 @import './styles/advisory-rows.css';
 @import './styles/report.css';
+@import './view/dialogs/dialog-tabs.css';
 @import './styles/code-tokens.css';
 @import './styles/bundle-treemap.css';
 @import './styles/bundle-compare.css';
