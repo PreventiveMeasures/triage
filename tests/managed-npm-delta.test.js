@@ -66,3 +66,23 @@ test('a version\'s lines against another, and those but for declaration files ch
   assert.equal((await send(delta('lib', '1.1.0', ''))).status, 400)
   assert.equal((await send(delta('lib', '1.1.0', '1.0.0'), null)).status, 401)
 })
+
+test('a delta\'s files are read only once its turn comes, two at a time, and one asked again meanwhile shares the first\'s', async () => {
+  const { npmDelta } = await import('../server-managed/npm-delta.ts')
+  const read = []
+  const held = []
+  const side = (integrity, text, hold = false) => ({ integrity, files: () => {
+    read.push(integrity)
+    const files = [{ path: 'index.js', bytes: Buffer.from(text) }]
+    return hold ? new Promise(resolve => { held.push(() => resolve(files)) }) : Promise.resolve(files)
+  } })
+  const first = npmDelta(null, side('sha512-one', 'a\n', true))
+  const again = npmDelta(null, side('sha512-one', 'a\n', true))
+  const second = npmDelta(null, side('sha512-two', 'a\nb\n', true))
+  const third = npmDelta(null, side('sha512-three', 'a\nb\nc\n'))
+  await new Promise(resolve => { setTimeout(resolve, 20) })
+  assert.deepEqual(read, ['sha512-one', 'sha512-two'], 'the third\'s files not read while two are counted, nor the first\'s twice')
+  for (const release of held) release()
+  assert.deepEqual(await Promise.all([first, again, second, third]).then(answers => answers.map(answer => answer.additions)), [1, 1, 2, 3])
+  assert.deepEqual(read, ['sha512-one', 'sha512-two', 'sha512-three'])
+})

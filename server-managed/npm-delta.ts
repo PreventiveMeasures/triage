@@ -8,10 +8,12 @@
 // the runtime they leave as it was, an added one's empty or a single bare
 // `export {}`), those of the rest (`typeless`), what a reviewer may pass by
 // leaving those out. Worked out in a worker, off the event loop, as many at
-// once per process as MAX_ACTIVE, those waiting their turn past them
-// refused, each in at most a minute, its wait included; and kept by both
-// sides' integrities, in this instance and beyond it (`kept`), what a version
-// holds never changing. Access is the caller's to check.
+// once per process as MAX_ACTIVE, their files read only once their turn has
+// come, those waiting past MAX_WAITING refused, each waiting a minute at
+// most and counting in a minute at most; one asked again meanwhile sharing
+// the first's; and kept by both sides' integrities, in this instance and
+// beyond it (`kept`), what a version holds never changing. Access is the
+// caller's to check.
 import { Worker } from 'node:worker_threads'
 import type { KeptStore } from './npm-kept.ts'
 import { type Lru, lru } from './lru.ts'
@@ -26,6 +28,7 @@ const DELTA_TIMEOUT_MS = 60_000
 const MAX_TEXT_LENGTH = 64 * 1024 * 1024
 
 const deltas: Lru<NpmDelta> = lru(20_000)
+const working = new Map<string, Promise<NpmDelta>>()
 let active = 0
 const waiting: Array<() => void> = []
 
@@ -96,19 +99,30 @@ function texts(files: NpmPackageFile[] | null) {
   return { read, length }
 }
 
+type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
+
 // The delta of `other` (its integrity, and how to read its files) against
 // `base`, or none, as kept, else worked out and kept.
-export async function npmDelta(base: { integrity: string; files: () => Promise<NpmPackageFile[]> } | null,
-  other: { integrity: string; files: () => Promise<NpmPackageFile[]> }, kept: KeptStore<NpmDelta> | null = null): Promise<NpmDelta> {
+export async function npmDelta(base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null = null): Promise<NpmDelta> {
   const key = `${base?.integrity ?? '(empty)'}\0${other.integrity}`
   const known = deltas.get(key) ?? deltaOf((await kept?.read(key))?.value)
   if (known) { deltas.set(key, known); return known }
-  const [olds, news] = [texts(base ? await base.files() : null), texts(await other.files())]
-  if (olds.length + news.length > MAX_TEXT_LENGTH) throw new NpmPackageError(413, 'package-too-large')
-  const deadline = Date.now() + DELTA_TIMEOUT_MS
-  await turn(deadline)
+  const shared = working.get(key)
+  if (shared) return shared
+  const work = worked(key, base, other, kept).finally(() => working.delete(key))
+  working.set(key, work)
+  return work
+}
+
+// Its turn awaited, then both sides' files read, counted and kept.
+async function worked(key: string, base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null): Promise<NpmDelta> {
+  await turn(Date.now() + DELTA_TIMEOUT_MS)
   let told
-  try { told = await counted(olds.read, news.read, deadline) } finally { done() }
+  try {
+    const [olds, news] = [texts(base ? await base.files() : null), texts(await other.files())]
+    if (olds.length + news.length > MAX_TEXT_LENGTH) throw new NpmPackageError(413, 'package-too-large')
+    told = await counted(olds.read, news.read, Date.now() + DELTA_TIMEOUT_MS)
+  } finally { done() }
   const delta = { additions: told.additions, deletions: told.deletions,
     typeless: told.typeFiles > 0 ? { additions: told.additions - told.typeAdditions, deletions: told.deletions - told.typeDeletions } : null }
   deltas.set(key, delta)
