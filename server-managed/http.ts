@@ -2046,10 +2046,12 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
     // Where its review is on, those of lockfiles it leaves out told to none,
     // whoever asks.
     const setting = (await deps.db.listRepoDependencyReviews()).get(repoId)
-    const told = setting?.enabled ? heldDependencies(answered.value, setting.lockfiles) : answered.value
-    const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told)) : null
-    // Its review by the lockfiles they were told by, though they have changed since.
+    const held = setting?.enabled ? heldDependencies(answered.value, setting.lockfiles) : answered.value
+    const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(held)) : null
+    // Its review by the lockfiles they were told by, though they have changed
+    // since; turned off meanwhile, all of them, as where it is off.
     const state = now && setting?.enabled ? { ...now, lockfiles: setting.lockfiles } : now
+    const told = review && !now && setting?.enabled && !(await deps.db.listRepoDependencyReviews()).get(repoId)?.enabled ? answered.value : held
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
     // Its comments read for reviews, where the host reads them, while it is
