@@ -3139,8 +3139,8 @@ changed in types alone as compareTrees proves them (`typeOnly`, an added
 one's left an empty runtime or a bare `export {}`), those of the rest
 (`typeless`, else null). It is worked out in a worker, two at a time per
 process, the versions' files read only once their turn comes, sixty-four
-waiting past them (`429 delta-busy`), one asked again meanwhile sharing the
-first's, within a minute (`504 delta-timeout`), neither side's text past 64 MiB together (`413
+waiting past them (`429 delta-busy`), one asked again meanwhile, even while
+the database is still looked in, sharing the first's, within a minute (`504 delta-timeout`), neither side's text past 64 MiB together (`413
 package-too-large`), and kept by both sides' integrities, in the instance
 and in the database (`npm/deltas`, a month), what a version holds never
 changing; `GET

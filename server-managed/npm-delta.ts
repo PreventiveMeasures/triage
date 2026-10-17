@@ -102,11 +102,14 @@ function texts(files: NpmPackageFile[] | null) {
 type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
 
 // The delta of `other` (its integrity, and how to read its files) against
-// `base`, or none, as kept, else worked out and kept.
-export async function npmDelta(base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null = null): Promise<NpmDelta> {
+// `base`, or none, as held, else shared with one asked before it, else
+// looked for where it is kept, else worked out and kept: shared from before
+// it is looked for, lest those asked together each look, find none, and work
+// it out.
+export function npmDelta(base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null = null): Promise<NpmDelta> {
   const key = `${base?.integrity ?? '(empty)'}\0${other.integrity}`
-  const known = deltas.get(key) ?? deltaOf((await kept?.read(key))?.value)
-  if (known) { deltas.set(key, known); return known }
+  const known = deltas.get(key)
+  if (known) return Promise.resolve(known)
   const shared = working.get(key)
   if (shared) return shared
   const work = worked(key, base, other, kept).finally(() => working.delete(key))
@@ -114,8 +117,10 @@ export async function npmDelta(base: Side | null, other: Side, kept: KeptStore<N
   return work
 }
 
-// Its turn awaited, then both sides' files read, counted and kept.
+// As kept, else its turn awaited, then both sides' files read, counted and kept.
 async function worked(key: string, base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null): Promise<NpmDelta> {
+  const known = deltaOf((await kept?.read(key))?.value)
+  if (known) { deltas.set(key, known); return known }
   await turn(Date.now() + DELTA_TIMEOUT_MS)
   let told
   try {

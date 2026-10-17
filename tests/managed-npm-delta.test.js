@@ -86,3 +86,16 @@ test('a delta\'s files are read only once its turn comes, two at a time, and one
   assert.deepEqual(await Promise.all([first, again, second, third]).then(answers => answers.map(answer => answer.additions)), [1, 1, 2, 3])
   assert.deepEqual(read, ['sha512-one', 'sha512-two', 'sha512-three'])
 })
+
+test('a delta asked again while where it is kept is still being looked in shares the first\'s look and work, even where its own look would have ended after that work', async () => {
+  const { npmDelta } = await import('../server-managed/npm-delta.ts')
+  const [looks, read] = [[], []]
+  const kept = { read() { return new Promise(resolve => { looks.push(resolve) }) }, write: () => Promise.resolve() }
+  const side = { integrity: 'sha512-four', files() { read.push('sha512-four'); return Promise.resolve([{ path: 'index.js', bytes: Buffer.from('a\n') }]) } }
+  const [first, again] = [npmDelta(null, side, kept), npmDelta(null, side, kept)]
+  looks[0](null)
+  assert.equal((await first).additions, 1)
+  looks[1]?.(null)
+  assert.equal((await again).additions, 1)
+  assert.deepEqual([looks.length, read], [1, ['sha512-four']], 'looked for once, its files read once')
+})
