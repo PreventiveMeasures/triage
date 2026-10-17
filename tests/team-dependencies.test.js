@@ -15,7 +15,8 @@ const terms = { required: 2, since: null, canReview: true }
 const dir = (more = {}) => ({ paths: ['package-lock.json'], added: [], more: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, moreLocked: 0, ...more })
 const wants = (name, more = {}) => ({ name, version: '1.0.0', source: 'registry', reviews: 0, ...more })
 const gitdep = { name: 'gitdep', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/gitdep.git', unsupported: 'git' }
-const big = Array.from({ length: 13 }, (_, at) => wants(`big-${at}`))
+// The first reviewed in its own pull request's comments alone.
+const big = Array.from({ length: 13 }, (_, at) => wants(`big-${at}`, at === 0 ? { reviews: 1, commented: 1 } : {}))
 const branches = {
   7: { cut: false, review: { ...terms, unreviewed: 2 }, lockfiles: [dir({ unreviewed: [wants('old'), wants('pat', { patched: true })] })] },
   8: { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir(), { paths: ['web/bun.lock'], error: 'lockfile-unsupported' }] },
@@ -126,6 +127,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.match(versions, /16 versions to review, each once,\s+by the pull requests adding it\./u)
   assert.equal(versions.split('>shared<').length - 1, 1, 'each once')
   assert.match(versions, /shared[^]*in review in\s+org\/a#1[^]*data-tooltip=Added by org\/b#2, org\/a#1>org\/b#2 \+1</u)
+  assert.match(versions, />big-0<[^]*>1\/2<\/span>\s*<span class="team-deps-elsewhere"[^>]*>in review in\s+org\/a#1</u, 'the first adding it too, all its pull requests\' alike')
   assert.match(versions, /<span class="team-deps-row">[^]*gitdep[^]*data-tooltip=From git, which isn’t reviewed>can’t review</u)
   assert.doesNotMatch(versions, /team-deps-pull"/u)
 

@@ -336,14 +336,15 @@ class TeamDependencies extends StateElement {
   }
 
   // Every version the pull requests add wanting reviews, each once, by the
-  // pull requests adding it.
+  // pull requests adding it, every one reviewing it in its comments told so,
+  // the first adding it, whose count it shows, too.
   renderVersions(adding, reading, elsewhere) {
     if (adding.size === 0) return reading ? nothing : html`<p class="workspace-content-empty">No version an open pull request adds wants a review.</p>`
     return html`<section class="team-deps-section" aria-label="Versions to review"><p class="team-deps-quiet">${plural(adding.size, 'version')} to review, each once,
       by the pull requests adding it.</p>
       ${this.rows('versions', [...adding.entries()], ([key, pulls]) => {
         const pkg = pulls[0].wanted.find(one => versionKey(one) === key)
-        return versionRow(pkg, pulls[0].entry.review, { others: pulls.map(pullName), adders: true, elsewhere: elsewhere(pkg, pulls[0]) })
+        return versionRow(pkg, pulls[0].entry.review, { others: pulls.map(pullName), adders: true, elsewhere: elsewhere(pkg) })
       }, SHOWN_LISTED)}
     </section>`
   }
