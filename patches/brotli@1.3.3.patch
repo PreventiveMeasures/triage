@@ -8,7 +8,7 @@ diff --git a/compress.js b/compress.js
 deleted file mode 100644
 index 002b5dfe4c8520da9e9547fff64981efd5273573..0000000000000000000000000000000000000000
 diff --git a/dec/dictionary-browser.js b/dec/dictionary-browser.js
-index 9608543881c9ffadb35c5cc00d097626159afb89..90371018040bf8c8b4f91b0220a32577b1a08f1a 100644
+index 9608543881c9ffadb35c5cc00d097626159afb89..7bdc766232fa677da0007f9e562a45a90a67657d 100644
 --- a/dec/dictionary-browser.js
 +++ b/dec/dictionary-browser.js
 @@ -1,14 +1,18 @@
@@ -30,7 +30,7 @@ index 9608543881c9ffadb35c5cc00d097626159afb89..90371018040bf8c8b4f91b0220a32577
 +  var base64 = require('./dictionary.bin.js');
 +  var compressed = Uint8Array.fromBase64
 +    ? Uint8Array.fromBase64(base64)
-+    : Uint8Array.from(atob(base64), function(c) { return c.charCodeAt(0); });
++    : Uint8Array.from(atob(base64), c => c.charCodeAt(0));
    return BrotliDecompressBuffer(compressed);
  };
 diff --git a/enc/pre.js b/enc/pre.js
