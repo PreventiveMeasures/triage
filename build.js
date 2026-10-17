@@ -11,6 +11,7 @@ import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
+import { minify as oxcMinify } from 'oxc-minify'
 import { escapedControls } from './build-controls.js'
 import { minifyLitSource } from './build-lit-minify.js'
 import { litSvgAsHtml } from './build-lit-svg.js'
@@ -142,10 +143,17 @@ if (mode === 'build') {
       owners.set(input, output)
     }
   }
-  // Control characters esbuild prints raw, escaped again (build-controls.js).
+  // esbuild's output goes through oxc-minify once more (installed as
+  // @preventive/compare's peer): it compresses further than esbuild's
+  // minifier, out/'s JavaScript some 2.6% smaller under Brotli. It keeps the
+  // licence comments esbuild kept, which it drops by default. A chunk's name
+  // stays esbuild's hash of its own output; nothing caches by it, the static
+  // servers revalidate every file by ETag. Then the control characters both
+  // print raw, escaped again (build-controls.js).
   await Promise.all(Object.keys(outputs).filter(path => path.endsWith('.js')).map(async path => {
-    const text = await readFile(path, 'utf8'), escaped = escapedControls(text)
-    if (escaped !== text) await writeFile(path, escaped)
+    const { code, errors } = await oxcMinify(path, await readFile(path, 'utf8'), { module: true, codegen: { legalComments: 'inline' } })
+    if (errors.length) throw new Error(`oxc-minify failed on ${path}: ${errors.map(e => e.message).join('; ')}`)
+    await writeFile(path, escapedControls(code))
   }))
   // view.js imports its chunks itself, but the browser only sees those
   // imports once view.js has arrived. Preload them beside it so they
