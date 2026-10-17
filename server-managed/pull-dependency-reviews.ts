@@ -24,19 +24,16 @@
 // changes: it is read once, every lockfile there of those read here
 // (pull-dependencies.ts), and kept by the commit (`baselines` in this
 // instance, `kept` beyond it), never stored as reviews.
-import { createClient } from '@preventive/upstream/github.js'
-import { upstreamGithub } from './github-errors.ts'
+import { lockedAt } from './commit-lockfiles.ts'
 import { GithubApiError } from './github-app.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
-import { type DirectoryDependencies, MAX_ADDED, type PullDependencies, lockedAs, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
-import type { PassingReview, RepoReviewState } from './repository-dependency-reviews.ts'
+import { type DirectoryDependencies, MAX_ADDED, type PullDependencies, lockedAs, lockedWith } from './pull-dependencies.ts'
+import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
 import { type ReviewedDependencies, type ReviewedDependency, askReviewed } from './reviewed-dependencies.ts'
 
-// Lockfiles at a commit read for its versions, and the other versions told
-// unreviewed, and those told unsupported, of each directory, those past them
-// counted.
-const MAX_BASELINE_LOCKFILES = 100
+// The other versions told unreviewed, and those told unsupported, of each
+// directory, those past them counted.
 export const MAX_UNREVIEWED = 200
 
 // The versions a commit's lockfiles lock, and the lockfiles there that
@@ -66,35 +63,28 @@ const hashesOf = (pkg: LockedPackage) => (pkg.integrity ?? '').split(/\s+/u).fil
 const baselineKeys = (pkg: LockedPackage) => hashesOf(pkg).map(hash => `${pkg.name}@${pkg.version ?? ''}\0${hash}\0${pkg.patchHash ?? ''}`)
 
 // The versions the repository's lockfiles locked at commit `since` that are
-// reviewed (reviewedAs), as kept, else read of GitHub and kept; with the
-// lockfiles there its reader refuses, isn't one of, or past
-// MAX_BASELINE_LOCKFILES (`unread`). GitHub having none of a lockfile it
-// lists there is a failure of the whole, as of any file, never kept.
+// reviewed (reviewedAs), as kept, else read of GitHub (commit-lockfiles.ts)
+// and kept; with the lockfiles there its reader refuses, isn't one of, or
+// past those read (`unread`). GitHub having none of a lockfile it lists
+// there is a failure of the whole, as of any file, never kept.
 export async function reviewBaseline(fullName: string, token: string, repoId: number, since: string, kept: ReviewBaselineStore): Promise<Baseline> {
   const key = `${repoId}\0${since}`
   const known = baselines.get(key)
   if (known) return known
   const stored = await kept.read(key)
   if (stored) { const baseline = { versions: new Set(stored.versions), unread: stored.unread }; baselines.set(key, baseline); return baseline }
-  const { lockfiles } = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).findRepoLockfiles({ repo: fullName, sha: since }))
-  const read = lockfiles.flatMap(({ path }) => { const format = lockfileFormat(path); return format ? [{ path, format }] : [] })
+  const { packages, unread } = await lockedAt(fullName, token, since)
   const versions = new Set<string>()
-  const unread = read.slice(MAX_BASELINE_LOCKFILES).map(({ path }) => path)
-  for (const lockfile of read.slice(0, MAX_BASELINE_LOCKFILES)) {
-    const packages = await readLockfile(fullName, token, since, lockfile)
-    if ('error' in packages && packages.error === 'github-not-found') throw new GithubApiError(404, 'github-not-found')
-    if ('error' in packages) { unread.push(lockfile.path); continue }
-    for (const pkg of packages.packages) if (reviewedAs(pkg) === 'version') for (const held of baselineKeys(pkg)) versions.add(held)
-  }
-  const baseline = { versions, unread: unread.toSorted() }
+  for (const pkg of packages) if (reviewedAs(pkg) === 'version') for (const held of baselineKeys(pkg)) versions.add(held)
+  const baseline = { versions, unread }
   baselines.set(key, baseline)
   await kept.write(key, { versions: [...versions], unread: baseline.unread })
   return baseline
 }
 
 // Passing reviews by the version they are of, its name and version.
-type ReviewsOf = Map<string, PassingReview[]>
-function reviewsByVersion(reviews: PassingReview[]): ReviewsOf {
+type ReviewsOf = Map<string, PublishedReview[]>
+function reviewsByVersion(reviews: PublishedReview[]): ReviewsOf {
   const by: ReviewsOf = new Map()
   for (const review of reviews) {
     const key = `${review.package}@${review.version}`
@@ -105,13 +95,29 @@ function reviewsByVersion(reviews: PassingReview[]): ReviewsOf {
   return by
 }
 
-// Who passed `pkg` among `reviews`: those of its version, of an integrity
-// it is locked with, whole or compared with one of `bases` of its package
-// (any, for `any`), each reviewer once.
-function reviewersOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'any') {
+const ACCEPTING = new Set(['accept', 'accept-with-nits'])
+// Where `pkg`'s reviewers stand on it among `reviews`, those of its version,
+// of an integrity it is locked with, and of its patch: each one's latest
+// telling it, any rejecting it holding it unreviewed (`rejected`); those
+// accepting it passing it (`passing`), each once, by a full, accepting
+// review of theirs, whole or compared with one of `bases` of its package
+// (any, for `any`).
+function stancesOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'any') {
   const hashes = hashesOf(pkg)
-  return new Set((reviews.get(`${pkg.name}@${pkg.version}`) ?? []).filter(review => hashes.includes(review.integrity)
-    && (review.basePackage === null || (review.basePackage === pkg.name && (bases === 'any' || bases.includes(review.baseVersion ?? ''))))).map(review => review.reviewer)).size
+  const by = new Map<string, PublishedReview[]>()
+  for (const review of reviews.get(`${pkg.name}@${pkg.version}`) ?? []) {
+    if (!hashes.includes(review.integrity) || (review.patchHash ?? '') !== (pkg.patchHash ?? '')) continue
+    by.set(review.reviewer, [...by.get(review.reviewer) ?? [], review])
+  }
+  const qualifies = (review: PublishedReview) => review.full && ACCEPTING.has(review.status)
+    && (review.basePackage === null || (review.basePackage === pkg.name && (bases === 'any' || bases.includes(review.baseVersion ?? ''))))
+  let passing = 0, rejected = false
+  for (const theirs of by.values()) {
+    const latest = theirs.reduce((one, other) => other.time > one.time ? other : one)
+    if (latest.status === 'reject') rejected = true
+    else if (ACCEPTING.has(latest.status) && theirs.some(qualifies)) passing++
+  }
+  return { passing, rejected }
 }
 
 // A version as the client is told it: what its reviews are held to left
@@ -132,7 +138,7 @@ function askedOf(pkg: LockedPackage): [string, ReviewedDependency] {
 
 // A version's review, and whether it wants one (`wants`), neither passing
 // nor needing none, as only one that can be reviewed may.
-type Review = { unsupported: Unsupported } | { baseline: true } | { reviewed: true } | { reviews: number } | Record<string, never>
+type Review = { unsupported: Unsupported } | { baseline: true } | { reviewed: true } | { reviews: number; rejected?: true } | Record<string, never>
 interface Judged { review: Review; wants: boolean }
 type Judge = (pkg: LockedPackage, bases: string[] | 'any') => Judged
 interface Context { state: RepoReviewState; reviews: ReviewsOf; baseline: Set<string> | null }
@@ -141,9 +147,9 @@ function judge(pkg: LockedPackage, bases: string[] | 'any', { state, reviews, ba
   if (as === 'skip') return { review: {}, wants: false }
   if (as !== 'version') return { review: { unsupported: as }, wants: false }
   if (baselineKeys(pkg).some(key => baseline?.has(key))) return { review: { baseline: true }, wants: false }
-  if (pkg.patchHash) return { review: {}, wants: true }
-  const count = reviewersOf(pkg, reviews, bases)
-  return { review: { reviews: count }, wants: count < state.required }
+  const { passing, rejected } = stancesOf(pkg, reviews, bases)
+  if (rejected) return { review: { reviews: passing, rejected: true }, wants: true }
+  return { review: { reviews: passing }, wants: passing < state.required }
 }
 
 // A directory as the client is told it: what it adds, as many as MAX_ADDED,
@@ -186,11 +192,19 @@ const distinct = (lists: Shown[][], key: (pkg: Shown) => string) => new Set(list
 const versionKey = (pkg: Shown) => `${pkg.name}@${pkg.version ?? ''}`
 const sourceKey = (pkg: Shown) => `${pkg.source}\0${versionKey(pkg)}\0${pkg.from ?? ''}`
 
+// The reviews an open pull request's comments make of `wanting`, the
+// versions still wanting one (pull-comment-reviews.ts): those that count,
+// and whether they couldn't be read.
+export type CommentReviews = (wanting: ReviewedDependency[]) => Promise<{ reviews: PublishedReview[]; failed: boolean }>
+
 // A pull request's dependencies as the client is told them: without the
 // versions its directories lock; with `state`, a repository's review in
 // effect, each version's review (reviewedDirectory), those wanting one asked
-// of the registered reviewed dependencies (`reviewed`), and the review's
-// terms (`review`), with how many versions across its directories want
+// of the registered reviewed dependencies (`reviewed`), and those still
+// wanting one of the reviews its comments make (`commentReviews`, where the
+// host reads them), and the review's terms (`review`), with how many
+// reviewers' its comments count (`commentReviews`), or that they couldn't be
+// read (`commentsFailed`), and how many versions across its directories want
 // reviews, of those it adds (`toReview`) and the rest (`unreviewed`), and
 // can't be reviewed (`unsupported`), each once; how many the reviewed dependencies failed to
 // answer (`unasked`), and whether they are registered (`reviewedDependencies`,
@@ -201,19 +215,38 @@ const sourceKey = (pkg: Shown) => `${pkg.source}\0${versionKey(pkg)}\0${pkg.from
 // be read or lock more than are checked, or the pull request changes more
 // lockfiles than are read (`cut`).
 export async function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null,
-  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null }:
-  { baseline?: Set<string> | null; baselineUnread?: string[]; baselineError?: string | null; reviewed?: ReviewedDependencies | null } = {}) {
+  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null }: { baseline?: Set<string> | null; baselineUnread?: string[]
+    baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null } = {}) {
   if (!state) return { ...told, lockfiles: told.lockfiles.map(dir => reviewedDirectory(dir, null)) }
-  const context = { state, reviews: reviewsByVersion(state.reviews), baseline: reviewed ? null : baseline }
-  // What wants a review here, as the reviewed dependencies are asked of.
-  const asked = new Map<string, ReviewedDependency>()
-  const asking: Judge = (pkg, bases) => {
-    const judged = judge(pkg, bases, context)
-    if (judged.wants) asked.set(...askedOf(pkg))
-    return judged
+  let context = { state, reviews: reviewsByVersion(state.reviews), baseline: reviewed ? null : baseline }
+  // What wants a review, as `lookup` is asked of, each once.
+  const wanting = () => {
+    const asked = new Map<string, ReviewedDependency>()
+    const asking: Judge = (pkg, bases) => {
+      const judged = judge(pkg, bases, context)
+      if (judged.wants) asked.set(...askedOf(pkg))
+      return judged
+    }
+    for (const dir of told.lockfiles) reviewedDirectory(dir, asking)
+    return asked
   }
-  if (reviewed) for (const dir of told.lockfiles) reviewedDirectory(dir, asking)
-  const { passed, unasked } = asked.size > 0 && reviewed ? await askReviewed(reviewed, asked) : { passed: new Set<string>(), unasked: 0 }
+  const passed = new Set<string>()
+  let unasked = 0
+  const ask = async (asked: Map<string, ReviewedDependency>) => {
+    const answer = asked.size > 0 && reviewed ? await askReviewed(reviewed.lookup, asked) : { passed: new Set<string>(), unasked: 0 }
+    for (const key of answer.passed) passed.add(key)
+    unasked += answer.unasked
+  }
+  const asked = wanting()
+  await ask(asked)
+  // Those still wanting one, of the reviews its comments make, which count
+  // as its teams' do; those their rejects hold asked of `lookup` too.
+  const still = [...asked].flatMap(([key, dependency]) => passed.has(key) ? [] : [dependency])
+  const comments = still.length > 0 && commentReviews ? await commentReviews(still) : { reviews: [], failed: false }
+  if (comments.reviews.length > 0) {
+    context = { ...context, reviews: reviewsByVersion([...state.reviews, ...comments.reviews]) }
+    await ask(new Map([...wanting()].filter(([key]) => !asked.has(key))))
+  }
   const dirs = told.lockfiles.map(dir => reviewedDirectory(dir, (pkg, bases) => {
     const judged = judge(pkg, bases, context)
     return judged.wants && passed.has(askedOf(pkg)[0]) ? { review: { reviewed: true }, wants: false } : judged
@@ -224,6 +257,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
     toReview: distinct(listed.map(dir => dir.toReview), versionKey), unreviewed: distinct(listed.map(dir => dir.unreviewed), versionKey),
     unsupported: distinct(listed.map(dir => dir.unsupported), sourceKey),
     ...unasked > 0 ? { unasked } : {}, ...baselineError && !reviewed ? { baselineError } : {},
+    ...comments.reviews.length > 0 ? { commentReviews: new Set(comments.reviews.map(review => review.reviewer)).size } : {}, ...comments.failed ? { commentsFailed: true } : {},
     ...baselineUnread.length > 0 && !reviewed ? { baselineUnread: baselineUnread.slice(0, MAX_UNREVIEWED) } : {} } }
 }
 

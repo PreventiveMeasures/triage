@@ -268,7 +268,7 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
   const replies = {
     1: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 2 }, { name: 'tool', version: '1.0.0', source: 'registry', reviews: 1 },
       { name: 'left-pad', version: '1.3.0', source: 'registry', baseline: true }, { name: 'vouched', version: '1.0.0', source: 'registry', reviewed: true },
-      { name: 'patched', version: '1.0.0', source: 'registry', patched: true }], unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 3 })],
+      { name: 'patched', version: '1.0.0', source: 'registry', patched: true, reviews: 0 }], unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 3 })],
     2: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 2 }, { name: 'local', version: '1.0.0', source: 'file' }] })],
     3: [dir({ added: [mine], unsupported: [mine, { name: 'mirrored', version: '1.0.0', source: 'mirror', unsupported: 'tarball' }], moreUnsupported: 1 })],
     4: [{ paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' }],
@@ -292,13 +292,13 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
   assert.ok(dependencyOptions.every(options => options.review === true), 'an open one\'s asked with their review')
   const tiles = templateText(view.render()).split('<li ').slice(1)
   assert.match(tiles[0], /data-tooltip=New in its lockfiles: tool@1\.0\.0 \(new, 1\/2 reviews\), left-pad@1\.3\.0 \(new, needs no review\), vouched@1\.0\.0 \(new, reviewed\), patched@1\.0\.0 \(new, patched, unreviewed\), ms@2\.1\.3 \(was 2\.1\.2, 2\/2 reviews\)\. 4 other versions in its lockfiles unreviewed>/u)
-  assert.match(tiles[0], /<span class="issue-deps-review is-wanted">2 to review · 4 unreviewed<\/span>/u, 'its own wanting reviews, a patched one with them, then the others its lockfiles lock')
+  assert.match(tiles[0], /<span class="issue-deps-review is-wanted">2 \+ 4 to review<\/span>/u, 'its own wanting reviews, a patched one with them, then the others its lockfiles lock')
   assert.match(tiles[1], /<span class="issue-deps-review is-passed" role="img" aria-label="Every version reviewed"><svg/u, 'a file of the project\'s not reviewed')
   assert.match(tiles[2], /<span class="issue-deps-review is-failed">3 can’t be reviewed<\/span>/u)
   assert.match(tiles[2], /Its review fails: mine@1\.0\.0 \(from git\), mirrored@1\.0\.0 \(a tarball not npm’s registry’s\) and 1 more can’t be reviewed>/u)
   assert.match(tiles[3], /data-tooltip=Its review fails: not every lockfile it changes was read>[^]*<span class="issue-deps-review is-failed">lockfiles unread<\/span>/u,
     'shown with no version new, its lockfiles unread')
-  assert.match(tiles[4], /is-wanted">1 to review · 201 unreviewed</u, 'a version two directories lock as passing as the less passing of them; the others counted once, as the server tells')
+  assert.match(tiles[4], /is-wanted">1 \+ 201 to review</u, 'a version two directories lock as passing as the less passing of them; the others counted once, as the server tells')
 
   // A repository's review set anew: each asked again.
   const asked = dependencyOptions.length

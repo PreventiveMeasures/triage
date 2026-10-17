@@ -50,7 +50,10 @@
 //   GET /api/admin/repositories/item?repoId=&number= → an issue or pull request, as its popup shows it, with its
 //        description's Markdown | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pull-dependencies?repoId=&number= → the package versions a pull request's npm, pnpm and
-//        Yarn 1 lockfiles lock that they didn't at its merge base, an update's with those it was, by directory | 400/401/403/404/409/429/502
+//        Yarn 1 lockfiles lock that they didn't at its merge base, an update's with those it was, by directory; with review=1, each's
+//        review, where its repository reviews dependencies | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/branch-dependencies?repoId= → the versions the default branch's lockfiles lock that want review, where
+//        its review is in effect for the reader | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week and a day over
 //        the last year, its contributors and when in the period they commit, counted from its commits as Commits keeps them (how many are
 //        read while they are), and the pull requests
@@ -201,10 +204,12 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
-import { PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, pullDependencies } from './pull-dependencies.ts'
+import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, lockfileFormat, pullDependencies } from './pull-dependencies.ts'
+import { lockedAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
 import { type ReviewBaselineStore, baselineFor, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import type { ReviewedDependencies } from './reviewed-dependencies.ts'
+import { commentReviews } from './pull-comment-reviews.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { type AgentMerges, agentCommits, agentMerges, directCommits, sameMerges } from './agent-merges.ts'
@@ -242,6 +247,7 @@ const REPO_ISSUES_PATH = '/api/admin/repositories/issues'
 const REPO_AGENTS_PATH = '/api/admin/repositories/agents'
 const REPO_ITEM_PATH = '/api/admin/repositories/item'
 const REPO_PULL_DEPENDENCIES_PATH = '/api/admin/repositories/pull-dependencies'
+const REPO_BRANCH_DEPENDENCIES_PATH = '/api/admin/repositories/branch-dependencies'
 const REPO_PULSE_PATH = '/api/admin/repositories/pulse'
 const REPO_PULSE_ITEMS_PATH = '/api/admin/repositories/pulse/items'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
@@ -2028,9 +2034,46 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
     const state = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told)) : null
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
-    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed }) },
+    // Its comments read for reviews, where the host reads them, while it is
+    // open (pull-comment-reviews.ts reads whether it is with them).
+    const parse = reviewed?.parseComments
+    const comments = state && parse ? commentReviews({ fullName, number, token, parse, reviewers: accounts => repoReviewers(deps, repoId, accounts) }) : null
+    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: comments }) },
       kept: answered.kept }
   })
+}
+
+// GET /api/admin/repositories/branch-dependencies: what the lockfiles of the
+// repository's default branch lock that wants review, where its review is in
+// effect for the reader (`review`, else none), as a team's Dependencies tab
+// shows it: its head, as its pulse reads it, kept a while; every lockfile
+// there (commit-lockfiles.ts) as one directory, its versions as a pull
+// request's others are (pull-dependency-reviews.ts), and those unread.
+async function handleRepositoryBranchDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const repoId = Number(query.get('repoId'))
+  if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
+  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
+    const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
+    if (!head) return { value: { head: null, review: null }, kept: false }
+    const { packages, paths, unread } = await lockedAt(fullName, token, head)
+    // Each lockfile left unread a directory of its own failing the review,
+    // as a pull request's are.
+    const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
+      ...unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
+    const state = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
+    if (!state) return { value: { head, review: null }, kept: false }
+    const reviewed = deps.reviewedDependencies ?? null
+    const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null } : await baselineFor(fullName, token, repoId, state, baselineKept(deps))
+    return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: false }
+  })
+}
+
+// The app's users `accounts` are, by their logins in lower case, of those
+// who publish reviews to a team counting for repository `repoId`.
+async function repoReviewers(deps: ManagedHttpDeps, repoId: number, accounts: { login: string; githubId: number | null }[]) {
+  const users = await deps.db.listUsersByAccount(accounts)
+  const counted = await deps.db.listRepoReviewers(repoId, [...new Set(Object.values(users).map(user => user.id))])
+  return new Map(Object.entries(users).flatMap(([login, user]) => counted.has(user.id) ? [[login.toLowerCase(), user.id] as const] : []))
 }
 
 // The versions repository lockfiles locked at the commits their dependencies
@@ -4239,6 +4282,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_PULL_DEPENDENCIES_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryPullDependencies(res, deps, cookie, url.searchParams); return
+    }
+    if (path === REPO_BRANCH_DEPENDENCIES_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryBranchDependencies(res, deps, cookie, url.searchParams); return
     }
     if (path === REPO_PULSE_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }

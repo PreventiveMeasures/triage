@@ -743,10 +743,11 @@ export function switchToManagedDeduplication(id) {
 // team's repositories.
 export async function switchToWorkspaceContent(id, kind, { history = true } = {}) {
   const managed = isManagedUiMode()
-  if (!['reports', 'bundles', ...managed ? ['repositories'] : []].includes(kind)) return false
+  if (!['reports', 'bundles', ...managed ? ['repositories', 'dependencies'] : []].includes(kind)) return false
   const view = `workspace-${kind}`
   const parent = managed ? state.managedTeams.find(team => team.id === id) : listWorkspaces().find(workspace => workspace.id === id)
-  if (!parent) return false
+  // A team's dependencies, only where its reader reviews them in it.
+  if (!parent || kind === 'dependencies' && parent.dependencyReview !== true) return false
   if (managed && history && managedHistory.active) {
     return managedHistory.navigate(managedRouteForIds({ view, teamId: id }, state.managedTeams))
   }

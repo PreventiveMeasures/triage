@@ -4,9 +4,12 @@
 // as many published reviews as `required`; those its lockfiles locked at
 // `since`, a commit (null for none), none. It is in effect only where a team
 // that reviews dependencies has the repository, which is where reviews that
-// count are published: by its reviewers, full (every file checked; a partial
-// review counts for nothing yet), accepting (Accept, or Accept with nits),
-// and neither revoked.
+// count are published, and not revoked: each reviewer's latest of a version
+// tells where they stand on it, a reject holding it unreviewed whatever
+// others passed it till they accept it again; and a reviewer standing on
+// accepting it passes it by a review of theirs that is full (every file
+// checked; a partial review counts for nothing yet) and accepting (Accept,
+// or Accept with nits).
 import type { ManagedSql } from './sql.ts'
 import { reviewsIn } from './dependency-reviews.ts'
 import { type ReviewVerdict, summarizeReview } from '../common/dependency-reviews.js'
@@ -17,14 +20,19 @@ export const MAX_REQUIRED_REVIEWS = 10
 export const SINCE_COMMIT = /^[a-f\d]{40}$/u
 
 export interface RepoDependencyReview { enabled: boolean; required: number; since: string | null }
-// A review that passes the version it is of: its package, version and npm's
-// integrity of it, the version it was compared with (none for a whole
-// package's), and who wrote it (`reviewer`, their id, else their login then).
-export interface PassingReview { package: string; version: string; integrity: string; basePackage: string | null; baseVersion: string | null; reviewer: string }
+// A review published of the version it is of: its package, version and
+// npm's integrity of it, the patch it is of (none here, the app reviewing no
+// patch yet), the version it was compared with (none for a whole package's),
+// who wrote it (`reviewer`, their id, else their login then), its verdict,
+// whether it checked every file (`full`), and when it was published.
+export interface PublishedReview {
+  package: string; version: string; integrity: string; patchHash?: string; basePackage: string | null; baseVersion: string | null
+  reviewer: string; status: ReviewVerdict; full: boolean; time: number
+}
 // A repository's review in effect for a reader: its settings, whether they
 // publish reviews to one of the teams that count (`canReview`), and the
-// passing reviews of the packages asked.
-export interface RepoReviewState extends Omit<RepoDependencyReview, 'enabled'> { canReview: boolean; reviews: PassingReview[] }
+// published reviews of the packages asked.
+export interface RepoReviewState extends Omit<RepoDependencyReview, 'enabled'> { canReview: boolean; reviews: PublishedReview[] }
 
 export interface RepositoryDependencyReviewStore {
   listRepoDependencyReviews(): Promise<Map<number, RepoDependencyReview>>
@@ -35,6 +43,9 @@ export interface RepositoryDependencyReviewStore {
   // undefined, which keeps it; the setting then, or null for no repository.
   setRepoDependencyReview(repoId: number, setting: Omit<RepoDependencyReview, 'since'> & { since?: string | null }): Promise<RepoDependencyReview | null>
   repoDependencyReviewState(repoId: number, user: string, packages: string[]): Promise<RepoReviewState | null>
+  // Which of `users` publish reviews to a team counting for repository
+  // `repoId`, whose reviews its pull requests' comments make count.
+  listRepoReviewers(repoId: number, users: string[]): Promise<Set<string>>
 }
 
 type SettingRow = { repoId: number; enabled: number; required: number; since: string | null }
@@ -45,21 +56,22 @@ const COUNTING_TEAM = `t.hidden = 0 AND t.dependency_review = 1 AND EXISTS (
   SELECT 1 FROM managed_team_repo tr WHERE tr.team_id = t.id AND tr.repo_id = ?)`
 const PACKAGES_AT_ONCE = 500
 
-// The full, accepting, published and unrevoked reviews of `packages` in teams
-// counting for repository `repoId`, a few hundred packages a query.
-async function passingReviews(db: ManagedSql, repoId: number, packages: string[]): Promise<PassingReview[]> {
-  const found: PassingReview[] = []
+// The published and unrevoked reviews of `packages` in teams counting for
+// repository `repoId`, each with whether it is full, a few hundred packages
+// a query.
+async function publishedReviews(db: ManagedSql, repoId: number, packages: string[]): Promise<PublishedReview[]> {
+  const found: PublishedReview[] = []
   for (let at = 0; at < packages.length; at += PACKAGES_AT_ONCE) {
     const names = packages.slice(at, at + PACKAGES_AT_ONCE)
     const rows = await db.prepare(`SELECT r.id, r.user_id AS userId, r.user_login AS userLogin, r.package, r.version, r.integrity,
-        NULLIF(r.base_package, '') AS basePackage, NULLIF(r.base_version, '') AS baseVersion, r.files
+        NULLIF(r.base_package, '') AS basePackage, NULLIF(r.base_version, '') AS baseVersion, r.files, r.status, r.published_at AS publishedAt
       FROM managed_dependency_review r
-      WHERE r.ecosystem = 'npm' AND r.published_at IS NOT NULL AND r.revoked_at IS NULL AND r.status IN ('accept', 'accept-with-nits')
+      WHERE r.ecosystem = 'npm' AND r.published_at IS NOT NULL AND r.revoked_at IS NULL AND r.status IS NOT NULL
         AND r.package IN (${names.map(() => '?').join(',')})
         AND EXISTS (SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id
           WHERE rt.review_id = r.id AND ${COUNTING_TEAM})`).all(...names, repoId) as
       { id: string; userId: string | null; userLogin: string; package: string; version: string; integrity: string
-        basePackage: string | null; baseVersion: string | null; files: string | null }[]
+        basePackage: string | null; baseVersion: string | null; files: string | null; status: ReviewVerdict; publishedAt: number }[]
     if (rows.length === 0) continue
     const entries = await db.prepare(`SELECT review_id AS reviewId, file, status FROM managed_dependency_file_review
       WHERE review_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as { reviewId: string; file: string; status: ReviewVerdict | null }[]
@@ -68,9 +80,9 @@ async function passingReviews(db: ManagedSql, repoId: number, packages: string[]
       // A snapshot of paths alone, before non-text files were told, can't be full.
       const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
       const nonText = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
-      if (summarizeReview(entries.filter(entry => entry.reviewId === row.id), files, nonText).coverage !== 'full') continue
+      const full = summarizeReview(entries.filter(entry => entry.reviewId === row.id), files, nonText).coverage === 'full'
       found.push({ package: row.package, version: row.version, integrity: row.integrity, basePackage: row.basePackage, baseVersion: row.baseVersion,
-        reviewer: row.userId ?? `login:${row.userLogin}` })
+        reviewer: row.userId ?? `login:${row.userLogin.toLowerCase()}`, status: row.status, full, time: Number(row.publishedAt) })
     }
   }
   return found
@@ -99,13 +111,19 @@ export function repositoryDependencyReviewMethods(db: ManagedSql): RepositoryDep
       if (Number(changes) === 0) return null
       return setting(await db.prepare(`SELECT ${columns} FROM managed_selected_repo WHERE repo_id = ?`).get(repoId) as SettingRow)
     },
+    async listRepoReviewers(repoId, users) {
+      if (users.length === 0) return new Set()
+      const rows = await db.prepare(`SELECT DISTINCT u.id FROM managed_user u JOIN managed_team t ON t.hidden = 0
+        WHERE u.id IN (${users.map(() => '?').join(',')}) AND ${reviewsIn(true)} AND ${COUNTING_TEAM}`).all(...users, repoId) as { id: string }[]
+      return new Set(rows.map(row => row.id))
+    },
     async repoDependencyReviewState(repoId, user, packages) {
       const row = await db.prepare(`SELECT ${columns} FROM managed_selected_repo WHERE repo_id = ?`).get(repoId) as SettingRow | undefined
       if (!row || row.enabled !== 1) return null
       if (!await db.prepare(`SELECT 1 FROM managed_team t WHERE ${COUNTING_TEAM}`).get(repoId)) return null
       const canReview = await db.prepare(`SELECT 1 FROM managed_team t JOIN managed_user u ON u.id = ?
         WHERE ${reviewsIn(true)} AND ${COUNTING_TEAM}`).get(user, repoId) != null
-      return { required: row.required, since: row.since, canReview, reviews: await passingReviews(db, repoId, [...new Set(packages)]) }
+      return { required: row.required, since: row.since, canReview, reviews: await publishedReviews(db, repoId, [...new Set(packages)]) }
     },
   }
 }

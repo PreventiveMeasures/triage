@@ -91,7 +91,7 @@ const at = (name, version, more = {}) => ({ name, version, source: 'registry', i
 // A passing review of `pkg` by `reviewer`, compared with `base` of its own
 // package where it is given.
 const passing = (pkg, reviewer, base = null, more = {}) => ({ package: pkg.name, version: pkg.version, integrity: pkg.integrity,
-  basePackage: base ? pkg.name : null, baseVersion: base, reviewer, ...more })
+  basePackage: base ? pkg.name : null, baseVersion: base, reviewer, status: 'accept', full: true, time: 1, ...more })
 const strip = ({ integrity: _integrity, ...pkg }) => pkg
 const bare = ({ was: _was, ...pkg }) => pkg
 
@@ -145,6 +145,20 @@ test('of a directory\'s other versions wanting reviews and those that can\'t be 
   assert.deepEqual([answer.review.unreviewed, answer.review.unsupported], [MAX_UNREVIEWED + 2, MAX_UNREVIEWED + 1], 'two workspaces locking the same versions count them once')
 })
 
+test('a reviewer\'s latest review tells where they stand: one rejecting a version holds it unreviewed, whatever others pass it, till they accept it again', async () => {
+  const pkg = at('pkg', '1.0.0')
+  const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: [pkg], locked: [pkg] }] }
+  const judged = async (reviews, more = {}) => (await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews }, more)).lockfiles[0].added[0]
+  const rejects = passing(pkg, 'u2', '0.9.0', { status: 'reject', full: false, time: 2 })
+  assert.deepEqual(await judged([passing(pkg, 'u1'), rejects]), { ...strip(pkg), reviews: 1, rejected: true }, 'a partial reject against any version it was holds it')
+  assert.deepEqual(await judged([passing(pkg, 'u1'), rejects, passing(pkg, 'u2', null, { full: false, time: 3 })]), { ...strip(pkg), reviews: 1 },
+    'its reviewer accepting it since, even in part, lets the others pass it')
+  assert.deepEqual(await judged([passing(pkg, 'u1'), passing(pkg, 'u1', null, { status: 'request-changes', time: 2 })]), { ...strip(pkg), reviews: 0 },
+    'one asking for changes since passes it no more')
+  assert.deepEqual(await judged([rejects], { baseline: new Set([`pkg@1.0.0\0${sri('pkg@1.0.0')}\0`]) }), { ...strip(pkg), baseline: true }, 'locked at the commit reviewed since, it needs none')
+  assert.deepEqual(await judged([rejects], { reviewed: { lookup: () => Promise.resolve(true) } }), { ...strip(pkg), reviewed: true }, 'nor where the reviewed dependencies pass it')
+})
+
 test('a version added locked with another integrity too is judged, by each, against the versions it was, never another', async () => {
   const ms = at('ms', '2.1.3', { was: ['2.1.2'] })
   const variant = { ...bare(ms), integrity: sri('ms@2.1.3 elsewhere') }
@@ -180,21 +194,21 @@ test('a patched version passes by no review here, only locked so at the commit r
   const shownAs = ({ integrity: _integrity, lockfile: _lockfile, shasum: _shasum, patchHash, ...pkg }) => ({ ...pkg, ...patchHash ? { patched: true } : {} })
   const unpatchedBaseline = new Set([`patched@1.0.0\0${sri('patched@1.0.0')}\0`])
   const alone = await reviewedDependencies(told, state, { baseline: unpatchedBaseline })
-  assert.deepEqual(alone.lockfiles[0].added, [{ ...shownAs(plain), reviews: 1 }, shownAs(patched), shownAs(vouched)],
+  assert.deepEqual(alone.lockfiles[0].added, [{ ...shownAs(plain), reviews: 1 }, { ...shownAs(patched), reviews: 0 }, { ...shownAs(vouched), reviews: 0 }],
     'two reviewers\' reviews pass no patch; the version locked unpatched at that commit, nor')
   const patchedBaseline = new Set([`patched@1.0.0\0${sri('patched@1.0.0')}\0${PATCH}`])
   assert.deepEqual((await reviewedDependencies(told, state, { baseline: patchedBaseline })).lockfiles[0].added[1], { ...shownAs(patched), baseline: true }, 'locked so, its patch too')
 
   const asked = []
-  const reviewed = dependency => {
+  const lookup = dependency => {
     asked.push(dependency)
     if (dependency.name === 'failing') return Promise.reject(new Error('down'))
     return Promise.resolve(['plain', 'vouched', 'other'].includes(dependency.name))
   }
   const warn = mock.method(console, 'warn', () => {})
-  const answer = await reviewedDependencies(told, state, { baseline: patchedBaseline, reviewed })
+  const answer = await reviewedDependencies(told, state, { baseline: patchedBaseline, reviewed: { lookup } })
   warn.mock.restore()
-  assert.deepEqual(answer.lockfiles[0].added, [{ ...shownAs(plain), reviewed: true }, shownAs(patched), { ...shownAs(vouched), reviewed: true }],
+  assert.deepEqual(answer.lockfiles[0].added, [{ ...shownAs(plain), reviewed: true }, { ...shownAs(patched), reviews: 0 }, { ...shownAs(vouched), reviewed: true }],
     'the commit reviewed since counts for nothing where reviewed dependencies are registered')
   assert.deepEqual(answer.lockfiles[0].unreviewed, [{ ...shownAs(failing), reviews: 0 }], 'one they failed to answer unreviewed')
   assert.deepEqual(answer.review, { required: 2, since: null, canReview: true, reviewedDependencies: true, toReview: 1, unreviewed: 1, unsupported: 0, unasked: 1 })
@@ -206,7 +220,7 @@ test('a patched version passes by no review here, only locked so at the commit r
     { ecosystem: 'npm', lockfile: 'pnpm', name: 'vouched', version: '1.0.0', integrity: sri('vouched@1.0.0'), patchHash: PATCH },
   ], 'each version wanting a review asked once, with its integrity, its shasum and its patch where it has them')
   asked.length = 0
-  await reviewedDependencies(told, state, { reviewed })
+  await reviewedDependencies(told, state, { reviewed: { lookup } })
   assert.deepEqual(asked.map(dependency => dependency.name), ['failing'], 'answers kept a while, but a failure')
   assert.deepEqual(reviewedPackages(told), ['plain', 'other', 'failing'], 'no patched one\'s reviews asked')
 })
@@ -248,15 +262,19 @@ function contents(path, text) {
 // GitHub, as a pull request's lockfiles and those at the commit reviews are
 // counted since are read of it: pull request 5's base at `tip` and head at
 // `head`, compared from `mergeBase`, changing `compared`; `files` by commit;
-// `asked` what was asked of it; `missing` the files listed it has none of.
-function github(t, { files, compared = [], missing = [] }) {
+// `asked` what was asked of it; `missing` the files listed it has none of;
+// `graphql` the data its GraphQL API answers with.
+function github(t, { files, compared = [], missing = [], graphql = () => ({}) }) {
   const asked = []
   const commits = Object.fromEntries(Object.entries(files).map(([commit, tree]) => [commit, gitTrees(tree)]))
-  t.mock.method(globalThis, 'fetch', input => {
+  t.mock.method(globalThis, 'fetch', (input, init) => {
     const url = new URL(typeof input === 'string' ? input : input.url)
     if (url.pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
     asked.push(`${url.pathname}${url.search}`)
-    if (url.pathname === '/repos/org/repo/pulls/5') return Promise.resolve(Response.json({ number: 5, base: { sha: tip, repo: { full_name: 'org/repo' } }, head: { sha: head } }))
+    if (url.pathname === '/repos/org/repo/pulls/5') {
+      return Promise.resolve(Response.json({ number: 5, state: 'open', base: { sha: tip, repo: { full_name: 'org/repo' } }, head: { sha: head } }))
+    }
+    if (url.pathname === '/graphql') return Promise.resolve(Response.json({ data: graphql(JSON.parse(init.body)) }))
     if (url.pathname === `/repos/org/repo/compare/${tip}...${head}`) return Promise.resolve(Response.json({ merge_base_commit: { sha: mergeBase }, files: compared }))
     const commit = /^\/repos\/org\/repo\/git\/commits\/([a-f\d]{40})$/u.exec(url.pathname)?.[1]
     if (commits[commit]) return Promise.resolve(Response.json({ sha: commit, tree: { sha: commits[commit].root } }))
@@ -379,7 +397,7 @@ test('where the host registers reviewed dependencies, they replace the commit re
   const users = await people(db)
   const asked = []
   const vouch = dependency => { asked.push(`${dependency.name}@${dependency.version}`); return Promise.resolve(dependency.name === 'kept') }
-  const send = api(db, users, { reviewedDependencies: vouch })
+  const send = api(db, users, { reviewedDependencies: { lookup: vouch } })
   const path = '/api/admin/repositories/dependency-review'
   assert.deepEqual((await send(path, { body: { repoId: 1, enabled: true, required: 1, since } })).body, { error: 'since-unsupported' })
   assert.equal((await send(path, { body: { repoId: 1, enabled: true, required: 1, since: null } })).status, 200)
@@ -394,4 +412,50 @@ test('where the host registers reviewed dependencies, they replace the commit re
   assert.deepEqual(answer.body.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviewed === true]), [['left-pad', false], ['ms', false]])
   assert.deepEqual(asked.toSorted(), ['kept@1.0.0', 'left-pad@1.3.0', 'ms@2.1.3'])
   assert.ok(!read.some(request => request.includes('/git/')), 'nor the commit\'s lockfiles read')
+})
+
+test('where the host reads an open pull request\'s comments, the reviews they make by those who review for the repository count for it', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  const parsed = []
+  const parseComments = input => {
+    parsed.push(input)
+    return Promise.resolve([{ user: 'bob', dependencies: [{ name: 'ms', version: '2.1.3', integrity: sri('ms@2.1.3'), status: 'accept' }] },
+      { user: 'outsider', dependencies: [{ name: 'left-pad', version: '1.3.0', integrity: sri('left-pad@1.3.0'), status: 'accept' }] }])
+  }
+  const send = api(db, users, { reviewedDependencies: { lookup: () => Promise.resolve(false), parseComments } })
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
+  const comment = (id, login, databaseId) => ({ id, author: { login, databaseId }, body: 'LGTM', createdAt: '2026-10-01T00:00:00Z', url: '' })
+  github(t, { ...PULL, graphql: () => ({ repository: { pullRequest: { state: 'OPEN',
+    comments: { pageInfo: { hasNextPage: false }, nodes: [comment('c1', 'bob', 3), comment('c2', 'outsider', 77)] },
+    reviews: { pageInfo: { hasNextPage: false }, nodes: [] } } } }) })
+  const answer = await send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`)
+  assert.equal(answer.status, 200)
+  assert.deepEqual(answer.body.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviews]), [['left-pad', 0], ['ms', 1]],
+    'bob, who reviews in team one, passes ms; one in no team, nothing')
+  assert.equal(answer.body.review.commentReviews, 1)
+  assert.deepEqual(parsed[0].dependencies.map(dependency => dependency.name).toSorted(), ['kept', 'left-pad', 'ms'])
+  assert.equal(answer.body.open, undefined, 'whether it is open told to none')
+})
+
+test('the default branch\'s dependencies, with their review, tell what its lockfiles lock that wants reviews and what fails it; where none is in effect, none', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  const send = api(db, users)
+  const files = { ...PULL.files, [head]: { ...PULL.files[head], 'berry/yarn.lock': BASELINE['berry/yarn.lock'], 'bun.lock': BASELINE['bun.lock'] } }
+  github(t, { files, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {} })
+  const ask = (repoId = '1') => send(`/api/admin/repositories/branch-dependencies?${new URLSearchParams({ repoId })}`)
+  assert.deepEqual((await ask()).body, { head, review: null, users: {} }, 'not enabled')
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, since })
+  await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
+  const answer = await ask()
+  assert.equal(answer.status, 200)
+  assert.deepEqual(answer.body, { head, base: head, cut: false, users: {}, review: { required: 1, since, canReview: true, toReview: 0, unreviewed: 1, unsupported: 1, baselineUnread: ['berry/yarn.lock', 'bun.lock'] },
+    lockfiles: [{ paths: ['package-lock.json'], added: [], more: 0, moreLocked: 0, unreviewed: [{ name: 'kept', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 0,
+      unsupported: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }], moreUnsupported: 0 },
+    { paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' }, { paths: ['bun.lock'], error: 'lockfile-unsupported' }] },
+  'ms reviewed, left-pad locked at the commit reviewed since; kept wanting reviews, mine, from git, failing it, as do the lockfiles left unread')
+  assert.equal((await ask('x')).status, 400)
 })

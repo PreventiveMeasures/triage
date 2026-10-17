@@ -229,7 +229,8 @@ function dependencyLine(entry) {
   const reviewed = pkg => {
     const review = reviewOf(pkg, entry.review)
     return review === 'unsupported' ? `, can’t be reviewed: ${UNSUPPORTED[pkg.unsupported]}` : review === 'baseline' ? ', needs no review'
-      : pkg.reviewed ? ', reviewed' : pkg.patched && review ? ', patched, unreviewed' : review ? `, ${pkg.reviews}/${entry.review.required} reviews` : ''
+      : pkg.reviewed ? ', reviewed' : pkg.rejected ? ', rejected' : pkg.patched && review === 'wanted' ? ', patched, unreviewed'
+      : review ? `, ${pkg.reviews}/${entry.review.required} reviews` : ''
   }
   const named = pkg => `${pkg.name}@${pkg.version ?? '?'}${pkg.was ? ` (was ${pkg.was.join(', ')}${reviewed(pkg)})` : ` (new${reviewed(pkg)})`}`
   const rest = versions.length - TOLD_PACKAGES
@@ -237,7 +238,8 @@ function dependencyLine(entry) {
     others > 0 ? `${others.toLocaleString('en-US')} other ${others === 1 ? 'version' : 'versions'} in its lockfiles unreviewed` : null,
     failed ? `Its review fails: ${failedTold(failed)}` : null].filter(Boolean).join('. ')
   const counted = [fresh ? `${fresh.toLocaleString('en-US')} new` : null, updated ? `${updated.toLocaleString('en-US')} updated` : null].filter(Boolean).join(', ')
-  const wanted = [toReview ? `${toReview.toLocaleString('en-US')} to review` : null, others ? `${others.toLocaleString('en-US')} unreviewed` : null].filter(Boolean).join(' · ')
+  const wanted = toReview && others ? `${toReview.toLocaleString('en-US')} + ${others.toLocaleString('en-US')} to review`
+    : toReview ? `${toReview.toLocaleString('en-US')} to review` : others ? `${others.toLocaleString('en-US')} unreviewed` : ''
   return html`<span class="issue-deps" data-tooltip=${told}>${PACKAGE_ICON}<span class="issue-deps-names">${[...new Set(versions.map(pkg => pkg.name))].join(', ')}</span>
     ${counted ? html`<span class="issue-deps-count">${counted}${plus}</span>` : nothing}
     ${failed ? html`<span class="issue-deps-review is-failed">${failed.count > 0 ? `${failed.count.toLocaleString('en-US')} can’t be reviewed` : 'lockfiles unread'}</span>`

@@ -1,16 +1,21 @@
 // The reviewed dependencies a host keeps beyond the app, as it registers
 // them before the server is assembled (server.ts registerReviewedDependencies):
-// a single async method telling whether a dependency, as a lockfile locks
-// it, is reviewed there. Registered, it replaces the commit a repository is
-// reviewed since (pull-dependency-reviews.ts): a version passes by the
-// reviews its teams publish, as many as the repository requires, or by the
-// method's saying so, and is otherwise unreviewed. A patched version (pnpm's
-// patchedDependencies) passes by the method alone, the app reviewing no
-// patch yet.
+// an async method telling whether a dependency, as a lockfile locks it, is
+// reviewed there (`lookup`), and, optionally, one reading the reviews of
+// dependencies an open pull request's comments make (`parseComments`,
+// pull-comment-reviews.ts). Registered, they replace the commit a repository
+// is reviewed since (pull-dependency-reviews.ts): a version passes by the
+// reviews its teams publish, and those its pull request's comments make, as
+// many as the repository requires, or by `lookup`'s saying so, and is
+// otherwise unreviewed. A patched version (pnpm's patchedDependencies)
+// passes by `lookup`, or reviews its comments make of its patch, alone, the
+// app reviewing no patch yet. Those comments' reviews count for the pull
+// request alone, as it is open: the host's to keep, as it is merged, among
+// those `lookup` tells of.
 //
-// Each version is asked once a request, as many at once as ASK_AT_ONCE, its
-// answer kept in this instance KEPT_MS; one the method fails to answer is
-// unreviewed, and counted so (`unasked`).
+// Each version is asked of `lookup` once a request, as many at once as
+// ASK_AT_ONCE, its answer kept in this instance KEPT_MS; one it fails to
+// answer is unreviewed, and counted so (`unasked`).
 import { type Lru, lru } from './lru.ts'
 
 export type ReviewedLockfile = 'npm' | 'pnpm' | 'yarn1'
@@ -27,22 +32,56 @@ export interface ReviewedDependency {
   shasum?: string
   patchHash?: string
 }
-export type ReviewedDependencies = (dependency: ReviewedDependency) => Promise<boolean>
+export type ReviewVerdict = 'accept' | 'accept-with-nits' | 'request-changes' | 'reject'
+// A comment of an open pull request's, as `parseComments` is given it: one
+// on the pull request (`comment`), a review's own (`review`, whatever its
+// state, a comment's alone too), or one on a line of its diff
+// (`review-comment`); by its author's GitHub login; when it was written, and
+// last edited (`editedAt`) where it was.
+export interface ReviewComment {
+  kind: 'comment' | 'review' | 'review-comment'
+  id: string
+  author: string | null
+  body: string
+  state?: string
+  createdAt: string
+  editedAt?: string
+  url: string
+}
+// What `parseComments` reads: the pull request, its comments, and the
+// dependencies wanting reviews.
+export interface ParseCommentsInput { repository: string; number: number; comments: ReviewComment[]; dependencies: ReviewedDependency[] }
+// A review its comments make, by `user` (a GitHub login, one of their
+// authors'), of each of `dependencies`, with its verdict, as of `time` (when
+// it was made, an ISO date or milliseconds; that user's latest comment's
+// where none is told).
+export interface CommentReview {
+  user: string
+  time?: string | number
+  dependencies: { ecosystem?: 'npm'; name: string; version: string; integrity: string; patchHash?: string; status: ReviewVerdict }[]
+}
+export interface ReviewedDependencies {
+  lookup(dependency: ReviewedDependency): Promise<boolean>
+  parseComments?(input: ParseCommentsInput): Promise<CommentReview[]>
+}
 
 const ASK_AT_ONCE = 16
 const KEPT_MS = 60_000
 
 let registered: ReviewedDependencies | null = null
 let assembled = false
-const answers: Lru<{ at: number; reviewed: boolean }> = lru(100_000)
+// Each lookup's answers, apart.
+const answers = new WeakMap<ReviewedDependencies['lookup'], Lru<{ at: number; reviewed: boolean }>>()
 
 // Registers the host's reviewed dependencies, once, before the server is
 // assembled (init()): a server already assembled keeps what it was given.
 export function registerReviewedDependencies(reviewed: ReviewedDependencies): void {
-  if (typeof reviewed !== 'function') throw new TypeError('registerReviewedDependencies: expected an async function of a dependency')
+  if (typeof reviewed?.lookup !== 'function' || (reviewed.parseComments !== undefined && typeof reviewed.parseComments !== 'function')) {
+    throw new TypeError('registerReviewedDependencies: expected { lookup, parseComments? }, async methods')
+  }
   if (assembled) throw new Error('registerReviewedDependencies: call it before init(), as the server takes them as it is assembled')
   if (registered) throw new Error('registerReviewedDependencies: reviewed dependencies are registered already')
-  registered = reviewed
+  registered = { lookup: reviewed.lookup.bind(reviewed), ...reviewed.parseComments ? { parseComments: reviewed.parseComments.bind(reviewed) } : {} }
 }
 
 // The reviewed dependencies registered, as a server takes them once it is
@@ -52,24 +91,25 @@ export function assembledReviewedDependencies(): ReviewedDependencies | null {
   return registered
 }
 
-// Which of `dependencies`, by their keys, `reviewed` passes, and how many it
+// Which of `dependencies`, by their keys, `lookup` passes, and how many it
 // failed to answer.
-export async function askReviewed(reviewed: ReviewedDependencies, dependencies: Map<string, ReviewedDependency>): Promise<{ passed: Set<string>; unasked: number }> {
+export async function askReviewed(lookup: ReviewedDependencies['lookup'], dependencies: Map<string, ReviewedDependency>): Promise<{ passed: Set<string>; unasked: number }> {
   const passed = new Set<string>()
   let unasked = 0
   const pending = [...dependencies]
+  const kept = answers.get(lookup) ?? answers.set(lookup, lru(100_000)).get(lookup)!
   await Promise.all(Array.from({ length: Math.min(ASK_AT_ONCE, pending.length) }, async () => {
     for (let next = pending.pop(); next; next = pending.pop()) {
       const [key, dependency] = next
-      const known = answers.get(key)
+      const known = kept.get(key)
       let answer = known && Date.now() - known.at < KEPT_MS ? known.reviewed : null
       if (answer === null) {
-        try { answer = await reviewed({ ...dependency }) === true } catch (error) {
+        try { answer = await lookup({ ...dependency }) === true } catch (error) {
           unasked++
           console.warn('reviewed dependencies: failed to answer', `${dependency.name}@${dependency.version}`, error instanceof Error ? error.message : error)
           continue
         }
-        answers.set(key, { at: Date.now(), reviewed: answer })
+        kept.set(key, { at: Date.now(), reviewed: answer })
       }
       if (answer) passed.add(key)
     }

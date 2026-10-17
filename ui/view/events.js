@@ -954,7 +954,7 @@ report.addEventListener('click', (e) => {
     }
     return
   }
-  const workspaceContentButton = e.target.closest('[data-action="workspace-reports"], [data-action="workspace-bundles"], [data-action="workspace-repositories"]')
+  const workspaceContentButton = e.target.closest('[data-action="workspace-reports"], [data-action="workspace-bundles"], [data-action="workspace-repositories"], [data-action="workspace-dependencies"]')
   if (workspaceContentButton) {
     const kind = workspaceContentButton.dataset.action.slice(10)
     if (state.currentView !== `workspace-${kind}`) void switchToWorkspaceContent(state.currentManagedTeam ?? state.currentWorkspace, kind)

@@ -166,6 +166,8 @@
     "server-managed/public-workspace.ts",
     "server-managed/pull-dependencies.ts",
     "server-managed/pull-dependency-reviews.ts",
+    "server-managed/pull-comment-reviews.ts",
+    "server-managed/commit-lockfiles.ts",
     "server-managed/queue.ts",
     "server-managed/repo-path.ts",
     "server-managed/report-migration.ts",

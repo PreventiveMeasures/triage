@@ -99,6 +99,13 @@ test("a team's header is its title, its findings' bar and its tabs, each countin
   assert.match(list, /aria-selected=true\s+data-action=workspace-repositories>Repositories<span class="n">3</u)
   assert.match(list, /data-action=workspace-findings>Findings<span class="n">40</u)
   assert.doesNotMatch(text(teamHeaderTemplate({ ...context, findings: null }, 'workspace-reports')), /Findings<span/u, 'an unknown count shows none')
+  assert.doesNotMatch(header, /workspace-dependencies/u, 'its dependencies only where its reader reviews them in it')
+  assert.match(text(renderWorkspaceContent(context, 'dependencies')), /You review no dependencies in this team\./u)
+  const reviewing = text(renderWorkspaceContent({ ...context, dependencyReview: true }, 'dependencies'))
+  assert.match(reviewing, /data-action=workspace-repositories>Repositories<span class="n">3<\/span><\/button><button[^>]*aria-selected=true\s+data-action=workspace-dependencies>Dependencies<\/button>/u,
+    'after its repositories, counting none')
+  assert.match(reviewing, /<team-dependencies/u)
+  assert.equal(workspaceContent({ currentWorkspace: 'managed-team:a', currentManagedTeam: 'a', managedTeams: [{ id: 'a', name: 'A', dependencyReview: true }] }, []).dependencyReview, true)
 })
 
 test('report lists match workspace membership and expose missing local files without opening them', () => {

@@ -69,10 +69,11 @@ export async function checkRepositoryDependencyReviews(db) {
   await publish(db, users.alice, context('elsewhere', '1.0.0'), ['one'])
 
   const state = await db.repoDependencyReviewState(1, users.alice.userId, ['pkg', 'pkg'])
-  assert.deepEqual({ ...state, reviews: state.reviews.toSorted((a, b) => a.reviewer < b.reviewer ? -1 : 1) }, { required: 2, since, canReview: true, reviews: [
-    { package: 'pkg', version: '1.0.0', integrity: sri('pkg@1.0.0'), basePackage: null, baseVersion: null, reviewer: users.alice.userId },
-    { package: 'pkg', version: '1.0.0', integrity: sri('pkg@1.0.0'), basePackage: null, baseVersion: null, reviewer: users.bob.userId },
-  ].toSorted((a, b) => a.reviewer < b.reviewer ? -1 : 1) }, 'neither a partial review, a rejecting one, one to a team without the repository, a revoked one, a draft, nor another package\'s')
+  const told = review => [review.reviewer === users.alice.userId ? 'alice' : review.reviewer === users.bob.userId ? 'bob' : review.reviewer, review.baseVersion, review.status, review.full]
+  assert.deepEqual([state.required, state.since, state.canReview], [2, since, true])
+  assert.deepEqual(state.reviews.map(told).toSorted(), [['alice', null, 'accept', true], ['alice', '0.9.0', 'accept', false], ['bob', null, 'accept-with-nits', true],
+    ['bob', '0.9.0', 'reject', true]], 'every published one, partial and rejecting too, but neither one to a team without the repository, a revoked one, a draft, nor another package\'s')
+  assert.ok(state.reviews.every(review => review.integrity === sri('pkg@1.0.0') && Number.isSafeInteger(review.time)), 'each when it was published')
   assert.deepEqual((await db.listRepoReviewTeams()).get(1), [{ id: 'one', name: 'one' }], 'the teams whose reviews count, neither one that reviews none nor a hidden one')
   for (const [who, canReview] of [['admin', true], ['bob', true], ['carol', false], ['manager', false]]) {
     assert.equal((await db.repoDependencyReviewState(1, users[who].userId, [])).canReview, canReview, `${who} ${canReview ? 'publishes' : 'publishes none'} to a team that counts`)

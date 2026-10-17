@@ -53,6 +53,7 @@ import { npmPackageInput, renderNpmLookup } from './npm-package.js'
 import { repositoryCodeName } from './repository-code.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, triageLoadingTemplate, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
+import './team-dependencies.js'
 import { createViewRenderer } from './render-transition.js'
 import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
@@ -1794,7 +1795,7 @@ function renderImpl() {
   // Lives before the reports-gate below because the bundles list is
   // independent of any loaded report; the user can browse OPFS
   // bundles even without a finding-bearing JSON open.
-  if (['workspace-reports', 'workspace-bundles', 'workspace-repositories'].includes(state.currentView)) {
+  if (['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)) {
     const kind = state.currentView.slice(10)
     const context = workspaceContent(state, listWorkspaces(), getKind)
     const slot = ensureReportSlot('workspace-content-slot')

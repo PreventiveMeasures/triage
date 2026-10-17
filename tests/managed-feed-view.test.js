@@ -138,7 +138,7 @@ test('unapproved users and public-share landing never open a user catalog feed',
   assert.equal(calls.length, 0)
 })
 
-for (const view of ['workspace-reports', 'workspace-bundles', 'workspace-repositories']) {
+for (const view of ['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies']) {
   test(`${view} keeps the team's catalog feed without reading annotations, including public shares`, async () => {
     state.managedSession = { id: 'share', role: 'view', publicShare: true }
     state.currentView = view

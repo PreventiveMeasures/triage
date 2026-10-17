@@ -20,7 +20,7 @@ export function workspaceContent(state, workspaces, reportKind = () => null) {
     }))
     const session = state.managedSession
     return { id: team.id, scope: 'team', title: `Team: ${team.name}`, findings: managedTeamFindings(team.app), reports, bundles,
-      repositories: teamRepositories(team.repos ?? [], reports, bundles, canReadRepositoryCode(session)) }
+      repositories: teamRepositories(team.repos ?? [], reports, bundles, canReadRepositoryCode(session)), dependencyReview: team.dependencyReview === true }
   }
   const workspace = workspaces.find(w => w.id === state.currentWorkspace)
   if (!workspace) return null
@@ -53,8 +53,8 @@ function teamRepositories(repos, reports, bundles, browsable) {
 }
 
 // What a team shows, the tab of each, and the view it is (Files is its
-// findings' too).
-const TEAM_TABS = [['findings', 'Findings'], ['reports', 'Reports'], ['bundles', 'Bundles'], ['repositories', 'Repositories']]
+// findings' too); its dependencies only where its reader reviews them in it.
+const TEAM_TABS = [['findings', 'Findings'], ['reports', 'Reports'], ['bundles', 'Bundles'], ['repositories', 'Repositories'], ['dependencies', 'Dependencies']]
 const teamTab = view => view === 'findings' || view === 'files' ? 'findings' : view.slice(10)
 
 // A team's header, its title and `statusBar` (its findings' severities) and
@@ -67,7 +67,8 @@ export function teamHeaderTemplate(context, view, { findings = context.findings,
   return html`<bundle-slide-header class="bundles-slide-header team-slide-header"><header class="bundles-slide-bar team-slide-bar">
     <h1 class="team-slide-name" data-tooltip-truncated data-tooltip=${context.title}>${context.title}</h1>
     ${statusBar}
-    <div class="bundles-slide-tabs" role="tablist" aria-label="Team">${TEAM_TABS.map(([kind, label]) => html`<button type="button"
+    <div class="bundles-slide-tabs" role="tablist" aria-label="Team">${TEAM_TABS.filter(([kind]) => kind !== 'dependencies' || context.dependencyReview)
+      .map(([kind, label]) => html`<button type="button"
       class=${classMap({ 'bundles-tab': true, 'team-slide-tab': true, active: shown === kind })} role="tab" aria-selected=${String(shown === kind)}
       data-action=${`workspace-${kind}`}>${label}${counts[kind] == null ? nothing : html`<span class="n">${counts[kind].toLocaleString()}</span>`}</button>`)}</div>
   </header></bundle-slide-header>`
@@ -117,7 +118,12 @@ function repositoryRowTemplate(item) {
 export function renderWorkspaceContent(context, kind) {
   if (!context) return html`<p class="workspace-content-empty">This workspace is no longer available.</p>`
   const view = `workspace-${kind}`
-  const items = context[kind]
+  if (kind === 'dependencies' && context.scope === 'team') {
+    return html`<section class="workspace-content-view">${teamHeaderTemplate(context, view)}
+      ${context.dependencyReview ? html`<team-dependencies .repositories=${context.repositories}></team-dependencies>`
+        : html`<p class="workspace-content-empty">You review no dependencies in this team.</p>`}</section>`
+  }
+  const items = context[kind] ?? []
   return html`<section class="workspace-content-view">
     ${context.scope === 'team' ? teamHeaderTemplate(context, view) : html`<header class="page-head"><div class="page-title">
       <h1>${workspaceTitleTemplate(context, view)}${workspaceContentButton(context, 'reports', view)}${workspaceContentButton(context, 'bundles', view)}</h1>
