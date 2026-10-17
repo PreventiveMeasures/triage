@@ -21,8 +21,11 @@
 //
 // Nothing here may touch the DOM or fetch anything: the worker's own
 // response carries `default-src 'none'` (see server-e2e/static.ts),
-// and esbuild bundles the decoder inline so the worker's module
-// graph has no dependency to load.
+// which refuses every load the worker starts once it runs — a fetch,
+// a dynamic `import()`. Its static imports are another matter: the
+// module graph (the decoder, and the shared chunk code splitting puts
+// esbuild's CommonJS helpers in) is fetched for the page that spawns
+// the worker, so index.html's `script-src 'self'` is what admits it.
 import decompress from 'brotli/decompress'
 
 export function brotliDecompress(bytes) {
