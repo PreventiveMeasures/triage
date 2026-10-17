@@ -110,6 +110,13 @@ const G2_PAPER_THEME = {
   labelHover: '#000',
 }
 
+// W95 draws the graph in a white well, picked in the theme's navy.
+const G2_W95_THEME = {
+  ...G2_THEMES.light,
+  bg: GRAPH_BACKGROUNDS.w95,
+  selectRing: '#000080',
+}
+
 function currentTheme() {
   // Each named light-style theme picks its own G2_THEMES entry so
   // the canvas fill matches the surrounding page chrome; anything
@@ -119,6 +126,7 @@ function currentTheme() {
   const c = document.body.classList
   if (c.contains('theme-paper')) return G2_PAPER_THEME
   if (c.contains('theme-pink')) return G2_THEMES.pink
+  if (c.contains('theme-w95')) return G2_W95_THEME
   if (c.contains('theme-light')) return G2_THEMES.light
   return G2_THEMES.dark
 }

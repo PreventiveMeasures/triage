@@ -71,6 +71,31 @@ export class SearchableSelector extends LitElement {
     button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     @media (max-width: 40rem) { .facets { width: 8.5rem; } }
     @media (max-width: 28rem) { .facets { width: 7rem; } .option { gap: .35rem; } }
+    /* W95 (styles/w95.css): a Windows 95 combo box — a sunken white field,
+       its arrow a raised button at its end — opening a plain list framed
+       in black, the option under the pointer or picked in navy. */
+    :host-context(body.theme-w95) {
+      & .trigger, & .trigger:hover:not(:disabled) {
+        height: 23px; padding: 0 1px 0 4px; gap: 4px;
+        border: 0; border-radius: 0; background: #fff;
+        box-shadow: var(--w95-sunken);
+        font-size: 11px; font-weight: 400;
+      }
+      & .trigger > svg:last-child {
+        width: 16px; height: 19px; padding: 3px 2px;
+        background: var(--w95-face); box-shadow: var(--w95-raised); color: #000;
+      }
+      & .menu { border: 1px solid #000; border-radius: 0; box-shadow: none; font-size: 11px; }
+      & .search { border-bottom: 0; box-shadow: inset 0 -1px var(--w95-shadow); }
+      & .search:focus-within { box-shadow: inset 0 -1px var(--w95-shadow); }
+      & :is(.option, .org) { border-radius: 0; font-size: 11px; }
+      & :is(.option, .org):is(:hover:not(:disabled), [aria-selected=true], [aria-pressed=true]) {
+        background: var(--w95-title); color: #fff;
+        & svg, & .secondary, & .detail, & .count { color: #fff; }
+      }
+      & .avatar { border-radius: 0; }
+      & button:focus-visible { outline: 1px dotted #000; outline-offset: -2px; }
+    }
   `
 
   constructor() {

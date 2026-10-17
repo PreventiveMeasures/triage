@@ -876,7 +876,8 @@ bundle-code-terminal-splitter {
   height: 7px; margin-block: -3px;
   &::before { inset: 3px 0; }
 }
-.bundle-code-view:has(> bundle-code-splitter.dragging, bundle-code-terminal-splitter.dragging) {
+/* While either handle is dragged (view/bundle-code-splitter.js). */
+.bundle-code-view.splitting {
   &, & * { cursor: default; user-select: none; }
 }
 /* Search bar — bordered strip: lens icon left, query input
@@ -1218,7 +1219,7 @@ bundle-code-search {
   &.sev-bug           { background: var(--bug); }
   &.sev-informational { background: var(--info); }
 }
-body:is(.theme-light, .theme-pink, .theme-paper)
+body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper)
   :is(.bundle-code-tree-count, .bundle-code-search-issue-sev, .bundle-issue-sev, .bundle-source-panel-sev, .bundle-advisory-severity) {
   &:is(.sev-critical, .sev-high, .sev-high_bug, .sev-bug) { color: #fff; }
 }
@@ -2409,7 +2410,9 @@ body.report-fullscreen {
    so the source matches the file-row chrome elsewhere. */
 .bundle-source-overlay {
   position: fixed; inset: 0;
-  z-index: 50;
+  /* Above the finding popup (findings.css `.kanban-detail-backdrop`,
+     1100), whose Code button opens it. */
+  z-index: 1200;
   /* Theme-aware dim — matches `meta[name="theme-color"]` (the
      same variable the kanban modal's dim uses) so light mode
      dims to off-white and dark mode dims to the near-black
@@ -3549,7 +3552,7 @@ repository-history {
   display: flex; flex-direction: column; flex: 1; min-height: 0;
   background: var(--bg); border-radius: inherit; font-size: .8rem;
 }
-body:is(.theme-light, .theme-pink, .theme-paper) repository-history {
+body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-history {
   --lane-0: #2a78d6; --lane-1: #eb6834; --lane-2: #1baf7a; --lane-3: #eda100;
   --lane-4: #e87ba4; --lane-5: #008300; --lane-6: #6250d6; --lane-7: #e34948;
 }
@@ -3717,7 +3720,7 @@ repository-issues, repository-agents, repository-pulse {
   display: flex; flex-direction: column; flex: 1; min-height: 0;
   background: var(--bg); border-radius: inherit; font-size: .8rem;
 }
-body:is(.theme-light, .theme-pink, .theme-paper) :is(repository-issues, repository-agents, repository-pulse) {
+body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) :is(repository-issues, repository-agents, repository-pulse) {
   --issue-merged: #8250df; --claude: #c15f3c;
 }
 .issues-count { margin-left: .2rem; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -4035,7 +4038,7 @@ repository-pulse {
   --pulse-1: #0d366b; --pulse-2: #184f95; --pulse-3: #256abf; --pulse-4: #3987e5; --pulse-5: #6da7ec; --pulse-6: #9ec5f4;
   container: pulse / inline-size;
 }
-body:is(.theme-light, .theme-pink, .theme-paper) repository-pulse {
+body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-pulse {
   --pulse-accent: #2a78d6; --pulse-release: #a83cb8;
   --pulse-zero: #e1e0d9; --pulse-grid: #e1e0d9; --pulse-axis: #c3c2b7;
   --pulse-1: #cde2fb; --pulse-2: #9ec5f4; --pulse-3: #6da7ec; --pulse-4: #3987e5; --pulse-5: #256abf; --pulse-6: #184f95;
@@ -4363,7 +4366,7 @@ repository-replay {
   display: flex; flex-direction: column; flex: 1; min-height: 0;
   background: var(--bg); border-radius: inherit; color: var(--text); font-size: .8rem;
 }
-body:is(.theme-light, .theme-pink, .theme-paper) repository-replay {
+body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-replay {
   --lane-0: #2a78d6; --lane-1: #eb6834; --lane-2: #1baf7a; --lane-3: #eda100;
   --lane-4: #e87ba4; --lane-5: #008300; --lane-6: #6250d6; --lane-7: #e34948;
 }

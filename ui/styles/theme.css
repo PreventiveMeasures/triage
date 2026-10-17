@@ -3,14 +3,15 @@
 /* Default = dark. Other themes are opt-in via `body.theme-${name}`,
    set by view/theme.js from a localStorage flag. The `<theme-toggle>`
    button initially cycles between dark and light; the first press from dark
-   on or after the eighth press unlocks green, pink, and paper until reload. All themes
+   on or after the eighth press unlocks green, pink, and paper until reload, and the
+   toggle's third turn from green into pink adds w95 after pink. All themes
    remain available through `DeepView.setTheme(name)` (see view/api.js). We deliberately do NOT honor
    `prefers-color-scheme`:
    dark-by-default is part of the product's identity (the report
    viewer is meant to feel like an IDE panel, not a document). The
    graph-tab canvas has its own per-theme palette baked into
    view/graph/canvas.js (a CSS-var round-trip per draw frame would
-   cost too much); pink + light + paper land on light canvas palettes,
+   cost too much); pink + light + w95 + paper land on light canvas palettes,
    dark + green on the dark one.
 
    Matte-glass aesthetic: the body holds a soft multi-color radial
@@ -359,8 +360,22 @@ body.theme-paper {
     --header-column-gap: 1.25rem;
     --header-tag-padding: .625rem;
   }
+  /* A repository's Activity views run flush with the slide's header,
+     as its Code tab does: their bar, scroll areas and the overlays
+     and player along Replay's edges drop their side insets. */
+  & :is(.history-bar, .issues-scroll, .pulse-scroll, .replay-controls) {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  & .history-commit { padding-right: 0; }
+  & .history-note { margin-left: 0; margin-right: 0; }
+  & :is(.replay-day, .replay-commit) { left: 0; }
+  & :is(.replay-key, .replay-commit) { right: 0; }
+
   & .kanban-card .kanban-analyzer { border: 0; }
   & .kanban-column-header .count { background: none; }
+  /* A rail's selected card keeps only its leading edge. */
+  & .focus-side-card.active { background: none; }
   & .annotation-chip:is(.sel-with, .sel-without)::before {
     content: '';
     position: absolute;
@@ -501,6 +516,9 @@ body.theme-pink {
      family so they're unaffected. */
   font-family: 'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', cursive;
 }
+
+/* W95 — easter-egg theme, Windows 95 on its teal desktop: its palette
+   and its window live together in styles/w95.css. */
 
 body {
   /* Resolve against the body's active theme before inheriting into cards. */

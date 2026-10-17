@@ -185,7 +185,7 @@ class DependencyMatrix extends LitElement {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const styles = getComputedStyle(this), value = (name) => styles.getPropertyValue(name).trim()
     const paper = document.body.classList.contains('theme-paper')
-    const light = paper || document.body.classList.contains('theme-light') || document.body.classList.contains('theme-pink')
+    const light = paper || ['theme-light', 'theme-pink', 'theme-w95'].some((name) => document.body.classList.contains(name))
     const theme = { bg: value('--graph-canvas-bg') || '#0c0c0c', surface: value('--surface'), text: value('--text'), muted: value('--muted'),
       border: value('--border'), grid: light ? '#0000000b' : '#ffffff0b', highlight: paper ? '#fff' : light ? '#0969da18' : '#ffffff12', cycle: paper ? '#000' : light ? '#a21caf' : '#e879c7' }
     this.style.setProperty('--matrix-cycle', theme.cycle)

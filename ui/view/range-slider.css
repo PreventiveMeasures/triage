@@ -71,3 +71,34 @@ input[type='range']::-moz-range-thumb {
 input[type='range']::-webkit-slider-runnable-track {
   background: transparent; height: var(--rs-thumb-size);
 }
+
+/* W95 (styles/w95.css): a Windows 95 trackbar — a sunken channel, the
+   range picked in it navy, and upright raised thumbs. */
+:host-context(body.theme-w95) {
+  height: 22px;
+  --rs-thumb-size: 22px;
+
+  & .track {
+    height: 4px;
+    box-shadow: var(--w95-sunken);
+    background:
+      linear-gradient(to right,
+        #fff 0,
+        #fff var(--low, 0%),
+        var(--w95-title) var(--low, 0%),
+        var(--w95-title) var(--high, 100%),
+        #fff var(--high, 100%));
+  }
+  & input[type='range']::-webkit-slider-thumb {
+    width: 11px; height: 21px;
+    border-radius: 0;
+    background: var(--w95-face);
+    box-shadow: var(--w95-raised);
+  }
+  & input[type='range']::-moz-range-thumb {
+    width: 11px; height: 21px;
+    border-radius: 0;
+    background: var(--w95-face);
+    box-shadow: var(--w95-raised);
+  }
+}

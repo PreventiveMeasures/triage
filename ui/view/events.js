@@ -1694,6 +1694,14 @@ report.addEventListener('drop', (e) => {
 // (they don't start a transition).
 let kanbanTransitioning = false
 
+// W95 and Paper open and close the dialog in place, as a window and a
+// printed page would: no flight out of the card, no fade.
+const STILL_THEMES = ['theme-w95', 'theme-paper']
+function kanbanAnimates() {
+  return Boolean(document.startViewTransition)
+    && !STILL_THEMES.some(theme => document.body.classList.contains(theme))
+}
+
 function kanbanCardEl(gid) {
   if (!gid) return null
   return report.querySelector(`.kanban-card[data-gid="${CSS.escape(gid)}"]`)
@@ -1730,20 +1738,6 @@ function updateKanbanClipVars(stampedCard) {
   )
 }
 
-// Bring the open finding's twin in the dialog's same-column rail into
-// view. The rail mounts scrolled to the top, so opening (or stepping
-// to) a card deep in a long column would otherwise leave it showing a
-// slice of the queue that doesn't contain the finding on screen.
-// `block: 'nearest'` is a no-op when the card is already visible and
-// `behavior: 'instant'` keeps an arrow-key run from lagging behind the
-// modal — same pair of arguments (and reasons) as the focus queue's
-// scroll in setFocusGid. Silently does nothing when the rail isn't
-// mounted (narrow viewport, or a bucket-less triage state).
-function scrollKanbanRailActive() {
-  const card = report.querySelector('.kanban-detail-side [data-kanban-select].active')
-  if (card) card.scrollIntoView({ block: 'nearest', behavior: 'instant' })
-}
-
 // The dialog's finding, and the Code panel's history alongside it.
 // Fullscreen mounts the focus view's panel (render.js
 // focusMainTemplate), and a trail of followed references belongs to
@@ -1758,11 +1752,11 @@ function showKanbanFinding(next) {
   state.focusCodeAt = 0
 }
 
-// What a dialog that just changed finding owes the surfaces around it,
-// once the render has landed: the rail scrolls its now-open card into
-// view, and the code panel — mounted in fullscreen — moves to the
-// lines this finding cites. Both are no-ops when their surface isn't
-// on screen.
+// What a dialog that just changed finding owes the code panel beside it,
+// once the render has landed: mounted in fullscreen, the panel moves to
+// the lines this finding cites. A no-op when the panel isn't on screen.
+// (The rail brings the now-open card into view itself — kanban-rail.js
+// — as it may not have drawn it yet.)
 //
 // The panel needs asking. Lit reuses `.focus-code-body` across the
 // render, so its scrollTop survives the swap and the new file arrives
@@ -1773,7 +1767,6 @@ function showKanbanFinding(next) {
 // after its own late render, and never when the source was already
 // loaded.
 function afterKanbanFindingShown() {
-  scrollKanbanRailActive()
   revealFocusCodeLines()
 }
 
@@ -1783,11 +1776,11 @@ function setKanbanPopoverGid(next) {
   const opening = prev === null && next !== null
   const closing = prev !== null && next === null
 
-  // Plain render path: no API available, or card-to-card switch
-  // (modal stays open, contents swap in place). Card switches stay
-  // allowed during an in-flight transition because they don't
-  // start a new one — only a render().
-  if (!document.startViewTransition || (!opening && !closing)) {
+  // Plain render path: no API available, a theme that doesn't
+  // animate it, or card-to-card switch (modal stays open, contents
+  // swap in place). Card switches stay allowed during an in-flight
+  // transition because they don't start a new one — only a render().
+  if (!kanbanAnimates() || (!opening && !closing)) {
     syncOpenedGroupTriage(next)
     showKanbanFinding(next)
     render()
@@ -1848,10 +1841,11 @@ function setKanbanPopoverGid(next) {
     showKanbanFinding(next)
     const t = startViewTransition(() => {
       render()
-      // Inside the callback, so the rail is already scrolled to the
-      // open card when the NEW snapshot is captured — scrolling it
-      // afterwards would animate from a slice of the queue the user
-      // never asked for.
+      // Inside the callback, so what the NEW snapshot captures is
+      // already in place — moving it afterwards would animate from a
+      // view the user never asked for. The rail brings the open card
+      // into view in its own update, a microtask from here, which also
+      // lands before the capture.
       afterKanbanFindingShown()
       // Clear inline name inside the callback so the NEW snapshot
       // has exactly one element holding `kanban-detail-modal` —

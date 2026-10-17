@@ -1,4 +1,4 @@
-// The selected theme persists; the press counter and bonus-theme unlock live
+// The selected theme persists; the press counters and bonus-theme unlocks live
 // only in this module and reset on reload. Dark remains the default.
 import { LitElement, html, unsafeCSS } from 'lit'
 import { ensureHostAria } from './host-aria.js'
@@ -13,8 +13,12 @@ const THEME_KEY = 'deepview.theme'
 
 // Canonical theme list. `dark` is the default (no body class). The
 // rest map to `body.theme-${name}` blocks in styles/theme.css.
-const THEMES = Object.freeze(['dark', 'light', 'green', 'pink', 'paper'])
-const UNLOCKED_CYCLE = Object.freeze(['dark', 'green', 'pink', 'paper', 'light'])
+const THEMES = Object.freeze(['dark', 'light', 'green', 'pink', 'w95', 'paper'])
+const UNLOCKED_CYCLE = Object.freeze(['dark', 'green', 'pink', 'w95', 'paper', 'light'])
+// W95 joins the unlocked cycle, after pink, once the toggle itself has
+// turned green into pink this many times on the page. Landing on pink any
+// other way (a reload, the API) doesn't count.
+const W95_PINK_TURNS = 3
 
 // Per-theme `<meta name="theme-color">` values. `base` paints the
 // WCO title-bar / Android browser chrome normally. `dim` swaps in
@@ -32,6 +36,9 @@ const THEME_COLOR = {
   // the overlay strip keeps its existing --theme-bar color.
   green: { base: '#0a140a', dim: '#050a05', sidebar: '#0f1e0f' },
   pink:  { base: '#ffe4ee', dim: '#a3727f', sidebar: '#ffe0f0' },
+  // W95's is its title bar's navy, the strip an installed app's own
+  // controls sit on.
+  w95:   { base: '#000080', dim: '#000033' },
   paper: { base: '#ffffff', dim: '#666666' },
 }
 
@@ -40,7 +47,7 @@ const standaloneMode = window.matchMedia?.('(display-mode: standalone)')
 const windowControlsOverlay = window.navigator?.windowControlsOverlay
 
 // The glyph reflects the active theme.
-const ICONS = { light: '☀', dark: '☾', green: '🕶️', pink: '✿', paper: '📄' }
+const ICONS = { light: '☀', dark: '☾', green: '🕶️', pink: '✿', w95: '⊞', paper: '📄' }
 
 // Fires on every applyTheme call (including the boot-time replay).
 // The toggle button listens so its icon stays in sync when an
@@ -53,10 +60,16 @@ let themePresses = 0
 let themesUnlocked = false
 let themeUnlocking = false
 let themeSelectionVersion = 0
+let pinkTurns = 0
+let w95Unlocked = false
 
+// The next theme of the cycle, without w95 while it is locked; w95 chosen
+// through the API meanwhile steps on as from pink, to what follows it.
 function nextTheme() {
   if (!themesUnlocked) return currentTheme === 'light' ? 'dark' : 'light'
-  return UNLOCKED_CYCLE[(UNLOCKED_CYCLE.indexOf(currentTheme) + 1) % UNLOCKED_CYCLE.length]
+  const cycle = w95Unlocked ? UNLOCKED_CYCLE : UNLOCKED_CYCLE.filter(theme => theme !== 'w95')
+  const from = cycle.includes(currentTheme) ? currentTheme : 'pink'
+  return cycle[(cycle.indexOf(from) + 1) % cycle.length]
 }
 
 function announceTheme() {
@@ -181,7 +194,9 @@ class ThemeToggle extends LitElement {
       }
       return
     }
-    applyTheme(nextTheme())
+    const next = nextTheme()
+    if (currentTheme === 'green' && next === 'pink' && ++pinkTurns >= W95_PINK_TURNS) w95Unlocked = true
+    applyTheme(next)
   }
 
   _onKeydown = (e) => {

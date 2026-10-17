@@ -1042,11 +1042,19 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   overscroll-behavior: contain;
   padding: 0;
   display: flex; flex-direction: column;
+  /* The rail draws a screen at a time and puts the list back under the
+     reader itself as its cards are measured (view/kanban-rail.js); the
+     browser's scroll anchoring would move it a second time. */
+  overflow-anchor: none;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 
   &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* The spacers standing in for the cards not drawn keep the heights
+     they're given, however full the column. */
+  & > .kanban-rail-spacer { flex: none; }
 }
 
 /* WCO PWA mode (the hidden-title-bar window): the fullscreen dialog

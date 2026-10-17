@@ -179,6 +179,100 @@
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
+/* W95 (styles/w95.css): the header is the window's title bar, pinned
+   across the window's top whatever the sidebar's width, collapsed or
+   not — the app's icon, `Triage - local` in bold white on navy, the
+   lock and the sidebar's toggle as its buttons, room at the end for
+   the theme toggle. The host draws no glass there (`--glass-blur: none`), so it
+   is no containing block and `fixed` places against the viewport. In
+   an installed app drawing its own title bar it keeps clear of the
+   OS controls on either side. */
+:host-context(body.theme-w95) .sidebar-header {
+  position: fixed; z-index: 1;
+  top: calc(var(--w95-gap) + var(--w95-frame));
+  right: calc(var(--w95-gap) + var(--w95-frame) + var(--wco-right-toolbar, 0px));
+  left: calc(var(--w95-gap) + var(--w95-frame));
+  height: var(--w95-title-height); min-height: 0;
+  justify-content: normal; gap: 0;
+  padding: 0 20px 0 max(2px, env(titlebar-area-x, 0px) - var(--w95-gap) - var(--w95-frame));
+  background: var(--w95-title); color: #fff;
+
+  & .brand {
+    display: flex; gap: 4px;
+    margin-right: 4px;
+    font-size: 11px; letter-spacing: 0;
+
+    &::before {
+      content: ''; flex: none; width: 16px; height: 16px;
+      background: url('./icon.svg') center / contain no-repeat;
+    }
+  }
+  & .brand-button:focus-visible { outline: 1px dotted #fff; outline-offset: 1px; }
+  & .brand-tag {
+    padding: 0; color: inherit; font-size: inherit; font-weight: inherit; letter-spacing: 0;
+
+    &::before { content: '- ' / ''; }
+    &[role='button']:hover { color: inherit; background: none; }
+    &:focus-visible { outline: 1px dotted #fff; outline-offset: 1px; }
+  }
+  /* An installed app drawing its own title bar shows the menu here too:
+     this bar doesn't collapse with the sidebar, so collapsing can't
+     strand the OS controls. The bar drags the window; its buttons opt out. */
+  & :is(#encryption-toggle, #sidebar-toggle) {
+    display: grid; width: 16px; height: 14px;
+    background: var(--w95-face); box-shadow: var(--w95-raised);
+    -webkit-app-region: no-drag; app-region: no-drag;
+
+    & svg { display: none; }
+    &:active { box-shadow: var(--w95-pressed); }
+    &:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
+  }
+  /* Their glyphs are drawn as Windows 95's caption glyphs are, pixel by
+     pixel (styles/w95.css): the lock, shut while it locks, and the
+     sidebar's toggle as Maximize — collapsing the sidebar gives the page
+     the window — then Restore while it is collapsed. */
+  & #sidebar-toggle { background: var(--w95-glyph-maximize), var(--w95-face); }
+  & #encryption-toggle { background: var(--w95-glyph-unlock), var(--w95-face); }
+  & #encryption-toggle:is(.encrypted, .locked-pending) { background: var(--w95-glyph-lock), var(--w95-face); }
+}
+:host-context(body.theme-w95):host(.collapsed) .sidebar-header #sidebar-toggle {
+  background: var(--w95-glyph-restore), var(--w95-face);
+}
+
+/* And the actions are its status bar, pinned along the window's foot,
+   each a field sunk a step. */
+:host-context(body.theme-w95) .sidebar-actions {
+  position: fixed; z-index: 1;
+  right: calc(var(--w95-gap) + var(--w95-frame));
+  bottom: calc(var(--w95-gap) + var(--w95-frame));
+  left: calc(var(--w95-gap) + var(--w95-frame));
+  height: var(--w95-status-height);
+  flex-direction: row; justify-content: normal; gap: 2px;
+  padding: 0; border-top: 0;
+
+  & sidebar-delete-current { display: contents; }
+  & :is(button, #sync-status, #auth-status, #manage-status, #public-status) {
+    display: inline-flex; align-items: center; gap: 4px;
+    width: auto; height: 100%; max-width: none; padding: 0 6px;
+    border: 0; background: none; color: var(--text);
+    box-shadow: var(--w95-status);
+    font-size: 11px;
+
+    &:hover { background: none; color: var(--text); }
+    &:active { box-shadow: inset 1px 1px #000, inset -1px -1px #fff; opacity: 1; }
+    &[hidden] { display: none; }
+  }
+  /* Sync's state and the account lead; an empty field takes the width
+     left, the Manage button last. */
+  & :is(#sync-status, #auth-status) { order: -1; }
+  & #manage-status { order: 2; }
+  &::after {
+    content: ''; flex: 1; order: 1; align-self: stretch;
+    box-shadow: var(--w95-status);
+  }
+  & #sync-status .sync-label { display: inline; }
+}
+
 #sidebar-toggle {
   flex-shrink: 0;
   width: 22px; height: 22px;
@@ -576,6 +670,61 @@ sidebar-view-button[hidden] { display: none !important; }
   }
 }
 
+/* W95 (styles/w95.css): the pane is Explorer's tree — its search a
+   sunken field, its groups plain bold names, its nesting drawn in dotted
+   lines, the storage warning a tooltip's yellow, its scrollbar Windows
+   95's (the document's can't reach into this root). */
+:host-context(body.theme-w95) {
+  & .sidebar-search {
+    margin: 2px 2px 4px;
+    border: 0; background: #fff;
+    box-shadow: var(--w95-sunken);
+
+    &:has(input:focus) { background: #fff; }
+    & input { font-size: 11px; }
+  }
+  & .file-group-header { padding-top: .35rem; font-size: 11px; color: #000; text-transform: none; letter-spacing: 0; }
+  & .file-item button.file-name { font-size: 11px; }
+  & .file-item.indented::before { background: none; border-left: 1px dotted var(--w95-shadow); }
+  & #storage-status {
+    border-color: #000; background: #ffffe1; color: #000;
+
+    &:hover { border-color: #000; background: #ffffe1; }
+  }
+  /* The list's own thin bar gives way to the full 16px one, in the
+     gutter it already keeps for it. */
+  & #file-list { padding-right: 0; scrollbar-width: auto; scrollbar-color: auto; }
+  & ::-webkit-scrollbar,
+  & #file-list::-webkit-scrollbar { width: 16px; height: 16px; background: var(--w95-dither); }
+  & ::-webkit-scrollbar-thumb,
+  & #file-list::-webkit-scrollbar-thumb { background: var(--w95-face); border-radius: 0; box-shadow: var(--w95-raised); }
+}
+/* Its arrow buttons, written flat: Chrome drops these nested. */
+:host-context(body.theme-w95) ::-webkit-scrollbar-button:single-button {
+  display: block; width: 16px; height: 16px;
+  background: var(--w95-arrow-down), var(--w95-face);
+  box-shadow: var(--w95-raised);
+}
+:host-context(body.theme-w95) ::-webkit-scrollbar-button:single-button:vertical:decrement {
+  background: var(--w95-arrow-up), var(--w95-face);
+}
+
+/* W95 picks a row as Windows 95 does: navy, its text white. The row's
+   own colours flip rather than each label's, so its icons, counts and
+   actions follow. */
+:host-context(body.theme-w95) .file-item.current {
+  --text: #fff;
+  --muted: var(--w95-light);
+
+  &::after { display: none; }
+  &:is(.workspace-item, .team-item),
+  &:not(.workspace-item, .team-item) button.file-name {
+    background: var(--w95-title);
+    border-color: transparent;
+    box-shadow: none;
+  }
+}
+
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
@@ -638,7 +787,12 @@ button:focus-visible {
 :host-context(body.theme-pink) .workspace-rename-input,
 :host-context(body.theme-pink) .file-item button.file-name .file-label,
 :host-context(body.theme-pink) .file-item.bundle-missing .file-label,
-:host-context(body.theme-pink) .file-item.report-missing .file-label {
+:host-context(body.theme-pink) .file-item.report-missing .file-label,
+/* W95 too: Explorer's tree names its rows in MS Sans Serif. */
+:host-context(body.theme-w95) .workspace-rename-input,
+:host-context(body.theme-w95) .file-item button.file-name .file-label,
+:host-context(body.theme-w95) .file-item.bundle-missing .file-label,
+:host-context(body.theme-w95) .file-item.report-missing .file-label {
   font-family: inherit;
 }
 

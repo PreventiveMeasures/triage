@@ -1,0 +1,675 @@
+/* W95 — easter-egg theme: Windows 95 on its teal desktop. It joins the
+   unlocked theme cycle, after pink, once the toggle has turned green into
+   pink three times on the page (view/theme.js), and is always there for
+   `DeepView.setTheme('w95')`.
+
+   The app is one window on the desktop, laid out as Explorer is: a navy
+   title bar, a sunken white tree pane on the left (the sidebar), the page
+   beside it, a status bar along its foot. The title and status bars are
+   the sidebar's header and actions, pinned along the window's edges
+   (view/sidebar.css). Dialogs are Windows 95 dialogs
+   (view/dialogs/dialog-base.css).
+
+   Its look is Windows 95's: silver chrome, white wells, navy where
+   something is picked, MS Sans Serif at its 8 points, no tracking and no
+   all-caps, square corners, and the bevel for depth — light from the top
+   left, white then pale grey, shade to the bottom right, grey then black.
+   Raised for windows and buttons, sunken for wells and fields, a pressed
+   toggle sunk over a white-and-silver dither. Toggle groups split into
+   their buttons; scrollbars are Windows 95's, arrows and all. What is
+   drawn on the white wells keeps the light theme's colours; the hues that
+   are text on silver take darker values to read there.
+
+   Screen only: print keeps the default theme's pinned palette
+   (print.css) and none of the window. */
+
+@media screen {
+  :root:has(> body.theme-w95) {
+    background: #008080;
+    /* Windows 95 sets its interface in 8 points: the rem-sized text and
+       the padding around it shrink together, as dense as its dialogs. */
+    font-size: 14px;
+  }
+
+  body.theme-w95 {
+    color-scheme: light;
+    --w95-face: #c0c0c0;
+    --w95-light: #dfdfdf;
+    --w95-shadow: #808080;
+    --w95-title: #000080;
+    /* The bevels, each as Windows draws it: a button's (white outside,
+       pale grey in), a window's (the two swapped), a button held down,
+       the default button's (a black ring inside), a field's, a status
+       field's, a tab's (no foot), a group box's etched groove. */
+    --w95-raised: inset -1px -1px #000, inset 1px 1px #fff, inset -2px -2px var(--w95-shadow), inset 2px 2px var(--w95-light);
+    --w95-window: inset -1px -1px #000, inset 1px 1px var(--w95-light), inset -2px -2px var(--w95-shadow), inset 2px 2px #fff;
+    --w95-pressed: inset -1px -1px #fff, inset 1px 1px #000, inset -2px -2px var(--w95-light), inset 2px 2px var(--w95-shadow);
+    --w95-default:
+      inset -2px -2px #000, inset 1px 1px #000, inset 2px 2px #fff,
+      inset -3px -3px var(--w95-shadow), inset 3px 3px var(--w95-light);
+    --w95-sunken: inset -1px -1px #fff, inset 1px 1px var(--w95-shadow), inset -2px -2px var(--w95-light), inset 2px 2px #000;
+    --w95-status: inset -1px -1px var(--w95-light), inset 1px 1px var(--w95-shadow);
+    --w95-tab: inset -1px 0 #000, inset 1px 1px var(--w95-light), inset -2px 0 var(--w95-shadow), inset 2px 2px #fff;
+    --w95-etched: inset 1px 1px var(--w95-shadow), inset -1px -1px #fff, inset 2px 2px #fff, inset -2px -2px var(--w95-shadow);
+    /* Behind a toggle held down, and in a scrollbar's track. */
+    --w95-dither: repeating-conic-gradient(#fff 0 25%, var(--w95-face) 0 50%) 0 0 / 2px 2px;
+    /* A scrollbar button's arrows, pixel by pixel for a 16px button: a
+       base of 7, and 4 to the point. */
+    --w95-arrow-up:
+      linear-gradient(#000, #000) 7px 6px / 1px 1px no-repeat,
+      linear-gradient(#000, #000) 6px 7px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 5px 8px / 5px 1px no-repeat,
+      linear-gradient(#000, #000) 4px 9px / 7px 1px no-repeat;
+    --w95-arrow-down:
+      linear-gradient(#000, #000) 4px 6px / 7px 1px no-repeat,
+      linear-gradient(#000, #000) 5px 7px / 5px 1px no-repeat,
+      linear-gradient(#000, #000) 6px 8px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 7px 9px / 1px 1px no-repeat;
+    --w95-arrow-left:
+      linear-gradient(#000, #000) 6px 7px / 1px 1px no-repeat,
+      linear-gradient(#000, #000) 7px 6px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 8px 5px / 1px 5px no-repeat,
+      linear-gradient(#000, #000) 9px 4px / 1px 7px no-repeat;
+    --w95-arrow-right:
+      linear-gradient(#000, #000) 6px 4px / 1px 7px no-repeat,
+      linear-gradient(#000, #000) 7px 5px / 1px 5px no-repeat,
+      linear-gradient(#000, #000) 8px 6px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 9px 7px / 1px 1px no-repeat;
+    /* Caption glyphs, pixel by pixel, for a 16x14 caption button: close,
+       maximize, restore, and the lock, shut and open. */
+    --w95-glyph-close:
+      linear-gradient(#000, #000) 4px 3px / 2px 1px no-repeat,
+      linear-gradient(#000, #000) 10px 3px / 2px 1px no-repeat,
+      linear-gradient(#000, #000) 5px 4px / 2px 1px no-repeat,
+      linear-gradient(#000, #000) 9px 4px / 2px 1px no-repeat,
+      linear-gradient(#000, #000) 6px 5px / 4px 1px no-repeat,
+      linear-gradient(#000, #000) 7px 6px / 2px 1px no-repeat,
+      linear-gradient(#000, #000) 6px 7px / 4px 1px no-repeat,
+      linear-gradient(#000, #000) 5px 8px / 2px 1px no-repeat,
+      linear-gradient(#000, #000) 9px 8px / 2px 1px no-repeat,
+      linear-gradient(#000, #000) 4px 9px / 2px 1px no-repeat,
+      linear-gradient(#000, #000) 10px 9px / 2px 1px no-repeat;
+    --w95-glyph-maximize:
+      linear-gradient(#000, #000) 3px 2px / 9px 2px no-repeat,
+      linear-gradient(#000, #000) 3px 4px / 1px 7px no-repeat,
+      linear-gradient(#000, #000) 11px 4px / 1px 7px no-repeat,
+      linear-gradient(#000, #000) 3px 10px / 9px 1px no-repeat;
+    --w95-glyph-restore:
+      linear-gradient(#000, #000) 5px 2px / 6px 2px no-repeat,
+      linear-gradient(#000, #000) 5px 4px / 1px 1px no-repeat,
+      linear-gradient(#000, #000) 10px 4px / 1px 4px no-repeat,
+      linear-gradient(#000, #000) 9px 7px / 1px 1px no-repeat,
+      linear-gradient(#000, #000) 3px 5px / 6px 2px no-repeat,
+      linear-gradient(#000, #000) 3px 7px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 8px 7px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 3px 10px / 6px 1px no-repeat;
+    --w95-glyph-lock:
+      linear-gradient(#000, #000) 6px 3px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 5px 4px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 9px 4px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 4px 7px / 7px 2px no-repeat,
+      linear-gradient(#000, #000) 4px 9px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 8px 9px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 4px 10px / 7px 2px no-repeat;
+    --w95-glyph-unlock:
+      linear-gradient(#000, #000) 8px 2px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 7px 3px / 1px 2px no-repeat,
+      linear-gradient(#000, #000) 11px 3px / 1px 4px no-repeat,
+      linear-gradient(#000, #000) 4px 7px / 7px 2px no-repeat,
+      linear-gradient(#000, #000) 4px 9px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 8px 9px / 3px 1px no-repeat,
+      linear-gradient(#000, #000) 4px 10px / 7px 2px no-repeat;
+    /* A check box's mark, pixel by pixel, for a 13px box. */
+    --w95-check:
+      linear-gradient(#000, #000) 3px 5px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 4px 6px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 5px 7px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 6px 6px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 7px 5px / 1px 3px no-repeat,
+      linear-gradient(#000, #000) 8px 4px / 1px 4px no-repeat,
+      linear-gradient(#000, #000) 9px 3px / 1px 3px no-repeat;
+    --w95-gap: 8px;
+    --w95-frame: 3px;
+    --w95-title-height: 18px;
+    --w95-status-height: 22px;
+    --bg: #fff;
+    --theme-bar: var(--w95-face);
+    --surface: var(--w95-face);
+    --surface-raised: var(--w95-face);
+    --surface-active: var(--w95-face);
+    --border: var(--w95-shadow);
+    --text: #000;
+    --muted: #404040;
+    --accent: var(--w95-title);
+    --critical: #c00000;
+    --high: #c05000;
+    --medium: #f0c040;
+    --low: #6e7781;
+    --green: #006000;
+    --nodejs-green: #3c873a;
+    --warning: #805000;
+    --yellow: #605000;
+    --search-limit-text: var(--yellow);
+    --bookmark-color: #800080;
+    --high-bug: #a85a14;
+    --bug: #6b5e52;
+    --info: #0050c0;
+    --action-bg: var(--w95-face);
+    --action-text: #000;
+    --marker-red: #f00;
+    --marker-blue: #00f;
+    --marker-green: #008000;
+    --marker-gray: var(--w95-shadow);
+    --code-comment: #6e7781;
+    --code-string: #0a3069;
+    --code-number: #0550ae;
+    --code-keyword: #cf222e;
+    --code-function: #8250df;
+    --code-operator: #0550ae;
+    --code-variable: #953800;
+    --code-deleted: #82071e;
+    --code-inserted: #116329;
+    --glass-blur: none;
+    --gradient-stop-a: transparent;
+    --gradient-stop-b: transparent;
+    --gradient-stop-c: transparent;
+    --shadow-glass: var(--w95-window);
+    --graph-canvas-bg: #fff;
+    --graph-hover-bg: rgb(0 0 128 / .06);
+    --graph-divider: var(--w95-shadow);
+    --graph-layout-active-shadow: var(--w95-sunken);
+    --kanban-column-bg: #fff;
+    --mark-red-bg: #ffc1bd;   --mark-red-tab-border: #ff8182;
+    --mark-blue-bg: #a5d6ff;  --mark-blue-tab-border: #54aeff;
+    --mark-green-bg: #aceebb; --mark-green-tab-border: #4ac26b;
+    --mark-gray-bg: #d0d7de;  --mark-gray-tab-border: #8c959f;
+    --badge-low-text: #fff;
+    --ui-radius: 0;
+    --theme-toggle-bg: var(--w95-face);
+    --theme-toggle-hover-bg: var(--w95-face);
+    /* Switches are Windows 95's check boxes, as in Paper. */
+    --switch-button-display: none;
+    --switch-checkbox-display: inline-flex;
+    --switch-input-position: static;
+    --switch-input-size: 13px;
+    --switch-input-opacity: 1;
+    --switch-track-display: none;
+    accent-color: var(--w95-title);
+    /* The window: its frame, then room inside for the pinned title and
+       status bars, the two panes side by side between them. */
+    height: calc(100dvh - 2 * var(--w95-gap));
+    margin: var(--w95-gap);
+    padding:
+      calc(var(--w95-frame) + var(--w95-title-height) + 3px) var(--w95-frame)
+      calc(var(--w95-frame) + var(--w95-status-height) + 3px);
+    background: var(--w95-face);
+    box-shadow: var(--w95-window);
+    color: #000;
+    font-family: 'MS Sans Serif', 'Microsoft Sans Serif', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 11px;
+    line-height: 1.35;
+    /* Its type was bitmap, unsmoothed: sharp, at any pixel ratio. */
+    -webkit-font-smoothing: none;
+
+    /* The splitter between the panes is the sidebar's own margin, not a
+       gap of the body's: elements appended to the body later (a dialog's
+       host) would each open a gap of their own and squeeze the page. */
+    & app-sidebar { height: auto; margin-right: 4px; padding: 2px; border-right: 0; background: #fff; box-shadow: var(--w95-sunken); }
+    & #main-content { border-top: 0; }
+
+    /* The theme toggle is the title bar's last button, Close. */
+    & theme-toggle {
+      position: fixed;
+      top: calc(var(--w95-gap) + var(--w95-frame) + (var(--w95-title-height) - 14px) / 2);
+      right: calc(var(--w95-gap) + var(--w95-frame) + var(--wco-right-toolbar, 0px) + 2px);
+      width: 16px; height: 14px;
+      border: 0;
+      background: var(--w95-glyph-close), var(--w95-face);
+      box-shadow: var(--w95-raised);
+      font-size: 0;
+
+      &:active { box-shadow: var(--w95-pressed); opacity: 1; }
+    }
+
+    & ::selection { background: var(--w95-title); color: #fff; }
+
+    /* Type: no tracking and no all-caps anywhere, headings at the
+       interface's own size. */
+    & *, & *::before, & *::after { letter-spacing: 0 !important; text-transform: none !important; }
+    /* And nothing is rounded but a radio button and a tab's top corners. */
+    & :not(input[type='radio'], .bundles-tab), & ::before, & ::after { border-radius: 0 !important; }
+    & :is(h1, h2, h3, h4) { font-size: 1em; font-weight: 700; line-height: 1.35; }
+    & #report header.page-head .page-title h1 { font-size: 13px; }
+    & :is(.kanban-column-header, .file-group-header, .drop-supported-section h2) { font-size: 11px; }
+    & :focus-visible { outline: 1px dotted #000 !important; outline-offset: -4px !important; }
+
+    /* Scrollbars are Windows 95's: 16px, a raised thumb on the dither,
+       an arrow button at either end (below). Their own sizes elsewhere
+       give way: the bars take the default `auto` so these pseudo-elements
+       apply. */
+    & *, & { scrollbar-color: auto; scrollbar-width: auto; }
+    & ::-webkit-scrollbar { width: 16px; height: 16px; background: var(--w95-dither); }
+    & ::-webkit-scrollbar-track { background: var(--w95-dither); }
+    & ::-webkit-scrollbar-thumb { background: var(--w95-face); border-radius: 0; box-shadow: var(--w95-raised); }
+    & ::-webkit-scrollbar-corner { background: var(--w95-face); }
+    /* Buttons. A toggle group is no pill any more: its buttons stand
+       apart, each raised, and the one on sinks over the dither. */
+    & :is(view-mode-buttons, source-filter, .severity-mode-chips, annotation-filter, severity-chips,
+      triage-selector, triage-filter, .history-modes, .activity-views, .g2-layout-tabs, revalidation-switch) {
+      gap: 0; padding: 0; border: 0;
+      background: none; box-shadow: none; overflow: visible;
+    }
+    & :is(.view-mode-btn, .source-chip, .severity-mode-chip, .annotation-chip, severity-chips > .sev-chip,
+      .triage-state-btn, triage-filter button, .history-modes > button, .activity-views > button,
+      .drop-prompt-action, .local-scan-button, .bundles-download-btn, .toolbar-export-btn, .analyzer-btn,
+      .npm-review-button:not(.npm-review-text-button), .history-more > button, .replay-status > button,
+      .replay-play, .file-chip:is(button), .files-toggle-btn, .revalidation-detail, .revalidation-upstream, .revalidation-conflicts,
+      .search-negate-btn, .managed-team-button, .landing-workspace, .managed-landing-actions button) {
+      min-height: 23px;
+      border: 0;
+      background: var(--w95-face); color: #000;
+      box-shadow: var(--w95-raised);
+      font-family: inherit; font-weight: 400;
+
+      &:not(:last-child) { border-right: 0; }
+      &:hover:not(:disabled) { background: var(--w95-face); color: #000; border-color: transparent; }
+      &:active:not(:disabled) { box-shadow: var(--w95-pressed); opacity: 1; }
+      &:disabled { color: var(--w95-shadow); text-shadow: 1px 1px #fff; opacity: 1; }
+      &:is(.active, .on, [aria-pressed='true'], .sel-with, .sel-without) {
+        background: var(--w95-dither); color: #000;
+        box-shadow: var(--w95-pressed);
+      }
+    }
+    /* The default button: a black ring inside its bevel. */
+    & :is(.drop-prompt-action, .npm-review-primary) {
+      box-shadow: var(--w95-default);
+
+      &:active:not(:disabled) { box-shadow: inset 0 0 0 1px #000, inset 0 0 0 2px var(--w95-shadow); }
+    }
+    /* Counts read as plain numbers, not bubbles. */
+    & :is(.sev-chip, .triage-state-btn, .team-slide-tab, .history-modes, .kanban-column-header) .n,
+    & :is(triage-filter, .kanban-column-header) .count {
+      margin: 0; padding: 0; min-width: 0;
+      background: none;
+      color: inherit; font-size: inherit; font-weight: 400; line-height: inherit;
+      align-self: center;
+    }
+    & triage-filter button { display: inline-flex; gap: 3px; width: auto; min-width: 23px; height: 23px; padding: 0 4px; }
+    & triage-filter .count { position: static; font-size: 11px; }
+    & severity-chips > .sev-chip .sd { box-shadow: inset 0 0 0 1px #000; }
+
+    /* Fields are white and sunk into their panel; a select is a combo
+       box, its arrow a button at its end. */
+    & :is(toolbar-search, .toolbar-search, .issues-filter, .toolbar input[type='text']:not(:is(toolbar-search, .toolbar-search) *),
+      npm-review textarea) {
+      border: 0;
+      background: #fff; color: #000;
+      box-shadow: var(--w95-sunken);
+
+      &:has(input:focus), &:focus { border-color: transparent; box-shadow: var(--w95-sunken); }
+    }
+    & :is(select, .toolbar select.sort-select) {
+      appearance: none;
+      padding-right: 22px;
+      border: 0;
+      /* The arrow, then the button's bevel line by line, its face, the
+         field's white. */
+      background:
+        linear-gradient(to top right, transparent 50%, #000 50%) right 10px top 50% / 4px 4px no-repeat,
+        linear-gradient(to top left, transparent 50%, #000 50%) right 6px top 50% / 4px 4px no-repeat,
+        linear-gradient(#000, #000) right 2px top 2px / 1px calc(100% - 4px) no-repeat,
+        linear-gradient(#000, #000) right 2px bottom 2px / 16px 1px no-repeat,
+        linear-gradient(var(--w95-shadow), var(--w95-shadow)) right 3px top 3px / 1px calc(100% - 6px) no-repeat,
+        linear-gradient(var(--w95-shadow), var(--w95-shadow)) right 3px bottom 3px / 14px 1px no-repeat,
+        linear-gradient(#fff, #fff) right 16px top 3px / 1px calc(100% - 6px) no-repeat,
+        linear-gradient(#fff, #fff) right 3px top 3px / 14px 1px no-repeat,
+        linear-gradient(var(--w95-face), var(--w95-face)) right 2px top 2px / 16px calc(100% - 4px) no-repeat,
+        #fff;
+      box-shadow: var(--w95-sunken);
+      color: #000;
+
+      /* Focused, its text is picked, as a combo box's is. */
+      &:focus { border-color: transparent; background-color: var(--w95-title); color: #fff; }
+      & option { background: #fff; color: #000; }
+    }
+
+    & .toolbar :is(revalidate-filter, findings-sort)::after { display: none; }
+    & .revalidation-toggle { border-right: 0; }
+    /* The confidence range is a labelled trackbar, not a framed box. */
+    & .toolbar conf-filter { border: 0; padding: 0 4px; }
+    & .toolbar conf-filter .conf-range-label { color: #000; font-size: 11px; font-weight: 400; }
+
+    /* Check boxes: a sunken white square, its mark drawn pixel by pixel. */
+    & input[type='checkbox'] {
+      appearance: none;
+      flex: none; width: 13px; height: 13px; margin: 0;
+      background: #fff; box-shadow: var(--w95-sunken);
+
+      &:checked { background: var(--w95-check), #fff; }
+      &:disabled { background-color: var(--w95-face); }
+    }
+
+    /* Tabs are Windows 95's: raised on three sides, the open one taller
+       and joined to what it shows. */
+    & :is(.bundles-tabs, .bundles-slide-tabs) {
+      gap: 0; border-bottom: 0; align-items: flex-end;
+    }
+    & .bundles-tab {
+      margin: 2px 0 0; padding: 2px 8px 3px;
+      border: 0; border-radius: 3px 3px 0 0;
+      background: var(--w95-face); color: #000;
+      box-shadow: var(--w95-tab);
+
+      &:hover { color: #000; }
+      &.active {
+        position: relative; z-index: 1;
+        margin: 0 -2px -1px; padding: 3px 10px 5px;
+        border-bottom: 0; color: #000;
+      }
+      &.bundles-tab-action { color: var(--w95-title); }
+    }
+
+    /* Panels: the toolbar and a slide's bar stand raised; the page's
+       chips are buttons, and its tags status fields. */
+    & :is(.toolbar, .bundles-slide-bar) { border: 0; }
+    & #report header.page-head .meta-row .tag {
+      border: 0; background: #fff; box-shadow: var(--w95-status);
+      font-family: inherit;
+    }
+    & #report header.page-head .meta-row .sep { opacity: 1; }
+
+    /* A kanban column is a list view: a white well under its raised
+       column header. */
+    & .kanban-column { padding: 2px; border-color: transparent; box-shadow: var(--w95-sunken); }
+    & .kanban-column-header {
+      border-bottom: 0;
+      background: var(--w95-face);
+      box-shadow: var(--w95-raised);
+      font-weight: 400;
+    }
+    & :is(.kanban-card, .focus-side-card) {
+      border-bottom: 0;
+
+      &:hover { background: none; }
+    }
+    & :is(.kanban-card.active, .focus-side-card.active, .history-row.is-shown) {
+      background: var(--w95-title); color: #fff; box-shadow: none;
+      --text: #fff; --muted: var(--w95-light); --accent: #fff;
+    }
+
+    /* The finding popup is a window: a navy title bar along its top,
+       its history, expand and close the bar's buttons; nothing dims
+       behind it, as nothing did. Its rail is a list view. */
+    & .kanban-detail-dim { background: none; }
+    & .kanban-detail-modal {
+      --kanban-detail-bg: var(--w95-face);
+      padding-top: 22px;
+      border: 0;
+      box-shadow: var(--w95-window);
+
+      &::before {
+        content: 'Finding';
+        position: absolute; top: 3px; right: 3px; left: 3px;
+        height: 18px; padding: 0 4px;
+        background: var(--w95-title); color: #fff;
+        font-weight: 700; line-height: 18px;
+      }
+    }
+    /* Its buttons are the bar's caption buttons wherever the popup is —
+       at the readable width, and filling the screen, where they would
+       otherwise ride the finding's pane: Maximize or Restore, then
+       Close, set apart. */
+    & .kanban-detail-modal .kanban-detail-actions,
+    & .kanban-detail-modal.fullscreen .kanban-detail-body .kanban-detail-actions {
+      position: absolute; z-index: 2; top: 5px; right: 5px;
+      gap: 0; margin: 0;
+    }
+    & .kanban-detail-actions button {
+      display: grid; place-items: center;
+      width: 16px; height: 14px; padding: 0;
+      border: 0;
+      background: var(--w95-face); color: #000;
+      box-shadow: var(--w95-raised);
+
+      &:hover { background-color: var(--w95-face); color: #000; }
+      &:active { box-shadow: var(--w95-pressed); }
+      & svg { width: 10px; height: 10px; }
+    }
+    & .kanban-detail-actions :is(.kanban-detail-expand, .kanban-detail-close) {
+      font-size: 0;
+
+      & svg { display: none; }
+    }
+    & .kanban-detail-actions .kanban-detail-expand { background: var(--w95-glyph-maximize), var(--w95-face); }
+    & .kanban-detail-actions .kanban-detail-expand[aria-pressed='true'] { background: var(--w95-glyph-restore), var(--w95-face); }
+    & .kanban-detail-actions .kanban-detail-close { margin-left: 2px; background: var(--w95-glyph-close), var(--w95-face); }
+
+    /* The code popup is a window too: no dimming, a title bar, Close its
+       caption button, its tools Windows 95's toolbar buttons, the source
+       in a white well. */
+    & .bundle-source-overlay { background: none; }
+    & .bundle-source-modal {
+      position: relative;
+      padding: 22px 3px 3px;
+      border: 0;
+      background: var(--w95-face);
+      box-shadow: var(--w95-window);
+
+      &::before {
+        content: 'Source';
+        position: absolute; top: 3px; right: 3px; left: 3px;
+        height: 18px; padding: 0 4px;
+        background: var(--w95-title); color: #fff;
+        font-weight: 700; line-height: 18px;
+      }
+    }
+    & .bundle-source-bar { border-bottom: 0; background: var(--w95-face); }
+    & .bundle-source-title { font-family: inherit; font-size: 11px; color: #000; }
+    & .bundle-source-close {
+      position: absolute; z-index: 1; top: 5px; right: 5px;
+      width: 16px; height: 14px;
+      border: 0;
+      background: var(--w95-glyph-close), var(--w95-face);
+      box-shadow: var(--w95-raised);
+      font-size: 0;
+
+      &:hover { border-color: transparent; }
+      &:active { box-shadow: var(--w95-pressed); }
+    }
+    & .bundle-source-body { box-shadow: var(--w95-sunken); }
+    & :is(.bundle-code-copy-path, .bundle-code-github-link, .bundle-source-pretty-toggle,
+      .bundle-source-lockfile-toggle, .bundle-source-wrap-toggle) {
+      width: 23px; height: 22px;
+      background: var(--w95-face); color: #000;
+      box-shadow: var(--w95-raised);
+
+      &:hover { background: var(--w95-face); color: #000; }
+      &:active, &[aria-pressed='true'] { background: var(--w95-dither); box-shadow: var(--w95-pressed); color: #000; }
+    }
+
+    /* The finding's column is a side panel of the finding's window, as
+       a wizard's picture is of its own: the window widens to take it
+       along its right, under the window's title bar, and grows no
+       shorter than a wizard. The window and the panel share one grid
+       cell, the window's width the cell's; the panel stretches to the
+       window's height and asks none of its own. Filling the screen,
+       the window takes the panel with it. */
+    @media (width >= 1400px) {
+      & .kanban-detail-backdrop:has(> .kanban-detail-side) {
+        grid-template-columns: min(calc(1100px + var(--kanban-side-w) + 12px), 100%);
+        place-content: center;
+        padding: 1rem;
+
+        & > .kanban-detail-modal {
+          grid-area: 1 / 1; justify-self: stretch;
+          width: auto; min-height: min(560px, 100vh - 2rem);
+          padding-right: calc(var(--kanban-side-w) + 12px);
+        }
+        & > .kanban-detail-side { grid-area: 1 / 1; }
+      }
+      & .kanban-detail-backdrop:has(> .kanban-detail-side):has(> .kanban-detail-modal.fullscreen) {
+        grid-template-columns: 100%;
+        place-content: stretch;
+        padding: 0;
+      }
+    }
+    & .kanban-detail-side {
+      position: relative; inset: auto;
+      place-self: stretch end;
+      margin: 26px 6px 6px 0; padding: 0;
+      border-left: 0;
+      background: none;
+      box-shadow: none;
+      contain: size;
+    }
+
+    /* A side panel's head sits on the window's face — the column picked
+       in a combo box, or the queue's name, then the arrows and where
+       they are — over its list, a white well. */
+    & :is(.kanban-detail-side-header, .focus-sidebar-header) {
+      min-height: 0; gap: 4px;
+      padding: 0 0 4px;
+      border-bottom: 0;
+      color: #000; font-size: 11px; font-weight: 400;
+
+      & .count { padding: 0 2px; background: none; color: #000; font-size: 11px; font-weight: 400; }
+    }
+    & .kanban-detail-side-header {
+      & .kanban-detail-side-pick::after { display: none; }
+      & .kanban-detail-side-select { height: 21px; padding: 0 22px 0 3px; }
+    }
+    & .focus-sidebar {
+      border: 0;
+      background: none; backdrop-filter: none;
+    }
+    & :is(.kanban-detail-side-body, .focus-sidebar-body) {
+      padding: 2px;
+      background: #fff;
+      box-shadow: var(--w95-sunken);
+    }
+    /* The arrows are a toolbar's buttons, their glyphs a scroll bar's,
+       nudged a pixel down and right while pressed, etched in grey while
+       there is nowhere further to go. */
+    & .focus-nav-btn {
+      width: 22px; height: 21px;
+      border: 0;
+      background: var(--w95-face);
+      box-shadow: var(--w95-raised);
+
+      & svg { display: none; }
+      /* 15px tall, so the glyph lands on whole pixels in the 21px button. */
+      &::before { content: ''; width: 16px; height: 15px; background: var(--w95-arrow-left); }
+      &[data-focus-nav='next']::before, &[data-kanban-nav='next']::before { background: var(--w95-arrow-right); }
+      &:hover:not(:disabled) { border-color: transparent; }
+      &:active:not(:disabled) { box-shadow: var(--w95-pressed); }
+      &:active:not(:disabled)::before { translate: 1px 1px; }
+      &:disabled { opacity: 1; }
+      &:disabled::before { filter: invert(50%) drop-shadow(1px 1px #fff); }
+    }
+
+    /* The landing is the Welcome dialog: a window of its own, its
+       heading set large as Windows 95 set its own name there, the drop
+       box a white well, the formats in group boxes. */
+    & .drop-prompt {
+      position: relative;
+      padding: 28px 16px 14px;
+      background: var(--w95-face);
+      box-shadow: var(--w95-window);
+      color: #000;
+
+      &::before {
+        content: 'Welcome';
+        position: absolute; top: 3px; right: 3px; left: 3px;
+        height: 18px; padding: 0 4px;
+        background: var(--w95-title); color: #fff;
+        font-weight: 700; line-height: 18px;
+      }
+    }
+    & .drop-eyebrow { color: #000; font-size: 11px; font-weight: 400; }
+    & .drop-heading h1 {
+      max-width: none;
+      font: 700 28px / 1.1 'Times New Roman', Times, serif;
+      color: #000;
+    }
+    & .drop-heading .drop-prompt-intro { font-size: 11px; }
+    & .drop-import {
+      border: 0;
+      background: #fff;
+      box-shadow: var(--w95-sunken);
+
+      & h2 { font-size: 11px; }
+      & p { font-size: 11px; }
+    }
+    & .drop-import-icon { border: 0; background: none; color: var(--w95-title); }
+    & .drop-supported { gap: 10px; }
+    & .drop-supported-section {
+      position: relative;
+      padding: 12px 8px 8px;
+      box-shadow: var(--w95-etched);
+
+      & h2 {
+        position: absolute; top: -7px; left: 6px;
+        margin: 0; padding: 0 3px;
+        background: var(--w95-face); color: #000;
+        font-weight: 400;
+      }
+      & li { font-size: 11px; }
+    }
+    & .drop-local-note { border-top-color: var(--w95-shadow); box-shadow: inset 0 1px #fff; }
+    & .local-scan-button { padding: 0 10px; }
+    /* Its GitHub link is the status bar's last field, at its right end. */
+    & .landing-github-link {
+      position: fixed; z-index: 2;
+      right: calc(var(--w95-gap) + var(--w95-frame));
+      bottom: calc(var(--w95-gap) + var(--w95-frame));
+      gap: 4px;
+      height: var(--w95-status-height);
+      padding: 0 6px;
+      border-left: 2px solid var(--w95-face);
+      background: var(--w95-face);
+      box-shadow: var(--w95-status);
+      color: #000; font-size: 11px;
+
+      & svg { width: 14px; height: 14px; }
+      &:hover { color: #000; }
+    }
+
+    /* Pulse's tiles and panels are group boxes. */
+    & :is(.pulse-tile, .pulse-panel) { border: 0; background: var(--w95-face); box-shadow: var(--w95-etched); }
+
+    /* The graph's fullscreen maximizes the window. The zeros keep
+       their unit: they are summed in calc(). */
+    /* stylelint-disable length-zero-no-unit */
+    &.report-fullscreen {
+      --w95-gap: 0px;
+      padding: var(--w95-frame);
+    }
+  }
+
+  /* Its scrollbars' arrow buttons. Written flat: Chrome drops these
+     button selectors when they are nested. */
+  body.theme-w95 ::-webkit-scrollbar-button:single-button {
+    display: block; width: 16px; height: 16px;
+    background-color: var(--w95-face);
+    box-shadow: var(--w95-raised);
+  }
+  body.theme-w95 ::-webkit-scrollbar-button:single-button:active { box-shadow: inset 0 0 0 1px var(--w95-shadow); }
+  body.theme-w95 ::-webkit-scrollbar-button:single-button:vertical:decrement { background: var(--w95-arrow-up), var(--w95-face); }
+  body.theme-w95 ::-webkit-scrollbar-button:single-button:vertical:increment { background: var(--w95-arrow-down), var(--w95-face); }
+  body.theme-w95 ::-webkit-scrollbar-button:single-button:horizontal:decrement { background: var(--w95-arrow-left), var(--w95-face); }
+  body.theme-w95 ::-webkit-scrollbar-button:single-button:horizontal:increment { background: var(--w95-arrow-right), var(--w95-face); }
+
+  /* An installed app drawing its own title bar maximizes the window:
+     its frame leaves the screen, as Windows 95's does, and the title
+     bar is the strip the OS draws its controls on. */
+  /* stylelint-disable-next-line media-feature-name-value-no-unknown */
+  @media (display-mode: window-controls-overlay) {
+    body.theme-w95 {
+      --w95-gap: 0px;
+      --w95-frame: 0px;
+      --w95-title-height: var(--wco-titlebar-height);
+    }
+    body.theme-w95::after { display: none; }
+  }
+  /* stylelint-enable length-zero-no-unit */
+}

@@ -1309,12 +1309,18 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
           >${NEXT_ICON}</button>
         </div>
       </div>
-      <div class="kanban-detail-side-body">
-        ${repeat(items, (g) => groupKey(g), (g) => kanbanCardTemplate(g, {
-          variant: 'kanban-side',
-          active: groupKey(g) === gid,
-        }))}
-      </div>
+      <!-- Drawn a screen at a time (view/kanban-rail.js): a column runs
+           to thousands of cards, the board already holds every one of
+           them, and building them all again here was most of the
+           dialog's wait to open. The card renderer is a new function
+           each render, so the cards drawn repaint with the board. -->
+      <kanban-rail
+        class="kanban-detail-side-body"
+        .items=${items}
+        .activeKey=${gid}
+        .keyOf=${groupKey}
+        .renderItem=${(g) => kanbanCardTemplate(g, { variant: 'kanban-side', active: groupKey(g) === gid })}
+      ></kanban-rail>
     </aside>`}
   </div>`
 }
