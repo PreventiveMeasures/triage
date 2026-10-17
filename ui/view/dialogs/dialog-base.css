@@ -195,3 +195,6 @@ header h3 {
   }
 }
 /* stylelint-enable media-feature-name-value-no-unknown */
+
+/* W95 (styles/w95.css): nothing overscrolls. */
+:host-context(body.theme-w95) * { overscroll-behavior: none; }

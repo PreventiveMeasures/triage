@@ -42,3 +42,6 @@
     opacity: .85;
   }
 }
+
+/* W95 (styles/w95.css): nothing overscrolls. */
+:host-context(body.theme-w95) * { overscroll-behavior: none; }

@@ -152,6 +152,8 @@ export class RevisionSelect extends LitElement {
     }
     .revision-empty { margin: 0; padding: .65rem; color: var(--muted); font-size: .75rem; cursor: default; user-select: none; }
     button:disabled, input:disabled { opacity: .5; }
+    /* W95 (styles/w95.css): nothing overscrolls. */
+    :host-context(body.theme-w95) * { overscroll-behavior: none; }
   `
 
   constructor() {

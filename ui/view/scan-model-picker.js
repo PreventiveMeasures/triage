@@ -109,6 +109,8 @@ class ScanModelPicker extends LitElement {
     .retry { margin-left: .5rem; padding: .2rem .4rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 4px); background: var(--bg); color: var(--text); font: inherit; }
     @container scan-controls (max-width: 50rem) { .layout.with-extra { grid-template-columns: minmax(16rem, 1fr) minmax(14rem, 1fr); } .layout.with-extra .extra { grid-column: 1 / -1; align-self: start; min-height: 0; } }
     @container scan-controls (max-width: 33rem) { .layout, .layout.with-extra { grid-template-columns: minmax(0, 1fr); gap: 1rem; } .layout.with-extra .extra { grid-column: auto; } }
+    /* W95 (styles/w95.css): nothing overscrolls. */
+    :host-context(body.theme-w95) * { overscroll-behavior: none; }
   `
 
   constructor() {

@@ -37,6 +37,12 @@ class ManagedFixLink extends HoverPreviewElement {
     :host([compact]) .fix-link { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
     :host([compact]) .fix-link svg { width: 14px; height: 14px; }
     :host([compact]) .status { margin: 0; font-size: 1rem; line-height: 1; }
+    /* A fifth wider than the comment previews: a pull request's or an
+       issue's description runs long. */
+    .preview { width: min(28.8rem, calc(100vw - 24px)); }
+    .preview.wide { width: min(43.2rem, calc(100vw - 24px)); }
+    /* W95 (styles/w95.css): on the tooltips' yellow. */
+    :host-context(body.theme-w95) .preview { background: var(--w95-tooltip); }
     .preview-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .preview-ref { display: inline-flex; align-items: center; gap: .4rem; min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
     .preview-ref span { min-width: 0; }

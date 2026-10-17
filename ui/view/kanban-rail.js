@@ -98,6 +98,8 @@ class KanbanRail extends LitElement {
     // held where it was, or the open finding's, brought into view.
     this._hold = null
     this._goal = null
+    // The held card, worked out before the heights were let go (below).
+    this._carried = null
     // The open finding changed while the rail had no height to show it
     // in; it's brought into view once the rail has one.
     this._reveal = false
@@ -117,11 +119,30 @@ class KanbanRail extends LitElement {
       if (!this.isUpdatePending && (this._reveal || !this._covers())) this.requestUpdate()
     })
     this._resizes.observe(this)
+    // Another theme sets the cards in another face and size, so the
+    // heights measured under the last one no longer hold.
+    this._themes = new AbortController()
+    globalThis.addEventListener('deepview-theme-changed', () => this._forgetHeights(), { signal: this._themes.signal })
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
     this._resizes?.disconnect()
+    this._themes?.abort()
+  }
+
+  // Lets go of every height measured, keeping the card at the top of the
+  // view where it is: it's found by the old heights, which the spacers
+  // were drawn with, before they go. The cards drawn are measured again,
+  // and the rest guessed from them. Two themes in a row before the rail
+  // redraws keep the first's card: by the second, the heights it was
+  // found by are gone, and the spacers are still the old ones.
+  _forgetHeights() {
+    this._carried ??= this._holdOf(this.items, this.scrollTop)
+    this._heights.clear()
+    this._total = 0
+    this._version++
+    this.requestUpdate()
   }
 
   _keysOf(list) {
@@ -156,6 +177,15 @@ class KanbanRail extends LitElement {
     return indexAt(tops, top) >= from && (to >= this.items.length || indexAt(tops, top + this._viewHeight()) < to)
   }
 
+  // The card at the top of a view scrolled to `top`, and how far above
+  // that its own top is, by the heights `list` was drawn with.
+  _holdOf(list, top) {
+    if (list.length === 0) return null
+    const tops = this._topsOf(list)
+    const at = indexAt(tops, top)
+    return { key: this._keysOf(list)[at], index: at, offset: tops[at] - top }
+  }
+
   // Where the held card puts the list, by its place in `tops`.
   _heldTop(tops) {
     const hold = this._hold
@@ -171,10 +201,8 @@ class KanbanRail extends LitElement {
     const height = this._viewHeight()
     // The card at the top of the view, in the list as it was drawn —
     // `items` may have just changed under it.
-    const before = changed.get('items') ?? this.items
-    const beforeTops = this._topsOf(before)
-    const at = indexAt(beforeTops, top)
-    this._hold = before.length > 0 ? { key: this._keysOf(before)[at], index: at, offset: beforeTops[at] - top } : null
+    this._hold = this._carried ?? this._holdOf(changed.get('items') ?? this.items, top)
+    this._carried = null
     this._goal = null
     if (this._reveal && height > 0) {
       this._reveal = false

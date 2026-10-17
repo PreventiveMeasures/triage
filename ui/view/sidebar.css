@@ -687,9 +687,9 @@ sidebar-view-button[hidden] { display: none !important; }
   & .file-item button.file-name { font-size: 11px; }
   & .file-item.indented::before { background: none; border-left: 1px dotted var(--w95-shadow); }
   & #storage-status {
-    border-color: #000; background: #ffffe1; color: #000;
+    border-color: #000; background: var(--w95-tooltip); color: #000;
 
-    &:hover { border-color: #000; background: #ffffe1; }
+    &:hover { border-color: #000; background: var(--w95-tooltip); }
   }
   /* The list's own thin bar gives way to the full 16px one, in the
      gutter it already keeps for it. */
@@ -1051,3 +1051,6 @@ sidebar-delete-current button {
 }
 .logout-row svg { flex: 0 0 auto; }
 .user-menu-row:hover { background: rgb(from var(--text) r g b / .08); }
+
+/* W95 (styles/w95.css): nothing overscrolls. */
+:host-context(body.theme-w95) * { overscroll-behavior: none; }
