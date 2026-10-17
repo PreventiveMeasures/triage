@@ -866,17 +866,18 @@ class RepositoryPulse extends LitElement {
     </figure>`
   }
 
-  // The pull requests, the commits pushed to the branch directly where there
-  // are any, and the issues, two at least: the issues, where there are none,
-  // left out beside commits pushed directly; still read, shown. Each a panel
-  // of its own, for the grid to lay out by how many.
+  // The pull requests, the commits pushed to the branch directly where the
+  // period has any, and the issues, two at least: the issues, where the
+  // period has none, left out beside commits pushed directly; still read,
+  // shown. Which of them by the period's alone: a contributor or a column
+  // picked narrows what each lists, never adds one or takes one away. Each
+  // a panel of its own, for the grid to lay out by how many.
   renderLists(answer, narrowing, now) {
-    const direct = answer.stats ? directIn(answer.stats, narrowing?.since ?? answer.since, narrowing?.until ?? Number.POSITIVE_INFINITY, narrowing?.person ?? null, now)
-      : null
-    const told = narrowing ? narrowing.nobody ? { closed: { count: 0 }, created: { count: 0 } } : narrowedRead(this.repository.repoId, answer.weeks, narrowing).answer
-      : answer
-    const issues = told?.closed && told.created ? told.closed.count + told.created.count : null
-    const commits = direct !== null && direct.count > 0
+    const period = answer.stats ? directIn(answer.stats, answer.since, Number.POSITIVE_INFINITY, null, now) : null
+    const commits = period !== null && period.count > 0
+    const issues = answer.closed && answer.created ? answer.closed.count + answer.created.count : null
+    const direct = commits && narrowing ? directIn(answer.stats, narrowing.since ?? answer.since, narrowing.until ?? Number.POSITIVE_INFINITY, narrowing.person ?? null, now)
+      ?? { count: 0, items: [] } : period
     return [this.renderList(answer, 'pulls', narrowing), ...commits ? [this.renderDirect(direct, narrowing)] : [],
       ...commits && issues === 0 ? [] : [this.renderList(answer, 'issues', narrowing)]]
   }
@@ -884,24 +885,25 @@ class RepositoryPulse extends LitElement {
   // The latest commits pushed to the branch directly, of the period or as
   // it is narrowed, so said beside the title, how many beside: each its
   // subject, short id, author and when, linking to it on GitHub; as many as
-  // DIRECT_SHOWN, the rest a click away; those older than the server lists
-  // (the year's latest, as many as it lists, or a shorter period's while
-  // this one reads), how many.
+  // DIRECT_SHOWN, the rest a click away, none as narrowed so said; those
+  // older than the server lists (the year's latest, as many as it lists, or
+  // a shorter period's while this one reads), how many.
   renderDirect(direct, narrowing) {
     const repo = this.repo ?? this.repository.repo
     const who = narrowing?.who ? commitAuthorName(narrowing.who.login, narrowing.who.name) : null
     const narrowedTo = narrowing ? [who && `by ${who}`, narrowing.when].filter(Boolean).join(' ') : ''
+    const scope = narrowing ? [who && `by ${who}`, narrowing.when ?? 'in the period'].filter(Boolean).join(' ') : 'in the period'
     const shown = this._allDirect ? direct.items : direct.items.slice(0, DIRECT_SHOWN)
     const unlisted = Math.max(0, direct.count - direct.items.length)
     return html`<section class="pulse-panel pulse-list" aria-label="Direct commits">
       <div class="pulse-head"><h3 data-tooltip="Commits pushed to the default branch, not merged from a pull request">Direct commits</h3>${narrowing
         ? html`<span class="pulse-narrowed">${narrowedTo}</span>` : nothing}<span class="pulse-count">${number(direct.count)}</span></div>
-      <ol>${shown.map(item => html`<li><a class=${`pulse-item is-commit${item.kind ? ` is-${item.kind}` : ''}`}
+      ${direct.count === 0 ? html`<p class="pulse-note">None ${scope}.</p>` : html`<ol>${shown.map(item => html`<li><a class=${`pulse-item is-commit${item.kind ? ` is-${item.kind}` : ''}`}
         href=${repo ? `https://github.com/${repo}/commit/${item.sha}` : nothing} target="_blank" rel="noopener noreferrer"><span class="issue-state" role="img"
         aria-label=${item.kind ? DIRECT_KINDS[item.kind] : 'Commit'}>${COMMIT_ICON}</span>
         <span class="pulse-item-title">${item.subject || '(no message)'}</span>
         <span class="pulse-item-meta"><span>${item.sha.slice(0, 7)}</span><span>${contributor(item)}</span><time datetime=${new Date(item.at).toISOString()}>${compactTime(item.at)}</time></span>
-      </a></li>`)}</ol>
+      </a></li>`)}</ol>`}
       ${direct.items.length > DIRECT_SHOWN ? html`<button type="button" class="history-link pulse-more" @click=${() => { this._allDirect = !this._allDirect }}>${this._allDirect
         ? 'Fewer' : `and ${plural(direct.items.length - DIRECT_SHOWN, 'more', 'more')}`}</button>` : nothing}
       ${unlisted > 0 ? html`<p class="pulse-note">${direct.items.length > 0 ? plural(unlisted, 'older commit', 'older commits') : plural(unlisted, 'commit')} not listed.</p>`

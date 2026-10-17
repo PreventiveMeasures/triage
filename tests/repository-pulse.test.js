@@ -413,7 +413,7 @@ test('a column\'s commits top to bottom as the legend names them left to right: 
   assert.match(text.split('class=pulse-column').slice(1)[3], /<span class=pulse-bar is-split style=--value: 1><span class=pulse-part style=--part: 1><\/span><span class=pulse-part is-without style=--part: 1><\/span><span class=pulse-part is-release style=--part: 1><\/span><\/span>/u)
 })
 
-test('commits pushed directly listed where there are any, between the pull requests and the issues, narrowed alike; the issues left out where none are beside them, two lists at least', async t => {
+test('commits pushed directly listed where the period has any, between the pull requests and the issues, narrowed alike; a contributor or a day picked takes no list away', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: NOW })
   const hour = 3_600_000
   // Each Monday's commit pushed directly: Alan Kay's of Sep 28 and one of Oct 12 listed.
@@ -437,8 +437,8 @@ test('commits pushed directly listed where there are any, between the pull reque
   assert.match(text, /<p class="pulse-note">2 older commits not listed\.<\/p>/u, 'the two the server doesn\'t list, so said')
   view.showPerson('=Alan Kay')
   text = templateText(view.render())
-  assert.deepEqual(panels(), ['Pull requests', 'Direct commits'], 'no issue of theirs, left out')
-  assert.match(text, /<div class=pulse-grid>/u)
+  assert.deepEqual(panels(), ['Pull requests', 'Direct commits', 'Issues'], 'no issue of theirs, the list kept')
+  assert.match(text, /<div class=pulse-grid is-lists>/u, 'the lists laid out as before')
   assert.match(text, /Direct commits<\/h3><span class="pulse-narrowed">by Alan Kay<\/span><span class="pulse-count">1<\/span>/u)
   assert.doesNotMatch(text, /Bump the version/u)
   view.showPerson('=Alan Kay')
@@ -446,7 +446,8 @@ test('commits pushed directly listed where there are any, between the pull reque
   assert.match(templateText(view.render()), /aria-label=Issues>[^]*Reading…/u, 'the day\'s issues shown as they read')
   await setImmediate()
   text = templateText(view.render())
-  assert.deepEqual(panels(), ['Pull requests', 'Direct commits'], 'none on the day')
+  assert.deepEqual(panels(), ['Pull requests', 'Direct commits', 'Issues'], 'none on the day, the list kept')
+  assert.match(text, /aria-label=Issues>[^]*<p class="pulse-note">None on Mon, Oct 12\.<\/p>/u)
   assert.match(text, /Direct commits<\/h3><span class="pulse-narrowed">on Mon, Oct 12<\/span><span class="pulse-count">1<\/span>[^]*Bump the version/u)
   assert.doesNotMatch(text, /Fix by hand/u)
   view.pickColumn(pulseColumns(pulse({ stats: direct }), NOW), 22)
@@ -454,7 +455,30 @@ test('commits pushed directly listed where there are any, between the pull reque
   view.render()
   await setImmediate()
   text = templateText(view.render())
-  assert.deepEqual(panels(), ['Pull requests', 'Issues'], 'none pushed directly: the issues, none of them, shown')
+  assert.deepEqual(panels(), ['Pull requests', 'Direct commits', 'Issues'], 'none pushed directly by them, the list kept')
+  assert.match(text, /Direct commits<\/h3><span class="pulse-narrowed">by ada<\/span><span class="pulse-count">0<\/span><\/div>\s*<p class="pulse-note">None by ada in the period\.<\/p>/u)
+})
+
+test('commits pushed directly beside no issue in the period: the issues left out, a contributor picked bringing them back no more than taking the commits away', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  const direct = stats({ weeks: year().map(row => ({ ...row, directDays: row.days.map((count, day) => day === 1 ? count : 0) })),
+    contributors: stats().contributors.map(person => ({ ...person, days: person.days.map(row => [...row, 0, 0, 0]) })),
+    directCommits: [{ sha: 'b'.repeat(40), at: Date.UTC(2026, 9, 12, 9), subject: 'Bump the version', login: 'linus', id: null, name: 'Linus', kind: 'release' }] })
+  answer = () => Promise.resolve(pulse({ stats: direct, closed: { count: 0, previous: 0, items: [] }, created: { count: 0, previous: 0, items: [] } }))
+  narrowedAnswer = () => Promise.resolve({ merged: { count: 0, items: [] }, opened: { count: 0, items: [] }, closed: { count: 2, items: [] }, created: { count: 0, items: [] } })
+  const view = shown()
+  view.render()
+  await setImmediate()
+  let text = templateText(view.render())
+  const panels = () => [...text.matchAll(/class="pulse-panel pulse-list" aria-label=([^>]+)>/gu)].map(([, label]) => label.replaceAll('"', ''))
+  assert.deepEqual(panels(), ['Pull requests', 'Direct commits'])
+  assert.match(text, /<div class=pulse-grid>/u)
+  view.showPerson('@ada')
+  view.render()
+  await setImmediate()
+  text = templateText(view.render())
+  assert.deepEqual(panels(), ['Pull requests', 'Direct commits'], 'as the period\'s, whatever theirs')
+  assert.match(text, /aria-label="Direct commits">[^]*<p class="pulse-note">None by ada in the period\.<\/p>/u)
 })
 
 test('commits pushed directly the server doesn\'t list said, a shorter period\'s listed while a longer one reads, or all of them', async t => {
