@@ -16,6 +16,7 @@
 // both sides' integrities, in this instance and beyond it (`kept`), what a
 // version holds never changing. Access is the caller's to check.
 import { Worker } from 'node:worker_threads'
+import { createHash } from 'node:crypto'
 import type { KeptStore } from './npm-kept.ts'
 import { type Lru, lru } from './lru.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
@@ -105,10 +106,11 @@ function texts(files: NpmPackageFile[] | null) {
 }
 
 const same = (a: Uint8Array, b: Uint8Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(b)
+const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('base64')
 
 // Whether `news`, a side's binary files, differ from `olds`, the other's:
 // one added, removed or changed, one moved where it is the same as one that
-// was elsewhere not.
+// was elsewhere not, matched by their digests, each file looked at once.
 function binaryChanged(olds: NpmPackageFile[], news: NpmPackageFile[]): boolean {
   if (olds.length !== news.length) return true
   const left = new Map(olds.map(({ path, bytes }) => [path, bytes]))
@@ -118,11 +120,17 @@ function binaryChanged(olds: NpmPackageFile[], news: NpmPackageFile[]): boolean 
     if (was && same(was, bytes)) left.delete(path)
     else moved.push(bytes)
   }
-  const unmoved = [...left.values()]
+  // Those not where they were, by their digests, as many of each as there are.
+  const unmoved = new Map<string, number>()
+  for (const bytes of left.values()) {
+    const key = digest(bytes)
+    unmoved.set(key, (unmoved.get(key) ?? 0) + 1)
+  }
   return moved.some(bytes => {
-    const at = unmoved.findIndex(was => same(was, bytes))
-    if (at === -1) return true
-    unmoved.splice(at, 1)
+    const key = digest(bytes)
+    const count = unmoved.get(key) ?? 0
+    if (count === 0) return true
+    unmoved.set(key, count - 1)
     return false
   })
 }

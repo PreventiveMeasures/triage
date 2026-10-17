@@ -81,6 +81,11 @@ test('a binary file added, removed or changed is told of, one moved as it was no
   assert.equal(await binary('sha512-bin-removed', { 'a.js': 'a\n', 'logo.png': logo }), true)
   assert.equal(await binary('sha512-bin-added', { 'a.js': 'a\n', 'logo.png': logo, 'icon.png': icon, 'font.woff': [0, 4] }), true)
   assert.equal(await binary('sha512-bin-copied', { 'a.js': 'a\n', 'logo.png': logo, 'copy.png': logo }), true, 'one in place of another the same as a third')
+  // Many moved, each to where another was, matched by their digests.
+  const many = Array.from({ length: 5000 }, (_, at) => [0, at >> 8, at & 255])
+  const manyBase = side('sha512-bin-many', Object.fromEntries(many.map((bytes, at) => [`a/${at}.bin`, bytes])))
+  const reversed = side('sha512-bin-reversed', Object.fromEntries(many.map((bytes, at) => [`b/${many.length - 1 - at}.bin`, bytes])))
+  assert.equal((await npmDelta(manyBase, reversed)).binary, false)
   const written = []
   const kept = { read: () => Promise.resolve({ value: { additions: 1, deletions: 0, typeless: null } }), write: (key, value) => { written.push(value); return Promise.resolve() } }
   const told = await npmDelta(null, side('sha512-bin-old', { 'a.js': 'a\n', 'logo.png': logo }), kept)
