@@ -75,12 +75,11 @@ const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : 
 // want reviews and can't be reviewed, whether the server's reviewed
 // dependencies pass them, and how many those failed to answer; by how many
 // reviewers its comments review them, or that they couldn't be read; and the
-// lockfiles it holds to, where not every one, a directory none of whose it
-// does told `excluded`.
+// lockfiles it holds to, where not every one, those of the rest told to none.
 export function checked(answer) {
   if (!Array.isArray(answer?.lockfiles)) throw new Error('The server answered with no lockfiles.')
-  const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? { ...dir, excluded: dir.excluded === true }
-    : { ...dir, excluded: dir.excluded === true, added: dir.added.flatMap(checkedVersion), more: count(dir.more) ?? 0, unreviewed: versionsOf(dir.unreviewed),
+  const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? dir
+    : { ...dir, added: dir.added.flatMap(checkedVersion), more: count(dir.more) ?? 0, unreviewed: versionsOf(dir.unreviewed),
       moreUnreviewed: count(dir.moreUnreviewed) ?? 0, unsupported: versionsOf(dir.unsupported), moreUnsupported: count(dir.moreUnsupported) ?? 0,
       moreLocked: count(dir.moreLocked) ?? 0 })
   const review = answer.review
@@ -201,8 +200,7 @@ export function unreviewedVersions({ lockfiles, review }) {
 // its lockfiles lock that can't be reviewed, each once across its
 // directories, and how many it counts in all (`count`, as its review tells,
 // else as its directories do); the directories
-// whose lockfiles couldn't be read (`unread`), but those its review leaves
-// out (`excluded`); how many versions they lock past those checked
+// whose lockfiles couldn't be read (`unread`); how many versions they lock past those checked
 // (`unchecked`); and whether it changes lockfiles left unread (`cut`). Null
 // where nothing does.
 export function reviewFailures({ lockfiles, cut, review }) {
@@ -213,6 +211,6 @@ export function reviewFailures({ lockfiles, cut, review }) {
     if (!all.has(key)) all.set(key, pkg)
   }
   const sum = field => lockfiles.reduce((total, dir) => total + (dir[field] ?? 0), 0)
-  const failed = { versions: [...all.values()], count: review.unsupported ?? all.size + sum('moreUnsupported'), unread: lockfiles.filter(dir => dir.error && !dir.excluded), unchecked: sum('moreLocked'), cut }
+  const failed = { versions: [...all.values()], count: review.unsupported ?? all.size + sum('moreUnsupported'), unread: lockfiles.filter(dir => dir.error), unchecked: sum('moreLocked'), cut }
   return failed.count > 0 || failed.unread.length > 0 || failed.unchecked > 0 || cut ? failed : null
 }

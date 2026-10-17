@@ -180,9 +180,7 @@ class RepositoryItemDialog extends AppDialog {
       ${told.length === 0 && lockfiles.length > 0 ? html`<p class="repo-item-quiet">None: every version its lockfiles lock, they locked before.</p>` : nothing}
       ${told.map(dir => html`<div class="repo-item-lockfiles">
         <p>${dir.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}</p>
-        ${dir.excluded ? html`<p class="repo-item-quiet">Not reviewed: the repository’s dependency review leaves ${dir.paths.length === 1 ? 'this lockfile' : 'these lockfiles'} out.</p>` : nothing}
-        ${dir.error && dir.excluded ? html`<p class="repo-item-quiet">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
-          : dir.error ? html`<p class="repo-item-quiet" role="alert">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
+        ${dir.error ? html`<p class="repo-item-quiet" role="alert">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
           : html`<ul>${dir.added.toSorted((a, b) => Number(Boolean(a.was)) - Number(Boolean(b.was))).map(pkg => html`<li>${this.renderPackage(pkg, review)}</li>`)}</ul>
             ${dir.more > 0 ? html`<p class="repo-item-quiet">and ${dir.more.toLocaleString('en-US')} more</p>` : nothing}`}
       </div>`)}

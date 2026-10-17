@@ -772,22 +772,22 @@ class ManagedAdminRepos extends ManagedPage {
         @submit=${event => { event.preventDefault(); void this._saveDependencyReview(repo, setting(true, Number(draft.required), draft.since.trim().toLowerCase() || null, scopeSent(draft.scope))) }}>
         <label><span>Reviews each version needs</span><input type="number" min="1" max="10" required .value=${draft.required} ?disabled=${busy}
           @input=${event => { this._reviewDraft = { ...draft, required: event.target.value } }}></label>
-        ${registered ? nothing : html`<label class="dependency-review-since"><span>Reviewed since commit</span><input type="text" placeholder="Full commit id, or none"
+        ${registered ? nothing : html`<label class="dependency-review-since"><span>Reviewed since commit (optional)</span><input type="text" placeholder="Full commit id"
           autocomplete="off" spellcheck="false" pattern="[0-9a-fA-F]{40}" .value=${draft.since} ?disabled=${busy}
           @input=${event => { this._reviewDraft = { ...draft, since: event.target.value } }}></label>`}
         ${this._lockfileScope(repo, draft, busy)}
         <button type="submit" class="btn" ?disabled=${busy || !changed}>Save</button>
         ${Array.isArray(repo.reviewTeams) && repo.reviewTeams.length === 0 ? html`<p class="dependency-review-hint is-warning" role="status">No team that reviews
           dependencies has this repository, so its pull requests show no review. Add it to such a team, or turn dependency review on for a team that has it.</p>`
-          : html`<p class="dependency-review-hint">${registered ? 'Versions this server’s reviewed dependencies pass need no reviews here; a patched one passes by them alone.'
-          : draft.since.trim() ? 'Versions the repository’s lockfiles locked at this commit need no review.'
-          : 'With no commit, every version needs its reviews, those its lockfiles already locked as well.'}</p>`}
+          : registered || draft.since.trim() ? html`<p class="dependency-review-hint">${registered
+            ? 'Versions this server’s reviewed dependencies pass need no reviews here; a patched one passes by them alone.'
+            : 'Versions the repository’s lockfiles locked at this commit need no review.'}</p>` : nothing}
       </form>` : nothing}
     </section>`
   }
 
   // The lockfiles its review holds to (`draft.scope`): every one, all but
-  // those checked, or those checked alone, of the default branch's, read for
+  // those selected, or those selected alone, of the default branch's, read for
   // it, those named before though no longer there, and another path, or a
   // directory ending in /, typed in.
   _lockfileScope(repo, draft, busy) {
@@ -801,7 +801,7 @@ class ManagedAdminRepos extends ManagedPage {
     }
     return html`<fieldset class="dependency-review-lockfiles" ?disabled=${busy}><legend>Lockfiles reviewed</legend>
       <select aria-label="Lockfiles reviewed" .value=${mode} @change=${event => set({ mode: event.target.value, paths })}>
-        <option value="all">Every lockfile</option><option value="exclude">All but those checked</option><option value="include">Only those checked</option>
+        <option value="all">Every lockfile</option><option value="exclude">All but those selected</option><option value="include">Only those selected</option>
       </select>
       ${mode === 'all' ? nothing : html`
         ${read.status === 'loading' ? html`<p class="dependency-review-hint" role="status">Reading the default branch’s lockfiles…</p>`
@@ -814,9 +814,7 @@ class ManagedAdminRepos extends ManagedPage {
           <input type="text" placeholder="examples/" autocomplete="off" spellcheck="false" .value=${draft.adding}
             @input=${event => { this._reviewDraft = { ...draft, adding: event.target.value } }}
             @keydown=${event => { if (event.key === 'Enter') { event.preventDefault(); add() } }}></label>
-        <button type="button" class="btn" ?disabled=${!draft.adding.trim()} @click=${add}>Add</button>
-        <p class="dependency-review-hint">${mode === 'exclude' ? 'Pull requests’ changes to the lockfiles checked are listed, but not reviewed.'
-          : 'Only the lockfiles checked are reviewed; pull requests’ changes to others are listed, but not reviewed.'}</p>`}
+        <button type="button" class="btn" ?disabled=${!draft.adding.trim()} @click=${add}>Add</button>`}
     </fieldset>`
   }
 

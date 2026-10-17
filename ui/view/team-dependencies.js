@@ -1,5 +1,7 @@
 // A team's dependencies to review, its Dependencies tab, where its reader
-// reviews them in it (workspace-content.js), a sub-tab each (TABS): of each
+// reviews them in it (workspace-content.js), a sub-tab each (TABS), drawn
+// as a dialog's header tabs are (header-tabs.js), the one open
+// scrolling under them: of each
 // of its repositories whose review is in effect for them, the open pull
 // requests whose versions want reviews, those adding fewest first, each
 // version with its review as its pull request's is (pull-dependencies.js),
@@ -11,23 +13,26 @@
 // while (KEEP_MS), its pull requests' as their tiles hold them; and read again
 // once a repository's or a team's review is set anew. As many repositories
 // are read at once as READ_AT_ONCE.
-import { html, nothing } from 'lit'
+import { html, nothing, svg } from 'lit'
 import { StateElement } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { fetchBranchDependencies, fetchRepositoryIssues } from './client-managed.js'
 import { addedVersions, checked, pullDependencies, readsDependencies, reviewFailures, reviewOf, subscribePullDependencies, unreviewedVersions } from './pull-dependencies.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
-import { PACKAGE_ICON } from './repository-tiles.js'
+import { PACKAGE_ICON, icon } from './repository-tiles.js'
+import { dialogTabs } from './header-tabs.js'
 import { withCompare } from './compare-load.js'
 import { deltaBase } from './npm-delta.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 
 const KEEP_MS = 2 * 60_000
 const RETRY_MS = 30_000
-// Pages of a repository's open pull requests read, and the versions told
-// under each pull request, the rest counted.
+// Pages of a repository's open pull requests read, and the versions shown
+// of a list, under a pull request or of its sub-tab, the rest shown once
+// asked for.
 const PULL_PAGES = 3
-const SHOWN_VERSIONS = 8
+const SHOWN_VERSIONS = 12
+const SHOWN_LISTED = 48
 const READ_AT_ONCE = 3
 // Its sub-tabs, the one last picked shown again as it is opened.
 const TABS = [['pulls', 'Pull requests'], ['versions', 'Versions'], ['branch', 'Default branch'], ['reviews', 'Reviews']]
@@ -147,15 +152,18 @@ function versionRow(pkg, review, others = [], adders = false) {
   const href = npm ? managedRoutePath({ view: 'npm', packageName: pkg.name, packageSpec: pkg.version,
     ...reviewing ? { bundleTab: 'review', ...before ? { reviewPackage: pkg.name, reviewSpec: before } : {} } : {} }) : null
   const label = html`${PACKAGE_ICON}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
-    ${reviewBadge(pkg, review)}
     ${npm && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${deltaBase(pkg)}></npm-delta>` : nothing}
+    ${reviewBadge(pkg, review)}
     ${others.length > 0 ? html`<span class="team-deps-also" data-tooltip=${`Added by ${others.join(', ')}${adders ? '' : ' too'}`}>${adders
       ? `${others[0]}${others.length > 1 ? ` +${others.length - 1}` : ''}` : `+${others.length}`}</span>` : nothing}`
   return html`<li>${href ? html`<a class="team-deps-row" href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : html`<span class="team-deps-row">${label}</span>`}</li>`
 }
 
+// A list's toggle: its chevron turned while it is open.
+const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
+
 class TeamDependencies extends StateElement {
-  static properties = { repositories: { attribute: false }, team: { attribute: false }, _tab: { state: true } }
+  static properties = { repositories: { attribute: false }, team: { attribute: false }, _tab: { state: true }, _open: { state: true } }
 
   createRenderRoot() { return this }
 
@@ -164,12 +172,20 @@ class TeamDependencies extends StateElement {
     this.repositories = []
     this.team = null
     this._tab = picked
+    // The lists opened past those shown, by their keys.
+    this._open = new Set()
     this._notify = () => this.requestUpdate()
   }
 
   pick(tab) {
     picked = tab
     this._tab = tab
+  }
+
+  toggle(key) {
+    const open = new Set(this._open)
+    if (!open.delete(key)) open.add(key)
+    this._open = open
   }
 
   connectedCallback() {
@@ -187,6 +203,27 @@ class TeamDependencies extends StateElement {
   open(event, { repo, item }) {
     event.preventDefault()
     openRepositoryItemDialog({ repository: { repoId: repo.repoId, repo: repo.name }, target: { number: item.number, preview: { ...item, kind: 'pulls' } } })
+  }
+
+  // Rows of `items`, as many as `shown` till the rest are asked for, under
+  // `key`, as one list, filling as many columns as fit.
+  rows(key, items, row, shown = SHOWN_VERSIONS) {
+    if (items.length === 0) return nothing
+    const open = this._open.has(key)
+    return html`<ul class="team-deps-versions">${(open ? items : items.slice(0, shown)).map(row)}</ul>
+      ${items.length > shown ? html`<button type="button" class="team-deps-more" aria-expanded=${String(open)} @click=${() => this.toggle(key)}>${CHEVRON}${open
+        ? 'Show fewer' : `and ${(items.length - shown).toLocaleString('en-US')} more`}</button>` : nothing}`
+  }
+
+  // A list told by `label` alone till it is opened, under `key`, and how
+  // many past those it lists (`unlisted`).
+  disclosed(key, label, items, row, unlisted = 0) {
+    const open = this._open.has(key)
+    return html`<div class="team-deps-disclosed">
+      <button type="button" class="team-deps-more" aria-expanded=${String(open)} @click=${() => this.toggle(key)}>${CHEVRON}${label}</button>
+      ${open ? html`${this.rows(key, items, row, SHOWN_LISTED)}${unlisted > 0
+        ? html`<p class="team-deps-quiet">and ${unlisted.toLocaleString('en-US')} more, not listed</p>` : nothing}` : nothing}
+    </div>`
   }
 
   render() {
@@ -225,9 +262,9 @@ class TeamDependencies extends StateElement {
     const tab = tabs.some(([kind]) => kind === this._tab) ? this._tab : 'pulls'
     const counts = { pulls: wanting.length, versions: adding.size, branch: branches.reduce((sum, { count }) => sum + count, 0) }
     return html`<div class="team-deps">
-      <div class="history-bar team-deps-bar"><div class="history-modes" role="group" aria-label="Dependencies">${tabs.map(([kind, label]) => html`<button type="button"
-        aria-pressed=${String(tab === kind)} @click=${() => this.pick(kind)}>${label}${counts[kind] == null || reading && counts[kind] === 0 ? nothing
-          : html`<span class="n">${counts[kind].toLocaleString('en-US')}</span>`}</button>`)}</div></div>
+      ${dialogTabs({ tabs: tabs.map(([id, label]) => ({ id, label: html`${label}${counts[id] == null || reading && counts[id] === 0 ? nothing
+        : html`<span class="team-deps-tab-n">${counts[id].toLocaleString('en-US')}</span>`}` })), current: tab, prefix: 'team-deps', select: kind => this.pick(kind) })}
+      <div class="team-deps-panel" role="tabpanel" id=${`team-deps-panel-${tab}`} aria-labelledby=${`team-deps-tab-${tab}`}>
       ${tab === 'reviews' ? withCompare(() => html`<dependency-review-list .session=${state.managedSession} .team=${this.team}></dependency-review-list>`) : html`
       ${reading ? html`<p class="team-deps-quiet" role="status">Reading their pull requests…</p>` : nothing}
       ${failures.length === 1 ? html`<p class="team-deps-quiet" role="alert">${failures[0]}</p>` : failures.length > 1
@@ -238,36 +275,39 @@ class TeamDependencies extends StateElement {
         updated latest are checked; its others aren’t.</p>`)}
       ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(wanting, adding, reading, unchecked.length > 0)
         : tab === 'versions' ? this.renderVersions(adding, reading) : branches.map(({ repo, read }) => this.renderBranch(repo, read))}`}
+      </div>
     </div>`
   }
 
   // The pull requests wanting reviews, fewest first, each version a pull
-  // request above adds told by it alone.
+  // request above adds told by it alone, those listed apart.
   renderPulls(wanting, adding, reading, unchecked) {
     if (wanting.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
     }
     const told = new Set()
-    return html`<section class="team-deps-section" aria-label="Pull requests wanting reviews"><h2>Pull requests</h2><ol class="team-deps-pulls">${wanting.map(pull => {
+    const row = pull => pkg => versionRow(pkg, pull.entry.review, (adding.get(versionKey(pkg)) ?? []).filter(other => other !== pull).map(pullName))
+    return html`<ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
       const own = pull.wanted.filter(pkg => !told.has(versionKey(pkg)))
       const above = pull.wanted.filter(pkg => told.has(versionKey(pkg)))
       for (const pkg of own) told.add(versionKey(pkg))
+      const key = pullName(pull)
+      const others = unreviewedVersions(pull.entry)
       const href = `https://github.com/${pull.repo.name}/pull/${pull.item.number}`
       return html`<li class="team-deps-pull">
         <a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
-          <span class="team-deps-pull-name">${pullName(pull)}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
+          <span class="team-deps-pull-name">${key}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
           <span class=${`team-deps-count${pull.failed ? ' is-failed' : ''}`}>${pull.failed ? 'review fails' : pull.size > 0 ? `${plural(pull.toReview, 'version')} to review`
             : `${plural(pull.others, 'other version')} unreviewed`}</span>
         </a>
-        ${own.length > 0 ? html`<ul class="team-deps-versions">${own.slice(0, SHOWN_VERSIONS).map(pkg => versionRow(pkg, pull.entry.review,
-          (adding.get(versionKey(pkg)) ?? []).filter(other => other !== pull).map(pullName)))}</ul>` : nothing}
-        ${own.length > SHOWN_VERSIONS ? html`<p class="team-deps-quiet">and ${(own.length - SHOWN_VERSIONS).toLocaleString('en-US')} more</p>` : nothing}
+        ${this.rows(`${key}:own`, own, row(pull))}
         ${pull.untold > 0 ? html`<p class="team-deps-quiet">and ${plural(pull.untold, 'more version')} past those listed</p>` : nothing}
-        ${above.length > 0 ? html`<p class="team-deps-quiet" data-tooltip=${above.map(versionKey).join(', ')}>and ${plural(above.length, 'version')} a pull request above adds too</p>` : nothing}
-        ${pull.others > 0 ? html`<p class="team-deps-quiet" data-tooltip="Versions its lockfiles locked before it, the default branch’s mostly: its popup lists them">${pull.size > 0 || pull.failed
-          ? `and ${plural(pull.others, 'other version')} its lockfiles lock want reviews` : 'Its own versions pass; those its lockfiles locked before want reviews'}</p>` : nothing}
+        ${above.length > 0 ? this.disclosed(`${key}:above`, `${plural(above.length, 'version')} a pull request above adds too`, above, row(pull)) : nothing}
+        ${pull.others > 0 ? this.disclosed(`${key}:others`, pull.size > 0 || pull.failed ? `${plural(pull.others, 'other version')} its lockfiles lock ${pull.others === 1 ? 'wants' : 'want'} reviews`
+          : `Its own versions pass; ${plural(pull.others, 'version')} its lockfiles locked before ${pull.others === 1 ? 'wants' : 'want'} reviews`,
+        others.versions, pkg => versionRow(pkg, pull.entry.review), pull.others - others.versions.length) : nothing}
       </li>`
-    })}</ol></section>`
+    })}</ol>`
   }
 
   // Every version the pull requests add wanting reviews, each once, by the
@@ -276,8 +316,8 @@ class TeamDependencies extends StateElement {
     if (adding.size === 0) return reading ? nothing : html`<p class="workspace-content-empty">No version an open pull request adds wants a review.</p>`
     return html`<section class="team-deps-section" aria-label="Versions to review"><p class="team-deps-quiet">${plural(adding.size, 'version')} to review, each once,
       by the pull requests adding it.</p>
-      <ul class="team-deps-versions">${[...adding.entries()].map(([key, pulls]) => versionRow(pulls[0].wanted.find(pkg => versionKey(pkg) === key),
-        pulls[0].entry.review, pulls.map(pullName), true))}</ul>
+      ${this.rows('versions', [...adding.entries()], ([key, pulls]) => versionRow(pulls[0].wanted.find(pkg => versionKey(pkg) === key),
+        pulls[0].entry.review, pulls.map(pullName), true), SHOWN_LISTED)}
     </section>`
   }
 
@@ -287,14 +327,14 @@ class TeamDependencies extends StateElement {
     const { versions, count } = unreviewedVersions(read.branch)
     const failed = reviewFailures(read.branch)
     const unread = failed?.unread.flatMap(dir => dir.paths) ?? []
+    const listed = [...versions, ...failed?.versions ?? []]
     return html`<section class="team-deps-section" aria-label=${`${repo.name}’s default branch`}><h2>${repo.name}</h2>
       <p class="team-deps-quiet">${plural(count, 'version')} unreviewed${failed?.count
       ? `, ${failed.count.toLocaleString('en-US')} can’t be reviewed` : ''}${unread.length > 0 ? `, ${plural(unread.length, 'lockfile')} unread` : ''}</p>
       ${unread.length > 0 ? html`<p class="team-deps-quiet" role="alert">Unread, so what ${unread.length === 1 ? 'it locks isn’t' : 'they lock aren’t'} checked:
         ${unread.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}</p>` : nothing}
-      ${versions.length + (failed?.versions.length ?? 0) > 0 ? html`<ul class="team-deps-versions">${[...versions, ...failed?.versions ?? []]
-        .map(pkg => versionRow(pkg, read.branch.review))}</ul>` : nothing}
-      ${count > versions.length ? html`<p class="team-deps-quiet">and ${(count - versions.length).toLocaleString('en-US')} more</p>` : nothing}
+      ${this.rows(`branch:${repo.repoId}`, listed, pkg => versionRow(pkg, read.branch.review), SHOWN_LISTED)}
+      ${count > versions.length ? html`<p class="team-deps-quiet">and ${(count - versions.length).toLocaleString('en-US')} more, not listed</p>` : nothing}
     </section>`
   }
 }
