@@ -6,11 +6,12 @@ import { startServer } from './server-common/standalone.ts'
 // init() (server-managed/reviewed-dependencies.ts): an async method telling
 // whether a dependency, as a lockfile locks it, is reviewed there
 // (`lookup`), and optionally one reading the reviews an open pull request's
-// comments make (`parseComments`). They replace a repository's commit its
-// dependencies are reviewed since.
+// comments make (`parseComments`), and one formatting one's own dependency
+// reviews as a comment to copy (`formatDependencyReviews`). They replace a
+// repository's commit its dependencies are reviewed since.
 export { registerReviewedDependencies } from './server-managed/reviewed-dependencies.ts'
-export type { CommentReview, ParseCommentsInput, ReviewComment, ReviewedDependencies, ReviewedDependency, ReviewedLockfile, ReviewVerdict }
-  from './server-managed/reviewed-dependencies.ts'
+export type { CommentReview, DependencyReviewEntry, FormatDependencyReviewsInput, ParseCommentsInput, ReviewComment, ReviewedDependencies, ReviewedDependency,
+  ReviewedLockfile, ReviewedVersion, ReviewVerdict } from './server-managed/reviewed-dependencies.ts'
 
 const modes = ['e2e', 'managed', 'managed-e2e', 'e2e-managed'] as const
 export type ServerMode = typeof modes[number]

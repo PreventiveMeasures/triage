@@ -2174,7 +2174,7 @@ unread named, each list forty-eight at first; and Reviews the reviews published 
 too, the latest published first, by whom, fifty a page (`GET
 /api/npm/reviews/team?teamId=…&beforeTime=&beforeId=`, `{ reviews, next }`,
 of one who reads reviews in it, else `404 no-team`, each held to the
-reader's npm access as My reviews' are), with no **Copy audit** button,
+reader's npm access as My reviews' are), with no **Copy dependency review** button,
 which is for one's own. What it reads is held for the session two minutes,
 and read again once a repository's review is set. Each version wanting
 reviews, there and in a pull request's popup, tells the lines it changes
@@ -2195,6 +2195,8 @@ registerReviewedDependencies({
   async lookup({ ecosystem, lockfile, name, version, integrity, shasum, patchHash }) { return isReviewed(...) },
   // Optional: the reviews an open pull request's comments make.
   async parseComments({ repository, number, comments, dependencies }) { return reviewsIn(comments) },
+  // Optional: one's own dependency reviews as a comment, to copy.
+  async formatDependencyReviews({ reviews, pullRequest }) { return commentOf(reviews) },
 })
 const server = await init('managed')
 ```
@@ -2243,6 +2245,30 @@ its comments count (`commentReviews`), or that they couldn't be read
 (`commentsFailed`, its error logged), and each version how many of its
 reviewers review it in its comments alone (`commented`), which a team's
 Dependencies tab tells beside it wherever another pull request lists it.
+
+Its `formatDependencyReviews`, where it has one, formats one's own dependency
+reviews as a comment, which a copy button gives (`dependency-review-copy.js`,
+**Copy dependency review**); where it has none, no review nor pull request
+has one. It is given a list (`reviews`), each: `ecosystem` (`npm`); `new`,
+the version reviewed, and `old`, the one it was compared with (null where
+its package was read whole), each `{ name, version, integrity, shasum?,
+patchHash? }`, `shasum` and `patchHash` where a pull request's lockfile has
+them; `status` (`accept`, `accept-with-nits`, `request-changes` or
+`reject`); `coverage` (`full`, else `partial`); its final `comment`;
+`files`, each file's `{ path, status, comment }` that was checked or
+commented on; `reviewer` (a login) and `publishedAt`. It answers the text to
+copy; one empty, null or undefined, or past a million characters, or its
+failing (logged), gives none. It is given the asker's own published,
+unrevoked reviews alone (`dependency-review-comments.ts` asks it, filtering
+any other out before it is called, however it is asked): of each of them
+alone, told as `formatted` on one's own reviews as My reviews, the review
+page, publishing and `GET /api/npm/reviews/latest` answer them, others'
+never; and, of an open pull request asked with its review, of all of the
+asker's reviews published to a team counting for its repository of the
+versions it adds (of their integrity and patch, whole or compared with a
+version they were), with the pull request (`pullRequest`, `{ repository,
+number }`), told as the pull request's `formatted`, which its popup and its
+card on a team's Dependencies tab copy.
 
 
 ## Agents
@@ -3366,9 +3392,9 @@ including added, removed, renamed, and binary files. Notes alone do not check a
 file; checking three of four files produces a partial review. The changed paths
 are frozen on first publication, along with the final verdict and comment.
 
-A full, non-revoked published review whose final verdict is **Accept** or
-**Accept with nits** offers **Copy audit Markdown**. This includes the package,
-version and integrity, its base when present, and any file or final notes.
+One's own published, unrevoked review offers **Copy dependency review** where
+the host formats it (`formatDependencyReviews`, above), the text as the host
+answers it; another's never does.
 
 Publication freezes the entire set. Its author can publish that same snapshot to
 additional eligible teams or **Revoke** it. Revocation is permanent and keeps its

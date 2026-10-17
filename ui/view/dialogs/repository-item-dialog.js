@@ -18,6 +18,7 @@ import { renderHighlighted } from '../render-finding.js'
 import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, agentIcon, agentName, branchOnGithub, issueState, sessionOnGithub, sessionRan } from '../repository-tiles.js'
 import { pullDependencies, readsDependencies, reviewFailures, reviewOf, subscribePullDependencies, unreviewedVersions } from '../pull-dependencies.js'
 import '../npm-delta.js'
+import '../dependency-review-copy.js'
 import { managedRoutePath } from '../../../common/managed/routes.js'
 import { githubUser, githubUsers } from '../github-users.js'
 import { reviewSections } from '../pull-reviews.js'
@@ -156,14 +157,17 @@ class RepositoryItemDialog extends AppDialog {
   // The package versions new to a pull request's lockfiles, by the lockfiles
   // of each directory, as they are read; none where it changes no lockfile
   // after all.
-  // An open one's with their review, where its repository's is in effect.
+  // An open one's with their review, where its repository's is in effect,
+  // and the reader's reviews of its versions to copy, where the server's host
+  // formats them.
   renderDependencies(number, open) {
     const entry = pullDependencies(this.repository.repoId, number, open)
     if (entry.status === 'ready' && entry.lockfiles.length === 0 && !entry.cut) return nothing
     const body = entry.status === 'loading' ? html`<p class="repo-item-quiet" role="status">Reading its lockfiles…</p>`
       : entry.status === 'error' ? html`<p class="repo-item-quiet" role="alert">${entry.error}</p>`
       : this.renderAdded(entry)
-    return html`<section class="repo-item-section"><h4>New dependency versions</h4>${body}</section>`
+    return html`<section class="repo-item-section"><h4 class="repo-item-deps-heading">New dependency versions${entry.formatted
+      ? html`<dependency-review-copy .text=${entry.formatted} .label=${'Copy your dependency reviews of its versions'}></dependency-review-copy>` : nothing}</h4>${body}</section>`
   }
 
   // Each directory's lockfiles and the package versions new to them, those of

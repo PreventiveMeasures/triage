@@ -76,8 +76,10 @@ const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : 
 // terms, where it tells them, with how many versions across its directories
 // want reviews and can't be reviewed, whether the server's reviewed
 // dependencies pass them, and how many those failed to answer; by how many
-// reviewers its comments review them, or that they couldn't be read; and the
-// lockfiles it holds to, where not every one, those of the rest told to none.
+// reviewers its comments review them, or that they couldn't be read; the
+// lockfiles it holds to, where not every one, those of the rest told to none;
+// and the comment the server's host formats of the reader's own reviews of
+// its versions, to copy (`formatted`), where it formats one.
 export function checked(answer) {
   if (!Array.isArray(answer?.lockfiles)) throw new Error('The server answered with no lockfiles.')
   const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? dir
@@ -85,7 +87,8 @@ export function checked(answer) {
       moreUnreviewed: count(dir.moreUnreviewed) ?? 0, unsupported: versionsOf(dir.unsupported), moreUnsupported: count(dir.moreUnsupported) ?? 0,
       moreLocked: count(dir.moreLocked) ?? 0 })
   const review = answer.review
-  return { lockfiles, cut: answer.cut === true, ...count(review?.required) > 0 ? { review: { required: review.required,
+  return { lockfiles, cut: answer.cut === true, ...typeof answer.formatted === 'string' && answer.formatted.trim() !== '' ? { formatted: answer.formatted } : {},
+    ...count(review?.required) > 0 ? { review: { required: review.required,
     since: typeof review.since === 'string' ? review.since : null, canReview: review.canReview === true,
     ...count(review.toReview) === null ? {} : { toReview: review.toReview },
     ...count(review.unreviewed) === null ? {} : { unreviewed: review.unreviewed }, ...count(review.unsupported) === null ? {} : { unsupported: review.unsupported },

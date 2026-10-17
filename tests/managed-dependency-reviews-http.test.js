@@ -6,10 +6,9 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
-import { auditMarkdown } from '../common/dependency-reviews.js'
 import { packageOf, registry, withToken } from './_managed-npm.js'
 
-async function fixture(t) {
+async function fixture(t, more = {}) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const config = { sessionCookieName: 'sid', sessionTtlMs: 3600000 }
@@ -24,7 +23,7 @@ async function fixture(t) {
   await db.createTeam('reviewers', 'Reviewers', Date.now())
   await db.setTeamMember('reviewers', sessions.triage.userId, { dependencies: true, security: false })
   await db.setTeamDependencyReview(hashToken(sessions.admin.setCookie.split(';')[0].slice(4)), 'reviewers', true)
-  const handler = createManagedRequestHandler({ db, config, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
+  const handler = createManagedRequestHandler({ db, config, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {}, ...more })
   async function send(path, { body, who = 'triage', csrf = true, method = body ? 'POST' : 'GET' } = {}) {
     const session = sessions[who]
     const req = Object.assign(Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []), { url: path, method,
@@ -86,7 +85,6 @@ test('non-text verdicts and notes are disabled, and binaries keep published cove
     assert.equal(published.totalFiles, texts.length + nonTextFiles.length)
     assert.equal(published.files.includes('removed.bin'), Boolean(base.basePackage))
     assert.equal(published.files.includes('unchanged.bin'), !base.basePackage)
-    assert.equal(auditMarkdown(published), null)
     const reloaded = (await h.send(url(context))).body.reviews.find(row => row.id === review.id)
     const listed = (await h.send('/api/npm/reviews/mine')).body.reviews.find(row => row.id === review.id)
     for (const result of [reloaded, listed]) {
@@ -434,6 +432,31 @@ test('a page of reviews of more versions than npm\'s reads hold at once is read 
     return { reviews, next: null }
   })
   assert.deepEqual(await h.send('/api/npm/reviews/team?teamId=reviewers').then(res => [res.status, res.body]), [404, { error: 'no-team' }])
+})
+
+test('where the host formats dependency reviews, one\'s own published reviews are told formatted, each alone, as published, read and listed; another\'s never', async t => {
+  const given = []
+  const formatDependencyReviews = input => { given.push(input); return Promise.resolve(`Reviewed ${input.reviews[0].new.name} by ${input.reviews[0].reviewer}`) }
+  const h = await fixture(t, { reviewedDependencies: { lookup: () => Promise.resolve(false), formatDependencyReviews } })
+  const pkg = packageOf('formatted', '1.0.0', { 'index.js': 'x' })
+  registry(t, [pkg])
+  const context = { ecosystem: 'npm', package: 'formatted', version: '1.0.0', integrity: pkg.doc.dist.integrity }
+  const published = {}
+  for (const who of ['triage', 'admin']) {
+    let review = (await h.send('/api/npm/reviews', { who, body: { ...context, action: 'start' } })).body.review
+    assert.equal(Object.hasOwn(review, 'formatted'), false, 'a draft formatted never')
+    review = (await h.send('/api/npm/reviews', { who, body: { ...context, action: 'save', reviewId: review.id, revision: review.revision, file: 'index.js', status: 'accept', comment: 'Fine.' } })).body.review
+    published[who] = (await h.send('/api/npm/reviews', { who, body: { ...context, action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['reviewers'],
+      files: [], coverage: 'full', finalStatus: 'accept', finalComment: '' } })).body.review
+  }
+  assert.deepEqual([published.triage.formatted, published.admin.formatted], ['Reviewed formatted by triage', 'Reviewed formatted by admin'], 'each one\'s own, as published')
+  given.length = 0
+  const listed = (await h.send(url({ ...context, basePackage: null, baseVersion: null, baseIntegrity: null }))).body.reviews
+  assert.deepEqual(listed.map(review => [review.userLogin, review.formatted ?? null]).toSorted(), [['admin', null], ['triage', 'Reviewed formatted by triage']], 'another\'s read, unformatted')
+  assert.equal((await h.send('/api/npm/reviews/mine')).body.reviews[0].formatted, 'Reviewed formatted by triage')
+  const latest = '/api/npm/reviews/latest?' + new URLSearchParams({ package: 'formatted', version: '1.0.0', integrity: pkg.doc.dist.integrity })
+  assert.equal((await h.send(latest)).body.review.formatted, 'Reviewed formatted by triage')
+  assert.deepEqual(given.flatMap(input => input.reviews.map(review => review.reviewer)), ['triage', 'triage', 'triage'], 'the host given one\'s own alone')
 })
 
 test('the session says who publishes reviews to some team: an admin, in no team, as well as a member who reviews', async t => {

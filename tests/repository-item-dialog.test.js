@@ -120,7 +120,7 @@ test('a pull request changing a lockfile, merged or closed as well as open, show
   dialog.open({ number: 21, preview: { ...tile, number: 21, state: 'merged', touchesLockfile: true } })
   let text = templateText(dialog.render())
   assert.deepEqual(dependencyAsked, [[7, 21]], 'asked as it opens, what its tile knew enough')
-  assert.match(text, /<h4>New dependency versions<\/h4><p class="repo-item-quiet" role="status">Reading its lockfiles…<\/p>/u)
+  assert.match(text, /<h4 class="repo-item-deps-heading">New dependency versions<\/h4><p class="repo-item-quiet" role="status">Reading its lockfiles…<\/p>/u)
   told({ number: 21, cut: true, lockfiles: [
     { paths: ['package-lock.json'], more: 3, added: [{ name: '@preventive/lockfile', version: '1.0.0', source: 'registry', was: ['1.0.0-alpha.7', '0.9.0'] },
       { name: '@scope/tool', version: '2.0.0', source: 'registry', dev: true }, { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git' },
@@ -196,7 +196,7 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
 })
 
 test('where the server registers reviewed dependencies, its terms say so, with its comments\' reviews; a version they pass is reviewed, one rejected so, and a patched one wants them, unlinked to reviewing it', async () => {
-  dependencies = number => Promise.resolve({ number, cut: false, review: { required: 2, since: null, canReview: true, reviewedDependencies: true, unasked: 1,
+  dependencies = number => Promise.resolve({ number, cut: false, formatted: 'Reviewed refused', review: { required: 2, since: null, canReview: true, reviewedDependencies: true, unasked: 1,
     commentReviews: 2, commentsFailed: true, lockfiles: { mode: 'exclude', paths: ['docs/'] } }, lockfiles: [
     { paths: ['pnpm-lock.yaml'], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, added: [
       { name: 'vouched', version: '1.0.0', source: 'registry', reviewed: true }, { name: 'patched', version: '1.0.0', source: 'registry', patched: true, reviews: 0 },
@@ -213,6 +213,8 @@ test('where the server registers reviewed dependencies, its terms say so, with i
   assert.match(text, /Reviews in its comments by 2 reviewers count too while it is open, a patched version’s of its patch\./u)
   assert.match(text, /role="alert">Its comments couldn’t be read for reviews, so none of theirs count\./u)
   assert.match(text, /These lockfiles aren’t reviewed: <code>docs\/<\/code>\./u)
+  assert.match(text, /<h4 class="repo-item-deps-heading">New dependency versions<dependency-review-copy \.text=Reviewed refused \.label=Copy your dependency reviews of its versions>/u,
+    'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
   assert.match(text, /href=\/npm\/refused@1\.0\.0\/review [^]*class="repo-item-review is-failed" data-tooltip="A reviewer rejects it[^>]*>rejected</u, 'one rejected wants reviews, however many pass it')
   assert.match(text, /href=\/npm\/vouched@1\.0\.0\/review [^]*class="repo-item-review is-passed" data-tooltip="The server’s reviewed dependencies pass it"><svg[^]*<\/svg>reviewed</u)
   assert.match(text, /<a class="repo-item-row" href=\/npm\/patched@1\.0\.0 [^]*class="repo-item-review is-wanted" data-tooltip="Reviews here pass no patch[^>]*>unreviewed<[^]*data-tooltip="pnpm patches it as it installs it">patched</u,
@@ -230,7 +232,7 @@ test('a pull request whose lockfiles add none says so; one changing none, or an 
   none.open({ number: 22, preview: { ...tile, number: 22, touchesLockfile: true } })
   templateText(none.render())
   await setImmediate()
-  assert.match(templateText(none.render()), /<h4>New dependency versions<\/h4>[^]*None: every version its lockfiles lock, they locked before\./u)
+  assert.match(templateText(none.render()), /<h4 class="repo-item-deps-heading">New dependency versions<\/h4>[^]*None: every version its lockfiles lock, they locked before\./u)
   // Its tile knew nothing of its files (a closed one's): asked once it is read, that it may.
   const maybe = shown()
   maybe.open({ number: 23, preview: { ...tile, number: 23, state: 'closed' } })
@@ -247,7 +249,7 @@ test('a pull request whose lockfiles add none says so; one changing none, or an 
   failing.open({ number: 25, preview: { ...tile, number: 25, touchesLockfile: true } })
   templateText(failing.render())
   await setImmediate()
-  assert.match(templateText(failing.render()), /<h4>New dependency versions<\/h4><p class="repo-item-quiet" role="alert">GitHub’s API rate limit has been reached\. Try again later\./u)
+  assert.match(templateText(failing.render()), /<h4 class="repo-item-deps-heading">New dependency versions<\/h4><p class="repo-item-quiet" role="alert">GitHub’s API rate limit has been reached\. Try again later\./u)
   assert.deepEqual(dependencyAsked.map(([, number]) => number), [22, 23, 25])
 })
 
@@ -276,5 +278,5 @@ test('a list\'s later read of a popup\'s item shows as it says, what a list read
   knowItems(7, [{ ...tile, number: 41, state: 'merged' }], 6000, 'pulls')
   const text = templateText(dialog.render())
   assert.match(text, /aria-label=Merged/u)
-  assert.match(text, /<h4>New dependency versions<\/h4>/u)
+  assert.match(text, /<h4 class="repo-item-deps-heading">New dependency versions<\/h4>/u)
 })

@@ -58,24 +58,7 @@ export function needsPackageJsonReview(entries, files, nonTextFiles = []) {
       || !entries.some(entry => entry.file === 'package.json' && Object.keys(REVIEW_VERDICTS).includes(entry.status)))
 }
 
-const markdownText = text => text.replaceAll(/[\\`*_{}[\]<>]/gu, '\\$&').replaceAll(/\r\n?/gu, '\n').replaceAll('\n', '\n  ')
-
 export function parseReviewNotes(comment) {
   return comment.replaceAll(/\r\n?/gu, '\n').split(/(?:^|\n)[\t ]*\*[\t ]+/u)
     .map((text, index) => ({ text: text.trim(), bullet: index > 0 })).filter(note => note.text)
-}
-
-function auditNotes(comment, prefix = '') {
-  return parseReviewNotes(comment).map(note => `* ${prefix}${note.text.replaceAll('\n', '\n  ')}`)
-}
-
-export function auditMarkdown(review) {
-  if (review.publishedAt === null || review.revokedAt !== null || review.coverage !== 'full'
-    || !['accept', 'accept-with-nits'].includes(review.status)) return null
-  const target = `${review.package} ${review.version} ${review.integrity}`
-  const dependency = review.basePackage === null ? target
-    : review.basePackage === review.package ? `${review.package} ${review.baseVersion} -> ${review.version} ${review.integrity}`
-    : `${review.basePackage} ${review.baseVersion} -> ${target}`
-  const notes = [...review.entries.filter(entry => entry.status).flatMap(entry => auditNotes(entry.comment, `In ${markdownText(entry.file)}: `)), ...auditNotes(review.comment)]
-  return `Audited:\n\`\`\`\n${dependency}\n\`\`\`${notes.length > 0 ? `\n\nNotes:\n${notes.join('\n')}` : ''}`
 }

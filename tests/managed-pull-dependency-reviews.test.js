@@ -472,6 +472,26 @@ test('where the host reads an open pull request\'s comments, the reviews they ma
   assert.equal(answer.body.open, undefined, 'whether it is open told to none')
 })
 
+test('where the host formats dependency reviews, a pull request tells the reader\'s own reviews of its versions formatted, to copy; another\'s never', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  const given = []
+  const formatDependencyReviews = input => {
+    given.push(input)
+    return Promise.resolve(input.reviews.map(review => `${review.new.name}@${review.new.version} by ${review.reviewer}`).join('\n'))
+  }
+  const send = api(db, users, { reviewedDependencies: { lookup: () => Promise.resolve(false), formatDependencyReviews } })
+  await db.setRepoDependencyReview(1, { enabled: true, required: 2, since: null })
+  await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
+  await publish(db, users.bob, context('ms', '2.1.3', '2.1.2'), ['one'])
+  github(t, PULL)
+  const ask = who => send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`, { who })
+  assert.equal((await ask('alice')).body.formatted, 'ms@2.1.3 by alice', 'hers alone, though bob\'s passes it too')
+  assert.deepEqual(given.map(input => [input.pullRequest, input.reviews.map(review => review.reviewer)]), [[{ repository: 'org/repo', number: 5 }, ['alice']]])
+  assert.equal(Object.hasOwn((await ask('carol')).body, 'formatted'), false, 'one with no review of its versions told none')
+})
+
 test('the default branch\'s dependencies, with their review, tell what its lockfiles lock that wants reviews and what fails it; where none is in effect, none', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())

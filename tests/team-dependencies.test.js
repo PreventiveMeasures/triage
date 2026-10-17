@@ -32,7 +32,8 @@ const dependencies = {
   '7#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('fine', { reviews: 2 }), wants('known', { baseline: true })] })] },
   // Its own passed, but held by those its lockfiles locked before it.
   '7#9': { cut: false, review: { ...terms, unreviewed: 4 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], unreviewed: [wants('old', { reviews: 1, commented: 1 })], moreUnreviewed: 3 })] },
-  '8#2': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared'), wants('rej', { reviews: 2, rejected: true }), wants('vouched', { reviewed: true })] })] },
+  // The reader's reviews of its versions formatted by the server's host, to copy.
+  '8#2': { cut: false, review: terms, formatted: 'Reviewed rej', lockfiles: [dir({ added: [wants('shared'), wants('rej', { reviews: 2, rejected: true }), wants('vouched', { reviewed: true })] })] },
   // Its versions past those told wanting reviews, those told passed.
   '8#6': { cut: false, review: { ...terms, toReview: 3 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], more: 250 })] },
 }
@@ -87,6 +88,9 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.match(cards[0], /shared[^]*>0\/2<\/span>\s*<span class="team-deps-elsewhere" data-tooltip=Reviewed in the comments of org\/a#1, which count there alone>in review in\s+org\/a#1<\/span>/u,
     'one another pull request reviews in its comments, which count there alone, told so')
   assert.equal(cards[0].split('team-deps-elsewhere').length - 1, 1)
+  assert.match(cards[0], /<\/a><dependency-review-copy \.text=Reviewed rej \.label=Copy your dependency reviews of its versions><\/dependency-review-copy><\/div>/u,
+    'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
+  assert.doesNotMatch(cards.slice(1).join(''), /dependency-review-copy/u, 'none where it formats none')
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
   assert.match(cards[0], /shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>[^]*rej[^]*<npm-delta \.name=rej /u,
     'the lines each wanting reviews changes, a new one\'s whole')

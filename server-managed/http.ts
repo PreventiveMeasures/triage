@@ -216,6 +216,7 @@ import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, heldTo, scopeOf } from './lockfile-scope.ts'
 import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
+import { formattedPull, withFormatted } from './dependency-review-comments.ts'
 import type { ReviewedDependencies } from './reviewed-dependencies.ts'
 import { commentReviews } from './pull-comment-reviews.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
@@ -2058,8 +2059,10 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
     // open (pull-comment-reviews.ts reads whether it is with them).
     const parse = reviewed?.parseComments
     const comments = state && parse ? commentReviews({ fullName, number, token, parse, reviewers: accounts => repoReviewers(deps, repoId, accounts) }) : null
-    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: comments }) },
-      kept: answered.kept }
+    // The comment the host formats of the reader's reviews of its versions, for its copy button.
+    const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number })
+    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: comments }),
+      ...formatted ? { formatted } : {} }, kept: answered.kept }
   })
 }
 
@@ -3831,7 +3834,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
       const allBases = params.get('allBases') === 'true'
       const rows = await deps.db.listDependencyReviews(context, current.userId, allBases)
       const reviews = allBases ? await readableNpmReviews(res, deps, cookie, current.userId, rows) : rows
-      if (reviews) sendJson(res, 200, { reviews, teams: await deps.db.listDependencyReviewTeams(current.userId) })
+      if (reviews) sendJson(res, 200, { reviews: await withFormatted(deps.reviewedDependencies ?? null, current.userId, reviews), teams: await deps.db.listDependencyReviewTeams(current.userId) })
       return
     }
     const checked = await checkMutation(req, res, deps, cookie)
@@ -3841,7 +3844,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
       sendJson(res, 400, { error: limit === 'reject' ? 'review-malware' : 'review-critical-vulnerability' }); return
     }
     const review = await deps.db.changeDependencyReview(context, checked.session.id, change, Date.now())
-    sendJson(res, 200, { review })
+    sendJson(res, 200, { review: (await withFormatted(deps.reviewedDependencies ?? null, current.userId, [review]))[0] })
   } catch (err) {
     if (controller.signal.aborted) return
     if (err instanceof NpmPackageError) { sendJson(res, err.status, { error: err.message }); return }
@@ -4549,7 +4552,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       }
       const review = await deps.db.getLatestOwnDependencyReview(s.user.id, { ecosystem: 'npm', package: name, version, integrity })
       const visible = await readableNpmReviews(res, deps, cookie, s.user.id, review ? [review] : [])
-      if (visible) sendJson(res, 200, { review: visible[0] ?? null })
+      if (visible) sendJson(res, 200, { review: (await withFormatted(deps.reviewedDependencies ?? null, s.user.id, visible))[0] ?? null })
       return
     }
     if (path === '/api/npm/reviews/discard') {
@@ -4579,7 +4582,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       }
       const page = await deps.db.listOwnDependencyReviews(s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
       const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews)
-      if (reviews) sendJson(res, 200, { ...page, reviews })
+      if (reviews) sendJson(res, 200, { ...page, reviews: await withFormatted(deps.reviewedDependencies ?? null, s.user.id, reviews) })
       return
     }
     // Those published to a team, of one who reads them there, as its

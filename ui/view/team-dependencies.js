@@ -23,6 +23,7 @@ import { PACKAGE_ICON, icon } from './repository-tiles.js'
 import { dialogTabs } from './header-tabs.js'
 import { withCompare } from './compare-load.js'
 import { deltaBase } from './npm-delta.js'
+import './dependency-review-copy.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 
 const KEEP_MS = 2 * 60_000
@@ -297,7 +298,9 @@ class TeamDependencies extends StateElement {
 
   // The pull requests wanting reviews, fewest first, each version a pull
   // request above adds told by it alone, those listed apart; each version
-  // other pull requests review in their comments told so (`elsewhere`).
+  // other pull requests review in their comments told so (`elsewhere`); and
+  // the reader's reviews of its versions to copy, where the server's host
+  // formats them (dependency-review-copy.js).
   renderPulls(wanting, adding, reading, unchecked, elsewhere) {
     if (wanting.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
@@ -313,11 +316,12 @@ class TeamDependencies extends StateElement {
       const others = unreviewedVersions(pull.entry)
       const href = `https://github.com/${pull.repo.name}/pull/${pull.item.number}`
       return html`<li class="team-deps-pull">
-        <a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
+        <div class="team-deps-pull-top"><a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
           <span class="team-deps-pull-name">${key}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
           <span class=${`team-deps-count${pull.failed ? ' is-failed' : ''}`}>${pull.failed ? 'review fails' : pull.size > 0 ? `${plural(pull.toReview, 'version')} to review`
             : `${plural(pull.others, 'other version')} unreviewed`}</span>
-        </a>
+        </a>${pull.entry.formatted ? html`<dependency-review-copy .text=${pull.entry.formatted} .label=${'Copy your dependency reviews of its versions'}></dependency-review-copy>`
+          : nothing}</div>
         ${this.rows(`${key}:own`, own, row(pull))}
         ${pull.untold > 0 ? html`<p class="team-deps-quiet">and ${plural(pull.untold, 'more version')} past those listed</p>` : nothing}
         ${above.length > 0 ? this.disclosed(`${key}:above`, `${plural(above.length, 'version')} a pull request above adds too`, above, row(pull)) : nothing}

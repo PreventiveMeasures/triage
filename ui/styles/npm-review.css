@@ -215,7 +215,7 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
 .npm-review-entry-result { display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .7rem; }
 .npm-review-entry-actions { display: flex; align-items: center; gap: .35rem; margin-top: .2rem; width: 100%; }
 .npm-review-entry-actions .npm-review-button { min-height: 1.7rem; padding: .25rem .5rem; font-size: .7rem; white-space: nowrap; }
-.npm-review-entry-actions review-audit-copy { display: inline-flex; margin-left: auto; }
+.npm-review-entry-actions dependency-review-copy { display: inline-flex; margin-left: auto; }
 .npm-review-share { font-size: .72rem; }
 .npm-review-share summary { padding-block: .25rem; color: var(--muted); }
 .npm-review-share fieldset { margin-top: .5rem; }
@@ -285,7 +285,7 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
   color: var(--warning); background: rgb(from var(--warning) r g b / .12);
 }
 .dependency-review-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: .1rem; }
-.dependency-review-row-actions review-audit-copy { display: inline-flex; }
+.dependency-review-row-actions dependency-review-copy { display: inline-flex; }
 .dependency-review-expand, .dependency-review-discard, .dependency-review-open {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 1.8rem; height: 1.8rem; border: 0;
@@ -295,8 +295,8 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
 .dependency-review-open:hover { color: var(--accent); }
 .dependency-review-expand { width: 1.35rem; height: 1.35rem; }
 .dependency-review-expand[aria-expanded='true'] svg { transform: rotate(90deg); }
-review-audit-copy .bundle-code-copy-path { width: 1.8rem; height: 1.8rem; }
-review-audit-copy svg, .dependency-review-discard svg { width: .95rem; height: .95rem; }
+dependency-review-copy .bundle-code-copy-path { width: 1.8rem; height: 1.8rem; }
+dependency-review-copy svg, .dependency-review-discard svg { width: .95rem; height: .95rem; }
 .dependency-review-discard:not(:disabled):hover { color: var(--critical); }
 .dependency-review-details { margin: 0 .5rem .7rem 2.45rem; }
 .dependency-review-final-note { margin-bottom: .5rem; }
