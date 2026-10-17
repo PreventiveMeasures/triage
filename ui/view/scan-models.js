@@ -19,8 +19,13 @@ const MODEL_NAMES = new Map([
 const DEVELOPER_NAMES = new Map([
   ['openai', 'OpenAI'], ['anthropic', 'Anthropic'], ['moonshotai', 'Moonshot AI'],
   ['google', 'Google'], ['nvidia', 'NVIDIA'], ['qwen', 'Qwen'], ['deepseek', 'DeepSeek'],
-  ['x-ai', 'xAI'], ['z-ai', 'Z.ai'], ['mistralai', 'Mistral AI'],
+  ['x-ai', 'xAI'], ['z-ai', 'Z.ai'], ['mistralai', 'Mistral AI'], ['meta', 'Meta'], ['unbiased', 'Unbiased'],
 ])
+
+// OpenRouter lists Meta's Muse models under `meta/` and Llama under
+// `meta-llama/`, and a family's latest-model alias under a `~` prefix
+// (`~unbiased/pareto-latest`). Each still names the one developer.
+const DEVELOPER_ALIASES = new Map([['meta-llama', 'meta']])
 
 const WORD_REPLACEMENTS = new Map([
   ['gpt', 'GPT'], ['gptoss', 'GPT OSS'], ['oss', 'OSS'], ['o', 'O'], ['ai', 'AI'], ['api', 'API'],
@@ -54,7 +59,8 @@ export function modelName(id) {
 }
 
 export function modelDeveloper(id) {
-  const key = id.includes('/') ? id.split('/')[0] : 'other'
+  const prefix = id.includes('/') ? id.split('/')[0].replace(/^~/u, '') : 'other'
+  const key = DEVELOPER_ALIASES.get(prefix) ?? prefix
   return { key, name: DEVELOPER_NAMES.get(key) ?? (key === 'other' ? 'Other' : prettySlug(key)) }
 }
 

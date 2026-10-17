@@ -59,6 +59,7 @@ class ScanModelPicker extends LitElement {
     .icon.qwen { color: #f97316; }
     .icon.deepseek { color: #4d8dff; }
     .icon.xiaomi { color: #ff6900; }
+    .icon.meta { color: #0081fb; }
     /* These marks have generous or unusually dense source viewBoxes.  A
        small optical correction keeps every provider mark the same apparent
        weight in both the selected value and the menu heading. */

@@ -40,7 +40,7 @@ test('provider icons are embedded as templates without external SVG outputs', as
   })
   assert.equal(outputFiles.length, 1)
   const { providerIcon } = await import(`data:text/javascript,${encodeURIComponent(outputFiles[0].text)}`)
-  for (const [key, name] of Object.entries({ moonshot: 'moonshot', google: 'google', openrouter: 'openrouter', deepseek: 'deepseek', nvidia: 'nvidia', qwen: 'qwen', xiaomi: 'xiaomi', 'x-ai': 'grok', 'z-ai': 'zai', mistralai: 'mistral' })) {
+  for (const [key, name] of Object.entries({ moonshot: 'moonshot', google: 'google', openrouter: 'openrouter', deepseek: 'deepseek', nvidia: 'nvidia', qwen: 'qwen', xiaomi: 'xiaomi', 'x-ai': 'grok', 'z-ai': 'zai', mistralai: 'mistral', meta: 'meta', unbiased: 'unbiased' })) {
     const icon = providerIcon(key)
     assert.equal(icon._$litType$, 1)
     assert.equal(icon.strings[0], await readFile(`ui/provider-icons/${name}.svg`, 'utf8'))

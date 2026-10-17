@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { defaultScanModels } from '../ui/scan/default-models.js'
 import { modelColumns, modelRows, modelSections } from '../ui/view/scan-model-layout.js'
+import { modelDeveloper, modelName } from '../ui/view/scan-models.js'
 
 test('GPT pairs use one row in either catalogue order, retaining each variant’s effort limits', () => {
   const base = { id: 'openai/gpt-6-astra', efforts: ['low', 'high'] }
@@ -45,6 +46,18 @@ test('long providers remain a single section while GPT families retain every can
   const rows = columns.flat().flatMap(section => section.models)
   assert.equal(rows.length, 17)
   assert.deepEqual(rows.flatMap(row => [row.pro.id, row.id]), models.map(model => model.id))
+})
+
+test('Meta and Unbiased models are each one section under their own developer', () => {
+  const ids = ['meta/muse-wonder', 'meta-llama/llama-4-maverick', 'unbiased/pareto-26.9', '~unbiased/pareto-latest']
+  const sections = modelSections(ids.map(id => ({ id, efforts: [] })))
+  assert.deepEqual(sections.map(section => [section.key, section.models.map(model => model.id)]), [
+    ['meta', ['meta/muse-wonder', 'meta-llama/llama-4-maverick']],
+    ['unbiased', ['unbiased/pareto-26.9', '~unbiased/pareto-latest']],
+  ])
+  assert.deepEqual(ids.map(id => [modelDeveloper(id).name, modelName(id)]), [
+    ['Meta', 'Muse Wonder'], ['Meta', 'Llama 4 Maverick'], ['Unbiased', 'Pareto 26.9'], ['Unbiased', 'Pareto Latest'],
+  ])
 })
 
 function catalogue(lengths) {
