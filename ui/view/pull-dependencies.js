@@ -59,13 +59,15 @@ const UNSUPPORTED = new Set(['git', 'tarball', 'integrity'])
 // whether it is patched, and its review, where it tells one: why it can't be
 // reviewed (`unsupported`), needing none (`baseline`), passed by the
 // server's reviewed dependencies (`reviewed`), or how many pass it
-// (`reviews`) and whether a reviewer rejects it (`rejected`).
+// (`reviews`), whether a reviewer rejects it (`rejected`), and how many
+// review it in its pull request's comments alone, which count for it alone
+// (`commented`).
 function checkedVersion(pkg) {
   if (typeof pkg?.name !== 'string') return []
-  const { was, reviews, rejected, baseline, reviewed, unsupported, patched, ...version } = pkg
+  const { was, reviews, rejected, commented, baseline, reviewed, unsupported, patched, ...version } = pkg
   return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {}, ...patched === true ? { patched } : {},
     ...UNSUPPORTED.has(unsupported) ? { unsupported } : baseline === true ? { baseline } : reviewed === true ? { reviewed }
-      : count(reviews) === null ? {} : { reviews, ...rejected === true ? { rejected } : {} } }]
+      : count(reviews) === null ? {} : { reviews, ...rejected === true ? { rejected } : {}, ...count(commented) > 0 ? { commented } : {} } }]
 }
 const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : []
 
@@ -74,8 +76,10 @@ const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : 
 // terms, where it tells them, with how many versions across its directories
 // want reviews and can't be reviewed, whether the server's reviewed
 // dependencies pass them, and how many those failed to answer; by how many
-// reviewers its comments review them, or that they couldn't be read; and the
-// lockfiles it holds to, where not every one, those of the rest told to none.
+// reviewers its comments review them, or that they couldn't be read; the
+// lockfiles it holds to, where not every one, those of the rest told to none;
+// and the comment the server's host formats of the reader's own reviews of
+// its versions, to copy (`formatted`), where it formats one.
 export function checked(answer) {
   if (!Array.isArray(answer?.lockfiles)) throw new Error('The server answered with no lockfiles.')
   const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? dir
@@ -83,7 +87,8 @@ export function checked(answer) {
       moreUnreviewed: count(dir.moreUnreviewed) ?? 0, unsupported: versionsOf(dir.unsupported), moreUnsupported: count(dir.moreUnsupported) ?? 0,
       moreLocked: count(dir.moreLocked) ?? 0 })
   const review = answer.review
-  return { lockfiles, cut: answer.cut === true, ...count(review?.required) > 0 ? { review: { required: review.required,
+  return { lockfiles, cut: answer.cut === true, ...typeof answer.formatted === 'string' && answer.formatted.trim() !== '' ? { formatted: answer.formatted } : {},
+    ...count(review?.required) > 0 ? { review: { required: review.required,
     since: typeof review.since === 'string' ? review.since : null, canReview: review.canReview === true,
     ...count(review.toReview) === null ? {} : { toReview: review.toReview },
     ...count(review.unreviewed) === null ? {} : { unreviewed: review.unreviewed }, ...count(review.unsupported) === null ? {} : { unsupported: review.unsupported },
@@ -165,8 +170,9 @@ function bothReviewed(had, pkg, review) {
   const passing = one => PASSING[reviewOf(one, review)] ?? 4
   const less = passing(pkg) < passing(had) || (passing(pkg) === passing(had) && (pkg.reviews ?? Infinity) < (had.reviews ?? Infinity)) ? pkg : had
   const { unsupported, baseline, reviewed, reviews, rejected } = less
+  const commented = Math.max(had.commented ?? 0, pkg.commented ?? 0)
   return { ...had.patched || pkg.patched ? { patched: true } : {}, ...unsupported ? { unsupported } : baseline ? { baseline } : reviewed ? { reviewed }
-    : reviews == null ? {} : { reviews, ...rejected ? { rejected } : {} } }
+    : reviews == null ? {} : { reviews, ...rejected ? { rejected } : {}, ...commented > 0 ? { commented } : {} } }
 }
 
 // A version's review, where its pull request's is in effect (`review`):

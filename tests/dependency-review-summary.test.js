@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { allowedReviewVerdicts, auditMarkdown, isReviewableFile, needsPackageJsonReview, npmReviewVerdictLimit, parseReviewNotes, summarizeReview } from '../common/dependency-reviews.js'
+import { allowedReviewVerdicts, isReviewableFile, needsPackageJsonReview, npmReviewVerdictLimit, parseReviewNotes, summarizeReview } from '../common/dependency-reviews.js'
 
 test('non-text content on either side is never reviewable and cannot yield full coverage', () => {
   const binary = { format: 'digest', size: 12, digest: 'sha256-binary' }
@@ -75,38 +75,4 @@ test('three checks out of four remain partial with a note on the unchecked file'
   for (const [status, allowed] of [['accept', 4], ['accept-with-nits', 3], ['request-changes', 2], ['reject', 1]]) {
     assert.equal(allowedReviewVerdicts([{ file: 'a.js', status }]).length, allowed)
   }
-})
-
-const review = { package: '@scope/pkg', version: '2.0.0', integrity: 'sha512-bytes', basePackage: null, baseVersion: null,
-  publishedAt: 100, revokedAt: null, coverage: 'full', status: 'accept', comment: '', entries: [] }
-test('audit Markdown formats whole packages, same-package updates and cross-package updates', () => {
-  assert.equal(auditMarkdown(review), 'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```')
-  assert.equal(auditMarkdown({ ...review, basePackage: '@scope/pkg', baseVersion: '1.0.0' }), 'Audited:\n```\n@scope/pkg 1.0.0 -> 2.0.0 sha512-bytes\n```')
-  assert.equal(auditMarkdown({ ...review, basePackage: 'old', baseVersion: '1.0.0' }), 'Audited:\n```\nold 1.0.0 -> @scope/pkg 2.0.0 sha512-bytes\n```')
-})
-test('only non-revoked full published accepting reviews have an audit export, including file and final notes', () => {
-  for (const patch of [{ publishedAt: null }, { revokedAt: 200 }, { coverage: 'partial' }, { status: 'request-changes' }, { status: 'reject' }]) {
-    assert.equal(auditMarkdown({ ...review, ...patch }), null)
-  }
-  assert.equal(auditMarkdown({ ...review, status: 'accept-with-nits', entries: [{ file: 'src/a.js', status: 'accept-with-nits', comment: 'Keep compatibility.' }], comment: 'Ready to update.' }),
-    'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n* In src/a.js: Keep compatibility.\n* Ready to update.')
-})
-test('audit notes split star lists, repeat the file prefix, and omit prefixes for the final note', () => {
-  const output = auditMarkdown({ ...review, entries: [
-    { file: 'crc.js', status: 'accept-with-nits', comment: '* Can we make it faster?\n* Keep the current behavior.' },
-    { file: 'unchecked.js', status: null, comment: 'Hidden legacy note.' },
-    { file: 'empty.js', status: 'accept', comment: '   ' },
-  ], comment: '* Ready to update.\n* Follow up next week.' })
-  assert.equal(output, 'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n'
-    + '* In crc.js: Can we make it faster?\n* In crc.js: Keep the current behavior.\n'
-    + '* Ready to update.\n* Follow up next week.')
-})
-test('audit notes preserve Markdown and multiline lists while escaping file names', () => {
-  const output = auditMarkdown({ ...review, entries: [
-    { file: 'a[1].js', status: 'accept-with-nits', comment: 'Context with a * b.\r\n  * First note\r\ncontinued.\r\n\t* Second `note`.\r\n*   ' },
-  ], comment: '* Function `foo()` needs a fix\n* **Keep** [compatibility](https://example.com).' })
-  assert.equal(output, 'Audited:\n```\n@scope/pkg 2.0.0 sha512-bytes\n```\n\nNotes:\n'
-    + '* In a\\[1\\].js: Context with a * b.\n* In a\\[1\\].js: First note\n  continued.\n* In a\\[1\\].js: Second `note`.\n'
-    + '* Function `foo()` needs a fix\n* **Keep** [compatibility](https://example.com).')
-  assert.equal(auditMarkdown({ ...review, entries: [{ file: 'crc.js', status: 'accept-with-nits', comment: '*  \n*  ' }] }), auditMarkdown(review))
 })

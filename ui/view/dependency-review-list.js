@@ -22,8 +22,9 @@ const compactDate = time => {
 
 // The reader's own reviews, drafts and published, as My reviews lists them;
 // or, given a team (`team`, its id), those published to it, the latest
-// first, by whom, as its Dependencies tab lists them, none to copy: copying a
-// review's audit is for one's own.
+// first, by whom, as its Dependencies tab lists them, none to copy: copying
+// the comment the server's host formats of a dependency review
+// (dependency-review-copy.js) is for one's own.
 export class DependencyReviewList extends LitElement {
   static properties = { session: { attribute: false }, team: { attribute: false }, _reviews: { state: true }, _loading: { state: true }, _error: { state: true },
     _next: { state: true }, _discarding: { state: true }, _expanded: { state: true } }
@@ -100,7 +101,7 @@ export class DependencyReviewList extends LitElement {
         <span class="dependency-review-coverage">${published ? html`${review.coverage === 'full' ? 'Full' : html`<span class="dependency-review-partial">Partial</span>`} · ${review.checkedFiles}/${review.totalFiles} files checked`
           : notes ? `${notes} ${notes === 1 ? 'note' : 'notes'}` : 'No notes'}</span></div>
       <div class="dependency-review-row-actions">
-        ${this.team ? nothing : html`<review-audit-copy .review=${review}></review-audit-copy>`}
+        ${this.team ? nothing : html`<dependency-review-copy .text=${review.formatted}></dependency-review-copy>`}
         ${this._canDiscard(review) ? html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${this._loading || Boolean(this._discarding)}
           @click=${() => this._discard(review)}>${appMarkup(DELETE_ICON_SVG)}</button>` : nothing}
         <a class="dependency-review-open" href=${managedRoutePath(route)} @click=${open} aria-label=${`${published ? 'Open' : 'Continue'} review for ${reviewTitle(review)}`}><span aria-hidden="true">→</span></a></div></div>

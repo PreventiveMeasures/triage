@@ -16,8 +16,3 @@ export function npmReviewVerdictLimit(npm: ReviewNpmVersion | null | undefined,
   socket?: { alerts: { type: string }[] } | null, risk?: { findings: { id: string }[] } | null): ReviewVerdict
 export function needsPackageJsonReview(entries: { file: string; status: ReviewVerdict | null }[], files: string[], nonTextFiles?: string[] | null): boolean
 export function parseReviewNotes(comment: string): { text: string; bullet: boolean }[]
-export function auditMarkdown(review: ReviewSummary & {
-  package: string; version: string; integrity: string; basePackage: string | null; baseVersion: string | null
-  publishedAt: number | null; revokedAt: number | null; entries: { file: string; comment: string }[]
-  status: ReviewVerdict | null; comment: string
-}): string | null

@@ -86,8 +86,18 @@ npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; 
 .agent-avatar { border-radius: 3px; }
 .repo-item-section {
   & h4 { margin: 0 0 .3rem; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  /* Its versions' heading, the reader's reviews of them to copy at its end
+     (dependency-review-copy.js), where the server's host formats them. */
+  & h4.repo-item-deps-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 1.6rem; }
   & ul { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden; }
   & li + li { border-top: 1px solid var(--border); }
+}
+.dependency-review-copy-button {
+  display: inline-flex; align-items: center; justify-content: center; width: 1.6rem; height: 1.6rem; padding: 0;
+  border: 0; border-radius: var(--ui-radius, 4px); background: transparent; color: var(--muted);
+  &:hover { background: var(--surface-active); color: var(--text); }
+  &.copied { color: var(--green); }
+  & svg { width: .9rem; height: .9rem; }
 }
 .repo-item-row {
   display: flex; align-items: center; gap: .5rem; width: 100%; padding: .35rem .6rem;

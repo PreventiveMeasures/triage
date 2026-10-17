@@ -3,7 +3,9 @@
 // an async method telling whether a dependency, as a lockfile locks it, is
 // reviewed there (`lookup`), and, optionally, one reading the reviews of
 // dependencies an open pull request's comments make (`parseComments`,
-// pull-comment-reviews.ts). Registered, they replace the commit a repository
+// pull-comment-reviews.ts), and one formatting one's own dependency reviews
+// as a comment, for a copy button to give (`formatDependencyReviews`,
+// dependency-review-comments.ts). Registered, they replace the commit a repository
 // is reviewed since (pull-dependency-reviews.ts): a version passes by the
 // reviews its teams publish, and those its pull request's comments make, as
 // many as the repository requires, or by `lookup`'s saying so, and is
@@ -49,7 +51,8 @@ export interface ReviewComment {
   url: string
 }
 // What `parseComments` reads: the pull request, its comments, and the
-// dependencies wanting reviews.
+// dependencies: every one the lockfiles its review holds to add that can be
+// reviewed and `lookup` doesn't pass, and the others still wanting reviews.
 export interface ParseCommentsInput { repository: string; number: number; comments: ReviewComment[]; dependencies: ReviewedDependency[] }
 // A review its comments make, by `user` (a GitHub login, one of their
 // authors'), of each of `dependencies`, with its verdict, as of `time` (when
@@ -60,9 +63,35 @@ export interface CommentReview {
   time?: string | number
   dependencies: { ecosystem?: 'npm'; name: string; version: string; integrity: string; patchHash?: string; status: ReviewVerdict }[]
 }
+// A version a dependency review is of, or compared it with: its package's
+// name, its version and integrity, and its tarball's shasum and its patch's
+// hash where they are known (a lockfile's, pnpm's patched dependencies').
+export interface ReviewedVersion { name: string; version: string; integrity: string; shasum?: string; patchHash?: string }
+// One of one's own published dependency reviews, as `formatDependencyReviews`
+// is given it: the version it is of (`new`) and the one it compared it with
+// (`old`, none where it read its package whole); its verdict (`status`);
+// whether it read every file (`coverage`, `full`, else `partial`); its final
+// comment; each file's verdict and comment (`files`, of those with either);
+// by whom (`reviewer`, their GitHub login), and when it was published.
+export interface DependencyReviewEntry {
+  ecosystem: 'npm'
+  old: ReviewedVersion | null
+  new: ReviewedVersion
+  status: ReviewVerdict
+  coverage: 'full' | 'partial'
+  comment: string
+  files: { path: string; status: ReviewVerdict | null; comment: string }[]
+  reviewer: string
+  publishedAt: number
+}
+// What `formatDependencyReviews` formats: one's own reviews, never another's,
+// and the pull request whose versions they are of, where its copy asks.
+export interface FormatDependencyReviewsInput { reviews: DependencyReviewEntry[]; pullRequest?: { repository: string; number: number } }
 export interface ReviewedDependencies {
   lookup(dependency: ReviewedDependency): Promise<boolean>
   parseComments?(input: ParseCommentsInput): Promise<CommentReview[]>
+  // The comment to copy, none where it is empty, null or undefined.
+  formatDependencyReviews?(input: FormatDependencyReviewsInput): Promise<string | null | undefined>
 }
 
 const ASK_AT_ONCE = 16
@@ -76,12 +105,14 @@ const answers = new WeakMap<ReviewedDependencies['lookup'], Lru<{ at: number; re
 // Registers the host's reviewed dependencies, once, before the server is
 // assembled (init()): a server already assembled keeps what it was given.
 export function registerReviewedDependencies(reviewed: ReviewedDependencies): void {
-  if (typeof reviewed?.lookup !== 'function' || (reviewed.parseComments !== undefined && typeof reviewed.parseComments !== 'function')) {
-    throw new TypeError('registerReviewedDependencies: expected { lookup, parseComments? }, async methods')
+  const optional = (method: unknown) => method === undefined || typeof method === 'function'
+  if (typeof reviewed?.lookup !== 'function' || !optional(reviewed.parseComments) || !optional(reviewed.formatDependencyReviews)) {
+    throw new TypeError('registerReviewedDependencies: expected { lookup, parseComments?, formatDependencyReviews? }, async methods')
   }
   if (assembled) throw new Error('registerReviewedDependencies: call it before init(), as the server takes them as it is assembled')
   if (registered) throw new Error('registerReviewedDependencies: reviewed dependencies are registered already')
-  registered = { lookup: reviewed.lookup.bind(reviewed), ...reviewed.parseComments ? { parseComments: reviewed.parseComments.bind(reviewed) } : {} }
+  registered = { lookup: reviewed.lookup.bind(reviewed), ...reviewed.parseComments ? { parseComments: reviewed.parseComments.bind(reviewed) } : {},
+    ...reviewed.formatDependencyReviews ? { formatDependencyReviews: reviewed.formatDependencyReviews.bind(reviewed) } : {} }
 }
 
 // The reviewed dependencies registered, as a server takes them once it is

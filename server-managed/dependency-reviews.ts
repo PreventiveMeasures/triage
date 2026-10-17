@@ -25,6 +25,8 @@ export interface DependencyReviewStore {
   listDependencyReviews(context: ReviewContext, user: string, allBases?: boolean): Promise<DependencyReview[]>
   getLatestOwnDependencyReview(user: string, target: Pick<ReviewContext, 'ecosystem' | 'package' | 'version' | 'integrity'>): Promise<DependencyReview | null>
   listOwnDependencyReviews(user: string, before: { time: number; id: string } | null): Promise<{ reviews: DependencyReview[]; next: { time: number; id: string } | null }>
+  // `user`'s own reviews of `ids`, none another's.
+  listOwnDependencyReviewsById(user: string, ids: string[]): Promise<DependencyReview[]>
   // The reviews published to team `teamId`, revoked ones too, the latest
   // published first, a page on from `before` (when it was published, and
   // its id), for one who reads them there (reviewsIn); null for another.
@@ -218,6 +220,11 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
   const read = (id: string) => db.prepare(`SELECT ${columns} FROM managed_dependency_review WHERE id = ?`).get(id)
   return {
     listOwnDependencyReviews: (user, before) => listOwn(db, user, before),
+    async listOwnDependencyReviewsById(user, ids) {
+      if (ids.length === 0) return []
+      return expandReviews(db, await db.prepare(`SELECT ${columns} FROM managed_dependency_review WHERE user_id = ? AND id IN (${ids.map(() => '?').join(',')})
+        ORDER BY time, id`).all(user, ...ids), user)
+    },
     listTeamDependencyReviews: (teamId, user, before) => listTeam(db, teamId, user, before),
     readsTeamDependencyReviews: (teamId, user) => readsTeam(db, teamId, user),
     async getLatestOwnDependencyReview(user, target) {

@@ -145,7 +145,7 @@ export function renderReviewEntry(page, review) {
         @click=${() => void page._openReview(review, true)}>Revise</button>` : nothing}
       ${published && own && page._writable && review.revokedAt === null ? html`<button type="button" class="npm-review-button npm-review-danger" ?disabled=${busy(page)}
         @click=${() => page._change({ action: 'revoke', reviewId: review.id, revision: review.revision })}>Revoke</button>` : nothing}
-      <review-audit-copy .review=${review}></review-audit-copy>
+      ${own ? html`<dependency-review-copy .text=${review.formatted}></dependency-review-copy>` : nothing}
       ${!published && own && page._writable ? html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${busy(page)}
         @click=${() => void page._discard(review)}>${appMarkup(DELETE_ICON_SVG)}</button>` : nothing}
     </div>

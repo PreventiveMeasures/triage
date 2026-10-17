@@ -55,7 +55,7 @@ mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, key, r
 const { EMPTY_REVIEW_BASE, NpmReview, REVIEW_DISPLAY_LIMITS, reviewContext } = await import('../ui/view/npm-review.js')
 const { renderReview, renderReviewEditor, renderReviewConfirmation, renderReviewEntry, reviewExtensions } = await import('../ui/view/npm-review-view.js')
 const { DependencyReviewList, dependencyReviewRoute } = await import('../ui/view/dependency-review-list.js')
-const { ReviewAuditCopy } = await import('../ui/view/review-audit-copy.js')
+const { DependencyReviewCopy } = await import('../ui/view/dependency-review-copy.js')
 const { BundleCompareCode } = await import('../ui/view/bundle-compare-code.js')
 const { reviewFileStates, reviewNote, reviewTitle, selectReviewOnOpen } = await import('../ui/view/npm-review-presentation.js')
 
@@ -98,6 +98,9 @@ test('a reader who publishes to no team reads reviews but neither edits nor revi
   const entryText = text(renderReviewEntry(page, published))
   assert.doesNotMatch(entryText, /Revise/u)
   assert.match(entryText, />Revoke</u, 'their own published review revoked all the same')
+  assert.match(text(renderReviewEntry(page, { ...published, formatted: 'Reviewed' })), /<dependency-review-copy \.text=Reviewed>/u, 'one\'s own copied as the server\'s host formats it')
+  assert.doesNotMatch(text(renderReviewEntry(page, { ...published, user: 'someone-else', formatted: 'Reviewed' })), /dependency-review-copy/u, 'another\'s never')
+  assert.doesNotMatch(entryText, /dependency-review-copy \.text=[^>]/u, 'none where it formats none')
   page._file = 'index.js'
   assert.match(text(renderReviewEditor(page, 'index.js')), /Reviewing needs a team that reviews dependencies, where you manage or have Dependencies\./u)
   page.session = { ...page.session, role: 'view' }
@@ -264,13 +267,20 @@ test('My reviews lists each frozen set and its final verdict, with copy restrict
   await page._load(true)
   assert.equal(requests.at(-1)[0].id, 'partial')
   assert.equal(page._reviews.length, 3)
-  const copy = new ReviewAuditCopy()
-  copy.review = partial
-  assert.equal(text(copy.render()), '')
-  copy.review = full
-  assert.match(text(copy.render()), /Copy audit Markdown/u)
-  copy.review = { ...full, revokedAt: 300 }
-  assert.equal(text(copy.render()), '')
+  // Its copy the comment the server's host formats of it alone, none where it formats none.
+  assert.match(text(page._row({ ...full, formatted: 'Reviewed: @scope/lib' })), /<dependency-review-copy \.text=Reviewed: @scope\/lib><\/dependency-review-copy>/u)
+  const copy = new DependencyReviewCopy()
+  for (const none of [undefined, null, '', '  ']) {
+    copy.text = none
+    assert.equal(text(copy.render()), '', String(none))
+  }
+  copy.text = 'Reviewed: @scope/lib'
+  assert.match(text(copy.render()), /aria-label=Copy dependency review/u)
+  const written = []
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: value => { written.push(value); return Promise.resolve() } } } })
+  await copy._copy()
+  assert.deepEqual([written, copy._copied], [['Reviewed: @scope/lib'], true])
+  copy.disconnectedCallback()
 })
 
 test('a team\'s reviews list those published to it, by whom, none to copy nor discard, a page on from the last', async () => {
@@ -284,7 +294,7 @@ test('a team\'s reviews list those published to it, by whom, none to copy nor di
   assert.deepEqual(requests.at(-1).slice(0, 3), ['team', 'team-1', null])
   const row = text(page._row(full))
   assert.match(row, /class="dependency-review-author">grace</u)
-  assert.doesNotMatch(row, /review-audit-copy|dependency-review-discard/u, 'copying an audit is for one\'s own')
+  assert.doesNotMatch(text(page._row({ ...full, formatted: 'Reviewed' })), /dependency-review-copy|dependency-review-discard/u, 'copying a dependency review is for one\'s own')
   answer = { reviews: [{ ...full, id: 'older', publishedAt: 100 }], next: null }
   await page._load(true)
   assert.deepEqual(requests.at(-1).slice(0, 3), ['team', 'team-1', { time: 200, id: 'full' }])

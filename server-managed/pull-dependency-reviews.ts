@@ -103,7 +103,9 @@ const ACCEPTING = new Set(['accept', 'accept-with-nits'])
 // telling it, any rejecting it holding it unreviewed (`rejected`); those
 // accepting it passing it (`passing`), each once, by a full, accepting
 // review of theirs, whole or compared with one of `bases` of its package
-// (any, for `any`).
+// (any, for `any`); and how many review it in its pull request's comments
+// alone (`commented`), which count for it alone: whose reviews passing it,
+// else whose latest, are its comments'.
 function stancesOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'any') {
   const hashes = hashesOf(pkg)
   const by = new Map<string, PublishedReview[]>()
@@ -113,13 +115,17 @@ function stancesOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'an
   }
   const qualifies = (review: PublishedReview) => review.full && ACCEPTING.has(review.status)
     && (review.basePackage === null || (review.basePackage === pkg.name && (bases === 'any' || bases.includes(review.baseVersion ?? ''))))
-  let passing = 0, rejected = false
+  let commented = 0, passing = 0, rejected = false
   for (const theirs of by.values()) {
     const latest = theirs.reduce((one, other) => other.time > one.time ? other : one)
+    // In its comments alone where those telling where they stand are: those
+    // passing it, where they pass it, else their latest.
+    const telling = ACCEPTING.has(latest.status) && theirs.some(qualifies) ? theirs.filter(qualifies) : [latest]
+    if (telling.every(review => review.comment)) commented++
     if (latest.status === 'reject') rejected = true
     else if (ACCEPTING.has(latest.status) && theirs.some(qualifies)) passing++
   }
-  return { passing, rejected }
+  return { passing, rejected, commented }
 }
 
 // A version as the client is told it: what its reviews are held to left
@@ -140,7 +146,7 @@ function askedOf(pkg: LockedPackage): [string, ReviewedDependency] {
 
 // A version's review, and whether it wants one (`wants`), neither passing
 // nor needing none, as only one that can be reviewed may.
-type Review = { unsupported: Unsupported } | { baseline: true } | { reviewed: true } | { reviews: number; rejected?: true } | Record<string, never>
+type Review = { unsupported: Unsupported } | { baseline: true } | { reviewed: true } | { reviews: number; rejected?: true; commented?: number } | Record<string, never>
 interface Judged { review: Review; wants: boolean }
 type Judge = (pkg: LockedPackage, bases: string[] | 'any') => Judged
 interface Context { state: RepoReviewState; reviews: ReviewsOf; baseline: Set<string> | null }
@@ -149,9 +155,10 @@ function judge(pkg: LockedPackage, bases: string[] | 'any', { state, reviews, ba
   if (as === 'skip') return { review: {}, wants: false }
   if (as !== 'version') return { review: { unsupported: as }, wants: false }
   if (baselineKeys(pkg).some(key => baseline?.has(key))) return { review: { baseline: true }, wants: false }
-  const { passing, rejected } = stancesOf(pkg, reviews, bases)
-  if (rejected) return { review: { reviews: passing, rejected: true }, wants: true }
-  return { review: { reviews: passing }, wants: passing < state.required }
+  const { passing, rejected, commented } = stancesOf(pkg, reviews, bases)
+  const told = { reviews: passing, ...commented > 0 ? { commented } : {} }
+  if (rejected) return { review: { ...told, rejected: true }, wants: true }
+  return { review: told, wants: passing < state.required }
 }
 
 // A directory as the client is told it: what it adds, as many as MAX_ADDED,
@@ -255,12 +262,25 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   }
   const asked = wanting()
   await ask(asked)
-  // Those still wanting one, of the reviews its comments make, which count
-  // as its teams' do; those their rejects hold asked of `lookup` too.
-  const still = [...asked].flatMap(([key, dependency]) => passed.has(key) ? [] : [dependency])
-  const comments = still.length > 0 && commentReviews ? await commentReviews(still) : { reviews: [], failed: false }
+  // Of those still wanting one, and every other one the lockfiles it holds
+  // to add that its teams' reviews pass, telling other pull requests those
+  // it reviews (`commented`), but those `lookup` passes, reviewed, the
+  // reviews its comments make, an open one's alone (pull-comment-reviews.ts),
+  // which count as its teams' do; those their rejects hold asked of `lookup`
+  // too.
+  const parsing = new Map([...asked].filter(([key]) => !passed.has(key)))
+  if (commentReviews) {
+    const others = new Map<string, ReviewedDependency>()
+    for (const pkg of held.flatMap(dir => 'added' in dir ? dir.added : [])) {
+      const [key, dependency] = askedOf(pkg)
+      if (!asked.has(key) && 'reviews' in judge(pkg, pkg.was ?? [], context).review) others.set(key, dependency)
+    }
+    const vouched = others.size > 0 && reviewed ? (await askReviewed(reviewed.lookup, others)).passed : new Set<string>()
+    for (const [key, dependency] of others) if (!vouched.has(key)) parsing.set(key, dependency)
+  }
+  const comments = parsing.size > 0 && commentReviews ? await commentReviews([...parsing.values()]) : { reviews: [], failed: false }
   if (comments.reviews.length > 0) {
-    context = { ...context, reviews: reviewsByVersion([...state.reviews, ...comments.reviews]) }
+    context = { ...context, reviews: reviewsByVersion([...state.reviews, ...comments.reviews.map(review => ({ ...review, comment: true as const }))]) }
     await ask(new Map([...wanting()].filter(([key]) => !asked.has(key))))
   }
   const dirs = held.map(dir => reviewedDirectory(dir, (pkg, bases) => {

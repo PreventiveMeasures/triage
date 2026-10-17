@@ -366,6 +366,14 @@ a.btn {
   color: var(--muted);
   font-size: .8rem;
 }
+/* A repository's settings and stored data scroll in a pane of their own
+   under its title, as a list's rows do (common.css .manage-list), none of
+   them under the page's header: its first section flush with the pane's
+   top, its last with room under it. */
+.repository-detail {
+  padding-bottom: 1.5rem;
+  & > :first-child { margin-top: 0; }
+}
 .section {
   margin-top: 1.75rem;
   border: 1px solid var(--border);
