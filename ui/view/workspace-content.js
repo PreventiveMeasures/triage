@@ -120,7 +120,7 @@ export function renderWorkspaceContent(context, kind) {
   const view = `workspace-${kind}`
   if (kind === 'dependencies' && context.scope === 'team') {
     return html`<section class="workspace-content-view">${teamHeaderTemplate(context, view)}
-      ${context.dependencyReview ? html`<team-dependencies .repositories=${context.repositories}></team-dependencies>`
+      ${context.dependencyReview ? html`<team-dependencies .repositories=${context.repositories} .team=${context.id}></team-dependencies>`
         : html`<p class="workspace-content-empty">You review no dependencies in this team.</p>`}</section>`
   }
   const items = context[kind] ?? []

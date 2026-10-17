@@ -2,7 +2,8 @@
 // reviews that pass its pull requests' dependencies (pull-dependency-reviews.ts).
 // Enabled, each package version its open pull requests' lockfiles lock needs
 // as many published reviews as `required`; those its lockfiles locked at
-// `since`, a commit (null for none), none. It is in effect only where a team
+// `since`, a commit (null for none), none; of the lockfiles it holds to
+// (`lockfiles`, lockfile-scope.ts), every one by default. It is in effect only where a team
 // that reviews dependencies has the repository, which is where reviews that
 // count are published, and not revoked: each reviewer's latest of a version
 // tells where they stand on it, a reject holding it unreviewed whatever
@@ -11,15 +12,16 @@
 // checked; a partial review counts for nothing yet) and accepting (Accept,
 // or Accept with nits).
 import type { ManagedSql } from './sql.ts'
+import { type LockfileScope, scopeText, storedScope } from './lockfile-scope.ts'
 import { reviewsIn } from './dependency-reviews.ts'
 import { type ReviewVerdict, summarizeReview } from '../common/dependency-reviews.js'
 
 export const REPOSITORY_DEPENDENCY_REVIEW_COLUMNS = [['dependency_review', 'INTEGER NOT NULL DEFAULT 0'],
-  ['dependency_reviews_required', 'INTEGER NOT NULL DEFAULT 1'], ['dependency_review_since', 'TEXT']] as const
+  ['dependency_reviews_required', 'INTEGER NOT NULL DEFAULT 1'], ['dependency_review_since', 'TEXT'], ['dependency_review_lockfiles', 'TEXT']] as const
 export const MAX_REQUIRED_REVIEWS = 10
 export const SINCE_COMMIT = /^[a-f\d]{40}$/u
 
-export interface RepoDependencyReview { enabled: boolean; required: number; since: string | null }
+export interface RepoDependencyReview { enabled: boolean; required: number; since: string | null; lockfiles: LockfileScope }
 // A review published of the version it is of: its package, version and
 // npm's integrity of it, the patch it is of (none here, the app reviewing no
 // patch yet), the version it was compared with (none for a whole package's),
@@ -39,17 +41,18 @@ export interface RepositoryDependencyReviewStore {
   // The teams whose published reviews count for each repository (COUNTING_TEAM),
   // by name.
   listRepoReviewTeams(): Promise<Map<number, { id: string; name: string }[]>>
-  // Sets a repository's review, its commit too but where `since` is
-  // undefined, which keeps it; the setting then, or null for no repository.
-  setRepoDependencyReview(repoId: number, setting: Omit<RepoDependencyReview, 'since'> & { since?: string | null }): Promise<RepoDependencyReview | null>
+  // Sets a repository's review, its commit and lockfiles too but where
+  // `since` or `lockfiles` is undefined, which keeps it; the setting then, or
+  // null for no repository.
+  setRepoDependencyReview(repoId: number, setting: Omit<RepoDependencyReview, 'since' | 'lockfiles'> & { since?: string | null; lockfiles?: LockfileScope }): Promise<RepoDependencyReview | null>
   repoDependencyReviewState(repoId: number, user: string, packages: string[]): Promise<RepoReviewState | null>
   // Which of `users` publish reviews to a team counting for repository
   // `repoId`, whose reviews its pull requests' comments make count.
   listRepoReviewers(repoId: number, users: string[]): Promise<Set<string>>
 }
 
-type SettingRow = { repoId: number; enabled: number; required: number; since: string | null }
-const setting = (row: SettingRow): RepoDependencyReview => ({ enabled: row.enabled === 1, required: row.required, since: row.since })
+type SettingRow = { repoId: number; enabled: number; required: number; since: string | null; lockfiles: string | null }
+const setting = (row: SettingRow): RepoDependencyReview => ({ enabled: row.enabled === 1, required: row.required, since: row.since, lockfiles: storedScope(row.lockfiles) })
 // Teams whose published reviews count for repository `?`: that review
 // dependencies and have it, not hidden.
 const COUNTING_TEAM = `t.hidden = 0 AND t.dependency_review = 1 AND EXISTS (
@@ -89,7 +92,8 @@ async function publishedReviews(db: ManagedSql, repoId: number, packages: string
 }
 
 export function repositoryDependencyReviewMethods(db: ManagedSql): RepositoryDependencyReviewStore {
-  const columns = `repo_id AS repoId, dependency_review AS enabled, dependency_reviews_required AS required, dependency_review_since AS since`
+  const columns = `repo_id AS repoId, dependency_review AS enabled, dependency_reviews_required AS required, dependency_review_since AS since,
+    dependency_review_lockfiles AS lockfiles`
   return {
     async listRepoDependencyReviews() {
       const rows = await db.prepare(`SELECT ${columns} FROM managed_selected_repo`).all() as SettingRow[]
@@ -102,12 +106,12 @@ export function repositoryDependencyReviewMethods(db: ManagedSql): RepositoryDep
       for (const { repoId, id, name } of rows) teams.set(repoId, [...teams.get(repoId) ?? [], { id, name }])
       return teams
     },
-    async setRepoDependencyReview(repoId, { enabled, required, since }) {
-      const { changes } = since === undefined
-        ? await db.prepare(`UPDATE managed_selected_repo SET dependency_review = ?, dependency_reviews_required = ? WHERE repo_id = ?`)
-          .run(enabled ? 1 : 0, required, repoId)
-        : await db.prepare(`UPDATE managed_selected_repo SET dependency_review = ?, dependency_reviews_required = ?,
-          dependency_review_since = ? WHERE repo_id = ?`).run(enabled ? 1 : 0, required, since, repoId)
+    async setRepoDependencyReview(repoId, { enabled, required, since, lockfiles }) {
+      const set: [string, unknown][] = [['dependency_review', enabled ? 1 : 0], ['dependency_reviews_required', required],
+        ...since === undefined ? [] : [['dependency_review_since', since] as [string, unknown]],
+        ...lockfiles === undefined ? [] : [['dependency_review_lockfiles', scopeText(lockfiles)] as [string, unknown]]]
+      const { changes } = await db.prepare(`UPDATE managed_selected_repo SET ${set.map(([column]) => `${column} = ?`).join(', ')} WHERE repo_id = ?`)
+        .run(...set.map(([, value]) => value), repoId)
       if (Number(changes) === 0) return null
       return setting(await db.prepare(`SELECT ${columns} FROM managed_selected_repo WHERE repo_id = ?`).get(repoId) as SettingRow)
     },
@@ -123,7 +127,7 @@ export function repositoryDependencyReviewMethods(db: ManagedSql): RepositoryDep
       if (!await db.prepare(`SELECT 1 FROM managed_team t WHERE ${COUNTING_TEAM}`).get(repoId)) return null
       const canReview = await db.prepare(`SELECT 1 FROM managed_team t JOIN managed_user u ON u.id = ?
         WHERE ${reviewsIn(true)} AND ${COUNTING_TEAM}`).get(user, repoId) != null
-      return { required: row.required, since: row.since, canReview, reviews: await publishedReviews(db, repoId, [...new Set(packages)]) }
+      return { required: row.required, since: row.since, lockfiles: storedScope(row.lockfiles), canReview, reviews: await publishedReviews(db, repoId, [...new Set(packages)]) }
     },
   }
 }

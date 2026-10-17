@@ -2030,14 +2030,16 @@ github-status-403`, the popup saying so).
 
 An admin turns a connected repository's dependency review on in its page
 under Repositories (**Dependency review**, its switch in the section's
-heading), with how many reviews each version needs (one to ten) and,
-optionally, the commit it is reviewed since (its full id), the page saying
+heading), with how many reviews each version needs (one to ten),
+optionally, the commit it is reviewed since (its full id), and the
+lockfiles it holds to, the page saying
 so where no team that would count its reviews has the repository, and the
 pull requests' reviews the page holds asked again once it is saved: `POST /api/admin/repositories/dependency-review` with
-`{ repoId, enabled, required, since }` (`400 bad-request` for another,
+`{ repoId, enabled, required, since, lockfiles? }` (`400 bad-request` for another,
 `404 no-repository`), kept on `managed_selected_repo`
 (`dependency_review`, `dependency_reviews_required`,
-`dependency_review_since`) and listed with each connected repository
+`dependency_review_since`, `dependency_review_lockfiles`, JSON; Postgres
+schema 30) and listed with each connected repository
 (`GET /api/admin/repositories`, `dependencyReview`, with the teams whose
 reviews count for it, `reviewTeams`). It is in effect only
 where a visible team that reviews dependencies has the repository; the
@@ -2111,18 +2113,38 @@ refuses, or past the hundred, a directory of its own failing the review
 (`lockfile-unreadable`, or `lockfile-unsupported`, Bun's); `{ head, review: null }` where none is in effect
 for the reader, `head` none where the branch has no commit.
 
+The lockfiles a review holds to (`lockfiles`, `lockfile-scope.ts`) are every
+one by default (`{ mode: 'exclude', paths: [] }`), every one but those named
+(`exclude`), or those named alone (`include`): at most a hundred, each by its
+path in the repository, or a directory's ending in `/`, every lockfile under
+it, none outside the repository; `lockfiles` left out of the request keeps
+those stored. The page lists the default branch's to check (`GET
+/api/admin/repositories/lockfiles?repoId=…`, `{ head, lockfiles: [{ path,
+format }] }`, of any reader of the whole repository), those named before
+though no longer there, and takes another path or directory typed in. A
+pull request's directory of lockfiles none of whose it holds to is told
+`excluded`, its versions with no review, neither asked of the host's
+reviewed dependencies nor, where it couldn't be read, failing the review,
+the popup saying it isn't reviewed; one with any it holds to is reviewed
+whole. The default branch's are read of those it holds to alone; the commit
+reviewed since passes the versions any of its lockfiles locked, but tells
+none it holds to no longer unread (`baselineUnread`). The terms tell the
+scope where it isn't every lockfile (`lockfiles`).
+
 #### A team's Dependencies
 
 A team whose reader reviews dependencies in it (`dependencyReview`, its
 **Enable dependency review** switch on, and they a member who manages it,
 or triages and sees its dependencies, or an admin)
 shows a **Dependencies** tab after Repositories (`/team/<slug>/dependencies`,
-`team-dependencies.js`). Of each of its repositories whose review is in
+`team-dependencies.js`), its sub-tabs **Pull requests**, **Versions**,
+**Default branch** (where any wants reviews) and **Reviews**, each counting
+what it lists, the one last picked opened again. Of each of its repositories whose review is in
 effect for them (three read at once, one they may read only some of left
 out), it reads the open pull requests (three pages at most, those updated
 latest, saying so where there are more) and
 the dependencies, with their review, of those changing a lockfile, as their
-tiles do, and lists the pull requests whose versions want reviews, or whose
+tiles do, and, under Pull requests, lists the pull requests whose versions want reviews, or whose
 review fails, those adding fewest first, then those held only by other
 versions their lockfiles lock (the default branch's mostly, counted, not
 listed), each a card opening its popup: how
@@ -2131,10 +2153,21 @@ many versions it wants reviewed, and its versions with their review (`0/2`,
 counted, those past the versions its answer lists too. A version is told under the first pull request adding it alone, of
 whichever repository, as one review passes it everywhere: another adding it
 too says so (`+1`), and a later one counts it as one a pull request above
-adds. Apart from them, folded, are every version wanting reviews, each once,
-with the pull requests adding it, and, of each repository, what its default
-branch locks that wants reviews or fails it, its lockfiles left unread named. What it reads is held for the
-session two minutes, and read again once a repository's review is set.
+adds. Versions lists every version they add wanting reviews, each once,
+with the pull requests adding it; Default branch, of each repository, what
+its default branch locks that wants reviews or fails it, its lockfiles left
+unread named; and Reviews the reviews published to the team, revoked ones
+too, the latest published first, by whom, fifty a page (`GET
+/api/npm/reviews/team?teamId=…&beforeTime=&beforeId=`, `{ reviews, next }`,
+of one who reads reviews in it, else `404 no-team`, each held to the
+reader's npm access as My reviews' are), with no **Copy audit** button,
+which is for one's own. What it reads is held for the session two minutes,
+and read again once a repository's review is set. Each version wanting
+reviews, there and in a pull request's popup, tells the lines it changes
+against the version it was, or its whole package's, `+x −y`, and `(+z −w
+without types)` where declaration files changed in types alone (`GET
+/api/npm/delta`, `npm-delta.js`), read once its row nears the viewport, two
+at a time, held for the session.
 
 #### Reviewed dependencies of the host
 
@@ -3093,6 +3126,19 @@ pair of them, a line each, as a bundle's; `GET
 /api/npm/type-only?name=&version=&otherVersion=` tells which of their
 TypeScript files changed in types alone, as a bundle's (`GET
 /api/bundles/:id/type-only`), nothing of it kept; `GET
+/api/npm/delta?name=&version=&otherVersion=` counts the lines the version
+adds and removes against `otherVersion`, or its whole package's against
+`(empty)` (`npm-delta.ts`, `{ name, version, otherVersion, additions,
+deletions, typeless }`): of their text files, as git's --numstat counts
+them, renames found as git finds them; and, where some declaration files
+changed in types alone as compareTrees proves them (`typeOnly`, an added
+one's left an empty runtime or a bare `export {}`), those of the rest
+(`typeless`, else null). It is worked out in a worker, two at a time per
+process, sixty-four waiting past them (`429 delta-busy`), within a minute
+(`504 delta-timeout`), neither side's text past 64 MiB together (`413
+package-too-large`), and kept by both sides' integrities, in the instance
+and in the database (`npm/deltas`, a month), what a version holds never
+changing; `GET
 /api/npm/comparison?name=&version=&otherVersion=&otherName=` compares the
 version shown with `otherVersion`, of `otherName` where Review compares a
 dependency replaced by another package, or with none as `(empty)`, as a
@@ -3323,7 +3369,9 @@ and required finalStatus/optional finalComment on first publication),
 `revoke`, or `continue` (reviewId, revision). Every mutation requires a session,
 CSRF token and triage role; all but `publish`, which is held to its teams, and
 `revoke`, one who reviews in some team (`403 review-access-required`). `GET /api/npm/reviews/mine` lists only the current
-user's sets in pages of 50, with an optional beforeTime/beforeId cursor.
+user's sets in pages of 50, with an optional beforeTime/beforeId cursor;
+`GET /api/npm/reviews/team?teamId=` those published to a team, the latest
+published first, by when it was, for one who reads reviews there.
 Revision conflicts return 409. Version and integrity
 mismatches also return 409; unknown file paths are refused, including paths not
 present on either side. Notes are limited to 20,000 characters.

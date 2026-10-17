@@ -443,6 +443,47 @@ a.btn {
 .dependency-review-settings input[type='number'] { width: 5rem; }
 .dependency-review-since { flex: 1; min-width: min(100%, 22rem); }
 .dependency-review-since input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* The lockfiles it holds to: which, then, but for every one, the default
+   branch's to check, a path to add, and what they mean, a row of their own. */
+.dependency-review-lockfiles {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: .5rem 1rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  & legend { margin-bottom: .3rem; padding: 0; color: var(--muted); font-size: .76rem; }
+  & select {
+    padding: .35rem .5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--ui-radius, 6px);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: .83rem;
+  }
+}
+.dependency-review-lockfile-list {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  gap: .25rem;
+  max-height: 16rem;
+  margin: 0;
+  padding: .5rem .75rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 6px);
+  list-style: none;
+  & label { flex-direction: row; align-items: baseline; gap: .5rem; color: var(--text); }
+  & code { font-size: .78rem; overflow-wrap: anywhere; }
+  & span { color: var(--muted); font-size: .72rem; }
+}
+.dependency-review-lockfile-add { flex: 1; min-width: min(100%, 18rem); }
+.dependency-review-lockfile-add input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dependency-review-hint {
   flex-basis: 100%;
   margin: 0;

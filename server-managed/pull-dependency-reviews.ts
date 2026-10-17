@@ -24,9 +24,10 @@
 // changes: it is read once, every lockfile there of those read here
 // (pull-dependencies.ts), and kept by the commit (`baselines` in this
 // instance, `kept` beyond it), never stored as reviews.
-import { lockedAt } from './commit-lockfiles.ts'
+import { lockedAt, lockedIn } from './commit-lockfiles.ts'
 import { GithubApiError } from './github-app.ts'
 import type { LockedPackage } from './locked-packages.ts'
+import { EVERY_LOCKFILE, heldTo, isEvery, reviewedIn } from './lockfile-scope.ts'
 import { type Lru, lru } from './lru.ts'
 import { type DirectoryDependencies, MAX_ADDED, type PullDependencies, lockedAs, lockedWith } from './pull-dependencies.ts'
 import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
@@ -73,7 +74,8 @@ export async function reviewBaseline(fullName: string, token: string, repoId: nu
   if (known) return known
   const stored = await kept.read(key)
   if (stored) { const baseline = { versions: new Set(stored.versions), unread: stored.unread }; baselines.set(key, baseline); return baseline }
-  const { packages, unread } = await lockedAt(fullName, token, since)
+  const read = await lockedAt(fullName, token, since)
+  const { packages } = lockedIn(read), { unread } = read
   const versions = new Set<string>()
   for (const pkg of packages) if (reviewedAs(pkg) === 'version') for (const held of baselineKeys(pkg)) versions.add(held)
   const baseline = { versions, unread }
@@ -213,11 +215,15 @@ export type CommentReviews = (wanting: ReviewedDependency[]) => Promise<{ review
 // the lockfiles there left unread (`baselineUnread`), whose versions do. It
 // fails where a version can't be reviewed, a directory's lockfiles couldn't
 // be read or lock more than are checked, or the pull request changes more
-// lockfiles than are read (`cut`).
+// lockfiles than are read (`cut`). A directory none of whose lockfiles the
+// review holds to (`lockfiles`, lockfile-scope.ts, told in its terms where
+// not every one) is told as unasked (`excluded`), failing it in nothing.
 export async function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null,
   { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null }: { baseline?: Set<string> | null; baselineUnread?: string[]
     baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null } = {}) {
   if (!state) return { ...told, lockfiles: told.lockfiles.map(dir => reviewedDirectory(dir, null)) }
+  const scope = state.lockfiles ?? EVERY_LOCKFILE
+  const held = told.lockfiles.filter(dir => reviewedIn(scope, dir.paths))
   let context = { state, reviews: reviewsByVersion(state.reviews), baseline: reviewed ? null : baseline }
   // What wants a review, as `lookup` is asked of, each once.
   const wanting = () => {
@@ -227,7 +233,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
       if (judged.wants) asked.set(...askedOf(pkg))
       return judged
     }
-    for (const dir of told.lockfiles) reviewedDirectory(dir, asking)
+    for (const dir of held) reviewedDirectory(dir, asking)
     return asked
   }
   const passed = new Set<string>()
@@ -247,10 +253,11 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
     context = { ...context, reviews: reviewsByVersion([...state.reviews, ...comments.reviews]) }
     await ask(new Map([...wanting()].filter(([key]) => !asked.has(key))))
   }
-  const dirs = told.lockfiles.map(dir => reviewedDirectory(dir, (pkg, bases) => {
+  const dirs = told.lockfiles.map(dir => held.includes(dir) ? reviewedDirectory(dir, (pkg, bases) => {
     const judged = judge(pkg, bases, context)
     return judged.wants && passed.has(askedOf(pkg)[0]) ? { review: { reviewed: true }, wants: false } : judged
-  }))
+  }) : { ...reviewedDirectory(dir, null), excluded: true as const })
+  const unread = baselineUnread.filter(path => heldTo(scope, path))
   const listed = dirs.flatMap(dir => 'unreviewed' in dir ? [dir] : [])
   return { ...told, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required,
     since: reviewed ? null : state.since, canReview: state.canReview, ...reviewed ? { reviewedDependencies: true } : {},
@@ -258,7 +265,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
     unsupported: distinct(listed.map(dir => dir.unsupported), sourceKey),
     ...unasked > 0 ? { unasked } : {}, ...baselineError && !reviewed ? { baselineError } : {},
     ...comments.reviews.length > 0 ? { commentReviews: new Set(comments.reviews.map(review => review.reviewer)).size } : {}, ...comments.failed ? { commentsFailed: true } : {},
-    ...baselineUnread.length > 0 && !reviewed ? { baselineUnread: baselineUnread.slice(0, MAX_UNREVIEWED) } : {} } }
+    ...unread.length > 0 && !reviewed ? { baselineUnread: unread.slice(0, MAX_UNREVIEWED) } : {}, ...isEvery(scope) ? {} : { lockfiles: scope } } }
 }
 
 // The packages a pull request's lockfiles lock that its reviews here may

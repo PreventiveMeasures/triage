@@ -112,6 +112,9 @@ export async function fetchPullDependencies(repoId, number, options) {
 export async function fetchBranchDependencies(repoId, options) {
   return (await loadManagedBundle()).fetchBranchDependencies(repoId, options)
 }
+export async function fetchNpmDelta(name, version, otherVersion, options) {
+  return (await loadManagedBundle()).fetchNpmDelta(name, version, otherVersion, options)
+}
 
 export function fetchRepositoryPulse(repoId, weeks, options) {
   return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryPulse(repoId, weeks, options))
@@ -316,6 +319,9 @@ export async function dependencyReviews(...args) {
 }
 export async function myDependencyReviews(...args) {
   return (await loadManagedBundle()).myDependencyReviews(...args)
+}
+export async function teamDependencyReviews(...args) {
+  return (await loadManagedBundle()).teamDependencyReviews(...args)
 }
 export async function discardDependencyReview(...args) {
   return (await loadManagedBundle()).discardDependencyReview(...args)

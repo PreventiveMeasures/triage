@@ -38,7 +38,7 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
   if (!exists) return false
   const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 29 }, (_, i) => i + 1).every(version => versions.has(version))
+  return Array.from({ length: 30 }, (_, i) => i + 1).every(version => versions.has(version))
 }
 
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
@@ -159,6 +159,16 @@ async function migrateRepositoryDependencyReviews(db: PgConnection): Promise<voi
   await db.query('INSERT INTO managed_schema_version VALUES (29)')
 }
 
+// The lockfiles a repository's dependency review holds to, its columns
+// added since 29 added there too; and a team's published reviews, listed by
+// it, indexed so.
+async function migrateRepositoryDependencyReviewLockfiles(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 30')).rows.length > 0) return
+  await db.query(`ALTER TABLE managed_selected_repo ${REPOSITORY_DEPENDENCY_REVIEW_COLUMNS.map(([column, type]) => `ADD COLUMN IF NOT EXISTS ${column} ${type}`).join(', ')}`)
+  await db.query('CREATE INDEX IF NOT EXISTS managed_dependency_review_team_idx ON managed_dependency_review_team(team_id, review_id)')
+  await db.query('INSERT INTO managed_schema_version VALUES (30)')
+}
+
 async function initialize(db: PgConnection): Promise<void> {
   if (await currentSchema(db)) return
   await db.query('BEGIN')
@@ -232,7 +242,8 @@ async function initialize(db: PgConnection): Promise<void> {
     if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
-    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes, migrateDependencyReviews, migrateGithubLinks, migrateRepositoryDependencyReviews]) await migrate(db)
+    for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes, migrateDependencyReviews, migrateGithubLinks, migrateRepositoryDependencyReviews,
+      migrateRepositoryDependencyReviewLockfiles]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

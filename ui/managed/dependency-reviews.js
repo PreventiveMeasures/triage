@@ -14,6 +14,7 @@ const ERRORS = {
   'review-malware': 'Malware detected. Only Reject is available.',
   'review-critical-vulnerability': 'Critical vulnerabilities detected. Choose Request changes or Reject.',
   forbidden: 'Reviewing requires triage access.',
+  'no-team': 'This team’s reviews aren’t available to you.',
 }
 
 async function requestReview(path, signal, operation, change, csrfToken) {
@@ -30,6 +31,12 @@ async function requestReview(path, signal, operation, change, csrfToken) {
 export function myDependencyReviews(cursor, signal) {
   const query = cursor ? `?${new URLSearchParams({ beforeTime: cursor.time, beforeId: cursor.id })}` : ''
   return requestReview(`/mine${query}`, signal, 'load your reviews')
+}
+// The reviews published to team `teamId`, the latest first, a page on from
+// `cursor`.
+export function teamDependencyReviews(teamId, cursor, signal) {
+  const query = new URLSearchParams({ teamId, ...cursor ? { beforeTime: cursor.time, beforeId: cursor.id } : {} })
+  return requestReview(`/team?${query}`, signal, 'load the team’s reviews')
 }
 export function discardDependencyReview(reviewId, revision, csrfToken, signal) {
   return requestReview('/discard', signal, 'discard review', { reviewId, revision }, csrfToken)

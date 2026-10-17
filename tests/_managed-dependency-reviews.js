@@ -141,6 +141,13 @@ export async function checkDependencyReviews(db) {
   await db.setUserRole(users.alice.userId, 'triage')
   await db.discardDependencyReview(users.alice.sid, continued.id, continued.revision)
   assert.deepEqual((await db.listOwnDependencyReviews(users.alice.userId, null)).reviews.map(item => item.id), [review.id])
+  // Those published to a team, revoked ones too, of one who reads them there.
+  const team = await db.listTeamDependencyReviews('one', users.alice.userId, null)
+  assert.deepEqual([team.reviews.map(item => [item.id, item.userLogin, item.revokedAt !== null]), team.next], [[[review.id, 'alice', true]], null])
+  assert.deepEqual((await db.listTeamDependencyReviews('one', users.admin.userId, null)).reviews.map(item => item.id), [review.id], 'an admin reads every team’s')
+  for (const who of ['bob', 'carol', 'viewer', 'outsider']) assert.equal(await db.listTeamDependencyReviews('one', users[who].userId, null), null, `${who} reads none there`)
+  assert.deepEqual((await db.listTeamDependencyReviews('disabled', users.alice.userId, null)).reviews, [], 'none published there')
+  assert.equal(await db.listTeamDependencyReviews('hidden', users.alice.userId, null), null, 'a hidden team’s none')
   assert.equal((await db.getLatestOwnDependencyReview(users.alice.userId, reviewContext)).id, review.id)
   assert.equal(await db.getLatestOwnDependencyReview(users.bob.userId, reviewContext), null)
   await assert.rejects(change(save(continued, 'index.js', 'accept')), /review-conflict/u, 'an autosave cannot resurrect a discarded review')

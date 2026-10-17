@@ -53,9 +53,14 @@ export async function checkRepositoryDependencyReviews(db) {
   const users = await people(db)
   assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, ['pkg']), null, 'not enabled')
   assert.equal(await db.setRepoDependencyReview(999, { enabled: true, required: 2, since: null }), null)
-  assert.deepEqual(await db.setRepoDependencyReview(1, { enabled: false, required: 3, since }), { enabled: false, required: 3, since })
-  assert.deepEqual(await db.setRepoDependencyReview(1, { enabled: true, required: 2 }), { enabled: true, required: 2, since }, 'its commit kept, none given')
-  assert.deepEqual((await db.listRepoDependencyReviews()).get(1), { enabled: true, required: 2, since })
+  assert.deepEqual(await db.setRepoDependencyReview(1, { enabled: false, required: 3, since }), { enabled: false, required: 3, since, lockfiles: { mode: 'exclude', paths: [] } })
+  const lockfiles = { mode: 'exclude', paths: ['examples/'] }
+  assert.deepEqual(await db.setRepoDependencyReview(1, { enabled: true, required: 2, lockfiles }), { enabled: true, required: 2, since, lockfiles }, 'its commit kept, none given')
+  assert.deepEqual((await db.listRepoDependencyReviews()).get(1), { enabled: true, required: 2, since, lockfiles })
+  assert.deepEqual(await db.setRepoDependencyReview(1, { enabled: true, required: 2, since, lockfiles: { mode: 'exclude', paths: [] } }), { enabled: true, required: 2, since, lockfiles: { mode: 'exclude', paths: [] } },
+    'every lockfile, stored as none named')
+  assert.deepEqual(await db.setRepoDependencyReview(1, { enabled: true, required: 2 }), { enabled: true, required: 2, since, lockfiles: { mode: 'exclude', paths: [] } }, 'its lockfiles kept, none given')
+  await db.setRepoDependencyReview(1, { enabled: true, required: 2, lockfiles })
 
   await publish(db, users.alice, context('pkg', '1.0.0'), ['one'])
   await publish(db, users.bob, context('pkg', '1.0.0'), ['one'], { status: 'accept-with-nits' })
@@ -70,7 +75,7 @@ export async function checkRepositoryDependencyReviews(db) {
 
   const state = await db.repoDependencyReviewState(1, users.alice.userId, ['pkg', 'pkg'])
   const told = review => [review.reviewer === users.alice.userId ? 'alice' : review.reviewer === users.bob.userId ? 'bob' : review.reviewer, review.baseVersion, review.status, review.full]
-  assert.deepEqual([state.required, state.since, state.canReview], [2, since, true])
+  assert.deepEqual([state.required, state.since, state.canReview, state.lockfiles], [2, since, true, lockfiles])
   assert.deepEqual(state.reviews.map(told).toSorted(), [['alice', null, 'accept', true], ['alice', '0.9.0', 'accept', false], ['bob', null, 'accept-with-nits', true],
     ['bob', '0.9.0', 'reject', true]], 'every published one, partial and rejecting too, but neither one to a team without the repository, a revoked one, a draft, nor another package\'s')
   assert.ok(state.reviews.every(review => review.integrity === sri('pkg@1.0.0') && Number.isSafeInteger(review.time)), 'each when it was published')

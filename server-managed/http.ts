@@ -54,6 +54,8 @@
 //        review, where its repository reviews dependencies | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/branch-dependencies?repoId= → the versions the default branch's lockfiles lock that want review, where
 //        its review is in effect for the reader | 400/401/403/404/409/429/502
+//   GET /api/admin/repositories/lockfiles?repoId= → the lockfiles of the default branch its dependency review reads, by their
+//        paths, for its settings to name | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week and a day over
 //        the last year, its contributors and when in the period they commit, counted from its commits as Commits keeps them (how many are
 //        read while they are), and the pull requests
@@ -101,6 +103,8 @@
 //   GET/POST /api/npm/reviews → read private/team reviews; save, publish, revoke or continue a set | 400/401/403/404/409
 //   POST /api/npm/reviews/discard → author discards an unpublished review and its file rows | 400/401/403/409
 //   GET /api/npm/reviews/latest → latest own review for exact target bytes, across all bases | 400/401/403
+//   GET /api/npm/reviews/team?teamId=&beforeTime=&beforeId= → the reviews published to a team, the latest first, for one who
+//        reads them there | 400/401/404
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/429/502
 //   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published and its first was, and whether a team lists its scope | 400/401/404/429/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/429/502
@@ -119,6 +123,8 @@
 //        Brotli-encoded ndjson | 400/401/404/413/429/502/503
 //   GET  /api/npm/type-only?name=&version=&otherVersion= → the files that changed between two versions in types alone,
 //        Brotli-encoded ndjson | 400/401/404/413/429/502/503
+//   GET  /api/npm/delta?name=&version=&otherVersion= → the lines a version adds and removes against another, or `(empty)`, and
+//        those but for declaration files changed in types alone, where any are | 400/401/404/413/422/429/502/503/504
 //   GET  /api/npm/risk?name=&version=&otherVersion= → what calls for a look at a version, as risk tells it, against another where given | 400/401/404/413/429/502
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404
@@ -127,8 +133,9 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmVersionStore, pullDependencyStore, repositoryReadStore,
-  reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmDeltaStore, npmVersionStore, pullDependencyStore,
+  repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { type NpmDelta, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -205,8 +212,9 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, lockfileFormat, pullDependencies } from './pull-dependencies.ts'
-import { lockedAt } from './commit-lockfiles.ts'
+import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
+import { EVERY_LOCKFILE, heldTo, scopeOf } from './lockfile-scope.ts'
 import { type ReviewBaselineStore, baselineFor, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import type { ReviewedDependencies } from './reviewed-dependencies.ts'
 import { commentReviews } from './pull-comment-reviews.ts'
@@ -248,6 +256,7 @@ const REPO_AGENTS_PATH = '/api/admin/repositories/agents'
 const REPO_ITEM_PATH = '/api/admin/repositories/item'
 const REPO_PULL_DEPENDENCIES_PATH = '/api/admin/repositories/pull-dependencies'
 const REPO_BRANCH_DEPENDENCIES_PATH = '/api/admin/repositories/branch-dependencies'
+const REPO_LOCKFILES_PATH = '/api/admin/repositories/lockfiles'
 const REPO_PULSE_PATH = '/api/admin/repositories/pulse'
 const REPO_PULSE_ITEMS_PATH = '/api/admin/repositories/pulse/items'
 const SELECT_REPO_PATH = '/api/admin/repositories/select'
@@ -293,6 +302,7 @@ const NPM_RENAME_DIFF_PATH = '/api/npm/rename-diff'
 const NPM_TYPE_ONLY_PATH = '/api/npm/type-only'
 const NPM_COMPARISON_PATH = '/api/npm/comparison'
 const NPM_RISK_PATH = '/api/npm/risk'
+const NPM_DELTA_PATH = '/api/npm/delta'
 // What risk's errors (risk/npm/registry.js NpmRiskError) are answered as: npm
 // having no such package or version, or a tarball unpacking past risk's
 // bounds; npm failing otherwise a 502.
@@ -305,7 +315,7 @@ function sendRiskError(res: ServerResponse, err: NpmRiskError) {
   sendJson(res, status, { error: err.code })
 }
 const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PATH, NPM_STATS_PATH, NPM_ADVISORIES_PATH, NPM_TAGS_PATH, NPM_SOCKET_PATH, NPM_PROVENANCE_PATH, NPM_PRETTY_PATH,
-  NPM_RENAME_DIFF_PATH, NPM_TYPE_ONLY_PATH, NPM_RISK_PATH, NPM_COMPARISON_PATH])
+  NPM_RENAME_DIFF_PATH, NPM_TYPE_ONLY_PATH, NPM_RISK_PATH, NPM_COMPARISON_PATH, NPM_DELTA_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
 const MAX_TEAM_NAME = 100
@@ -809,7 +819,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
     repositories = allRows.map((r) => ({
       id: r.repoId, fullName: r.fullName, private: r.private, htmlUrl: r.htmlUrl,
       installed: r.installationId != null, selected: r.active, active: r.active,
-      dependencyReview: reviews.get(r.repoId) ?? { enabled: false, required: 1, since: null },
+      dependencyReview: reviews.get(r.repoId) ?? { enabled: false, required: 1, since: null, lockfiles: EVERY_LOCKFILE },
       reviewTeams: reviewTeams.get(r.repoId) ?? [],
     }))
   } else {
@@ -992,14 +1002,17 @@ async function handleRepositoryDependencyReview(req: IncomingMessage, res: Serve
   const enabled = body?.['enabled']
   const required = body?.['required']
   const since = body?.['since'] ?? null
+  // The lockfiles it holds to, kept as they are where none is sent.
+  const lockfiles = body?.['lockfiles'] === undefined ? undefined : scopeOf(body['lockfiles'])
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof enabled !== 'boolean'
     || typeof required !== 'number' || !Number.isSafeInteger(required) || required < 1 || required > MAX_REQUIRED_REVIEWS
-    || (since !== null && (typeof since !== 'string' || !SINCE_COMMIT.test(since)))) {
+    || (since !== null && (typeof since !== 'string' || !SINCE_COMMIT.test(since))) || lockfiles === null) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
   if (since !== null && deps.reviewedDependencies) { sendJson(res, 400, { error: 'since-unsupported' }); return }
   const repo = (await deps.db.listAllRepos()).find(row => row.repoId === repoId)
-  const setting = repo ? await deps.db.setRepoDependencyReview(repoId, { enabled, required, ...deps.reviewedDependencies ? {} : { since: since as string | null } }) : null
+  const setting = repo ? await deps.db.setRepoDependencyReview(repoId, { enabled, required, ...deps.reviewedDependencies ? {} : { since: since as string | null },
+    ...lockfiles ? { lockfiles } : {} }) : null
   if (!repo || !setting) { sendJson(res, 404, { error: 'no-repository' }); return }
   await activity(deps, s.user, 'repository', enabled ? 'enabled dependency review' : 'disabled dependency review', { repo: repo.fullName })
   sendJson(res, 200, { ok: true, dependencyReview: setting })
@@ -2047,24 +2060,41 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
 // repository's default branch lock that wants review, where its review is in
 // effect for the reader (`review`, else none), as a team's Dependencies tab
 // shows it: its head, as its pulse reads it, kept a while; every lockfile
-// there (commit-lockfiles.ts) as one directory, its versions as a pull
-// request's others are (pull-dependency-reviews.ts), and those unread.
+// there its review holds to (lockfile-scope.ts, commit-lockfiles.ts) as one
+// directory, its versions as a pull request's others are
+// (pull-dependency-reviews.ts), each left unread a directory of its own
+// failing the review, as a pull request's are.
 async function handleRepositoryBranchDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
     const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
     if (!head) return { value: { head: null, review: null }, kept: false }
-    const { packages, paths, unread } = await lockedAt(fullName, token, head)
-    // Each lockfile left unread a directory of its own failing the review,
-    // as a pull request's are.
-    const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
-      ...unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
-    const state = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
+    const read = await lockedAt(fullName, token, head)
+    const branch = (held: (path: string) => boolean) => {
+      const { packages, paths } = lockedIn(read, held)
+      return { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
+        ...read.unread.filter(held).map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
+    }
+    const state = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(branch(() => true)))
     if (!state) return { value: { head, review: null }, kept: false }
+    const told = branch(path => heldTo(state.lockfiles, path))
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null } : await baselineFor(fullName, token, repoId, state, baselineKept(deps))
     return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: false }
+  })
+}
+
+// GET /api/admin/repositories/lockfiles: the lockfiles of the repository's
+// default branch its dependency review reads (commit-lockfiles.ts), by their
+// paths, with their formats, at its head, as its pulse reads it, for its
+// settings to name those it holds to (lockfile-scope.ts).
+async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
+  const repoId = Number(query.get('repoId'))
+  if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
+  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
+    const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
+    return { value: { head, lockfiles: head ? (await lockfilesAt(fullName, token, head)).map(({ path, format }) => ({ path, format })) : [] }, kept: false }
   })
 }
 
@@ -3823,7 +3853,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   if (!isNpmPackageName(name) || !isNpmPackageName(otherName) || (versioned && !isNpmPackageSpec(spec)) || ((path === NPM_RENAME_DIFF_PATH || path === NPM_TYPE_ONLY_PATH) && !isNpmPackageSpec(otherSpec))
     || (path === NPM_PRETTY_PATH && otherSpec !== '' && !isNpmPackageSpec(otherSpec))
     || (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))
-    || (path === NPM_COMPARISON_PATH && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))) {
+    || ((path === NPM_COMPARISON_PATH || path === NPM_DELTA_PATH) && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))) {
     sendJson(res, 400, { error: 'bad-package' }); return
   }
   const diffed = path === NPM_RENAME_DIFF_PATH && params.has('path') ? renameDiffRequest(params) : null
@@ -3927,6 +3957,20 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       return
     }
     if (path === NPM_PROVENANCE_PATH) { await reply(doc.private, { name, version: doc.version, provenance: await provenanceOf() }); return }
+    // The lines it changes against `otherVersion`, or `(empty)`, its whole
+    // package's, and those but for declaration files changed in types alone
+    // (npm-delta.ts), as a list of versions wanting reviews tells them.
+    if (path === NPM_DELTA_PATH) {
+      const old = otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
+      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      const side = (version: NpmVersionDocument) => ({ integrity: version.dist.integrity, files: async () => {
+        const load = loadNpmFiles(version)
+        try { return await load.result } finally { load.release() }
+      } })
+      const delta = await npmDelta(old ? side(old) : null, side(doc), npmDeltaStore<NpmDelta>(deps.db, deps.config.debug))
+      await reply(doc.private || old?.private === true, { name, version: doc.version, otherVersion: old?.version ?? null, ...delta })
+      return
+    }
     // Its files paired with those of `otherVersion` (of `otherName`, else the
     // same package), as Compare and Review pair them, with what their
     // Overview reads beside them (comparison.ts): the version shown against
@@ -4287,6 +4331,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryBranchDependencies(res, deps, cookie, url.searchParams); return
     }
+    if (path === REPO_LOCKFILES_PATH) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleRepositoryLockfiles(res, deps, cookie, url.searchParams); return
+    }
     if (path === REPO_PULSE_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryPulse(res, deps, cookie, url.searchParams); return
@@ -4518,6 +4566,23 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
         sendJson(res, 400, { error: 'bad-review-cursor' }); return
       }
       const page = await deps.db.listOwnDependencyReviews(s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
+      const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews)
+      if (reviews) sendJson(res, 200, { ...page, reviews })
+      return
+    }
+    // Those published to a team, of one who reads them there, as its
+    // Dependencies tab lists them, fifty a page.
+    if (path === '/api/npm/reviews/team') {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      const s = await readWorkspaceSession(res, deps, cookie)
+      if (!s) return
+      const id = url.searchParams.get('beforeId'), teamId = url.searchParams.get('teamId'), time = url.searchParams.get('beforeTime')
+      if (!teamId || teamId.length > 100) { sendJson(res, 400, { error: 'bad-team' }); return }
+      if ((time !== null || id !== null) && (time === null || !/^\d+$/u.test(time) || !Number.isSafeInteger(Number(time)) || !id || id.length > 100)) {
+        sendJson(res, 400, { error: 'bad-review-cursor' }); return
+      }
+      const page = await deps.db.listTeamDependencyReviews(teamId, s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
+      if (!page) { sendJson(res, 404, { error: 'no-team' }); return }
       const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews)
       if (reviews) sendJson(res, 200, { ...page, reviews })
       return

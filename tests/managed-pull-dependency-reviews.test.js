@@ -342,21 +342,28 @@ function api(db, users, more = {}) {
   }
 }
 
-test('an admin sets a repository\'s review: whether it is enabled, how many reviews each version needs, and the commit it is reviewed since', async t => {
+test('an admin sets a repository\'s review: whether it is enabled, how many reviews each version needs, the commit it is reviewed since, and the lockfiles it holds to', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const send = api(db, await people(db))
   const path = '/api/admin/repositories/dependency-review'
   const setting = { repoId: 1, enabled: true, required: 3, since }
-  assert.deepEqual((await send(path, { body: setting })).body, { ok: true, dependencyReview: { enabled: true, required: 3, since } })
+  assert.deepEqual((await send(path, { body: setting })).body, { ok: true, dependencyReview: { enabled: true, required: 3, since, lockfiles: { mode: 'exclude', paths: [] } } })
   const listed = (await send('/api/admin/repositories?scope=connected')).body.repositories[0]
-  assert.deepEqual([listed.dependencyReview, listed.reviewTeams], [{ enabled: true, required: 3, since }, [{ id: 'one', name: 'one' }]], 'with the teams whose reviews count')
-  for (const bad of [{ required: 0 }, { required: 11 }, { required: 1.5 }, { since: 'abc' }, { since: since.toUpperCase() }, { enabled: 'yes' }, { repoId: '1' }]) {
+  assert.deepEqual([listed.dependencyReview, listed.reviewTeams], [{ enabled: true, required: 3, since, lockfiles: { mode: 'exclude', paths: [] } }, [{ id: 'one', name: 'one' }]], 'with the teams whose reviews count')
+  const only = { mode: 'include', paths: ['web/package-lock.json', 'apps/', 'apps/'] }
+  assert.deepEqual((await send(path, { body: { ...setting, lockfiles: only } })).body.dependencyReview.lockfiles, { mode: 'include', paths: ['apps/', 'web/package-lock.json'] },
+    'each once, in order')
+  assert.deepEqual((await send(path, { body: setting })).body.dependencyReview.lockfiles, { mode: 'include', paths: ['apps/', 'web/package-lock.json'] }, 'kept, none sent')
+  for (const bad of [{ required: 0 }, { required: 11 }, { required: 1.5 }, { since: 'abc' }, { since: since.toUpperCase() }, { enabled: 'yes' }, { repoId: '1' },
+    { lockfiles: null }, { lockfiles: { mode: 'some', paths: [] } }, { lockfiles: { mode: 'exclude', paths: ['/etc/passwd'] } }, { lockfiles: { mode: 'exclude', paths: ['a/../b'] } },
+    { lockfiles: { mode: 'exclude', paths: ['a//b'] } }, { lockfiles: { mode: 'exclude', paths: ['a\\b'] } }, { lockfiles: { mode: 'exclude', paths: Array.from({ length: 101 }, (_, n) => `${n}/`) } }]) {
     assert.equal((await send(path, { body: { ...setting, ...bad } })).status, 400, JSON.stringify(bad))
   }
   assert.equal((await send(path, { body: { ...setting, repoId: 999 } })).status, 404)
   assert.equal((await send(path, { who: 'alice', body: setting })).status, 403)
-  assert.deepEqual((await send(path, { body: { repoId: 1, enabled: false, required: 1 } })).body.dependencyReview, { enabled: false, required: 1, since: null })
+  assert.deepEqual((await send(path, { body: { repoId: 1, enabled: false, required: 1, lockfiles: { mode: 'exclude', paths: [] } } })).body.dependencyReview,
+    { enabled: false, required: 1, since: null, lockfiles: { mode: 'exclude', paths: [] } })
 })
 
 // Pull request 5 bumps ms and adds left-pad, locked at the commit reviewed
@@ -403,7 +410,7 @@ test('where the host registers reviewed dependencies, they replace the commit re
   assert.equal((await send(path, { body: { repoId: 1, enabled: true, required: 1, since: null } })).status, 200)
   assert.equal((await send('/api/admin/repositories?scope=connected')).body.reviewedDependencies, true, 'the page told so, to hide the commit')
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, since })
-  assert.deepEqual((await send(path, { body: { repoId: 1, enabled: true, required: 1 } })).body.dependencyReview, { enabled: true, required: 1, since },
+  assert.deepEqual((await send(path, { body: { repoId: 1, enabled: true, required: 1 } })).body.dependencyReview, { enabled: true, required: 1, since, lockfiles: { mode: 'exclude', paths: [] } },
     'the commit stored before they were registered kept, should they be no more')
   const read = github(t, PULL)
   const answer = await send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`)
@@ -458,4 +465,20 @@ test('the default branch\'s dependencies, with their review, tell what its lockf
     { paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' }, { paths: ['bun.lock'], error: 'lockfile-unsupported' }] },
   'ms reviewed, left-pad locked at the commit reviewed since; kept wanting reviews, mine, from git, failing it, as do the lockfiles left unread')
   assert.equal((await ask('x')).status, 400)
+
+  // Those its review leaves out neither read for it nor failing it, there or at the commit reviewed since.
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'exclude', paths: ['berry/', 'bun.lock'] } })
+  const scoped = (await ask()).body
+  assert.deepEqual(scoped.lockfiles.map(dir => [dir.paths, dir.error ?? null]), [[['package-lock.json'], null]])
+  assert.deepEqual([scoped.review.baselineUnread, scoped.review.lockfiles], [undefined, { mode: 'exclude', paths: ['berry/', 'bun.lock'] }])
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'include', paths: ['web/'] } })
+  const none = (await ask()).body
+  assert.deepEqual([none.lockfiles, none.review.unreviewed, none.review.unsupported], [[{ paths: [], added: [], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0,
+    unsupported: [], moreUnsupported: 0 }], 0, 0], 'none it holds to there')
+
+  // And its lockfiles there, by their paths, for its settings to name.
+  const listing = (await send(`/api/admin/repositories/lockfiles?${new URLSearchParams({ repoId: '1' })}`)).body
+  assert.deepEqual([listing.head, listing.lockfiles.toSorted((a, b) => a.path < b.path ? -1 : 1)],
+    [head, [{ path: 'berry/yarn.lock', format: 'yarn' }, { path: 'bun.lock', format: 'bun' }, { path: 'package-lock.json', format: 'npm' }]])
+  assert.equal((await send('/api/admin/repositories/lockfiles?repoId=0')).status, 400)
 })

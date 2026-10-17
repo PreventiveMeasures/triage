@@ -396,6 +396,17 @@ test('review lists recheck target access and session after registry reads, prese
   const hidden = await h.send('/api/npm/reviews/mine')
   assert.equal(hidden.status, 200)
   assert.deepEqual(hidden.body, { reviews: [], next })
+  // A team's, as its Dependencies tab lists them, held to the same access.
+  const teams = []
+  t.mock.method(h.db, 'listTeamDependencyReviews', (teamId, user, before) => {
+    teams.push([teamId, user, before])
+    return Promise.resolve(teamId === 'team' ? { reviews: [review], next: null } : null)
+  })
+  const listed = await h.send('/api/npm/reviews/team?' + new URLSearchParams({ teamId: 'team', beforeTime: '5', beforeId: 'r' }))
+  assert.deepEqual([listed.status, listed.body], [200, { reviews: [], next: null }], 'the private package no longer readable, none of its reviews')
+  assert.deepEqual(teams, [['team', h.sessions.triage.userId, { time: 5, id: 'r' }]])
+  assert.equal((await h.send('/api/npm/reviews/team?teamId=elsewhere')).status, 404)
+  for (const bad of ['', '?teamId=team&beforeTime=x&beforeId=r', '?teamId=team&beforeId=r']) assert.equal((await h.send(`/api/npm/reviews/team${bad}`)).status, 400, bad)
   const latest = '/api/npm/reviews/latest?' + new URLSearchParams({ package: context.package, version: context.version, integrity: context.integrity })
   assert.equal((await h.send(latest)).body.review, null)
   await h.db.setTeamNpmScopes(admin, 'team', ['@secret'])
