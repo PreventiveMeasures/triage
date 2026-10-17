@@ -148,7 +148,7 @@ function severityBadge(f, { variant = 'full' } = {}) {
 // out first — so a snippet's quotes and backticks stay the code they
 // are instead of being chipped up as markup.
 const INLINE_HL_RE = /\[[^\]\n]+\]\([^)\s]+\)|\*\*[^*\n]+\*\*|(?<![\p{L}\p{M}\p{N}_])_(?![\s_])(?:[^_\n]|(?<=[\p{L}\p{M}\p{N}])_(?=[\p{L}\p{M}\p{N}]))*?(?<!\s)_(?![\p{L}\p{M}\p{N}_])|"[^"\n]+"|`[^`\n]+`/gu
-function renderInline(text) {
+function renderInline(text, inLink = false) {
   const parts = []
   let lastIdx = 0
   // matchAll scans a copy of the pattern, so the nested call for what
@@ -158,13 +158,12 @@ function renderInline(text) {
     const c0 = m[0].codePointAt(0)
     if (c0 === 0x5B /* [ */) {
       const link = markdownLinkToken(m[0])
-      parts.push(link
-        ? html`<a href=${link.url} target="_blank" rel="noopener noreferrer" data-tooltip=${link.url}>${link.label}</a>`
-        : m[0])
+      if (link) parts.push(inLink ? link.label : html`<a href=${link.url} target="_blank" rel="noopener noreferrer" data-tooltip=${link.url}>${link.label}</a>`)
+      else parts.push(m[0])
     } else if (c0 === 0x2A /* * */) {
-      parts.push(html`<strong>${renderInline(m[0].slice(2, -2))}</strong>`)
+      parts.push(html`<strong>${renderInline(m[0].slice(2, -2), inLink)}</strong>`)
     } else if (c0 === 0x5F /* _ */) {
-      parts.push(html`<em>${renderInline(m[0].slice(1, -1))}</em>`)
+      parts.push(html`<em>${renderInline(m[0].slice(1, -1), inLink)}</em>`)
     } else if (c0 === 0x60 /* ` */) {
       parts.push(html`<span class="inline-code">${m[0].slice(1, -1)}</span>`)
     } else {
@@ -230,19 +229,19 @@ function codeBlockTemplate({ lang, code }) {
 //
 // A heading or a rule line (format.js lineBlockSegments) is a block of
 // its own between the paragraphs, however the blank lines fell around it.
-function proseTemplate(run, { wrap = false } = {}) {
+function proseTemplate(run, { wrap = false, inLink = false } = {}) {
   const paras = run.split(/\n{2,}/u).filter((p) => p.trim()).flatMap(lineBlockSegments)
   if (paras.length < 2 && typeof paras[0] !== 'object') {
-    return wrap ? html`<div class="para">${renderInline(run)}</div>` : renderInline(run)
+    return wrap ? html`<div class="para">${renderInline(run, inLink)}</div>` : renderInline(run, inLink)
   }
-  return paras.map((p) => (typeof p === 'string' ? html`<div class="para">${renderInline(p)}</div>` : lineBlockTemplate(p)))
+  return paras.map((p) => (typeof p === 'string' ? html`<div class="para">${renderInline(p, inLink)}</div>` : lineBlockTemplate(p, inLink)))
 }
 
 // A heading as an element that says so rather than as `<h2>`: the
 // surfaces this draws into have their own heading rules, and a
 // description's `##` is not their section.
-function lineBlockTemplate({ level, text, rule }) {
-  return rule ? html`<hr class="md-rule">` : html`<div class="md-heading" role="heading" aria-level=${level}>${renderInline(text)}</div>`
+function lineBlockTemplate({ level, text, rule }, inLink = false) {
+  return rule ? html`<hr class="md-rule">` : html`<div class="md-heading" role="heading" aria-level=${level}>${renderInline(text, inLink)}</div>`
 }
 
 // One markdown list as a real `<ol>` / `<ul>` (format.js listSegments
@@ -264,12 +263,12 @@ function lineBlockTemplate({ level, text, rule }) {
 // A task item (`- [x] Lint passes`, a pull request's test plan) shows
 // its box, ticked as the markdown says, where the bullet would be.
 const TASK_ITEM_RE = /^\[([ xX])\][ \t]+/u
-function listTemplate({ ordered, start, items }) {
+function listTemplate({ ordered, start, items }, inLink = false) {
   const entries = items.map((item) => {
-    const task = TASK_ITEM_RE.exec(item)
+    const task = !inLink && TASK_ITEM_RE.exec(item)
     return task
       ? html`<li class="md-task"><input type="checkbox" disabled ?checked=${task[1] !== ' '}>${renderHighlighted(item.slice(task[0].length))}</li>`
-      : html`<li>${renderHighlighted(item)}</li>`
+      : html`<li>${renderHighlighted(item, { inLink })}</li>`
   })
   return ordered
     ? html`<ol class="md-list" start=${start > 1 ? start : nothing}>${entries}</ol>`
@@ -301,7 +300,12 @@ function listTemplate({ ordered, start, items }) {
 //
 // CRLF line endings come in as `\n`, as in flowText, for the bodies that
 // reach here without it.
-export function renderHighlighted(raw, { paragraphs = true } = {}) {
+//
+// `inLink: true` is for a body drawn inside a link (a linked fix's
+// preview, managed-fix-link.js): a markdown link is drawn as its label
+// and a task item as written, so no link or control nests in the one
+// around it.
+export function renderHighlighted(raw, { paragraphs = true, inLink = false } = {}) {
   if (!raw) return raw
   const text = raw.replaceAll('\r\n', '\n')
   const blocks = paragraphs ? listSegments(text) : [text]
@@ -309,14 +313,14 @@ export function renderHighlighted(raw, { paragraphs = true } = {}) {
   // the gap between them is a margin — which needs an element to sit
   // on (see proseTemplate's `wrap`).
   const many = blocks.length > 1
-  const prose = (run) => (paragraphs ? proseTemplate(run, { wrap: many }) : renderInline(run))
+  const prose = (run) => (paragraphs ? proseTemplate(run, { wrap: many, inLink }) : renderInline(run, inLink))
   const flow = (run) => {
     const segments = codeBlockSegments(run)
     if (segments.length === 1 && typeof segments[0] === 'string') return prose(segments[0])
     return segments.map((seg) => (typeof seg === 'string' ? prose(seg) : codeBlockTemplate(seg)))
   }
   if (blocks.length === 1 && typeof blocks[0] === 'string') return flow(blocks[0])
-  return blocks.map((b) => (typeof b === 'string' ? flow(b) : listTemplate(b)))
+  return blocks.map((b) => (typeof b === 'string' ? flow(b) : listTemplate(b, inLink)))
 }
 
 // The producer buckets behind a set of report names, first-seen order

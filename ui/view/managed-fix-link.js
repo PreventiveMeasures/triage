@@ -1,5 +1,8 @@
-import { css, html, nothing } from 'lit'
+import { css, html, nothing, unsafeCSS } from 'lit'
 import { appMarkup } from './markup.js'
+import { flowText } from './format.js'
+import { renderHighlighted } from './render-finding.js'
+import proseCSS from '../styles/prose.css'
 import { HoverPreviewElement } from './hover-preview.js'
 import { isHttpUrl } from '@preventive/report'
 import { parseGithubIssueUrl, parseGithubPrUrl } from '../../common/github-pr.ts'
@@ -15,7 +18,7 @@ const issueIcons = { completed: completedIssueIcon, not_planned: notPlannedIssue
 
 class ManagedFixLink extends HoverPreviewElement {
   static properties = { url: { type: String }, compact: { type: Boolean, reflect: true } }
-  static styles = [HoverPreviewElement.styles, css`
+  static styles = [HoverPreviewElement.styles, unsafeCSS(proseCSS), css`
     :host { display: inline; word-break: normal; }
     a { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; cursor: default; }
     .status { display: inline-flex; align-items: center; gap: .3em; vertical-align: text-bottom; margin-right: .35em; font-weight: 600; white-space: nowrap; }
@@ -116,7 +119,7 @@ class ManagedFixLink extends HoverPreviewElement {
         <span class=${`status ${status}`}>${icon}${data ? labels[status] : pr ? 'Pull request' : 'Issue'}</span>
       </div>
       ${data ? html`<div class="preview-title">${data.title}</div>` : nothing}
-      ${data?.description ? html`<div class="preview-description">${data.description}</div>` : nothing}
+      ${data?.description ? html`<div class="preview-description">${renderHighlighted(flowText(data.description), { inLink: true })}</div>` : nothing}
     </a>` : nothing}`
   }
 }

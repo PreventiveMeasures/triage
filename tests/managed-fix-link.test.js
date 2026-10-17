@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
+import './_polyfills.js'
+import { templateText } from './_lit.js'
 
 let metadata = null
+// The preview draws its description through render-finding.js, whose page
+// modules these stand in for under Node.
+mock.module('../ui/view/render.js', { namedExports: { render() {} } })
+mock.module('../ui/view/dom.js', { namedExports: { report: null } })
+mock.module('../ui/view/code-highlight.js', { namedExports: { highlightedCode: () => null } })
+const pullRequests = await import('../ui/view/managed-pull-requests.js')
 mock.module('../ui/view/managed-pull-requests.js', { namedExports: {
-  managedFixes: { read: () => metadata }, subscribeFixes: () => () => {},
+  ...pullRequests, managedFixes: { read: () => metadata }, subscribeFixes: () => () => {},
 } })
 mock.module('../ui/view/tooltip.js', { namedExports: { hideTooltip: () => {}, installShadowTooltipListener: () => {} } })
 await import('../ui/view/managed-fix-link.js')
@@ -83,4 +91,16 @@ test('non-GitHub and unrecognized GitHub Fix URLs retain plain links and tooltip
     assert.ok(compact.includes(`Open fix link: ${url}`))
     assert.doesNotMatch(compact, /fix-preview|preview-title|link-icon|link-status/u)
   }
+})
+
+test('a compact preview draws its description\'s headings, lists, inline code and bold, and nothing that is a link or a control', () => {
+  const link = new FixLink()
+  link.url = 'https://github.com/org/repo/pull/42'
+  link.compact = true
+  metadata = { title: 'A fix', status: 'open', description: '## Summary\r\n\r\n- **`a.ts`:** fixed\r\n- [x] tested\r\n\r\nSee [the docs](https://docs.example/).' }
+  const text = templateText(link.render())
+  assert.match(text, /<div class="preview-description"><div class="md-heading" role="heading" aria-level=2>Summary<\/div>/u)
+  assert.match(text, /<ul class="md-list"><li><strong><span class="inline-code">a\.ts<\/span>:<\/strong> fixed<\/li><li>\[x\] tested<\/li><\/ul>/u)
+  assert.match(text, /See the docs\./u)
+  assert.doesNotMatch(text, /docs\.example|<input/u)
 })
