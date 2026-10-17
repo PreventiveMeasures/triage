@@ -38,6 +38,8 @@
     --w95-light: #dfdfdf;
     --w95-shadow: #808080;
     --w95-title: #000080;
+    /* A tooltip's pale yellow, behind any note that pops up over the page. */
+    --w95-tooltip: #ffffe1;
     /* The bevels, each as Windows draws it: a button's (white outside,
        pale grey in), a window's (the two swapped), a button held down,
        the default button's (a black ring inside), a field's, a status

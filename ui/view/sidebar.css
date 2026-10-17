@@ -687,9 +687,9 @@ sidebar-view-button[hidden] { display: none !important; }
   & .file-item button.file-name { font-size: 11px; }
   & .file-item.indented::before { background: none; border-left: 1px dotted var(--w95-shadow); }
   & #storage-status {
-    border-color: #000; background: #ffffe1; color: #000;
+    border-color: #000; background: var(--w95-tooltip); color: #000;
 
-    &:hover { border-color: #000; background: #ffffe1; }
+    &:hover { border-color: #000; background: var(--w95-tooltip); }
   }
   /* The list's own thin bar gives way to the full 16px one, in the
      gutter it already keeps for it. */
