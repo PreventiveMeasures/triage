@@ -1918,7 +1918,6 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 .team-deps-count {
   flex: none; color: var(--medium); font-size: .75rem; font-variant-numeric: tabular-nums;
   &.is-failed { color: var(--critical); }
-  &.is-done { color: var(--green); }
 }
 .team-deps-versions {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr)); column-gap: 1.5rem;

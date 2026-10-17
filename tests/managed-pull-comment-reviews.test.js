@@ -44,6 +44,23 @@ test('the reviews its comments make count beside its teams\', each reviewer once
   assert.equal(failing.review.commentsFailed, true)
 })
 
+test('every version the lockfiles it holds to add that its teams\' reviews pass is read of its comments, to tell other pull requests it reviews it, but one the reviewed dependencies pass; none where it holds to none', async () => {
+  const [ms, vouched, gitdep] = [at('ms', '2.1.3'), at('vouched', '1.0.0'), { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git' }]
+  const told = { base: 'c'.repeat(40), head: 'b'.repeat(40), cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: [ms, vouched, gitdep],
+    locked: [ms, vouched, gitdep] }] }
+  const state = { required: 1, since: null, canReview: true, reviews: [review(ms, 'u1'), review(vouched, 'u1')] }
+  const [given, asked] = [[], []]
+  const lookup = dependency => { asked.push(dependency.name); return Promise.resolve(dependency.name === 'vouched') }
+  const comments = list => { given.push(list.map(dependency => dependency.name)); return Promise.resolve({ failed: false, reviews: [review(ms, 'u2', { time: 5 })] }) }
+  const answer = await reviewedDependencies(told, state, { reviewed: { lookup }, commentReviews: comments })
+  assert.deepEqual([asked.toSorted(), given], [['ms', 'vouched'], [['ms']]], 'those its teams pass asked of them first, one they pass reviewed, never read; one from git, which can\'t be reviewed, not')
+  assert.deepEqual([answer.lockfiles[0].added[0].reviews, answer.lockfiles[0].added[0].commented], [2, 1])
+  assert.equal(answer.review.unasked, undefined)
+  given.length = 0
+  await reviewedDependencies(told, { ...state, lockfiles: { mode: 'include', paths: ['web/'] } }, { reviewed: { lookup }, commentReviews: comments })
+  assert.deepEqual(given, [], 'none read where its review holds to none of its lockfiles')
+})
+
 // GitHub's GraphQL API, answering pull request 7's comments: `bob`'s and
 // `mallory`'s on it, and, a page apart, `carol`'s review, then `bob`'s with
 // `carol`'s comments on its diff, a page apart too; the comments, read

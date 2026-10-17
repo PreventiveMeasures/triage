@@ -84,9 +84,8 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.match(text, /role="alert">Only org\/b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = cardsOf(text)
-  assert.equal(cards.length, 5, 'one adding none wanting reviews not shown, but where the reader\'s reviews of it are to copy')
-  assert.match(cards[4], />org\/a#10<[^]*class=team-deps-count is-done>every version reviewed<[^]*<dependency-review-copy \.text=Reviewed done /u, 'that one last')
-  assert.doesNotMatch(text, />org\/a#11</u)
+  assert.equal(cards.length, 4, 'one adding none wanting reviews not shown')
+  assert.doesNotMatch(text, />org\/a#1[01]</u, 'nor one every version of which is reviewed, the reader\'s reviews of it to copy or not: its popup copies them')
   assert.match(cards[3], />org\/a#9<[^]*class=team-deps-count>4 other versions unreviewed<[^]*aria-expanded=false [^]*<\/svg>Its own versions pass; 4 versions its lockfiles locked before want reviews<\/button>/u,
     'one held only by the versions its lockfiles locked before it, last')
   assert.doesNotMatch(cards[3], /<li>/u, 'those not listed under it till asked for')
@@ -98,7 +97,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.equal(cards[0].split('team-deps-elsewhere').length - 1, 1)
   assert.match(cards[0], /<\/a><dependency-review-copy \.text=Reviewed rej \.label=Copy your dependency reviews of its versions><\/dependency-review-copy><\/div>/u,
     'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
-  assert.doesNotMatch(cards.slice(1, 4).join(''), /dependency-review-copy/u, 'none where it formats none')
+  assert.doesNotMatch(cards.slice(1).join(''), /dependency-review-copy/u, 'none where it formats none')
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
   assert.match(cards[0], /shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>[^]*rej[^]*<npm-delta \.name=rej /u,
     'the lines each wanting reviews changes, a new one\'s whole')

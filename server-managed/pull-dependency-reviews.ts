@@ -262,10 +262,23 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   }
   const asked = wanting()
   await ask(asked)
-  // Those still wanting one, of the reviews its comments make, which count
-  // as its teams' do; those their rejects hold asked of `lookup` too.
-  const still = [...asked].flatMap(([key, dependency]) => passed.has(key) ? [] : [dependency])
-  const comments = still.length > 0 && commentReviews ? await commentReviews(still) : { reviews: [], failed: false }
+  // Of those still wanting one, and every other one the lockfiles it holds
+  // to add that its teams' reviews pass, telling other pull requests those
+  // it reviews (`commented`), but those `lookup` passes, reviewed, the
+  // reviews its comments make, an open one's alone (pull-comment-reviews.ts),
+  // which count as its teams' do; those their rejects hold asked of `lookup`
+  // too.
+  const parsing = new Map([...asked].filter(([key]) => !passed.has(key)))
+  if (commentReviews) {
+    const others = new Map<string, ReviewedDependency>()
+    for (const pkg of held.flatMap(dir => 'added' in dir ? dir.added : [])) {
+      const [key, dependency] = askedOf(pkg)
+      if (!asked.has(key) && 'reviews' in judge(pkg, pkg.was ?? [], context).review) others.set(key, dependency)
+    }
+    const vouched = others.size > 0 && reviewed ? (await askReviewed(reviewed.lookup, others)).passed : new Set<string>()
+    for (const [key, dependency] of others) if (!vouched.has(key)) parsing.set(key, dependency)
+  }
+  const comments = parsing.size > 0 && commentReviews ? await commentReviews([...parsing.values()]) : { reviews: [], failed: false }
   if (comments.reviews.length > 0) {
     context = { ...context, reviews: reviewsByVersion([...state.reviews, ...comments.reviews.map(review => ({ ...review, comment: true as const }))]) }
     await ask(new Map([...wanting()].filter(([key]) => !asked.has(key))))

@@ -51,7 +51,8 @@ export interface ReviewComment {
   url: string
 }
 // What `parseComments` reads: the pull request, its comments, and the
-// dependencies wanting reviews.
+// dependencies: every one the lockfiles its review holds to add that can be
+// reviewed and `lookup` doesn't pass, and the others still wanting reviews.
 export interface ParseCommentsInput { repository: string; number: number; comments: ReviewComment[]; dependencies: ReviewedDependency[] }
 // A review its comments make, by `user` (a GitHub login, one of their
 // authors'), of each of `dependencies`, with its verdict, as of `time` (when

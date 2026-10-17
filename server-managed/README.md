@@ -2168,8 +2168,9 @@ there alone (`commented`), says so (**in review in org/repo#1**) wherever it
 is listed but under that pull request, where its count says how many of its
 reviewers are in its comments, a patched one never, as two pull requests may
 patch it apart; reviews published here count everywhere, and none says so.
-One wanting no reviews is listed, last, where the reader's reviews of its
-versions are to copy (`formatted`, below), **every version reviewed**. Versions lists every version they add wanting reviews, each once,
+One wanting no reviews, its versions passed by reviews or the host's
+reviewed dependencies, is not listed; the reader's reviews of its versions
+are copied in its popup (`formatted`, below). Versions lists every version they add wanting reviews, each once,
 with the pull requests adding it; Default branch, of each repository, what
 its default branch locks that wants reviews or fails it, its lockfiles left
 unread named, each list forty-eight at first; and Reviews the reviews published to the team, revoked ones
@@ -2204,7 +2205,8 @@ const server = await init('managed')
 ```
 
 Its `lookup` is asked of each version an open pull request's lockfiles lock that its
-teams' reviews don't pass, as the lockfile locks it: `ecosystem` (`npm`),
+teams' reviews don't pass, and, where it has `parseComments`, of each its
+lockfiles add that they do, before its comments are read for them (below), as the lockfile locks it: `ecosystem` (`npm`),
 `lockfile` (`npm`, `pnpm` or `yarn1`), `name`, `version` and `integrity`,
 always, as a version locked with none fails the review instead; `shasum`, the
 hex sha1 Yarn 1 writes after a tarball's `#`, and `patchHash`, pnpm's, where
@@ -2222,10 +2224,14 @@ it nor as many reviewers' reviews as required pass is unreviewed.
 
 Its `parseComments`, where it has one, reads the reviews an open pull
 request's comments make (`pull-comment-reviews.ts`), whether it is open read
-of GitHub with them, never kept with its dependencies, asked only where some
-version still wants reviews once its teams' reviews and the lookup are
-counted, of those versions (`dependencies`, as the lookup is asked of
-them). It is given the pull request (`repository`, `number`) and its
+of GitHub with them, never kept with its dependencies, asked of an open one
+alone, and only where the lockfiles its review holds to change: of every
+version they add that can be reviewed and its teams' reviews or the lookup
+don't pass, and of those its teams' reviews pass but the lookup doesn't, which
+the lookup is asked of first, to tell other pull requests the versions it
+reviews (`commented`); and of the other versions its lockfiles lock still
+wanting reviews (`dependencies`, as the lookup is asked of them). A version
+the lookup passes is reviewed, its comments never read for it. It is given the pull request (`repository`, `number`) and its
 comments (`comments`, a thousand at most, read of GitHub's GraphQL API and
 kept in the instance a minute): each with its `kind` (`comment`, `review`,
 whatever its state, which it tells, `state`, or `review-comment`, on a line

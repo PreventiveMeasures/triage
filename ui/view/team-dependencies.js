@@ -249,11 +249,10 @@ class TeamDependencies extends StateElement {
       const wanted = addedVersions(pull.entry).versions.filter(pkg => ['wanted', 'unsupported'].includes(reviewOf(pkg, pull.entry.review)))
       const told = wanted.filter(pkg => reviewOf(pkg, pull.entry.review) === 'wanted').length
       const toReview = Math.max(pull.entry.review.toReview ?? told, told)
-      const failed = reviewFailures(pull.entry), others = unreviewedVersions(pull.entry).count, size = wanted.length + toReview - told
-      return { ...pull, wanted, failed, toReview, untold: toReview - told, size, others, done: size === 0 && others === 0 && !failed }
-    // One wanting none kept where the reader's reviews of it are to copy, last.
-    }).filter(pull => !pull.done || pull.entry.formatted)
-      .toSorted((a, b) => Number(a.done) - Number(b.done) || Number(a.size === 0) - Number(b.size === 0) || a.size - b.size || a.others - b.others
+      return { ...pull, wanted, failed: reviewFailures(pull.entry), toReview, untold: toReview - told, size: wanted.length + toReview - told,
+        others: unreviewedVersions(pull.entry).count }
+    }).filter(pull => pull.size > 0 || pull.others > 0 || pull.failed)
+      .toSorted((a, b) => Number(a.size === 0) - Number(b.size === 0) || a.size - b.size || a.others - b.others
         || (a.repo.name < b.repo.name ? -1 : a.repo.name > b.repo.name ? 1 : b.item.number - a.item.number))
     // The repositories whose open pull requests are more than are read.
     const unchecked = reviewed.filter(({ read }) => read.pulls.more)
@@ -279,7 +278,7 @@ class TeamDependencies extends StateElement {
     const elsewhere = (pkg, pull = null) => pkg.patched ? [] : [...commentedIn.get(versionKey(pkg)) ?? []].filter(name => !pull || name !== pullName(pull))
     const tabs = TABS.filter(([kind]) => kind !== 'branch' || branches.length > 0)
     const tab = tabs.some(([kind]) => kind === this._tab) ? this._tab : 'pulls'
-    const counts = { pulls: wanting.filter(pull => !pull.done).length, versions: adding.size, branch: branches.reduce((sum, { count }) => sum + count, 0) }
+    const counts = { pulls: wanting.length, versions: adding.size, branch: branches.reduce((sum, { count }) => sum + count, 0) }
     return html`<div class="team-deps">
       ${dialogTabs({ tabs: tabs.map(([id, label]) => ({ id, label: html`${label}${counts[id] == null || reading && counts[id] === 0 ? nothing
         : html`<span class="team-deps-tab-n">${counts[id].toLocaleString('en-US')}</span>`}` })), current: tab, prefix: 'team-deps', select: kind => this.pick(kind) })}
@@ -302,16 +301,16 @@ class TeamDependencies extends StateElement {
   // request above adds told by it alone, those listed apart; each version
   // other pull requests review in their comments told so (`elsewhere`); and
   // the reader's reviews of its versions to copy, where the server's host
-  // formats them (dependency-review-copy.js), one wanting none listed last
-  // for them.
+  // formats them (dependency-review-copy.js); one wanting none is not
+  // listed, its copy in its popup.
   renderPulls(wanting, adding, reading, unchecked, elsewhere) {
-    const none = reading || wanting.some(pull => !pull.done) ? nothing
-      : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
-    if (wanting.length === 0) return none
+    if (wanting.length === 0) {
+      return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
+    }
     const told = new Set()
     const row = pull => pkg => versionRow(pkg, pull.entry.review, { others: (adding.get(versionKey(pkg)) ?? []).filter(other => other !== pull).map(pullName),
       elsewhere: elsewhere(pkg, pull) })
-    return html`${none}<ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
+    return html`<ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
       const own = pull.wanted.filter(pkg => !told.has(versionKey(pkg)))
       const above = pull.wanted.filter(pkg => told.has(versionKey(pkg)))
       for (const pkg of own) told.add(versionKey(pkg))
@@ -321,8 +320,8 @@ class TeamDependencies extends StateElement {
       return html`<li class="team-deps-pull">
         <div class="team-deps-pull-top"><a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
           <span class="team-deps-pull-name">${key}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
-          <span class=${`team-deps-count${pull.failed ? ' is-failed' : pull.done ? ' is-done' : ''}`}>${pull.failed ? 'review fails' : pull.size > 0
-            ? `${plural(pull.toReview, 'version')} to review` : pull.done ? 'every version reviewed' : `${plural(pull.others, 'other version')} unreviewed`}</span>
+          <span class=${`team-deps-count${pull.failed ? ' is-failed' : ''}`}>${pull.failed ? 'review fails' : pull.size > 0 ? `${plural(pull.toReview, 'version')} to review`
+            : `${plural(pull.others, 'other version')} unreviewed`}</span>
         </a>${pull.entry.formatted ? html`<dependency-review-copy .text=${pull.entry.formatted} .label=${'Copy your dependency reviews of its versions'}></dependency-review-copy>`
           : nothing}</div>
         ${this.rows(`${key}:own`, own, row(pull))}
