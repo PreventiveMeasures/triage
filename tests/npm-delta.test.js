@@ -3,6 +3,7 @@
 // once as READ_AT_ONCE, each once a session; `+x −y`, and, where some
 // declaration files changed in types alone, those without them.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { setImmediate } from 'node:timers/promises'
 import { mock, test } from 'node:test'
 import './_polyfills.js'
@@ -60,4 +61,12 @@ test('a row\'s lines are read once it nears the viewport, two at a time, each on
   assert.equal(near.has(failed), false)
 
   assert.deepEqual([deltaBase({ version: '2.1.3', was: ['2.1.3', '2.1.2'] }), deltaBase({ version: '1.0.0' })], ['2.1.2', '(empty)'], 'against the version it was, else whole')
+})
+
+test('its element is a box wherever it is styled, as its viewport\'s observer sees nothing of one with none', () => {
+  for (const sheet of ['../ui/styles/report.css', '../ui/view/dialogs/dialog-repository-item.css']) {
+    const rule = /(?:^|\n)npm-delta \{([^}]*)\}/u.exec(readFileSync(new URL(sheet, import.meta.url), 'utf8'))?.[1] ?? ''
+    assert.match(rule, /display: inline-block/u, sheet)
+    assert.match(rule, /min-width: 1px/u, sheet)
+  }
 })
