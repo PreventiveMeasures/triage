@@ -1,3 +1,12 @@
+diff --git a/build/encode.js b/build/encode.js
+deleted file mode 100644
+index ff35302b47a0e25e7389ecbd41f58f9a29f02a27..0000000000000000000000000000000000000000
+diff --git a/build/mem.js b/build/mem.js
+deleted file mode 100644
+index 1157f6a76eba769074b0bcb1989b42fa1c60db9b..0000000000000000000000000000000000000000
+diff --git a/compress.js b/compress.js
+deleted file mode 100644
+index 002b5dfe4c8520da9e9547fff64981efd5273573..0000000000000000000000000000000000000000
 diff --git a/dec/dictionary-browser.js b/dec/dictionary-browser.js
 index 9608543881c9ffadb35c5cc00d097626159afb89..90371018040bf8c8b4f91b0220a32577b1a08f1a 100644
 --- a/dec/dictionary-browser.js
@@ -24,3 +33,13 @@ index 9608543881c9ffadb35c5cc00d097626159afb89..90371018040bf8c8b4f91b0220a32577
 +    : Uint8Array.from(atob(base64), function(c) { return c.charCodeAt(0); });
    return BrotliDecompressBuffer(compressed);
  };
+diff --git a/enc/pre.js b/enc/pre.js
+deleted file mode 100644
+index 4737c01d92b2936821819f6bfc1e2f47cb94a3fc..0000000000000000000000000000000000000000
+diff --git a/index.js b/index.js
+index c9528d84fa4362c14a9ff57963602447948130c8..2769e4d3beab43e4649512f92f8a4cc81ec33363 100644
+--- a/index.js
++++ b/index.js
+@@ -1,2 +1 @@
+-exports.compress = require('./compress');
+ exports.decompress = require('./dec/decode').BrotliDecompressBuffer;
