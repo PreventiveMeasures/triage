@@ -20,9 +20,11 @@
 //     tab still beats an unopenable bundle.
 //
 // Nothing here may touch the DOM or fetch anything: the worker's own
-// response carries `default-src 'none'` (see server-e2e/static.ts),
-// and esbuild bundles the decoder inline so the worker's module
-// graph has no dependency to load.
+// response carries `default-src 'none'` (see server-e2e/static.ts).
+// Firefox holds the worker's static imports to that policy too, so
+// build.js bundles this file on its own, decoder inline and without
+// code splitting, and fails the build if the output imports anything:
+// the worker's module graph has no dependency to load.
 import decompress from 'brotli/decompress'
 
 export function brotliDecompress(bytes) {
