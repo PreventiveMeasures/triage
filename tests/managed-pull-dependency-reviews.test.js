@@ -400,6 +400,18 @@ test('an open pull request\'s dependencies, asked with their review, tell each v
   // Those of lockfiles its review leaves out told to none, asked for it or not; while it is off, all.
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'include', paths: ['web/'] } })
   assert.deepEqual([(await ask({ review: '1' })).body.lockfiles, (await ask({})).body.lockfiles], [[], []])
+  // Changed as its review is read: reviewed by those it was told by.
+  const only = { mode: 'include', paths: ['package-lock.json'] }
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: only })
+  const stateOf = db.repoDependencyReviewState.bind(db)
+  t.mock.method(db, 'repoDependencyReviewState', async (...args) => {
+    await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'include', paths: ['web/'] } })
+    return stateOf(...args)
+  })
+  const moved = (await ask({ review: '1' })).body
+  assert.deepEqual([moved.lockfiles.map(dir => dir.paths), moved.review.lockfiles], [[['package-lock.json']], only])
+  t.mock.restoreAll()
+  github(t, PULL)
   await db.setRepoDependencyReview(1, { enabled: false, required: 1 })
   assert.equal((await ask({})).body.lockfiles.length, 1)
 })
