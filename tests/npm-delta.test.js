@@ -1,7 +1,8 @@
 // The lines a version wanting reviews changes, beside its row
 // (ui/view/npm-delta.js): read once the row nears the viewport, as many at
 // once as READ_AT_ONCE, each once a session; `+x −y`, and, where some
-// declaration files changed in types alone, those without them.
+// declaration files changed in types alone, those without them; `, binary`
+// where binary files changed too.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { setImmediate } from 'node:timers/promises'
@@ -25,7 +26,7 @@ const { deltaBase, npmDelta } = await import('../ui/view/npm-delta.js')
 // Not connected: its watching asked of it alone, its updates none.
 const Delta = class extends customElements.get('npm-delta') { requestUpdate() {} }
 
-test('a row\'s lines are read once it nears the viewport, two at a time, each once; told added and removed, and without types where some changed in types alone', async () => {
+test('a row\'s lines are read once it nears the viewport, two at a time, each once; told added and removed, binary where binary files changed, and -types where some changed in types alone', async () => {
   const delta = Object.assign(new Delta(), { name: 'ms', version: '2.1.3', base: '2.1.2' })
   delta._watch()
   assert.equal(templateText(delta.render()), '', 'nothing till it nears the viewport')
@@ -36,12 +37,12 @@ test('a row\'s lines are read once it nears the viewport, two at a time, each on
   npmDelta('a', '1.0.0', '(empty)')
   npmDelta('b', '1.0.0', '(empty)')
   assert.equal(asked.length, 2, 'two at a time, the rest waiting their turn')
-  pending[0].resolve({ additions: 1234, deletions: 2, typeless: { additions: 30, deletions: 1 } })
+  pending[0].resolve({ additions: 1234, deletions: 2, typeless: { additions: 30, deletions: 1 }, binary: true })
   await setImmediate()
   assert.equal(asked.length, 3)
   const text = templateText(delta.render())
-  assert.match(text, /data-tooltip=Lines it adds and removes, against 2\.1\.2><span class="is-added">\+1,234<\/span> <span class="is-deleted">−2<\/span>/u)
-  assert.match(text, /\(<span class="is-added">\+30<\/span> <span class="is-deleted">−1<\/span>\s+without types\)/u)
+  assert.match(text, /data-tooltip=Lines it adds and removes, against 2\.1\.2><span class="is-added">\+1,234<\/span> <span class="is-deleted">−2<\/span><span class="npm-delta-binary"[^>]*>, binary<\/span>/u)
+  assert.match(text, /\(<span class="is-added">\+30<\/span> <span class="is-deleted">−1<\/span>\s+-types\)/u)
   npmDelta('ms', '2.1.3', '2.1.2')
   assert.equal(asked.length, 3, 'held, not asked again')
 
@@ -51,7 +52,8 @@ test('a row\'s lines are read once it nears the viewport, two at a time, each on
   const whole = Object.assign(new Delta(), { name: 'a', version: '1.0.0', base: '(empty)' })
   whole._watch()
   near.get(whole)(true)
-  assert.doesNotMatch(templateText(whole.render()), /without types/u, 'none apart where none changed in types alone')
+  assert.doesNotMatch(templateText(whole.render()), /-types/u, 'none apart where none changed in types alone')
+  assert.doesNotMatch(templateText(whole.render()), /binary/u, 'nor binary where none changed')
   assert.match(templateText(whole.render()), /the whole package/u)
   const failed = Object.assign(new Delta(), { name: 'b', version: '1.0.0', base: '(empty)' })
   failed._watch()

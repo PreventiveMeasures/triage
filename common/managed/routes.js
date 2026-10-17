@@ -28,8 +28,12 @@ export const MANAGED_PAGES = Object.freeze({
   'manage-history': '/manage/history',
 })
 
-// A team's lists, each at /team/<slug>/<what it lists>.
+// A team's lists, each at /team/<slug>/<what it lists>; its dependencies'
+// sub-tabs past the first at /team/<slug>/dependencies/<tab>.
 const WORKSPACE_CONTENT_VIEWS = new Set(['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'])
+export const DEPENDENCY_TABS = new Set(['pulls', 'versions', 'branch', 'reviews'])
+// A route's `dependencyTab` field, where it names one.
+const dependencyTabField = route => route.view === 'workspace-dependencies' && route.dependencyTab != null ? { dependencyTab: route.dependencyTab } : {}
 
 // Dot-only path components are normalised away by URL parsers, even escaped.
 function findingPath(id) {
@@ -45,7 +49,9 @@ export function managedRoutePath(route) {
   if (route.view === 'npm') return npmPackagePath(route)
   if (route.view === 'repository-code') return repositoryCodePath(route)
   if (WORKSPACE_CONTENT_VIEWS.has(route.view)) {
-    return /^[A-Za-z0-9_-]+$/u.test(route.teamSlug ?? '') ? `/team/${route.teamSlug}/${route.view.slice(10)}` : null
+    const tab = dependencyTabField(route).dependencyTab ?? 'pulls'
+    if (!/^[A-Za-z0-9_-]+$/u.test(route.teamSlug ?? '') || !DEPENDENCY_TABS.has(tab)) return null
+    return `/team/${route.teamSlug}/${route.view.slice(10)}${tab === 'pulls' ? '' : `/${tab}`}`
   }
   if (route.view === 'bundles') {
     if (!/^[A-Za-z0-9_-]+$/u.test(route.bundleSlug ?? '')
@@ -244,6 +250,8 @@ export function parseManagedRoute(url) {
   if (code !== undefined) return code
   const contentList = /^\/team\/([A-Za-z0-9_-]+)\/(reports|bundles|repositories|dependencies)$/u.exec(path)
   if (contentList) return { view: `workspace-${contentList[2]}`, teamSlug: contentList[1] }
+  const dependencies = /^\/team\/([A-Za-z0-9_-]+)\/dependencies\/([a-z]+)$/u.exec(path)
+  if (dependencies) return DEPENDENCY_TABS.has(dependencies[2]) ? { view: 'workspace-dependencies', teamSlug: dependencies[1], dependencyTab: dependencies[2] } : null
   const match = /^\/team\/([^/]+)(?:\/report\/([^/]+))?(?:\/(files)|\/finding\/([^/]+))?$/u.exec(path)
   if (!match) return null
   try {
@@ -262,7 +270,7 @@ export function parseManagedRoute(url) {
 export function resolveManagedRoute(route, teams, adminBundles = []) {
   if (WORKSPACE_CONTENT_VIEWS.has(route.view)) {
     const matches = teams.filter(team => team.slug === route.teamSlug)
-    return matches.length === 1 ? { view: route.view, teamId: matches[0].id } : null
+    return matches.length === 1 ? { view: route.view, teamId: matches[0].id, ...dependencyTabField(route) } : null
   }
   if (route.view === 'bundles') {
     const { teamSlug, bundleSlug, compareSlug, compareMode, ...rest } = route
@@ -295,7 +303,7 @@ export function resolveManagedRoute(route, teams, adminBundles = []) {
 export function managedRouteForIds(route, teams, adminBundles = []) {
   if (WORKSPACE_CONTENT_VIEWS.has(route.view)) {
     const team = teams.find(entry => entry.id === route.teamId)
-    const result = { view: route.view, teamSlug: team?.slug }
+    const result = { view: route.view, teamSlug: team?.slug, ...dependencyTabField(route) }
     return team?.slug && resolveManagedRoute(result, teams) ? result : null
   }
   if (route.view === 'bundles') {

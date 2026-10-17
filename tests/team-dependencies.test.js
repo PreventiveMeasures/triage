@@ -2,14 +2,16 @@
 // repositories whose review is in effect for its reader, the open pull
 // requests whose versions want reviews, fewest first, each version told
 // under the first adding it alone, with its review; every version apart, each
-// once; and what each default branch locks that wants reviews.
+// once; and what each default branch locks that wants reviews; each sub-tab
+// at its address; a pull request named without its owner where every
+// repository reviewed has the same one.
 import assert from 'node:assert/strict'
 import { setImmediate } from 'node:timers/promises'
 import { mock, test } from 'node:test'
 import './_polyfills.js'
 import { templateText } from './_lit.js'
 
-const state = { managedSession: { id: 's', role: 'triage' } }
+const state = { managedSession: { id: 's', role: 'triage' }, managedTeams: [{ id: 'team-1', slug: 'deps' }], teamDependenciesTab: 'pulls' }
 const asked = { branches: [], pulls: [], dependencies: [] }
 const terms = { required: 2, since: null, canReview: true }
 const dir = (more = {}) => ({ paths: ['package-lock.json'], added: [], more: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, moreLocked: 0, ...more })
@@ -56,6 +58,10 @@ mock.module('../ui/view/client-managed.js', { exports: {
 const opened = []
 mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
 mock.module('../ui/view/compare-load.js', { exports: { withCompare: template => template() } })
+const routes = []
+mock.module('../ui/view/managed-history.js', { exports: { managedHistory: {
+  pushRoute(route) { routes.push(['push', route]) }, replaceRoute(route) { routes.push(['replace', route]) },
+} } })
 await import('../ui/view/team-dependencies.js')
 const Dependencies = customElements.get('team-dependencies')
 
@@ -70,7 +76,7 @@ const tabs = text => [...text.split('class="dlg-tabs"')[1].split('</div>')[0].ma
 const cardsOf = text => text.slice(text.indexOf('team-deps-pulls'), text.indexOf('</ol>')).split('<li class="team-deps-pull">').slice(1)
 
 test('the pull requests wanting reviews, fewest first, each version under the first adding it alone, its review shown; every version apart, once; the default branches\'; and the team\'s reviews, a sub-tab each', async () => {
-  const view = shown([repo(7, 'org/a'), repo(8, 'org/b'), repo(9, 'org/c'), repo(7, 'org/a')])
+  const view = shown([repo(7, 'org/a'), repo(8, 'org/b'), repo(9, 'other/c'), repo(7, 'org/a')])
   assert.match(templateText(view.render()), /role="status">Reading their pull requests…/u)
   const text = await read(view)
   assert.deepEqual(tabs(text), [['Pull requests', '4', true], ['Versions', '16', false], ['Default branch', '2', false], ['Reviews', null, false]])
@@ -81,18 +87,18 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.deepEqual(asked.dependencies.map(([repoId, number, options]) => [repoId, number, options.review]).toSorted(),
     [[7, 1, true], [7, 10, true], [7, 11, true], [7, 3, true], [7, 9, true], [8, 2, true], [8, 6, true]],
     'those changing a lockfile, of the repositories reviewing them, with their review')
-  assert.match(text, /role="alert">Only org\/b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
+  assert.match(text, /role="alert">Only b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = cardsOf(text)
   assert.equal(cards.length, 4, 'one adding none wanting reviews not shown')
-  assert.doesNotMatch(text, />org\/a#1[01]</u, 'nor one every version of which is reviewed, the reader\'s reviews of it to copy or not: its popup copies them')
-  assert.match(cards[3], />org\/a#9<[^]*class=team-deps-count>4 other versions unreviewed<[^]*aria-expanded=false [^]*<\/svg>Its own versions pass; 4 versions its lockfiles locked before want reviews<\/button>/u,
+  assert.doesNotMatch(text, />a#1[01]</u, 'nor one every version of which is reviewed, the reader\'s reviews of it to copy or not: its popup copies them')
+  assert.match(cards[3], />a#9<[^]*class=team-deps-count>4 other versions unreviewed<[^]*aria-expanded=false [^]*<\/svg>Its own versions pass; 4 versions its lockfiles locked before want reviews<\/button>/u,
     'one held only by the versions its lockfiles locked before it, last')
   assert.doesNotMatch(cards[3], /<li>/u, 'those not listed under it till asked for')
-  assert.match(cards[0], /href=https:\/\/github\.com\/org\/b\/pull\/2 [^]*>org\/b#2<[^]*>Pull 2<[^]*class=team-deps-count>2 versions to review</u, 'that adding fewest first')
-  assert.match(cards[0], /href=\/npm\/shared@1\.0\.0\/review [^]*shared[^]*class="team-deps-review is-wanted" data-tooltip=0 reviews of 2 required>0\/2<[^]*data-tooltip=Added by org\/a#1 too>\+1</u)
+  assert.match(cards[0], /href=https:\/\/github\.com\/org\/b\/pull\/2 [^]*>b#2<[^]*>Pull 2<[^]*class=team-deps-count>2 versions to review</u, 'that adding fewest first')
+  assert.match(cards[0], /href=\/npm\/shared@1\.0\.0\/review [^]*shared[^]*class="team-deps-review is-wanted" data-tooltip=0 reviews of 2 required>0\/2<[^]*data-tooltip=Added by a#1 too>\+1</u)
   assert.match(cards[0], /href=\/npm\/rej@1\.0\.0\/review [^]*class="team-deps-review is-failed" data-tooltip="A reviewer rejects it[^>]*>rejected</u, 'one rejected, however many pass it')
-  assert.match(cards[0], /shared[^]*>0\/2<\/span>\s*<span class="team-deps-elsewhere" data-tooltip=Reviewed in the comments of org\/a#1, which count there alone>in review in\s+org\/a#1<\/span>/u,
+  assert.match(cards[0], /shared[^]*>0\/2<\/span>\s*<span class="team-deps-elsewhere" data-tooltip=Reviewed in the comments of a#1, which count there alone>in review in\s+a#1<\/span>/u,
     'one another pull request reviews in its comments, which count there alone, told so')
   assert.equal(cards[0].split('team-deps-elsewhere').length - 1, 1)
   assert.match(cards[0], /<\/a><dependency-review-copy \.text=Reviewed rej \.label=Copy your dependency reviews of its versions><\/dependency-review-copy><\/div>/u,
@@ -101,9 +107,9 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
   assert.match(cards[0], /shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>[^]*rej[^]*<npm-delta \.name=rej /u,
     'the lines each wanting reviews changes, a new one\'s whole')
-  assert.match(cards[1], />org\/b#6<[^]*class=team-deps-count>3 versions to review<[^]*and 3 more versions past those listed</u, 'one whose versions wanting reviews aren\'t listed kept')
+  assert.match(cards[1], />b#6<[^]*class=team-deps-count>3 versions to review<[^]*and 3 more versions past those listed</u, 'one whose versions wanting reviews aren\'t listed kept')
   assert.doesNotMatch(cards[1], /<li>/u)
-  assert.match(cards[2], />org\/a#1<[^]*class=team-deps-count is-failed>review fails</u)
+  assert.match(cards[2], />a#1<[^]*class=team-deps-count is-failed>review fails</u)
   assert.equal(cards[2].split('<li>').length - 1, 12, 'as many as SHOWN_VERSIONS of its own')
   assert.doesNotMatch(cards[2], /shared@|fine@/u, 'one a pull request above adds, nor one passed, under it')
   assert.match(cards[2], /aria-expanded=false [^]*<\/svg>and 2 more<\/button>[^]*aria-expanded=false [^]*<\/svg>1 version a pull request above adds too<\/button>/u)
@@ -118,34 +124,37 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.doesNotMatch(expanded[2] + expanded[3], /team-deps-elsewhere/u, 'nor told reviewed elsewhere')
   view.toggle('org/a#1:own')
   assert.equal(cardsOf(templateText(view.render()))[2].split('<li>').length - 1, 13)
-  assert.doesNotMatch(text, /versions to review, each once|<h2>org\/a<\/h2>|dependency-review-list/u, 'the other sub-tabs\' apart')
+  assert.doesNotMatch(text, /versions to review, each once|<h2>a<\/h2>|dependency-review-list/u, 'the other sub-tabs\' apart')
 
   view.pick('versions')
   const versions = templateText(view.render())
   assert.deepEqual(tabs(versions).map(([label, , on]) => on && label).filter(Boolean), ['Versions'])
   assert.match(versions, /16 versions to review, each once,\s+by the pull requests adding it\./u)
   assert.equal(versions.split('>shared<').length - 1, 1, 'each once')
-  assert.match(versions, /shared[^]*in review in\s+org\/a#1[^]*data-tooltip=Added by org\/b#2, org\/a#1>org\/b#2 \+1</u)
-  assert.match(versions, />big-0<[^]*>1\/2<\/span>\s*<span class="team-deps-elsewhere"[^>]*>in review in\s+org\/a#1</u, 'the first adding it too, all its pull requests\' alike')
+  assert.match(versions, /shared[^]*in review in\s+a#1[^]*data-tooltip=Added by b#2, a#1>b#2 \+1</u)
+  assert.match(versions, />big-0<[^]*>1\/2<\/span>\s*<span class="team-deps-elsewhere"[^>]*>in review in\s+a#1</u, 'the first adding it too, all its pull requests\' alike')
   assert.match(versions, /<span class="team-deps-row">[^]*gitdep[^]*data-tooltip=From git, which isn’t reviewed>can’t review</u)
   assert.doesNotMatch(versions, /team-deps-pull"/u)
 
   view.pick('branch')
   const branch = templateText(view.render())
-  assert.match(branch, /<h2>org\/a<\/h2>\s*<p class="team-deps-quiet">2 versions unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*in review in\s+org\/a#9</u,
+  assert.match(branch, /<h2>a<\/h2>\s*<p class="team-deps-quiet">2 versions unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*in review in\s+a#9</u,
     'one a pull request reviews in its comments, which count there alone')
   const patched = branch.split('<li>').find(row => row.includes('>pat<'))
   assert.ok(patched && !patched.includes('team-deps-elsewhere'), 'a patched one never, as two pull requests may patch it apart')
-  assert.match(branch, /<h2>org\/b<\/h2>\s*<p class="team-deps-quiet">0 versions unreviewed, 1 lockfile unread<\/p>\s*<p class="team-deps-quiet" role="alert">Unread, so what it locks isn’t checked:\s*<code>web\/bun\.lock<\/code>/u,
+  assert.match(branch, /<h2>b<\/h2>\s*<p class="team-deps-quiet">0 versions unreviewed, 1 lockfile unread<\/p>\s*<p class="team-deps-quiet" role="alert">Unread, so what it locks isn’t checked:\s*<code>web\/bun\.lock<\/code>/u,
     'one wanting none, but whose lockfile is unread')
-  assert.doesNotMatch(branch, /org\/c/u, 'one not reviewed, not shown')
+  assert.doesNotMatch(branch, /<h2>(?:other\/)?c</u, 'one not reviewed, not shown')
 
   view.pick('reviews')
   const reviews = templateText(view.render())
   assert.match(reviews, /<dependency-review-list \.session=\[object Object\] \.team=team-1><\/dependency-review-list>/u, 'those published to the team')
   assert.doesNotMatch(reviews, /Reading their pull requests|team-deps-pull"/u)
-  assert.equal(Object.assign(new Dependencies(), { repositories: [], team: 'team-1' })._tab, 'reviews', 'the sub-tab last picked opened again')
+  assert.equal(state.teamDependenciesTab, 'reviews', 'the sub-tab last picked, which the team\'s Dependencies tab opens again')
+  assert.deepEqual(routes.splice(0), ['versions', 'branch', 'reviews'].map(dependencyTab => ['push', { view: 'workspace-dependencies', teamSlug: 'deps', dependencyTab }]),
+    'each picked at its address, an entry of its own')
   view.pick('pulls')
+  routes.length = 0
 
   view.open({ preventDefault() {} }, { repo: repo(8, 'org/b'), item: pull(2) })
   assert.deepEqual(opened, [{ repository: { repoId: 8, repo: 'org/b' }, target: { number: 2, preview: { ...pull(2), kind: 'pulls' } } }])
@@ -159,6 +168,28 @@ test('a team none of whose repositories reviews its dependencies for its reader 
   assert.deepEqual(tabs(noneText).map(([label]) => label), ['Pull requests', 'Versions', 'Reviews'], 'no default branch to show, nor its sub-tab')
   const failing = Object.assign(new Dependencies(), { repositories: [repo(10, 'org/gone')] })
   const failed = await read(failing)
-  assert.match(failed, /role="alert">org\/gone: It isn’t there\.</u)
+  assert.match(failed, /role="alert">gone: It isn’t there\.</u, 'named without its owner, the only one')
   assert.doesNotMatch(failed, /workspace-content-empty/u, 'nothing told of what it couldn’t read')
+})
+
+test('pull requests and repositories named with their owners where those reviewed have more than one; a sub-tab its address names kept while read, the first in its place where it isn’t shown', async () => {
+  state.teamDependenciesTab = 'versions'
+  const owners = await read(shown([repo(7, 'org/a'), repo(8, 'kin/b'), repo(10, 'kin/gone')]))
+  assert.match(owners, /shared[^]*in review in\s+org\/a#1[^]*data-tooltip=Added by kin\/b#2, org\/a#1>kin\/b#2 \+1</u)
+  assert.match(owners, /role="alert">kin\/gone: It isn’t there\.</u)
+  state.teamDependenciesTab = 'branch'
+  const branch = await read(shown([repo(7, 'org/a'), repo(8, 'kin/b')]))
+  assert.match(branch, /<h2>org\/a<\/h2>[^]*<h2>kin\/b<\/h2>/u)
+
+  routes.length = 0
+  const view = shown([repo(12, 'org/new')])
+  const reading = templateText(view.render())
+  assert.deepEqual(tabs(reading).find(([, , on]) => on), ['Default branch', null, true], 'the default branch\'s while its repositories are read')
+  view.updated()
+  assert.deepEqual(routes, [])
+  const text = await read(view)
+  assert.deepEqual(tabs(text).map(([label, , on]) => [label, on]), [['Pull requests', true], ['Versions', false], ['Reviews', false]])
+  view.updated()
+  assert.deepEqual(routes, [['replace', { view: 'workspace-dependencies', teamSlug: 'deps', dependencyTab: 'pulls' }]], 'its address the first\'s, replacing its own')
+  assert.equal(state.teamDependenciesTab, 'pulls')
 })

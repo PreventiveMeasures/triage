@@ -115,6 +115,7 @@ export interface State {
   bundleCreationRepoId: number | null
   bundleDetails: unknown
   bundleDetailsTab: string
+  teamDependenciesTab: 'pulls' | 'versions' | 'branch' | 'reviews'
   selectedPackage: string | null
   selectedPackageVersion: string | null
   packageDetailsTab: 'overview' | 'issues'
@@ -584,6 +585,10 @@ export const state: State = store<State>({
   // (LAST_FILE_KEY suffix) round-trips without migration. Reset to
   // 'overview' when selectedBundle changes.
   bundleDetailsTab: 'overview',
+  // A team's Dependencies sub-tab shown (team-dependencies.js), as its
+  // address names it, /team/<slug>/dependencies[/<tab>]: the one last
+  // picked, which its header tab opens again.
+  teamDependenciesTab: 'pulls',
   // Packages view selection — the package name (string) of the open
   // row, null when no detail panel is up. Mirrors the selectedBundle
   // pattern: clicking a row sets it; the deselect button clears it.

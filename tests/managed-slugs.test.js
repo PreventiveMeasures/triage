@@ -147,6 +147,23 @@ test('managed routes use exact server slugs and resolve back to internal UUIDs',
       assert.equal(path, `/team/${team.slug}/${kind}`)
       assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), teams), internal)
     }
+    // Its dependencies' sub-tabs, past the first, which its list's own
+    // address names.
+    for (const dependencyTab of ['pulls', 'versions', 'branch', 'reviews']) {
+      const internal = { view: 'workspace-dependencies', teamId: team.id, dependencyTab }
+      const path = managedRoutePath(managedRouteForIds(internal, teams))
+      assert.equal(path, `/team/${team.slug}/dependencies${dependencyTab === 'pulls' ? '' : `/${dependencyTab}`}`)
+      assert.deepEqual(resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), teams),
+        dependencyTab === 'pulls' ? { view: 'workspace-dependencies', teamId: team.id } : internal)
+    }
+    assert.deepEqual(parseManagedRoute(new URL(`/team/${team.slug}/dependencies/pulls`, 'https://triage.test')),
+      { view: 'workspace-dependencies', teamSlug: team.slug, dependencyTab: 'pulls' })
+    for (const path of [`/team/${team.slug}/dependencies/other`, `/team/${team.slug}/repositories/versions`]) {
+      assert.equal(parseManagedRoute(new URL(path, 'https://triage.test')), null, path)
+    }
+    assert.equal(managedRoutePath({ view: 'workspace-dependencies', teamSlug: team.slug, dependencyTab: 'other' }), null)
+    assert.equal(managedRoutePath({ view: 'workspace-repositories', teamSlug: team.slug, dependencyTab: 'versions' }), `/team/${team.slug}/repositories`,
+      'a sub-tab of its dependencies alone')
   }
   assert.equal(resolveManagedRoute({ view: 'findings', teamSlug: first }, teams), null, 'a UUID is not an alias for a different stored slug')
   assert.equal(resolveManagedRoute({ view: 'findings', teamSlug: short, reportSlug: second }, teams), null, 'report must belong to the selected team')

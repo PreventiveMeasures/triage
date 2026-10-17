@@ -2322,7 +2322,9 @@ async function restoreManagedPageContent(route, isCurrent) {
     startManagedTeamFeed()
     return managedRouteForIds({ view: 'findings', teamId: state.currentManagedTeam, reportId: state.currentManagedReport, finding: { id: route.finding.id } }, state.managedTeams)
   }
-  if (['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(route.view)) return switchToWorkspaceContent(route.teamId, route.view.slice(10), { history: false })
+  if (['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(route.view)) {
+    return switchToWorkspaceContent(route.teamId, route.view.slice(10), { history: false, tab: route.dependencyTab ?? 'pulls' })
+  }
   if (route.view === 'bundles') {
     const entries = route.teamId == null ? adminBundles.map(managedBundleEntry) : managedTeamBundleEntries(state.managedTeams)
     if (!(await openManagedBundle(route, entries, isCurrent, renderSidebar))) return false
