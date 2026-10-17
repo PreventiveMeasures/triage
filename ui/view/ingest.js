@@ -5,7 +5,7 @@ import { managedBundleRoute, managedTabLocation, managedTeamBundleEntries } from
 import { npmPackageRoute } from './npm-package.js'
 import { repositoryCodeRoute } from './repository-code.js'
 import { setManagedWorkspace } from '../../client/managed/workspace.js'
-import { managedRouteForIds } from '../../common/managed/routes.js'
+import { DEPENDENCY_TABS, managedRouteForIds } from '../../common/managed/routes.js'
 import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, holdLocalChangeChecks, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog, openSyncDownloadDialog } from './lazy-dialogs.js'
@@ -740,17 +740,19 @@ export function switchToManagedDeduplication(id) {
 }
 
 // A workspace's or team's list of its `kind`: its reports or bundles, or a
-// team's repositories.
-export async function switchToWorkspaceContent(id, kind, { history = true } = {}) {
+// team's repositories or dependencies, these on their sub-tab `tab`, else
+// the one last picked.
+export async function switchToWorkspaceContent(id, kind, { history = true, tab = state.teamDependenciesTab } = {}) {
   const managed = isManagedUiMode()
   if (!['reports', 'bundles', ...managed ? ['repositories', 'dependencies'] : []].includes(kind)) return false
   const view = `workspace-${kind}`
   const parent = managed ? state.managedTeams.find(team => team.id === id) : listWorkspaces().find(workspace => workspace.id === id)
   // A team's dependencies, only where its reader reviews them in it.
-  if (!parent || kind === 'dependencies' && parent.dependencyReview !== true) return false
+  if (!parent || kind === 'dependencies' && (parent.dependencyReview !== true || !DEPENDENCY_TABS.has(tab))) return false
   if (managed && history && managedHistory.active) {
-    return managedHistory.navigate(managedRouteForIds({ view, teamId: id }, state.managedTeams))
+    return managedHistory.navigate(managedRouteForIds({ view, teamId: id, ...kind === 'dependencies' ? { dependencyTab: tab } : {} }, state.managedTeams))
   }
+  if (kind === 'dependencies') state.teamDependenciesTab = tab
   const workspaceId = managed ? `managed-team:${id}` : id
   const gen = beginViewNavigation()
   closeSessionsExcept(new Set())

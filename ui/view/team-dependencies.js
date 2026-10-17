@@ -1,7 +1,8 @@
 // A team's dependencies to review, its Dependencies tab, where its reader
 // reviews them in it (workspace-content.js), a sub-tab each (TABS), drawn
 // as a dialog's header tabs are (header-tabs.js), the one open
-// scrolling under them: of each
+// (`state.teamDependenciesTab`) its address's, /team/<slug>/dependencies
+// [/<tab>], and scrolling under them: of each
 // of its repositories whose review is in effect for them, the open pull
 // requests whose versions want reviews, those adding fewest first, each
 // version with its review as its pull request's is (pull-dependencies.js),
@@ -12,7 +13,8 @@
 // (dependency-review-list.js). A repository's are held for the session a
 // while (KEEP_MS), its pull requests' as their tiles hold them; and read again
 // once a repository's or a team's review is set anew. As many repositories
-// are read at once as READ_AT_ONCE.
+// are read at once as READ_AT_ONCE. A pull request is named without its
+// repository's owner where every repository reviewed has the same one.
 import { html, nothing, svg } from 'lit'
 import { StateElement } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
@@ -24,7 +26,8 @@ import { dialogTabs } from './header-tabs.js'
 import { withCompare } from './compare-load.js'
 import { deltaBase } from './npm-delta.js'
 import './dependency-review-copy.js'
-import { managedRoutePath } from '../../common/managed/routes.js'
+import { managedHistory } from './managed-history.js'
+import { managedRouteForIds, managedRoutePath } from '../../common/managed/routes.js'
 
 const KEEP_MS = 2 * 60_000
 const RETRY_MS = 30_000
@@ -35,9 +38,10 @@ const PULL_PAGES = 3
 const SHOWN_VERSIONS = 12
 const SHOWN_LISTED = 48
 const READ_AT_ONCE = 3
-// Its sub-tabs, the one last picked shown again as it is opened.
+// Its sub-tabs, each at an address of its own, the one last picked
+// opened again by the team's Dependencies tab (ingest.js
+// switchToWorkspaceContent).
 const TABS = [['pulls', 'Pull requests'], ['versions', 'Versions'], ['branch', 'Default branch'], ['reviews', 'Reviews']]
-let picked = 'pulls'
 
 const held = new Map()
 const listeners = new Set()
@@ -171,7 +175,7 @@ function versionRow(pkg, review, { others = [], adders = false, elsewhere = [] }
 const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
 
 class TeamDependencies extends StateElement {
-  static properties = { repositories: { attribute: false }, team: { attribute: false }, _tab: { state: true }, _open: { state: true } }
+  static properties = { repositories: { attribute: false }, team: { attribute: false }, _open: { state: true } }
 
   createRenderRoot() { return this }
 
@@ -179,15 +183,24 @@ class TeamDependencies extends StateElement {
     super()
     this.repositories = []
     this.team = null
-    this._tab = picked
     // The lists opened past those shown, by their keys.
     this._open = new Set()
     this._notify = () => this.requestUpdate()
   }
 
-  pick(tab) {
-    picked = tab
-    this._tab = tab
+  // Sub-tab `tab` shown, at its address, an entry of its own where it is
+  // picked (`push`), else the one shown's replaced.
+  pick(tab, { push = true } = {}) {
+    state.teamDependenciesTab = tab
+    const route = managedRouteForIds({ view: 'workspace-dependencies', teamId: this.team, dependencyTab: tab }, state.managedTeams)
+    if (push) managedHistory?.pushRoute(route)
+    else managedHistory?.replaceRoute(route)
+  }
+
+  // The sub-tab its address names, the default branch's, which isn't shown
+  // where none wants reviews once all is read, giving way to the first.
+  updated() {
+    if (this._shown && this._shown !== state.teamDependenciesTab) this.pick(this._shown, { push: false })
   }
 
   toggle(key) {
@@ -259,8 +272,8 @@ class TeamDependencies extends StateElement {
     const adding = new Map()
     for (const pull of wanting) for (const pkg of pull.wanted) adding.set(versionKey(pkg), [...adding.get(versionKey(pkg)) ?? [], pull])
     const reading = reads.some(({ read }) => read.status === 'loading') || pulls.some(({ entry }) => entry.status === 'loading')
-    const failures = [...reads.filter(({ read }) => read.status === 'error').map(({ repo, read }) => `${repo.name}: ${read.error}`),
-      ...pulls.filter(({ entry }) => entry.status === 'error').map(pull => `${pullName(pull)}: ${pull.entry.error}`)]
+    const failures = [...reads.filter(({ read }) => read.status === 'error').map(({ repo, read }) => [repo.name, read.error]),
+      ...pulls.filter(({ entry }) => entry.status === 'error').map(pull => [pullName(pull), pull.entry.error])]
     // The default branches with versions wanting reviews, or failing them.
     const branches = reviewed.flatMap(({ repo, read }) => {
       const { count } = unreviewedVersions(read.branch), failed = reviewFailures(read.branch)
@@ -275,9 +288,21 @@ class TeamDependencies extends StateElement {
         if (pkg.commented > 0 && !pkg.patched) commentedIn.set(versionKey(pkg), new Set([...commentedIn.get(versionKey(pkg)) ?? [], pullName(pull)]))
       }
     }
-    const elsewhere = (pkg, pull = null) => pkg.patched ? [] : [...commentedIn.get(versionKey(pkg)) ?? []].filter(name => !pull || name !== pullName(pull))
-    const tabs = TABS.filter(([kind]) => kind !== 'branch' || branches.length > 0)
-    const tab = tabs.some(([kind]) => kind === this._tab) ? this._tab : 'pulls'
+    // Repositories and pull requests named without their owner where every
+    // repository reviewed, or not yet read, has the same one.
+    const owners = new Set(reads.filter(({ read }) => read.status !== 'ready' || read.branch).map(({ repo }) => repo.name.split('/')[0]))
+    const shorten = owners.size === 1 ? name => name.slice(name.indexOf('/') + 1) : name => name
+    const named = pull => shorten(pullName(pull))
+    const elsewhere = (pkg, pull = null) => pkg.patched ? []
+      : [...commentedIn.get(versionKey(pkg)) ?? []].filter(name => !pull || name !== pullName(pull)).map(shorten)
+    const naming = { elsewhere, named, shorten }
+    const failed = failures.map(([name, error]) => `${shorten(name)}: ${error}`)
+    // The default branch's sub-tab where it wants reviews, or, picked, while
+    // its repositories are read.
+    const picked = state.teamDependenciesTab
+    const tabs = TABS.filter(([kind]) => kind !== 'branch' || branches.length > 0 || reading && picked === 'branch')
+    const tab = tabs.some(([kind]) => kind === picked) ? picked : 'pulls'
+    this._shown = tab
     const counts = { pulls: wanting.length, versions: adding.size, branch: branches.reduce((sum, { count }) => sum + count, 0) }
     return html`<div class="team-deps">
       ${dialogTabs({ tabs: tabs.map(([id, label]) => ({ id, label: html`${label}${counts[id] == null || reading && counts[id] === 0 ? nothing
@@ -285,14 +310,14 @@ class TeamDependencies extends StateElement {
       <div class="team-deps-panel" role="tabpanel" id=${`team-deps-panel-${tab}`} aria-labelledby=${`team-deps-tab-${tab}`}>
       ${tab === 'reviews' ? withCompare(() => html`<dependency-review-list .session=${state.managedSession} .team=${this.team}></dependency-review-list>`) : html`
       ${reading ? html`<p class="team-deps-quiet" role="status">Reading their pull requests…</p>` : nothing}
-      ${failures.length === 1 ? html`<p class="team-deps-quiet" role="alert">${failures[0]}</p>` : failures.length > 1
-        ? html`<p class="team-deps-quiet" role="alert" data-tooltip=${failures.join('\n')}>${plural(failures.length, 'repository or pull request')} couldn’t be read.</p>` : nothing}
+      ${failed.length === 1 ? html`<p class="team-deps-quiet" role="alert">${failed[0]}</p>` : failed.length > 1
+        ? html`<p class="team-deps-quiet" role="alert" data-tooltip=${failed.join('\n')}>${plural(failed.length, 'repository or pull request')} couldn’t be read.</p>` : nothing}
       ${!reading && reads.length > 0 && reviewed.length === 0 && failures.length === 0
         ? html`<p class="workspace-content-empty">None of this team’s repositories reviews its dependencies for you.</p>` : nothing}
-      ${tab === 'branch' ? nothing : unchecked.map(({ repo, read }) => html`<p class="team-deps-quiet" role="alert">Only ${repo.name}’s ${plural(read.pulls.items.length, 'open pull request')}
+      ${tab === 'branch' ? nothing : unchecked.map(({ repo, read }) => html`<p class="team-deps-quiet" role="alert">Only ${shorten(repo.name)}’s ${plural(read.pulls.items.length, 'open pull request')}
         updated latest are checked; its others aren’t.</p>`)}
-      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(wanting, adding, reading, unchecked.length > 0, elsewhere)
-        : tab === 'versions' ? this.renderVersions(adding, reading, elsewhere) : branches.map(({ repo, read }) => this.renderBranch(repo, read, elsewhere))}`}
+      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(wanting, adding, reading, unchecked.length > 0, naming)
+        : tab === 'versions' ? this.renderVersions(adding, reading, naming) : branches.map(({ repo, read }) => this.renderBranch(repo, read, naming))}`}
       </div>
     </div>`
   }
@@ -302,13 +327,13 @@ class TeamDependencies extends StateElement {
   // other pull requests review in their comments told so (`elsewhere`); and
   // the reader's reviews of its versions to copy, where the server's host
   // formats them (dependency-review-copy.js); one wanting none is not
-  // listed, its copy in its popup.
-  renderPulls(wanting, adding, reading, unchecked, elsewhere) {
+  // listed, its copy in its popup. Each named as `naming` names it.
+  renderPulls(wanting, adding, reading, unchecked, { elsewhere, named }) {
     if (wanting.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
     }
     const told = new Set()
-    const row = pull => pkg => versionRow(pkg, pull.entry.review, { others: (adding.get(versionKey(pkg)) ?? []).filter(other => other !== pull).map(pullName),
+    const row = pull => pkg => versionRow(pkg, pull.entry.review, { others: (adding.get(versionKey(pkg)) ?? []).filter(other => other !== pull).map(named),
       elsewhere: elsewhere(pkg, pull) })
     return html`<ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
       const own = pull.wanted.filter(pkg => !told.has(versionKey(pkg)))
@@ -319,7 +344,7 @@ class TeamDependencies extends StateElement {
       const href = `https://github.com/${pull.repo.name}/pull/${pull.item.number}`
       return html`<li class="team-deps-pull">
         <div class="team-deps-pull-top"><a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
-          <span class="team-deps-pull-name">${key}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
+          <span class="team-deps-pull-name">${named(pull)}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
           <span class=${`team-deps-count${pull.failed ? ' is-failed' : ''}`}>${pull.failed ? 'review fails' : pull.size > 0 ? `${plural(pull.toReview, 'version')} to review`
             : `${plural(pull.others, 'other version')} unreviewed`}</span>
         </a>${pull.entry.formatted ? html`<dependency-review-copy .text=${pull.entry.formatted} .label=${'Copy your dependency reviews of its versions'}></dependency-review-copy>`
@@ -337,25 +362,25 @@ class TeamDependencies extends StateElement {
   // Every version the pull requests add wanting reviews, each once, by the
   // pull requests adding it, every one reviewing it in its comments told so,
   // the first adding it, whose count it shows, too.
-  renderVersions(adding, reading, elsewhere) {
+  renderVersions(adding, reading, { elsewhere, named }) {
     if (adding.size === 0) return reading ? nothing : html`<p class="workspace-content-empty">No version an open pull request adds wants a review.</p>`
     return html`<section class="team-deps-section" aria-label="Versions to review"><p class="team-deps-quiet">${plural(adding.size, 'version')} to review, each once,
       by the pull requests adding it.</p>
       ${this.rows('versions', [...adding.entries()], ([key, pulls]) => {
         const pkg = pulls[0].wanted.find(one => versionKey(one) === key)
-        return versionRow(pkg, pulls[0].entry.review, { others: pulls.map(pullName), adders: true, elsewhere: elsewhere(pkg) })
+        return versionRow(pkg, pulls[0].entry.review, { others: pulls.map(named), adders: true, elsewhere: elsewhere(pkg) })
       }, SHOWN_LISTED)}
     </section>`
   }
 
   // What a repository's default branch locks that wants reviews, and what
   // fails it there, its lockfiles left unread too.
-  renderBranch(repo, read, elsewhere) {
+  renderBranch(repo, read, { elsewhere, shorten }) {
     const { versions, count } = unreviewedVersions(read.branch)
     const failed = reviewFailures(read.branch)
     const unread = failed?.unread.flatMap(dir => dir.paths) ?? []
     const listed = [...versions, ...failed?.versions ?? []]
-    return html`<section class="team-deps-section" aria-label=${`${repo.name}’s default branch`}><h2>${repo.name}</h2>
+    return html`<section class="team-deps-section" aria-label=${`${shorten(repo.name)}’s default branch`}><h2>${shorten(repo.name)}</h2>
       <p class="team-deps-quiet">${plural(count, 'version')} unreviewed${failed?.count
       ? `, ${failed.count.toLocaleString('en-US')} can’t be reviewed` : ''}${unread.length > 0 ? `, ${plural(unread.length, 'lockfile')} unread` : ''}</p>
       ${unread.length > 0 ? html`<p class="team-deps-quiet" role="alert">Unread, so what ${unread.length === 1 ? 'it locks isn’t' : 'they lock aren’t'} checked:

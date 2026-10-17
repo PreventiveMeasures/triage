@@ -7,19 +7,21 @@
 // types alone (`typeOnly`, proveTypeOnly: types and comments alone erased,
 // the runtime they leave as it was, an added one's empty or a single bare
 // `export {}`), those of the rest (`typeless`), what a reviewer may pass by
-// leaving those out. Worked out in a worker, off the event loop, as many at
-// once per process as MAX_ACTIVE, their files read only once their turn has
-// come, those waiting past MAX_WAITING refused, each waiting a minute at
-// most and counting in a minute at most; one asked again meanwhile sharing
-// the first's; and kept by both sides' integrities, in this instance and
-// beyond it (`kept`), what a version holds never changing. Access is the
-// caller's to check.
+// leaving those out; and whether a binary file, which they count none of,
+// was added, removed or changed (`binary`), one moved as it was not. Worked
+// out in a worker, off the event loop, as many at once per process as
+// MAX_ACTIVE, their files read only once their turn has come, those waiting
+// past MAX_WAITING refused, each waiting a minute at most and counting in a
+// minute at most; one asked again meanwhile sharing the first's; and kept by
+// both sides' integrities, in this instance and beyond it (`kept`), what a
+// version holds never changing. Access is the caller's to check.
 import { Worker } from 'node:worker_threads'
+import { createHash } from 'node:crypto'
 import type { KeptStore } from './npm-kept.ts'
 import { type Lru, lru } from './lru.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
 
-export interface NpmDelta { additions: number; deletions: number; typeless: { additions: number; deletions: number } | null }
+export interface NpmDelta { additions: number; deletions: number; typeless: { additions: number; deletions: number } | null; binary: boolean }
 
 const MAX_ACTIVE = 2
 const MAX_WAITING = 64
@@ -52,9 +54,11 @@ function done() {
 
 const lines = (told: unknown): told is { additions: number; deletions: number } => typeof told === 'object' && told !== null
   && Number.isSafeInteger((told as { additions?: unknown }).additions) && Number.isSafeInteger((told as { deletions?: unknown }).deletions)
-// A delta as kept, none where it isn't one.
+// A delta as kept, none where it isn't one, or was kept before it told of
+// binary files.
 const deltaOf = (told: unknown): NpmDelta | null => lines(told) && ((told as NpmDelta).typeless === null || lines((told as NpmDelta).typeless))
-  ? { additions: told.additions, deletions: told.deletions, typeless: (told as NpmDelta).typeless } : null
+  && typeof (told as NpmDelta).binary === 'boolean' ? { additions: told.additions, deletions: told.deletions, typeless: (told as NpmDelta).typeless,
+    binary: (told as NpmDelta).binary } : null
 
 type Counted = { additions: number; deletions: number; typeAdditions: number; typeDeletions: number; typeFiles: number }
 const isCounted = (told: unknown): told is Counted => typeof told === 'object' && told !== null
@@ -87,16 +91,48 @@ function counted(base: [string, string][], other: [string, string][], deadline: 
   })
 }
 
-// A side's text files, by path, and how long their texts are.
+// A side's text files, by path, how long their texts are, and its other,
+// binary, files.
 function texts(files: NpmPackageFile[] | null) {
   let length = 0
-  const read = (files ?? []).flatMap(({ path, bytes }) => {
-    const text = npmFileText(bytes)
-    if (text === null) return []
+  const binaries: NpmPackageFile[] = []
+  const read = (files ?? []).flatMap(file => {
+    const text = npmFileText(file.bytes)
+    if (text === null) { binaries.push(file); return [] }
     length += text.length
-    return [[path, text] as [string, string]]
+    return [[file.path, text] as [string, string]]
   })
-  return { read, length }
+  return { read, length, binaries }
+}
+
+const same = (a: Uint8Array, b: Uint8Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(b)
+const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('base64')
+
+// Whether `news`, a side's binary files, differ from `olds`, the other's:
+// one added, removed or changed, one moved where it is the same as one that
+// was elsewhere not, matched by their digests, each file looked at once.
+function binaryChanged(olds: NpmPackageFile[], news: NpmPackageFile[]): boolean {
+  if (olds.length !== news.length) return true
+  const left = new Map(olds.map(({ path, bytes }) => [path, bytes]))
+  const moved: Uint8Array[] = []
+  for (const { path, bytes } of news) {
+    const was = left.get(path)
+    if (was && same(was, bytes)) left.delete(path)
+    else moved.push(bytes)
+  }
+  // Those not where they were, by their digests, as many of each as there are.
+  const unmoved = new Map<string, number>()
+  for (const bytes of left.values()) {
+    const key = digest(bytes)
+    unmoved.set(key, (unmoved.get(key) ?? 0) + 1)
+  }
+  return moved.some(bytes => {
+    const key = digest(bytes)
+    const count = unmoved.get(key) ?? 0
+    if (count === 0) return true
+    unmoved.set(key, count - 1)
+    return false
+  })
 }
 
 type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
@@ -122,14 +158,15 @@ async function worked(key: string, base: Side | null, other: Side, kept: KeptSto
   const known = deltaOf((await kept?.read(key))?.value)
   if (known) { deltas.set(key, known); return known }
   await turn(Date.now() + DELTA_TIMEOUT_MS)
-  let told
+  let binary, told
   try {
     const [olds, news] = [texts(base ? await base.files() : null), texts(await other.files())]
     if (olds.length + news.length > MAX_TEXT_LENGTH) throw new NpmPackageError(413, 'package-too-large')
+    binary = binaryChanged(olds.binaries, news.binaries)
     told = await counted(olds.read, news.read, Date.now() + DELTA_TIMEOUT_MS)
   } finally { done() }
   const delta = { additions: told.additions, deletions: told.deletions,
-    typeless: told.typeFiles > 0 ? { additions: told.additions - told.typeAdditions, deletions: told.deletions - told.typeDeletions } : null }
+    typeless: told.typeFiles > 0 ? { additions: told.additions - told.typeAdditions, deletions: told.deletions - told.typeDeletions } : null, binary }
   deltas.set(key, delta)
   await kept?.write(key, delta, Date.now())
   return delta

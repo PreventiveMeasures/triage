@@ -124,7 +124,8 @@
 //   GET  /api/npm/type-only?name=&version=&otherVersion= → the files that changed between two versions in types alone,
 //        Brotli-encoded ndjson | 400/401/404/413/429/502/503
 //   GET  /api/npm/delta?name=&version=&otherVersion= → the lines a version adds and removes against another, or `(empty)`, and
-//        those but for declaration files changed in types alone, where any are | 400/401/404/413/422/429/502/503/504
+//        those but for declaration files changed in types alone, where any are, and whether binary files changed
+//        | 400/401/404/413/422/429/502/503/504
 //   GET  /api/npm/risk?name=&version=&otherVersion= → what calls for a look at a version, as risk tells it, against another where given | 400/401/404/413/429/502
 //   POST /api/auth/logout        → same-origin + CSRF, drops the session (and any view)
 //   POST /api/auth/view-as       → admin opens a read-only view as another user | 400/401/403/404

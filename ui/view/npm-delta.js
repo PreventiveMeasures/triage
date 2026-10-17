@@ -3,7 +3,8 @@
 // version it was (`base`), or, new, its whole package's (`(empty)`), as the
 // server counts them (GET /api/npm/delta): `+x −y`, and, where declaration
 // files changed in types alone, which a reviewer may pass leaving them out,
-// `(+z −w without types)`. Read once its row nears the viewport
+// `(+z −w -types)`; and `, binary` where binary files, which lines don't
+// count, changed too. Read once its row nears the viewport
 // (lazy-render.js), as many at once as READ_AT_ONCE, those asked first read
 // first, and held for the session, what a version holds never changing; one
 // that fails asked again after RETRY_MS.
@@ -48,7 +49,7 @@ const lines = told => count(told?.additions) === null || count(told?.deletions) 
 
 // Version `version` of package `name`'s delta against `base`, as held, else
 // asked: `{ status }`, 'loading', then 'ready' with `additions`,
-// `deletions` and `typeless`, or 'error' with its `error`.
+// `deletions`, `typeless` and `binary`, or 'error' with its `error`.
 export function npmDelta(name, version, base) {
   const data = sessionHeld()
   const key = `${name}\0${version}\0${base}`
@@ -59,7 +60,7 @@ export function npmDelta(name, version, base) {
   waiting.push(() => fetchNpmDelta(name, version, base).then(told => {
     const all = lines(told)
     if (data.get(key) !== loading) return null
-    data.set(key, all ? { status: 'ready', until: Number.POSITIVE_INFINITY, ...all, typeless: lines(told.typeless) }
+    data.set(key, all ? { status: 'ready', until: Number.POSITIVE_INFINITY, ...all, typeless: lines(told.typeless), binary: told.binary === true }
       : { status: 'error', until: Date.now() + RETRY_MS, error: 'The server answered with no lines.' })
     return null
   }, err => {
@@ -119,9 +120,10 @@ class NpmDeltaElement extends LitElement {
     const against = this.base && this.base !== '(empty)' ? `against ${this.base}` : 'the whole package'
     if (entry.status === 'loading') return html`<span class="npm-delta is-loading" aria-label="Counting its lines">…</span>`
     if (entry.status === 'error') return html`<span class="npm-delta is-error" data-tooltip=${entry.error}>?</span>`
-    return html`<span class="npm-delta" data-tooltip=${`Lines it adds and removes, ${against}`}>${counted(entry.additions, entry.deletions)}${entry.typeless
+    return html`<span class="npm-delta" data-tooltip=${`Lines it adds and removes, ${against}`}>${counted(entry.additions, entry.deletions)}${entry.binary
+      ? html`<span class="npm-delta-binary" data-tooltip="Binary files changed too, which no line counts">, binary</span>` : nothing}${entry.typeless
       ? html` <span class="npm-delta-typeless" data-tooltip="Leaving out the declaration files changed in types alone">(${counted(entry.typeless.additions, entry.typeless.deletions)}
-        without types)</span>` : nothing}</span>`
+        -types)</span>` : nothing}</span>`
   }
 }
 

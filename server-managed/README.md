@@ -2147,8 +2147,14 @@ or triages and sees its dependencies, or an admin)
 shows a **Dependencies** tab after Repositories (`/team/<slug>/dependencies`,
 `team-dependencies.js`), its sub-tabs **Pull requests**, **Versions**,
 **Default branch** (where any wants reviews) and **Reviews**, drawn as a
-dialog's header tabs are, each counting what it lists, the one last picked
-opened again, held under the team's header while the one open scrolls. Of each of its repositories whose review is in
+dialog's header tabs are, each counting what it lists, each at an address
+of its own past the first (`/team/<slug>/dependencies/versions`, `/branch`,
+`/reviews`), picked as a history entry of its own, the one last picked
+opened again by the team's Dependencies tab, held under the team's header
+while the one open scrolls (Default branch, named but wanting no reviews
+once all is read, gives way to Pull requests, its address too). Pull
+requests and repositories are named without their owner where every
+repository reviewed has the same one (`repo#1`). Of each of its repositories whose review is in
 effect for them (three read at once, one they may read only some of left
 out), it reads the open pull requests (three pages at most, those updated
 latest, saying so where there are more) and
@@ -2181,10 +2187,12 @@ reader's npm access as My reviews' are), with no **Copy dependency review** butt
 which is for one's own. What it reads is held for the session two minutes,
 and read again once a repository's review is set. Each version wanting
 reviews, there and in a pull request's popup, tells the lines it changes
-against the version it was, or its whole package's, `+x −y`, and `(+z −w
-without types)` where declaration files changed in types alone (`GET
-/api/npm/delta`, `npm-delta.js`), read once its row nears the viewport, two
-at a time, held for the session.
+against the version it was, or its whole package's, `+x −y`, `, binary`
+after them where a binary file, which no line counts, was added, removed or
+changed (one moved as it was is not), and `(+z −w -types)` where
+declaration files changed in types alone (`GET /api/npm/delta`,
+`npm-delta.js`), read once its row nears the viewport, two at a time, held
+for the session.
 
 #### Reviewed dependencies of the host
 
@@ -3179,11 +3187,13 @@ TypeScript files changed in types alone, as a bundle's (`GET
 /api/npm/delta?name=&version=&otherVersion=` counts the lines the version
 adds and removes against `otherVersion`, or its whole package's against
 `(empty)` (`npm-delta.ts`, `{ name, version, otherVersion, additions,
-deletions, typeless }`): of their text files, as git's --numstat counts
-them, renames found as git finds them; and, where some declaration files
+deletions, typeless, binary }`): of their text files, as git's --numstat
+counts them, renames found as git finds them; where some declaration files
 changed in types alone as compareTrees proves them (`typeOnly`, an added
 one's left an empty runtime or a bare `export {}`), those of the rest
-(`typeless`, else null). It is worked out in a worker, two at a time per
+(`typeless`, else null); and whether a binary file, none of whose lines
+are counted, was added, removed or changed (`binary`), one moved as it was
+not, one kept before it told so worked out again. It is worked out in a worker, two at a time per
 process, the versions' files read only once their turn comes, sixty-four
 waiting past them (`429 delta-busy`), one asked again meanwhile, even while
 the database is still looked in, sharing the first's, within a minute (`504 delta-timeout`), neither side's text past 64 MiB together (`413
