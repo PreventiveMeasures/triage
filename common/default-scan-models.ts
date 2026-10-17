@@ -13,7 +13,7 @@ export function defaultScanModels(provider: string | null = null) {
     'openai/gpt-6-luna',
     'openai/gpt-6-luna-pro',
     'moonshotai/kimi-k3',
-    'google/gemini-3.8-flash',
+    'google/gemini-4-argon',
     'google/gemma-4-31b-it',
     'x-ai/grok-4.7',
     'z-ai/glm-5.3',
