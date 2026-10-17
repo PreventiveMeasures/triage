@@ -104,7 +104,8 @@ const ACCEPTING = new Set(['accept', 'accept-with-nits'])
 // accepting it passing it (`passing`), each once, by a full, accepting
 // review of theirs, whole or compared with one of `bases` of its package
 // (any, for `any`); and how many review it in its pull request's comments
-// alone (`commented`), which count for it alone.
+// alone (`commented`), which count for it alone: whose reviews passing it,
+// else whose latest, are its comments'.
 function stancesOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'any') {
   const hashes = hashesOf(pkg)
   const by = new Map<string, PublishedReview[]>()
@@ -117,7 +118,10 @@ function stancesOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'an
   let commented = 0, passing = 0, rejected = false
   for (const theirs of by.values()) {
     const latest = theirs.reduce((one, other) => other.time > one.time ? other : one)
-    if (theirs.every(review => review.comment)) commented++
+    // In its comments alone where those telling where they stand are: those
+    // passing it, where they pass it, else their latest.
+    const telling = ACCEPTING.has(latest.status) && theirs.some(qualifies) ? theirs.filter(qualifies) : [latest]
+    if (telling.every(review => review.comment)) commented++
     if (latest.status === 'reject') rejected = true
     else if (ACCEPTING.has(latest.status) && theirs.some(qualifies)) passing++
   }
