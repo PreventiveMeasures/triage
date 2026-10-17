@@ -14,8 +14,9 @@ import type { DependencyReviewEntry, ReviewedDependencies } from './reviewed-dep
 const FORMAT_AT_ONCE = 8
 // The longest comment told, past which none is.
 const MAX_FORMATTED = 1_000_000
-// The reviews of a pull request's versions formatted, at most.
-const MAX_PULL_REVIEWS = 200
+// The reviews of a pull request's versions read at once, those past them
+// read after, every one formatted.
+const REVIEWS_AT_ONCE = 200
 
 // `review` as the hook is given it, the version it is of as `locked`, a
 // pull request's lockfile, locks it where it is one's.
@@ -90,6 +91,7 @@ export async function formattedPull(reviewed: ReviewedDependencies | null, db: P
   if (!reviewed?.formatDependencyReviews || !state) return null
   const mine = ownOfPull(told, state.reviews, user)
   if (mine.size === 0) return null
-  const reviews = await db.listOwnDependencyReviewsById(user, [...mine.keys()].slice(0, MAX_PULL_REVIEWS))
+  const ids = [...mine.keys()], reviews: DependencyReview[] = []
+  for (let at = 0; at < ids.length; at += REVIEWS_AT_ONCE) reviews.push(...await db.listOwnDependencyReviewsById(user, ids.slice(at, at + REVIEWS_AT_ONCE)))
   return formatOwn(reviewed, user, reviews.map(review => ({ review, locked: mine.get(review.id) })), pullRequest)
 }

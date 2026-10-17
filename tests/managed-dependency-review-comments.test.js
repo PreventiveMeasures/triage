@@ -58,3 +58,20 @@ test('a pull request\'s, of one\'s own published reviews of the versions it adds
   assert.equal(await formattedPull(reviewed, db, 'nobody', told, state, pullRequest), null, 'nor for one with no review of its versions')
   assert.equal(asked.length, 1, 'the store asked of none of them')
 })
+
+test('a pull request\'s reviews are read a page at a time, every one formatted, however many', async () => {
+  const pkgs = Array.from({ length: 250 }, (_, at) => ({ name: `lib-${at}`, version: '1.0.0', source: 'registry', integrity: sri(`lib-${at}`), lockfile: 'npm' }))
+  const told = { base: 'c'.repeat(40), head: 'b'.repeat(40), cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: pkgs, locked: pkgs }] }
+  const state = { required: 1, since: null, canReview: true, lockfiles: { mode: 'exclude', paths: [] }, reviews: pkgs.map((pkg, at) => ({ id: `r${at}`, package: pkg.name,
+    version: '1.0.0', integrity: pkg.integrity, basePackage: null, baseVersion: null, reviewer: 'me', status: 'accept', full: true, time: 1 })) }
+  const pages = []
+  const db = { listOwnDependencyReviewsById: (user, ids) => {
+    pages.push(ids.length)
+    return Promise.resolve(ids.map(id => review(id, { package: `lib-${id.slice(1)}`, basePackage: null, baseVersion: null, baseIntegrity: null })))
+  } }
+  let given = null
+  const reviewed = { lookup: () => Promise.resolve(false), formatDependencyReviews: input => { given = input; return Promise.resolve(`${input.reviews.length} reviewed`) } }
+  assert.equal(await formattedPull(reviewed, db, 'me', told, state, { repository: 'org/a', number: 5 }), '250 reviewed')
+  assert.deepEqual([pages, given.reviews.length], [[200, 50], 250])
+})
+
