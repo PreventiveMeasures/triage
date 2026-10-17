@@ -63,13 +63,20 @@ export function withFormatted<T extends DependencyReview>(reviewed: ReviewedDepe
 // integrity it is locked with and of its patch, whole or compared with a
 // version it was.
 function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string): Map<string, AddedPackage> {
+  // Theirs by the version they are of, each version probed once.
+  const theirs = new Map<string, PublishedReview[]>()
+  for (const review of reviews) {
+    if (review.id === undefined || review.reviewer !== user) continue
+    const key = `${review.package}@${review.version}`
+    theirs.set(key, [...theirs.get(key) ?? [], review])
+  }
   const mine = new Map<string, AddedPackage>()
+  if (theirs.size === 0) return mine
   for (const pkg of told.lockfiles.flatMap(dir => 'added' in dir ? dir.added : [])) {
     const hashes = new Set((pkg.integrity ?? '').split(/\s+/u).filter(Boolean))
-    for (const review of reviews) {
-      if (review.id === undefined || review.reviewer !== user || review.package !== pkg.name || review.version !== pkg.version || !hashes.has(review.integrity)
-        || (review.patchHash ?? '') !== (pkg.patchHash ?? '')) continue
-      if (review.basePackage === null || (review.basePackage === pkg.name && (pkg.was ?? []).includes(review.baseVersion ?? ''))) mine.set(review.id, pkg)
+    for (const review of theirs.get(`${pkg.name}@${pkg.version}`) ?? []) {
+      if (!hashes.has(review.integrity) || (review.patchHash ?? '') !== (pkg.patchHash ?? '')) continue
+      if (review.basePackage === null || (review.basePackage === pkg.name && (pkg.was ?? []).includes(review.baseVersion ?? ''))) mine.set(review.id!, pkg)
     }
   }
   return mine

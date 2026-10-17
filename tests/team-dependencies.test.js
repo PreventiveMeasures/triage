@@ -17,13 +17,13 @@ const wants = (name, more = {}) => ({ name, version: '1.0.0', source: 'registry'
 const gitdep = { name: 'gitdep', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/gitdep.git', unsupported: 'git' }
 const big = Array.from({ length: 13 }, (_, at) => wants(`big-${at}`))
 const branches = {
-  7: { cut: false, review: { ...terms, unreviewed: 1 }, lockfiles: [dir({ unreviewed: [wants('old')] })] },
+  7: { cut: false, review: { ...terms, unreviewed: 2 }, lockfiles: [dir({ unreviewed: [wants('old'), wants('pat', { patched: true })] })] },
   8: { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir(), { paths: ['web/bun.lock'], error: 'lockfile-unsupported' }] },
   9: { cut: false, review: null, lockfiles: [dir()] },
 }
 const pull = (number, more = {}) => ({ number, title: `Pull ${number}`, author: 'octo', state: 'open', touchesLockfile: true, ...more })
 // Repository 8's a page at a time, more than are read.
-const pulls = { 7: [pull(1), pull(3), pull(4, { touchesLockfile: false }), pull(9)], 8: { '': [pull(2)], p2: [pull(6)], p3: [pull(7, { touchesLockfile: false })] }, 9: [pull(5)] }
+const pulls = { 7: [pull(1), pull(3), pull(4, { touchesLockfile: false }), pull(9), pull(10), pull(11)], 8: { '': [pull(2)], p2: [pull(6)], p3: [pull(7, { touchesLockfile: false })] }, 9: [pull(5)] }
 const page = (repoId, after = '') => Array.isArray(pulls[repoId]) ? { items: pulls[repoId], more: false }
   : { items: pulls[repoId][after] ?? [], more: true, after: after === '' ? 'p2' : `p${Number(after.slice(1)) + 1}` }
 const dependencies = {
@@ -31,8 +31,12 @@ const dependencies = {
   '7#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared', { reviews: 1, commented: 1 }), ...big, gitdep, wants('fine', { reviews: 2 })], unsupported: [gitdep] })] },
   '7#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('fine', { reviews: 2 }), wants('known', { baseline: true })] })] },
   // Its own passed, but held by those its lockfiles locked before it.
-  '7#9': { cut: false, review: { ...terms, unreviewed: 4 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], unreviewed: [wants('old', { reviews: 1, commented: 1 })], moreUnreviewed: 3 })] },
+  '7#9': { cut: false, review: { ...terms, unreviewed: 4 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], unreviewed: [wants('old', { reviews: 1, commented: 1 }),
+    wants('pat', { patched: true, reviews: 1, commented: 1 })], moreUnreviewed: 2 })] },
   // The reader's reviews of its versions formatted by the server's host, to copy.
+  // Every version reviewed, one with the reader's reviews to copy, one without.
+  '7#10': { cut: false, review: terms, formatted: 'Reviewed done', lockfiles: [dir({ added: [wants('done', { reviews: 2 })] })] },
+  '7#11': { cut: false, review: terms, lockfiles: [dir({ added: [wants('done', { reviews: 2 })] })] },
   '8#2': { cut: false, review: terms, formatted: 'Reviewed rej', lockfiles: [dir({ added: [wants('shared'), wants('rej', { reviews: 2, rejected: true }), wants('vouched', { reviewed: true })] })] },
   // Its versions past those told wanting reviews, those told passed.
   '8#6': { cut: false, review: { ...terms, toReview: 3 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], more: 250 })] },
@@ -68,17 +72,20 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   const view = shown([repo(7, 'org/a'), repo(8, 'org/b'), repo(9, 'org/c'), repo(7, 'org/a')])
   assert.match(templateText(view.render()), /role="status">Reading their pull requests…/u)
   const text = await read(view)
-  assert.deepEqual(tabs(text), [['Pull requests', '4', true], ['Versions', '16', false], ['Default branch', '1', false], ['Reviews', null, false]])
+  assert.deepEqual(tabs(text), [['Pull requests', '4', true], ['Versions', '16', false], ['Default branch', '2', false], ['Reviews', null, false]])
   assert.match(text, /role="tabpanel" id=team-deps-panel-pulls aria-labelledby=team-deps-tab-pulls>/u, 'the one open under them')
   assert.deepEqual(asked.branches.toSorted(), [7, 8, 9], 'each repository once')
   assert.deepEqual(asked.pulls.map(([repoId, kind, options]) => [repoId, kind, options.state, options.after ?? null]).toSorted(),
     [[7, 'pulls', 'open', null], [8, 'pulls', 'open', null], [8, 'pulls', 'open', 'p2'], [8, 'pulls', 'open', 'p3']], 'of those whose review is in effect, three pages at most')
-  assert.deepEqual(asked.dependencies.map(([repoId, number, options]) => [repoId, number, options.review]).toSorted(), [[7, 1, true], [7, 3, true], [7, 9, true], [8, 2, true], [8, 6, true]],
+  assert.deepEqual(asked.dependencies.map(([repoId, number, options]) => [repoId, number, options.review]).toSorted(),
+    [[7, 1, true], [7, 10, true], [7, 11, true], [7, 3, true], [7, 9, true], [8, 2, true], [8, 6, true]],
     'those changing a lockfile, of the repositories reviewing them, with their review')
   assert.match(text, /role="alert">Only org\/b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = cardsOf(text)
-  assert.equal(cards.length, 4, 'one adding none wanting reviews not shown')
+  assert.equal(cards.length, 5, 'one adding none wanting reviews not shown, but where the reader\'s reviews of it are to copy')
+  assert.match(cards[4], />org\/a#10<[^]*class=team-deps-count is-done>every version reviewed<[^]*<dependency-review-copy \.text=Reviewed done /u, 'that one last')
+  assert.doesNotMatch(text, />org\/a#11</u)
   assert.match(cards[3], />org\/a#9<[^]*class=team-deps-count>4 other versions unreviewed<[^]*aria-expanded=false [^]*<\/svg>Its own versions pass; 4 versions its lockfiles locked before want reviews<\/button>/u,
     'one held only by the versions its lockfiles locked before it, last')
   assert.doesNotMatch(cards[3], /<li>/u, 'those not listed under it till asked for')
@@ -90,7 +97,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.equal(cards[0].split('team-deps-elsewhere').length - 1, 1)
   assert.match(cards[0], /<\/a><dependency-review-copy \.text=Reviewed rej \.label=Copy your dependency reviews of its versions><\/dependency-review-copy><\/div>/u,
     'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
-  assert.doesNotMatch(cards.slice(1).join(''), /dependency-review-copy/u, 'none where it formats none')
+  assert.doesNotMatch(cards.slice(1, 4).join(''), /dependency-review-copy/u, 'none where it formats none')
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
   assert.match(cards[0], /shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>[^]*rej[^]*<npm-delta \.name=rej /u,
     'the lines each wanting reviews changes, a new one\'s whole')
@@ -106,7 +113,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   const expanded = cardsOf(templateText(view.render()))
   assert.equal(expanded[2].split('<li>').length - 1, 15, 'its own, and the one a pull request above adds')
   assert.match(expanded[2], /<\/svg>Show fewer<\/button>[^]*aria-expanded=true [^]*above adds too<\/button>\s*<ul class="team-deps-versions"><li>[^]*shared/u)
-  assert.match(expanded[3], /aria-expanded=true [^]*href=\/npm\/old@1\.0\.0\/review [^]*and 3 more, not listed</u, 'those its lockfiles locked before, as many as it tells')
+  assert.match(expanded[3], /aria-expanded=true [^]*href=\/npm\/old@1\.0\.0\/review [^]*and 2 more, not listed</u, 'those its lockfiles locked before, as many as it tells')
   assert.match(expanded[2], /shared[^]*data-tooltip=1 review of 2 required; 1 reviewer in its comments, which count here alone>1\/2</u, 'where its comments review it, its count says so')
   assert.doesNotMatch(expanded[2] + expanded[3], /team-deps-elsewhere/u, 'nor told reviewed elsewhere')
   view.toggle('org/a#1:own')
@@ -124,8 +131,10 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
 
   view.pick('branch')
   const branch = templateText(view.render())
-  assert.match(branch, /<h2>org\/a<\/h2>\s*<p class="team-deps-quiet">1 version unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*in review in\s+org\/a#9</u,
+  assert.match(branch, /<h2>org\/a<\/h2>\s*<p class="team-deps-quiet">2 versions unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*in review in\s+org\/a#9</u,
     'one a pull request reviews in its comments, which count there alone')
+  const patched = branch.split('<li>').find(row => row.includes('>pat<'))
+  assert.ok(patched && !patched.includes('team-deps-elsewhere'), 'a patched one never, as two pull requests may patch it apart')
   assert.match(branch, /<h2>org\/b<\/h2>\s*<p class="team-deps-quiet">0 versions unreviewed, 1 lockfile unread<\/p>\s*<p class="team-deps-quiet" role="alert">Unread, so what it locks isn’t checked:\s*<code>web\/bun\.lock<\/code>/u,
     'one wanting none, but whose lockfile is unread')
   assert.doesNotMatch(branch, /org\/c/u, 'one not reviewed, not shown')

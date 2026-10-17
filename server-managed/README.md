@@ -2166,8 +2166,10 @@ too says so (`+1`), and a later one counts it as one a pull request above
 adds. A version another pull request reviews in its comments, which count
 there alone (`commented`), says so (**in review in org/repo#1**) wherever it
 is listed but under that pull request, where its count says how many of its
-reviewers are in its comments; reviews published here count everywhere,
-and none says so. Versions lists every version they add wanting reviews, each once,
+reviewers are in its comments, a patched one never, as two pull requests may
+patch it apart; reviews published here count everywhere, and none says so.
+One wanting no reviews is listed, last, where the reader's reviews of its
+versions are to copy (`formatted`, below), **every version reviewed**. Versions lists every version they add wanting reviews, each once,
 with the pull requests adding it; Default branch, of each repository, what
 its default branch locks that wants reviews or fails it, its lockfiles left
 unread named, each list forty-eight at first; and Reviews the reviews published to the team, revoked ones
