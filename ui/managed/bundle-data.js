@@ -443,6 +443,14 @@ export function fetchNpmTypeOnly(name, version, otherVersion, onLine, { signal }
   return requestPrettyLines(`/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal)
 }
 
+// The lines a version changes against another, or `(empty)`, its whole
+// package's, and those but for declaration files changed in types alone.
+const DELTA_ERRORS = { ...NPM_ERRORS, 'delta-busy': 'Too many packages are being counted. Try again shortly.',
+  'delta-timeout': 'Counting its lines took too long.', 'delta-failed': 'Its lines couldn’t be counted.' }
+export function fetchNpmDelta(name, version, otherVersion, { signal } = {}) {
+  return request(`/api/npm/delta?${new URLSearchParams({ name, version, otherVersion })}`, DELTA_ERRORS, response => response.json(), signal)
+}
+
 const COMPARISON_ERRORS = {
   404: 'This bundle is no longer available.',
   422: "This bundle couldn't be read.",

@@ -306,15 +306,18 @@ test('Postgres adds dependency review to existing repositories, off', async t =>
   await db.selectRepo(reviewedRepo, 1)
   const legacy = await connect()
   try {
-    await legacy.query(`ALTER TABLE managed_selected_repo DROP COLUMN dependency_review, DROP COLUMN dependency_reviews_required, DROP COLUMN dependency_review_since;
-      DELETE FROM managed_schema_version WHERE version = 29;`)
+    await legacy.query(`ALTER TABLE managed_selected_repo DROP COLUMN dependency_review, DROP COLUMN dependency_reviews_required, DROP COLUMN dependency_review_since,
+      DROP COLUMN dependency_review_lockfiles;
+      DELETE FROM managed_schema_version WHERE version IN (29, 30);`)
   } finally { await legacy.release() }
   await db.close()
   const upgraded = await openPostgresManagedDb(connect)
   t.after(() => upgraded.close())
-  assert.deepEqual((await upgraded.listRepoDependencyReviews()).get(1), { enabled: false, required: 1, since: null })
-  assert.deepEqual(await upgraded.setRepoDependencyReview(1, { enabled: true, required: 2, since: null }), { enabled: true, required: 2, since: null })
-  assert.deepEqual((await upgraded.listRepoDependencyReviews()).get(1), { enabled: true, required: 2, since: null })
+  assert.deepEqual((await upgraded.listRepoDependencyReviews()).get(1), { enabled: false, required: 1, since: null, lockfiles: { mode: 'exclude', paths: [] } })
+  assert.deepEqual(await upgraded.setRepoDependencyReview(1, { enabled: true, required: 2, since: null }), { enabled: true, required: 2, since: null, lockfiles: { mode: 'exclude', paths: [] } })
+  const only = { mode: 'include', paths: ['package-lock.json', 'web/'] }
+  assert.deepEqual(await upgraded.setRepoDependencyReview(1, { enabled: true, required: 2, lockfiles: only }), { enabled: true, required: 2, since: null, lockfiles: only })
+  assert.deepEqual((await upgraded.listRepoDependencyReviews()).get(1), { enabled: true, required: 2, since: null, lockfiles: only })
 })
 
 test('Postgres repository aliases share matching, validation and authorization semantics', async t => {

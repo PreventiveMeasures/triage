@@ -396,6 +396,17 @@ test('review lists recheck target access and session after registry reads, prese
   const hidden = await h.send('/api/npm/reviews/mine')
   assert.equal(hidden.status, 200)
   assert.deepEqual(hidden.body, { reviews: [], next })
+  // A team's, as its Dependencies tab lists them, held to the same access.
+  const teams = []
+  t.mock.method(h.db, 'listTeamDependencyReviews', (teamId, user, before) => {
+    teams.push([teamId, user, before])
+    return Promise.resolve(teamId === 'team' ? { reviews: [review], next: null } : null)
+  })
+  const listed = await h.send('/api/npm/reviews/team?' + new URLSearchParams({ teamId: 'team', beforeTime: '5', beforeId: 'r' }))
+  assert.deepEqual([listed.status, listed.body], [200, { reviews: [], next: null }], 'the private package no longer readable, none of its reviews')
+  assert.deepEqual(teams, [['team', h.sessions.triage.userId, { time: 5, id: 'r' }]])
+  assert.equal((await h.send('/api/npm/reviews/team?teamId=elsewhere')).status, 404)
+  for (const bad of ['', '?teamId=team&beforeTime=x&beforeId=r', '?teamId=team&beforeId=r']) assert.equal((await h.send(`/api/npm/reviews/team${bad}`)).status, 400, bad)
   const latest = '/api/npm/reviews/latest?' + new URLSearchParams({ package: context.package, version: context.version, integrity: context.integrity })
   assert.equal((await h.send(latest)).body.review, null)
   await h.db.setTeamNpmScopes(admin, 'team', ['@secret'])
@@ -405,6 +416,24 @@ test('review lists recheck target access and session after registry reads, prese
     return listScopes(user)
   })
   assert.equal((await h.send('/api/npm/reviews/mine')).status, 401)
+})
+
+test('a page of reviews of more versions than npm\'s reads hold at once is read a few at a time, each version once', async t => {
+  const h = await fixture(t)
+  const pkgs = Array.from({ length: 40 }, (_, i) => packageOf(`lib-${i}`, '1.0.0', { 'index.js': `${i}` }))
+  const calls = registry(t, pkgs)
+  const reviews = pkgs.map(({ doc }, i) => ({ id: `r${i}`, package: doc.name, version: doc.version, integrity: doc.dist.integrity,
+    ...i % 2 ? { basePackage: pkgs[i - 1].doc.name, baseVersion: '1.0.0', baseIntegrity: pkgs[i - 1].doc.dist.integrity } : { basePackage: null, baseVersion: null, baseIntegrity: null } }))
+  t.mock.method(h.db, 'listTeamDependencyReviews', () => Promise.resolve({ reviews, next: null }))
+  const listed = await h.send('/api/npm/reviews/team?teamId=reviewers')
+  assert.deepEqual([listed.status, listed.body.reviews?.length], [200, 40])
+  assert.equal(new Set(calls.map(call => call.url)).size, calls.length, 'a base another review\'s target read once')
+  // Its membership taken after the page is chosen, while npm is read: none of it.
+  t.mock.method(h.db, 'listTeamDependencyReviews', async () => {
+    await h.db.setTeamMember('reviewers', h.sessions.triage.userId, { dependencies: false, security: false })
+    return { reviews, next: null }
+  })
+  assert.deepEqual(await h.send('/api/npm/reviews/team?teamId=reviewers').then(res => [res.status, res.body]), [404, { error: 'no-team' }])
 })
 
 test('the session says who publishes reviews to some team: an admin, in no team, as well as a member who reviews', async t => {

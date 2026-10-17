@@ -1,7 +1,7 @@
 import { LitElement, html, nothing } from 'lit'
 import { appMarkup } from './markup.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
-import { discardDependencyReview, myDependencyReviews } from './client-managed.js'
+import { discardDependencyReview, myDependencyReviews, teamDependencyReviews } from './client-managed.js'
 import { openDiscardReviewDialog } from './lazy-dialogs.js'
 import { managedHistory } from './managed-history.js'
 import { NEXT_ICON } from './lit-icons.js'
@@ -20,8 +20,12 @@ const compactDate = time => {
     <span>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span></time>`
 }
 
+// The reader's own reviews, drafts and published, as My reviews lists them;
+// or, given a team (`team`, its id), those published to it, the latest
+// first, by whom, as its Dependencies tab lists them, none to copy: copying a
+// review's audit is for one's own.
 export class DependencyReviewList extends LitElement {
-  static properties = { session: { attribute: false }, _reviews: { state: true }, _loading: { state: true }, _error: { state: true },
+  static properties = { session: { attribute: false }, team: { attribute: false }, _reviews: { state: true }, _loading: { state: true }, _error: { state: true },
     _next: { state: true }, _discarding: { state: true }, _expanded: { state: true } }
   constructor() { super(); this._reviews = []; this._next = null; this._expanded = new Set(); this._controller = new AbortController() }
   createRenderRoot() { return this }
@@ -48,7 +52,8 @@ export class DependencyReviewList extends LitElement {
     this._loading = true
     this._error = null
     try {
-      const { reviews, next } = await myDependencyReviews(more ? this._next : null, this._controller.signal)
+      const cursor = more ? this._next : null
+      const { reviews, next } = await (this.team ? teamDependencyReviews(this.team, cursor, this._controller.signal) : myDependencyReviews(cursor, this._controller.signal))
       if (key !== this._key) return
       this._reviews = [...new Map([...(more ? this._reviews : []), ...reviews].map(review => [review.id, review])).values()]
       this._next = next
@@ -87,6 +92,7 @@ export class DependencyReviewList extends LitElement {
         ${review.basePackage !== null && review.basePackage !== review.package ? html`<span>${review.basePackage} ${review.baseVersion} → </span>` : nothing}
         <strong>${review.package}</strong> <span>${review.basePackage === review.package ? `${review.baseVersion} → ` : ''}${review.version}</span></a>
         <div class="dependency-review-meta">${compactDate(review.publishedAt ?? review.time)}
+          ${this.team ? html`<span class="dependency-review-author">${review.userLogin}</span>` : nothing}
           ${published && review.teams.length > 0 ? html`<span class="dependency-review-teams">${review.teams.map(team => team.name).join(', ')}</span>` : nothing}
           ${published && notes > 0 ? html`<span class="dependency-review-note-count">${notes} ${notes === 1 ? 'note' : 'notes'}</span>` : nothing}
           ${review.revokedAt === null ? nothing : reviewBadge(review)}</div></div>
@@ -94,7 +100,7 @@ export class DependencyReviewList extends LitElement {
         <span class="dependency-review-coverage">${published ? html`${review.coverage === 'full' ? 'Full' : html`<span class="dependency-review-partial">Partial</span>`} · ${review.checkedFiles}/${review.totalFiles} files checked`
           : notes ? `${notes} ${notes === 1 ? 'note' : 'notes'}` : 'No notes'}</span></div>
       <div class="dependency-review-row-actions">
-        <review-audit-copy .review=${review}></review-audit-copy>
+        ${this.team ? nothing : html`<review-audit-copy .review=${review}></review-audit-copy>`}
         ${this._canDiscard(review) ? html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${this._loading || Boolean(this._discarding)}
           @click=${() => this._discard(review)}>${appMarkup(DELETE_ICON_SVG)}</button>` : nothing}
         <a class="dependency-review-open" href=${managedRoutePath(route)} @click=${open} aria-label=${`${published ? 'Open' : 'Continue'} review for ${reviewTitle(review)}`}><span aria-hidden="true">→</span></a></div></div>
@@ -102,7 +108,7 @@ export class DependencyReviewList extends LitElement {
     </li>`
   }
   render() {
-    const key = JSON.stringify([this.session?.id, this.session?.role])
+    const key = JSON.stringify([this.session?.id, this.session?.role, this.team ?? null])
     if (key !== this._key) {
       this._controller.abort()
       this._controller = new AbortController()
@@ -112,6 +118,14 @@ export class DependencyReviewList extends LitElement {
       this._discarding = null
       this._expanded = new Set()
       void this._load()
+    }
+    if (this.team) {
+      return html`<section class="dependency-review-list is-team">
+        ${this._error ? html`<p role="alert">${this._error}</p>` : nothing}
+        ${!this._loading && !this._error && this._reviews.length === 0 ? html`<p class="npm-review-muted">No reviews are published to this team yet.</p>` : nothing}
+        <ol>${this._reviews.map(review => this._row(review))}</ol>
+        ${this._next ? html`<button type="button" class="npm-review-button" ?disabled=${this._loading} @click=${() => this._load(true)}>Load more</button>` : nothing}
+      </section>`
     }
     return html`<section class="dependency-review-list">
       <header><h1>My reviews</h1></header>

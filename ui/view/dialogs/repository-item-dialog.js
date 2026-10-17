@@ -17,6 +17,7 @@ import { flowText } from '../format.js'
 import { renderHighlighted } from '../render-finding.js'
 import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, agentIcon, agentName, branchOnGithub, issueState, sessionOnGithub, sessionRan } from '../repository-tiles.js'
 import { pullDependencies, readsDependencies, reviewFailures, reviewOf, subscribePullDependencies, unreviewedVersions } from '../pull-dependencies.js'
+import '../npm-delta.js'
 import { managedRoutePath } from '../../../common/managed/routes.js'
 import { githubUser, githubUsers } from '../github-users.js'
 import { reviewSections } from '../pull-reviews.js'
@@ -179,7 +180,9 @@ class RepositoryItemDialog extends AppDialog {
       ${told.length === 0 && lockfiles.length > 0 ? html`<p class="repo-item-quiet">None: every version its lockfiles lock, they locked before.</p>` : nothing}
       ${told.map(dir => html`<div class="repo-item-lockfiles">
         <p>${dir.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}</p>
-        ${dir.error ? html`<p class="repo-item-quiet" role="alert">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
+        ${dir.excluded ? html`<p class="repo-item-quiet">Not reviewed: the repository’s dependency review leaves ${dir.paths.length === 1 ? 'this lockfile' : 'these lockfiles'} out.</p>` : nothing}
+        ${dir.error && dir.excluded ? html`<p class="repo-item-quiet">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
+          : dir.error ? html`<p class="repo-item-quiet" role="alert">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
           : html`<ul>${dir.added.toSorted((a, b) => Number(Boolean(a.was)) - Number(Boolean(b.was))).map(pkg => html`<li>${this.renderPackage(pkg, review)}</li>`)}</ul>
             ${dir.more > 0 ? html`<p class="repo-item-quiet">and ${dir.more.toLocaleString('en-US')} more</p>` : nothing}`}
       </div>`)}
@@ -197,8 +200,9 @@ class RepositoryItemDialog extends AppDialog {
   // lockfiles there (`baselineUnread`, the first few named), or the
   // reviewed dependencies answer, that the versions they would pass want
   // reviews. By how many reviewers its comments review its versions, which
-  // count while it is open, or that they couldn't be read.
-  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [], commentReviews, commentsFailed }) {
+  // count while it is open, or that they couldn't be read. The lockfiles it
+  // holds to, where not every one.
+  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [], commentReviews, commentsFailed, lockfiles }) {
     const named = baselineUnread.slice(0, 5)
     return html`<p class="repo-item-quiet">Each version needs ${plural(required, 'full, accepting review')} by as many reviewers${reviewedDependencies
       ? ', or the server’s reviewed dependencies to pass it; a patched one, not reviews here' : since
@@ -208,7 +212,9 @@ class RepositoryItemDialog extends AppDialog {
         ? ` and ${(baselineUnread.length - named.length).toLocaleString('en-US')} more` : ''} couldn’t be read, so the versions ${baselineUnread.length === 1 ? 'it' : 'they'} locked want reviews.</p>` : nothing}
       ${unasked ? html`<p class="repo-item-quiet" role="alert">The server’s reviewed dependencies didn’t answer for ${plural(unasked, 'version')}, so ${unasked === 1 ? 'it wants' : 'they want'} reviews.</p>` : nothing}
       ${commentReviews ? html`<p class="repo-item-quiet">Reviews in its comments by ${plural(commentReviews, 'reviewer')} count too while it is open, a patched version’s of its patch.</p>` : nothing}
-      ${commentsFailed ? html`<p class="repo-item-quiet" role="alert">Its comments couldn’t be read for reviews, so none of theirs count.</p>` : nothing}`
+      ${commentsFailed ? html`<p class="repo-item-quiet" role="alert">Its comments couldn’t be read for reviews, so none of theirs count.</p>` : nothing}
+      ${lockfiles ? html`<p class="repo-item-quiet">${lockfiles.mode === 'include' ? 'Only these lockfiles are reviewed: ' : 'These lockfiles aren’t reviewed: '}${lockfiles.paths.length === 0 ? 'none'
+        : lockfiles.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}.</p>` : nothing}`
   }
 
   // What fails a review (reviewFailures), where anything does: each version
@@ -234,9 +240,10 @@ class RepositoryItemDialog extends AppDialog {
   // where its review is in effect and the reader reviews, reviewed against
   // it, one that can be, unpatched; its review; whether only devDependencies
   // need it, whether it is patched; and where one not of npm's registry is
-  // from. Another its lockfiles lock
-  // (`other`), wanting reviews or failing them, by its version alone,
-  // reviewed whole.
+  // from; and, one of npm's registry wanting reviews, the lines it changes
+  // against the version it was, or whole (npm-delta.js). Another its
+  // lockfiles lock (`other`), wanting reviews or failing them, by its version
+  // alone, reviewed whole.
   renderPackage(pkg, review = null, other = false) {
     const { name, version, source, from, dev, was } = pkg
     const npm = (source === 'registry' || source === 'mirror') && version
@@ -249,6 +256,7 @@ class RepositoryItemDialog extends AppDialog {
       ${other ? nothing : was ? html`<span class="repo-item-was" data-tooltip-truncated data-tooltip=${`Was ${was.join(', ')}`}>from ${was.join(', ')}</span>`
         : html`<span class="repo-item-tag is-new" data-tooltip="Its lockfiles locked no version of it before">new</span>`}
       ${this.renderReview(pkg, review)}
+      ${source === 'registry' && version && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${name} .version=${version} .base=${before ?? '(empty)'}></npm-delta>` : nothing}
       ${dev ? html`<span class="repo-item-tag" data-tooltip="Only devDependencies need it">dev</span>` : nothing}
       ${pkg.patched ? html`<span class="repo-item-tag" data-tooltip="pnpm patches it as it installs it">patched</span>` : nothing}
       ${SOURCES[source] ? html`<span class="repo-item-tag" data-tooltip=${from ?? nothing}>${SOURCES[source]}</span>` : nothing}`

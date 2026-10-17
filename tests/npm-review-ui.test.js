@@ -28,6 +28,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchPrettyBundleChanges() {}, fetchPrettyBundleFile() {}, fetchPrettyNpmChanges() {}, fetchPrettyNpmFile() {}, fetchPrettyNpmFiles() {}, fetchBundleRenameDiff() {}, fetchNpmRenameDiff() {}, fetchBundleRenameDiffs() {}, fetchNpmRenameDiffs() {}, fetchBundleTypeOnly() {}, fetchNpmTypeOnly() {},
   dependencyReviews: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
   myDependencyReviews: (...args) => { requests.push(args); return Promise.resolve(answer) },
+  teamDependencyReviews: (...args) => { requests.push(['team', ...args]); return Promise.resolve(answer) },
   discardDependencyReview: (...args) => { requests.push(args); return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer) },
   latestDependencyReview: (...args) => { latestRequests.push(args); return latestAnswer instanceof Error ? Promise.reject(latestAnswer) : Promise.resolve(latestAnswer) },
 } })
@@ -270,6 +271,26 @@ test('My reviews lists each frozen set and its final verdict, with copy restrict
   assert.match(text(copy.render()), /Copy audit Markdown/u)
   copy.review = { ...full, revokedAt: 300 }
   assert.equal(text(copy.render()), '')
+})
+
+test('a team\'s reviews list those published to it, by whom, none to copy nor discard, a page on from the last', async () => {
+  const page = new DependencyReviewList()
+  page.team = 'team-1'
+  page.session = { id: 'u-me', role: 'triage' }
+  const full = { ...review, id: 'full', publishedAt: 200, coverage: 'full', checkedFiles: 4, totalFiles: 4, status: 'accept', userLogin: 'grace' }
+  answer = { reviews: [full], next: { time: 200, id: 'full' } }
+  requests.length = 0
+  await page._load()
+  assert.deepEqual(requests.at(-1).slice(0, 3), ['team', 'team-1', null])
+  const row = text(page._row(full))
+  assert.match(row, /class="dependency-review-author">grace</u)
+  assert.doesNotMatch(row, /review-audit-copy|dependency-review-discard/u, 'copying an audit is for one\'s own')
+  answer = { reviews: [{ ...full, id: 'older', publishedAt: 100 }], next: null }
+  await page._load(true)
+  assert.deepEqual(requests.at(-1).slice(0, 3), ['team', 'team-1', { time: 200, id: 'full' }])
+  const shown = text(page.render())
+  assert.match(shown, /class="dependency-review-list is-team"/u)
+  assert.doesNotMatch(shown, /My reviews|Drafts/u)
 })
 
 test('review lists discard only drafts after confirmation and keep rows on failure', async () => {

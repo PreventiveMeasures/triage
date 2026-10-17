@@ -25,6 +25,12 @@ export interface DependencyReviewStore {
   listDependencyReviews(context: ReviewContext, user: string, allBases?: boolean): Promise<DependencyReview[]>
   getLatestOwnDependencyReview(user: string, target: Pick<ReviewContext, 'ecosystem' | 'package' | 'version' | 'integrity'>): Promise<DependencyReview | null>
   listOwnDependencyReviews(user: string, before: { time: number; id: string } | null): Promise<{ reviews: DependencyReview[]; next: { time: number; id: string } | null }>
+  // The reviews published to team `teamId`, revoked ones too, the latest
+  // published first, a page on from `before` (when it was published, and
+  // its id), for one who reads them there (reviewsIn); null for another.
+  listTeamDependencyReviews(teamId: string, user: string, before: { time: number; id: string } | null): Promise<{ reviews: DependencyReview[]; next: { time: number; id: string } | null } | null>
+  // Whether `user` reads the reviews published to team `teamId` (reviewsIn).
+  readsTeamDependencyReviews(teamId: string, user: string): Promise<boolean>
   listDependencyReviewTeams(user: string): Promise<ReviewTeam[]>
   listDependencyReviewEnabledTeams(): Promise<string[]>
   setTeamDependencyReview(sessionId: string, teamId: string, enabled: boolean): Promise<boolean>
@@ -62,6 +68,7 @@ CREATE TABLE IF NOT EXISTS managed_dependency_review_team (
   team_id TEXT NOT NULL REFERENCES managed_team(id) ON DELETE CASCADE,
   PRIMARY KEY (review_id, team_id)
 ) STRICT;
+CREATE INDEX IF NOT EXISTS managed_dependency_review_team_idx ON managed_dependency_review_team(team_id, review_id);
 `
 const values = (c: ReviewContext) => [c.ecosystem, c.package, c.version, c.integrity, c.basePackage ?? '', c.baseVersion ?? '', c.baseIntegrity ?? '']
 const targetWhere = 'ecosystem = ? AND package = ? AND version = ? AND integrity = ?'
@@ -163,6 +170,30 @@ async function listOwn(db: ManagedSql, user: string, before: { time: number; id:
   return { reviews: await expandReviews(db, page, user), next: rows.length > 50 && last ? { time: last.time, id: last.id } : null }
 }
 
+// A version's reviews, of its base (`context`), or of any (`allBases`), that
+// `user` reads: their own, and those published to a team they read in.
+async function listContext(db: ManagedSql, context: ReviewContext, user: string, allBases: boolean) {
+  const rows = await db.prepare(`SELECT ${columns} FROM managed_dependency_review r WHERE ${allBases ? targetWhere : contextWhere}
+    AND (user_id = ? OR (published_at IS NOT NULL AND EXISTS (
+      SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id JOIN managed_user u ON u.id = ?
+      WHERE rt.review_id = r.id AND ${reviewsIn(false)})))
+    ORDER BY time, id`).all(...values(context).slice(0, allBases ? 4 : 7), user, user)
+  return expandReviews(db, rows, user)
+}
+
+const readsTeam = async (db: ManagedSql, teamId: string, user: string) =>
+  Boolean(await db.prepare(`SELECT 1 FROM managed_team t JOIN managed_user u ON u.id = ? WHERE t.id = ? AND ${reviewsIn(false)}`).get(user, teamId))
+
+async function listTeam(db: ManagedSql, teamId: string, user: string, before: { time: number; id: string } | null) {
+  if (!await readsTeam(db, teamId, user)) return null
+  const rows = await db.prepare(`SELECT ${columns} FROM managed_dependency_review r JOIN managed_dependency_review_team rt ON rt.review_id = r.id
+    WHERE rt.team_id = ? AND r.published_at IS NOT NULL ${before ? 'AND (r.published_at < ? OR (r.published_at = ? AND r.id < ?))' : ''}
+    ORDER BY r.published_at DESC, r.id DESC LIMIT 51`).all(teamId, ...before ? [before.time, before.time, before.id] : []) as DependencyReview[]
+  const page = rows.slice(0, 50)
+  const last = page.at(-1)
+  return { reviews: await expandReviews(db, page, user), next: rows.length > 50 && last ? { time: Number(last.publishedAt), id: last.id } : null }
+}
+
 async function saveFile(db: ManagedSql, reviewId: string, entry: ReviewInput, requestedId: string | null, now: number) {
   const existing = await db.prepare(`SELECT id FROM managed_dependency_file_review
     WHERE review_id = ? AND file = ? ORDER BY time, id`).all(reviewId, entry.file) as { id: string }[]
@@ -187,6 +218,8 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
   const read = (id: string) => db.prepare(`SELECT ${columns} FROM managed_dependency_review WHERE id = ?`).get(id)
   return {
     listOwnDependencyReviews: (user, before) => listOwn(db, user, before),
+    listTeamDependencyReviews: (teamId, user, before) => listTeam(db, teamId, user, before),
+    readsTeamDependencyReviews: (teamId, user) => readsTeam(db, teamId, user),
     async getLatestOwnDependencyReview(user, target) {
       const row = await db.prepare(`SELECT ${columns} FROM managed_dependency_review
         WHERE user_id = ? AND ecosystem = ? AND package = ? AND version = ? AND integrity = ? ORDER BY time DESC, id DESC LIMIT 1`)
@@ -207,14 +240,7 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
       return true
     },
     listDependencyReviewTeams: user => teams(db, user),
-    async listDependencyReviews(context, user, allBases = false) {
-      const rows = await db.prepare(`SELECT ${columns} FROM managed_dependency_review r WHERE ${allBases ? targetWhere : contextWhere}
-        AND (user_id = ? OR (published_at IS NOT NULL AND EXISTS (
-          SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id JOIN managed_user u ON u.id = ?
-          WHERE rt.review_id = r.id AND ${reviewsIn(false)})))
-        ORDER BY time, id`).all(...values(context).slice(0, allBases ? 4 : 7), user, user)
-      return expandReviews(db, rows, user)
-    },
+    listDependencyReviews: (context, user, allBases = false) => listContext(db, context, user, allBases),
     async changeDependencyReview(context, sessionId, change, now) {
       const user = await actor(db, sessionId)
       if (change.action !== 'revoke' && change.action !== 'publish') await requireReviewer(db, user.id)

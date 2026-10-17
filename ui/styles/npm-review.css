@@ -224,6 +224,13 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
   container-type: inline-size; container-name: review-list;
 }
 .dependency-review-list > p { color: var(--muted); margin: .4rem 0 1.6rem; }
+/* A team's, under its Dependencies tab's header: as wide as the tab, its
+   rows from the top. */
+.dependency-review-list.is-team {
+  max-width: none; padding: 0;
+  & > ol { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border); }
+  & > p { margin: 0 0 .6rem; }
+}
 .dependency-review-section { margin-top: 1.2rem; }
 .dependency-review-section + .dependency-review-section { margin-top: .6rem; }
 .dependency-review-section h2 {
@@ -265,8 +272,10 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
 .dependency-review-meta time { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .dependency-review-meta time span { margin-left: .3rem; }
 .dependency-review-teams { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dependency-review-note-count { flex: none; }
-.dependency-review-teams::before, .dependency-review-note-count::before { content: '·'; margin-right: .65rem; }
+.dependency-review-note-count, .dependency-review-author { flex: none; }
+.dependency-review-teams::before, .dependency-review-note-count::before, .dependency-review-author::before {
+  content: '·'; margin-right: .65rem;
+}
 .dependency-review-meta .npm-review-badge { flex: none; padding-block: 0; font-size: .65rem; }
 .dependency-review-result { display: flex; flex-direction: column; gap: .2rem; line-height: 1.5; }
 .dependency-review-result .npm-review-verdict, .dependency-review-checked { font-size: .72rem; }

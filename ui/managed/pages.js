@@ -16,7 +16,7 @@ import { formatBytes } from '../scan/metrics.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
 import { fetchBundleOrigin } from './bundle-data.js'
-import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRepositoryDependencyReview, setRole, uploadBundle, uploadReport } from './admin-api.js'
+import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchRepositoryLockfiles, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRepositoryDependencyReview, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
 import { viewAs } from '../../client/managed/session.js'
 import localImportStyles from './styles/local-import.css'
@@ -386,6 +386,13 @@ customElements.define('managed-admin-users', ManagedAdminUsers)
 
 const REPO_ICON = adminIcon('repo')
 
+// The lockfiles a repository's dependency review holds to as its settings
+// edit them: every one (`all`), all but those named, or those alone; and as
+// they are saved, every one as naming none to leave out.
+const draftScope = lockfiles => !lockfiles || (lockfiles.mode === 'exclude' && lockfiles.paths.length === 0) ? { mode: 'all', paths: [] }
+  : { mode: lockfiles.mode, paths: [...lockfiles.paths].toSorted() }
+const scopeSent = scope => scope.mode === 'all' ? { mode: 'exclude', paths: [] } : { mode: scope.mode, paths: scope.paths }
+
 // Only the connected set loads on entry. Private/public discovery is opt-in,
 // and each connected repository has its own page for configuration.
 class ManagedAdminRepos extends ManagedPage {
@@ -742,17 +749,19 @@ class ManagedAdminRepos extends ManagedPage {
   }
 
   // Its dependency review: on or off at once, by its header's switch; the
-  // reviews each version needs and the commit whose lockfiles' versions need
-  // none, saved together; no commit where the server registers reviewed
-  // dependencies, which replace it, the one stored left as it is
-  // (`setting`). On, where no team that reviews dependencies has it, which
-  // its pull requests then show no review for, it says so.
+  // reviews each version needs, the commit whose lockfiles' versions need
+  // none and the lockfiles it holds to, saved together; no commit where the
+  // server registers reviewed dependencies, which replace it, the one stored
+  // left as it is (`setting`). On, where no team that reviews dependencies
+  // has it, which its pull requests then show no review for, it says so.
   _dependencyReviewSection(repo) {
     const registered = this._data?.reviewedDependencies === true
     const saved = repo.dependencyReview ?? { enabled: false, required: 1, since: null }
-    const draft = this._reviewDraft ?? { required: String(saved.required), since: saved.since ?? '' }
+    const savedScope = draftScope(saved.lockfiles)
+    const draft = { required: String(saved.required), since: saved.since ?? '', scope: savedScope, adding: '', ...this._reviewDraft }
     const changed = draft.required !== String(saved.required) || (!registered && draft.since.trim() !== (saved.since ?? ''))
-    const setting = (enabled, required, since) => this._reviewSetting(enabled, required, since)
+      || JSON.stringify(draft.scope) !== JSON.stringify(savedScope)
+    const setting = (enabled, required, since, lockfiles) => this._reviewSetting(enabled, required, since, lockfiles)
     const busy = this._busy != null
     return html`<section class="section" aria-label="Dependency review">
       <div class="section-head"><h2>Dependency review</h2>
@@ -760,12 +769,13 @@ class ManagedAdminRepos extends ManagedPage {
           @click=${() => { if (!busy) void this._saveDependencyReview(repo, setting(!saved.enabled, saved.required, saved.since)) }}></mode-switch>
       </div>
       ${saved.enabled ? html`<form class="settings-row dependency-review-settings" aria-label="Dependency review settings"
-        @submit=${event => { event.preventDefault(); void this._saveDependencyReview(repo, setting(true, Number(draft.required), draft.since.trim().toLowerCase() || null)) }}>
+        @submit=${event => { event.preventDefault(); void this._saveDependencyReview(repo, setting(true, Number(draft.required), draft.since.trim().toLowerCase() || null, scopeSent(draft.scope))) }}>
         <label><span>Reviews each version needs</span><input type="number" min="1" max="10" required .value=${draft.required} ?disabled=${busy}
           @input=${event => { this._reviewDraft = { ...draft, required: event.target.value } }}></label>
         ${registered ? nothing : html`<label class="dependency-review-since"><span>Reviewed since commit</span><input type="text" placeholder="Full commit id, or none"
           autocomplete="off" spellcheck="false" pattern="[0-9a-fA-F]{40}" .value=${draft.since} ?disabled=${busy}
           @input=${event => { this._reviewDraft = { ...draft, since: event.target.value } }}></label>`}
+        ${this._lockfileScope(repo, draft, busy)}
         <button type="submit" class="btn" ?disabled=${busy || !changed}>Save</button>
         ${Array.isArray(repo.reviewTeams) && repo.reviewTeams.length === 0 ? html`<p class="dependency-review-hint is-warning" role="status">No team that reviews
           dependencies has this repository, so its pull requests show no review. Add it to such a team, or turn dependency review on for a team that has it.</p>`
@@ -776,10 +786,58 @@ class ManagedAdminRepos extends ManagedPage {
     </section>`
   }
 
+  // The lockfiles its review holds to (`draft.scope`): every one, all but
+  // those checked, or those checked alone, of the default branch's, read for
+  // it, those named before though no longer there, and another path, or a
+  // directory ending in /, typed in.
+  _lockfileScope(repo, draft, busy) {
+    const { mode, paths } = draft.scope
+    const read = mode === 'all' ? { status: 'ready', paths: [] } : this._lockfilesFor(repo)
+    const set = scope => { this._reviewDraft = { ...draft, scope } }
+    const listed = [...new Set([...read.paths, ...paths])].toSorted()
+    const add = () => {
+      const path = draft.adding.trim().replace(/^\.?\/+/u, '')
+      if (path) this._reviewDraft = { ...draft, adding: '', scope: { mode, paths: [...new Set([...paths, path])].toSorted() } }
+    }
+    return html`<fieldset class="dependency-review-lockfiles" ?disabled=${busy}><legend>Lockfiles reviewed</legend>
+      <select aria-label="Lockfiles reviewed" .value=${mode} @change=${event => set({ mode: event.target.value, paths })}>
+        <option value="all">Every lockfile</option><option value="exclude">All but those checked</option><option value="include">Only those checked</option>
+      </select>
+      ${mode === 'all' ? nothing : html`
+        ${read.status === 'loading' ? html`<p class="dependency-review-hint" role="status">Reading the default branch’s lockfiles…</p>`
+          : read.status === 'error' ? html`<p class="dependency-review-hint is-warning" role="alert">Its lockfiles couldn’t be read (${read.error}); name them below.</p>` : nothing}
+        ${listed.length > 0 ? html`<ul class="dependency-review-lockfile-list">${listed.map(path => html`<li><label>
+          <input type="checkbox" .checked=${paths.includes(path)} @change=${event => set({ mode, paths: event.target.checked ? [...paths, path].toSorted() : paths.filter(one => one !== path) })}>
+          <code>${path}</code>${read.status === 'ready' && !read.paths.includes(path) ? html`<span>${path.endsWith('/') ? 'every lockfile under it' : 'not on the default branch'}</span>` : nothing}
+        </label></li>`)}</ul>` : read.status === 'ready' ? html`<p class="dependency-review-hint">Its default branch has no lockfile its review reads.</p>` : nothing}
+        <label class="dependency-review-lockfile-add"><span>Another lockfile, or a directory ending in /</span>
+          <input type="text" placeholder="examples/" autocomplete="off" spellcheck="false" .value=${draft.adding}
+            @input=${event => { this._reviewDraft = { ...draft, adding: event.target.value } }}
+            @keydown=${event => { if (event.key === 'Enter') { event.preventDefault(); add() } }}></label>
+        <button type="button" class="btn" ?disabled=${!draft.adding.trim()} @click=${add}>Add</button>
+        <p class="dependency-review-hint">${mode === 'exclude' ? 'Pull requests’ changes to the lockfiles checked are listed, but not reviewed.'
+          : 'Only the lockfiles checked are reviewed; pull requests’ changes to others are listed, but not reviewed.'}</p>`}
+    </fieldset>`
+  }
+
+  // The lockfiles of its default branch its review reads, read once as its
+  // settings show, its page told again as they arrive.
+  _lockfilesFor(repo) {
+    if (this._lockfileRead?.repoId !== repo.id) {
+      const read = { repoId: repo.id, status: 'loading', paths: [] }
+      this._lockfileRead = read
+      fetchRepositoryLockfiles(repo.id).then(paths => Object.assign(read, { status: 'ready', paths }),
+        err => Object.assign(read, { status: 'error', error: err?.message ?? String(err) }))
+        .finally(() => { if (this._lockfileRead === read) this.requestUpdate() })
+    }
+    return this._lockfileRead
+  }
+
   // A review's setting as it is saved: without its commit where the server
-  // registers reviewed dependencies, the one stored kept.
-  _reviewSetting(enabled, required, since) {
-    return this._data?.reviewedDependencies === true ? { enabled, required } : { enabled, required, since }
+  // registers reviewed dependencies, the one stored kept; with the lockfiles
+  // it holds to where they are given.
+  _reviewSetting(enabled, required, since, lockfiles) {
+    return { ...this._data?.reviewedDependencies === true ? { enabled, required } : { enabled, required, since }, ...lockfiles ? { lockfiles } : {} }
   }
 
   async _saveDependencyReview(repo, setting) {

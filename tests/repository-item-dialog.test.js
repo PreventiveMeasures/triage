@@ -15,7 +15,10 @@ mock.module('../ui/view/dialogs/app-dialog.js', { namedExports: { AppDialog: Tes
 const dependencyAsked = []
 const dependencyOptions = []
 let dependencies = () => new Promise(() => {})
-mock.module('../ui/view/client-managed.js', { namedExports: { fetchRepositoryItem(repoId, number) { asked.push([repoId, number]); return answer(number) },
+// The lines a version changes, as the server counts them, those asked noted.
+const deltasAsked = []
+let deltas = (...args) => { deltasAsked.push(args); return new Promise(() => {}) }
+mock.module('../ui/view/client-managed.js', { namedExports: { fetchNpmDelta: (...args) => deltas(...args), fetchRepositoryItem(repoId, number) { asked.push([repoId, number]); return answer(number) },
   fetchPullDependencies(repoId, number, options) { dependencyAsked.push([repoId, number]); dependencyOptions.push([number, options]); return dependencies(number) } } })
 mock.module('../ui/view/render-finding.js', { namedExports: { renderHighlighted: text => text } })
 mock.module('../ui/view/format.js', { namedExports: { flowText: text => `[flowed]${text}` } })
@@ -171,6 +174,8 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   assert.match(text, /href=\/npm\/ms@2\.1\.3\/review\/ms@2\.1\.2 [^]*class=repo-item-review is-passed data-tooltip=2 full, accepting reviews of 2 required><svg[^]*<\/svg>2\/2</u,
     'an update reviewed against the version it was, passed')
   assert.match(text, /href=\/npm\/tool@1\.0\.0\/review [^]*class=repo-item-review is-wanted data-tooltip=1 full, accepting review of 2 required>1\/2</u, 'a new one reviewed whole, wanting one more')
+  assert.match(text, />1\/2<\/span>\s*<npm-delta \.name=tool \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>/u, 'the lines it changes, whole')
+  assert.equal(text.split('<npm-delta').length - 1, 2, 'of those wanting reviews alone: tool, and another its lockfiles lock')
   assert.match(text, /left-pad<span class="repo-item-version">@1\.3\.0[^]*>baseline</u)
   const own = text.slice(text.indexOf('repo-item-lockfiles'))
   assert.match(own, /<span class="repo-item-row">[^]*mine[^]*is-failed" data-tooltip=From git, which isn’t reviewed>can’t review</u)
@@ -192,7 +197,8 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
 
 test('where the server registers reviewed dependencies, its terms say so, with its comments\' reviews; a version they pass is reviewed, one rejected so, and a patched one wants them, unlinked to reviewing it', async () => {
   dependencies = number => Promise.resolve({ number, cut: false, review: { required: 2, since: null, canReview: true, reviewedDependencies: true, unasked: 1,
-    commentReviews: 2, commentsFailed: true }, lockfiles: [
+    commentReviews: 2, commentsFailed: true, lockfiles: { mode: 'exclude', paths: ['docs/'] } }, lockfiles: [
+    { paths: ['docs/package-lock.json'], excluded: true, more: 0, added: [{ name: 'docs-tool', version: '1.0.0', source: 'registry' }] },
     { paths: ['pnpm-lock.yaml'], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, added: [
       { name: 'vouched', version: '1.0.0', source: 'registry', reviewed: true }, { name: 'patched', version: '1.0.0', source: 'registry', patched: true, reviews: 0 },
       { name: 'refused', version: '1.0.0', source: 'registry', reviews: 3, rejected: true }] },
@@ -207,6 +213,8 @@ test('where the server registers reviewed dependencies, its terms say so, with i
   assert.match(text, /role="alert">The server’s reviewed dependencies didn’t answer for 1 version, so it wants reviews\./u)
   assert.match(text, /Reviews in its comments by 2 reviewers count too while it is open, a patched version’s of its patch\./u)
   assert.match(text, /role="alert">Its comments couldn’t be read for reviews, so none of theirs count\./u)
+  assert.match(text, /These lockfiles aren’t reviewed: <code>docs\/<\/code>\./u)
+  assert.match(text, /<code>docs\/package-lock\.json<\/code><\/p>\s*<p class="repo-item-quiet">Not reviewed: the repository’s dependency review leaves this lockfile out\.<\/p>/u)
   assert.match(text, /href=\/npm\/refused@1\.0\.0\/review [^]*class="repo-item-review is-failed" data-tooltip="A reviewer rejects it[^>]*>rejected</u, 'one rejected wants reviews, however many pass it')
   assert.match(text, /href=\/npm\/vouched@1\.0\.0\/review [^]*class="repo-item-review is-passed" data-tooltip="The server’s reviewed dependencies pass it"><svg[^]*<\/svg>reviewed</u)
   assert.match(text, /<a class="repo-item-row" href=\/npm\/patched@1\.0\.0 [^]*class="repo-item-review is-wanted" data-tooltip="Reviews here pass no patch[^>]*>unreviewed<[^]*data-tooltip="pnpm patches it as it installs it">patched</u,

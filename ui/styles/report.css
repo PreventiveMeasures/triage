@@ -1865,17 +1865,18 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 .workspace-content-arrow { color: var(--muted); }
 .workspace-content-empty { color: var(--muted); padding: 1rem 0; }
 
-/* A team's dependencies to review (team-dependencies.js): its pull requests
-   wanting reviews, each a card of the versions it alone adds, every version
-   wanting one apart, and its default branches', folded. Each version a row:
-   its name, its review in the color the tiles tell it in, and the pull
-   requests adding it besides. */
+/* A team's dependencies to review (team-dependencies.js), a sub-tab each,
+   picked in its bar: its pull requests wanting reviews, each a card of the
+   versions it alone adds, every version wanting one, its default branches',
+   and the reviews published to it. Each version a row: its name, its review
+   in the color the tiles tell it in, and the pull requests adding it
+   besides. */
 .team-deps { display: flex; flex-direction: column; gap: 1rem; max-width: 1200px; }
+.team-deps-bar { padding-inline: 0; border-bottom: 0; }
 .team-deps-section {
-  & > h2 { margin: 0 0 .5rem; font-size: .8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-  & > summary { color: var(--muted); font-size: .8rem; }
-  & > summary + * { margin-top: .5rem; }
-  &:is(details) > .team-deps-versions { padding: .25rem .5rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 10px); }
+  & > h2 { margin: 0 0 .25rem; font-size: .875rem; font-weight: 500; color: var(--text); }
+  & > .team-deps-quiet:first-child, & > h2 + .team-deps-quiet { margin: 0 0 .5rem; }
+  & > .team-deps-versions { padding: .25rem .5rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 10px); }
 }
 .team-deps-pulls {
   display: flex; flex-direction: column; gap: .5rem; margin: 0; padding: 0; list-style: none;
@@ -1923,6 +1924,14 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   flex: none; margin-left: auto; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .team-deps-quiet { margin: .25rem 0 0; color: var(--muted); font-size: .75rem; }
+/* The lines a version wanting reviews changes (npm-delta.js), beside its
+   review: added green, removed red, those but for declaration files changed
+   in types alone after them, muted; kept whole, as the row shortens its name.
+   Its element a box, however narrow, as its viewport's observer sees only
+   one, while it shows nothing till then. */
+npm-delta { display: inline-block; flex: none; min-width: 1px; min-height: 1em; }
+.npm-delta { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.npm-delta-typeless { opacity: .8; }
 
 @media (width < 600px) {
   .workspace-content-row { flex-wrap: wrap; gap: .5rem .75rem; }
