@@ -1,0 +1,26 @@
+diff --git a/dec/dictionary-browser.js b/dec/dictionary-browser.js
+index 9608543881c9ffadb35c5cc00d097626159afb89..90371018040bf8c8b4f91b0220a32577b1a08f1a 100644
+--- a/dec/dictionary-browser.js
++++ b/dec/dictionary-browser.js
+@@ -1,14 +1,18 @@
+-var base64 = require('base64-js');
+-
+ /**
+  * The normal dictionary-data.js is quite large, which makes it 
+  * unsuitable for browser usage. In order to make it smaller, 
+  * we read dictionary.bin, which is a compressed version of
+  * the dictionary, and on initial load, Brotli decompresses 
+  * it's own dictionary. 😜
++ *
++ * The base64 is decoded natively: `Uint8Array.fromBase64` where the
++ * browser has it, `atob` otherwise.
+  */
+ exports.init = function() {
+   var BrotliDecompressBuffer = require('./decode').BrotliDecompressBuffer;
+-  var compressed = base64.toByteArray(require('./dictionary.bin.js'));
++  var base64 = require('./dictionary.bin.js');
++  var compressed = Uint8Array.fromBase64
++    ? Uint8Array.fromBase64(base64)
++    : Uint8Array.from(atob(base64), function(c) { return c.charCodeAt(0); });
+   return BrotliDecompressBuffer(compressed);
+ };
