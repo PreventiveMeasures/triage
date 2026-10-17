@@ -134,9 +134,11 @@ class KanbanRail extends LitElement {
   // Lets go of every height measured, keeping the card at the top of the
   // view where it is: it's found by the old heights, which the spacers
   // were drawn with, before they go. The cards drawn are measured again,
-  // and the rest guessed from them.
+  // and the rest guessed from them. Two themes in a row before the rail
+  // redraws keep the first's card: by the second, the heights it was
+  // found by are gone, and the spacers are still the old ones.
   _forgetHeights() {
-    this._carried = this._holdOf(this.items, this.scrollTop)
+    this._carried ??= this._holdOf(this.items, this.scrollTop)
     this._heights.clear()
     this._total = 0
     this._version++
