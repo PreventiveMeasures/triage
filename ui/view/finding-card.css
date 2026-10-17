@@ -1455,3 +1455,6 @@ span.evidence-ref:not([role]) { color: var(--muted); }
     }
   }
 }
+
+/* W95 (styles/w95.css): nothing overscrolls. */
+:host-context(body.theme-w95) * { overscroll-behavior: none; }

@@ -14,6 +14,8 @@ export class HoverPreviewElement extends StateElement {
     }
     .preview.wide { width: min(36rem, calc(100vw - 24px)); }
     @media print { .preview { display: none; } }
+    /* W95 (styles/w95.css): nothing overscrolls. */
+    :host-context(body.theme-w95) * { overscroll-behavior: none; }
   `
 
   constructor() {

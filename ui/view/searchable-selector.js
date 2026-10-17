@@ -96,6 +96,8 @@ export class SearchableSelector extends LitElement {
       & .avatar { border-radius: 0; }
       & button:focus-visible { outline: 1px dotted #000; outline-offset: -2px; }
     }
+    /* W95 (styles/w95.css): nothing overscrolls. */
+    :host-context(body.theme-w95) * { overscroll-behavior: none; }
   `
 
   constructor() {

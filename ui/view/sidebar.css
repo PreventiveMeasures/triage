@@ -1051,3 +1051,6 @@ sidebar-delete-current button {
 }
 .logout-row svg { flex: 0 0 auto; }
 .user-menu-row:hover { background: rgb(from var(--text) r g b / .08); }
+
+/* W95 (styles/w95.css): nothing overscrolls. */
+:host-context(body.theme-w95) * { overscroll-behavior: none; }

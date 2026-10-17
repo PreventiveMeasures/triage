@@ -543,3 +543,6 @@ a { cursor: default; }
   border-color: rgb(from var(--green) r g b / .2);
   background: rgb(from var(--green) r g b / .06);
 }
+
+/* W95 (styles/w95.css): nothing overscrolls. */
+:host-context(body.theme-w95) * { overscroll-behavior: none; }

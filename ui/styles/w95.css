@@ -26,6 +26,7 @@
 @media screen {
   :root:has(> body.theme-w95) {
     background: #008080;
+    overscroll-behavior: none;
     /* Windows 95 sets its interface in 8 points: the rem-sized text and
        the padding around it shrink together, as dense as its dialogs. */
     font-size: 14px;
@@ -246,8 +247,10 @@
     /* Scrollbars are Windows 95's: 16px, a raised thumb on the dither,
        an arrow button at either end (below). Their own sizes elsewhere
        give way: the bars take the default `auto` so these pseudo-elements
-       apply. */
-    & *, & { scrollbar-color: auto; scrollbar-width: auto; }
+       apply. Nor does anything overscroll: no bounce or glow at a
+       scroller's ends, no scrolling handed on to the one around it. A
+       shadow root's scrollers take the same from its own stylesheet. */
+    & *, & { scrollbar-color: auto; scrollbar-width: auto; overscroll-behavior: none; }
     & ::-webkit-scrollbar { width: 16px; height: 16px; background: var(--w95-dither); }
     & ::-webkit-scrollbar-track { background: var(--w95-dither); }
     & ::-webkit-scrollbar-thumb { background: var(--w95-face); border-radius: 0; box-shadow: var(--w95-raised); }

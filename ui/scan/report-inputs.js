@@ -238,6 +238,8 @@ export class ReportInputs extends LitElement {
     .copy span { max-width: 55%; color: var(--muted); font-size: .66rem; }
     .empty { margin: 0; padding: 1rem .9rem; color: var(--muted); font-size: .76rem; }
     button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* W95 (styles/w95.css): nothing overscrolls. */
+    :host-context(body.theme-w95) * { overscroll-behavior: none; }
   `, ROW_ACTION_STYLES]
 }
 if (!customElements.get('scan-report-inputs')) customElements.define('scan-report-inputs', ReportInputs)
