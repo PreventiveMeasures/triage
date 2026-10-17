@@ -3376,7 +3376,9 @@ CSRF token and triage role; all but `publish`, which is held to its teams, and
 `revoke`, one who reviews in some team (`403 review-access-required`). `GET /api/npm/reviews/mine` lists only the current
 user's sets in pages of 50, with an optional beforeTime/beforeId cursor;
 `GET /api/npm/reviews/team?teamId=` those published to a team, the latest
-published first, by when it was, for one who reads reviews there.
+published first, by when it was, for one who reads reviews there. Either list
+checks each version a page names once, eight at a time, as npm's reads hold
+no more than thirty-two version documents at once.
 Revision conflicts return 409. Version and integrity
 mismatches also return 409; unknown file paths are refused, including paths not
 present on either side. Notes are limited to 20,000 characters.

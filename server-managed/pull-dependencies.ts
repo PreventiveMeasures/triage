@@ -194,7 +194,7 @@ export async function readLockfile(fullName: string, token: string, ref: string,
 
 // Runs `run` for each of `items`, as many at once as `parallel`, each's
 // result in its place.
-async function eachOf<T, R>(items: T[], parallel: number, run: (item: T) => Promise<R>): Promise<R[]> {
+export async function eachOf<T, R>(items: T[], parallel: number, run: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = []
   let next = 0
   await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, async () => {

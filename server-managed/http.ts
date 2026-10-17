@@ -211,7 +211,7 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
-import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, lockfileFormat, pullDependencies } from './pull-dependencies.ts'
+import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, eachOf, lockfileFormat, pullDependencies } from './pull-dependencies.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, heldTo, scopeOf } from './lockfile-scope.ts'
@@ -3650,6 +3650,11 @@ function found<T>(value: T | null | undefined): T {
   return value
 }
 
+// Version documents a list of reviews reads at once: each holds a version
+// document's room in what npm's reads may hold at once (npm-packages.ts),
+// which refuses past thirty-two of them.
+const REVIEW_READS_AT_ONCE = 8
+
 // Lists must enforce the same target and base access as the review itself,
 // including permission changes while the registry requests are in flight.
 async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, user: string, reviews: T[]): Promise<T[] | null> {
@@ -3659,18 +3664,15 @@ async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, 
   try {
     const reader = await npmReader(deps, cookie, reviews.flatMap(review => [review.package, ...review.basePackage ? [review.basePackage] : []]))
     if (!reader || reader.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
-    const documents = new Map<string, Promise<NpmVersionDocument | null>>()
     // Public versions' documents as the viewer keeps them (npm-kept.ts), a
-    // day: a list asks npm for none it read within it.
+    // day: a list asks npm for none it read within it. Each version once, as
+    // many at once as REVIEW_READS_AT_ONCE.
     const kept = npmVersionStore(deps.db, deps.config.debug)
-    const read = (name: string, version: string) => {
-      const key = `${name}@${version}`
-      if (!documents.has(key)) documents.set(key, readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal, kept))
-      return documents.get(key)!
-    }
-    const packages = await Promise.all(reviews.map(review => Promise.all([
-      read(review.package, review.version), ...(review.basePackage ? [read(review.basePackage, review.baseVersion!)] : []),
-    ])))
+    const versionsOf = (review: T) => [[review.package, review.version], ...review.basePackage ? [[review.basePackage, review.baseVersion!]] : []] as [string, string][]
+    const asked = new Map(reviews.flatMap(versionsOf).map(([name, version]) => [`${name}\0${version}`, [name, version] as const]))
+    const read = await eachOf([...asked], REVIEW_READS_AT_ONCE, ([, [name, version]]) => readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal, kept))
+    const documents = new Map([...asked.keys()].map((key, at) => [key, read[at] ?? null]))
+    const packages = reviews.map(review => versionsOf(review).map(([name, version]) => documents.get(`${name}\0${version}`) ?? null))
     const current = await npmReader(deps, cookie, packages.flat().flatMap(doc => doc?.private ? [doc.name] : []))
     if (!current || current.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     return reviews.filter((_, index) => packages[index]!.every(doc => doc && (!doc.private || canReadPrivateNpm(current, doc.name))))
