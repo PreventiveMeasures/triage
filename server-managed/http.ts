@@ -2077,8 +2077,11 @@ async function handleRepositoryBranchDependencies(res: ServerResponse, deps: Man
     const { packages, paths } = lockedIn(read)
     const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
       ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
-    const state = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
-    if (!state) return { value: { head, review: null }, kept: false }
+    const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
+    if (!now) return { value: { head, review: null }, kept: false }
+    // Told by the lockfiles it held to as they were read, though they have
+    // changed since.
+    const state = { ...now, lockfiles: setting.lockfiles }
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null } : await baselineFor(fullName, token, repoId, state, baselineKept(deps))
     return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: false }
@@ -4586,7 +4589,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       const page = await deps.db.listTeamDependencyReviews(teamId, s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
       if (!page) { sendJson(res, 404, { error: 'no-team' }); return }
       const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews)
-      if (reviews) sendJson(res, 200, { ...page, reviews })
+      if (!reviews) return
+      // Its access asked again, as it may have been taken while npm was read.
+      if (!await deps.db.readsTeamDependencyReviews(teamId, s.user.id)) { sendJson(res, 404, { error: 'no-team' }); return }
+      sendJson(res, 200, { ...page, reviews })
       return
     }
     if (path === '/api/npm/reviews') {

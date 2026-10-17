@@ -29,6 +29,8 @@ export interface DependencyReviewStore {
   // published first, a page on from `before` (when it was published, and
   // its id), for one who reads them there (reviewsIn); null for another.
   listTeamDependencyReviews(teamId: string, user: string, before: { time: number; id: string } | null): Promise<{ reviews: DependencyReview[]; next: { time: number; id: string } | null } | null>
+  // Whether `user` reads the reviews published to team `teamId` (reviewsIn).
+  readsTeamDependencyReviews(teamId: string, user: string): Promise<boolean>
   listDependencyReviewTeams(user: string): Promise<ReviewTeam[]>
   listDependencyReviewEnabledTeams(): Promise<string[]>
   setTeamDependencyReview(sessionId: string, teamId: string, enabled: boolean): Promise<boolean>
@@ -179,8 +181,11 @@ async function listContext(db: ManagedSql, context: ReviewContext, user: string,
   return expandReviews(db, rows, user)
 }
 
+const readsTeam = async (db: ManagedSql, teamId: string, user: string) =>
+  Boolean(await db.prepare(`SELECT 1 FROM managed_team t JOIN managed_user u ON u.id = ? WHERE t.id = ? AND ${reviewsIn(false)}`).get(user, teamId))
+
 async function listTeam(db: ManagedSql, teamId: string, user: string, before: { time: number; id: string } | null) {
-  if (!await db.prepare(`SELECT 1 FROM managed_team t JOIN managed_user u ON u.id = ? WHERE t.id = ? AND ${reviewsIn(false)}`).get(user, teamId)) return null
+  if (!await readsTeam(db, teamId, user)) return null
   const rows = await db.prepare(`SELECT ${columns} FROM managed_dependency_review r JOIN managed_dependency_review_team rt ON rt.review_id = r.id
     WHERE rt.team_id = ? AND r.published_at IS NOT NULL ${before ? 'AND (r.published_at < ? OR (r.published_at = ? AND r.id < ?))' : ''}
     ORDER BY r.published_at DESC, r.id DESC LIMIT 51`).all(teamId, ...before ? [before.time, before.time, before.id] : []) as DependencyReview[]
@@ -214,6 +219,7 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
   return {
     listOwnDependencyReviews: (user, before) => listOwn(db, user, before),
     listTeamDependencyReviews: (teamId, user, before) => listTeam(db, teamId, user, before),
+    readsTeamDependencyReviews: (teamId, user) => readsTeam(db, teamId, user),
     async getLatestOwnDependencyReview(user, target) {
       const row = await db.prepare(`SELECT ${columns} FROM managed_dependency_review
         WHERE user_id = ? AND ecosystem = ? AND package = ? AND version = ? AND integrity = ? ORDER BY time DESC, id DESC LIMIT 1`)

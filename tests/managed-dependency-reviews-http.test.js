@@ -428,6 +428,12 @@ test('a page of reviews of more versions than npm\'s reads hold at once is read 
   const listed = await h.send('/api/npm/reviews/team?teamId=reviewers')
   assert.deepEqual([listed.status, listed.body.reviews?.length], [200, 40])
   assert.equal(new Set(calls.map(call => call.url)).size, calls.length, 'a base another review\'s target read once')
+  // Its membership taken after the page is chosen, while npm is read: none of it.
+  t.mock.method(h.db, 'listTeamDependencyReviews', async () => {
+    await h.db.setTeamMember('reviewers', h.sessions.triage.userId, { dependencies: false, security: false })
+    return { reviews, next: null }
+  })
+  assert.deepEqual(await h.send('/api/npm/reviews/team?teamId=reviewers').then(res => [res.status, res.body]), [404, { error: 'no-team' }])
 })
 
 test('the session says who publishes reviews to some team: an admin, in no team, as well as a member who reviews', async t => {

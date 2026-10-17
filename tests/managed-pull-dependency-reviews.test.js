@@ -475,6 +475,16 @@ test('the default branch\'s dependencies, with their review, tell what its lockf
   const none = (await ask()).body
   assert.deepEqual([none.lockfiles, none.review.unreviewed, none.review.unsupported], [[{ paths: [], added: [], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0,
     unsupported: [], moreUnsupported: 0 }], 0, 0], 'none it holds to there')
+  // Changed while its lockfiles are read: told by those it held to as they were.
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'exclude', paths: [] } })
+  const stateOf = db.repoDependencyReviewState.bind(db)
+  t.mock.method(db, 'repoDependencyReviewState', async (...args) => {
+    await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'include', paths: ['berry/'] } })
+    return stateOf(...args)
+  })
+  const moved = (await ask()).body
+  assert.deepEqual([moved.lockfiles.map(dir => [dir.paths, dir.excluded ?? false]), moved.review.lockfiles],
+    [[[['package-lock.json'], false], [['berry/yarn.lock'], false], [['bun.lock'], false]], undefined])
 
   // Those it holds to read before the hundred read are counted, however many there are.
   t.mock.restoreAll()

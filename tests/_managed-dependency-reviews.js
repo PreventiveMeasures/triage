@@ -148,6 +148,8 @@ export async function checkDependencyReviews(db) {
   for (const who of ['bob', 'carol', 'viewer', 'outsider']) assert.equal(await db.listTeamDependencyReviews('one', users[who].userId, null), null, `${who} reads none there`)
   assert.deepEqual((await db.listTeamDependencyReviews('disabled', users.alice.userId, null)).reviews, [], 'none published there')
   assert.equal(await db.listTeamDependencyReviews('hidden', users.alice.userId, null), null, 'a hidden team’s none')
+  assert.deepEqual(await Promise.all([['one', 'alice'], ['one', 'admin'], ['one', 'bob'], ['hidden', 'alice']].map(([teamId, who]) => db.readsTeamDependencyReviews(teamId, users[who].userId))),
+    [true, true, false, false], 'who reads them, as asked again')
   assert.equal((await db.getLatestOwnDependencyReview(users.alice.userId, reviewContext)).id, review.id)
   assert.equal(await db.getLatestOwnDependencyReview(users.bob.userId, reviewContext), null)
   await assert.rejects(change(save(continued, 'index.js', 'accept')), /review-conflict/u, 'an autosave cannot resurrect a discarded review')
