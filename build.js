@@ -7,7 +7,7 @@
 // `import source` for .css. The plugin below routes JS-imported `.css`
 // through the `text` loader and leaves entry-point CSS alone.
 import * as esbuild from 'esbuild'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
@@ -88,23 +88,23 @@ if (mode === 'build') {
   // overwriting them. Start from an empty out/: anything left over would be
   // served by the static servers and published via `out/chunk-*.js`.
   await rm('out', { recursive: true, force: true })
-  const { metafile } = await esbuild.build({
+  // The brotli fallback builds on its own, without splitting: it runs as
+  // a worker whose response carries `default-src 'none'`
+  // (server-e2e/static.ts), and Firefox fetches a module worker's static
+  // imports under that policy, so an import of a shared chunk is refused
+  // and the worker dies before it decodes anything. (Chromium fetches
+  // them under the page's policy, which admits them.) Alone it imports
+  // nothing; the CommonJS helpers it would share are a few hundred bytes.
+  const scripts = (await readdir('ui')).filter(name => name.endsWith('.js') && name !== 'brotli-fallback.js').map(name => `ui/${name}`)
+  const [{ metafile }, { metafile: fallbackMetafile }] = await Promise.all([esbuild.build({
     bundle: true,
     plugins: [minifyLitTemplates, litCssAsText({ minify: true }), litSvgAsHtml],
-    entryPoints: ['ui/*.js', 'ui/*.css', 'ui/*.html', 'ui/*.svg', 'ui/*.webmanifest'],
+    entryPoints: [...scripts, 'ui/*.css', 'ui/*.html', 'ui/*.svg', 'ui/*.webmanifest'],
     loader: { '.html': 'copy', '.svg': 'copy', '.webmanifest': 'copy' },
     outdir: 'out',
     minify: true,
-    // ESM output so the brotli-fallback entry's `export
-    // brotliDecompress` survives the bundle and the runtime
-    // `await import('./brotli-fallback.js')` from view.js gets a
-    // real module namespace. With the IIFE default, exports were
-    // silently dropped and the dynamic import resolved to an empty
-    // namespace ("brotliDecompress is not a function"). index.html
-    // already loads view.js with `type="module"`, so ESM is
-    // expected on the page side too — as is the dedicated worker
-    // `view/brotli-decompress.js` spawns from the same entry with
-    // `{ type: 'module' }` to keep the decode off the main thread.
+    // index.html loads view.js with `type="module"`, and splitting needs
+    // ESM output for its chunks.
     format: 'esm',
     // Code shared between entries (lit, the scan page, report parsing…)
     // lands once in a chunk instead of in every bundle that uses it, so a
@@ -114,13 +114,28 @@ if (mode === 'build') {
     splitting: true,
     chunkNames: 'chunk-[hash]',
     metafile: true,
-  })
+  }), esbuild.build({
+    bundle: true,
+    entryPoints: ['ui/brotli-fallback.js'],
+    outdir: 'out',
+    minify: true,
+    // ESM output so its `export brotliDecompress` survives the bundle and
+    // the runtime `await import('./brotli-fallback.js')` gets a real module
+    // namespace. With the IIFE default, exports were silently dropped and
+    // the dynamic import resolved to an empty namespace ("brotliDecompress
+    // is not a function"). The dedicated worker `view/brotli-decompress.js`
+    // spawns from the same file with `{ type: 'module' }` to match.
+    format: 'esm',
+    metafile: true,
+  })])
+  if (fallbackMetafile.outputs['out/brotli-fallback.js'].imports.length) throw new Error('out/brotli-fallback.js imports a module, which its worker may not load')
+  const outputs = { ...metafile.outputs, ...fallbackMetafile.outputs }
   // One module, one output. Lazy entries (graph.js, scan.js, dialogs.js…)
   // take lit and the client state from the chunks view.js loads; a copy of
   // their own would be a second lit, a second set of custom elements, a
   // second state, which splitting in this one build rules out. Hold to it.
   const owners = new Map()
-  for (const [output, { inputs }] of Object.entries(metafile.outputs)) {
+  for (const [output, { inputs }] of Object.entries(outputs)) {
     if (!output.endsWith('.js')) continue
     for (const input of Object.keys(inputs)) {
       if (owners.has(input)) throw new Error(`${input} is in both ${owners.get(input)} and ${output}`)
@@ -128,7 +143,7 @@ if (mode === 'build') {
     }
   }
   // Control characters esbuild prints raw, escaped again (build-controls.js).
-  await Promise.all(Object.keys(metafile.outputs).filter(path => path.endsWith('.js')).map(async path => {
+  await Promise.all(Object.keys(outputs).filter(path => path.endsWith('.js')).map(async path => {
     const text = await readFile(path, 'utf8'), escaped = escapedControls(text)
     if (escaped !== text) await writeFile(path, escaped)
   }))
