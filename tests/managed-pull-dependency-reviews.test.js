@@ -476,6 +476,21 @@ test('the default branch\'s dependencies, with their review, tell what its lockf
   assert.deepEqual([none.lockfiles, none.review.unreviewed, none.review.unsupported], [[{ paths: [], added: [], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0,
     unsupported: [], moreUnsupported: 0 }], 0, 0], 'none it holds to there')
 
+  // Those it holds to read before the hundred read are counted, however many there are.
+  t.mock.restoreAll()
+  const many = Object.fromEntries(Array.from({ length: 101 }, (_, n) => [`p${String(n).padStart(3, '0')}/package-lock.json`, npmLockfile({ [`pkg-${n}`]: registry(`pkg-${n}`, '1.0.0') })]))
+  const later = '9'.repeat(40)
+  // Its head moved on: the one kept forgotten.
+  await db.deleteUpstreamCacheEntries('repository/reads/', Number.MAX_SAFE_INTEGER)
+  github(t, { files: { ...PULL.files, [later]: many }, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: later } } } } : {} })
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null, lockfiles: { mode: 'include', paths: ['p100/package-lock.json'] } })
+  const last = (await ask()).body
+  assert.deepEqual(last.lockfiles, [{ paths: ['p100/package-lock.json'], added: [], more: 0, moreLocked: 0, unreviewed: [{ name: 'pkg-100', version: '1.0.0', source: 'registry', reviews: 0 }],
+    moreUnreviewed: 0, unsupported: [], moreUnsupported: 0 }], 'the one past the hundred, which it alone holds to, read')
+  t.mock.restoreAll()
+  await db.deleteUpstreamCacheEntries('repository/reads/', Number.MAX_SAFE_INTEGER)
+  github(t, { files, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {} })
+
   // And its lockfiles there, by their paths, for its settings to name.
   const listing = (await send(`/api/admin/repositories/lockfiles?${new URLSearchParams({ repoId: '1' })}`)).body
   assert.deepEqual([listing.head, listing.lockfiles.toSorted((a, b) => a.path < b.path ? -1 : 1)],

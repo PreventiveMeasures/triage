@@ -217,12 +217,16 @@ export type CommentReviews = (wanting: ReviewedDependency[]) => Promise<{ review
 // be read or lock more than are checked, or the pull request changes more
 // lockfiles than are read (`cut`). A directory none of whose lockfiles the
 // review holds to (`lockfiles`, lockfile-scope.ts, told in its terms where
-// not every one) is told as unasked (`excluded`), failing it in nothing.
+// not every one) is told as unasked (`excluded`), failing it in nothing, as
+// directories left unread are where it holds to none of their lockfiles
+// (`omitted`, told to none).
 export async function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null,
   { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null }: { baseline?: Set<string> | null; baselineUnread?: string[]
     baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null } = {}) {
-  if (!state) return { ...told, lockfiles: told.lockfiles.map(dir => reviewedDirectory(dir, null)) }
+  const { omitted, ...answered } = told
+  if (!state) return { ...answered, lockfiles: told.lockfiles.map(dir => reviewedDirectory(dir, null)) }
   const scope = state.lockfiles ?? EVERY_LOCKFILE
+  const cut = told.cut && !(omitted && !omitted.some(path => heldTo(scope, path)))
   const held = told.lockfiles.filter(dir => reviewedIn(scope, dir.paths))
   let context = { state, reviews: reviewsByVersion(state.reviews), baseline: reviewed ? null : baseline }
   // What wants a review, as `lookup` is asked of, each once.
@@ -259,7 +263,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   }) : { ...reviewedDirectory(dir, null), excluded: true as const })
   const unread = baselineUnread.filter(path => heldTo(scope, path))
   const listed = dirs.flatMap(dir => 'unreviewed' in dir ? [dir] : [])
-  return { ...told, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required,
+  return { ...answered, cut, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required,
     since: reviewed ? null : state.since, canReview: state.canReview, ...reviewed ? { reviewedDependencies: true } : {},
     toReview: distinct(listed.map(dir => dir.toReview), versionKey), unreviewed: distinct(listed.map(dir => dir.unreviewed), versionKey),
     unsupported: distinct(listed.map(dir => dir.unsupported), sourceKey),

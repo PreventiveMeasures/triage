@@ -2070,15 +2070,15 @@ async function handleRepositoryBranchDependencies(res: ServerResponse, deps: Man
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
     const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
     if (!head) return { value: { head: null, review: null }, kept: false }
-    const read = await lockedAt(fullName, token, head)
-    const branch = (held: (path: string) => boolean) => {
-      const { packages, paths } = lockedIn(read, held)
-      return { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
-        ...read.unread.filter(held).map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
-    }
-    const state = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(branch(() => true)))
+    // Those its review holds to alone read, as many as are read of them.
+    const setting = (await deps.db.listRepoDependencyReviews()).get(repoId)
+    if (!setting?.enabled) return { value: { head, review: null }, kept: false }
+    const read = await lockedAt(fullName, token, head, path => heldTo(setting.lockfiles, path))
+    const { packages, paths } = lockedIn(read)
+    const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
+      ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
+    const state = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
     if (!state) return { value: { head, review: null }, kept: false }
-    const told = branch(path => heldTo(state.lockfiles, path))
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null } : await baselineFor(fullName, token, repoId, state, baselineKept(deps))
     return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: false }

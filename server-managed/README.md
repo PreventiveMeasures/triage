@@ -2126,7 +2126,11 @@ pull request's directory of lockfiles none of whose it holds to is told
 `excluded`, its versions with no review, neither asked of the host's
 reviewed dependencies nor, where it couldn't be read, failing the review,
 the popup saying it isn't reviewed; one with any it holds to is reviewed
-whole. The default branch's are read of those it holds to alone; the commit
+whole; one changing lockfiles in more directories than are read fails it
+only where it holds to a lockfile of those left unread (`omitted`, the
+paths kept with what the pull request adds, a thousand at most). The
+default branch's are read of those it holds to alone, the hundred read of
+them; the commit
 reviewed since passes the versions any of its lockfiles locked, but tells
 none it holds to no longer unread (`baselineUnread`). The terms tell the
 scope where it isn't every lockfile (`lockfiles`).

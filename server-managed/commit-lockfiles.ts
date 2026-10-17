@@ -1,12 +1,13 @@
 // The versions a repository's lockfiles of npm's ecosystem lock at a commit,
 // as their review reads them (pull-dependency-reviews.ts): every lockfile
-// there (findRepoLockfiles) read as a pull request's are (pull-dependencies.ts
-// readLockfile), as many as MAX_LOCKFILES, each's versions (`lockfiles`), and
-// those its reader refuses, of Bun's, or past MAX_LOCKFILES (`unread`); and
-// those of some of them (lockedIn), each version once by what its reviews are
-// held to (lockedWith), dev only where it is wherever it is locked. GitHub
-// having none of a lockfile it lists there fails the whole, as it would for
-// any file. What a commit holds never changes: kept in this instance by it.
+// there (findRepoLockfiles) a review holds to (`held`, lockfile-scope.ts),
+// read as a pull request's are (pull-dependencies.ts readLockfile, kept in
+// this instance by the commit and path), as many as MAX_LOCKFILES of those,
+// each's versions (`lockfiles`), and those its reader refuses, of Bun's, or
+// past MAX_LOCKFILES (`unread`); and those of some of them (lockedIn), each
+// version once by what its reviews are held to (lockedWith), dev only where
+// it is wherever it is locked. GitHub having none of a lockfile it lists
+// there fails the whole, as it would for any file.
 import { createClient } from '@preventive/upstream/github.js'
 import { upstreamGithub } from './github-errors.ts'
 import { GithubApiError } from './github-app.ts'
@@ -17,7 +18,6 @@ import { lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts
 export const MAX_LOCKFILES = 100
 
 export interface CommitLockfiles { lockfiles: { path: string; packages: LockedPackage[] }[]; unread: string[] }
-const commits: Lru<CommitLockfiles> = lru(400_000, read => read.lockfiles.reduce((size, lockfile) => size + lockfile.packages.length + 1, 1))
 
 // The lockfiles at commit `sha` its review reads, by their paths, each with
 // its format (pull-dependencies.ts lockfileFormat), kept by the commit.
@@ -32,11 +32,8 @@ export async function lockfilesAt(fullName: string, token: string, sha: string) 
   return listed
 }
 
-export async function lockedAt(fullName: string, token: string, sha: string): Promise<CommitLockfiles> {
-  const key = `${fullName}\0${sha}`
-  const known = commits.get(key)
-  if (known) return known
-  const listed = await lockfilesAt(fullName, token, sha)
+export async function lockedAt(fullName: string, token: string, sha: string, held: (path: string) => boolean = () => true): Promise<CommitLockfiles> {
+  const listed = (await lockfilesAt(fullName, token, sha)).filter(({ path }) => held(path))
   const unread = listed.slice(MAX_LOCKFILES).map(({ path }) => path)
   const lockfiles: CommitLockfiles['lockfiles'] = []
   for (const lockfile of listed.slice(0, MAX_LOCKFILES)) {
@@ -45,9 +42,7 @@ export async function lockedAt(fullName: string, token: string, sha: string): Pr
     if ('error' in read) unread.push(lockfile.path)
     else lockfiles.push({ path: lockfile.path, packages: read.packages })
   }
-  const read = { lockfiles, unread: unread.toSorted() }
-  commits.set(key, read)
-  return read
+  return { lockfiles, unread: unread.toSorted() }
 }
 
 // The versions those of `read`'s lockfiles `held` holds to lock, each once,

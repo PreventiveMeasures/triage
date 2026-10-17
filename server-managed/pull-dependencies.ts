@@ -92,8 +92,11 @@ export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage
 // What a pull request's lockfiles add: the commits compared (`base`, its
 // merge base, and `head`); each directory's, of those it changes a lockfile
 // in; and `cut` where it changes more files than GitHub lists, or lockfiles
-// in more directories than are read.
-export interface PullDependencies { base: string; head: string; lockfiles: DirectoryDependencies[]; cut: boolean }
+// in more directories than are read, with, where only those cut it and they
+// are few enough, the paths of those directories' lockfiles (`omitted`), for
+// a review holding to none of them to fail in nothing.
+export interface PullDependencies { base: string; head: string; lockfiles: DirectoryDependencies[]; cut: boolean; omitted?: string[] }
+const MAX_OMITTED = 1000
 
 // What is told of a pull request, by the commits it is of, `${base}...${head}`.
 export interface PullDependencyStore {
@@ -162,7 +165,8 @@ function lockfilesChanged(files: ChangedFile[]) {
     take('after', status === 'D' ? undefined : path)
   }
   const all = [...directories.entries()].toSorted(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-  return { directories: all.slice(0, MAX_DIRECTORIES).map(([, directory]) => directory), cut: all.length > MAX_DIRECTORIES }
+  return { directories: all.slice(0, MAX_DIRECTORIES).map(([, directory]) => directory), cut: all.length > MAX_DIRECTORIES,
+    omitted: all.slice(MAX_DIRECTORIES).flatMap(([, directory]) => [...directory.paths]).toSorted() }
 }
 
 // A lockfile's packages at `ref`, as read in this instance, else of GitHub;
@@ -262,7 +266,7 @@ export async function pullDependencies(fullName: string, token: string, number: 
   const held = await kept.read(key)
   if (held) return held
   const { mergeBase, files, cut: filesCut } = await pullFiles(fullName, token, number, base, head, fetchImpl)
-  const { directories, cut } = lockfilesChanged(files)
+  const { directories, cut, omitted } = lockfilesChanged(files)
   const reads = directories.flatMap(({ before, after }) => [...before.map(lockfile => [mergeBase, lockfile] as const), ...after.map(lockfile => [head, lockfile] as const)])
   const read = await eachOf(reads, READ_PARALLEL, ([ref, lockfile]) => readLockfile(fullName, token, ref, lockfile))
   let at = 0
@@ -270,7 +274,7 @@ export async function pullDependencies(fullName: string, token: string, number: 
     const readBefore = read.slice(at, at += before.length)
     return addedIn([...paths].toSorted(), readBefore, read.slice(at, at += after.length))
   })
-  const told = { base: mergeBase, head, lockfiles, cut: filesCut || cut }
+  const told = { base: mergeBase, head, lockfiles, cut: filesCut || cut, ...cut && !filesCut && omitted.length <= MAX_OMITTED ? { omitted } : {} }
   await kept.write(key, told)
   return told
 }

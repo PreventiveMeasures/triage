@@ -227,7 +227,7 @@ test('one changing as many files as GitHub compares has them listed from its own
   const asked = github(t, { compared: many, pullFiles: [...many, { filename: 'package-lock.json', status: 'modified' }] })
   const told = await pullDependencies('org/repo', 'token', 5, memory())
   assert.deepEqual(told.lockfiles.map(dir => dir.paths), [['package-lock.json']])
-  assert.equal(told.cut, false)
+  assert.deepEqual([told.cut, told.omitted], [false, undefined])
   assert.deepEqual(asked.filter(at => at.includes('/pulls/5/files')), [1, 2, 3, 4].map(page => `/repos/org/repo/pulls/5/files?per_page=100&page=${page}`))
 
   t.mock.restoreAll()
@@ -238,6 +238,7 @@ test('one changing as many files as GitHub compares has them listed from its own
   const cut = await pullDependencies('org/repo', 'token', 5, memory())
   assert.equal(cut.cut, true)
   assert.equal(cut.lockfiles.length, MAX_DIRECTORIES)
+  assert.deepEqual(cut.omitted, [lockfiles.at(-1)], 'the lockfiles of those past them named, for a review to know whether it holds to any')
 })
 
 test('of a lockfile adding more than are told, the first by name, the rest counted', async t => {

@@ -58,4 +58,12 @@ test('a pull request\'s directories none of whose lockfiles its review holds to 
   assert.deepEqual([read.lockfiles.map(dir => dir.excluded), read.review.lockfiles], [[false, true, true], lockfiles])
   assert.equal(reviewFailures(read), null, 'its unread lockfile left out fails nothing')
   assert.equal((await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews: [] })).review.lockfiles, undefined, 'every one, told of none')
+
+  // Lockfiles in more directories than are read: failing it only where it holds to one of them.
+  const cut = { ...told, cut: true, omitted: ['docs/z/package-lock.json'] }
+  const left = await reviewedDependencies(cut, { required: 1, since: null, canReview: true, lockfiles, reviews: [] })
+  assert.deepEqual([left.cut, left.omitted], [false, undefined], 'none it holds to left unread, nor told which')
+  assert.equal((await reviewedDependencies({ ...cut, omitted: ['z/package-lock.json'] }, { required: 1, since: null, canReview: true, lockfiles, reviews: [] })).cut, true)
+  assert.equal((await reviewedDependencies({ ...cut, omitted: undefined }, { required: 1, since: null, canReview: true, lockfiles, reviews: [] })).cut, true, 'none named, as where files were cut')
+  assert.deepEqual([(await reviewedDependencies(cut, null)).cut, (await reviewedDependencies(cut, null)).omitted], [true, undefined], 'unasked for its review, cut all the same')
 })
