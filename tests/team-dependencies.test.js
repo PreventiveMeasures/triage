@@ -27,10 +27,11 @@ const pulls = { 7: [pull(1), pull(3), pull(4, { touchesLockfile: false }), pull(
 const page = (repoId, after = '') => Array.isArray(pulls[repoId]) ? { items: pulls[repoId], more: false }
   : { items: pulls[repoId][after] ?? [], more: true, after: after === '' ? 'p2' : `p${Number(after.slice(1)) + 1}` }
 const dependencies = {
-  '7#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared'), ...big, gitdep, wants('fine', { reviews: 2 })], unsupported: [gitdep] })] },
+  // Its shared one reviewed in its comments, which count for it alone.
+  '7#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared', { reviews: 1, commented: 1 }), ...big, gitdep, wants('fine', { reviews: 2 })], unsupported: [gitdep] })] },
   '7#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('fine', { reviews: 2 }), wants('known', { baseline: true })] })] },
   // Its own passed, but held by those its lockfiles locked before it.
-  '7#9': { cut: false, review: { ...terms, unreviewed: 4 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], unreviewed: [wants('old')], moreUnreviewed: 3 })] },
+  '7#9': { cut: false, review: { ...terms, unreviewed: 4 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], unreviewed: [wants('old', { reviews: 1, commented: 1 })], moreUnreviewed: 3 })] },
   '8#2': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared'), wants('rej', { reviews: 2, rejected: true }), wants('vouched', { reviewed: true })] })] },
   // Its versions past those told wanting reviews, those told passed.
   '8#6': { cut: false, review: { ...terms, toReview: 3 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], more: 250 })] },
@@ -83,6 +84,9 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.match(cards[0], /href=https:\/\/github\.com\/org\/b\/pull\/2 [^]*>org\/b#2<[^]*>Pull 2<[^]*class=team-deps-count>2 versions to review</u, 'that adding fewest first')
   assert.match(cards[0], /href=\/npm\/shared@1\.0\.0\/review [^]*shared[^]*class="team-deps-review is-wanted" data-tooltip=0 reviews of 2 required>0\/2<[^]*data-tooltip=Added by org\/a#1 too>\+1</u)
   assert.match(cards[0], /href=\/npm\/rej@1\.0\.0\/review [^]*class="team-deps-review is-failed" data-tooltip="A reviewer rejects it[^>]*>rejected</u, 'one rejected, however many pass it')
+  assert.match(cards[0], /shared[^]*>0\/2<\/span>\s*<span class="team-deps-elsewhere" data-tooltip=Reviewed in the comments of org\/a#1, which count there alone>in review in\s+org\/a#1<\/span>/u,
+    'one another pull request reviews in its comments, which count there alone, told so')
+  assert.equal(cards[0].split('team-deps-elsewhere').length - 1, 1)
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
   assert.match(cards[0], /shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>[^]*rej[^]*<npm-delta \.name=rej /u,
     'the lines each wanting reviews changes, a new one\'s whole')
@@ -99,6 +103,8 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.equal(expanded[2].split('<li>').length - 1, 15, 'its own, and the one a pull request above adds')
   assert.match(expanded[2], /<\/svg>Show fewer<\/button>[^]*aria-expanded=true [^]*above adds too<\/button>\s*<ul class="team-deps-versions"><li>[^]*shared/u)
   assert.match(expanded[3], /aria-expanded=true [^]*href=\/npm\/old@1\.0\.0\/review [^]*and 3 more, not listed</u, 'those its lockfiles locked before, as many as it tells')
+  assert.match(expanded[2], /shared[^]*data-tooltip=1 review of 2 required; 1 reviewer in its comments, which count here alone>1\/2</u, 'where its comments review it, its count says so')
+  assert.doesNotMatch(expanded[2] + expanded[3], /team-deps-elsewhere/u, 'nor told reviewed elsewhere')
   view.toggle('org/a#1:own')
   assert.equal(cardsOf(templateText(view.render()))[2].split('<li>').length - 1, 13)
   assert.doesNotMatch(text, /versions to review, each once|<h2>org\/a<\/h2>|dependency-review-list/u, 'the other sub-tabs\' apart')
@@ -108,13 +114,14 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.deepEqual(tabs(versions).map(([label, , on]) => on && label).filter(Boolean), ['Versions'])
   assert.match(versions, /16 versions to review, each once,\s+by the pull requests adding it\./u)
   assert.equal(versions.split('>shared<').length - 1, 1, 'each once')
-  assert.match(versions, /shared[^]*data-tooltip=Added by org\/b#2, org\/a#1>org\/b#2 \+1</u)
+  assert.match(versions, /shared[^]*in review in\s+org\/a#1[^]*data-tooltip=Added by org\/b#2, org\/a#1>org\/b#2 \+1</u)
   assert.match(versions, /<span class="team-deps-row">[^]*gitdep[^]*data-tooltip=From git, which isn’t reviewed>can’t review</u)
   assert.doesNotMatch(versions, /team-deps-pull"/u)
 
   view.pick('branch')
   const branch = templateText(view.render())
-  assert.match(branch, /<h2>org\/a<\/h2>\s*<p class="team-deps-quiet">1 version unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review /u)
+  assert.match(branch, /<h2>org\/a<\/h2>\s*<p class="team-deps-quiet">1 version unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*in review in\s+org\/a#9</u,
+    'one a pull request reviews in its comments, which count there alone')
   assert.match(branch, /<h2>org\/b<\/h2>\s*<p class="team-deps-quiet">0 versions unreviewed, 1 lockfile unread<\/p>\s*<p class="team-deps-quiet" role="alert">Unread, so what it locks isn’t checked:\s*<code>web\/bun\.lock<\/code>/u,
     'one wanting none, but whose lockfile is unread')
   assert.doesNotMatch(branch, /org\/c/u, 'one not reviewed, not shown')

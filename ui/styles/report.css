@@ -1940,6 +1940,11 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   &.is-failed { color: var(--critical); }
   &.is-wanted { color: var(--medium); }
 }
+/* Reviewed in another pull request's comments, which count there alone. */
+.team-deps-elsewhere {
+  flex: none; padding: 0 .4rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent); font-size: .66rem; line-height: 1.5; white-space: nowrap;
+}
 .team-deps-also { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .team-deps-quiet { margin: .25rem 0 0; color: var(--muted); font-size: .75rem; }
 /* A list's toggle: rows past those shown, or a list apart, its chevron

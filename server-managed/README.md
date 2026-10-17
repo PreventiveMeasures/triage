@@ -2163,7 +2163,11 @@ past the versions its answer lists counted; and, each opened as asked for,
 the versions a pull request above adds too and those other versions. A version is told under the first pull request adding it alone, of
 whichever repository, as one review passes it everywhere: another adding it
 too says so (`+1`), and a later one counts it as one a pull request above
-adds. Versions lists every version they add wanting reviews, each once,
+adds. A version another pull request reviews in its comments, which count
+there alone (`commented`), says so (**in review in org/repo#1**) wherever it
+is listed but under that pull request, where its count says how many of its
+reviewers are in its comments; reviews published here count everywhere,
+and none says so. Versions lists every version they add wanting reviews, each once,
 with the pull requests adding it; Default branch, of each repository, what
 its default branch locks that wants reviews or fails it, its lockfiles left
 unread named, each list forty-eight at first; and Reviews the reviews published to the team, revoked ones
@@ -2236,7 +2240,9 @@ the open pull request alone and are never stored: the host is to merge one
 reviewed so only once those reviews reach what its lookup reads, so a
 closed one's comments are never read. The terms tell how many reviewers
 its comments count (`commentReviews`), or that they couldn't be read
-(`commentsFailed`, its error logged).
+(`commentsFailed`, its error logged), and each version how many of its
+reviewers review it in its comments alone (`commented`), which a team's
+Dependencies tab tells beside it wherever another pull request lists it.
 
 
 ## Agents

@@ -136,16 +136,21 @@ function reviewBadge(pkg, review) {
   if (pkg.patched && shown === 'wanted') {
     return html`<span class="team-deps-review is-wanted" data-tooltip="Reviews here pass no patch: the server’s reviewed dependencies, or reviews of its patch in the pull request’s comments, pass it">patched</span>`
   }
-  if (shown === 'wanted') return html`<span class="team-deps-review is-wanted" data-tooltip=${`${plural(pkg.reviews, 'review')} of ${review.required} required`}>${pkg.reviews}/${review.required}</span>`
+  if (shown === 'wanted') {
+    return html`<span class="team-deps-review is-wanted" data-tooltip=${`${plural(pkg.reviews, 'review')} of ${review.required} required${pkg.commented
+      ? `; ${plural(pkg.commented, 'reviewer')} in its comments, which count here alone` : ''}`}>${pkg.reviews}/${review.required}</span>`
+  }
   return nothing
 }
 
 // A version as a row: its name and version, opening its review where its
 // reader reviews it and it can be, against the version it was where it was
 // one, else its page; its review; the lines it changes against the version
-// it was, or whole, where it wants reviews (npm-delta.js); and the pull
-// requests adding it besides, or, `adders`, all those adding it.
-function versionRow(pkg, review, others = [], adders = false) {
+// it was, or whole, where it wants reviews (npm-delta.js); that other pull
+// requests review it in their comments (`elsewhere`), which count for them
+// alone; and the pull requests adding it besides, or, `adders`, all those
+// adding it.
+function versionRow(pkg, review, { others = [], adders = false, elsewhere = [] } = {}) {
   const npm = pkg.source === 'registry' && pkg.version
   const before = pkg.was?.find(prior => prior !== pkg.version)
   const reviewing = review?.canReview && !pkg.patched && reviewOf(pkg, review) !== 'unsupported'
@@ -154,6 +159,8 @@ function versionRow(pkg, review, others = [], adders = false) {
   const label = html`${PACKAGE_ICON}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
     ${npm && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${deltaBase(pkg)}></npm-delta>` : nothing}
     ${reviewBadge(pkg, review)}
+    ${elsewhere.length > 0 ? html`<span class="team-deps-elsewhere" data-tooltip=${`Reviewed in the comments of ${elsewhere.join(', ')}, which count there alone`}>in review in
+      ${elsewhere[0]}${elsewhere.length > 1 ? ` +${elsewhere.length - 1}` : ''}</span>` : nothing}
     ${others.length > 0 ? html`<span class="team-deps-also" data-tooltip=${`Added by ${others.join(', ')}${adders ? '' : ' too'}`}>${adders
       ? `${others[0]}${others.length > 1 ? ` +${others.length - 1}` : ''}` : `+${others.length}`}</span>` : nothing}`
   return html`<li>${href ? html`<a class="team-deps-row" href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : html`<span class="team-deps-row">${label}</span>`}</li>`
@@ -258,6 +265,15 @@ class TeamDependencies extends StateElement {
       const { count } = unreviewedVersions(read.branch), failed = reviewFailures(read.branch)
       return count > 0 || failed ? [{ repo, read, count: count + (failed?.count ?? 0) }] : []
     })
+    // The pull requests reviewing each version in their comments, which
+    // count for them alone, and those but `pull` reviewing `pkg` so.
+    const commentedIn = new Map()
+    for (const pull of pulls.filter(({ entry }) => entry.status === 'ready' && entry.review)) {
+      for (const pkg of [...addedVersions(pull.entry).versions, ...unreviewedVersions(pull.entry).versions]) {
+        if (pkg.commented > 0) commentedIn.set(versionKey(pkg), new Set([...commentedIn.get(versionKey(pkg)) ?? [], pullName(pull)]))
+      }
+    }
+    const elsewhere = (pkg, pull = null) => [...commentedIn.get(versionKey(pkg)) ?? []].filter(name => !pull || name !== pullName(pull))
     const tabs = TABS.filter(([kind]) => kind !== 'branch' || branches.length > 0)
     const tab = tabs.some(([kind]) => kind === this._tab) ? this._tab : 'pulls'
     const counts = { pulls: wanting.length, versions: adding.size, branch: branches.reduce((sum, { count }) => sum + count, 0) }
@@ -273,20 +289,22 @@ class TeamDependencies extends StateElement {
         ? html`<p class="workspace-content-empty">None of this team’s repositories reviews its dependencies for you.</p>` : nothing}
       ${tab === 'branch' ? nothing : unchecked.map(({ repo, read }) => html`<p class="team-deps-quiet" role="alert">Only ${repo.name}’s ${plural(read.pulls.items.length, 'open pull request')}
         updated latest are checked; its others aren’t.</p>`)}
-      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(wanting, adding, reading, unchecked.length > 0)
-        : tab === 'versions' ? this.renderVersions(adding, reading) : branches.map(({ repo, read }) => this.renderBranch(repo, read))}`}
+      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(wanting, adding, reading, unchecked.length > 0, elsewhere)
+        : tab === 'versions' ? this.renderVersions(adding, reading, elsewhere) : branches.map(({ repo, read }) => this.renderBranch(repo, read, elsewhere))}`}
       </div>
     </div>`
   }
 
   // The pull requests wanting reviews, fewest first, each version a pull
-  // request above adds told by it alone, those listed apart.
-  renderPulls(wanting, adding, reading, unchecked) {
+  // request above adds told by it alone, those listed apart; each version
+  // other pull requests review in their comments told so (`elsewhere`).
+  renderPulls(wanting, adding, reading, unchecked, elsewhere) {
     if (wanting.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
     }
     const told = new Set()
-    const row = pull => pkg => versionRow(pkg, pull.entry.review, (adding.get(versionKey(pkg)) ?? []).filter(other => other !== pull).map(pullName))
+    const row = pull => pkg => versionRow(pkg, pull.entry.review, { others: (adding.get(versionKey(pkg)) ?? []).filter(other => other !== pull).map(pullName),
+      elsewhere: elsewhere(pkg, pull) })
     return html`<ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
       const own = pull.wanted.filter(pkg => !told.has(versionKey(pkg)))
       const above = pull.wanted.filter(pkg => told.has(versionKey(pkg)))
@@ -305,25 +323,27 @@ class TeamDependencies extends StateElement {
         ${above.length > 0 ? this.disclosed(`${key}:above`, `${plural(above.length, 'version')} a pull request above adds too`, above, row(pull)) : nothing}
         ${pull.others > 0 ? this.disclosed(`${key}:others`, pull.size > 0 || pull.failed ? `${plural(pull.others, 'other version')} its lockfiles lock ${pull.others === 1 ? 'wants' : 'want'} reviews`
           : `Its own versions pass; ${plural(pull.others, 'version')} its lockfiles locked before ${pull.others === 1 ? 'wants' : 'want'} reviews`,
-        others.versions, pkg => versionRow(pkg, pull.entry.review), pull.others - others.versions.length) : nothing}
+        others.versions, pkg => versionRow(pkg, pull.entry.review, { elsewhere: elsewhere(pkg, pull) }), pull.others - others.versions.length) : nothing}
       </li>`
     })}</ol>`
   }
 
   // Every version the pull requests add wanting reviews, each once, by the
   // pull requests adding it.
-  renderVersions(adding, reading) {
+  renderVersions(adding, reading, elsewhere) {
     if (adding.size === 0) return reading ? nothing : html`<p class="workspace-content-empty">No version an open pull request adds wants a review.</p>`
     return html`<section class="team-deps-section" aria-label="Versions to review"><p class="team-deps-quiet">${plural(adding.size, 'version')} to review, each once,
       by the pull requests adding it.</p>
-      ${this.rows('versions', [...adding.entries()], ([key, pulls]) => versionRow(pulls[0].wanted.find(pkg => versionKey(pkg) === key),
-        pulls[0].entry.review, pulls.map(pullName), true), SHOWN_LISTED)}
+      ${this.rows('versions', [...adding.entries()], ([key, pulls]) => {
+        const pkg = pulls[0].wanted.find(one => versionKey(one) === key)
+        return versionRow(pkg, pulls[0].entry.review, { others: pulls.map(pullName), adders: true, elsewhere: elsewhere(pkg, pulls[0]) })
+      }, SHOWN_LISTED)}
     </section>`
   }
 
   // What a repository's default branch locks that wants reviews, and what
   // fails it there, its lockfiles left unread too.
-  renderBranch(repo, read) {
+  renderBranch(repo, read, elsewhere) {
     const { versions, count } = unreviewedVersions(read.branch)
     const failed = reviewFailures(read.branch)
     const unread = failed?.unread.flatMap(dir => dir.paths) ?? []
@@ -333,7 +353,7 @@ class TeamDependencies extends StateElement {
       ? `, ${failed.count.toLocaleString('en-US')} can’t be reviewed` : ''}${unread.length > 0 ? `, ${plural(unread.length, 'lockfile')} unread` : ''}</p>
       ${unread.length > 0 ? html`<p class="team-deps-quiet" role="alert">Unread, so what ${unread.length === 1 ? 'it locks isn’t' : 'they lock aren’t'} checked:
         ${unread.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}</p>` : nothing}
-      ${this.rows(`branch:${repo.repoId}`, listed, pkg => versionRow(pkg, read.branch.review), SHOWN_LISTED)}
+      ${this.rows(`branch:${repo.repoId}`, listed, pkg => versionRow(pkg, read.branch.review, { elsewhere: elsewhere(pkg) }), SHOWN_LISTED)}
       ${count > versions.length ? html`<p class="team-deps-quiet">and ${(count - versions.length).toLocaleString('en-US')} more, not listed</p>` : nothing}
     </section>`
   }

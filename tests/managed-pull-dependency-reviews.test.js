@@ -465,8 +465,8 @@ test('where the host reads an open pull request\'s comments, the reviews they ma
     reviews: { pageInfo: { hasNextPage: false }, nodes: [] } } } }) })
   const answer = await send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`)
   assert.equal(answer.status, 200)
-  assert.deepEqual(answer.body.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviews]), [['left-pad', 0], ['ms', 1]],
-    'bob, who reviews in team one, passes ms; one in no team, nothing')
+  assert.deepEqual(answer.body.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviews, pkg.commented ?? 0]), [['left-pad', 0, 0], ['ms', 1, 1]],
+    'bob, who reviews in team one, passes ms, in its comments alone, which count for it alone; one in no team, nothing')
   assert.equal(answer.body.review.commentReviews, 1)
   assert.deepEqual(parsed[0].dependencies.map(dependency => dependency.name).toSorted(), ['kept', 'left-pad', 'ms'])
   assert.equal(answer.body.open, undefined, 'whether it is open told to none')

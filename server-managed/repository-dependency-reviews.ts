@@ -27,9 +27,10 @@ export interface RepoDependencyReview { enabled: boolean; required: number; sinc
 // patch yet), the version it was compared with (none for a whole package's),
 // who wrote it (`reviewer`, their id, else their login then), its verdict,
 // whether it checked every file (`full`), and when it was published.
+// One made in a pull request's comments (`comment`) counts for it alone.
 export interface PublishedReview {
   package: string; version: string; integrity: string; patchHash?: string; basePackage: string | null; baseVersion: string | null
-  reviewer: string; status: ReviewVerdict; full: boolean; time: number
+  reviewer: string; status: ReviewVerdict; full: boolean; time: number; comment?: true
 }
 // A repository's review in effect for a reader: its settings, whether they
 // publish reviews to one of the teams that count (`canReview`), and the

@@ -33,9 +33,9 @@ test('the reviews its comments make count beside its teams\', each reviewer once
   ] }) }
   const answer = await reviewedDependencies(told, state, { reviewed: { lookup }, commentReviews: comments })
   assert.deepEqual(wanting, ['ms', 'patched'], 'its comments read for those still wanting one, the reviewed dependencies asked first')
-  assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(ms), reviews: 2 }, { ...strip(patched), reviews: 2 }],
-    'u1 once, for their review here and in its comments; a patched one passed by reviews of its patch')
-  assert.deepEqual(answer.lockfiles[0].unreviewed, [{ ...strip(held), reviews: 2, rejected: true }], 'a reject in its comments holds one its teams passed')
+  assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(ms), reviews: 2, commented: 1 }, { ...strip(patched), reviews: 2, commented: 2 }],
+    'u1 once, for their review here and in its comments, u2 in its comments alone; a patched one passed by reviews of its patch')
+  assert.deepEqual(answer.lockfiles[0].unreviewed, [{ ...strip(held), reviews: 2, rejected: true, commented: 1 }], 'a reject in its comments holds one its teams passed')
   assert.deepEqual(asked.toSorted(), ['held', 'ms', 'other', 'patched'], 'one held asked of the reviewed dependencies too, which pass `other` whatever rejects it')
   assert.deepEqual([answer.review.commentReviews, answer.review.toReview, answer.review.unreviewed], [3, 0, 1])
 
