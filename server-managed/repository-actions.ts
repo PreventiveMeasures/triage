@@ -88,8 +88,9 @@ export async function readActions(reading: ActionsReading): Promise<WorkflowsRea
     const file = files[at]!
     if (!('text' in file) || file.kind === 'dockerfile') continue
     const { actions, dockerfile } = ownFiles(file.path, file.kind, file.text)
-    if (dockerfile) files.push({ path: dockerfile, kind: 'dockerfile', ...await readFile(reading, dockerfile) })
+    if (dockerfile && files.length < MAX_FILES) files.push({ path: dockerfile, kind: 'dockerfile', ...await readFile(reading, dockerfile) })
     for (const dir of actions) {
+      if (files.length >= MAX_FILES) break
       if (dirs.has(dir)) continue
       dirs.add(dir)
       const named = dir === '' ? 'action' : `${dir}/action`

@@ -112,6 +112,9 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('npx eslint . && npm ci', { locked }).length, 1, 'and one after it')
     assert.deepEqual(graded('npm ci --prefix web && npm ci && npx eslint .', { locked }), [], 'any install before it, not the first alone')
     assert.deepEqual(graded('bash -c \'npx eslint .\' && npm ci', { locked }).length, 1, 'a shell\'s command line where the shell runs')
+    assert.deepEqual(graded('echo "$(npx eslint --version)" && npm ci', { locked }).length, 1, 'a command substitution before its command')
+    assert.deepEqual(graded('npm ci && echo "$(npx eslint --version)"', { locked }), [], 'and after an install before it')
+    assert.deepEqual([graded('npm ci --prefix . && npx eslint .', { locked }), graded('pnpm -C ./ install && npx eslint .', { locked })], [[], []], 'an install naming its own directory')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\''), ['fetched-package/high@11', 'remote-script/high@12'], 'a shell\'s command line')
     assert.deepEqual(graded('npx eslint .\nnpm ci', { locked }), ['fetched-package/high@11'], 'an install after it')
@@ -152,6 +155,13 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(actionInstalls('runs: [', new Map()), [], 'one GitHub can\'t run')
     const wrapper = 'runs:\n  using: composite\n  steps:\n    - uses: ./lint\n'
     assert.deepEqual([actionInstalls(wrapper, new Map()), actionInstalls(wrapper, new Map([['lint', ['api']]]))], [[], ['api']], 'one using an action of its own, by that one')
+  })
+
+  it('a privileged workflow checking out a fork\'s repository, at its default branch', () => {
+    const job = (on, repository) => `on: ${on}\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@${SHA('c')}\n        with:\n          repository: \${{ ${repository} }}\n`
+    assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.event.pull_request.head.repo.full_name')).findings), ['pwn-request/critical@7'])
+    assert.deepEqual(ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.head_repository.full_name')).findings), ['pwn-request/critical@7'])
+    assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.repository')).findings), [], 'its own')
   })
 
   it('an action that installs a project\'s packages, by its name, not another tool\'s', () => {

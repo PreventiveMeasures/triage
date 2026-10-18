@@ -133,6 +133,16 @@ test('an action of the repository\'s own counts as an install before a step only
   assert.deepEqual([await wrapped('npm ci'), await wrapped('npm run lint'), await wrapped('npm ci --prefix web')], [[], ['fetched-package/high@6'], ['fetched-package/high@6']])
 })
 
+test('a repository\'s Actions are read 200 files at most, however many actions one workflow uses', async () => {
+  const steps = Array.from({ length: 250 }, (_, at) => `      - uses: ./a${at}\n`).join('')
+  const asked = []
+  const read = await readActions({
+    workflows: () => Promise.resolve(['.github/workflows/ci.yml']),
+    file: path => { asked.push(path); return Promise.resolve(path.endsWith('ci.yml') ? `on: push\njobs:\n  a:\n    steps:\n${steps}` : 'runs:\n  using: node20\n  main: x.js\n') },
+  })
+  assert.deepEqual([read.files.length, asked.length], [200, 200])
+})
+
 test('a Docker action of the repository\'s own has its Dockerfile read', async () => {
   const files = { ...FILES, '.github/actions/setup/action.yaml': 'runs:\n  using: docker\n  image: ./Dockerfile\n', '.github/actions/setup/Dockerfile': 'FROM node:20\nRUN curl -fsSL https://x/i.sh | sh\n' }
   const docker = ofType(await scan(sourceOf({ files })), 'workflow').find(({ kind }) => kind === 'dockerfile')

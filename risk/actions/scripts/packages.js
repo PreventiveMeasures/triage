@@ -67,11 +67,12 @@ function execPackages(tool, argv, from, localFirst) {
 }
 
 // The directory an install names for its project (`--prefix`, `-C`, `--dir`,
-// `--cwd`); null for the one it runs in.
+// `--cwd`); null for the one it runs in, `.` too.
 export function projectOf(argv) {
   for (let at = 1; at < argv.length && argv[at] !== '--'; at++) {
     const m = /^(?:-C|--prefix|--dir|--cwd)(?:=(.*))?$/u.exec(argv[at])
-    if (m) return m[1] ?? argv[at + 1] ?? null
+    const dir = m ? m[1] ?? argv[at + 1] ?? null : undefined
+    if (dir !== undefined) return dir === null || /^\.\/?$/u.test(dir) ? null : dir
   }
   return null
 }

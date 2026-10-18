@@ -79,16 +79,17 @@ function closing(text, from) {
   return text.length
 }
 
-// A line's commands, each `{ argv, piped, out }`, `piped` where a pipe feeds
-// it and `out` the file it writes its output to, and each command
-// substitution's text (`nested`), to read as lines of their own.
+// A line's commands, each `{ argv, piped, out, nested }`, `piped` where a
+// pipe feeds it, `out` the file it writes its output to and `nested` its
+// command substitutions' text, to read as lines of their own; and those of
+// none of them (`nested`).
 function commandsOf(text) {
-  const commands = [], nested = []
-  let piped = false, quote = null, start = 0
+  const commands = []
+  let nested = [], piped = false, quote = null, start = 0
   const end = (at, next) => {
     const { words, out } = wordsOf(text.slice(start, at))
     const argv = argvOf(words)
-    if (argv.length > 0) commands.push({ argv, piped, out })
+    if (argv.length > 0) { commands.push({ argv, piped, out, nested }); nested = [] }
     piped = next
   }
   for (let at = 0; at < text.length; at++) {
@@ -120,15 +121,17 @@ function shellLine([program, ...words]) {
 // Each command of a script: `{ argv, piped, line, order, next }`, `line` the
 // one it is on, counting from 0, `order` its place among them all, as they
 // run, and `next` the command a pipe feeds it to, as a script fetched is fed
-// to a shell; a shell's command line's after the shell, and a command
-// substitution's after its line's. 64 lines read of each.
+// to a shell; a command substitution's before the command it is of, as it
+// is expanded first, and a shell's command line's after the shell. 64 lines
+// read of each.
 export function scriptCommands(script) {
   const found = []
   let read = 0
   const readLine = (text, line) => {
     if (read++ >= 64) return
     const { commands, nested } = commandsOf(text)
-    commands.forEach((command, at) => {
+    commands.forEach(({ nested: substituted, ...command }, at) => {
+      for (const each of substituted) readLine(each, line)
       found.push({ ...command, line, order: found.length, next: commands[at + 1]?.piped ? commands[at + 1] : null })
       const shell = shellLine(command.argv)
       if (shell) readLine(shell, line)
