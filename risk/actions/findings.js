@@ -27,23 +27,26 @@ function installs(step, installers) {
 }
 
 // Whether `dir` is `directory` or above it, as node finds a package there;
-// null, which an expression names, for any.
-const within = (dir, directory) => dir === null || directory === null || dir === '' || directory === dir || directory.startsWith(`${dir}/`)
+// null for anywhere.
+const within = (dir, directory) => dir === null || dir === '' || directory === dir || directory.startsWith(`${dir}/`)
 
 // A step's directory, and a path from it (`into`), from the repository's
-// root, '' for it; null for an expression, a variable or a path out of it.
+// root, '' for it; as written where an expression or a variable names it, or
+// it is out of the repository, so that it is within the same alone.
 function directoryOf(workingDirectory, into = null) {
-  if (workingDirectory?.includes('${{') || /^\/|\$/u.test(into ?? '')) return null
+  const path = into?.startsWith('/') ? into : [workingDirectory, into].filter(Boolean).join('/')
+  if (/\$|^\//u.test(path)) return path
   const parts = []
-  for (const part of `${workingDirectory ?? ''}/${into ?? ''}`.split('/')) {
-    if (part === '..') { if (parts.pop() === undefined) return null } else if (part && part !== '.') parts.push(part)
+  for (const part of path.split('/')) {
+    if (part === '..') { if (parts.pop() === undefined) return path } else if (part && part !== '.') parts.push(part)
   }
   return parts.join('/')
 }
 
-// Whether a lockfile at or above `directory` locks what npx runs by `name`.
+// Whether a lockfile at or above `directory`, any for one an expression
+// names, locks what npx runs by `name`.
 function lockedIn(lockfiles, directory) {
-  const applies = lockfiles.filter(({ path }) => within(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '', directory))
+  const applies = directory.includes('$') ? lockfiles : lockfiles.filter(({ path }) => within(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '', directory))
   return name => applies.some(({ names }) => lockedName(names, name))
 }
 

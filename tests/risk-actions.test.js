@@ -45,6 +45,7 @@ describe('a uses: as GitHub reads it', () => {
     assert.deepEqual(usesOfKey(usesKey(uses)), { ...readUses(`org/repo/sub@${SHA('e')}`, { comment: '# v1.0.0' }) })
     assert.equal(usesOfKey('org/repo/.github/workflows/x.yml@v1').kind, 'workflow')
     assert.equal(usesOfKey('not a key'), null)
+    assert.equal(usesOfKey('org/repo@release#1').ref, 'release#1', 'a ref with a # in it')
   })
 })
 
@@ -125,6 +126,10 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm ci --prefix web'), { lockfiles }).findings), ['fetched-package/high@7'], 'the directory an install names')
     assert.deepEqual(ids(scanWorkflow('workflow', job('web', 'api', 'pnpm -C ../api install'), { lockfiles }).findings), [])
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm --prefix=api ci'), { lockfiles }).findings), [], 'its option before its command')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api', 'npm i -g pnpm'), { lockfiles }).findings), ['fetched-package/high@5', 'fetched-package/high@7'], 'a global install, itself fetched')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api', 'npm install --package-lock-only'), { lockfiles }).findings), ['unlocked-install/moderate@5', 'fetched-package/high@7'], 'one writing the lockfile alone')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('${{ matrix.project }}', 'api'), { lockfiles }).findings), ['fetched-package/high@7'], 'one an expression names, for another')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('${{ matrix.project }}', '${{ matrix.project }}'), { lockfiles }).findings), [], 'and for the same')
   })
 
   it('an action of the repository\'s own counts as an install where it installs', () => {

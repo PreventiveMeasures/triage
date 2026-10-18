@@ -140,19 +140,25 @@ async function resolved(resolving: ActionsResolving, source: ActionsSource, { ke
   return line
 }
 
+// Whether a reference is named by a workflow of its repository's owner.
+const ownOwners = ({ key, owner }: ActionRef) => key.split('/')[0] === owner?.toLowerCase()
+
 // Resolves the references added (`add`), each once a scan, RESOLVERS at once,
 // each told as it is, and those it names in turn, `source`'s answers kept
-// for the scan; `close` settles once all are told, or the scan stops.
+// for the scan; once more where another owner's workflow names one its own
+// owner's did, as a repository missing is red then (risk resolve.js), its
+// line the one told. `close` settles once all are told, or the scan stops.
 export function resolvingActions(resolving: ActionsResolving) {
   const source = keptSource(resolving.source)
   const pending: Queue<ActionRef> = queue(resolving.signal)
-  const seen = new Set<string>()
+  const latest = new Map<string, ActionRef>()
   let closed = false, waiting = 0
   const settle = () => { if (closed && waiting === 0) pending.close() }
   const add = (refs: ActionRef[]) => {
     for (const ref of refs) {
-      if (seen.has(ref.key) || seen.size >= MAX_ACTIONS || ref.depth > MAX_DEPTH) continue
-      seen.add(ref.key)
+      const first = latest.get(ref.key)
+      if (ref.depth > MAX_DEPTH || (first ? !ownOwners(first) || ownOwners(ref) : latest.size >= MAX_ACTIONS)) continue
+      latest.set(ref.key, ref)
       waiting++
       pending.add(ref)
     }
@@ -161,7 +167,7 @@ export function resolvingActions(resolving: ActionsResolving) {
     for (let ref = await pending.take(); ref !== undefined; ref = await pending.take()) {
       try {
         const line = await resolved(resolving, source, ref)
-        if (line) {
+        if (line && latest.get(ref.key) === ref) {
           resolving.tell(line)
           const owner = 'repository' in line ? (line.repository?.fullName ?? line.repo).split('/')[0]! : ref.owner
           if ('uses' in line) add(line.uses.map(({ key }) => ({ key, owner, depth: ref.depth + 1 })))

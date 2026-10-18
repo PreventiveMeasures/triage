@@ -61,7 +61,7 @@ export const usesKey = ({ repo, path, ref, pin, comment }) => `${repo.toLowerCas
 
 // A reference from its key, a reusable workflow's by its path's.
 export function usesOfKey(key) {
-  const m = typeof key === 'string' ? /^([^@\s]+@[^\s#]+)(?: # (\S+))?$/u.exec(key) : null
+  const m = typeof key === 'string' ? /^([^@\s]+@\S+)(?: # (\S+))?$/u.exec(key) : null
   const job = Boolean(m && /^[^/]+\/[^/]+\/\.github\/workflows\/[^/@]+\.ya?ml@/u.test(m[1]))
   const read = m ? readUses(m[1], { job, comment: m[2] ? `# ${m[2]}` : null }) : null
   return read && (read.kind === 'action' || read.kind === 'workflow') && usesKey(read) === key ? read : null

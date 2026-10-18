@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 import { repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
-import { lastingRead, readActions } from '../server-managed/repository-actions.ts'
+import { lastingRead, readActions, resolvingActions } from '../server-managed/repository-actions.ts'
 import { githubActionsSource } from '../server-managed/github-actions.ts'
 import { GithubApiError } from '../server-managed/github-errors.ts'
 
@@ -124,6 +124,21 @@ test('an action of the repository\'s own counts as an install before a step only
   }
   assert.deepEqual(await found('npm ci'), [])
   assert.deepEqual(await found('npm run lint'), ['fetched-package/high@6'])
+})
+
+test('a repository missing is red where another owner\'s workflow names it, whichever names it first', async () => {
+  for (const owners of [['missing', 'org'], ['org', 'missing']]) {
+    for (const wait of [false, true]) {
+      const told = []
+      const resolving = resolvingActions({ source: actionsSource(), signal: new AbortController().signal, tell: line => { told.push(line) }, memory: riskCaches().actions })
+      for (const owner of owners) {
+        resolving.add([{ key: 'missing/action@v1', owner, depth: 0 }])
+        if (wait) await setImmediate()
+      }
+      await resolving.close()
+      assert.deepEqual(told.at(-1).findings.map(({ id, severity }) => `${id}/${severity}`), ['repo-missing/critical'], `${owners.join(' then ')}${wait ? ', each resolved' : ''}`)
+    }
+  }
 })
 
 test('what a scan resolved and read of a repository\'s Actions is kept: a scan again asks GitHub none of it but a private repository\'s', async () => {
