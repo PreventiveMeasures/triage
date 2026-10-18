@@ -1273,8 +1273,8 @@ async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, ses
 // declared integrity that has a stored bundle wins (bundleId set). When none is
 // stored yet, keep the first declared integrity so a later bundle upload of it
 // re-links (see linkReportsToBundle). Returns the (bundleId, integrity) to store.
-async function resolveReportBundle(deps: ManagedHttpDeps, user: StoredUser, bytes: Buffer): Promise<{ bundleId: string | null; integrity: string | null }> {
-  const hashes = reportBundleHashes(bytes)
+async function resolveReportBundle(deps: ManagedHttpDeps, user: StoredUser, json: unknown): Promise<{ bundleId: string | null; integrity: string | null }> {
+  const hashes = reportBundleHashes(json)
   for (const h of hashes) {
     const b = await deps.db.getBundleByIntegrity(h)
     if (b != null && await canAccessBundle(deps, user, b.id)) return { bundleId: b.id, integrity: h }
@@ -1384,7 +1384,8 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   if (existing) { await sendUploadedReport(req, res, deps, cookie, existing, true); return }
   const id = randomUUID()
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
-  const { bundleId, integrity } = await resolveReportBundle(deps, s.user, bytes)
+  // A JSON report's parse already in hand, not parsed again for its hashes.
+  const { bundleId, integrity } = await resolveReportBundle(deps, s.user, parsed.format === 'json' ? parsed.data : null)
   const dataKey = await deps.reportStore.put(id, bytes)
   let report: ReportRecord
   try {

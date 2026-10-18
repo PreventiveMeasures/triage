@@ -109,10 +109,9 @@ export async function bundleFilePrefix(bytes: Buffer): Promise<string> {
 }
 
 // Extract the bundle integrities a report declares (its top-level
-// `bundleHashes`). Non-JSON reports (markdown / CSV) or a missing field → [].
-export function reportBundleHashes(bytes: Buffer): string[] {
-  let data: unknown
-  try { data = JSON.parse(bytes.toString('utf8')) } catch { return [] }
+// `bundleHashes`), from the JSON it parsed to (readManagedReport's, as is).
+// Non-JSON reports (markdown / CSV, given as null) or a missing field → [].
+export function reportBundleHashes(data: unknown): string[] {
   if (data == null || typeof data !== 'object') return []
   const hashes = (data as { bundleHashes?: unknown }).bundleHashes
   if (!Array.isArray(hashes)) return []
