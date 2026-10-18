@@ -2033,7 +2033,8 @@ memory by its commit, so that pull requests branching off the same commit,
 as a bot's do, read it once, one being read with the same token shared.
 With `numbers=1,2,3` in place of `number`, twenty at most, it answers those
 of each, `{ pulls }`, three read at once, one GitHub fails told `{ number,
-error }`, the repository's access asked once before them all and once after.
+error }`, the repository's access asked once before them all and once after,
+unless every one was kept, none failing.
 The page reads two at a time, those asked first first, a team's
 Dependencies tab's after a tile's or a popup's, as many of a repository's
 waiting as twenty read together, and keeps them for the session five

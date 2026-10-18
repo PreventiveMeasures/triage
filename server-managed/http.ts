@@ -2048,7 +2048,7 @@ function itemNumber(query: URLSearchParams): number | null {
 // Up to MAX_ASKED_PULLS pull requests asked together (`numbers=1,2,3`) are
 // answered together, as many read at once as PULLS_AT_ONCE, `{ pulls }`,
 // each's answer, else `{ number, error }` where GitHub fails it, with one
-// check of its access before and one after.
+// check of its access before and one after, but where each was kept.
 const MAX_ASKED_PULLS = 20
 const PULLS_AT_ONCE = 3
 async function handleRepositoryPullDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
@@ -2061,7 +2061,8 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
     if (listed === null) return pullDependencyAnswer(deps, fullName, token, user, repoId, numbers[0]!, review)
     const answers = await eachOf(numbers as number[], PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, review).catch((err: unknown) => {
-      if (err instanceof GithubApiError) return { value: { number, error: err.message }, kept: true }
+      // GitHub asked, though it failed: its access asked again after.
+      if (err instanceof GithubApiError) return { value: { number, error: err.message }, kept: false }
       throw err
     }))
     return { value: { pulls: answers.map(({ value }) => value) }, kept: answers.every(({ kept }) => kept) }

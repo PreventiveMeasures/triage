@@ -314,9 +314,12 @@ test('GET pull-dependencies answers several of a repository\'s pull requests tog
   assert.equal(metadata(), 2, 'its access asked before and after reading, not for each')
   const { users: _users, ...single } = (await request('pull-dependencies', { repoId: '1', number: '5' })).body
   assert.deepEqual([answer.body.pulls, answer.body.users], [[{ number: 6, error: 'github-not-found' }, single], {}], 'each in the order asked, the app\'s users they name once')
-  const before = metadata()
+  let before = metadata()
   assert.deepEqual((await request('pull-dependencies', { repoId: '1', numbers: '6,5' })).body.pulls, answer.body.pulls)
-  assert.equal(metadata() - before, 1, 'all kept, but the one failed: asked before alone')
+  assert.equal(metadata() - before, 2, 'one failing asked GitHub: its access asked again after')
+  before = metadata()
+  assert.deepEqual((await request('pull-dependencies', { repoId: '1', numbers: '5' })).body.pulls, [single])
+  assert.equal(metadata() - before, 1, 'every one kept: asked before alone')
   for (const numbers of ['5,5', 'x', '', Array.from({ length: 21 }, (_, at) => at + 1).join(',')]) {
     assert.equal((await request('pull-dependencies', { repoId: '1', numbers })).status, 400, numbers)
   }
