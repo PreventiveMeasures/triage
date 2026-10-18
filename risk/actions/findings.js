@@ -14,14 +14,21 @@ function usesFinding(uses, owner) {
   return uses.pin === 'short-sha' ? { id: 'short-sha', severity: 'high', ...at } : { id: 'unpinned', severity: ownerKind(uses.repo, owner) === 'third-party' ? 'high' : 'moderate', ...at, ref: uses.ref }
 }
 
+// An action that installs a project's npm packages, by its name: npm's,
+// Yarn's, pnpm's or Bun's install of dependencies (`bahmutov/npm-install`),
+// not another tool's (`cachix/install-nix-action`).
+const INSTALLER = /(?:npm|yarn|pnpm|bun|node[-_]?modules)[-_]?(?:ci|install)|install[-_]?(?:npm|yarn|pnpm|bun|node[-_]?modules|dep(?:endencie)?s|packages)/iu
+
 // Where a step installs a project's packages: each install's of a script,
-// its directory or the one it names; anywhere (null) for an action named for
-// installing, and one of its own of `installers` (ScanOptions), or any where
-// none are told.
+// its directory or the one it names; anywhere (null) for an action that
+// installs them (cypress-io/github-action's unless `install: false`,
+// pnpm/action-setup's with `run_install`), and one of its own of
+// `installers` (ScanOptions), or any where none are told.
 function installs(step, installers) {
   if (step.uses?.kind === 'local') return !installers || installers.has(step.uses.path) ? [null] : []
-  if (step.uses?.repo && /install/iu.test(step.uses.repo)) return [null]
-  if (step.uses?.repo?.toLowerCase() === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return [null]
+  const repo = step.uses?.repo?.toLowerCase()
+  if (repo && (INSTALLER.test(repo) || (repo === 'cypress-io/github-action' && String(step.with?.install) !== 'false'))) return [null]
+  if (repo === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return [null]
   return step.run ? installsOf(step.run.script).map(({ into }) => directoryOf(step.run.workingDirectory, into)) : []
 }
 
@@ -106,10 +113,11 @@ export function workflowUses(read) {
 }
 
 // Whether an action's metadata installs a project's packages, as a step
-// using it does: false for one GitHub can't run.
-export function actionInstalls(text) {
+// using it does, an action of its own of `installers` (ScanOptions) among
+// those: false for one GitHub can't run.
+export function actionInstalls(text, installers) {
   try {
-    return readWorkflow('action', text).jobs.some(job => job.steps.some(step => installs(step, null).length > 0))
+    return readWorkflow('action', text).jobs.some(job => job.steps.some(step => installs(step, installers).length > 0))
   } catch (error) {
     if (error instanceof YamlError) return false
     throw error

@@ -213,7 +213,7 @@ export interface WorkflowScan {
 
 export function scanWorkflow(kind: 'workflow' | 'action', text: string, options?: ScanOptions): WorkflowScan
 export function readWorkflow(kind: 'workflow' | 'action', text: string): unknown
-export function actionInstalls(text: string): boolean
+export function actionInstalls(text: string, installers: ReadonlySet<string>): boolean
 export function workflowUses(read: unknown): Uses[]
 // A reference by its key, as a scan names it; null for none.
 export function usesOfKey(key: string): ActionUses | null

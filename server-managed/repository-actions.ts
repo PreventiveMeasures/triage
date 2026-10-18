@@ -98,8 +98,14 @@ export function actionsLines(repo: number, owner: string, read: WorkflowsRead, l
   if ('error' in read) return { lines: [{ type: 'workflows', repo, ...read } as WorkflowsLine], refs: [] as ActionRef[] }
   const lines: (WorkflowsLine | WorkflowLine)[] = [{ type: 'workflows', repo, paths: read.files.filter(file => file.kind === 'workflow').map(file => file.path) }]
   const refs = new Map<string, ActionRef>()
-  // The directories of its own actions that install its packages.
-  const installers = new Set(read.files.flatMap(file => file.kind === 'action' && 'text' in file && actionInstalls(file.text) ? [file.path.replace(/\/?action\.ya?ml$/u, '')] : []))
+  // The directories of its own actions that install its packages, or use
+  // one of those that does.
+  const actions = read.files.flatMap(file => file.kind === 'action' && 'text' in file ? [{ dir: file.path.replace(/\/?action\.ya?ml$/u, ''), text: file.text }] : [])
+  const installers = new Set<string>()
+  for (let grew = true; grew;) {
+    grew = false
+    for (const { dir, text } of actions) if (!installers.has(dir) && actionInstalls(text, installers)) grew = Boolean(installers.add(dir))
+  }
   for (const file of read.files) {
     if (!('text' in file)) { lines.push({ type: 'workflow', repo, ...file }); continue }
     const at = { type: 'workflow', repo, path: file.path, kind: file.kind } as const

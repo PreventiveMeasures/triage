@@ -111,6 +111,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('npm ci && npx eslint .', { locked }), [], 'an install earlier on its line')
     assert.deepEqual(graded('npx eslint . && npm ci', { locked }).length, 1, 'and one after it')
     assert.deepEqual(graded('npm ci --prefix web && npm ci && npx eslint .', { locked }), [], 'any install before it, not the first alone')
+    assert.deepEqual(graded('bash -c \'npx eslint .\' && npm ci', { locked }).length, 1, 'a shell\'s command line where the shell runs')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\''), ['fetched-package/high@11', 'remote-script/high@12'], 'a shell\'s command line')
     assert.deepEqual(graded('npx eslint .\nnpm ci', { locked }), ['fetched-package/high@11'], 'an install after it')
@@ -144,9 +145,19 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(scan(new Set()), ['fetched-package/high@6'], 'one that doesn\'t')
     assert.deepEqual(scan(undefined), [], 'none told')
     const action = script => `runs:\n  using: composite\n  steps:\n    - run: ${script}\n      shell: bash\n`
-    assert.equal(actionInstalls(action('npm ci')), true)
-    assert.equal(actionInstalls(action('npm run lint')), false)
-    assert.equal(actionInstalls('runs: ['), false, 'one GitHub can\'t run')
+    assert.equal(actionInstalls(action('npm ci'), new Set()), true)
+    assert.equal(actionInstalls(action('npm run lint'), new Set()), false)
+    assert.equal(actionInstalls('runs: [', new Set()), false, 'one GitHub can\'t run')
+    const wrapper = 'runs:\n  using: composite\n  steps:\n    - uses: ./lint\n'
+    assert.deepEqual([actionInstalls(wrapper, new Set()), actionInstalls(wrapper, new Set(['lint']))], [false, true], 'one using an action of its own, by that one')
+  })
+
+  it('an action that installs a project\'s packages, by its name, not another tool\'s', () => {
+    const lockfiles = [{ path: 'package-lock.json', names: new Set(['eslint']) }]
+    const found = uses => ids(scanWorkflow('workflow', `on: push\njobs:\n  a:\n    steps:\n      - uses: ${uses}\n      - run: npx eslint .\n`, { lockfiles }).findings)
+      .filter(id => id.startsWith('fetched-package'))
+    assert.deepEqual([found('bahmutov/npm-install@v1'), found('cypress-io/github-action@v6')], [[], []])
+    assert.deepEqual([found('cachix/install-nix-action@v27'), found('actions/setup-node@v4')], [['fetched-package/high@6'], ['fetched-package/high@6']])
   })
 
   it('other tools by how they are pinned', () => {

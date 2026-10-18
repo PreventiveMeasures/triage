@@ -124,6 +124,13 @@ test('an action of the repository\'s own counts as an install before a step only
   }
   assert.deepEqual(await found('npm ci'), [])
   assert.deepEqual(await found('npm run lint'), ['fetched-package/high@6'])
+  // One using another of its own: as that one does.
+  const wrapped = async script => {
+    const files = { ...FILES, '.github/workflows/ci.yml': ci, '.github/actions/setup/action.yaml': 'runs:\n  using: composite\n  steps:\n    - uses: ./deps\n',
+      'deps/action.yml': `runs:\n  using: composite\n  steps:\n    - run: ${script}\n      shell: bash\n` }
+    return findingIds(ofType(await scan(sourceOf({ files })), 'workflow')[0].findings)
+  }
+  assert.deepEqual([await wrapped('npm ci'), await wrapped('npm run lint')], [[], ['fetched-package/high@6']])
 })
 
 test('a repository missing is red where another owner\'s workflow names it, whichever names it first', async () => {

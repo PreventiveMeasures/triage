@@ -118,19 +118,26 @@ function shellLine([program, ...words]) {
 }
 
 // Each command of a script: `{ argv, piped, line, order, next }`, `line` the
-// one it is on, counting from 0, `order` its place among them all, and
-// `next` the command a pipe feeds it to, as a
-// script fetched is fed to a shell; a command substitution's and a shell's
-// command line's after its line's.
+// one it is on, counting from 0, `order` its place among them all, as they
+// run, and `next` the command a pipe feeds it to, as a script fetched is fed
+// to a shell; a shell's command line's after the shell, and a command
+// substitution's after its line's. 64 lines read of each.
 export function scriptCommands(script) {
   const found = []
+  let read = 0
+  const readLine = (text, line) => {
+    if (read++ >= 64) return
+    const { commands, nested } = commandsOf(text)
+    commands.forEach((command, at) => {
+      found.push({ ...command, line, order: found.length, next: commands[at + 1]?.piped ? commands[at + 1] : null })
+      const shell = shellLine(command.argv)
+      if (shell) readLine(shell, line)
+    })
+    for (const each of nested) readLine(each, line)
+  }
   for (const { text, line } of scriptLines(script)) {
-    const queue = [text]
-    for (let read = 0; read < queue.length && read < 64; read++) {
-      const { commands, nested } = commandsOf(queue[read])
-      commands.forEach((command, at) => { found.push({ ...command, line, order: found.length, next: commands[at + 1]?.piped ? commands[at + 1] : null }) })
-      queue.push(...nested, ...commands.map(({ argv }) => shellLine(argv)).filter(Boolean))
-    }
+    read = 0
+    readLine(text, line)
   }
   return found
 }
