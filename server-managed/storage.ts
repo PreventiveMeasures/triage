@@ -15,8 +15,10 @@ import { migrateStorage, reapStorageUploads } from './storage-maintenance.ts'
 // Database-only callers (notably status) must not activate byte encryption.
 export async function openManagedStorageDb(config: ManagedConfig) {
   const options = { triageHistoryLimit: config.triageHistoryLimit, storageEncryptionKey: parseStorageKey(config.storageEncryptionKey) }
-  return config.neonUrl ? openNeonManagedDb(config.neonUrl, options)
-    : (await import('./db.ts')).openSqliteManagedDb(config.dbPath, options)
+  if (!config.neonUrl) return (await import('./db.ts')).openSqliteManagedDb(config.dbPath, options)
+  // Serverless instances hold pooled connections only while an invocation lasts.
+  const attachPool = config.serverless ? (await import('@vercel/functions')).attachDatabasePool : undefined
+  return openNeonManagedDb(config.neonUrl, options, attachPool)
 }
 
 export async function openManagedStorage(config: ManagedConfig) {
