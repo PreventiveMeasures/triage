@@ -8,7 +8,7 @@ import { autorun } from '@rray/frontend/state-management'
 import { bundleWhy } from '../ui/view/bundle-why.js'
 import { buildGraph } from '../ui/view/graph/data.js'
 import { buildSizeFlow, layoutSizeFlow } from '../ui/view/graph/size-flow-model.js'
-import { templates } from './_lit.js'
+import { guarded, isGuard, templates } from './_lit.js'
 
 // Keep the real modal and bundle source rendering without unrelated page
 // navigation, tooltip listeners, or asynchronous syntax highlighting.
@@ -38,6 +38,7 @@ const { buildBundleGraphData, renderBundleSourceModal, renderBundlesList, render
 
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
+  if (isGuard(value)) return renderText(guarded(value))
   if (value?.strings) return value.strings.map((text, index) => text + renderText(value.values[index])).join('')
   return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
 }
@@ -1280,4 +1281,100 @@ test('same-ID App and dependency findings remain selectable in package and bundl
     assert.equal((markup.match(/class="bundle-issues-finding"/gu) ?? []).length, 2)
     assert.equal((markup.match(/triage-ignored>Ignored/gu) ?? []).length, 1)
   }
+})
+
+// Each `guard` a render holds, its dependencies by where it stands: the
+// source gutter's, or the Code rail's tree.
+function guardedParts(value) {
+  const found = new Map()
+  for (const part of templates(value)) {
+    for (const held of part.values) {
+      if (!Array.isArray(held?.values?.[0]) || typeof held.values[1] !== 'function') continue
+      const where = part.strings.join('')
+      found.set(where.includes('bundle-source-lineno-col') ? 'gutter' : where.includes('bundle-code-rail-body') ? 'tree' : where, held.values[0])
+    }
+  }
+  return found
+}
+// Whether Lit's guard keeps what it drew: the same dependencies, each one.
+const kept = (before, after) => before.length === after.length && before.every((dependency, i) => dependency === after[i])
+
+test('the Code tab draws its gutter and tree again only where what they show changed', t => {
+  t.after(() => Object.assign(state, { bundleSourceTargetLine: null, bundleSourceFindingIdx: null, bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '' }))
+  const entry = { name: 'guard.stasis', integrity: 'sha512-guarded-views' }
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1.0.0', files: { 'src/app.js': 'one\ntwo\nthree', 'src/other.js': 'a\nb\nc', 'lib/long.js': 'a\nb\nc\nd' } }],
+  ]) }).serialize())
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
+    bundleSourceFile: 'src/app.js', bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '', bundleSourceTargetLine: null, bundleSourceFindingIdx: null,
+    bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const first = guardedParts(renderBundlesList([entry]))
+  assert.deepEqual([...first.keys()].toSorted(), ['gutter', 'tree'])
+  let next = guardedParts(renderBundlesList([entry]))
+  assert.ok(kept(first.get('gutter'), next.get('gutter')), 'nothing changed: the gutter stays')
+  assert.ok(kept(first.get('tree'), next.get('tree')), 'nothing changed: the tree stays')
+  state.bundleSourceTargetLine = { bundle: entry.integrity, path: 'src/app.js', line: 2 }
+  next = guardedParts(renderBundlesList([entry]))
+  assert.ok(!kept(first.get('gutter'), next.get('gutter')), 'a line marked draws the gutter again')
+  assert.ok(kept(first.get('tree'), next.get('tree')), 'the tree shows no line')
+  state.bundleSourceTargetLine = null
+  state.bundleSourceFile = 'src/other.js'
+  next = guardedParts(renderBundlesList([entry]))
+  assert.ok(kept(first.get('gutter'), next.get('gutter')), 'as many lines, none marked: the gutter is the same')
+  assert.ok(!kept(first.get('tree'), next.get('tree')), 'another file open draws the tree again')
+  state.bundleSourceFile = 'lib/long.js'
+  assert.ok(!kept(first.get('gutter'), guardedParts(renderBundlesList([entry])).get('gutter')), 'more lines draw the gutter again')
+  state.bundleCodeSearchQuery = 'other'
+  const filtered = guardedParts(renderBundlesList([entry])).get('tree')
+  assert.ok(kept(filtered, guardedParts(renderBundlesList([entry])).get('tree')), 'the same filter keeps its tree')
+  state.bundleCodeSearchQuery = 'app'
+  assert.ok(!kept(filtered, guardedParts(renderBundlesList([entry])).get('tree')), 'another filter draws the tree again')
+})
+
+test('Code search lists its first files\' first hits where the bundle search stopped short of them', t => {
+  t.after(() => Object.assign(state, { bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '' }))
+  const entry = { name: 'capped.stasis', integrity: 'sha512-code-search-capped' }
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1.0.0', files: { 'src/a.js': Array.from({ length: 6000 }, () => 'needle').join('\n'), 'src/b.js': 'needle\nneedle' } }],
+  ]) }).serialize())
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
+    bundleSourceFile: 'src/b.js', bundleCodeSearchMode: 'code', bundleCodeSearchQuery: 'needle',
+    bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  for (let i = 0; i < 2; i++) {
+    const rail = renderText(renderBundlesList([entry])).match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
+    assert.match(rail, /22 hits in 2 files/u)
+  }
+})
+
+test('the Overview orders its files again when their sizes change', () => {
+  const entry = { name: 'sizes.map', integrity: 'sha512-map-sizes-change' }
+  state.selectedBundle = entry.integrity
+  state.bundleDetails = { integrity: entry.integrity, kind: 'sourcemap', size: 123, sourceSizes: [1, 3, 2], json: {
+    version: 3, sources: ['src/a.js', 'src/b.js', 'src/c.js'], sourcesContent: ['a', 'b', 'c'],
+  } }
+  state.bundleOverviewFilesSort = 'size'
+  const files = () => [...renderText(renderBundlesList([entry])).match(/<ul class="bundles-sources-list">(.*?)<\/ul>/su)[1]
+    .matchAll(/class="bundles-source-path"[^>]*>(.*?)<\/span>/gu)].map(match => match[1])
+  assert.deepEqual(files(), ['b.js', 'c.js', 'a.js'])
+  state.bundleDetails.sourceSizes = [3, 1, 2]
+  assert.deepEqual(files(), ['a.js', 'c.js', 'b.js'])
+  state.bundleOverviewFilesSort = 'name'
+  assert.deepEqual(files(), ['a.js', 'b.js', 'c.js'])
+})
+
+test('the bundle graph hands the canvas the same files while neither its reason nor its focus changes', t => {
+  t.after(() => { graph2.focusedPkg = null })
+  graph2.focusedPkg = null
+  const details = { integrity: 'sha512-graph-files-kept', kind: 'stasis', size: 1, bundle: new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1.0.0', files: { 'src/a.js': 'a', 'src/b.js': 'b' } }],
+    ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'dep' } }],
+  ]) }) }
+  const all = buildBundleGraphData(details).files
+  assert.equal(buildBundleGraphData(details).files, all)
+  graph2.focusedPkg = 'dep'
+  const focused = buildBundleGraphData(details).files
+  assert.deepEqual(focused, ['node_modules/dep/index.js'])
+  assert.equal(buildBundleGraphData(details).files, focused)
+  graph2.focusedPkg = null
+  assert.equal(buildBundleGraphData(details).files, all)
 })

@@ -2845,7 +2845,11 @@ report.addEventListener('search-input', (e) => {
   } else if (kind === 'repositories') {
     state.repositoriesSearchQuery = value
   } else if (kind === 'bundle-code') {
+    // The Code rail's filter, a search of every source in its Code mode:
+    // per frame, as the Search tab's below.
     state.bundleCodeSearchQuery = value
+    renderSearchNextFrame()
+    return
   } else if (kind === 'bundle-search') {
     // Heaviest of the search fields (scans every source) — debounce
     // its render to one per frame instead of the synchronous render

@@ -20,6 +20,7 @@ import { managedBundleRoute, managedCodeLocation } from './managed-bundle-naviga
 import { managedHistory } from './managed-history.js'
 import { choose } from 'lit/directives/choose.js'
 import { classMap } from 'lit/directives/class-map.js'
+import { guard } from 'lit/directives/guard.js'
 import { live } from 'lit/directives/live.js'
 import { ref } from 'lit/directives/ref.js'
 import { repeat } from 'lit/directives/repeat.js'
@@ -72,7 +73,7 @@ import { bundleCodeStats } from '../../common/bundle-stats.js'
 import { bundleCommitTooltip, bundleOriginLinks } from './bundle-origin-links.js'
 import { bundleLineCounts, bundleNeedsSources, computeBundleFileHashes } from './bundle-metadata.js'
 import { bundleHasSbomComponents } from './sbom.js'
-import { buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
+import { SEARCH_MAX_TOTAL_HITS, buildSearchMatcher, runBundleSearch } from './bundle-search-scan.js'
 import { railHitText, renderSearchMarks, sliceSearchLine } from './search-marks.js'
 import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
 import { bundleWhyQuery } from './bundle-why.js'
@@ -228,6 +229,9 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
 // original paths while nodes live under stripped ones.
 //
 // Every file in the chosen reason is a node; All includes the full bundle.
+// Its files are kept for the reason (bundleGraphScope), and in a focused
+// package, so a render with neither changed hands the canvas the same
+// array, which it keeps its layout for (graph/canvas.js).
 export function buildBundleGraphData(details) {
   const full = buildBundleTree(details)
   const reasons = bundleGraphReasons(details, full.origToStripped.keys())
@@ -236,9 +240,10 @@ export function buildBundleGraphData(details) {
     graph2.dependencyPackagesView = false
     graph2.bundleReason = null
   }
-  const { tree, origToStripped, selected } = filterBundleGraphReason(full.tree, full.origToStripped, reasons, graph2.bundleReason)
+  const scope = bundleGraphScope(full, reasons, graph2.bundleReason)
+  const { tree, origToStripped, selected } = scope
   graph2.bundleReason = selected
-  const allFiles = Object.keys(tree)
+  const allFiles = scope.files
   if (allFiles.length === 0) return null
   let strippedHashes = null
   if (details.fileHashes && details.fileHashes.size > 0) {
@@ -328,7 +333,8 @@ export function buildBundleGraphData(details) {
   // doesn't open on an empty focus with a dead back-button.
   let files = allFiles
   if (graph2.focusedPkg) {
-    const focusFiles = allFiles.filter((f) => pkgOf(f) === graph2.focusedPkg)
+    if (!scope.focused.has(graph2.focusedPkg)) scope.focused.set(graph2.focusedPkg, allFiles.filter((f) => pkgOf(f) === graph2.focusedPkg))
+    const focusFiles = scope.focused.get(graph2.focusedPkg)
     if (focusFiles.length > 0) files = focusFiles
     else graph2.focusedPkg = null
   }
@@ -361,6 +367,21 @@ export function buildBundleGraphData(details) {
   }
 }
 
+// The bundle's tree for a reason (filterBundleGraphReason; null for every
+// file), its files, and each focused package's of them, by the full tree
+// (buildBundleTree keeps one a bundle).
+const bundleGraphScopes = new WeakMap()
+function bundleGraphScope(full, reasons, requested) {
+  const selected = reasons.has(requested) ? requested : null
+  if (!bundleGraphScopes.has(full)) bundleGraphScopes.set(full, new Map())
+  const scopes = bundleGraphScopes.get(full)
+  if (!scopes.has(selected)) {
+    const scope = filterBundleGraphReason(full.tree, full.origToStripped, reasons, selected)
+    scopes.set(selected, { ...scope, files: Object.keys(scope.tree), focused: new Map() })
+  }
+  return scopes.get(selected)
+}
+
 // Always bundle context — these helpers serve only the bundle Graph
 // tab, so the selection card's Files → / View source → branch picks
 // View source. Dispatch into lazy `ui/graph.js` so its
@@ -388,26 +409,17 @@ export function setCurrentBundleGraphPrep(prep) {
 // per package. Mirrors the graph2 distribution chrome on the right
 // panel — same `pkgColor` palette so the colors carry meaning
 // across both views (a `@noble/hashes` package shows the same hue
-// in the bundle-size chart and the canvas).
-function renderBundleSizeDistribution(items, sort, details) {
-  // items: Array<{path, size, pkgDir}>; size may be 0 / null when the
-  // bundle didn't carry per-source content (rare for sourcemaps).
-  // `pkgDir` is the path's stasis package dir (undefined for sourcemap
-  // bundles), so workspace packages bucket apart from their parent dir.
-  const totalByPkg = new Map()
-  const whyQueries = new Map()
-  let total = 0
-  for (const { path, size, pkgDir } of items) {
-    if (typeof size !== 'number' || size <= 0) continue
-    const pkg = bundlePkgOf(path, { packageDir: pkgDir })
-    totalByPkg.set(pkg, (totalByPkg.get(pkg) ?? 0) + size)
-    if (!whyQueries.has(pkg)) whyQueries.set(pkg, bundleWhyQuery(details, pkgDir))
-    total += size
-  }
+// in the bundle-size chart and the canvas). `dist` the packages' sizes
+// (bundleSizeDistribution), sorted here by `sort` once for each.
+function renderBundleSizeDistribution(dist, sort, details) {
+  const { totalByPkg, whyQueries, total } = dist
   if (total === 0) return nothing
-  const sorted = [...totalByPkg.entries()].toSorted((a, b) => Number(b[0] === '__own__') - Number(a[0] === '__own__')
-    || (sort === 'size' ? b[1] - a[1] : 0)
-    || pkgLabel(a[0]).localeCompare(pkgLabel(b[0])) || a[0].localeCompare(b[0]))
+  if (!dist.sorted.has(sort)) {
+    dist.sorted.set(sort, [...totalByPkg.entries()].toSorted((a, b) => Number(b[0] === '__own__') - Number(a[0] === '__own__')
+      || (sort === 'size' ? b[1] - a[1] : 0)
+      || pkgLabel(a[0]).localeCompare(pkgLabel(b[0])) || a[0].localeCompare(b[0])))
+  }
+  const sorted = dist.sorted.get(sort)
   return html`<div class="bundles-dist">
     <div class="bundles-dist-bar" aria-hidden="true">
       ${repeat(sorted, ([pkg]) => pkg, ([pkg, size]) => html`<span
@@ -449,6 +461,53 @@ function openBundleWhy(details, query) {
     && (state.managedSession && store(state.managedSession)) === session })
 }
 
+// What the Overview makes of its files: the prefix they share and their
+// paths without it, their packages (package identities use original paths
+// and recorded module boundaries; the stripped paths are only for
+// displaying the file list), the Files orders by name and by size, and each
+// package's size for the Packages column (bundleSizeDistribution). Made once
+// for a bundle's, not on every render (an npm answer arriving renders the
+// Overview again): kept by the files' array, which its details keep, with the
+// sizes, package directories and details they were made of.
+const _overviewFiles = new WeakMap()
+function overviewFiles(sources, sizes, packageDirs, details) {
+  const kept = _overviewFiles.get(sources)
+  if (kept && kept.packageDirs === packageDirs && kept.details === details && kept.sizes.length === sizes.length && kept.sizes.every((size, i) => size === sizes[i])) return kept
+  const { prefix, stripped } = stripCommonPathPrefix(sources)
+  const pkgDirOf = (i) => packageDirs?.get(sources[i])
+  const packages = new Set()
+  for (let i = 0; i < stripped.length; i++) {
+    packages.add(bundlePkgOf(sources[i], { packageDir: pkgDirOf(i) }))
+  }
+  const byName = stripped.map((_, i) => i).toSorted((a, b) => stripped[a].localeCompare(stripped[b]))
+  const bySize = stripped.map((_, i) => i).toSorted((a, b) => (sizes[b] ?? -1) - (sizes[a] ?? -1) || stripped[a].localeCompare(stripped[b]))
+  const dist = bundleSizeDistribution(sources.map((p, i) => ({ path: p, size: sizes[i], pkgDir: pkgDirOf(i) })), details)
+  const facts = { sizes: [...sizes], packageDirs, details, prefix, stripped, packages, byName, bySize, dist }
+  _overviewFiles.set(sources, facts)
+  return facts
+}
+
+// Each package's size for the Overview's Packages column, and the query
+// that names it for the why dialog (bundleWhyQuery), their orders kept as
+// they are asked for (renderBundleSizeDistribution).
+// items: Array<{path, size, pkgDir}>; size may be 0 / null when the
+// bundle didn't carry per-source content (rare for sourcemaps).
+// `pkgDir` is the path's stasis package dir (undefined for sourcemap
+// bundles), so workspace packages bucket apart from their parent dir.
+function bundleSizeDistribution(items, details) {
+  const totalByPkg = new Map()
+  const whyQueries = new Map()
+  let total = 0
+  for (const { path, size, pkgDir } of items) {
+    if (typeof size !== 'number' || size <= 0) continue
+    const pkg = bundlePkgOf(path, { packageDir: pkgDir })
+    totalByPkg.set(pkg, (totalByPkg.get(pkg) ?? 0) + size)
+    if (!whyQueries.has(pkg)) whyQueries.set(pkg, bundleWhyQuery(details, pkgDir))
+    total += size
+  }
+  return { totalByPkg, whyQueries, total, sorted: new Map() }
+}
+
 // Sources panel for the bundles details view — shared between the
 // sourcemap and stasis branches of `renderBundleDetails`. Wraps
 // the metadata block + per-package size visualization + flat file
@@ -484,35 +543,30 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
   bundleSize = null, unpackedSize = null, resources = null, details = null, leadColumn = null, trailColumns = nothing, summaryExtra = nothing,
   fileTag = null, fileIcon = null, fileFlags = null, overviewClass = '', fileFilter = null, lines = null, sized = (measure, value, text) => text,
 } = {}) {
-  const { prefix, stripped } = stripCommonPathPrefix(sources)
-  // Package identities use original paths and recorded module boundaries;
-  // the stripped paths are only for displaying the file list.
-  const pkgDirOf = (i) => packageDirs?.get(sources[i])
-  const packages = new Set()
-  for (let i = 0; i < stripped.length; i++) {
-    packages.add(bundlePkgOf(sources[i], { packageDir: pkgDirOf(i) }))
-  }
+  const facts = overviewFiles(sources, sizes, packageDirs, details)
+  const { prefix, stripped, packages } = facts
   // Name ascends; Size puts the largest files first, with unknown
   // sizes last and name order breaking ties in either view. Where any file
   // listed is flagged (`fileFlags`), Flags is offered too (file-flags.js
   // byFlags), and else is Name's. `fileFilter` narrows the Files list alone,
   // `{ label, keeps, clear }`: what it keeps, named in the column's head, with
-  // a way back to every file.
+  // a way back to every file. The orders of every file, narrowed, are those
+  // of the files it keeps.
   const shown = stripped.map((_, i) => i).filter((i) => !fileFilter || fileFilter.keeps(sources[i]))
   const flagsOf = (i) => fileFlags?.(sources[i]) ?? []
   const flagged = shown.some((i) => flagsOf(i).length > 0)
   const filesSort = state.bundleOverviewFilesSort === 'flags' && !flagged ? 'name' : state.bundleOverviewFilesSort
+  const order = filesSort === 'size' ? facts.bySize : facts.byName
   const listed = filesSort === 'flags' ? byFlags(shown, flagsOf, (i) => stripped[i])
-    : shown.toSorted((a, b) => (filesSort === 'size' ? (sizes[b] ?? -1) - (sizes[a] ?? -1) : 0) || stripped[a].localeCompare(stripped[b]))
+    : fileFilter ? order.filter((i) => fileFilter.keeps(sources[i])) : order
 
-  const distItems = sources.map((p, i) => ({ path: p, size: sizes[i], pkgDir: pkgDirOf(i) }))
   // `renderBundleSizeDistribution` returns `nothing` when no source
   // carries a positive byte size (common for stasis bundles without
   // inline `sourcesContent`). Mirror the Files / Reports column
   // empty-state so the Packages column doesn't render as a card
   // with a header and a yawning blank body.
   const packagesSort = state.bundleOverviewPackagesSort
-  const distContent = renderBundleSizeDistribution(distItems, packagesSort, details)
+  const distContent = renderBundleSizeDistribution(facts.dist, packagesSort, details)
   const distTpl = distContent === nothing
     ? html`<p class="bundles-overview-col-empty">No size information for this bundle's sources.</p>`
     : distContent
@@ -646,8 +700,11 @@ function renderBundleSourcesPanel(renderMeta, extras, sources, sizes, packageDir
 // the content, no XSS risk. Click-outside / × button / Escape all
 // dismiss; the close handler clears state.bundleSourceFile.
 // Cache: integrity\0path → highlighted HTML string (or null when
-// prism doesn't support the language / failed). Persists for the
-// session so re-opens of the same file are instant.
+// prism doesn't support the language / failed). The files opened
+// last, BUNDLE_HIGHLIGHTS_KEPT of them, so re-opens of those are
+// instant; a viewer shows one at a time, and each is several times
+// its source's size.
+const BUNDLE_HIGHLIGHTS_KEPT = 16
 const _bundleHighlightCache = new Map()
 const _bundleHighlightPending = new Set()
 
@@ -780,7 +837,7 @@ function plainSource(content) {
 // across gutter and code (`.is-target`). A `pretty` copy of the file
 // (pretty-source.js) has lines of its own, which the file's mark is not on.
 function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null, lineLinks = false, pretty = false) {
-  const lineCount = content.split('\n').length
+  const lineCount = bundleSourceLines(content)
   const target = state.bundleSourceTargetLine
   const targetLine = !pretty && target && target.path === path && target.bundle === (details?.integrity ?? null) ? target.line : null
   const targetEnd = targetLine == null ? null : Math.max(target.end ?? targetLine, targetLine)
@@ -800,6 +857,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
     ;(async () => {
       const highlightedHtml = await prismHighlight(content, lang, bundleSourceLinkResolver(details, path))
       _bundleHighlightCache.set(cacheKey, typeof highlightedHtml === 'string' ? controlMarkup(highlightedHtml) : null)
+      if (_bundleHighlightCache.size > BUNDLE_HIGHLIGHTS_KEPT) _bundleHighlightCache.delete(_bundleHighlightCache.keys().next().value)
       _bundleHighlightPending.delete(cacheKey)
       // Cheap re-render — Lit only patches what changed, so the cost
       // is just the highlighted string injected via appMarkup.
@@ -807,14 +865,25 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
     })()
   }
   const highlighted = _bundleHighlightCache.get(cacheKey)
+  // Read again last, as the files opened last are kept.
+  if (_bundleHighlightCache.has(cacheKey)) {
+    _bundleHighlightCache.delete(cacheKey)
+    _bundleHighlightCache.set(cacheKey, highlighted)
+  }
+  // Each line's dot, as the gutter draws it: its severity, how many and
+  // which findings it stands for. The gutter is drawn again only where it
+  // or anything else a row shows changed (`guard`): a large file has a row
+  // for each of many thousand lines.
+  const findingIdx = state.bundleSourceFindingIdx
+  const dots = [...lineFindings].map(([ln, entries]) => `${ln}:${_topSeverityOf(entries.map((e) => e.f))}:${entries.map((e) => e.idx).join(',')}`).join(' ')
   return html`<div class=${classMap({ 'bundle-source-lines': true, 'is-wrapped': state.bundleSourceWrap })} style=${styleMap({ '--lineno-width': `${digits}ch` })} ${ref(watchSourceWrap)}>
     <aside class="bundle-source-lineno-col" aria-hidden="true">
-      ${Array.from({ length: lineCount }, (_, i) => {
+      ${guard([lineCount, dots, findingIdx, matchLines, lineLinks, targetLine, targetEnd], () => Array.from({ length: lineCount }, (_, i) => {
         const ln = i + 1
         const entries = lineFindings.get(ln)
         const sev = entries ? _topSeverityOf(entries.map((e) => e.f)) : null
-        const isActive = entries && state.bundleSourceFindingIdx != null
-          && entries.some((e) => e.idx === state.bundleSourceFindingIdx)
+        const isActive = entries && findingIdx != null
+          && entries.some((e) => e.idx === findingIdx)
         return html`<div class=${classMap({ 'bundle-source-lineno-row': true, 'is-match': matchLines?.has(ln) ?? false, 'is-target': targetLine != null && ln >= targetLine && ln <= targetEnd })} data-line=${ln}>
           ${entries
             ? html`<button
@@ -827,7 +896,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
             : html`<span class="bundle-source-dot-placeholder"></span>`}
           <span class="bundle-source-lineno-num" data-bundle-source-line=${lineLinks ? ln : nothing}>${ln}</span>
         </div>`
-      })}
+      }))}
     </aside>
     <pre class="bundle-source-code" tabindex="-1" aria-label=${path}><code class=${lang ? `language-${lang}` : ''}>${typeof highlighted === 'string'
       ? appMarkup(highlighted)
@@ -894,12 +963,13 @@ function renderBundleSourceFindingPanel(findings) {
 // for the side panel) + a line→entries map for the gutter dots.
 // Shared by the source-viewer modal, the Code slide's right pane,
 // and the Search slide's right sidebar. Empty until the async hash
-// pass populates `details.fileHashes`.
-function bundleViewerFindings(details, path, content) {
+// pass populates `details.fileHashes`. `byFile` the bundle's matched
+// findings by file, where the caller has them already.
+function bundleViewerFindings(details, path, content, byFile = null) {
   const fileFindings = []
   const lineFindings = new Map()
   if (typeof content === 'string' && details?.fileHashes) {
-    const matches = bundleFindingsByFile(details.fileHashes, 'issues')
+    const matches = byFile ?? bundleFindingsByFile(details.fileHashes, 'issues')
     const onThisFile = matches.get(path) ?? []
     for (let i = 0; i < onThisFile.length; i++) {
       const f = onThisFile[i]
@@ -991,10 +1061,15 @@ export function renderBundleSourceModal() {
 const _bundleTreeUserOpen = new Map()
 let _bundleTreeMapBundle = null
 let _bundleTreeCurrentPath = null
+// Counts what is opened or closed here rather than by a click on a
+// directory, which the browser has opened or closed already: the tree is
+// drawn again for it (renderBundleCodeFilesPanel).
+let _bundleTreeOpenings = 0
 
 function openBundleTreeAncestors(path, prefix) {
   const parts = stripPathPrefix(path ?? '', prefix).split('/')
   for (let i = 1; i < parts.length; i++) _bundleTreeUserOpen.set(parts.slice(0, i).join('/'), true)
+  _bundleTreeOpenings++
 }
 
 function revealBundleTreeFile(path, prefix) {
@@ -1013,6 +1088,7 @@ function collapseBundleTree(tree) {
     }
   }
   walk(tree)
+  _bundleTreeOpenings++
   render()
 }
 
@@ -1178,17 +1254,34 @@ function stripPathPrefix(p, prefix) {
 
 // Filter the full presentation so package boundaries and variant labels stay
 // stable. Both physical paths and the displayed package names are searchable.
+// The filtered tree is kept for the query, and the tree drawn again only
+// where anything it shows changed (`guard`): the file open, the findings on
+// its files (bundleIssuesKey), a directory opened or closed other than by a
+// click on it. A large bundle's has a row for each of thousands of files,
+// its closed directories' too, which find in page looks through.
+let _filteredSourceTree = { tree: null, query: '', prefix: '', filtered: null }
 function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix = '', formats = null, sources = null) {
-  if (!query) return renderBundleSourceTree(tree, currentPath, 0, issueIndex, false, formats, sources)
-  const filtered = filterBundleSourceTree(tree, query, prefix)
-  if (!filtered) {
-    return html`<div class="bundle-code-search-empty">No files match.</div>`
+  const kept = _filteredSourceTree
+  if (query && !(kept.tree === tree && kept.query === query && kept.prefix === prefix)) {
+    _filteredSourceTree = { tree, query, prefix, filtered: filterBundleSourceTree(tree, query, prefix) }
   }
-  // expandAll: filtered tree only contains matches; every dir
-  // exists because something inside it matched, so opening them
-  // all means the user sees every hit at a glance instead of
-  // having to click every level open after typing.
-  return renderBundleSourceTree(filtered, currentPath, 0, issueIndex, true, formats, sources)
+  const shown = query ? _filteredSourceTree.filtered : tree
+  return guard([shown, currentPath, bundleIssuesKey(issueIndex), formats, sources, _bundleTreeOpenings], () => {
+    if (!shown) {
+      return html`<div class="bundle-code-search-empty">No files match.</div>`
+    }
+    // expandAll: filtered tree only contains matches; every dir
+    // exists because something inside it matched, so opening them
+    // all means the user sees every hit at a glance instead of
+    // having to click every level open after typing.
+    return renderBundleSourceTree(shown, currentPath, 0, issueIndex, Boolean(query), formats, sources)
+  })
+}
+
+// What the tree's rows show of a bundle's matched findings
+// (bundleFindingsByFile): each file's count and worst severity.
+function bundleIssuesKey(issueIndex) {
+  return [...issueIndex].map(([file, findings]) => `${file}\0${findings.length}\0${_topSeverityOf(findings)}`).join('\n')
 }
 
 // Scan order shared by the Code rail's code search and the Search tab:
@@ -1245,13 +1338,27 @@ function renderBundleCodeLargestResults(details, sources, query, currentPath, pr
   </div>`
 }
 
-function renderBundleCodeContentResults(details, sources, query, currentPath, prefix = '') {
-  if (!query) {
-    return html`<div class="bundle-code-search-hint">Type to search across every source in this bundle.</div>`
+const MAX_RAIL_HITS_PER_FILE = 20
+const MAX_RAIL_FILES = 100
+
+// The rail's hits for a query: the first MAX_RAIL_FILES files in scan order
+// with a match, the first MAX_RAIL_HITS_PER_FILE of each one's. Read from the
+// Search tab's scan (runBundleSearch), which keeps its recent results and
+// refines one typed on, where that has every hit the rail shows: all it
+// found, or MAX_RAIL_FILES files of them before the last, which it may have
+// stopped in. Else scanned here, to the rail's own caps, kept for the query.
+let _railHits = { sources: null, query: '', hits: null }
+function bundleCodeRailHits(details, sources, query) {
+  const found = runBundleSearch(details.integrity ?? '', sources, query, false, false, bundleSearchOrder(details, sources))
+  const complete = found.fileResults.length > MAX_RAIL_FILES || !found.truncated || found.totalHits < SEARCH_MAX_TOTAL_HITS
+    || (found.fileResults.length === MAX_RAIL_FILES && found.fileResults.at(-1).hits.length >= MAX_RAIL_HITS_PER_FILE)
+  if (complete) {
+    const results = found.fileResults.slice(0, MAX_RAIL_FILES).map(({ path, lines, hits }) => ({ path,
+      hits: hits.slice(0, MAX_RAIL_HITS_PER_FILE).map(({ ln, ranges }) => ({ ln, text: lines[ln - 1], ranges })) }))
+    return { results, totalHits: results.reduce((sum, { hits }) => sum + hits.length, 0) }
   }
+  if (_railHits.sources === sources && _railHits.query === query) return _railHits.hits
   const matcher = buildSearchMatcher(query, false, false)
-  const MAX_HITS_PER_FILE = 20
-  const MAX_FILES = 100
   const results = []
   let totalHits = 0
   for (const path of bundleSearchOrder(details, sources)) {
@@ -1264,11 +1371,20 @@ function renderBundleCodeContentResults(details, sources, query, currentPath, pr
       if (ranges.length === 0) continue
       hits.push({ ln: i + 1, text: lines[i], ranges })
       totalHits++
-      if (hits.length >= MAX_HITS_PER_FILE) break
+      if (hits.length >= MAX_RAIL_HITS_PER_FILE) break
     }
     if (hits.length > 0) results.push({ path, hits })
-    if (results.length >= MAX_FILES) break
+    if (results.length >= MAX_RAIL_FILES) break
   }
+  _railHits = { sources, query, hits: { results, totalHits } }
+  return _railHits.hits
+}
+
+function renderBundleCodeContentResults(details, sources, query, currentPath, prefix = '') {
+  if (!query) {
+    return html`<div class="bundle-code-search-hint">Type to search across every source in this bundle.</div>`
+  }
+  const { results, totalHits } = bundleCodeRailHits(details, sources, query)
   if (results.length === 0) {
     return html`<div class="bundle-code-search-empty">No matches.</div>`
   }
@@ -1379,13 +1495,37 @@ function renderBundleCodeIssuesResults(details, query, currentPath, prefix = '')
 // even in a flat capture; other dependency directories use recorded
 // module boundaries so an app's internal dependencies/ folder stays own.
 // Sourcemaps consider every source.
+// Kept by the sources (bundleSourcesAsMap keeps one map a bundle).
+const _bundleCodeDefaults = new WeakMap()
 function bundleCodeDefaultSources(details, sources) {
   if (details.kind !== 'stasis') return sources
+  if (_bundleCodeDefaults.has(sources)) return _bundleCodeDefaults.get(sources)
   const packageDirs = bundlePackageDirs(details)
   const ownSources = new Map([...sources].filter(([file]) =>
     !/(?:^|\/)node_modules(?:\/|$)/u.test(file)
       && !/(?:^|\/)(?:node_modules|dependencies|vendor)(?:\/|$)/u.test(packageDirs?.get(file) ?? file)))
-  return ownSources.size > 0 ? ownSources : sources
+  const defaults = ownSources.size > 0 ? ownSources : sources
+  _bundleCodeDefaults.set(sources, defaults)
+  return defaults
+}
+
+// The Code slide's tree of a bundle's sources, and the prefix its rail shows
+// over it, built once a bundle rather than on every render: kept by the
+// sources, as the defaults are.
+const _bundleCodeTrees = new WeakMap()
+function bundleCodeTree(details, sources, allPaths) {
+  let built = _bundleCodeTrees.get(sources)
+  if (!built) {
+    const packageModules = details.kind === 'stasis' ? details.bundle.modules : null
+    const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix, packageModules, allPaths)
+    // Tree built from STRIPPED paths so the visual hierarchy
+    // doesn't waste horizontal space on a shared root prefix.
+    // Stripped → original mapping lets the click handlers (and
+    // sources.get) recover the full key.
+    built = { prefix, tree: buildBundleSourceTree(allPaths.map(p => stripPathPrefix(p, prefix)), allPaths, packageModules) }
+    _bundleCodeTrees.set(sources, built)
+  }
+  return built
 }
 
 // Default file for the Code slide when nothing is selected yet —
@@ -1460,28 +1600,23 @@ function renderBundleCodeView(details, entry = null) {
   // aren't intended to share open state).
   if (_bundleTreeMapBundle !== state.selectedBundle) {
     _bundleTreeUserOpen.clear()
+    _bundleTreeOpenings++
     _bundleTreeMapBundle = state.selectedBundle
     _bundleTreeCurrentPath = null
   }
   const codeFiles = bundleSourceOrder(sources)
   const allPaths = codeFiles.paths
-  const packageModules = details.kind === 'stasis' ? details.bundle.modules : null
-  const prefix = bundleSourceTreePrefix(stripCommonPathPrefix(allPaths).prefix, packageModules, allPaths)
-  const stripped = allPaths.map(p => stripPathPrefix(p, prefix))
-  // Tree built from STRIPPED paths so the visual hierarchy
-  // doesn't waste horizontal space on a shared root prefix.
-  // Stripped → original mapping lets the click handlers (and
-  // sources.get) recover the full key.
-  const tree = buildBundleSourceTree(stripped, allPaths, packageModules)
+  const { prefix, tree } = bundleCodeTree(details, sources, allPaths)
   // Per-file finding index for the tree's count chips, the default-
-  // file pick, and the Issues-mode hidden-when-empty gate. Computed
-  // once and reused — the tree walk reads it as
-  // Map<originalPath, Finding[]>.
+  // file pick, the open file's dots, and the Issues-mode
+  // hidden-when-empty gate. Computed once and reused — the tree walk
+  // reads it as Map<originalPath, Finding[]>.
   const issueIndex = details.fileHashes
     ? bundleFindingsByFile(details.fileHashes, 'issues')
     : new Map()
+  // The default pick's, found only where a file is to be picked.
   const defaultSources = bundleCodeDefaultSources(details, sources)
-  const defaultIssueIndex = details.kind === 'stasis'
+  const defaultIssues = () => details.kind === 'stasis'
     ? new Map([...issueIndex].filter(([file]) => defaultSources.has(file)))
     : issueIndex
   let path = state.bundleSourceFile
@@ -1517,6 +1652,7 @@ function renderBundleCodeView(details, entry = null) {
     // coercions. The tab-switch handler nulls the pointer on entry,
     // so this runs once per visit and the pick stays sticky across
     // re-renders, EXCEPT the one-time findings upgrade below.
+    const defaultIssueIndex = defaultIssues()
     path = pickDefaultBundleCodeFile(details, defaultSources, defaultIssueIndex)
     if (path) {
       state.bundleSourceFile = path
@@ -1525,7 +1661,7 @@ function renderBundleCodeView(details, entry = null) {
       // tab, so the reveal has to ride the pick itself.
       revealBundleCodeCurrent()
     }
-  } else if (_bundleCodeAutoPick && !_bundleCodeAutoPick.hadIssues && defaultIssueIndex.size > 0) {
+  } else if (_bundleCodeAutoPick && !_bundleCodeAutoPick.hadIssues && issueIndex.size > 0 && defaultIssues().size > 0) {
     // Findings upgrade. A page refresh lands here before the hash
     // pass and the OPFS finding index finish, so the original pick
     // could only fall back to the entry / largest file — a file
@@ -1534,7 +1670,7 @@ function renderBundleCodeView(details, entry = null) {
     // re-pick ONCE and follow it; the guard above ensures this only
     // happens while the fallback is still what's on screen.
     _bundleCodeAutoPick.hadIssues = true
-    const upgraded = pickDefaultBundleCodeFile(details, defaultSources, defaultIssueIndex)
+    const upgraded = pickDefaultBundleCodeFile(details, defaultSources, defaultIssues())
     if (upgraded && upgraded !== path) {
       path = upgraded
       state.bundleSourceFile = upgraded
@@ -1561,7 +1697,7 @@ function renderBundleCodeView(details, entry = null) {
   // the modal uses; the panel renders inside the slide rather
   // than as an overlay so the user can read source + finding
   // details side by side.
-  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
+  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content, issueIndex)
   // Search state — three modes share a single query field. Issues
   // mode is hidden when the bundle has no matched findings; the
   // selector falls back to Files automatically.
@@ -1629,10 +1765,18 @@ function renderBundleCodeFileNav(history) {
   </span>`
 }
 
-// A text's lines and size, as the Code tab's bar tells a file's.
+// A text's lines and size, as the Code tab's bar tells a file's. Kept for
+// the last two told, the file and its pretty-printed copy, as the bar tells
+// them on every render and counting a large one takes a while.
+const _textStats = []
 function textStats(text) {
-  const lines = text.split('\n').length
-  return `${lines.toLocaleString()} ${lines === 1 ? 'line' : 'lines'} · ${formatBytes(utf8ByteLength(text))}`
+  const kept = _textStats.find(entry => entry.text === text)
+  if (kept) return kept.stats
+  const lines = bundleSourceLines(text)
+  const stats = `${lines.toLocaleString()} ${lines === 1 ? 'line' : 'lines'} · ${formatBytes(utf8ByteLength(text))}`
+  _textStats.unshift({ text, stats })
+  _textStats.length = Math.min(_textStats.length, 2)
+  return stats
 }
 
 // Main pane of the Code slide — header bar (path + copy button + GitHub
@@ -1864,8 +2008,7 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
   const { fileResults, totalHits, truncated } = result
   // Stable display prefix from ALL sources, so it doesn't jump as the
   // matched-file set shifts between keystrokes.
-  const allPaths = [...sources.keys()].toSorted()
-  const { prefix } = stripCommonPathPrefix(allPaths)
+  const prefix = bundleSearchPrefix(sources)
   if (fileResults.length === 0) {
     return html`<div class="bundle-search-results">
       <div class="bundle-search-empty">No matches.</div>
@@ -1887,6 +2030,14 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
   </div>`
 }
 
+// The common prefix of every source's path, kept by the sources, as
+// the scan order is (bundleSearchOrder).
+const searchPrefixCache = new WeakMap()
+function bundleSearchPrefix(sources) {
+  if (!searchPrefixCache.has(sources)) searchPrefixCache.set(sources, stripCommonPathPrefix([...sources.keys()].toSorted()).prefix)
+  return searchPrefixCache.get(sources)
+}
+
 // Line numbers (1-based) in `content` matched by the active search —
 // drives the matched-line highlight in the sidebar's gutter (the same
 // lines the results column marks). Returns `null` when the query
@@ -1894,16 +2045,30 @@ function renderBundleSearchResults(details, sources, query, useRegex, caseSensit
 // doesn't compile) — the caller treats null as "no signal": keep the
 // sidebar open with no highlight, rather than reading it as a
 // no-match eviction. An empty Set means the query is valid and the
-// file genuinely has zero matches.
-function searchMatchLines(content, query, useRegex, caseSensitive) {
+// file genuinely has zero matches. Read from the scan's result
+// (runBundleSearch), where it has every match, else scanned here; and
+// kept for the file and the search, so a render with neither changed
+// hands the gutter the same lines (renderBundleSourceLines).
+let _searchMatchLines = { content: null, path: null, query: '', useRegex: false, caseSensitive: false, lines: null }
+function searchMatchLines(details, sources, path, query, useRegex, caseSensitive) {
+  const content = sources.get(path)
   if (!query || typeof content !== 'string') return null
-  const matcher = buildSearchMatcher(query, useRegex, caseSensitive)
-  if (matcher.error) return null
-  const out = new Set()
-  const lines = content.split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    if (matcher.ranges(lines[i]).length > 0) out.add(i + 1)
+  const kept = _searchMatchLines
+  if (kept.content === content && kept.path === path && kept.query === query && kept.useRegex === useRegex && kept.caseSensitive === caseSensitive) return kept.lines
+  const result = runBundleSearch(details.integrity ?? '', sources, query, useRegex, caseSensitive, bundleSearchOrder(details, sources))
+  if (result.error) return null
+  let out
+  if (result.truncated) {
+    const matcher = buildSearchMatcher(query, useRegex, caseSensitive)
+    out = new Set()
+    const lines = content.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      if (matcher.ranges(lines[i]).length > 0) out.add(i + 1)
+    }
+  } else {
+    out = new Set(result.fileResults.find(file => file.path === path)?.hits.map(({ ln }) => ln))
   }
+  _searchMatchLines = { content, path, query, useRegex, caseSensitive, lines: out }
   return out
 }
 
@@ -1957,7 +2122,7 @@ function renderBundleSearchView(details, entry = null) {
   // sidebar's gutter highlight so the file isn't scanned twice.
   let openMatchLines = null
   if (state.bundleSourceFile) {
-    const lines = searchMatchLines(sources.get(state.bundleSourceFile), query, useRegex, caseSensitive)
+    const lines = searchMatchLines(details, sources, state.bundleSourceFile, query, useRegex, caseSensitive)
     if (lines && lines.size === 0) {
       state.bundleSourceFile = null
       state.bundleSourceFindingIdx = null
@@ -2720,8 +2885,7 @@ function renderBundleDetails(entry, details) {
     // holds and is no file: listed, it would sit among the files as one.
     const sizeMap = bundleFileSizes(details)
     const kinds = bundleFileKinds(details)
-    const sourceNames = [...kinds.keys()]
-    const resources = new Set(sourceNames.filter((path) => kinds.get(path) === 'resource'))
+    const { sourceNames, resources } = stasisOverviewFiles(kinds)
     // Each `bundle.imports` key is either `*` or a `, `-joined
     // condition set (see `State#conditionsKey` in @exodus/stasis-core);
     // a bundle commonly carries several keys whose underlying
@@ -2754,6 +2918,18 @@ function renderBundleDetails(entry, details) {
   // wrapped in the same shell so layout is consistent.
   return renderBundleOverviewFallback(meta('', true), exportsCol,
     { placeholder: html`<div class="bundles-overview-placeholder">Bundle contents not parsed.</div>` })
+}
+
+// A stasis bundle's files as its Overview lists them, and those that are
+// resources: kept by its files' kinds (bundleFileKinds keeps those a
+// bundle), so the Overview's facts are kept by them (overviewFiles).
+const _stasisOverviewFiles = new WeakMap()
+function stasisOverviewFiles(kinds) {
+  if (!_stasisOverviewFiles.has(kinds)) {
+    const sourceNames = [...kinds.keys()]
+    _stasisOverviewFiles.set(kinds, { sourceNames, resources: new Set(sourceNames.filter((path) => kinds.get(path) === 'resource')) })
+  }
+  return _stasisOverviewFiles.get(kinds)
 }
 
 // An npm package version's Overview: its manifest beside the files its
