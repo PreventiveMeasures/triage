@@ -111,18 +111,25 @@ export function repositoryCodeEntry(data, revision = null) {
   }
 }
 
-// The file Code opens on: the directory's readme, where it has one.
+// The text files Code opens on, in the order it tries them: the directory's
+// readme, else its package.json, else its largest file at its top, else the
+// largest a level down, and so on, so a fixture deep in it never opens over
+// a file nearer its top.
 const README = /^readme(?:\.[^/]*)?$/iu
-export function repositoryCodeEntries(paths) {
+export function repositoryCodeEntries(paths, sizes = new Map()) {
   const readmes = paths.filter(path => README.test(path))
-  return readmes.toSorted((a, b) => Number(!/\.md$/iu.test(a)) - Number(!/\.md$/iu.test(b)) || a.localeCompare(b)).slice(0, 1)
+    .toSorted((a, b) => Number(!/\.md$/iu.test(a)) - Number(!/\.md$/iu.test(b)) || a.localeCompare(b))
+  const nearest = paths.map(path => ({ path, depth: path.split('/').length, size: sizes.get(path) ?? 0 }))
+    .toSorted((a, b) => a.depth - b.depth || b.size - a.size || a.path.localeCompare(b.path)).map(({ path }) => path)
+  return [...new Set([...readmes, ...paths.filter(path => path === 'package.json'), ...nearest])]
 }
 
 // Its files, as the server read them, in the shape an npm version's take
 // (bundle-sources.js fileRowDetails).
 export function repositoryCodeDetails(entry, data) {
   const details = fileRowDetails(entry, data.files)
-  return { ...details, repository: entry.repository, npmEntries: repositoryCodeEntries(details.json.sources) }
+  const texts = details.json.sources.filter((_, i) => typeof details.json.sourcesContent[i] === 'string')
+  return { ...details, repository: entry.repository, npmEntries: repositoryCodeEntries(texts, details.fileSizes) }
 }
 
 // The route of the directory an entry names, on `tab`, at `location`.

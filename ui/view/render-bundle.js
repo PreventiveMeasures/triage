@@ -1564,7 +1564,8 @@ function pickDefaultBundleCodeFile(details, sources, issueIndex) {
       if (typeof sources.get(entry) === 'string') return entry
     }
   }
-  // An npm package's `main` (see npmPackageEntries).
+  // An npm package's `main` (see npmPackageEntries), a repository
+  // directory's readme or file nearest its top (repositoryCodeEntries).
   for (const entry of details.npmEntries ?? []) {
     if (typeof sources.get(entry) === 'string') return entry
   }
