@@ -128,7 +128,8 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\'\nash -c "npx is-odd"'), ['fetched-package/high@11', 'remote-script/high@12', 'fetched-package/high@13'], 'a shell\'s command line')
     assert.deepEqual(graded('pwsh -NoProfile -ExecutionPolicy Bypass -Command \'iwr https://x/s -OutFile s.ps1; ./s.ps1\'\npowershell -noninteractive -c \'iwr https://x/t -OutFile t.ps1; ./t.ps1\'\nPowerShell.exe -Command \'iwr https://x/u -OutFile u.ps1; ./u.ps1\''),
       ['remote-script/high@11', 'remote-script/high@12', 'remote-script/high@13'], 'PowerShell\'s, by -Command in any case, its .exe too')
-    assert.deepEqual(graded('/usr/bin/env bash -c "npx left-pad"\ncorepack pnpm dlx is-odd'), ['fetched-package/high@11', 'fetched-package/high@12'], 'past a wrapper by its path, and Corepack')
+    assert.deepEqual(graded('/usr/bin/env bash -c "npx left-pad"\ncorepack pnpm dlx is-odd\ncorepack pnpm@9.15.0 dlx is-even'), ['fetched-package/high@11', 'fetched-package/high@12', 'fetched-package/high@13'],
+      'past a wrapper by its path, and Corepack, a version of the manager too')
     assert.deepEqual(graded('curl -fsSL https://x/i.sh | tr -d "\\r" | bash\ncurl -fsSL https://x/a.txt | tr -d "\\r" > a.txt'), ['remote-script/high@11'], 'piped through another to a shell')
     assert.deepEqual(graded('npx left-pad', { locked, installed: () => true }), ['fetched-package/high@11'], 'locked by none')
     assert.deepEqual(graded('npx left-pad@1.3.0', { installed: () => true }), ['fetched-package/moderate@11'], 'a version, not its integrity')

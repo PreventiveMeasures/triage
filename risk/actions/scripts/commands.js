@@ -6,7 +6,7 @@ import { SHELLS as SHELL_NAMES } from '../../files/runs-code.js'
 import { readImage } from '../uses.js'
 
 // A program's file name, lowercase, past its directory and a Windows extension.
-const programOf = word => (word ?? '').split(/[/\\]/u).at(-1).toLowerCase().replace(/\.(?:cmd|exe|bat|ps1)$/u, '')
+const programOf = word => (word ?? '').split(/[/\\]/u).at(-1).toLowerCase().replace(/\.(?:cmd|exe|bat|ps1)$|@[\w.-]*$/u, '')
 
 const SHELLS = new RegExp(String.raw`^(?:${SHELL_NAMES}|python[\d.]*|node|perl|ruby|php|iex|invoke-expression)$`, 'u')
 const FETCHERS = /^(?:curl|wget|irm|iwr|invoke-restmethod|invoke-webrequest)$/u
