@@ -151,14 +151,16 @@ const INSTALLS = { npm: new RegExp(`^(?:ci|clean-install|ic|install-clean|${NPM_
 const NOT_LOCAL = /^(?:-g|--global|--location=global|--package-lock-only|--lockfile-only)$/u
 
 // A script's installs of a project's packages, in its order: each one's
-// command's `order` (shell.js scriptCommands) and the directory it names
-// (`into`, packages.js projectOf).
+// command's `order` (shell.js scriptCommands), the directory it names
+// (`into`, packages.js projectOf), and whether it leaves devDependencies
+// out (`prod`: `--omit=dev`, `--production`, `--prod`).
 export function installsOf(script) {
   return scriptCommands(script).flatMap(({ argv, order }) => {
     const program = programOf(argv[0])
     const command = positional(argv, 1)[0]
     if (argv.some(word => NOT_LOCAL.test(word))) return []
-    return (program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? '')) ? [{ order, into: projectOf(argv) }] : []
+    const prod = argv.some((word, at) => /^(?:--omit=dev|--production|--prod|--only=prod(?:uction)?)$/u.test(word) || (word === '--omit' && argv[at + 1] === 'dev'))
+    return (program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? '')) ? [{ order, into: projectOf(argv), prod }] : []
   })
 }
 

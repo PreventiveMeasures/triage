@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 import { repositoryRiskLines, riskCaches } from '../server-managed/repository-risk.ts'
-import { lastingRead, readActions, resolvingActions } from '../server-managed/repository-actions.ts'
+import { lastingRead, lockedNames, readActions, resolvingActions } from '../server-managed/repository-actions.ts'
 import { githubActionsSource } from '../server-managed/github-actions.ts'
 import { GithubApiError } from '../server-managed/github-errors.ts'
 
@@ -131,6 +131,11 @@ test('an action of the repository\'s own counts as an install before a step only
     return findingIds(ofType(await scan(sourceOf({ files })), 'workflow')[0].findings)
   }
   assert.deepEqual([await wrapped('npm ci'), await wrapped('npm run lint'), await wrapped('npm ci --prefix web')], [[], ['fetched-package/high@6'], ['fetched-package/high@6']])
+})
+
+test('a lockfile\'s names, and those only devDependencies need', () => {
+  const { names, dev } = lockedNames('package-lock.json', [{ name: 'a', dev: true }, { name: 'a' }, { name: 'b', dev: true }, { name: 'c' }])
+  assert.deepEqual([[...names], [...dev]], [['a', 'b', 'c'], ['b']])
 })
 
 test('a repository\'s Actions are read 200 files at most, however many actions one workflow uses', async () => {

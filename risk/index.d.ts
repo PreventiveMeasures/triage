@@ -198,13 +198,14 @@ export interface ScanOptions {
   // Whose repository it is, as an unpinned `uses:` of its owner's is yellow.
   owner?: string | null
   // Its lockfiles' paths and the packages each locks, as npx runs those.
-  lockfiles?: { path: string; names: ReadonlySet<string> }[]
+  lockfiles?: { path: string; names: ReadonlySet<string>; dev?: ReadonlySet<string> }[]
   // Another repository's action, run in a workspace it can't tell.
   external?: boolean
   // Where the repository's own actions install its packages, by their
-  // directories (actionInstalls), null for anywhere; else each counts as
-  // one that installs them anywhere.
-  installers?: ReadonlyMap<string, readonly (string | null)[]> | null
+  // directories (actionInstalls): each install's directory, null for
+  // anywhere, and whether it leaves devDependencies out; else each counts
+  // as one that installs them all anywhere.
+  installers?: ReadonlyMap<string, readonly { at: string | null; prod: boolean }[]> | null
 }
 
 export interface WorkflowScan {
@@ -216,7 +217,7 @@ export function scanWorkflow(kind: 'workflow' | 'action', text: string, options?
 // A workflow or an action's metadata read, a Docker action's Dockerfile's
 // path from its directory among it.
 export function readWorkflow(kind: 'workflow' | 'action', text: string): { dockerfile: { path: string } | null }
-export function actionInstalls(text: string, installers: NonNullable<ScanOptions['installers']>): (string | null)[]
+export function actionInstalls(text: string, installers: NonNullable<ScanOptions['installers']>): { at: string | null; prod: boolean }[]
 // A Dockerfile's findings, each on its line.
 export function dockerfileFindings(text: string): ActionsFinding[]
 export function workflowUses(read: unknown): Uses[]

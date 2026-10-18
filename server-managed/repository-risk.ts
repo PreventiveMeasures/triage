@@ -46,7 +46,7 @@ import { type DependabotRead, type ListedLockfile, type LockfileRead, type Opene
 import { type DependabotAlert, alertVersions } from './dependabot-alerts.ts'
 import type { ActionsSource } from '../risk/index.js'
 import { type ActionAnswers, type ActionLine, type ActionRef, type WorkflowLine, type WorkflowsLine, type WorkflowsRead, actionsLines, answerWeight,
-  resolvingActions } from './repository-actions.ts'
+  lockedNames, resolvingActions } from './repository-actions.ts'
 
 export { RISK_KEPT_MS, highestSeverity } from './repository-risk-assess.ts'
 export { type OpenedRepository, SCAN_READ_KEPT_MS } from './repository-risk-read.ts'
@@ -360,7 +360,7 @@ async function tellRepository(scan: Scan, repo: RepositoryRiskRepo, read: Reposi
 // A repository's Actions told, npx held to its lockfiles' packages, and the
 // references they make given to resolve: those references.
 function tellActions(scan: Scan, repo: RepositoryRiskRepo, read: WorkflowsRead, lockfiles: RepositoryRead['lockfiles']) {
-  const locked = lockfiles.flatMap(({ line }) => 'packages' in line ? [{ path: line.path, names: new Set(line.packages.map(({ name }) => name)) }] : [])
+  const locked = lockfiles.flatMap(({ line }) => 'packages' in line ? [lockedNames(line.path, line.packages)] : [])
   const { lines, refs } = actionsLines(repo.repoId, repo.fullName.split('/')[0]!, read, locked)
   for (const line of lines) scan.lines.add(line)
   scan.actions?.add(refs)

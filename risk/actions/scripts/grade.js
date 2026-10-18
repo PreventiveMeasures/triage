@@ -66,7 +66,7 @@ const packageOf = ({ tool, name, spec, localFirst }) => ({ tool, name, spec, ...
 // The findings of one find of a script.
 function graded(found, context) {
   if (found.kind === 'package') {
-    const locked = found.ecosystem === 'npm' && found.localFirst ? context.locked(found.name) : false
+    const locked = found.ecosystem === 'npm' && found.localFirst ? Boolean(context.locked(found.name)) : false
     const severity = packageSeverity(found, { locked, installed: context.installed, external: context.external })
     return severity ? [{ id: 'fetched-package', severity, ...packageOf(found), ...found.localFirst ? { locked, installed: context.installed } : {} }] : []
   }
@@ -83,13 +83,16 @@ export const imageFinding = (text, read) => ({ id: 'unpinned-image', severity: !
 const fileLine = (run, line) => run.start === null ? run.line : run.start + line
 
 // Every finding of a `run` script (workflow.js runOf); `context`'s `locked(name)`
-// whether a lockfile there locks it, `installed` whether an install ran before.
+// whether a lockfile there locks it (`dev` where devDependencies alone
+// need it), `installed(dev)` whether an install ran before that installs
+// such a package.
 export function scriptFindings(run, context) {
   const findings = []
   // An install earlier in the script, in its own directory, counts as one in a step before.
   const installs = installsOf(run.script).filter(({ into }) => into === null)
   for (const found of scriptFinds(run.script)) {
-    const before = context.installed || installs.some(({ order }) => order < found.order)
+    const dev = found.kind === 'package' && context.locked(found.name) === 'dev'
+    const before = context.installed(dev) || installs.some(({ order, prod }) => order < found.order && !(prod && dev))
     for (const finding of graded(found, { ...context, installed: before })) findings.push({ ...finding, line: fileLine(run, found.line) })
   }
   for (const [tag, services] of npmHostTags(npmExfiltration('run.sh', run.script, true))) {

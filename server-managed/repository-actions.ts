@@ -105,6 +105,14 @@ export async function readActions(reading: ActionsReading): Promise<WorkflowsRea
   return { files }
 }
 
+// A lockfile's packages' names, as npx is held to them, and those only
+// devDependencies need, which an install leaving them out doesn't install.
+export function lockedNames(path: string, packages: readonly { name: string; dev?: true }[]) {
+  const dev = new Map<string, boolean>()
+  for (const { name, dev: only } of packages) dev.set(name, (dev.get(name) ?? true) && only === true)
+  return { path, names: new Set(dev.keys()), dev: new Set([...dev].flatMap(([name, only]) => only ? [name] : [])) }
+}
+
 // The lines a repository's Actions read are told by, and the references
 // they make to resolve. `lockfiles`, its lockfiles' packages' names by path.
 export function actionsLines(repo: number, owner: string, read: WorkflowsRead, lockfiles: NonNullable<ScanOptions['lockfiles']>) {
@@ -114,7 +122,7 @@ export function actionsLines(repo: number, owner: string, read: WorkflowsRead, l
   // Where its own actions install its packages, by their directories: by
   // their steps, and the actions of its own those use in turn.
   const actions = read.files.flatMap(file => file.kind === 'action' && 'text' in file ? [{ dir: actionDir(file.path), text: file.text }] : [])
-  const installers = new Map<string, (string | null)[]>()
+  const installers: NonNullable<ScanOptions['installers']> & Map<string, ReturnType<typeof actionInstalls>> = new Map()
   for (let grew = true; grew;) {
     grew = false
     for (const { dir, text } of actions) {

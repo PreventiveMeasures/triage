@@ -80,7 +80,7 @@ export function dockerfileFindings(text) {
     else if (!read?.digest) findings.push({ ...imageFinding(image, read), line: start + 1 })
   }
   const run = { script: script.join('\n'), line: 1, start: 1 }
-  findings.push(...scriptFindings(run, { locked: () => false, installed: false, external: true, triggers: [] }))
+  findings.push(...scriptFindings(run, { locked: () => false, installed: () => false, external: true, triggers: [] }))
   return findings.toSorted((a, b) => a.line - b.line)
 }
 
@@ -192,7 +192,7 @@ async function codeOf(uses, info, commit, source) {
   if (docker !== null) findings.push(...dockerfileFindings(docker).map(finding => ({ ...finding, file: dockerfile })))
   const nested = workflowUses(read).flatMap(each => {
     if (each.kind !== 'local') return [each]
-    return each.self ? [{ ...selfRef(each, info, commit), line: each.line }] : []
+    return each.self || each.job ? [{ ...selfRef(each, info, commit), line: each.line }] : []
   })
   return { findings, uses: nested.filter(each => each.kind === 'action' || each.kind === 'workflow').map(each => ({ key: usesKey(each), line: each.line, file })) }
 }

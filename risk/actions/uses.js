@@ -37,11 +37,12 @@ export const isWorkflowPath = path => /^\.github\/workflows\/[^/]+\.ya?ml$/u.tes
 
 // `{ kind, uses, … }`: `action`, or `workflow` at a job's level (`job`), with
 // its `repo`, `path`, `ref`, `pin` and `comment`'s version; `local`, `self`
-// at the commit running; `docker`; or `invalid`, which GitHub won't run.
+// at the commit running, `job` a reusable workflow's, at the calling
+// workflow's commit; `docker`; or `invalid`, which GitHub won't run.
 export function readUses(text, { job = false, comment = null } = {}) {
   const uses = typeof text === 'string' ? text.trim() : ''
   if (uses.startsWith('./') || uses.startsWith('$/')) {
-    return { kind: 'local', uses, path: uses.slice(2).replace(/\/+$/u, ''), ...uses.startsWith('$/') ? { self: true } : {} }
+    return { kind: 'local', uses, path: uses.slice(2).replace(/\/+$/u, ''), ...uses.startsWith('$/') ? { self: true } : {}, ...job ? { job: true } : {} }
   }
   if (uses.startsWith('docker://')) {
     const image = job ? null : readImage(uses.slice('docker://'.length))

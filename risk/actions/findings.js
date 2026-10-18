@@ -19,17 +19,19 @@ function usesFinding(uses, owner) {
 // not another tool's (`cachix/install-nix-action`).
 const INSTALLER = /(?:npm|yarn|pnpm|bun|node[-_]?modules)[-_]?(?:ci|install)|install[-_]?(?:npm|yarn|pnpm|bun|node[-_]?modules|dep(?:endencie)?s|packages)/iu
 
-// Where a step installs a project's packages: each install's of a script,
-// its directory or the one it names; where an action of its own does, by
+// Where a step installs a project's packages, each `{ at, prod }`: a
+// script's install's directory or the one it names, and whether it leaves
+// devDependencies out (`--omit=dev`); where an action of its own does, by
 // `installers` (ScanOptions), anywhere (null) where none are told; and
 // anywhere for an action that installs them (cypress-io/github-action's
 // unless `install: false`, pnpm/action-setup's with `run_install`).
+const ANYWHERE = [{ at: null, prod: false }]
 function installs(step, installers) {
-  if (step.uses?.kind === 'local') return installers ? installers.get(step.uses.path) ?? [] : [null]
+  if (step.uses?.kind === 'local') return installers ? installers.get(step.uses.path) ?? [] : ANYWHERE
   const repo = step.uses?.repo?.toLowerCase()
-  if (repo && (INSTALLER.test(repo) || (repo === 'cypress-io/github-action' && String(step.with?.install) !== 'false'))) return [null]
-  if (repo === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return [null]
-  return step.run ? installsOf(step.run.script).map(({ into }) => directoryOf(step.run.workingDirectory, into)) : []
+  if (repo && (INSTALLER.test(repo) || (repo === 'cypress-io/github-action' && String(step.with?.install) !== 'false'))) return ANYWHERE
+  if (repo === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return ANYWHERE
+  return step.run ? installsOf(step.run.script).map(({ into, prod }) => ({ at: directoryOf(step.run.workingDirectory, into), prod })) : []
 }
 
 // Whether `dir` is `directory` or above it, as node finds a package there;
@@ -50,10 +52,14 @@ function directoryOf(workingDirectory, into = null) {
 }
 
 // Whether a lockfile at or above `directory`, any for one an expression
-// names, locks what npx runs by `name`.
+// names, locks what npx runs by `name`: `dev` where only devDependencies
+// need it in each that does.
 function lockedIn(lockfiles, directory) {
   const applies = directory.includes('$') ? lockfiles : lockfiles.filter(({ path }) => within(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '', directory))
-  return name => applies.some(({ names }) => lockedName(names, name))
+  return name => {
+    const locking = applies.filter(({ names }) => lockedName(names, name))
+    return locking.length > 0 && (locking.every(({ dev }) => dev && lockedName(dev, name)) ? 'dev' : true)
+  }
 }
 
 // github-script's injections, and a fork's code or artifacts taken where the
@@ -87,7 +93,8 @@ function jobFindings(job, triggers, { owner, lockfiles, external, installers }) 
     if (step.run) {
       const directory = directoryOf(step.run.workingDirectory)
       const locked = external ? () => false : lockedIn(lockfiles, directory)
-      found.push(...scriptFindings(step.run, { locked, installed: installed.some(at => within(at, directory)), external, triggers }))
+      const before = dev => installed.some(({ at, prod }) => within(at, directory) && !(prod && dev))
+      found.push(...scriptFindings(step.run, { locked, installed: before, external, triggers }))
     }
     found.push(...stepFindings(step, triggers))
     installed.push(...installs(step, installers))
@@ -114,7 +121,7 @@ export function workflowUses(read) {
 
 // Where an action's metadata installs a project's packages, as a step using
 // it does, by `installers` (ScanOptions) where it uses an action of its own:
-// each install's directory, null for anywhere; none for one GitHub can't run.
+// each install's `{ at, prod }` (installs); none for one GitHub can't run.
 export function actionInstalls(text, installers) {
   try {
     return readWorkflow('action', text).jobs.flatMap(job => job.steps.flatMap(step => installs(step, installers)))
