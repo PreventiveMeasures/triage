@@ -5,7 +5,7 @@
 // `runs`: a composite one's steps, a Docker one's image, a JavaScript one's
 // runtime. Each with the line it is on, counting from 1, a script's own
 // lines each the file's where it is a `|` block scalar.
-import { YamlError, parseYaml } from './yaml.js'
+import { YamlError, parseYaml } from '@preventive/lockfile/yaml.js'
 import { readImage, readUses } from './uses.js'
 
 // Why a workflow, an action or a reference couldn't be read or resolved, by

@@ -21,7 +21,7 @@ const resolved = await resolveAction(usesOfKey('actions/checkout@v4'), keptSourc
 
 `scanWorkflow('action', text)` reads an action's metadata (action.yml) as it reads a workflow: a composite action's steps, a Docker action's image, a JavaScript action's runtime. `source` is GitHub as the asker reads it (index.d.ts `ActionsSource`): the managed server's asks @preventive/upstream's client for a repository, its tags, a tag's commit, a branch's head and a file at a commit, and GitHub's compare API whether a commit is in a ref's history (server-managed/github-actions.ts). `keptSource` keeps what it answers for as long as it is held, a scan's: a repository's tags are asked once, however many of its references there are.
 
-YAML is read as GitHub reads it, by @preventive/lockfile's parseYaml with `workflow` (`yaml.js`): a value left empty, `>` folded scalars, anchors and aliases, scalars over more than one line; a tag (`!!js/function` and all), a merge key, which GitHub doesn't read either, and a tab indenting are refused, a workflow holding one told unreadable (`workflow-unreadable`). What it reads is plain data alone: no tag makes code or any other object. Until a release of it reads workflows (PreventiveMeasures/libraries#238, on its main as of deedba5), its files are kept in `vendor/lockfile/` as they are there.
+YAML is read as GitHub reads it, by @preventive/lockfile's parseYaml with `workflow` (1.2.0 and later, `workflow.js`): a value left empty, `>` folded scalars, anchors and aliases, scalars over more than one line; a tag (`!!js/function` and all), a merge key, which GitHub doesn't read either, and a tab indenting are refused, a workflow holding one told unreadable (`workflow-unreadable`). What it reads is plain data alone: no tag makes code or any other object.
 
 ## What it tells
 
@@ -75,6 +75,5 @@ A reference's own code is what it runs: a composite action's steps, a reusable w
 - `scripts/`: a script's commands (`shell.js`), what each fetches (`commands.js`, `packages.js`), graded (`grade.js`).
 - `expressions.js`: what of an expression anyone can write, and a ref naming a pull request's code.
 - `resolve.js`: a reference resolved on GitHub; `versions.js`, tags as versions.
-- `yaml.js`: the YAML reader, vendored in `vendor/lockfile/` for now.
 
 A quick read, not a shell's parse nor a full run: a command built as a script runs (`$x install`, `eval "$cmd"`), one in a function it defines, or a package an action's JavaScript fetches goes unseen. Labels to assist a reviewer, not a check to rely on.
