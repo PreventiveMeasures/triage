@@ -23,7 +23,7 @@
 //   POST /api/reports/<id>/triage → write triage entries: admin, or ≥triage role + membership | 401/403/404
 //   GET  /api/reports/<id>/triage/history?finding=<fid> → one visible finding's triage trail, newest first | 400/401/404
 //   GET  /api/avatar/<id>[?own]  → cached avatar bytes by user id, of the account chosen on their profile (`own`: the
-//        sign-in account's), or by linked account id; `app-<id>` or `user-<id>`, an app agent's GitHub App's or account's (APP_AGENTS) | 401/404
+//        sign-in account's), or by linked account id; `app-<id>` or `user-<id>`, an agent's GitHub App's or account's (GITHUB_AGENTS) | 401/404
 //   GET  /api/admin/users        → admin-only user list | 401/403
 //   GET  /api/admin/history      → paginated activity (admin), team content activity (manage) | 401/403
 //   POST /api/admin/set-role     → admin sets another user's role | 401/403/404
@@ -214,7 +214,7 @@ import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, cha
 import { COAUTHORS_READ } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, type SquashedPull, type Squashes, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
-import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
+import { AGENTS_READ_VERSION, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
 import { type GithubAsked, lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
@@ -481,13 +481,11 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: st
 }
 
 // The avatars `/api/avatar/app-<id>` and `/api/avatar/user-<id>` serve, these
-// alone: the agents' known by their GitHub Apps or accounts (APP_AGENTS),
-// each its mark on the Agents tab, and those the app draws agents' accounts
-// by (GITHUB_AGENTS). Each is fetched from GitHub once and
+// alone: those the app draws agents by (GITHUB_AGENTS), on the Agents tab and
+// wherever their work shows. Each is fetched from GitHub once and
 // kept, under a key no user's, a v4 UUID, can be: an app's, `…-0000-<id>`,
 // an account's, `…-0001-<id>`.
-const AGENT_AVATARS: ReadonlySet<string> = new Set([...APP_AGENTS, ...Object.values(GITHUB_AGENTS)]
-  .flatMap(agent => 'avatar' in agent && agent.avatar ? [agent.avatar] : []))
+const AGENT_AVATARS: ReadonlySet<string> = new Set(Object.values(GITHUB_AGENTS).flatMap(agent => 'avatar' in agent ? [agent.avatar] : []))
 const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
 
 async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {

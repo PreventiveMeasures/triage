@@ -31,8 +31,8 @@
 // Those the Agents tab tells beside Claude and Codex (whose sessions and
 // tasks it tells them by, common/managed/agent-tasks.ts), the server's app
 // agents (server-managed/app-agents.ts APP_AGENTS), by their branches'
-// prefix (`prefix`), their first account, the one their work is authored by,
-// and the fingerprint (`fingerprint`) they leave as a line of their pull
+// prefix (`prefix`), the accounts their work is authored by, and the
+// fingerprint (`fingerprint`) they leave as a line of their pull
 // requests' bodies and their commits' messages, where they leave one:
 // Neo's, on `neo/` branches; Copilot's coding agent's, on `copilot/`;
 // Dependabot's, on `dependabot/<ecosystem>/…`. Their work may carry

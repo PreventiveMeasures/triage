@@ -13,14 +13,16 @@
 // requests are one session, and a commit its own.
 //
 // The agents are Claude and Codex, and those the server knows by their GitHub
-// Apps or accounts (repository-agents.ts APP_AGENTS): each told by its
-// fingerprint, a line of its texts, by the account its work is authored by,
-// or by its branches' prefix, the server's to read, and named to the client
+// Apps or accounts (server-managed/app-agents.ts APP_AGENTS): each told by its
+// fingerprint, a line of its texts, by the account its work is authored by
+// (github-agents.ts githubAgent), or by its branches' prefix, the server's to
+// read, and named to the client
 // by its id, name and avatar (AppAgent). Such an agent names no session:
 // a pull request of its is a session alone, with its branch; Claude's or
 // Codex's marks on its work show those as its tools. A pull request labelled
 // for an agent (labelAgents) is that agent's too, where its own texts and
 // branch name none: the mark one who ran it gives work it left unmarked.
+import { githubAgent } from './github-agents.ts'
 
 // 'claude', 'codex', or an app agent's id.
 export type Agent = string
@@ -30,11 +32,10 @@ export type Agent = string
 // `app-<id>` a GitHub App's, `user-<id>` a GitHub account's), where the app
 // draws no mark of its own for it (Copilot's, ui/view/repository-tiles.js).
 export interface AppAgent { id: string; name: string; avatar?: string }
-// How the server tells one: its fingerprint, a line of an artifact's texts
-// starting with it; the GitHub account its work is authored by, its id and
-// the logins GitHub names it by, none for one known by its id alone; its
-// branches' prefix.
-export interface AppAgentMarks { id: string; fingerprint?: string; account?: { id: number; logins: readonly string[] }; prefix: string }
+// How the server tells one, beside the accounts its work is authored by (its
+// id githubAgent's): its fingerprint, a line of an artifact's texts starting
+// with it; its branches' prefix.
+export interface AppAgentMarks { id: string; fingerprint?: string; prefix: string }
 // An artifact's author, as GitHub names its account: its login and id.
 export interface AgentAuthor { login: string; id: number }
 
@@ -121,22 +122,19 @@ export function labelAgents(labels: unknown[], ids: readonly string[]): Agent[] 
 // The sessions and tasks `texts` link, whether they carry Claude's marks and
 // Codex's, and the agents of `apps` whose fingerprints start a line of them
 // (not one a text quotes, as one describing it may), whose account `author`
-// is, by its id and login both (its id alone where it names no login), or
-// whose prefix the branch `branch` is under;
+// is (githubAgent), or whose prefix the branch `branch` is under;
 // Claude, Codex or the agents of `apps` its `labels` name (labelAgents).
 export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = [], branch: string | null = null,
   author: AgentAuthor | null = null, labels: unknown[] = []): AgentSignals {
   const strings = texts.filter((text): text is string => typeof text === 'string')
   const found = (pattern: RegExp) => [...new Set(strings.flatMap(text => [...text.matchAll(pattern)].map(match => match[1]!)))].slice(0, MAX_LINKS)
   const lines = strings.flatMap(text => text.split('\n').map(line => line.trimStart()))
-  const login = author?.login.toLowerCase()
-  const authored = ({ account }: AppAgentMarks) => author !== null && account !== undefined && account.id === author.id
-    && (account.logins.length === 0 || account.logins.some(name => name.toLowerCase() === login))
+  const authored = author ? githubAgent(author.login, author.id) : null
   const labelled = labelAgents(labels, ['claude', 'codex', ...apps.map(app => app.id)])
   return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: labelled.includes('claude') || strings.some(text => CLAUDE_MARK.test(text)),
     codex: labelled.includes('codex') || strings.some(text => CODEX_MARK.test(trailerBlock(text))),
     agents: apps.filter(app => (app.fingerprint && lines.some(line => line.startsWith(app.fingerprint!)))
-      || authored(app) || branch?.startsWith(app.prefix) || labelled.includes(app.id)).map(app => app.id) }
+      || authored === app.id || branch?.startsWith(app.prefix) || labelled.includes(app.id)).map(app => app.id) }
 }
 
 // The agent a branch's name says made it, and the issue or pull request the
