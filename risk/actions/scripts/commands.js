@@ -18,10 +18,11 @@ const FETCHED_AND_RUN = [
 ]
 
 // The file curl or wget saves to (`-o f`, `-of`, `--output f`, curl's `-O`,
-// wget's by its URL), or null.
+// wget's by its URL), or PowerShell's (`-OutFile f`); else null.
 function savedTo(program, argv) {
   for (let at = 1; at < argv.length; at++) {
-    const word = argv[at]
+    const outFile = /^-outfile(?::(.+))?$/iu.exec(argv[at]), word = argv[at]
+    if (outFile && !/^(?:curl|wget)$/u.test(program)) return outFile[1] ?? argv[at + 1] ?? null
     const attached = { curl: /^-[a-zA-Z]*o(.+)$/u, wget: /^-[a-zA-Z]*O(.+)$/u }[program]?.exec(word)
     if (attached) return attached[1] === '-' ? null : attached[1]
     if (program === 'curl' && (/^-[a-zA-Z]*o$/u.test(word) || word === '--output')) return argv[at + 1] ?? null
@@ -29,7 +30,7 @@ function savedTo(program, argv) {
     const joined = /^(?:--output|--output-document)=(.+)$/u.exec(word)
     if (joined) return joined[1]
   }
-  const url = program === 'wget' || argv.some(word => /^-[a-zA-Z]*O[a-zA-Z]*$/u.test(word) || word === '--remote-name') ? argv.find(word => /^https?:\/\//u.test(word)) : null
+  const url = program === 'wget' || (program === 'curl' && argv.some(word => /^-[a-zA-Z]*O[a-zA-Z]*$/u.test(word) || word === '--remote-name')) ? argv.find(word => /^https?:\/\//u.test(word)) : null
   return url ? URL.parse(url)?.pathname.split('/').at(-1) || null : null
 }
 

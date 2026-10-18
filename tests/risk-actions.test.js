@@ -193,7 +193,7 @@ describe('a script\'s findings, graded', () => {
   it('a fork\'s repository\'s description, which its owner writes, and a script saved by curl\'s -o joined to its file', () => {
     assert.deepEqual(graded('echo "${{ github.event.pull_request.head.repo.description }}"\necho "${{ github.event.workflow_run.head_repository.homepage }}"'),
       ['script-injection/high@11', 'script-injection/high@12'])
-    assert.deepEqual(graded('curl -fsSLo/tmp/setup https://x/s.sh && sh /tmp/setup\nwget -qO- https://x/a.txt\nwget https://x/install.sh && sh install.sh'), ['remote-script/high@11', 'remote-script/high@13'])
+    assert.deepEqual(graded('curl -fsSLo/tmp/setup https://x/s.sh && sh /tmp/setup\nwget -qO- https://x/a.txt\nwget https://x/install.sh && sh install.sh\niwr https://x/s -OutFile setup.ps1; pwsh ./setup.ps1'), ['remote-script/high@11', 'remote-script/high@13', 'remote-script/high@14'])
     assert.deepEqual(graded('echo "${{ github.event.workflow_run.head_repository.default_branch }}"'), ['script-injection/high@11'])
     const call = `on: pull_request_target\njobs:\n  a:\n    uses: org/wf/.github/workflows/x.yml@${SHA('a')}\n    with:\n      title: \${{ github.event.pull_request.title }}\n      ref: \${{ github.sha }}\n`
     assert.deepEqual(ids(scanWorkflow('workflow', call).findings), ['script-injection/critical@6'], 'one handed to a reusable workflow, which writes its inputs into its scripts')
