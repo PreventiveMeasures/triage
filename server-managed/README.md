@@ -1682,8 +1682,9 @@ package's LICENSE links the root's; one that `@preventive/archive` refuses is `4
 directory-unreadable`: one holding an absolute symlink, or one climbing past
 the repository's root.
 Readers asking for the same directory meanwhile share one load, among the npm
-viewer's (`429 repository-busy` past them), and access
-is checked again once it is read, before any of it is sent.
+viewer's, taking as many of their four places as packages its files, as
+listed, would fill, all four at most (`429 repository-busy` past them), and
+access is checked again once it is read, before any of it is sent.
 
 A directory's **Treemap**, while its files are read, or where they are too
 many to open, is drawn from their sizes alone, as its commit's tree lists
@@ -3321,7 +3322,8 @@ return 413 `package-too-large`, before download when the registry's
 `@preventive/archive`, which refuses one malformed, one with a path or a
 symlink that would leave it, and one naming a path twice as different entries
 (422 `bad-tarball`); directories and links are not extracted. At most four
-loads run at once per process (429 `npm-busy`), each until its response is
+loads run at once per process (429 `npm-busy`), a repository directory's
+larger than a package counting as more (Repository code viewer, above), each until its response is
 encoded and every response holding it is written or abandoned, a response left
 unread for a minute being dropped; concurrent reads of one version share its
 download and its encoded response. A download is the tarball as the registry

@@ -26,13 +26,17 @@ const MAX_REPOSITORY_CODE_JSON_LENGTH = 384 * 1024 * 1024
 // tree under it (repository-browser.ts repositoryTreeFiles): asked before
 // its tarball is, which may run to hundreds of MiB. One GitHub cut short
 // (null) has too many.
-export function repositoryCodeFits(files: { files: number; bytes: number } | null): boolean {
+export function repositoryCodeFits(files: RepositoryCodeFiles | null): files is RepositoryCodeFiles {
   return files !== null && files.files <= MAX_REPOSITORY_CODE_FILES && files.bytes <= MAX_REPOSITORY_CODE_BYTES
 }
 
+// A directory's files' count and bytes, as GitHub lists its tree.
+export interface RepositoryCodeFiles { files: number; bytes: number }
+
 // The directory read: the repository by its id and name, the commit, the
-// directory (`''` for the root) and its tree's id.
-export interface RepositoryCodeInput { repoId: number; repo: string; commit: string; path: string; tree: string }
+// directory (`''` for the root), its tree's id, and its files as listed,
+// which weigh its load among the active ones.
+export interface RepositoryCodeInput { repoId: number; repo: string; commit: string; path: string; tree: string; listed: RepositoryCodeFiles }
 
 // A package's refusals, as a directory's: past the bounds, or an archive
 // @preventive/archive refuses, as it does one holding a symlink that climbs
@@ -47,7 +51,7 @@ const directoryError = (err: unknown) => {
 // repo, commit, path, tree, files }`, its files as npmFileRows gives them,
 // by their paths in the directory, from `tarball`, the tree's.
 export function loadRepositoryCodeBody(input: RepositoryCodeInput, tarball: () => Promise<Uint8Array>): NpmLoad<Buffer> {
-  const { repoId, repo, commit, path, tree } = input
+  const { repoId, repo, commit, path, tree, listed } = input
   return sharedLoad(`repository ${repoId} ${repo} ${commit} ${path} ${tree}`, async () => {
     let files
     // A symlink may reach the repository's root, as a monorepo package's
@@ -56,5 +60,5 @@ export function loadRepositoryCodeBody(input: RepositoryCodeInput, tarball: () =
     try { files = npmFileRows(await readTarballFiles(await tarball(), { ...REPOSITORY_TAR, symlinksAbove: path.split('/').length - 1 }), MAX_REPOSITORY_CODE_JSON_LENGTH) }
     catch (err) { throw directoryError(err) }
     return encodeBrotli(Buffer.from(JSON.stringify({ repoId, repo, commit, path, tree, files })))
-  }, 'repository-busy')
+  }, 'repository-busy', { holds: listed })
 }
