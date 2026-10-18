@@ -137,6 +137,8 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('npm ci\nnpx eslint@8.57.0 .\nnpx eslint@v9.0.0 .', { locked: versions }), ['fetched-package/moderate@13'], 'a version, the project\'s own where a lockfile locks that one')
     assert.deepEqual(graded('npm i -g corepack@${V}'), ['fetched-package/moderate@11'], 'a version a variable names')
     assert.deepEqual(graded('npx eslint', { external: true, installed: () => true }), [], 'another\'s action, in a workspace that installed')
+    assert.deepEqual(graded('pnpm install --frozen-lockfile ${{ inputs.ignore-scripts == \'true\' && \'--ignore-scripts\' || \'\' }}\nnpx eslint .', { locked }), [],
+      'an install an expression adds to, as a variable would')
   })
 
   it('an install in a step before counts where node finds what it installed: its directory or one below', () => {
