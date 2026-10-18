@@ -13,7 +13,7 @@ import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_TAR_ENTRIES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmPublishTime, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion,
   readNpmVersions, readTogether, setNpmDocumentCache } from '../server-managed/npm-packages.ts'
 import { npmVersionFields } from '../server-managed/npm-manifest.ts'
-import { npmPublishTimeStore, npmVersionStore, riskLineStore } from '../server-managed/npm-kept.ts'
+import { npmPublishTimeStore, npmVersionStore, ownKeptPrunes, riskLineStore } from '../server-managed/npm-kept.ts'
 import { MAX_TAR_BYTES, loadNpmFiles, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
 import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
@@ -656,13 +656,34 @@ test('a kept write is done before its prune, which runs behind it once an hour',
       return new Promise(resolve => { release = resolve })
     },
   }
+  const owned = []
+  ownKeptPrunes(db, prune => { owned.push(prune) })
   const lines = riskLineStore(db, 30 * DAY)
   await lines.write('left-pad@1.3.0', { score: 7 }, now)
   assert.equal(written.length, 1, 'written')
   assert.deepEqual(pruning, [['repository-risk/lines/', now - 30 * DAY]], 'its prune started, and still running')
+  assert.equal(owned.length, 1, 'handed to its database\'s owner, which sees it through')
+  let settled = false
+  void (async () => { await owned[0]; settled = true })()
   await lines.write('ms@2.1.3', { score: 0 }, now + 1)
   assert.equal(pruning.length, 1, 'none started again within the hour, the first one under way')
+  assert.equal(owned.length, 1, 'nor handed over again')
+  assert.equal(settled, false)
   release()
+  await owned[0]
+  assert.equal(settled, true, 'the owner\'s promise settles with the prune')
+})
+
+test('the request handler sees its database\'s prunes through: tracked, and kept alive past the answer on serverless', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const retained = [], tracked = []
+  createManagedRequestHandler({ config: { ...config, serverless: true }, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false,
+    track(work) { tracked.push(work) }, waitUntil(work) { retained.push(work) } })
+  await riskLineStore(db, 24 * 60 * 60_000).write('left-pad@1.3.0', { score: 7 }, Date.now())
+  assert.equal(tracked.length, 1, 'tracked, so the database outlives it')
+  assert.deepEqual(retained, tracked, 'and retained by the function past its answer')
+  await Promise.all(retained)
 })
 
 test('risk lines kept for good are never removed, however old', async t => {

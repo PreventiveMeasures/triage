@@ -242,11 +242,14 @@ test('a page read is kept for every reader: answered as kept a while, then at on
   const first = await fixture(t, { serverless: true, tracked, retained })
   title = 'Before'
   await first({ repoId: '1', kind: 'pulls' })
-  assert.equal(retained.length, 0, 'nothing read behind a fresh answer')
+  const asking = asked.length
+  await Promise.all(retained)
+  assert.equal(asked.length, asking, 'nothing read behind a fresh answer: its write\'s prune alone retained')
+  const answered = retained.length
   title = 'After'
   t.mock.timers.setTime(Date.now() + 3 * 60_000)
   assert.equal((await first({ repoId: '1', kind: 'pulls' })).body.items[0].title, 'Before', 'answered as kept at once')
-  assert.equal(retained.length, 1, 'the read behind it retained')
+  assert.equal(retained.length, answered + 1, 'the read behind it retained')
   await Promise.all(retained)
   assert.equal((await first({ repoId: '1', kind: 'pulls' })).body.items[0].title, 'After', 'the next to ask has what was read behind it')
 })

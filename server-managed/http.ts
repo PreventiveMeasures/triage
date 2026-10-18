@@ -135,7 +135,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmDeltaStore, npmPublishTimeStore, npmVersionStore, pullDependencyStore,
+import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore,
   repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { type NpmDelta, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
@@ -4268,6 +4268,9 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   const { config, db, avatarStore, isShuttingDown, track } = deps
   const repositoryDiscovery = new RepositoryDiscovery(config)
+  // Kept reads' prunes run behind their writes: tracked, so the database
+  // outlives them, and on serverless kept alive past the answer.
+  ownKeptPrunes(db, prune => { track(prune); deps.waitUntil?.(prune) })
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost')
