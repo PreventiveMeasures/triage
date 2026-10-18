@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
-import { GithubApiError, type GithubIdentity, READ_PERMISSIONS, githubJson, githubRepoPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
+import { GithubApiError, type GithubIdentity, READ_PERMISSIONS, githubJson, githubRepoPermission, githubUserIdentity, onTokenRejected, repoAccessToken } from './github-app.ts'
 import { MAX_PACKAGE_BYTES, readPackageEntryPoints } from './package-entry-points.ts'
 import { readSolidityEntryPoints } from './solidity-entry-points.ts'
 import { parseGithubCommit } from './bundle-commits.ts'
@@ -47,12 +47,22 @@ function credentialFailure(err: unknown): err is GithubApiError {
 // and the permission level GitHub told, where it was asked. Kept per user, by
 // their GitHub id and token, and per repository, by its id, name and
 // installation, for config.repositoryAccessCacheMs; only access granted is kept.
+// One read with the user's token is kept no longer once GitHub rejects that
+// token (`userToken`, hashed): the next check asks GitHub, falling back to
+// the installation's or none as it does.
 type RepoMetadata = { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown; default_branch?: unknown }
-type AccessVerdict = { until: number; data: RepoMetadata; credential: 'user' | 'app' | 'none'; level: string | null }
-type VerdictCache = { get(): AccessVerdict | undefined; set(verdict: Omit<AccessVerdict, 'until'>): void }
+type AccessVerdict = { until: number; data: RepoMetadata; credential: 'user' | 'app' | 'none'; level: string | null; userToken: string | null }
+type VerdictCache = { get(): AccessVerdict | undefined; set(verdict: Omit<AccessVerdict, 'until' | 'userToken'>): void }
 const MAX_ACCESS_VERDICTS = 1000
 // By the fetch reading GitHub, as installation tokens are: a test's own.
 const accessVerdicts = new WeakMap<typeof fetch, Map<string, AccessVerdict>>()
+const hashed = (token: string) => createHash('sha256').update(token).digest('hex')
+onTokenRejected((token, fetchImpl) => {
+  const kept = accessVerdicts.get(fetchImpl)
+  if (!kept) return
+  const rejected = hashed(token)
+  for (const [key, verdict] of kept) if (verdict.userToken === rejected) kept.delete(key)
+})
 
 function verdictCache(config: ManagedConfig, user: RepositoryBrowserUser, repo: SelectedRepo, fetchImpl: typeof fetch): VerdictCache | null {
   const keepMs = config.repositoryAccessCacheMs
@@ -71,7 +81,7 @@ function verdictCache(config: ManagedConfig, user: RepositoryBrowserUser, repo: 
     },
     set(verdict) {
       kept.delete(key)
-      kept.set(key, { ...verdict, until: Date.now() + keepMs })
+      kept.set(key, { ...verdict, until: Date.now() + keepMs, userToken: verdict.credential === 'user' && user.token ? hashed(user.token) : null })
       while (kept.size > MAX_ACCESS_VERDICTS) kept.delete(kept.keys().next().value!)
     },
   }

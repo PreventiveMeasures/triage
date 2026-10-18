@@ -10,6 +10,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { createRepositoryBrowser, scopedDirectory } from '../server-managed/repository-browser.ts'
+import { GithubApiError } from '../server-managed/github-app.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
@@ -1010,4 +1011,23 @@ test('a public repository read anonymously is kept so too, with no credential', 
   const fetch = url => { calls.push(new URL(url).pathname); return Promise.resolve(Response.json(publicMetadata)) }
   for (let i = 0; i < 3; i++) assert.equal((await createRepositoryBrowser(keptConfig, anonymous, fetch).reader(repo)).readToken(), null)
   assert.deepEqual(calls, ['/repos/org/repo'])
+})
+
+test('access read with a token GitHub rejects since is kept no longer: the next check asks again, falling back as it does', async () => {
+  let revoked = false
+  const calls = []
+  const fetch = (url, options) => {
+    const path = new URL(url).pathname
+    calls.push([path, options.headers.authorization ?? null])
+    if (revoked && options.headers.authorization === 'Bearer alice') return Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 }))
+    return Promise.resolve(Response.json(path === '/repos/org/repo' ? publicMetadata : []))
+  }
+  assert.equal((await createRepositoryBrowser(keptConfig, alice, fetch).reader(repo)).readToken(), 'alice')
+  revoked = true
+  const kept = await createRepositoryBrowser(keptConfig, alice, fetch).reader(repo)
+  assert.equal(kept.readToken(), 'alice', 'answered as kept')
+  await assert.rejects(kept.refs(), GithubApiError)
+  const next = await createRepositoryBrowser(keptConfig, alice, fetch).reader(repo)
+  assert.equal(next.readToken(), null, 'asked again, read anonymously')
+  assert.deepEqual(calls.filter(([path]) => path === '/repos/org/repo'), [['/repos/org/repo', 'Bearer alice'], ['/repos/org/repo', 'Bearer alice'], ['/repos/org/repo', null]])
 })

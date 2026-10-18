@@ -22,8 +22,18 @@ interface InstallationTokenEntry { token: string | null; expiresAt: number; pend
 // cached here. Bound memory per transport and separate App/key/install scopes.
 const installationTokens = new WeakMap<typeof fetch, Map<string, InstallationTokenEntry>>()
 
-function discardInstallationToken(token: string | null, fetchImpl: typeof fetch): void {
+// What others keep by a token, as GitHub answered it (repository-browser.ts's
+// access answers), told when GitHub rejects that token, to keep it no longer.
+const rejectedTokenListeners = new Set<(token: string, fetchImpl: typeof fetch) => void>()
+export function onTokenRejected(listener: (token: string, fetchImpl: typeof fetch) => void): void {
+  rejectedTokenListeners.add(listener)
+}
+
+// A token GitHub rejected (401): an installation's no longer reused, and
+// those keeping what it was answered told.
+function discardRejectedToken(token: string | null, fetchImpl: typeof fetch): void {
   if (!token) return
+  for (const listener of rejectedTokenListeners) listener(token, fetchImpl)
   const cache = installationTokens.get(fetchImpl)
   if (!cache) return
   for (const [key, entry] of cache) if (entry.token === token) cache.delete(key)
@@ -85,7 +95,7 @@ export async function githubJson(url: string, token: string | null, fetchImpl: t
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
   } catch (error) { throw githubUnreachable(error, started) }
-  if (res.status === 401) discardInstallationToken(token, fetchImpl)
+  if (res.status === 401) discardRejectedToken(token, fetchImpl)
   if (!res.ok) await throwGithubResponseError(res)
   // The answer's body is read within the same timeout: one not read whole is
   // GitHub not reached, as one not answered is; only one that isn't JSON is

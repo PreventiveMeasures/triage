@@ -997,7 +997,10 @@ credential reads it) is kept for that user, by their GitHub ID and token, and
 that repository, by its ID, name and installation, for five minutes
 (`MANAGED_REPOSITORY_ACCESS_CACHE_MS`, in milliseconds, up to an hour; `0`
 asks on every request): checks and rechecks within it, theirs alone, answered
-as kept, in the instance that asked. Access GitHub refuses is never kept.
+as kept, in the instance that asked. Access GitHub refuses is never kept,
+and access read with the user's token is kept no longer once GitHub rejects
+that token (`401`): the next check asks GitHub again, falling back to the
+installation's token or an anonymous read as it does.
 Managed access (roles, teams, grants) is checked on every request all the
 same. Stale
 installation access falls back to anonymous source reads only after GitHub confirms
