@@ -5,7 +5,7 @@ import { brotliDecompressSync, gzipSync } from 'node:zlib'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES } from '../server-managed/npm-packages.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES } from '../server-managed/npm-packages.ts'
 import { MAX_REPOSITORY_CODE_BYTES, MAX_REPOSITORY_CODE_FILES, loadRepositoryCodeBody, repositoryCodeFits } from '../server-managed/repository-code.ts'
 import { tar } from './_managed-npm.js'
 
@@ -250,6 +250,19 @@ test('a directory past a package\'s bounds takes as many places among the active
   const after = load('7', 1, 1)
   await after.result
   after.release()
+})
+
+test('a directory\'s JSON is held to what its places hold, as its listing cannot tell how far escaping grows it', async () => {
+  const size = Math.floor(MAX_NPM_JSON_LENGTH / 6) + 1
+  const tgz = gzipSync(tar([{ name: 'org-repo-aaaaaaa/controls', data: Buffer.alloc(size, 1) }]))
+  const load = (tree, bytes) => loadRepositoryCodeBody({ repoId: 1, repo: 'org/repo', commit, path: '', tree: tree.repeat(40), listed: { files: 1, bytes } },
+    () => Promise.resolve(tgz))
+  const one = load('8', size)
+  await assert.rejects(one.result, err => err.status === 413 && err.message === 'directory-too-large', 'one place holds a package\'s JSON')
+  one.release()
+  const two = load('9', MAX_NPM_PACKAGE_BYTES + 1)
+  assert.ok((await two.result).byteLength > 0, 'two hold twice that')
+  two.release()
 })
 
 test('a directory the commit has none at is none to read; bad queries, other methods and signed-out readers are refused', async t => {

@@ -1683,8 +1683,11 @@ directory-unreadable`: one holding an absolute symlink, or one climbing past
 the repository's root.
 Readers asking for the same directory meanwhile share one load, among the npm
 viewer's, taking as many of their four places as packages its files, as
-listed, would fill, all four at most (`429 repository-busy` past them), and
-access is checked again once it is read, before any of it is sent.
+listed, would fill, all four at most (`429 repository-busy` past them), its
+files' JSON held to what a package's may take for each place
+(`413 directory-too-large` past that), as the listing cannot tell how far
+escaping grows it; access is checked again once it is read, before any of
+it is sent.
 
 A directory's **Treemap**, while its files are read, or where they are too
 many to open, is drawn from their sizes alone, as its commit's tree lists

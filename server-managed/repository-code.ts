@@ -7,8 +7,8 @@
 // active ones (npm-loads.ts sharedLoad).
 import { Buffer } from 'node:buffer'
 import { encodeBrotli } from './brotli.ts'
-import { NpmPackageError, npmFileRows } from './npm-packages.ts'
-import { type NpmLoad, readTarballFiles, sharedLoad } from './npm-loads.ts'
+import { MAX_NPM_JSON_LENGTH, NpmPackageError, npmFileRows } from './npm-packages.ts'
+import { type NpmLoad, loadPlaces, readTarballFiles, sharedLoad } from './npm-loads.ts'
 
 // What a directory may hold, bounded apart from a package's (npm-packages.ts),
 // as the viewer holds every file in memory: its files' count and bytes.
@@ -52,13 +52,18 @@ const directoryError = (err: unknown) => {
 // by their paths in the directory, from `tarball`, the tree's.
 export function loadRepositoryCodeBody(input: RepositoryCodeInput, tarball: () => Promise<Uint8Array>): NpmLoad<Buffer> {
   const { repoId, repo, commit, path, tree, listed } = input
+  // Its places among the active loads, by its files as listed, hold their
+  // JSON too, which the listing cannot tell, as escaping may grow a text
+  // sixfold: as much as a package's may take for each.
+  const places = loadPlaces(listed)
+  const maxLength = Math.min(MAX_REPOSITORY_CODE_JSON_LENGTH, places * MAX_NPM_JSON_LENGTH)
   return sharedLoad(`repository ${repoId} ${repo} ${commit} ${path} ${tree}`, async () => {
     let files
     // A symlink may reach the repository's root, as a monorepo package's
     // LICENSE links the root's, and no further: the directory's depth, less
     // the level the archive's root already stands above its top directory.
-    try { files = npmFileRows(await readTarballFiles(await tarball(), { ...REPOSITORY_TAR, symlinksAbove: path.split('/').length - 1 }), MAX_REPOSITORY_CODE_JSON_LENGTH) }
+    try { files = npmFileRows(await readTarballFiles(await tarball(), { ...REPOSITORY_TAR, symlinksAbove: path.split('/').length - 1 }), maxLength) }
     catch (err) { throw directoryError(err) }
     return encodeBrotli(Buffer.from(JSON.stringify({ repoId, repo, commit, path, tree, files })))
-  }, 'repository-busy', { holds: listed })
+  }, 'repository-busy', { places })
 }

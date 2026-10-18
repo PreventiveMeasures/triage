@@ -61,17 +61,22 @@ function shared<T>(what: string, doc: NpmVersionDocument, work: () => Promise<T>
   return sharedLoad(`${what} ${slot}`, work, 'npm-busy', { slot })
 }
 
+// The places among the active ones a load takes whose files hold `files` and
+// `bytes`: as many as packages they would fill, up to every one, each place
+// holding what a package may.
+export function loadPlaces({ files, bytes }: { files: number; bytes: number }): number {
+  return Math.min(MAX_ACTIVE_LOADS, Math.max(1, Math.ceil(files / MAX_NPM_PACKAGE_FILES), Math.ceil(bytes / MAX_NPM_PACKAGE_BYTES)))
+}
+
 // A load among the active ones, by `key`, refused as `busy` past them: a
 // repository directory's (repository-code.ts) as a package's, each holding
 // alike a tarball, its tar, its files and their encoded JSON. Loads of one
-// `slot` take one place between them; one whose files (`holds`, their count
-// and bytes) run past a package's bounds takes as many places as packages
-// they would fill, up to every one, as it may hold as much more.
+// `slot` take one place between them, or `places` (loadPlaces) where they
+// hold more.
 export function sharedLoad<T>(key: string, work: () => Promise<T>, busy: string,
-  { slot = key, holds }: { slot?: string; holds?: { files: number; bytes: number } } = {}): NpmLoad<T> {
+  { slot = key, places = 1 }: { slot?: string; places?: number } = {}): NpmLoad<T> {
   let load = loads.get(key)
   if (!load) {
-    const places = holds ? Math.min(MAX_ACTIVE_LOADS, Math.max(1, Math.ceil(holds.files / MAX_NPM_PACKAGE_FILES), Math.ceil(holds.bytes / MAX_NPM_PACKAGE_BYTES))) : 1
     if (!slots.has(slot) && placesTaken() + places > MAX_ACTIVE_LOADS) return refused(429, busy)
     const created: Load = { job: work(), readers: 0, settled: false, slot }
     const finish = () => { settle(key, created) }
