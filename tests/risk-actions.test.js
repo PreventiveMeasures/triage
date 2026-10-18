@@ -124,7 +124,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual([graded('NODE_ENV=production npm ci --include dev && npx eslint .', { locked: dev }), graded('npm ci --omit=dev --include=dev && npx eslint .', { locked: dev })], [[], []],
       'devDependencies included, whatever leaves them out')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
-    assert.deepEqual(graded('npm ci --dry-run && npx eslint .', { locked }).length, 1, 'one that installs nothing')
+    assert.deepEqual([graded('npm ci --dry-run && npx eslint .', { locked }).length, graded('npm ci --dry-run=true && npx eslint .', { locked }).length], [1, 1], 'one that installs nothing')
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\'\nash -c "npx is-odd"'), ['fetched-package/high@11', 'remote-script/high@12', 'fetched-package/high@13'], 'a shell\'s command line')
     assert.deepEqual(graded('pwsh -NoProfile -ExecutionPolicy Bypass -Command \'iwr https://x/s -OutFile s.ps1; ./s.ps1\'\npowershell -noninteractive -c \'iwr https://x/t -OutFile t.ps1; ./t.ps1\''),
       ['remote-script/high@11', 'remote-script/high@12'], 'PowerShell\'s, by -Command in any case')
@@ -214,7 +214,7 @@ describe('a script\'s findings, graded', () => {
   it('other tools by how they are pinned', () => {
     assert.deepEqual(graded('pip install --upgrade pip setuptools\npip install flask==3.0.0\npip install flask'), ['fetched-package/notice@11', 'fetched-package/notice@11', 'fetched-package/moderate@12', 'fetched-package/high@13'])
     assert.deepEqual(graded('go install x.dev/y@v1.2.3\ngo install x.dev/y@latest'), ['fetched-package/high@12'], 'a Go version held to its checksum database')
-    assert.deepEqual(graded('cargo install --locked x@1.0.0\ncargo install x@1.0.0'), ['fetched-package/moderate@12'])
+    assert.deepEqual(graded('cargo install --locked x@1.0.0\ncargo install x@1.0.0\ncargo install --locked x@1.0.0 y'), ['fetched-package/moderate@12', 'fetched-package/high@13'], 'each crate')
     assert.deepEqual(graded('npm install\nyarn\nbun install'), ['unlocked-install/moderate@11', 'unlocked-install/low@12', 'unlocked-install/low@13'])
     assert.deepEqual(graded('docker run alpine\ndocker run node:20\ndocker pull node@sha256:' + 'c'.repeat(64)), ['unpinned-image/high@11', 'unpinned-image/moderate@12'])
   })
@@ -222,7 +222,7 @@ describe('a script\'s findings, graded', () => {
   it('a fork\'s repository\'s description, which its owner writes, and a script saved by curl\'s -o joined to its file', () => {
     assert.deepEqual(graded('echo "${{ github.event.pull_request.head.repo.description }}"\necho "${{ github.event.workflow_run.head_repository.homepage }}"'),
       ['script-injection/high@11', 'script-injection/high@12'])
-    assert.deepEqual(graded('curl -fsSLo/tmp/setup https://x/s.sh && sh /tmp/setup\nwget -qO- https://x/a.txt\nwget https://x/install.sh && sh install.sh\niwr https://x/s -OutFile setup.ps1; pwsh ./setup.ps1'), ['remote-script/high@11', 'remote-script/high@13', 'remote-script/high@14'])
+    assert.deepEqual(graded('curl -fsSLo/tmp/setup https://x/s.sh && sh /tmp/setup\nwget -qO- https://x/a.txt\nwget https://x/install.sh && sh install.sh\niwr https://x/s -OutFile setup.ps1; pwsh ./setup.ps1\ncurl -o env.sh https://x/e && . ./env.sh'), ['remote-script/high@11', 'remote-script/high@13', 'remote-script/high@14', 'remote-script/high@15'])
     assert.deepEqual(graded('echo "${{ github.event.workflow_run.head_repository.default_branch }}"'), ['script-injection/high@11'])
     assert.deepEqual(graded('echo "${{ github[\'event\'][ \'pull_request\' ].title }}"'), ['script-injection/high@11'], 'by index syntax')
     assert.deepEqual(graded('curl -fsSL https://x/i.sh |\n  sh\n# a |\nnpx left-pad'), ['remote-script/high@11', 'fetched-package/high@14'], 'a pipe the next line goes on from, not a comment\'s')

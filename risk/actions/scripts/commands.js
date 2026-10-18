@@ -39,7 +39,7 @@ function runsFile({ argv }, file) {
   const name = file.replace(/^\.\//u, '')
   const ran = argv[0].replace(/^\.\//u, '')
   if (ran === name || argv[0] === file) return true
-  return SHELLS.test(programOf(argv[0])) && argv.slice(1).some(word => word.replace(/^\.\//u, '') === name)
+  return (SHELLS.test(programOf(argv[0])) || argv[0] === 'source' || argv[0] === '.') && argv.slice(1).some(word => word.replace(/^\.\//u, '') === name)
 }
 
 const pythonPackage = text => {
@@ -83,16 +83,14 @@ function go(argv) {
   return target?.includes('@') ? fetched(`go ${argv[1]}`, atVersion(target, spec => /^v\d+\.\d+\.\d+/u.test(spec)), { ecosystem: 'go' }) : []
 }
 
-// `cargo install`: a crate by its version, or a repository by its commit;
+// `cargo install`: each crate by its version, or a repository by its commit;
 // `locked` with `--locked`.
 function cargo(argv) {
   if (argv.includes('--path')) return []
   const options = optionsOf(argv, 2, /^--(?:version|git|branch|rev|tag|root|features|registry|index|bin|example|target|profile|jobs)$|^-[jF]$/u)
-  const [git = null] = valuesOf(options, '--git'), [crate] = options.operands, [version = null] = valuesOf(options, '--version')
-  if (!crate && !git) return []
-  const [ref = null] = valuesOf(options, '--rev', '--tag', '--branch')
-  const spec = git ? { name: git, spec: ref, exact: valuesOf(options, '--rev').length > 0, registry: false } : atVersion(crate, EXACT_SEMVER)
-  return fetched(`cargo ${argv[1]}`, { ...spec, spec: spec.spec ?? version, exact: spec.exact || (!git && EXACT_SEMVER(version ?? '')), locked: argv.includes('--locked') }, { ecosystem: 'crates' })
+  const [git = null] = valuesOf(options, '--git'), [version = null] = valuesOf(options, '--version'), [ref = null] = valuesOf(options, '--rev', '--tag', '--branch')
+  const specs = git ? [{ name: git, spec: ref, exact: valuesOf(options, '--rev').length > 0, registry: false }] : options.operands.map(crate => atVersion(crate, EXACT_SEMVER))
+  return specs.flatMap(spec => fetched(`cargo ${argv[1]}`, { ...spec, spec: spec.spec ?? version, exact: spec.exact || (!git && EXACT_SEMVER(version ?? '')), locked: argv.includes('--locked') }, { ecosystem: 'crates' }))
 }
 
 // `gem install x [-v 1.2.3]`.
@@ -130,7 +128,7 @@ function commandFinds(command) {
 
 const INSTALLS = { npm: new RegExp(`^(?:ci|clean-install|ic|install-clean|${NPM_INSTALLS})$`, 'u'), pnpm: /^(?:i|install|add)$/u, bun: /^(?:i|install|add)$/u }
 // An install's options that leave the project's node_modules as they are.
-const NOT_LOCAL = /^(?:-g|--global|--location=global|--package-lock-only|--lockfile-only|--dry-run)$/u
+const NOT_LOCAL = /^(?:-g|--location=global|--(?:global|package-lock-only|lockfile-only|dry-run)(?:=true)?)$/u
 
 // A script's installs of a project's packages: each one's `order`, the
 // directory it installs into, by its `cd`s and the one it names (`into`, a
