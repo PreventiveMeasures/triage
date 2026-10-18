@@ -626,6 +626,19 @@ test('Postgres report uploads reuse content across instances and upgrade without
   finally { await upgraded.release() }
 })
 
+test('Postgres indexes reports and bundles by repository on upgrade', async t => {
+  const { connect } = await database(t)
+  const previous = await connect()
+  try { await previous.query('DROP INDEX managed_report_repo_idx; DROP INDEX managed_bundle_repo_idx; DELETE FROM managed_schema_version WHERE version = 31;') }
+  finally { await previous.release() }
+  await (await openPostgresManagedDb(connect)).close()
+  const upgraded = await connect()
+  try {
+    assert.deepEqual((await upgraded.query("SELECT indexname FROM pg_indexes WHERE indexname IN ('managed_report_repo_idx', 'managed_bundle_repo_idx') ORDER BY indexname")).rows.map(row => row.indexname),
+      ['managed_bundle_repo_idx', 'managed_report_repo_idx'])
+  } finally { await upgraded.release() }
+})
+
 test('Postgres bundle slugs migrate deterministically, persist, and resolve upload collisions', async t => {
   const { db, connect } = await database(t)
   const ids = ['11111111-1111-4111-8111-123456789abc', '22222222-2222-4222-8222-123456789abc']
@@ -768,6 +781,10 @@ test('Postgres report batches snapshot sessions, scoped grants, and metadata wit
     assert.deepEqual(report.permissions, { dependencies: index % 2 !== 0, security: true })
     assert.equal(report.repo.github, 'org/repo')
   }
+  queries.length = 0
+  assert.equal(await db.userCanReadReport(viewer, ids[0]), true)
+  assert.deepEqual(await db.reportPermissionsFor(viewer, ids[1]), { dependencies: true, security: true })
+  assert.equal(queries.length, 2, 'single-statement reads take no transaction')
   queries.length = 0
   const app = await db.getTeamReportAccessSnapshot('session', 10, 'app')
   assert.equal(queries.length, 7, 'one transaction: session, membership, reports, repository scopes and links')
@@ -1173,7 +1190,7 @@ test('Postgres migrates bundle locations to root and preserves directory edits o
   await db.selectRepo({ repoId: 1, fullName: 'org/repo', private: true, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, 1)
   await db.insertBundle({ id: 'bundle', integrity: 'hash', filename: 'source.map', kind: 'sourcemap', byteSize: 1, repoId: 1, uploadedBy: null }, 1)
   const legacy = await connect()
-  try { await legacy.query('ALTER TABLE managed_bundle DROP COLUMN repo_directory; DELETE FROM managed_schema_version WHERE version = 7;') }
+  try { await legacy.query('ALTER TABLE managed_bundle DROP COLUMN repo_directory; DELETE FROM managed_schema_version WHERE version IN (7, 31);') }
   finally { await legacy.release() }
   const upgraded = await openPostgresManagedDb(connect)
   try {

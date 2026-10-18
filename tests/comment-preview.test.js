@@ -69,21 +69,53 @@ test('long comment lines widen the preview without widening short multiline comm
 })
 
 test('subscriptions follow the active finding and refresh after comment edits', async t => {
+  // Every read edits both findings' comments, so each one notifies.
+  let version = 0
+  const load = () => {
+    version++
+    serverComments = ['first', 'second'].map(findingId => ({ id: `${findingId}-comment`, findingId, body: 'note', version }))
+    return loadManagedReportComments('report')
+  }
+  const preview = new CommentPreview()
+  preview.finding = { id: 'first' }
+  preview.requestUpdate = mock.fn()
+  preview._subscribe()
+  t.after(() => preview.unsubscribe())
+  await load()
+  assert.equal(preview.requestUpdate.mock.callCount(), 1)
+  preview.finding = { id: 'second' }
+  preview._subscribe()
+  preview.requestUpdate.mock.resetCalls()
+  await load()
+  assert.equal(preview.requestUpdate.mock.callCount(), 1, 'only the new finding notifies the preview')
+  preview.unsubscribe()
+  await load()
+  assert.equal(preview.requestUpdate.mock.callCount(), 1, 'unsubscribed previews stop receiving updates')
+})
+
+test('a read that finds a finding\'s comments as they were leaves its preview alone', async t => {
   const preview = new CommentPreview()
   preview.finding = { id: 'first' }
   preview.requestUpdate = mock.fn()
   preview._subscribe()
   t.after(() => preview.unsubscribe())
   await loadManagedReportComments('report')
+  assert.equal(preview.requestUpdate.mock.callCount(), 0, 'none read where none were kept')
+  serverComments = [{ id: 'c', findingId: 'first', body: 'note', version: 1 }]
+  await loadManagedReportComments('report')
   assert.equal(preview.requestUpdate.mock.callCount(), 1)
-  preview.finding = { id: 'second' }
-  preview._subscribe()
-  preview.requestUpdate.mock.resetCalls()
+  const kept = state.managedComments.get('first')
+  serverComments = [{ id: 'c', findingId: 'first', body: 'note', version: 1 }]
   await loadManagedReportComments('report')
-  assert.equal(preview.requestUpdate.mock.callCount(), 1, 'only the new finding notifies the preview')
-  preview.unsubscribe()
+  assert.equal(preview.requestUpdate.mock.callCount(), 1, 'the same comments read again')
+  assert.equal(state.managedComments.get('first'), kept)
+  serverComments = [{ id: 'c', findingId: 'first', body: 'edited', version: 2 }]
   await loadManagedReportComments('report')
-  assert.equal(preview.requestUpdate.mock.callCount(), 1, 'unsubscribed previews stop receiving updates')
+  assert.equal(preview.requestUpdate.mock.callCount(), 2, 'an edit notifies')
+  serverComments = []
+  await loadManagedReportComments('report')
+  assert.equal(preview.requestUpdate.mock.callCount(), 3, 'so does the last deletion')
+  assert.deepEqual(state.managedComments.get('first'), [])
 })
 
 test('an empty managed preview shows the first remote comment and hides after the last deletion', async t => {

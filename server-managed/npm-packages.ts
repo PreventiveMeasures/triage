@@ -153,14 +153,60 @@ async function publicWholeDocument(name: string, url: string, { limit, signal }:
   return json
 }
 
+// Whole documents being asked of npm as anyone asks, by URL and limit:
+// readers asking for one meanwhile share it, as opening a version asks for
+// its package's for its versions, its advisories and its risk at once; each
+// gives up on it alone once its own signal aborts, and it is given up on once
+// they all have. None is asked with the token. Read alike by every reader,
+// none changing it.
+const wholeAsks = new Map<string, { asked: Promise<Record<string, unknown> | null>; controller: AbortController; readers: number }>()
+
+function sharedWholeDocument(name: string, url: string, { limit, signal }: { limit: number; signal: AbortSignal }): Promise<Record<string, unknown> | null> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  const key = `${url} ${limit}`
+  let ask = wholeAsks.get(key)
+  if (!ask) {
+    const controller = new AbortController()
+    const created = { asked: publicWholeDocument(name, url, { limit, signal: controller.signal }), controller, readers: 0 }
+    const settle = () => { if (wholeAsks.get(key) === created) wholeAsks.delete(key) }
+    created.asked.then(settle, settle)
+    wholeAsks.set(key, ask = created)
+  }
+  const held = ask
+  held.readers++
+  return new Promise((answer, fail) => {
+    let left = false
+    const leave = () => {
+      if (left) return false
+      left = true
+      held.readers--
+      signal.removeEventListener('abort', onAbort)
+      return true
+    }
+    const onAbort = () => {
+      if (!leave()) return
+      if (held.readers === 0) {
+        if (wholeAsks.get(key) === held) wholeAsks.delete(key)
+        held.controller.abort(signal.reason)
+      }
+      fail(signal.reason)
+    }
+    const answered = (json: Record<string, unknown> | null) => { if (leave()) answer(json) }
+    const failed = (err: unknown) => { if (leave()) fail(err) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    held.asked.then(answered, failed)
+  })
+}
+
 // Asked anonymously first, unless its caller knows npm has none for anyone
 // (`anonymous` false): a reader without private access stops there. One
 // with it asks again with the token where npmTokenReads says so, and the
 // answer is private. A whole document (`whole`) anyone may read is kept
-// (publicWholeDocument).
+// (publicWholeDocument), and asked once for those asking at once
+// (sharedWholeDocument).
 async function readDocument(name: string, url: string, privileged: boolean,
   { whole = false, anonymous = true, ...options }: { accept: string; limit: number; signal: AbortSignal; whole?: boolean; anonymous?: boolean }) {
-  const open = anonymous ? whole ? await publicWholeDocument(name, url, options) : await registryDocument(url, { ...options, token: null }) : null
+  const open = anonymous ? whole ? await sharedWholeDocument(name, url, options) : await registryDocument(url, { ...options, token: null }) : null
   if (open) return { json: open, private: false }
   if (!npmTokenReads(name, privileged)) return null
   const json = await registryDocument(url, { ...options, token: npmToken() })
@@ -228,6 +274,20 @@ export function readNpmVersion(name: string, spec: string, privileged: boolean, 
     if (store && !found.private) await store.write(name, doc.version, npmVersionFields(found.json))
     return doc
   })
+}
+
+// `store`, where it reads many at once, with the exact ones of `versions`
+// read from it in one read, for readNpmVersion to read each of those from as
+// it asks: a version and the one it is compared with, read together.
+export function readTogether(store: NpmVersionStore, versions: { name: string; version: string }[]): NpmVersionStore {
+  const exact = versions.filter(({ version }) => isExactVersion(version))
+  if (!store.readMany || exact.length < 2) return store
+  const keys = new Set(exact.map(({ name, version }) => `${name}@${version}`))
+  const kept = store.readMany(exact)
+  return { ...store, async read(name, version) {
+    const key = `${name}@${version}`
+    return keys.has(key) ? (await kept).get(key) ?? null : store.read(name, version)
+  } }
 }
 
 // The package's dist-tags and versions, newest published first, from its

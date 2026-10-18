@@ -35,6 +35,7 @@ import { buffer } from 'node:stream/consumers'
 import type { CacheStore } from '@preventive/upstream/npm.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, type NpmAssessment, assessNpm, npmReadyDownload, npmReadyDownloads } from '../risk/index.js'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
+import { npmVersionStore } from './npm-kept.ts'
 import { loadNpmTarball } from './npm-loads.ts'
 import { NpmPackageError, type NpmVersionDocument, npmTokenReads, readNpmPackument, readNpmVersion } from './npm-packages.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
@@ -176,7 +177,9 @@ export function npmRisk(doc: NpmVersionDocument, old: NpmVersionDocument | 'pick
     return scopes.get(scope)!
   }
   const given = old === 'pick' ? null : old
-  const documentOf = async (version: string) => [doc, given].find(read => read?.version === version) ?? await readNpmVersion(doc.name, version, privileged, signal) ?? undefined
+  // The one picked, read as the viewer reads a version, kept a day where public.
+  const documentOf = async (version: string) => [doc, given].find(read => read?.version === version)
+    ?? await readNpmVersion(doc.name, version, privileged, signal, npmVersionStore(stores.db, stores.debug)) ?? undefined
   return bounded(spare, () => assessNpm(doc.name, doc.version, { oldVersion: old === 'pick' ? true : old?.version ?? null, fromEmpty,
     minimumReleaseAge: teamScoped ? 0 : DEFAULT_MINIMUM_RELEASE_AGE,
     popularity: !teamScoped, cache: npmRiskCache(stores, !doc.private && !given?.private), signal, dependencies: !spare, advisories: !spare, osv: !doc.private, owned,

@@ -619,6 +619,12 @@ test('the pairs of minified JavaScript files that changed between two bundles ar
   assert.equal(lines[0].reason, null)
   assert.equal(lines[0].blocks.length, 1, 'its renamed names hidden, its changed line shown')
   assert.ok(lines[0].ignoringWhitespace.blocks.length === 1 && lines[0].marks.length > 0, 'whitespace changes hidden too, and renamed lines marked')
+  const opens = t.mock.method(h.stores.cacheStorage, 'open')
+  assert.deepEqual(linesOf(await h.send(bundleRenameDiffs(base, other))), lines)
+  const copyOf = hash => `pretty-v4/${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`
+  const failed = new Set(lines.filter(line => line.error).flatMap(line => [line.hash, line.otherHash].map(copyOf)))
+  const read = opens.mock.calls.map(call => call.arguments[1]).filter(file => file.startsWith('pretty-'))
+  assert.ok(read.length > 0 && read.every(file => failed.has(file)), 'diffs kept answered without reading their copies, those of one that failed read again')
   assert.equal((await h.send(bundleRenameDiffs(base, other), 'outsider')).status, 404)
   assert.equal((await h.send(bundleRenameDiffs(base, other), null)).status, 401)
   assert.equal((await h.send(bundleRenameDiffs(base, 'nope'))).status, 400)
@@ -777,6 +783,22 @@ test('two bundles\' files are paired by the server, as the viewer paired them, f
   const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
   assert.deepEqual((await h.send(bundleComparison(base, other), null, { headers })).json(), comparison, 'a public link\'s own bundles')
   assert.equal((await h.send(bundleComparison(base, randomUUID()), null, { headers })).status, 404)
+})
+
+test('a comparison\'s requests decode each bundle once, asked at once or one after another, its details kept a little while', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const h = await setup(t)
+  const [base, other] = [await h.seed(typedBuilds[0]), await h.seed(typedBuilds[1])]
+  const reads = t.mock.method(h.stores.bundleStore, 'get')
+  const asked = await Promise.all([h.send(bundleComparison(base, other)), h.send(bundleChanges(base, other)), h.send(bundleTypeOnly(base, other))])
+  assert.deepEqual(asked.map(res => res.status), [200, 200, 200])
+  assert.equal(reads.mock.callCount(), 2, 'each bundle decoded once for them all')
+  assert.equal((await h.send(bundleRenameDiffs(base, other))).status, 200)
+  assert.equal(reads.mock.callCount(), 2, 'and kept for the next to ask')
+  assert.equal((await h.send(bundleComparison(base, other), 'outsider')).status, 404, 'each reader\'s access checked as ever')
+  t.mock.timers.tick(60_000)
+  assert.equal((await h.send(bundleComparison(base, other))).status, 200)
+  assert.equal(reads.mock.callCount(), 4, 'and no longer')
 })
 
 test('a comparison sends where the two sides\' roots differ how each base file reads, and is of the files within its scope', async t => {

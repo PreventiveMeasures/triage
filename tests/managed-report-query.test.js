@@ -201,7 +201,7 @@ test('batch database calls stay constant as report count grows and preserve per-
     h.blobs.set(id, h.blobs.get('a'))
     ids.push(id)
   }
-  const calls = new Map(['sessionWithUser', 'getReportAccessSnapshot', 'listAllRepos', 'getReport', 'userCanReadReport', 'reportPermissionsFor']
+  const calls = new Map(['sessionWithUser', 'getSessionWithUser', 'getReportAccessSnapshot', 'listAllRepos', 'getReport', 'userCanReadReport', 'reportPermissionsFor']
     .map(name => [name, t.mock.method(h.db, name)]))
   assert.equal((await h.request({ ids: ids.slice(0, 1) }, { role: 'admin' })).status, 200)
   const singleCounts = [...calls.values()].map(method => method.mock.callCount())
@@ -210,6 +210,8 @@ test('batch database calls stay constant as report count grows and preserve per-
   assert.equal(response.status, 200)
   assert.deepEqual([...calls.values()].map(method => method.mock.callCount()), singleCounts)
   assert.equal(calls.get('getReportAccessSnapshot').mock.callCount(), 2)
+  assert.equal(calls.get('sessionWithUser').mock.callCount(), 1, 'presence is recorded by the first session read alone')
+  assert.ok(calls.get('getSessionWithUser').mock.callCount() >= 1, 'later reads in the request only read')
   for (const name of ['listAllRepos', 'getReport', 'userCanReadReport', 'reportPermissionsFor']) assert.equal(calls.get(name).mock.callCount(), 0)
   assert.equal(response.body.reports.length, ids.length)
   for (const [index, entry] of response.body.reports.entries()) {

@@ -7,6 +7,10 @@ import { GITHUB_LINK_SCHEMA } from './github-links.ts'
 
 // Created after the column migration, which predates it on older databases.
 export const VIEW_SESSION_INDEX = 'CREATE INDEX IF NOT EXISTS managed_session_viewer_idx ON managed_session(viewer_session);'
+// What a team's scopes join reports and bundles on: their repository, and the
+// directory in it. Created after the column migrations, as above.
+export const REPO_UPLOAD_INDEXES = `CREATE INDEX IF NOT EXISTS managed_report_repo_idx ON managed_report(repo_id, repo_directory);
+CREATE INDEX IF NOT EXISTS managed_bundle_repo_idx ON managed_bundle(repo_id, repo_directory);`
 
 export const MANAGED_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_user (

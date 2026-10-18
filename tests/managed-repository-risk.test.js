@@ -527,7 +527,8 @@ test('repositories are read READ_AHEAD at a time, as GitHub answers each slowly,
   const opening = source.open
   // Each opened 20ms after it is asked, the last first, as GitHub may answer.
   // Access to each checked again as it is told: once those before it are,
-  // their advisories asked of npm, however long ago it was read.
+  // however long ago it was read, its advisories asked of npm as it was.
+  // Those of each told, as those before it, by then.
   const rechecked = []
   source.open = async repo => {
     most = Math.max(most, ++open)
@@ -539,7 +540,30 @@ test('repositories are read READ_AHEAD at a time, as GitHub answers each slowly,
   const lines = await Array.fromAsync(scan(source))
   assert.equal(most, 6, 'six at a time, not one after another')
   assert.deepEqual(lines.filter(line => line.type === 'repo').map(line => line.id), [1, 2, 3, 4, 5, 6, 7, 8], 'told in turn')
-  assert.deepEqual(rechecked, [1, 2, 3, 4, 5, 6, 7, 8].map(id => [id, id - 1]))
+  assert.deepEqual(rechecked.map(([id]) => id), [1, 2, 3, 4, 5, 6, 7, 8])
+  assert.ok(rechecked.every(([id, audited]) => audited >= id - 1), 'the advisories of those before each asked by then')
+  assert.ok(rechecked.some(([id, audited]) => audited > id - 1), 'and of those read ahead, as they are read')
+})
+
+test('a repository\'s lockfiles are read, and their advisories asked of npm, four at a time, each told in turn', async () => {
+  const paths = Array.from({ length: 9 }, (_, at) => `app${at}/pnpm-lock.yaml`)
+  const source = sourceOf({ 1: { fullName: 'org/many', lockfiles: paths.map(path => ({ path, format: 'pnpm' })), files: Object.fromEntries(paths.map(path => [path, pnpmLockfile])) } },
+    () => Promise.resolve(noneFound))
+  const most = { file: 0, advisories: 0 }, open = { file: 0, advisories: 0 }
+  // Each answered the slower the earlier it is asked, as GitHub and npm may answer.
+  const slowly = (what, ask) => async (...args) => {
+    most[what] = Math.max(most[what], ++open[what])
+    await delay(5 * (9 - source.read.length % 9))
+    open[what]--
+    return ask(...args)
+  }
+  const opening = source.open
+  source.open = async repo => { const opened = await opening(repo); return { ...opened, file: slowly('file', path => opened.file(path)) } }
+  source.advisories = slowly('advisories', source.advisories)
+  const lines = await Array.fromAsync(scan(source))
+  assert.deepEqual(most, { file: 4, advisories: 4 })
+  assert.deepEqual(lines.filter(line => line.type === 'lockfile').map(line => line.path), paths, 'told in turn')
+  assert.deepEqual(lines.filter(line => line.type === 'advisories').map(line => line.path), paths)
 })
 
 test('a scan in parts goes on past the repositories a part before told whole, asking GitHub nothing of them, their packages still assessed', async () => {

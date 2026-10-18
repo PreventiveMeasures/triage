@@ -39,7 +39,7 @@ async function legacyDatabase(t) {
   }
   await db.close()
   const legacy = new DatabaseSync(path)
-  legacy.exec('ALTER TABLE managed_report DROP COLUMN repo_directory')
+  legacy.exec('DROP INDEX managed_report_repo_idx; ALTER TABLE managed_report DROP COLUMN repo_directory')
   legacy.exec('ALTER TABLE managed_report DROP COLUMN repo_embedded')
   legacy.close()
   return { path, store, userId, teamId, ids }

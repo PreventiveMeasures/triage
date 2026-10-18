@@ -392,6 +392,10 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   // A view session opened by `viewerSessionId`, while that session is current
   // and its user is still an admin. Presence is the admin's, not the viewed user's.
   viewSessionWithUser(id: string, viewerSessionId: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
+  // The two above as they read, recording no presence: for a read again in a
+  // request whose first read recorded it.
+  getSessionWithUser(id: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
+  getViewSessionWithUser(id: string, viewerSessionId: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
   // Store `candidate` unless the session already has an upload key; returns
   // the stored key, or null when the session no longer exists.
   ensureSessionUploadKey(id: string, candidate: string): Promise<string | null>
@@ -413,6 +417,8 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   deselectRepo(repoId: number): Promise<boolean>
   listSelectedRepos(): Promise<SelectedRepo[]>
   listAllRepos(): Promise<ManagedRepo[]>
+  // A selected repository's full name, active or not; null for none.
+  getRepoFullName(repoId: number): Promise<string | null>
   deactivateRepo(repoId: number): Promise<boolean>
   reactivateRepo(repoId: number): Promise<boolean>
   deleteRepo(repoId: number): Promise<boolean>
@@ -459,6 +465,8 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   // stamp nor the trail. Every change also appends to managed_finding_triage_event;
   // listTriageHistory walks one finding's trail, newest first.
   listTriage(findingIds: readonly string[]): Promise<TriageRow[]>
+  // The distinct Fix links of those, without the rest of their entries.
+  listTriageFixes(findingIds: readonly string[]): Promise<string[]>
   getAnnotations(findingIds: readonly string[]): Promise<{ triage: TriageRow[]; comments: Awaited<ReturnType<CommentStore['listComments']>>; issues: Awaited<ReturnType<ManagedIssueStore['listManagedIssues']>> }>
   applyManagedIssueFixes(sessionId: string, snapshot: TeamReportAccessSnapshot, updates: IssueFixUpdate[]): Promise<boolean>
   // A content-free fingerprint of current annotations, read in one snapshot.
@@ -543,6 +551,15 @@ type SessionRow = {
   uid: string; login: string; name: string | null; avatar: string | null; role: Role
 }
 type ViewSessionRow = SessionRow & { viewerId: string; viewerLogin: string; viewerName: string | null }
+const ownSession = (row: SessionRow) => ({
+  session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey },
+  user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
+})
+const viewSession = (row: ViewSessionRow) => ({
+  session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey,
+    viewer: { id: row.viewerId, login: row.viewerLogin, name: row.viewerName } },
+  user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
+})
 
 type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number | null; lastActivity: number | null }
 
@@ -690,6 +707,7 @@ function prepareStatements(db: ManagedSql) {
               added_by AS addedBy, added_at AS addedAt, active AS active
          FROM managed_selected_repo WHERE active = 1 ORDER BY full_name ASC`,
     ),
+    selectRepoFullNameStmt: db.prepare(`SELECT full_name AS fullName FROM managed_selected_repo WHERE repo_id = ?`),
     selectAllReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
               installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
@@ -820,6 +838,8 @@ function prepareStatements(db: ManagedSql) {
         WHERE t.finding_id IN (SELECT value FROM json_each(?))
         ORDER BY t.finding_id ASC`,
     ),
+    selectTriageFixesStmt: db.prepare(`SELECT DISTINCT fix FROM managed_finding_triage
+      WHERE finding_id IN (SELECT value FROM json_each(?)) AND fix IS NOT NULL ORDER BY fix`),
     annotationTriageRevisionStmt: db.prepare(`
       SELECT t.finding_id AS id,
         (SELECT e.batch_id FROM managed_finding_triage_event e
@@ -1065,6 +1085,9 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
       const rows = (await selectAllReposStmt.all()) as RepoRow[]
       return rows.map(readManagedRepo)
     },
+    async getRepoFullName(repoId: number): Promise<string | null> {
+      return ((await stmts.selectRepoFullNameStmt.get(repoId)) as { fullName: string } | undefined)?.fullName ?? null
+    },
     async deactivateRepo(repoId: number): Promise<boolean> {
       return Number((await deactivateRepoStmt.run(repoId)).changes) > 0
     },
@@ -1288,6 +1311,10 @@ function triageMethods(stmts: ReturnType<typeof prepareStatements>, historyLimit
         flagged: r.flagged == null ? null : r.flagged === 1,
         actorId: r.actorId, actorLogin: r.actorLogin, actorName: r.actorName, at: r.at,
       }))
+    },
+    async listTriageFixes(findingIds: readonly string[]): Promise<string[]> {
+      if (findingIds.length === 0) return []
+      return ((await stmts.selectTriageFixesStmt.all(JSON.stringify(findingIds))) as { fix: string }[]).map(row => row.fix)
     },
     async listTriage(findingIds: readonly string[]): Promise<TriageRow[]> {
       if (findingIds.length === 0) return []
@@ -1658,10 +1685,11 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       const row = (await selectOwnSessionStmt.get(id, now)) as SessionRow | undefined
       if (row == null) return null
       await touchUserSeenStmt.run(now, row.uid, now)
-      return {
-        session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey },
-        user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
-      }
+      return ownSession(row)
+    },
+    async getSessionWithUser(id, now) {
+      const row = (await selectOwnSessionStmt.get(id, now)) as SessionRow | undefined
+      return row == null ? null : ownSession(row)
     },
     async createViewSession(view, now) {
       if (Number((await insertViewSessionStmt.run(view.id, view.csrfToken, now, view.userId, view.viewerSessionId, now)).changes) === 0) return false
@@ -1672,11 +1700,11 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       const row = (await selectViewSessionStmt.get(id, viewerSessionId, now, now)) as ViewSessionRow | undefined
       if (row == null) return null
       await touchUserSeenStmt.run(now, row.viewerId, now)
-      return {
-        session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey,
-          viewer: { id: row.viewerId, login: row.viewerLogin, name: row.viewerName } },
-        user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
-      }
+      return viewSession(row)
+    },
+    async getViewSessionWithUser(id, viewerSessionId, now) {
+      const row = (await selectViewSessionStmt.get(id, viewerSessionId, now, now)) as ViewSessionRow | undefined
+      return row == null ? null : viewSession(row)
     },
     async ensureSessionUploadKey(id, candidate) {
       const row = (await ensureUploadKeyStmt.get(candidate, id)) as { uploadKey: string } | undefined

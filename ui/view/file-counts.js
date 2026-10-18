@@ -50,7 +50,19 @@ export function computeFindingCountsByFile(allGroups, mode) {
 // bound by cross-report dedup hints in state.workspaceMerges) —
 // this is the matching merge on the tree side. Returns null when no
 // report carries tree data so callers fall back to a tree-less layout.
+//
+// The last merge is kept by the trees it merged: render asks for it on
+// every draw, and a report's tree is never changed once it is ingested,
+// so the same trees merge to the same map. Callers only read it.
+let lastMerge = { trees: [], merged: null }
 export function mergeReportsTree(reports) {
+  const trees = reports.map((r) => r?.tree ?? null)
+  if (trees.length === lastMerge.trees.length && trees.every((tree, i) => tree === lastMerge.trees[i])) return lastMerge.merged
+  lastMerge = { trees, merged: mergeTrees(reports) }
+  return lastMerge.merged
+}
+
+function mergeTrees(reports) {
   let merged = null
   for (const r of reports) {
     if (!r?.tree) continue

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { makeLargeGraph } from '../examples/large-graph-sample.js'
-const { computeTransitiveCounts } = await import('../ui/view/file-counts.js')
+const { computeTransitiveCounts, mergeReportsTree } = await import('../ui/view/file-counts.js')
 const { SEVERITIES } = await import('../ui/view/format.js')
 
 function original(tree, counts, files = Object.keys(tree)) {
@@ -44,4 +44,17 @@ it('handles the 26k-file bundle without recursion or per-file reachability walks
   const files = Object.keys(tree).filter((_, i) => i % 2600 === 0)
   const expected = original(tree, counts, files)
   for (const [file, value] of expected) assert.deepEqual(result.get(file), value)
+})
+
+it('mergeReportsTree keeps its merge for the same trees and merges again for others', () => {
+  const a = { tree: { 'a.js': { imports: ['b.js'], size: 1 } } }
+  const b = { tree: { 'a.js': { imports: ['c.js'] }, 'b.js': { imports: [] } } }
+  const first = mergeReportsTree([a])
+  assert.equal(mergeReportsTree([a]), first, 'the same trees merge to the same map')
+  const both = mergeReportsTree([a, b])
+  assert.notEqual(both, first)
+  assert.deepEqual(both['a.js'].imports, ['b.js', 'c.js'])
+  assert.deepEqual(first['a.js'].imports, ['b.js'], 'a kept merge is never added to')
+  assert.equal(mergeReportsTree([{ tree: null }]), null)
+  assert.deepEqual(Object.keys(mergeReportsTree([b])), ['a.js', 'b.js'])
 })

@@ -5,6 +5,7 @@
 //
 // Async throughout — the store (db.ts) is async so a future non-SQLite
 // backend slots in without touching these helpers.
+import { AsyncLocalStorage } from 'node:async_hooks'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedSession, ManagedUser, StoredUser } from './db.ts'
 import { hashToken, randomToken } from './crypto.ts'
@@ -73,19 +74,32 @@ export async function createSession(
   return { setCookie, csrfToken, userId }
 }
 
+// A request's sign-in, whose presence its first read to find it records.
+// Every read after it in that request (the rechecks after its reads of
+// storage, GitHub or npm among them) only reads: last_seen_at was written a
+// moment before, by the read that let the request in.
+const requests = new AsyncLocalStorage<{ seen: boolean }>()
+export function runRequestPresence<T>(work: () => T): T {
+  return requests.run({ seen: false }, work)
+}
+
 // Resolve the current session (+ user) from the request's cookies, or null.
 // A view cookie resolves only to that admin's view as another user: a view
 // that has ended never falls back to the admin's own session. `own` skips the
 // view and reads the signed-in session itself.
-export function readSession(
+export async function readSession(
   config: ManagedConfig, db: ManagedDb, cookieHeader: string | undefined, now: number, { own = false } = {},
 ): Promise<{ session: ManagedSession; user: StoredUser } | null> {
   const cookies = parseCookies(cookieHeader)
   const token = cookies.get(config.sessionCookieName)
-  if (token == null || token === '') return Promise.resolve(null)
+  if (token == null || token === '') return null
   const view = own ? undefined : cookies.get(cookieName(config, VIEW_COOKIE))
-  if (view != null && view !== '') return db.viewSessionWithUser(hashToken(view), hashToken(token), now)
-  return db.sessionWithUser(hashToken(token), now)
+  const request = requests.getStore(), seen = request?.seen === true
+  const s = view != null && view !== ''
+    ? await (seen ? db.getViewSessionWithUser : db.viewSessionWithUser)(hashToken(view), hashToken(token), now)
+    : await (seen ? db.getSessionWithUser : db.sessionWithUser)(hashToken(token), now)
+  if (s && request) request.seen = true
+  return s
 }
 
 // Drop the session named by the request's cookie (logout). The caller also

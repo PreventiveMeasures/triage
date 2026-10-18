@@ -135,6 +135,20 @@ describe('matchesFilters — findings search', () => {
     assert.equal(matchesFilters(other), false)
   })
 
+  it('the kept search text follows the revalidation layer', async () => {
+    const { configureRevalidation } = await import('../ui/view/format.js')
+    const f = makeFinding('kept', { revalidate: 'refuted', revalidateVerdict: 'the sink is unreachable' })
+    state.filterInclude = 'unreachable'
+    try {
+      configureRevalidation(true)
+      assert.equal(matchesFilters(f), true)
+      configureRevalidation(false)
+      assert.equal(matchesFilters(f), false, 'the verdict leaves the text with the layer')
+      configureRevalidation(true)
+      assert.equal(matchesFilters(f), true, 'and comes back with it')
+    } finally { configureRevalidation(true) }
+  })
+
   it('an empty query keeps every finding', () => {
     state.filterInclude = ''
     assert.equal(matchesFilters(makeFinding('H')), true)

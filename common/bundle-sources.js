@@ -282,15 +282,19 @@ export function bundleSourceSizes(details) {
 //
 // Returns null for sourcemap bundles (and anything without parsed
 // modules) — they carry no package metadata, so callers fall back to
-// the path heuristic alone.
+// the path heuristic alone. Kept by the bundle, as its sources are:
+// callers only read it.
+const packageDirsCache = new WeakMap()
 export function bundlePackageDirs(details) {
   if (details?.kind !== 'stasis' || !details.bundle?.modules) return null
+  if (packageDirsCache.has(details.bundle)) return packageDirsCache.get(details.bundle)
   const map = new Map()
   for (const [dir, info] of details.bundle.modules) {
     for (const rel of Object.keys(info.files)) {
       map.set(dir === '.' ? rel : `${dir}/${rel}`, dir)
     }
   }
+  packageDirsCache.set(details.bundle, map)
   return map
 }
 

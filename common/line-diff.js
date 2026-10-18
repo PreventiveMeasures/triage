@@ -5,7 +5,7 @@
 //
 // Lines are numbered the way the diff numbers them: from zero, a final
 // newline ending the last line rather than starting an empty one.
-import { diff, parseDiff } from '@preventive/diff'
+import { changeSet } from '@preventive/diff'
 
 export function textLines(text) {
   if (text === '') return []
@@ -25,10 +25,11 @@ const spacing = line => line.replace(/[ \t\n\v\f\r]+$/u, '').replaceAll(/[ \t\n\
 
 // Each `a[a0..a1)` replaced by `b[b0..b1)`. `ignoreWhitespace` is diff -b:
 // lines differing only in how much whitespace they have pair up as unchanged,
-// whitespace added or removed between other characters still a change.
+// whitespace added or removed between other characters still a change. Those
+// a unified diff with no context shows (horizon 0), found without printing
+// one and reading it back.
 export function changeBlocks(before, after, ignoreWhitespace = false) {
-  const text = diff(before, after, { format: 'unified', context: 0, whitespace: ignoreWhitespace ? 'change' : 'none' })
-  return text ? (parseDiff(text)[0]?.blocks ?? []).map(({ a0, a1, b0, b1 }) => ({ a0, a1, b0, b1 })) : []
+  return changeSet(before, after, { horizon: 0, whitespace: ignoreWhitespace ? 'change' : 'none' }).map(({ a0, a1, b0, b1 }) => ({ a0, a1, b0, b1 }))
 }
 
 // Whether `blocks` take `before`'s lines to `after`'s: each in order and apart

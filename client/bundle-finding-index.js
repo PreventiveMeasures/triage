@@ -545,6 +545,13 @@ export function ensureBundleFindingsIndexed() {
   return activeRun
 }
 
+// The walk ensureBundleFindingsIndexed has in flight, or null: for a
+// subscriber that would rather draw once when it settles than after
+// every report it reaches.
+export function bundleFindingsWalk() {
+  return activeRun
+}
+
 // Subscribe to the storage layer's mutation events so file-level
 // changes prune (delete) or evict-then-re-index-on-next-walk (save)
 // without the caller having to invoke us. Audit round-8 H1.

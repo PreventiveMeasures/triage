@@ -174,7 +174,7 @@ export function parseBundleMetadata(data, integrity) {
       || [...unsized].some((path) => typeof path !== 'string' || !fileSizes.has(path) || fileSizes.get(path) !== null)) throw new Error('Invalid bundle metadata')
   const details = { integrity, kind: data.kind, size: data.size, metadataOnly: true, fileSizes, fileHashes, lineCounts, unsizedFiles: unsized, stale }
   if (data.kind === 'stasis') {
-    details.bundle = Bundle.parse(JSON.stringify(data.bundle))
+    details.bundle = Bundle.fromJSON(data.bundle)
     const paths = details.bundle.sources
     if (paths.size !== fileSizes.size || [...paths.keys()].some((path) => !fileSizes.has(path))) throw new Error('Invalid bundle metadata inventory')
     // A file is hashed exactly when it is source: a resource has bytes and

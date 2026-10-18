@@ -8,7 +8,7 @@ import { managedHistory } from './managed-history.js'
 import { openFindingHistoryDialog, openManagedIssueDialog } from './client-managed.js'
 import { canViewFindingHistory } from './finding-history.js'
 import { renderHighlighted } from './render-finding.js'
-import { BUNDLE_SOURCE_WRAP_KEY, KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
+import { BUNDLE_SOURCE_WRAP_KEY, KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, bundleFindingsWalk, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, depsDirName, evidenceMarkdown, findingUrl, handoffBlock, isModule, lineRange, revalidationShown } from './format.js'
 import { activeTabFor, canApplyFixToGroup, canEditTriage, canTriageFinding, findGroupById, findingRepo, findingRepoTarget, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
@@ -54,8 +54,25 @@ subscribeToBundleFindingIndex(() => {
   setTimeout(ready, 350)
 })
 
+// The findings surface waits out a walk still filling the index: a tick
+// there rebuilds every merged row and redraws every card, and the walk
+// reaches the reports on disk one by one, so it draws once with what the
+// walk found rather than once per report — the same rows the last of
+// those draws would have shown.
+let findingIndexWalkAwaited = false
 function refreshFindingIndexView() {
   findingIndexRenderQueued = false
+  const walk = bundleFindingsWalk()
+  if (walk && (state.currentView === 'findings' || state.currentView === 'files')) {
+    if (!findingIndexWalkAwaited) {
+      findingIndexWalkAwaited = true
+      void walk.catch(() => {}).finally(() => {
+        findingIndexWalkAwaited = false
+        refreshFindingIndexView()
+      })
+    }
+    return
+  }
   // Rows with the same finding id can contribute security evidence even
   // without an explicit links file. Invalidate the cached lens in every view.
   state.findingIndexTick++
@@ -2817,13 +2834,22 @@ report.addEventListener('search-input', (e) => {
     renderSearchNextFrame()
     return
   } else if (kind === 'files') {
+    // Per-frame as well: the Files tab draws a row for every file the
+    // search leaves, which a tree of thousands takes longer than a
+    // keystroke to.
     state.filesSearch = value
+    renderSearchNextFrame()
+    return
   } else if (kind === 'packages') {
     state.packagesSearchQuery = value
   } else if (kind === 'repositories') {
     state.repositoriesSearchQuery = value
   } else if (kind === 'bundle-code') {
+    // The Code rail's filter, a search of every source in its Code mode:
+    // per frame, as the Search tab's below.
     state.bundleCodeSearchQuery = value
+    renderSearchNextFrame()
+    return
   } else if (kind === 'bundle-search') {
     // Heaviest of the search fields (scans every source) — debounce
     // its render to one per frame instead of the synchronous render

@@ -28,10 +28,15 @@ test('SQLite migrates existing bundles to root and persists editable directories
   await db.insertBundle({ id: 'bundle', filename: 'source.map', integrity: 'hash', kind: 'sourcemap', byteSize: 2, repoId: 1, uploadedBy: null }, 1)
   await db.close()
   const legacy = new DatabaseSync(path)
-  legacy.exec('ALTER TABLE managed_bundle DROP COLUMN repo_directory; ALTER TABLE managed_bundle DROP COLUMN visible')
+  legacy.exec('DROP INDEX managed_bundle_repo_idx; ALTER TABLE managed_bundle DROP COLUMN repo_directory; ALTER TABLE managed_bundle DROP COLUMN visible')
   legacy.close()
   db = openSqliteManagedDb(path)
   assert.equal((await db.getBundle('bundle')).repoDirectory, '')
+  const indexes = new DatabaseSync(path)
+  try {
+    assert.deepEqual(indexes.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('managed_report_repo_idx', 'managed_bundle_repo_idx') ORDER BY name").all().map(row => row.name),
+      ['managed_bundle_repo_idx', 'managed_report_repo_idx'], 'the repository indexes are made after the column migration')
+  } finally { indexes.close() }
   assert.equal((await db.getBundle('bundle')).visible, true, 'existing bundles retain visibility')
   await db.setBundleVisible('bundle', false)
   await db.setBundleRepo('bundle', 1, 'foo/sub')

@@ -52,6 +52,15 @@ function readPage(job: Job, item: Issue | Pull, metadata: Map<string, Metadata>)
 
 function issueUpdates(jobs: Job[], issues: ManagedIssue[], allowed: Map<string, Repository>, checkedAt: number, metadata: Map<string, Metadata>) {
   const updates: IssueFixUpdate[] = []
+  // The issues each job's issue is, by repository and number, read once.
+  const byIssue = new Map<string, ManagedIssue[]>()
+  for (const issue of issues) {
+    const ref = parseGithubFixUrl(issue.issueUrl)
+    if (ref?.kind !== 'issue') continue
+    const key = `${issue.repoId}:${ref.number}`, same = byIssue.get(key)
+    if (same) same.push(issue)
+    else byIssue.set(key, [issue])
+  }
   for (const job of jobs) {
     if (!job.linked || !job.complete) continue
     // "Last" means the newest PR by creation time, never its latest comment.
@@ -62,11 +71,8 @@ function issueUpdates(jobs: Job[], issues: ManagedIssue[], allowed: Map<string, 
     if (latest && (!repo || repo.repoId !== latest.repository.databaseId)) continue
     const next = latest ? `https://github.com/${repo!.github}/pull/${latest.number}` : null
     if (latest && next) metadata.set(next, { url: next, ...itemMetadata(latest, 'pull')! })
-    for (const issue of issues) {
-      const ref = parseGithubFixUrl(issue.issueUrl)
-      if (ref?.kind === 'issue' && ref.number === job.number && issue.repoId === job.repo.repoId) {
-        updates.push({ findingId: issue.findingId, issueUrl: issue.issueUrl!, previous: issue.autoFixUrl, next, checkedAt })
-      }
+    for (const issue of byIssue.get(`${job.repo.repoId}:${job.number}`) ?? []) {
+      updates.push({ findingId: issue.findingId, issueUrl: issue.issueUrl!, previous: issue.autoFixUrl, next, checkedAt })
     }
   }
   return updates

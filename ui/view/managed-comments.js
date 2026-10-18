@@ -51,9 +51,18 @@ export async function loadManagedReportComments(reportId, { signal, readAnnotati
   for (const comment of comments) if (grouped.has(comment.findingId)) grouped.get(comment.findingId).push(comment)
   for (const [id, entries] of grouped) {
     // A POST completed while this read was in flight; keep its newer result.
-    if (state.managedComments.get(id) === before.get(id)) setManagedComments(id, entries)
+    // And a finding whose comments read as they were is left as it is: every
+    // row and preview showing it would draw again for nothing, and a read
+    // follows every triage event the team's feed carries.
+    if (state.managedComments.get(id) === before.get(id) && !sameComments(before.get(id), entries)) setManagedComments(id, entries)
   }
   return true
+}
+
+// Whether two lists of a finding's comments say the same, none and none
+// alike (a finding never read reads as none, managedCommentsFor).
+function sameComments(kept = [], read) {
+  return kept.length === read.length && kept.every((comment, i) => JSON.stringify(comment) === JSON.stringify(read[i]))
 }
 
 export async function writeManagedComment(finding, body, original = null) {

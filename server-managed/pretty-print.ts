@@ -12,16 +12,17 @@ import { promisify } from 'node:util'
 import { brotliDecompress } from 'node:zlib'
 import { format } from '@preventive/compare/pretty.js'
 import { computeFileHash } from '@preventive/report'
-import { FILE_HASH } from '../common/bundle-metadata.js'
+import { FILE_HASH, computeBundleFileHashes } from '../common/bundle-metadata.js'
 import { bundleCompareFiles } from '../common/bundle-compare-inputs.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { MAX_PRETTY_BYTES, needsPrettyPrint, prettyExtension } from '../common/pretty-print.js'
 import type { OpenedBlob } from './blob-store.ts'
-import { type BundleCacheStorage, readBundleDetails } from './bundle-cache.ts'
+import { type BundleCacheStorage, readSizedBundleDetails } from './bundle-cache.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
+import { keptBriefly } from './kept-briefly.ts'
 import { loadNpmFiles } from './npm-loads.ts'
 import { type NpmVersionDocument, npmFileText } from './npm-packages.ts'
 
@@ -34,6 +35,16 @@ const PRETTY_VERSION = 4
 // after another, beside other readers'), any more refused.
 const MAX_ACTIVE_FORMATS = 2
 const MAX_WAITING_FORMATS = 16
+// How long a bundle's details are kept once read, and what the two last read
+// may have decoded from between them, the least lately read going first past
+// it: Compare's requests for a pair of bundles come one after another, each
+// reading both, and the Code tab's for one, each reading it.
+const DETAILS_KEPT_MS = 60_000
+const MAX_KEPT_DETAILS = 2
+const MAX_KEPT_DETAILS_BYTES = 256 * 1024 * 1024
+// Files hashed at once: one at a time, each waits its own round trip to the
+// thread pool; all at once, every one's job is held together.
+const HASHES_AT_ONCE = 32
 
 export class PrettyError extends Error {
   status: number
@@ -108,6 +119,18 @@ export async function prettyBody(text: string, extension: string): Promise<Buffe
 
 const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
 
+// A version's file's hash, by its bytes: those of a version's files loaded
+// a little while since are the same bytes (npm-loads.ts), hashed once.
+const fileHashes = new WeakMap<Uint8Array, Promise<string>>()
+function npmFileHash(bytes: Uint8Array): Promise<string> {
+  let hash = fileHashes.get(bytes)
+  if (!hash) {
+    fileHashes.set(bytes, hash = computeFileHash(bytes))
+    hash.catch(() => { fileHashes.delete(bytes) })
+  }
+  return hash
+}
+
 const decompress = promisify(brotliDecompress)
 
 // A pretty-printed copy's text, from its Brotli-encoded bytes.
@@ -127,7 +150,7 @@ async function npmPrintable(doc: NpmVersionDocument): Promise<Array<PrettyReques
       const extension = prettyExtension(path)
       if (extension === null || bytes.byteLength > MAX_PRETTY_BYTES) continue
       const text = npmFileText(bytes)
-      if (text !== null && needsPrettyPrint(path, text)) files.push({ path, hash: await computeFileHash(bytes), extension, text })
+      if (text !== null && needsPrettyPrint(path, text)) files.push({ path, hash: await npmFileHash(bytes), extension, text })
     }
   } finally { load.release() }
   return files.toSorted((a, b) => (a.path < b.path ? -1 : 1))
@@ -206,26 +229,35 @@ async function kept(open: () => Promise<OpenedBlob>): Promise<OpenedBlob | null>
 
 // A side's files that can be formatted, with their texts, and every one of
 // its files' hashes by path, from their paths and contents: texts, or bytes,
-// read as text where they are.
-async function sideFiles(entries: Iterable<[string, string | Uint8Array]>): Promise<Pick<ComparedSide, 'files' | 'hashes'>> {
+// read as text where they are; hashed by `hashOf`, a few at once.
+async function sideFiles<T extends string | Uint8Array>(entries: Array<[string, T]>, hashOf: (file: string, content: T) => Promise<string>): Promise<Pick<ComparedSide, 'files' | 'hashes'>> {
   const files: ComparedSide['files'] = [], hashes = new Map<string, string>()
+  for (let i = 0; i < entries.length; i += HASHES_AT_ONCE) {
+    const chunk = entries.slice(i, i + HASHES_AT_ONCE)
+    const hashed = await Promise.all(chunk.map(async ([path, content]) => [path, await hashOf(path, content)] as const))
+    for (const [path, hash] of hashed) hashes.set(path, hash)
+  }
   for (const [path, content] of entries) {
-    const hash = await computeFileHash(content)
-    hashes.set(path, hash)
     const extension = prettyExtension(path)
     if (extension === null || (typeof content === 'string' ? Buffer.byteLength(content) : content.byteLength) > MAX_PRETTY_BYTES) continue
     const text = typeof content === 'string' ? content : npmFileText(content)
-    if (text !== null) files.push({ path, hash, extension, text })
+    if (text !== null) files.push({ path, hash: hashes.get(path)!, extension, text })
   }
   return { files, hashes }
 }
 
 // A bundle's side, from its details: its files, as sideFiles reads them,
 // within a reason `scope` as Compare reads them there (bundleCompareFiles),
-// and its packages' directories.
+// and its packages' directories; hashed once for its details, as long as
+// they are kept (computeBundleFileHashes).
 async function bundleSide(details: Parameters<typeof bundlePackageDirs>[0], scope: string): Promise<Pick<ComparedSide, 'files' | 'hashes' | 'packageDirs'>> {
   const scoped = scope ? new Set(bundleCompareFiles(details, scope).keys()) : null, sources = bundleSourcesAsMap(details)
-  return { ...await sideFiles(scoped ? [...sources].filter(([path]) => scoped.has(path)) : sources), packageDirs: bundlePackageDirs(details) }
+  const hashed: Map<string, string> = await computeBundleFileHashes(details)
+  return { ...await sideFiles(scoped ? [...sources].filter(([path]) => scoped.has(path)) : [...sources], (path, content) => {
+    const hash = hashed.get(path)
+    return hash === undefined ? computeFileHash(content) : Promise.resolve(hash)
+  }),
+    packageDirs: bundlePackageDirs(details) }
 }
 
 // A version's files by path, from one load of them.
@@ -251,14 +283,25 @@ export function stalePrettyRemover(npm: CacheStorage): (signal?: AbortSignal) =>
 }
 
 // A bundle's details, from its bytes in `store`: bundles are read one at a
-// time, as reading one decodes all of it.
+// time, as reading one decodes all of it, readers asking for one waiting its
+// turn or being read sharing it; and kept a little while once read
+// (DETAILS_KEPT_MS), each reader's access to the bundle the caller's to check
+// as ever.
 function detailsReader(store: BundleStore) {
-  const enqueue = serial()
-  return (record: ManagedBundle) => enqueue(async () => {
-    const details = await readBundleDetails(record, store)
-    if (!details) throw new PrettyError(422, 'bundle-unavailable')
-    return details
-  })
+  type Details = NonNullable<Awaited<ReturnType<typeof readSizedBundleDetails>>>['details']
+  const enqueue = serial(), share = sharing<Details>()
+  const held = keptBriefly<Details>({ keptMs: DETAILS_KEPT_MS, maxBytes: MAX_KEPT_DETAILS_BYTES, maxEntries: MAX_KEPT_DETAILS })
+  return (record: ManagedBundle): Promise<Details> => {
+    const key = `${record.id} ${record.integrity}`
+    const hit = held.get(key)
+    if (hit) return Promise.resolve(hit)
+    return share(key, () => enqueue(async () => {
+      const read = await readSizedBundleDetails(record, store)
+      if (!read) throw new PrettyError(422, 'bundle-unavailable')
+      held.keep(key, read.details, read.decodedBytes)
+      return read.details
+    }))
+  }
 }
 
 export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage, db: Pick<ManagedDb, 'getBundle'>, store: BundleStore) {
@@ -317,7 +360,7 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
         try {
           const bytes = (await load.result).find(entry => entry.path === request.path)?.bytes
           if (!bytes) throw new PrettyError(404, 'no-file')
-          if (await computeFileHash(bytes) !== request.hash) throw new PrettyError(409, 'hash-mismatch')
+          if (await npmFileHash(bytes) !== request.hash) throw new PrettyError(409, 'hash-mismatch')
           text = npmFileText(bytes)
         } finally { load.release() }
         if (text === null) throw new PrettyError(422, 'unformattable')
@@ -338,19 +381,20 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
     // pretty-printed (compared), and their diffs with renamed names hidden
     // (rename-diff.ts renamedPairs); a bundle's within a reason `scope`
     // where one is asked for, as Compare reads it then.
-    async bundleSides(base: ManagedBundle, other: ManagedBundle, scope = ''): Promise<[ComparedSide, ComparedSide]> {
+    bundleSides(base: ManagedBundle, other: ManagedBundle, scope = ''): Promise<[ComparedSide, ComparedSide]> {
       const sideOf = async (record: ManagedBundle, side: Side): Promise<ComparedSide> => ({ side, ...await bundleSide(await bundleDetails(record), scope),
         kept: request => kept(() => bundles.open(record.id, prettyFile(request))),
         made: async (request, text) => opened(await bundleCopy(record, request, () => Promise.resolve(text))) })
-      return [await sideOf(base, 'base'), await sideOf(other, 'other')]
+      return Promise.all([sideOf(base, 'base'), sideOf(other, 'other')])
     },
     // A bundle's details, read in its turn, as Compare pairs them (comparison.ts).
     bundleDetails,
-    async npmSides(base: NpmVersionDocument, other: NpmVersionDocument): Promise<[ComparedSide, ComparedSide]> {
-      const sideOf = async (doc: NpmVersionDocument, side: Side): Promise<ComparedSide> => ({ side, ...await sideFiles(await npmFiles(doc)), packageDirs: null,
+    npmSides(base: NpmVersionDocument, other: NpmVersionDocument): Promise<[ComparedSide, ComparedSide]> {
+      const sideOf = async (doc: NpmVersionDocument, side: Side): Promise<ComparedSide> => ({ side, ...await sideFiles(await npmFiles(doc), (_, bytes) => npmFileHash(bytes)),
+        packageDirs: null,
         kept: request => (doc.private ? Promise.resolve(null) : kept(() => npm.open(prettyFile(request)))),
         made: (request, text) => npmCopy(doc, request, () => Promise.resolve(text)) })
-      return [await sideOf(base, 'base'), await sideOf(other, 'other')]
+      return Promise.all([sideOf(base, 'base'), sideOf(other, 'other')])
     },
   }
 }

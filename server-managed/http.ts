@@ -182,7 +182,7 @@ import { WORKFLOWS_DIR } from './repository-actions.ts'
 import { githubActionsSource } from './github-actions.ts'
 import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, cacheAvatar, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
-import { clearCookie, endSession, readSession } from './session.ts'
+import { clearCookie, endSession, readSession, runRequestPresence } from './session.ts'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
@@ -197,7 +197,7 @@ import { LINK_LOGIN_PATH, isLinkOAuthCallback, linkLoginRedirect, linkOAuthCallb
 import type { ProfileChoice } from './github-links.ts'
 import { withAppUsers } from './github-users.ts'
 import { isBlobId } from './object-storage.ts'
-import { attachmentDisposition, sendJson, sendLines, writeResponse } from './http-response.ts'
+import { attachmentDisposition, sendJson, sendLines, writeResponse, writeResponseParts } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
@@ -206,7 +206,7 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
@@ -336,7 +336,7 @@ async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, 
   if (!s) return
   const snapshot = await teamSnapshot(deps.db, s.session.id, teamId, reportId)
   const ids = [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
-  const manualUrls = storedFixUrls(await deps.db.listTriage(ids))
+  const manualUrls = storedFixUrls(await deps.db.listTriageFixes(ids))
   const storedIssues = await deps.db.listManagedIssues(ids)
   const issues = visibleManagedIssues(storedIssues, snapshot)
   const visibleIds = new Set(issues.map(issue => issue.findingId))
@@ -347,7 +347,7 @@ async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, 
     : { fixes: await lookupFixes(deps.config, deps.db, snapshot, urls), updates: [] }
   // Cold report reads, token refresh and upstream batches can outlive changes
   // to security/links, team grants, publication, sessions or the Fix links.
-  const currentUrls = storedFixUrls(await deps.db.listTriage(ids))
+  const currentUrls = storedFixUrls(await deps.db.listTriageFixes(ids))
   if (await readWorkspaceSession(res, deps, cookie) == null) return
   await recheckTeam(deps.db, s.session.id, snapshot)
   if (JSON.stringify(currentUrls) !== JSON.stringify(manualUrls)) {
@@ -386,9 +386,8 @@ function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['
   return deps.db.recordActivity({ kind, actor: user.login, actorId: user.id, action, ...context }, Date.now())
 }
 
-async function repositoryName(deps: ManagedHttpDeps, repoId: number | null | undefined): Promise<string | null> {
-  if (repoId == null) return null
-  return (await deps.db.listAllRepos()).find(repo => repo.repoId === repoId)?.fullName ?? null
+function repositoryName(deps: ManagedHttpDeps, repoId: number | null | undefined): Promise<string | null> {
+  return repoId == null ? Promise.resolve(null) : deps.db.getRepoFullName(repoId)
 }
 
 // Workspace history is authorized BEFORE filtering, counting, or paging.
@@ -412,8 +411,14 @@ async function handleHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie:
   if (s.user.role !== 'admin') {
     const findings = new Map<string, ActivityContext>()
     const reports = kind === 'all' || kind === 'triage' ? await deps.db.listActivityReports(s.user.id) : []
+    // Every report's record in one read, as visibleFindingIds reads each one's.
+    const snapshot = reports.length > 0 ? await deps.db.getReportAccessSnapshot(s.session.id, Date.now(), reports.map(report => report.reportId)) : { reports: [] }
+    if (snapshot == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+    const records = new Map(snapshot.reports.map(record => [record.id, record]))
     for (const report of reports) {
-      for (const finding of await visibleFindingIds(deps, s.user, report.reportId, s.session.id, null)) {
+      const record = records.get(report.reportId)
+      if (record == null) continue
+      for (const finding of await reportFindingIds(deps, record, record.repo.github)) {
         if (!findings.has(finding)) findings.set(finding, { finding, ...report })
       }
     }
@@ -3263,7 +3268,7 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   if (outputBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
   parts.push(suffix)
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
-  writeResponse(res, Buffer.concat(parts, outputBytes))
+  writeResponseParts(res, parts, outputBytes)
 }
 
 // The server selects the complete published workspace for classification.
@@ -3293,24 +3298,23 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
   }
   const rec = await deps.db.getReport(reportId)
   if (rec == null) return new Set()
-  const repo = { github: await repositoryName(deps, rec.repoId) }
-  const key = JSON.stringify([reportId, rec.sha256, rec.filename, repo])
+  return reportFindingIds(deps, rec, await repositoryName(deps, rec.repoId))
+}
+// A whole report's finding ids, kept by its content, name and repository,
+// the one read least recently dropped first.
+async function reportFindingIds(deps: ManagedHttpDeps, rec: { id: string; sha256: string; filename: string }, github: string | null): Promise<Set<string>> {
+  const key = JSON.stringify([rec.id, rec.sha256, rec.filename, { github }])
   let cache = visibleIdsCaches.get(deps)
   if (cache == null) { cache = new Map(); visibleIdsCaches.set(deps, cache) }
   const hit = cache.get(key)
-  if (hit != null) return hit
-  const ids = new Set<string>()
-  const bytes = await deps.reportStore.get(reportId)
-  if (bytes == null) return ids
-  const text = bytes.toString('utf8')
-  const { data } = readManagedReport(text, rec.filename)
-  if (data == null) return ids
-  const report = await loadManagedFindings(JSON.stringify(data), rec.filename)
-  if (report == null) return ids
-  for (const f of report.findings) {
-    const id = (f as { id?: unknown }).id
-    if (typeof id === 'string' && id !== '') ids.add(id)
-  }
+  if (hit != null) { cache.delete(key); cache.set(key, hit); return hit }
+  const bytes = await deps.reportStore.get(rec.id)
+  if (bytes == null) return new Set()
+  const { data } = readManagedReport(bytes.toString('utf8'), rec.filename)
+  if (data == null) return new Set()
+  // The ids the team workspace derives (teamFindingIds), from the one parse.
+  const ids = await reportIds(data)
+  ids.delete('')
   while (cache.size >= VISIBLE_IDS_CACHE_MAX) {
     const oldest = cache.keys().next().value
     if (oldest === undefined) break
@@ -3876,7 +3880,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   try {
     const reader = await npmReader(deps, cookie, [context.package, ...context.basePackage ? [context.basePackage] : []])
     if (!reader || reader.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-    const kept = npmVersionStore(deps.db, deps.config.debug)
+    const kept = readTogether(npmVersionStore(deps.db, deps.config.debug), [{ name, version }, ...context.basePackage ? [{ name: context.basePackage, version: context.baseVersion! }] : []])
     const read = (pkg: string, spec: string) => readNpmVersion(pkg, spec, canReadPrivateNpm(reader, pkg), controller.signal, kept)
     const [doc, base] = await Promise.all([read(name, version), context.basePackage ? read(context.basePackage, context.baseVersion!) : null])
     if (!doc || (context.basePackage && !base)) { sendJson(res, 404, { error: 'package-not-found' }); return }
@@ -4016,7 +4020,17 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       await reply(doc.private, { name, downloads, github })
       return
     }
-    const doc = found(await readNpmVersion(name, spec, privileged, controller.signal, keptVersions))
+    // The version it is compared with, where its route names one, read
+    // beside it, the two read of those kept at once.
+    const against: [string, string, boolean] | null = (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)') || (path === NPM_DELTA_PATH && otherSpec !== '(empty)')
+      || ((path === NPM_TYPE_ONLY_PATH || path === NPM_RENAME_DIFF_PATH || (path === NPM_PRETTY_PATH && !params.has('path'))) && otherSpec !== '')
+      ? [name, otherSpec, privileged]
+      : path === NPM_COMPARISON_PATH && otherSpec !== '(empty)' ? [otherName, otherSpec, canReadPrivateNpm(reader, otherName)] : null
+    const keptTogether = against ? readTogether(keptVersions, [{ name, version: spec }, { name: against[0], version: against[1] }]) : keptVersions
+    const otherAsked = against && readNpmVersion(against[0], against[1], against[2], controller.signal, keptTogether)
+    otherAsked?.catch(() => {})
+    const otherDoc = async () => found(await otherAsked!)
+    const doc = found(await readNpmVersion(name, spec, privileged, controller.signal, keptTogether))
     if (spec === 'latest') latest = Promise.resolve(doc)
     const repo = githubRepoOf(doc), sha = bundleCommitHash(doc.manifest['gitHead'])
     // What the viewer asks about a version beside its files, by its route,
@@ -4039,7 +4053,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // new and however few download it where a team lists its scope, its own
     // packages, as a new dependency on a package of such a scope is.
     if (path === NPM_RISK_PATH) {
-      const old = otherSpec === '' || otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
+      const old = otherSpec === '' || otherSpec === '(empty)' ? null : await otherDoc()
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
       const assessment = await npmRisk(doc, otherSpec === '' ? 'pick' : old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, fromEmpty: otherSpec === '(empty)',
@@ -4054,7 +4068,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // package's, and those but for declaration files changed in types alone
     // (npm-delta.ts), as a list of versions wanting reviews tells them.
     if (path === NPM_DELTA_PATH) {
-      const old = otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
+      const old = otherSpec === '(empty)' ? null : await otherDoc()
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       const side = (version: NpmVersionDocument) => ({ integrity: version.dist.integrity, files: async () => {
         const load = loadNpmFiles(version)
@@ -4070,7 +4084,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // the one compared with, or `(empty)`, none, as Review reads a first
     // version. Read of both, each package's access checked again once worked out.
     if (path === NPM_COMPARISON_PATH) {
-      const old = otherSpec === '(empty)' ? null : found(await readNpmVersion(otherName, otherSpec, canReadPrivateNpm(reader, otherName), controller.signal, keptVersions))
+      const old = otherSpec === '(empty)' ? null : await otherDoc()
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       const loads = [doc, ...old ? [old] : []].map(loadNpmFiles)
       let body
@@ -4108,7 +4122,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // and those that changed in types alone (type-only.ts).
     if (path === NPM_PRETTY_PATH || path === NPM_TYPE_ONLY_PATH || (path === NPM_RENAME_DIFF_PATH && !diffed)) {
       if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const other = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
+      const other = otherSpec === '' ? null : await otherDoc()
       const sides = other && await deps.prettyCache.npmSides(doc, other)
       const lines = path === NPM_RENAME_DIFF_PATH ? renamedPairs(sides!, !doc.private && !other!.private)
         : path === NPM_TYPE_ONLY_PATH ? typeOnlyFiles(sides!) : sides ? compared(sides) : await deps.prettyCache.npmAll(doc)
@@ -4126,7 +4140,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (diffed) {
       const { prettyCache } = deps
       if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const other = found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
+      const other = await otherDoc()
       const diff = await renameDiffOf(diffed, async () => [await prettyText(await prettyCache.npm(doc, diffed.base)),
         await prettyText(await prettyCache.npm(other, diffed.other))], !doc.private && !other.private)
       if (!(await recheck(doc.private || other.private))) { diff.stream.destroy(); return }
@@ -4701,7 +4715,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // Feeds lease a connection per poll, never across streaming sleeps. This
     // also covers capability-authenticated feeds handled by public-workspace.
     const feed = /^\/api\/teams(?:\/[^/?]+)?\/feed(?:\?|$)/u.test(req.url ?? '')
-    const serve = () => db.withRequest && !feed ? db.withRequest(() => route(req, res)) : route(req, res)
+    const serve = () => runRequestPresence(() => db.withRequest && !feed ? db.withRequest(() => route(req, res)) : route(req, res))
     const work = runViewing(viewToken(config, req.headers.cookie) != null, serve).catch((err) => {
       if ((err instanceof TeamReportsError || err instanceof IssueError || err instanceof OAuthError || err instanceof ManagedMutationError) && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
       console.warn('managed: request handler error:', err)

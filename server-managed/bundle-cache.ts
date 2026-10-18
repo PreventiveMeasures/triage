@@ -24,11 +24,17 @@ export type BundleCacheRecord = Pick<ManagedBundle, 'id' | 'integrity' | 'filena
 export interface BundleSummary { files: number; codeFiles: number; lines: number; commit?: string; stasisVersion?: number; versionedPackages?: number }
 
 export async function readBundleDetails(record: BundleCacheRecord, store: BundleStore) {
+  return (await readSizedBundleDetails(record, store))?.details ?? null
+}
+
+// As readBundleDetails, with the bytes the bundle decoded to: about what
+// holding its details takes.
+export async function readSizedBundleDetails(record: BundleCacheRecord, store: BundleStore) {
   const bytes = await store.get(record.id, record.kind)
   if (!bytes) return null
   const decoded = record.kind === 'stasis' || record.kind === 'sourcemap' ? await decompress(bytes, { maxOutputLength: MAX_DECODED_BYTES }) : bytes
   if (decoded.length > MAX_DECODED_BYTES) throw new Error('Decoded bundle too large')
-  return parseBundleContents(decodeUtf8(decoded), { integrity: record.integrity, kind: record.kind, size: record.byteSize })
+  return { details: parseBundleContents(decodeUtf8(decoded), { integrity: record.integrity, kind: record.kind, size: record.byteSize }), decodedBytes: decoded.length }
 }
 
 export interface BundleCacheStorage {

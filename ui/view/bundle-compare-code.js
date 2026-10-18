@@ -238,6 +238,11 @@ export const diffCounts = (additions, deletions) => html`<span class="bundle-com
   <span class="add">+${additions.toLocaleString()}</span><span class="del">−${deletions.toLocaleString()}</span>
 </span>`
 
+// Whether hiding whitespace changes hides one in a file drawn with them
+// hidden (hidesWhitespace), its model's lines and blocks those of the two
+// texts: kept on the model, as whether they mix kinds of blank is (_fileState).
+const hidesAnyWhitespace = (model, before, after) => (model.hideable ??= hidesWhitespace(before, after, model.blocks))
+
 // A diff too large to compute before it is asked for.
 export const isLargeDiff = (before, after) => before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES
 
@@ -377,6 +382,8 @@ export class BundleCompareCode extends LitElement {
     this._spaced = new Map()
     // Whether a file's printed copies diff in fewer lines than it (_smaller).
     this._shorter = new Map()
+    // Whether the texts a file shows are too large to diff unasked (_large).
+    this._larges = new Map()
     // A model's key (modelKey) → fold run → lines revealed, and the rows
     // shown before "Show more"; large files the user asked to diff anyway.
     this._expansions = new Map()
@@ -396,6 +403,7 @@ export class BundleCompareCode extends LitElement {
       this._models.clear()
       this._spaced.clear()
       this._shorter.clear()
+      this._larges.clear()
       this._expansions.clear()
       this._limits.clear()
       this._forced.clear()
@@ -1096,8 +1104,8 @@ export class BundleCompareCode extends LitElement {
     const renames = generated && pretty.status === 'ready'
     // A hit sought here asks for a diff too large to show unasked, as "Show
     // diff" does: large as the texts it shows are, printed or as published.
-    if (!counting && textual && this._sought?.path === path && !this._forced.has(path) && isLargeDiff(before, after)) this._forced.add(path)
-    const large = textual && !this._forced.has(path) && isLargeDiff(before, after)
+    if (!counting && textual && this._sought?.path === path && !this._forced.has(path) && this._large(path, before, after)) this._forced.add(path)
+    const large = textual && !this._forced.has(path) && this._large(path, before, after)
     const { basePath = path } = entry
     const diffed = ignoreWhitespace => {
       const ask = () => renameDiff(this.base, basePath, contents.before, this.other, path, contents.after, ignoreWhitespace, this._repaint, pretty.hashes,
@@ -1149,7 +1157,7 @@ export class BundleCompareCode extends LitElement {
     const off = model && !unlisted && !prefs.ignoreWhitespace ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
     const whitespace = model === null || unlisted ? null
       : mixed ? 'mixed'
-      : prefs.ignoreWhitespace ? (hidesWhitespace(shown, after, model.blocks) ? 'hideable' : null)
+      : prefs.ignoreWhitespace ? (hidesAnyWhitespace(model, shown, after) ? 'hideable' : null)
       : off.hides && !off.mixed ? 'hideable' : null
     // A hit sought here waits while its diff isn't drawn yet: its printed
     // copies still coming, or its renamed names, to be hidden, coming or
@@ -1208,6 +1216,18 @@ export class BundleCompareCode extends LitElement {
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }
     const smaller = !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
     return { copies, minified: unreadable, smaller, applies: unreadable || smaller }
+  }
+
+  // Whether the texts a file shows are too large to diff unasked
+  // (isLargeDiff), kept with the texts it was found for, as _smaller keeps
+  // its answer: every render asks it of every file it lists, and counting a
+  // large file's lines takes a while.
+  _large(path, before, after) {
+    const kept = this._larges.get(path)
+    if (kept?.before === before && kept.after === after) return kept.large
+    const large = isLargeDiff(before, after)
+    this._larges.set(path, { before, after, large })
+    return large
   }
 
   // Whether a file's printed copies' diff has fewer changed lines than its

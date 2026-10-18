@@ -310,10 +310,10 @@ test('a cold report read rechecks workspace access before contacting GitHub', as
 
 test('access is rechecked after the final persisted Fix read', async t => {
   const f = await workspaceFixture(t)
-  const listTriage = f.db.listTriage
+  const listTriageFixes = f.db.listTriageFixes
   let reads = 0
-  t.mock.method(f.db, 'listTriage', async ids => {
-    const entries = await listTriage(ids)
+  t.mock.method(f.db, 'listTriageFixes', async ids => {
+    const entries = await listTriageFixes(ids)
     if (++reads === 2) await f.db.removeTeamMember('team', f.session.userId)
     return entries
   })

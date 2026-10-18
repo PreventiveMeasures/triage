@@ -7,7 +7,7 @@ import { migrateReportLocations } from './report-migration.ts'
 import { initCommentMethods } from './comments.ts'
 import { initActivityMethods } from './activity.ts'
 import { revisionSchema } from './revisions.ts'
-import { MANAGED_SCHEMA, VIEW_SESSION_INDEX } from './db-schema.ts'
+import { MANAGED_SCHEMA, REPO_UPLOAD_INDEXES, VIEW_SESSION_INDEX } from './db-schema.ts'
 import { GITHUB_LINK_USER_COLUMNS } from './github-links.ts'
 import { REPOSITORY_DEPENDENCY_REVIEW_COLUMNS } from './repository-dependency-reviews.ts'
 import { STORAGE_SCHEMA } from './storage-db.ts'
@@ -113,6 +113,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     if (addedVisible) db.prepare('UPDATE managed_report SET visible = 1 WHERE visible = 0').run()
     ensureColumn(db, 'managed_bundle', 'uploaded_by_login', 'TEXT')
     ensureColumn(db, 'managed_bundle', 'repo_directory', "TEXT NOT NULL DEFAULT ''")
+    db.exec(REPO_UPLOAD_INDEXES)
     ensureColumn(db, 'managed_bundle', 'visible', 'INTEGER NOT NULL DEFAULT 1')
     // Existing rows stay NULL (unknown): some may have been built on the server.
     ensureColumn(db, 'managed_bundle', 'provenance', 'TEXT')

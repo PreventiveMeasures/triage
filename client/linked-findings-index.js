@@ -129,7 +129,7 @@ async function indexOne(name) {
   // the old file. Record nothing (so the name stays unclassified) and
   // ask for another pass.
   if ((fileGen.get(name) ?? 0) !== gen) { needsRescan = true; return false }
-  const parsed = /^\s*\[/u.test(content) ? parseLinkedFindings(content) : null
+  const parsed = parseLinkedFindings(content)
   byFile.set(name, parsed)
   // Repair stale hints for the sidebar too. The ordinary-report fast path
   // does not re-analyze reports whose classification is already consistent.

@@ -152,10 +152,12 @@ export interface ActionsResolving {
   store?: KeptStore<ActionLine> | undefined
 }
 
-// A reference's line: kept, else resolved, and kept where it is a public
-// repository's; why not, where it couldn't be.
-async function resolved(resolving: ActionsResolving, source: ActionsSource, { key, owner }: ActionRef): Promise<ActionLine | null> {
-  const kept = resolving.memory.get(key) ?? await resolving.store?.read(key).then(row => row && { at: row.at, line: row.value })
+// A reference's line: kept (`stored`, as read of the store with others),
+// else resolved, and kept where it is a public repository's; why not, where
+// it couldn't be.
+async function resolved(resolving: ActionsResolving, source: ActionsSource, { key, owner }: ActionRef,
+  stored = resolving.store?.read(key)): Promise<ActionLine | null> {
+  const kept = resolving.memory.get(key) ?? await stored?.then(row => row && { at: row.at, line: row.value })
   if (kept && Date.now() - kept.at < RISK_KEPT_MS) { resolving.memory.set(key, kept); return kept.line }
   const uses = usesOfKey(key)
   if (!uses) return { type: 'action', key, error: 'invalid-uses' }
@@ -181,6 +183,9 @@ export function resolvingActions(resolving: ActionsResolving) {
   const source = keptSource(sharedSource(resolving.source, resolving.answers))
   const pending: Queue<ActionRef> = queue(resolving.signal)
   const latest = new Map<string, ActionRef>()
+  // Those of the references added at once kept beyond this instance, read of
+  // the store together as they are added.
+  const stored = new Map<string, Promise<{ at: number; value: ActionLine } | null>>()
   let closed = false, waiting = 0
   const settle = () => { if (closed && waiting === 0) pending.close() }
   const add = (refs: ActionRef[]) => {
@@ -192,11 +197,14 @@ export function resolvingActions(resolving: ActionsResolving) {
       waiting++
       pending.add(kept)
     }
+    const unread = [...new Set(refs.map(ref => ref.key))].filter(key => latest.has(key) && !stored.has(key) && !resolving.memory.get(key))
+    const read = unread.length > 0 ? resolving.store?.readMany(unread) : undefined
+    for (const key of read ? unread : []) stored.set(key, read!.then(found => found.get(key) ?? null))
   }
   const work = async () => {
     for (let ref = await pending.take(); ref !== undefined; ref = await pending.take()) {
       try {
-        const line = await resolved(resolving, source, ref)
+        const line = await resolved(resolving, source, ref, stored.get(ref.key))
         if (line && latest.get(ref.key) === ref) {
           resolving.tell(line)
           const owner = 'repository' in line ? (line.repository?.fullName ?? line.repo).split('/')[0]! : ref.owner
