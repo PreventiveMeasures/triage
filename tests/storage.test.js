@@ -167,6 +167,46 @@ describe('storage — readFile cache semantics', () => {
   })
 })
 
+describe('storage — readFile cache bound and walks reading without keeping', () => {
+  it('keeps texts up to its bound, the least lately read going first', async () => {
+    globalThis.localStorage.clear()
+    const fresh = await import(`../client/storage.js?bound=${Date.now()}`)
+    fresh.__test__.setMaxKeptChars(100)
+    await fresh.saveFile('a.json', 'a'.repeat(40))
+    await fresh.saveFile('b.json', 'b'.repeat(40))
+    // Read again lately: b goes first once c needs the room.
+    assert.equal(await fresh.readFile('a.json'), 'a'.repeat(40))
+    await fresh.saveFile('c.json', 'c'.repeat(40))
+    assert.equal(fresh.__test__.keptChars(), 80)
+    for (const name of ['a.json', 'b.json', 'c.json']) globalThis.localStorage.removeItem(LS_REPORT_PREFIX + name)
+    assert.equal(await fresh.readFile('a.json'), 'a'.repeat(40), 'kept')
+    assert.equal(await fresh.readFile('c.json'), 'c'.repeat(40), 'kept')
+    await assert.rejects(fresh.readFile('b.json'), /File not found/u, 'let go, so read of storage again')
+    // One past the bound alone is never kept.
+    await fresh.saveFile('big.json', 'x'.repeat(101))
+    globalThis.localStorage.removeItem(LS_REPORT_PREFIX + 'big.json')
+    await assert.rejects(fresh.readFile('big.json'), /File not found/u)
+    assert.equal(fresh.__test__.keptChars(), 80)
+  })
+
+  it('a read with keep: false keeps nothing, unless a reader asking to keep it shares it', async () => {
+    globalThis.localStorage.clear()
+    const fresh = await import(`../client/storage.js?walk=${Date.now()}`)
+    await fresh.saveFile('walked.json', 'walked')
+    await fresh.saveFile('shared.json', 'shared')
+    fresh.__test__.forgetAll()
+    assert.equal(await fresh.readFile('walked.json', { keep: false }), 'walked')
+    const [walk, view] = await Promise.all([fresh.readFile('shared.json', { keep: false }), fresh.readFile('shared.json')])
+    assert.equal(walk, 'shared')
+    assert.equal(view, 'shared')
+    assert.equal(fresh.__test__.keptChars(), 'shared'.length, 'the one a view asked for kept')
+    globalThis.localStorage.removeItem(LS_REPORT_PREFIX + 'walked.json')
+    globalThis.localStorage.removeItem(LS_REPORT_PREFIX + 'shared.json')
+    await assert.rejects(fresh.readFile('walked.json'), /File not found/u, 'the walk\'s read not kept')
+    assert.equal(await fresh.readFile('shared.json', { keep: false }), 'shared', 'one kept is answered to a walk too')
+  })
+})
+
 describe('storage — readFile error path', () => {
   it('rejects with a descriptive error when the name is unknown', async () => {
     globalThis.localStorage.clear()

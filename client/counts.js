@@ -213,7 +213,7 @@ export function ensureCounts(names, onUpdate) {
         activePending.delete(n)
         if (c[n] !== undefined) continue
         try {
-          const content = await readFile(n)
+          const content = await readFile(n, { keep: false })
           // Re-check after the await: a concurrent setCount (e.g. an
           // ingest landing mid-walk) may have populated c[n] while we
           // were reading. Overwriting it with our freshly-parsed value

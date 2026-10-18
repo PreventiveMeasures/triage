@@ -422,7 +422,8 @@ async function indexOne(name) {
   // don't double-process the same report.
   indexed.add(name)
   try {
-    const content = await readFile(name)
+    // Read without keeping its text: the walk reads every report on disk.
+    const content = await readFile(name, { keep: false })
     // The same read ingest.js does — every format, `groups` or
     // `findings`, ids derived where the report stamped none — so a
     // markdown-format report surfaces in Packages / Repositories, and
