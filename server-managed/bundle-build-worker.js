@@ -96,13 +96,17 @@ export function buildErrorCode(error, message) {
 if (parentPort && workerData?.type === 'managed-bundle-build') {
   // Send diagnostics to the request's parent thread, which writes them before
   // returning the HTTP response. Worker stdout can be lost on termination.
-  const send = message => {
+  const send = (message, transfer = []) => {
     // Node worker messages have no browser target origin.
     // oxlint-disable-next-line unicorn/require-post-message-target-origin
-    parentPort.postMessage(message)
+    parentPort.postMessage(message, transfer)
   }
   try {
-    send(await buildStasisBundle(workerData, undefined, stage => send({ type: 'progress', stage })))
+    const built = await buildStasisBundle(workerData, undefined, stage => send({ type: 'progress', stage }))
+    // The bytes handed over rather than copied, where they alone fill their
+    // buffer (a small one may share Node's pool, which can't be moved).
+    const { bytes } = built
+    send(built, bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? [bytes.buffer] : [])
   } catch (error) {
     const diagnostic = bundleBuildDiagnostic(error, workerData.token)
     const code = buildErrorCode(error, diagnostic.message)

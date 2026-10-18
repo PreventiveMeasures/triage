@@ -95,7 +95,7 @@ export function githubBundleFilename(github: string, directory: string, commit: 
   return `${repo}.${dir}${tail}`
 }
 
-export interface BuiltBundle { bytes: Uint8Array; directory: string; filename: string }
+export interface BuiltBundle { bytes: Buffer; directory: string; filename: string }
 export interface BuildRequest {
   input: BundleBuildInput; github: string; token: string | null; maxBytes: number; scopes: (string | null)[]
   // Upstream's disk cache for what a build fetches (setCacheDir), or null for
@@ -174,14 +174,16 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
       const abort = () => fail(signal.reason instanceof BundleBuildError ? signal.reason.status : 499,
         signal.reason instanceof BundleBuildError ? signal.reason.code : 'build-cancelled')
       signal.addEventListener('abort', abort, { once: true })
-      running.on('message', (message: BuiltBundle & { type?: string; stage?: BundleBuildStage; error?: string; status?: number; diagnostic?: BundleBuildDiagnostic }) => {
+      running.on('message', (message: Omit<BuiltBundle, 'bytes'> & { bytes: Uint8Array; type?: string; stage?: BundleBuildStage; error?: string; status?: number; diagnostic?: BundleBuildDiagnostic }) => {
         if (settled) return
         if (message.type === 'progress' && message.stage) { stage = message.stage; log('progress'); return }
         if (message.error) { fail(message.status ?? 422, message.error, { diagnostic: message.diagnostic }); return }
         settled = true
         cleanup()
         log('completed', { byteSize: message.bytes.length })
-        resolve({ bytes: Buffer.from(message.bytes), directory: message.directory, filename: message.filename })
+        // A view of the bytes the worker handed over, not a copy of them.
+        const { bytes } = message
+        resolve({ bytes: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), directory: message.directory, filename: message.filename })
       })
       running.once('error', error => fail(422, 'build-failed', { diagnostic: bundleBuildDiagnostic(error, request.token) }))
       running.once('exit', exitCode => fail(422, 'build-failed', { exitCode }))

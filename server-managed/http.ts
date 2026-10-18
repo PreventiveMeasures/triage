@@ -2794,9 +2794,8 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
         throw new BundleBuildError(409, 'repository-changed')
       }
       signal.throwIfAborted()
-      const bytes = Buffer.from(built.bytes)
-      await storeUploadedBundle(req, res, deps, cookie, current, bytes, input.repoId, built.directory, built.filename, 'build',
-        bundleIntegrity(bytes), input.conditions)
+      await storeUploadedBundle(req, res, deps, cookie, current, built.bytes, input.repoId, built.directory, built.filename, 'build',
+        bundleIntegrity(built.bytes), input.conditions)
     })
   } catch (error) {
     if (res.destroyed || controller.signal.aborted) return
