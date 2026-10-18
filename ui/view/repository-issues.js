@@ -25,6 +25,7 @@ import { activityPicker } from './repository-activity.js'
 import { githubUser, githubUserName } from './github-users.js'
 import { reviewLine } from './pull-reviews.js'
 import { groupAt, groupOf, knowItems, knownItem, knownItems, readAtOf } from './repository-items.js'
+import { heldRead } from './held-read.js'
 
 export { issueState }
 
@@ -117,26 +118,18 @@ function rebase(repoId, kind, entry) {
 // The list `key` names, as held, else read: `{ status }`, 'loading', then
 // 'ready' with its `items`, `counts`, and where more follow, the cursor
 // reading them (`after`), or 'error' with its `error`; read again once old,
-// or an error's retry is due. `adopt` records what its counts counted.
+// or an error's retry is due, shown meanwhile (held-read.js). `adopt`
+// records what its counts counted.
 function listRead(key, ask, adopt) {
-  const data = sessionLists()
-  const held = data.get(key)
-  if (held && Date.now() < held.until) return held
-  const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
-  data.set(key, loading)
-  ask(null).then(answer => {
-    if (data.get(key) !== loading) return null
-    const entry = { status: 'ready', until: Date.now() + KEEP_MS, ...answer, countsAt: answer.readAt, loadingMore: false, moreError: null }
-    adopt(entry)
-    data.set(key, entry)
-    return null
-  }, err => {
-    if (data.get(key) !== loading) return null
-    if (err?.name === 'AbortError') data.delete(key)
-    else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The list could not be read.' })
-    return null
-  }).finally(repaint)
-  return loading
+  return heldRead(sessionLists(), key, () => ask(null), {
+    ready: answer => {
+      const entry = { status: 'ready', until: Date.now() + KEEP_MS, ...answer, countsAt: answer.readAt, loadingMore: false, moreError: null }
+      adopt(entry)
+      return entry
+    },
+    failed: err => err?.name === 'AbortError' ? null : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The list could not be read.' },
+    retryMs: RETRY_MS, repaint,
+  })
 }
 
 // The next page of a list, after those it holds.

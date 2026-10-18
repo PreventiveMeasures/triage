@@ -26,6 +26,9 @@ export interface KeptStore<T> {
   read(key: string): Promise<{ at: number; value: T } | null>
   // Those of `keys` kept, by key, in one read of the database.
   readMany(keys: string[]): Promise<Map<string, { at: number; value: T }>>
+  // Those of `first` kept; where none is, those of `then`, in one read of the
+  // database (`first` whether they are `first`'s).
+  readFirst(first: string[], then: string[]): Promise<{ first: boolean; found: Map<string, { at: number; value: T }> }>
   write(key: string, value: T, at: number): Promise<void>
   // Removes what is kept by `key`.
   remove(key: string): Promise<void>
@@ -65,6 +68,13 @@ function keptStore<T>(db: UpstreamCacheStore, type: string, keptMs: number, debu
         const rows = await db.getUpstreamCacheEntries(keys.map(keyOf))
         return new Map(keys.flatMap(key => { const kept = valueOf(rows.get(keyOf(key))); return kept ? [[key, kept] as const] : [] }))
       } catch (error) { warn('read', error); return new Map() }
+    },
+    async readFirst(first, then) {
+      try {
+        const { first: answered, entries } = await db.getFirstUpstreamCacheEntries(first.map(keyOf), then.map(keyOf))
+        const asked = answered ? first : then
+        return { first: answered, found: new Map(asked.flatMap(key => { const kept = valueOf(entries.get(keyOf(key))); return kept ? [[key, kept] as const] : [] })) }
+      } catch (error) { warn('read', error); return { first: false, found: new Map() } }
     },
     async write(key, value, at) {
       try { await db.setUpstreamCacheEntry(keyOf(key), JSON.stringify({ at, value }), at) } catch (error) { warn('write', error) }

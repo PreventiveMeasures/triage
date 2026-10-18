@@ -20,6 +20,7 @@ import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { navigateToRepositoryCode, shownRevision } from './repository-code.js'
 import { activityPicker } from './repository-activity.js'
 import { commitAuthors } from './github-users.js'
+import { heldRead } from './held-read.js'
 
 // The graph's geometry, in pixels: a lane's width, a line's height, and the
 // margin before the first lane and after the last.
@@ -74,22 +75,14 @@ function readEntry(answer, settle, sought = new Set()) {
   return entry
 }
 
+// One gone old is shown while it is read again (held-read.js).
 function historyRead(key, ask, settle) {
-  const data = sessionHistories()
-  const held = data.get(key)
-  if (held && Date.now() < held.until) return held
-  const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
-  data.set(key, loading)
-  ask(1).then(answer => {
-    if (data.get(key) === loading) data.set(key, readEntry(answer, settle))
-    return null
-  }, err => {
-    if (data.get(key) !== loading) return null
-    if (err?.name === 'AbortError') data.delete(key)
-    else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The history could not be read.', code: err?.code ?? null })
-    return null
-  }).finally(repaint)
-  return loading
+  return heldRead(sessionHistories(), key, () => ask(1), {
+    ready: answer => readEntry(answer, settle),
+    failed: err => err?.name === 'AbortError' ? null
+      : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The history could not be read.', code: err?.code ?? null },
+    retryMs: RETRY_MS, repaint,
+  })
 }
 
 // Every branch's history read again, afresh (`ask`'s third argument), for

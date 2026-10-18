@@ -27,7 +27,7 @@ function github(t, graphql) {
 
 // The endpoint over a database of its own: `tracked` what it reads behind its
 // answers, on a deployment `serverless` or not.
-async function fixture(t, { role = 'admin', tokens = userTokens, serverless = false, tracked = [] } = {}) {
+async function fixture(t, { role = 'admin', tokens = userTokens, serverless = false, tracked = [], retained = null } = {}) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const config = { ...baseConfig, serverless }
@@ -38,7 +38,8 @@ async function fixture(t, { role = 'admin', tokens = userTokens, serverless = fa
   await db.createTeam('team', 'Team', Date.now())
   await db.setTeamRepo('team', 1, 'src/allowed')
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
-  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track(work) { tracked.push(work) } })
+  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track(work) { tracked.push(work) },
+    ...retained ? { waitUntil: work => { retained.push(work) } } : {} })
   return async (query, { method = 'GET', path = 'issues' } = {}) => {
     const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
     await handler({ method, url: `/api/admin/repositories/${path}?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
@@ -191,7 +192,7 @@ test('a list that names no kind or state, or a cursor that isn\'t one, is a bad 
   assert.equal((await request({ repoId: '1', kind: 'issues' }, { method: 'POST' })).status, 405)
 })
 
-test('a page read is kept for every reader: answered as kept a while, then at once as it is read again behind it; serverless, read again first', async t => {
+test('a page read is kept for every reader: answered as kept a while, then at once as it is read again behind it, serverless too', async t => {
   let title = 'Kept'
   // GitHub's answers, held till released where `held` is.
   let held = null
@@ -221,13 +222,18 @@ test('a page read is kept for every reader: answered as kept a while, then at on
   title = 'A day on'
   t.mock.timers.setTime(Date.now() + 24 * 60 * 60_000 + 60_000)
   assert.equal(await titled({ repoId: '1', kind: 'issues' }), 'A day on')
-  // Serverless, where nothing outlives an answer: read again before it.
-  const first = await fixture(t, { serverless: true, tracked })
+  // Serverless, the read behind it kept alive by the function's waitUntil.
+  const retained = []
+  const first = await fixture(t, { serverless: true, tracked, retained })
   title = 'Before'
   await first({ repoId: '1', kind: 'pulls' })
+  assert.equal(retained.length, 0, 'nothing read behind a fresh answer')
   title = 'After'
   t.mock.timers.setTime(Date.now() + 3 * 60_000)
-  assert.equal((await first({ repoId: '1', kind: 'pulls' })).body.items[0].title, 'After')
+  assert.equal((await first({ repoId: '1', kind: 'pulls' })).body.items[0].title, 'Before', 'answered as kept at once')
+  assert.equal(retained.length, 1, 'the read behind it retained')
+  await Promise.all(retained)
+  assert.equal((await first({ repoId: '1', kind: 'pulls' })).body.items[0].title, 'After', 'the next to ask has what was read behind it')
 })
 
 test('an item is one issue or pull request as its popup shows it: as its tile, with its description\'s Markdown and what it closes or what closes it', async t => {

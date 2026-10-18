@@ -437,6 +437,9 @@ export interface ManagedHttpDeps {
   originGate: OriginGate
   isShuttingDown: () => boolean
   track: (p: Promise<unknown>) => void
+  // Serverless (Vercel's): keeps the invocation alive for work that goes on
+  // past its answer, as a kept read read again behind it does.
+  waitUntil?: (p: Promise<unknown>) => void
   // Combined boot delegates unmatched paths to e2e and overrides discovery.
   serveStatic?: (req: IncomingMessage, res: ServerResponse) => boolean
   next?: Handler
@@ -1841,9 +1844,9 @@ const refusedRead = (err: unknown) => err instanceof GithubApiError
 // What `read` answers of a repository, kept by `key` (its id first) for every
 // reader (repositoryReadStore), each one's access checked as they ask before
 // this: answered as kept for REPOSITORY_READ_FRESH_MS, then, while it is
-// kept, answered at once and read again behind it for the next to ask, where
-// the instance outlives its answer (not serverless, where it is read again
-// before it is answered); `kept` where it was, or where reading it again
+// kept, answered at once and read again behind it for the next to ask, the
+// read tracked (serverless, its invocation kept alive till it settles,
+// deps.waitUntil); `kept` where it was, or where reading it again
 // failed as `keepThrough` lets it. One asked for afresh (`fresh`) is read
 // now, unless it was read REPOSITORY_READ_FLOOR_MS since, what was kept
 // answered where that read fails. One GitHub refuses to read again is no
@@ -1878,10 +1881,12 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
   }
   const age = held ? Date.now() - held.at : Infinity
   const now = fresh && age >= REPOSITORY_READ_FLOOR_MS
-  if (held && !now && (age < REPOSITORY_READ_FRESH_MS || !deps.config.serverless)) {
+  if (held && !now) {
     if (age >= REPOSITORY_READ_FRESH_MS && !repositoryRereads.has(key)) {
       // Its failure leaves the kept answer sent until it is a day old, so it is said.
-      deps.track(reread().catch((err: unknown) => { console.warn('managed: repository read failed:', err) }))
+      const behind = reread().catch((err: unknown) => { console.warn('managed: repository read failed:', err) })
+      deps.track(behind)
+      deps.waitUntil?.(behind)
     }
     return { value: held.value as T, kept: true, at: held.at }
   }
@@ -1903,14 +1908,16 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
 function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false): HistoryPages {
   const store = historyPageStore<HistoryCommit[]>(deps.db, deps.config.debug)
   const keyOf = (top: string) => `${repoId}\0${COAUTHORS_READ}\0${top}`
+  const told = (tops: string[], kept: Map<string, { value: HistoryCommit[] }>) => new Map(tops.flatMap(top => {
+    const page = kept.get(keyOf(top))?.value
+    return Array.isArray(page) && page.every(commit => Array.isArray(commit.coauthors)) && (!graphql || page.every(commit => commit.additions != null))
+      ? [[top, page] as const] : []
+  }))
   return {
-    async read(tops) {
-      const kept = await store.readMany(tops.map(keyOf))
-      return new Map(tops.flatMap(top => {
-        const page = kept.get(keyOf(top))?.value
-        return Array.isArray(page) && page.every(commit => Array.isArray(commit.coauthors)) && (!graphql || page.every(commit => commit.additions != null))
-          ? [[top, page] as const] : []
-      }))
+    read: async tops => told(tops, await store.readMany(tops.map(keyOf))),
+    async readFirst(first, then) {
+      const kept = await store.readFirst(first.map(keyOf), then.map(keyOf))
+      return { first: kept.first, pages: told(kept.first ? first : then, kept.found) }
     },
     write: (top, commits) => store.write(keyOf(top), commits, Date.now()),
   }

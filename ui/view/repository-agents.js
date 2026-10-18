@@ -19,6 +19,7 @@ import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, plainClick, sessionLink } from './repository-tiles.js'
 import { activityPicker } from './repository-activity.js'
 import { commitAgent, githubUser, githubUserName } from './github-users.js'
+import { heldRead } from './held-read.js'
 
 export { sessionLink }
 
@@ -79,24 +80,14 @@ const reconstructed = entry => Object.assign(entry, { sessions: agentSessions(en
 // What the repository `key` names showed, as held, else read: `{ status }`,
 // 'loading', then 'ready' with the artifacts read, the `sessions` they make,
 // and where more follow, the cursors reading them (`after`), or 'error' with
-// its `error`; read again once old, or an error's retry is due.
+// its `error`; read again once old, or an error's retry is due, shown
+// meanwhile (held-read.js).
 function listRead(key, ask) {
-  const data = sessionLists()
-  const held = data.get(key)
-  if (held && Date.now() < held.until) return held
-  const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
-  data.set(key, loading)
-  ask(null).then(answer => {
-    knowAgents(answer.agents)
-    if (data.get(key) === loading) data.set(key, reconstructed({ status: 'ready', until: Date.now() + KEEP_MS, ...answer, loadingMore: false, moreError: null }))
-    return null
-  }, err => {
-    if (data.get(key) !== loading) return null
-    if (err?.name === 'AbortError') data.delete(key)
-    else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The agents\' work could not be read.' })
-    return null
-  }).finally(repaint)
-  return loading
+  return heldRead(sessionLists(), key, () => ask(null).then(answer => { knowAgents(answer.agents); return answer }), {
+    ready: answer => reconstructed({ status: 'ready', until: Date.now() + KEEP_MS, ...answer, loadingMore: false, moreError: null }),
+    failed: err => err?.name === 'AbortError' ? null : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The agents\' work could not be read.' },
+    retryMs: RETRY_MS, repaint,
+  })
 }
 
 // The next page, after those held: its pull requests and commits, each once.

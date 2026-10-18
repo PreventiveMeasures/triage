@@ -172,6 +172,9 @@ const GLUE_LOOKUP = 50
 // changes.
 export interface HistoryPages {
   read(tops: string[]): Promise<Map<string, HistoryCommit[]>>
+  // The pages kept of `first`; where none is, those of `then`, in one read
+  // (`first` whether they are `first`'s). Without it, both are read together.
+  readFirst?(first: string[], then: string[]): Promise<{ first: boolean; pages: Map<string, HistoryCommit[]> }>
   write(top: string, commits: HistoryCommit[]): Promise<void>
 }
 
@@ -241,8 +244,11 @@ const graphCommit = (node: GraphCommit | null | undefined) => historyCommit(node
 
 // The history from each of `starts`, a page of each, kept (`pages`), or read
 // and then kept by its top; glued on to it, the pages kept that start at a
-// parent of a commit listed not listed, or at a commit listed, the oldest
-// first (where each goes on furthest), GLUE_LOOKUP looked up at a time, and
+// parent of a commit listed not listed, each adding commits none listed has,
+// and, where any of those has none kept and readable, at a commit listed, the
+// oldest first (where each goes on furthest; a page at a commit listed lists
+// mostly commits listed already), GLUE_LOOKUP of each looked up at a time, in
+// one read where none of those parents' is kept, else two, and
 // those that start where those go on, till HISTORY_GLUED are listed. The
 // pages from `starts` are listed whole, however many that is (all branches'
 // first, as many as ALL_BRANCHES of them): the cap is gluing's. Each commit
@@ -259,11 +265,21 @@ export async function historyFrom(fullName: string, token: string | null, starts
   for (const top of starts) add(kept.get(top) ?? read.get(top) ?? [])
   const looked = new Set(starts)
   for (let round = 0; round < MAX_GLUE_ROUNDS && listed.size < HISTORY_GLUED; round++) {
-    const parents = [...listed.values()].flatMap(commit => commit.parents.filter(parent => !listed.has(parent)))
-    const tops = [...new Set([...parents, ...[...listed.keys()].toReversed()])].filter(sha => !looked.has(sha)).slice(0, GLUE_LOOKUP)
-    if (tops.length === 0) break
-    for (const sha of tops) looked.add(sha)
-    const glued = await pages.read(tops)
+    const parents = [...new Set([...listed.values()].flatMap(commit => commit.parents.filter(parent => !listed.has(parent) && !looked.has(parent))))].slice(0, GLUE_LOOKUP)
+    const within = [...listed.keys()].toReversed().filter(sha => !looked.has(sha)).slice(0, GLUE_LOOKUP)
+    if (parents.length === 0 && within.length === 0) break
+    // Without readFirst, GLUE_LOOKUP of both at once, the parents first.
+    const asked = pages.readFirst ? null : [...parents, ...within].slice(0, GLUE_LOOKUP)
+    let { first, pages: glued } = asked ? { first: false, pages: await pages.read(asked) } : await pages.readFirst!(parents, within)
+    // A parent with no page kept, or none readable (one GitHub's REST API
+    // listed, read with GraphQL), its line going on only by a page at a
+    // commit listed: those read too, apart, the others' lines notwithstanding.
+    if (first && glued.size < parents.length && within.length > 0) {
+      glued = new Map([...glued, ...await pages.read(within)])
+      first = false
+    }
+    // Those at commits listed, unread where a parent's answered, are looked up again.
+    for (const sha of asked ?? (first ? parents : [...parents, ...within])) looked.add(sha)
     for (const commit of [...glued.values()].flat()) {
       if (listed.size >= HISTORY_GLUED) break
       if (!listed.has(commit.sha)) listed.set(commit.sha, commit)

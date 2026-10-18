@@ -27,5 +27,12 @@ export async function checkUpstreamCacheStore(db) {
   await db.setUpstreamCacheEntries([['many/b', '"b2"']], 4)
   await db.setUpstreamCacheEntries([], 5)
   assert.equal(await db.getUpstreamCacheEntry('many/b'), '"b2"')
+  // The first keys' where any is kept, else the others', in one read.
+  assert.deepEqual(await db.getFirstUpstreamCacheEntries(['many/missing', 'many/a'], ['many/b', key]), { first: true, entries: new Map([['many/a', '"a2"']]) })
+  assert.deepEqual(await db.getFirstUpstreamCacheEntries(['many/missing'], ['many/b', 'many/none', key]),
+    { first: false, entries: new Map([['many/b', '"b2"'], [key, '{"v":2}']]) })
+  assert.deepEqual(await db.getFirstUpstreamCacheEntries(['many/missing'], ['many/none']), { first: false, entries: new Map() })
+  assert.deepEqual(await db.getFirstUpstreamCacheEntries([], ['many/b']), { first: false, entries: new Map([['many/b', '"b2"']]) })
+  assert.deepEqual(await db.getFirstUpstreamCacheEntries([], []), { first: false, entries: new Map() })
   return { key, value: '{"v":2}' }
 }
