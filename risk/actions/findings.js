@@ -75,7 +75,7 @@ function stepFindings(step, triggers) {
   }
   if (forks && step.run && /\bgh\s+pr\s+checkout\b/u.test(step.run.script)) found.push({ id: 'pwn-request', severity: 'critical', ref: 'gh pr checkout', line: step.run.line })
   if (triggers.includes('workflow_run') && ((repo === 'actions/download-artifact' && (step.with?.['run-id'] !== undefined || step.with?.['github-token'] !== undefined))
-    || repo === 'dawidd6/action-download-artifact')) found.push({ id: 'untrusted-artifact', severity: 'high', line: step.uses.line })
+    || repo === 'dawidd6/action-download-artifact' || /\bgh\s+run\s+download\b/u.test(step.run?.script ?? ''))) found.push({ id: 'untrusted-artifact', severity: 'high', line: step.uses?.line ?? step.run.line })
   return found
 }
 

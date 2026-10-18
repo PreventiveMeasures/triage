@@ -171,7 +171,13 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.event.pull_request.head.repo.full_name')).findings), ['pwn-request/critical@7'])
     assert.deepEqual(ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.head_repository.full_name')).findings), ['pwn-request/critical@7'])
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.event.pull_request.merge_commit_sha')).findings), ['pwn-request/critical@7'], 'its merge commit')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.pull_requests[0].head.sha')).findings), ['pwn-request/critical@7'], 'its run\'s pull request\'s')
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.repository')).findings), [], 'its own')
+  })
+
+  it('a workflow_run\'s artifacts taken by the GitHub CLI', () => {
+    const found = on => ids(scanWorkflow('workflow', `on: ${on}\njobs:\n  a:\n    steps:\n      - run: gh run download \${{ github.event.workflow_run.id }}\n`).findings)
+    assert.deepEqual([found('workflow_run'), found('push')], [['untrusted-artifact/high@5'], []])
   })
 
   it('an action that installs a project\'s packages, by its name, not another tool\'s', () => {
