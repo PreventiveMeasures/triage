@@ -31,11 +31,13 @@ export async function openManagedStorage(config: ManagedConfig) {
     const raw = config.neonUrl ? await openVercelObjectStorage(config.blobToken!) : createDiskObjectStorage(dirname(config.dbPath))
     // Enable before exposing stores or token writers. Concurrent first starts
     // serialize activation in the database and validate the winning key.
-    if (key && !await db.getStorageEncryption()) {
+    const enabled = key ? await db.getStorageEncryption() : null
+    if (key && !enabled) {
       if (config.vercelPreview) throw new Error('Storage encryption must be enabled outside a Vercel preview deployment')
       await db.enableStorageEncryption()
     }
-    const objects = await createEncryptedObjectStorage(raw, db, key)
+    // Enabled already: that state, not read again.
+    const objects = await createEncryptedObjectStorage(raw, db, key, enabled)
     const storage = createManagedStores(objects, !config.neonUrl)
     // Move legacy team link uploads into encrypted SQL before serving catalogs.
     // The DB transaction commits first; a failed blob cleanup cannot lose links.

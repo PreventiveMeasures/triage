@@ -2882,15 +2882,17 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     repo.repoId = null
     directory = ''
   }
-  await storeUploadedBundle(req, res, deps, cookie, s, bytes, repo.repoId, directory, filename, 'upload', integrity)
+  await storeUploadedBundle(req, res, deps, cookie, s, bytes, repo.repoId, directory, filename, 'upload', integrity, null, existing === null)
 }
 
+// `absent` where the caller has just found no bundle of `integrity`: not read
+// again, one inserted since meeting the insert's UNIQUE below as a race does.
 async function storeUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined,
   s: { session: ManagedSession; user: StoredUser }, bytes: Buffer, repoId: number | null, directory: string, filename: string,
-  provenance: BundleProvenance, integrity = bundleIntegrity(bytes), buildConditions: BundleBuildConditions | null = null): Promise<void> {
+  provenance: BundleProvenance, integrity = bundleIntegrity(bytes), buildConditions: BundleBuildConditions | null = null, absent = false): Promise<void> {
   const kind = bundleKind(filename)
   const reuse = { provenance, filename, kind, buildConditions }
-  const existing = await deps.db.getBundleByIntegrity(integrity)
+  const existing = absent ? null : await deps.db.getBundleByIntegrity(integrity)
   if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, reuse); return }
   const id = randomUUID()
   const dataKey = await deps.bundleStore.put(id, bytes, kind)

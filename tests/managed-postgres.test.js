@@ -1245,7 +1245,7 @@ test('Postgres warm schemas and single-statement reads avoid DDL and transaction
   let opened = 0
   const db = await openPostgresManagedDb(() => { opened++; return connect() }, {}, true)
   t.after(() => db.close())
-  assert.equal(queries.length, 2)
+  assert.equal(queries.length, 1, 'the schema checked current in one read')
   assert.ok(queries.every(query => query.startsWith('SELECT')))
   opened = 0; queries.length = 0
   await db.withRequest(async () => {

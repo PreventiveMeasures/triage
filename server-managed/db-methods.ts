@@ -1649,6 +1649,12 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     selectViewSessionStmt, deleteOtherViewsStmt, insertViewSessionStmt, deleteDemotedViewsStmt,
   } = stmts
 
+  // Claimed at every automatic reap: prepared once.
+  const claimLeaseStmt = db.prepare(`INSERT INTO managed_maintenance_lease (id, owner, expires_at) VALUES (?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
+    WHERE managed_maintenance_lease.expires_at <= ? RETURNING id`)
+  const finishLeaseStmt = db.prepare('UPDATE managed_maintenance_lease SET expires_at = ? WHERE owner = ?')
+
   const methods: Omit<ManagedDb, keyof ManagementStore | keyof ManagementCatalogStore> = {
     ...storageMethods(db, key),
     ...linkReportMethods(db, key),
@@ -1660,12 +1666,10 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...bundleBuildLeaseMethods(db),
     ...upstreamCacheMethods(db),
     async claimMaintenanceLease(owner, now, until, migration = false) {
-      return !!await db.prepare(`INSERT INTO managed_maintenance_lease (id, owner, expires_at) VALUES (?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
-        WHERE managed_maintenance_lease.expires_at <= ? RETURNING id`).get(migration ? 2 : 1, owner, until, now)
+      return !!await claimLeaseStmt.get(migration ? 2 : 1, owner, until, now)
     },
     async finishMaintenanceLease(owner, until) {
-      await db.prepare('UPDATE managed_maintenance_lease SET expires_at = ? WHERE owner = ?').run(until, owner)
+      await finishLeaseStmt.run(until, owner)
     },
     async upsertUser(user, now, initialAdminGithubId = null) {
       if (await selectLinkedStmt.get(user.githubUserId)) return null
