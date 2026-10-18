@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { namedAccounts } from '../common/managed/github-logins.ts'
 import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
@@ -549,6 +550,27 @@ test('a year\'s contributors are its authors\' accounts, whatever they were rena
     'one contributor by the login it committed as first listed; whose the commit with no id of a login named by two is, no telling')
   assert.deepEqual([...namedAccounts(read)], [['ada', 7], ['octo', 'ambiguous'], ['linus', 5]], 'such a login no one\'s')
 })
+
+for (const status of [200, 202, 204, 422]) {
+  test(`Pulse stats and lines share contributors, including GitHub status ${status}`, async () => {
+    const asked = []
+    let responseStatus = status
+    const fetch = async url => {
+      const kind = new URL(url).pathname.split('/').at(-1)
+      asked.push(kind)
+      await setImmediate()
+      return responseStatus === 204 ? new Response(null, { status: 204 })
+        : Response.json(responseStatus === 200 ? stats[kind] : {}, { status: responseStatus })
+    }
+    const results = await Promise.allSettled([repositoryStats('org/repo', 'token', fetch), repositoryLines('org/repo', 'token', w0 * 1000, fetch)])
+    assert.deepEqual(asked.toSorted(), ['code_frequency', 'commit_activity', 'contributors', 'punch_card'])
+    if (status === 202) assert.ok(results.every(result => result.status === 'rejected' && result.reason instanceof StatsPending))
+    else assert.ok(results.every(result => result.status === 'fulfilled'))
+    responseStatus = 200
+    assert.equal((await repositoryStats('org/repo', 'token', fetch)).weeks.length, 2, 'completed or pending responses are read again')
+    assert.equal(asked.filter(kind => kind === 'contributors').length, 2)
+  })
+}
 
 test('a year past YEAR_COMMITS is GitHub\'s statistics, each asked once, together: any still computed, pending; lines apart, none past 10,000 commits', async t => {
   github(t)

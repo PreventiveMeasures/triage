@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
@@ -53,6 +54,20 @@ const page = (nodes, { hasNextPage = false, endCursor = null, open = 3, closed =
   open: { totalCount: open }, closed: { totalCount: closed }, page: { pageInfo: { hasNextPage, endCursor }, nodes },
 } } })
 const labels = (...names) => ({ totalCount: names.length + 1, nodes: names.map(name => ({ name, color: 'D73A4A' })) })
+
+test('concurrent cold issues requests share the GitHub query and populate the persistent cache', async t => {
+  const request = await fixture(t)
+  const gate = Promise.withResolvers()
+  const asked = github(t, async () => { await gate.promise; return page([{ number: 12, title: 'Shared read', state: 'OPEN' }]) })
+  const reads = Array.from({ length: 6 }, () => request({ repoId: '1', kind: 'issues' }))
+  await setImmediate()
+  gate.resolve()
+  const answers = await Promise.all(reads)
+  assert.equal(asked.length, 1, 'one GraphQL query on a cold cache')
+  assert.ok(answers.every(answer => answer.status === 200 && answer.body.items[0].title === 'Shared read'))
+  await request({ repoId: '1', kind: 'issues' })
+  assert.equal(asked.length, 1, 'the result still populates the persistent cache')
+})
 
 test('issues read a page of those open, the most recently updated first, each as a tile shows it, with how many are open and closed', async t => {
   const request = await fixture(t)

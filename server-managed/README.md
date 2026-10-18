@@ -1002,6 +1002,18 @@ and access kept for a user is kept no longer once GitHub rejects their token
 (`401`), whichever credential reads it, a private repository's installation
 token too: the next check asks GitHub again, falling back to the
 installation's token or an anonymous read as it does.
+Concurrent GitHub REST GETs and read-only GraphQL queries share an outstanding
+request when their transport, URL, token and request body match. This covers
+cold-cache activity reads and simultaneous access checks as well as refreshes.
+The shared request lasts through the JSON body read and is removed on success
+or failure; later access rechecks still read GitHub when the access cache is
+disabled or expired. Each caller gets its own result object and applies its
+own GraphQL error policy. POST mutations and token mints are not shared by this
+layer. At most 1,000 outstanding reads per transport are tracked; additional
+reads proceed independently. The Commits tab reads open pull heads alongside
+its history, so those independent GitHub queries no longer add a serial wait.
+Pulse's statistics and line totals share their contributors request, including
+GitHub's pending, empty and oversized statistics responses.
 Managed access (roles, teams, grants) is checked on every request all the
 same. Stale
 installation access falls back to anonymous source reads only after GitHub confirms
