@@ -820,6 +820,52 @@ test('what is read is kept by type, and an assessment kept needs no tarball', as
   assert.ok(asked.some(url => /^https:\/\/api\.npmjs\.org\/downloads\/range\/[^/]+\/kept$/u.test(url)), 'a week on, its downloads asked again')
 })
 
+test('a version\'s advisories, its tarball and its downloads asked at once, once its facts are read; a failure told as the first of them failing would be', async t => {
+  const days = Array.from({ length: 72 }, () => 10)
+  const open = version('together', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(30))
+  const failing = version('failing', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(30))
+  npm(t, [{ name: 'together', versions: [open] }, { name: 'failing', versions: [failing] }], { together: { start: '2026-08-01', end: '2026-10-11', days } }, {},
+    { 'failing@1.0.0': 503 })
+  const answered = globalThis.fetch
+  // npm's advisories answered once the tarball and the downloads are asked
+  // too, or a moment on, so that one asked after them doesn't hang.
+  const order = []
+  let release = () => {}
+  const gate = new Promise(resolve => { release = resolve; setTimeout(resolve, 500) })
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const url = String(input)
+    const kind = url === ADVISORIES ? 'advisories' : url === open.doc.dist.tarball || url === failing.doc.dist.tarball ? 'tarball'
+      : url.startsWith('https://api.npmjs.org/downloads/range/') ? 'downloads' : null
+    if (kind) order.push(`${kind} asked`)
+    if (order.includes('tarball asked') && order.includes('downloads asked')) release()
+    if (kind === 'advisories') { await gate; order.push('advisories answered') }
+    // Its downloads busy at once, before its advisories fail.
+    if (kind === 'downloads' && url.endsWith('/failing')) return Response.json({}, { status: 429 })
+    return answered(input, init)
+  })
+  await assessNpm('together', '1.0.0', { now: NOW, cache: store() })
+  const answer = order.indexOf('advisories answered')
+  assert.ok(order.indexOf('tarball asked') < answer && order.indexOf('downloads asked') < answer, `all three asked before its advisories were answered: ${order.join(', ')}`)
+  await assert.rejects(assessNpm('failing', '1.0.0', { now: NOW, cache: store() }), error => error instanceof NpmRiskError && error.code === 'upstream-unavailable'
+    && /advisories of failing@1\.0\.0/u.test(error.message), 'its advisories\' failure, though its downloads failed first')
+})
+
+test('a package\'s record and its versions\' read of the cache in one read where it reads records of any types at once', async t => {
+  npm(t, [{ name: 'batched', versions: [version('batched', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(400)), version('batched', '1.1.0', { 'package.json': '{}' }, { dependencies: {} }, ago(300))] }])
+  const cache = store(), each = [], single = []
+  const counted = { ...cache, read: (type, key) => { single.push(type); return cache.read(type, key) },
+    readEach: entries => { each.push(entries.map(([type, key]) => `${type} ${key}`)); return Promise.all(entries.map(([type, key]) => cache.read(type, key))) } }
+  const first = await assessNpm('batched', '1.1.0', { oldVersion: '1.0.0', now: NOW, downloads: false, cache: counted })
+  each.length = 0
+  single.length = 0
+  assert.deepEqual(await assessNpm('batched', '1.1.0', { oldVersion: '1.0.0', now: NOW, downloads: false, cache: counted }), first)
+  assert.deepEqual(each, [['risk/npm/packages batched', 'risk/npm/versions batched@1.1.0', 'risk/npm/versions batched@1.0.0']], 'its record and both versions\' at once')
+  assert.ok(!single.includes('risk/npm/packages') && !single.includes('risk/npm/versions'), 'none of them read one by one')
+  each.length = 0
+  await assessNpm('batched', '1.1.0', { oldVersion: '1.0.0', now: NOW, downloads: false, cache: store() })
+  assert.deepEqual(each, [], 'a cache reading one at a time read so')
+})
+
 test('an advisory is of malware where GitHub files it as embedded malicious code, or its title says so', () => {
   assert.equal(npmMalwareAdvisory({ cwe: ['CWE-506'], title: 'Critical severity vulnerability that affects event-stream and flatmap-stream' }), true)
   assert.equal(npmMalwareAdvisory({ cwe: ['CWE-94', 'CWE-506'], title: 'Embedded Malicious Code in node-ipc' }), true)

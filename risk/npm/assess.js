@@ -197,15 +197,22 @@ export async function assessNpm(name, version, { oldVersion = null, fromEmpty = 
   const facts = await npmPackageFacts(name, version, oldVersion, context)
   const old = facts.oldVersion
   if (old !== null && !facts.versions.has(old)) throw new NpmRiskError('version-not-found', `npm has no ${name}@${old}`)
-  const malware = npmMalwareFinding({ takenDown: facts.takenDown, advisories: advisories ? await npmVersionAdvisories(name, version, osv, context) : [] })
-  if (!facts.versions.has(version)) {
+  // Its advisories, its lasting risk and its downloads need none of each
+  // other, so all are asked at once, and waited on in this order, so that a
+  // failure fails it as the first of them failing would.
+  const listed = facts.versions.has(version)
+  const advised = settledLater(advisories ? npmVersionAdvisories(name, version, osv, context) : Promise.resolve([]))
+  const keeping = listed ? settledLater(lasting(name, version, old, facts, context, fromEmpty)) : null
+  const counting = listed && downloads && popularity ? settledLater(npmDownloads(name, context)) : null
+  const malware = npmMalwareFinding({ takenDown: facts.takenDown, advisories: await advised })
+  if (!listed) {
     if (!malware) throw new NpmRiskError('version-not-found', `npm has no ${name}@${version}`)
     return { name, version, oldVersion: null, published: facts.removed.get(version), removed: true, findings: [malware], files: {}, dependencies: { added: [], changed: [] },
       score: npmRiskScore([malware]) }
   }
   const { published, manifest } = facts.versions.get(version)
-  const kept = await lasting(name, version, old, facts, context, fromEmpty)
-  const counted = downloads && popularity ? await npmDownloads(name, context) : null
+  const kept = await keeping
+  const counted = await counting
   const own = npmVersionFindings({ deprecated: facts.deprecated[version], published, minimumReleaseAge, now, known: Boolean(manifest.knownAccounts), scope: npmKnownScope(name),
     provenance: Boolean(manifest.provenance), downloads: counted })
   const was = old === null ? null : facts.versions.get(old).published
@@ -224,6 +231,10 @@ export async function assessNpm(name, version, { oldVersion = null, fromEmpty = 
 
 // A dependency's key among a version's, by its kind and name.
 const keyOf = row => `${row.kind ?? ''}\0${row.name}`
+
+// `promise`, waited on later: its failure, if it fails before then, not
+// thrown as unhandled meanwhile.
+const settledLater = promise => { promise.catch(() => {}); return promise }
 
 // The keys of the dependencies a version holds that nothing of it imports
 // (`kept`, npmLastingRisk's: its `held-unused-deps`), those risk counts
