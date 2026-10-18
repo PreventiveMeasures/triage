@@ -69,7 +69,7 @@ const ENV_WHOLE = String.raw`(?=JSON|Object|URLSearchParams)(?<![\p{ID_Continue}
 // BusyBox's `ash`, `| powershell`); after a pipe, by its path or env's too (`| /bin/sh`,
 // `| /usr/bin/env bash`), env's options, their values, and settings before
 // it on its line (`env -S`, `env -u NAME`, `env MODE=x`).
-const SHELLS = String.raw`(?:(?:ba|z|da|k|mk|c|tc|fi|a)?sh|pwsh|powershell)`
+export const SHELLS = String.raw`(?:(?:ba|z|da|k|mk|c|tc|fi|a)?sh|pwsh|powershell)`
 const SHELL_PATH = String.raw`(?:(?:\/[\w.-]{1,40}){0,8}\/)?(?:env(?:[^\S\n]+(?:-[\w-]{1,20}(?:=\S{0,100}|[^\S\n]+(?!-)[^\s=]{1,100})?|\w{1,40}=\S{0,100})){0,6}[^\S\n]+)?`
 const SHELL_OR_PLACE = String.raw`curl|wget|\|\s*(?:sudo|${SHELL_PATH}${SHELLS})|powershell|pwsh|rundll32|osascript|mshta|certutil|bitsadmin|\/dev\/(?:tcp|udp)|iex|invoke-expression`
   + String.raw`|\$profile|profile\.ps1|config\.fish|conf\.d|bashrc|zshrc|zshenv|zlogin|bash_profile|bash_login|zprofile|\.profile|Launch(?:Agents|Daemons)|systemd|systemctl|\.claude|\.vscode|trufflehog|metadata\.google\.internal|["'\x60\/\\]gh(?:\.exe)?["'\x60]`

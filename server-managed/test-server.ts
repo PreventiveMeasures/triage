@@ -28,6 +28,8 @@ import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
 import { type Maker, coauthorsOf } from './commit-coauthors.ts'
 import { APP_AGENTS } from './repository-agents.ts'
+import { usesOfKey } from '../risk/index.js'
+import { actionsLines } from './repository-actions.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -1091,6 +1093,58 @@ function serveReportLocation(url: URL, res: ServerResponse): boolean {
 
 type RiskFixtureLine = { type: string; id?: number; repo?: number; name?: string; packages?: ({ name: string } & Record<string, unknown>)[] } & Record<string, unknown>
 
+// A workflow of the first repository's, as a scan reads it
+// (repository-actions.ts), its findings worked out of its text.
+const FIXTURE_WORKFLOW = `name: CI
+on:
+  pull_request_target:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: node:20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.1
+        with:
+          ref: \${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+      - uses: tj-actions/changed-files@v45
+      - uses: someone/deploy-action@0123456789abcdef0123456789abcdef01234567 # v2.1.0
+      - run: |
+          npm ci
+          npx eslint .
+          npx left-pad --help
+          echo "\${{ github.event.pull_request.title }}"
+      - run: curl -fsSL https://get.example.com/install.sh | bash
+`
+
+// The references those name, resolved, as GitHub would have them.
+function fixtureActions(): RiskFixtureLine[] {
+  const commit = (char: string) => char.repeat(40)
+  // Its `repo` the repository's name, as a reference names it, not an id.
+  const action = (key: string, more: Record<string, unknown>) => {
+    const { kind, repo, path, ref } = usesOfKey(key)!
+    return { type: 'action', key, kind, repo, path, ref, repository: { fullName: repo, private: false }, uses: [], findings: [], ...more } as unknown as RiskFixtureLine
+  }
+  return [
+    action('actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.1', { commit: 'de0fac2e4500dabe0009e67214ff5f5447ce83dd', at: 'sha', tags: ['v6.0.1', 'v6'] }),
+    action('actions/setup-node@v4', { commit: commit('4'), at: 'tag', tags: ['v4.4.0', 'v4'], findings: [{ id: 'outdated', severity: 'low', latest: 'v6.0.0' }] }),
+    action('tj-actions/changed-files@v45', { commit: commit('0'), at: 'tag', tags: ['v45'],
+      findings: [{ id: 'tag-off-release', severity: 'high', release: 'v45.0.7' }, { id: 'tag-off-branch', severity: 'low' },
+        { id: 'remote-script', severity: 'high', file: 'action.yml', line: 20 }, { id: 'hosts', severity: 'critical', tag: 'Exfiltration', services: ['webhook-site'], file: 'action.yml', line: 21 }] }),
+    action('someone/deploy-action@0123456789abcdef0123456789abcdef01234567 # v2.1.0', { commit: '0123456789abcdef0123456789abcdef01234567', at: 'sha', tags: [],
+      findings: [{ id: 'imposter-commit', severity: 'critical' }, { id: 'comment-mismatch', severity: 'high', comment: 'v2.1.0', tags: [] }] }),
+  ]
+}
+
+// The first repository's Actions' lines, as a scan tells them, npx held to
+// its npm lockfile's packages.
+function fixtureWorkflows(repo: number, owner: string, locked: string[]): RiskFixtureLine[] {
+  return actionsLines(repo, owner, { files: [{ path: '.github/workflows/ci.yml', kind: 'workflow', text: FIXTURE_WORKFLOW }] },
+    [{ path: 'package-lock.json', names: new Set(locked) }]).lines as unknown as RiskFixtureLine[]
+}
+
 // A scan of the connected repositories' npm lockfiles (repository-risk.ts),
 // or a team's (`team`) or one's (`repo`), its lines a little apart as the
 // server's come, and stopped with its reader.
@@ -1127,6 +1181,7 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
       { name: 'minimist', version: '1.2.5', source: 'registry' }, { name: 'internal-utils', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-utils.git' },
     ] },
     { type: 'lockfile', repo: first!.id, path: 'docs/bun.lock', format: 'bun', error: 'unsupported-format' },
+    ...fixtureWorkflows(first!.id, first!.fullName.split('/')[0]!, ['left-pad', 'lodash', 'event-stream', 'minimist', 'internal-utils']),
     { type: 'advisories', repo: first!.id, path: 'package-lock.json', advisories: [
       advisory('event-stream', 'GHSA-mh6f-8j2x-4483', 'Critical severity vulnerability that affects event-stream and flatmap-stream', 'critical', ['CWE-506'], '=3.3.6', ['3.3.6']),
       advisory('lodash', 'GHSA-35jh-r3h4-6jhm', 'Command Injection in lodash', 'high', ['CWE-77', 'CWE-94'], '<4.17.21', []),
@@ -1158,12 +1213,13 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
     risk('event-stream', '3.3.6', [['held-runs-code', 'high'], ['held-obfuscated', 'high']]),
     ...rest.map(repo => ({ type: 'repo', id: repo.id, error: 'no-repository' })),
     { type: 'risk', ...chalk, error: 'integrity-mismatch' },
+    ...fixtureActions(),
     { type: 'done' },
   ]
   // Those of the repositories scanned, and of the packages their lockfiles lock.
   const names = new Set(lines.flatMap(line => line.type === 'lockfile' && scanned.has(line.repo!) ? (line.packages ?? []).map(pkg => pkg.name) : []))
-  const told = lines.filter(line => line.type === 'repo' ? scanned.has(line.id!) : ['lockfile', 'advisories', 'dependabot'].includes(line.type) ? scanned.has(line.repo!)
-    : line.type !== 'risk' || names.has(line.name!))
+  const told = lines.filter(line => line.type === 'repo' ? scanned.has(line.id!) : ['lockfile', 'advisories', 'dependabot', 'workflows', 'workflow'].includes(line.type) ? scanned.has(line.repo!)
+    : line.type === 'action' ? scanned.has(first!.id) : line.type !== 'risk' || names.has(line.name!))
   res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' })
   let at = 0
   const timer = setInterval(() => {

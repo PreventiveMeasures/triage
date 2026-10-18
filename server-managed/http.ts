@@ -177,6 +177,8 @@ import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
 import { RepositoryDiscovery } from './repository-discovery.ts'
 import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, type ScanProgress, repositoryRiskLines } from './repository-risk.ts'
+import { WORKFLOWS_DIR } from './repository-actions.ts'
+import { githubActionsSource } from './github-actions.ts'
 import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, cacheAvatar, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession } from './session.ts'
@@ -2370,7 +2372,9 @@ function scanProgress(deps: ManagedHttpDeps, key: string, scan: string | null) {
 // their scope, and each lockfile's asked of npm's advisories at once; each
 // repository's Dependabot alerts, open or dismissed, read with the App's
 // installation token where the admin's own access to it lets them see them on
-// GitHub (dependabot-access.ts). The reader leaving, losing their admin role or
+// GitHub (dependabot-access.ts); and its GitHub Actions, the references they
+// make resolved with the admin's own GitHub token (github-actions.ts). The
+// reader leaving, losing their admin role or
 // the server shutting down stops it.
 async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const s = await readAdminSession(res, deps, cookie)
@@ -2384,7 +2388,8 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
   const controller = new AbortController()
   res.on('close', () => { controller.abort() })
   res.setTimeout(REPO_RISK_IDLE_MS, () => res.destroy())
-  const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, s.user.id))
+  const user = await repositoryBrowserUser(deps, s.user.id)
+  const browser = createRepositoryBrowser(deps.config, user)
   const scopes = new Map<string, Promise<boolean>>()
   const teamScoped = (name: string) => {
     const scope = npmPackageScope(name)
@@ -2411,8 +2416,13 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
         recheck: async () => { await reader.recheckAccess() },
         // As GitHub has them now, where the admin's own access lets them see them.
         dependabot: () => reader.dependabotAlerts(),
+        workflows: () => reader.directory(WORKFLOWS_DIR, commit).then(({ entries }) => entries.filter(entry => entry.type === 'file' && /\.ya?ml$/iu.test(entry.name)).map(entry => entry.path),
+          (error: unknown) => { if (error instanceof GithubApiError && error.status === 404) return []; throw error }),
       }
     },
+    actions: githubActionsSource(user.token),
+    actionFiles: scanReadStore(deps.db, 'action-files', SCAN_READ_KEPT_MS, deps.config.debug),
+    actionLines: scanReadStore(deps.db, 'actions', RISK_KEPT_MS, deps.config.debug),
     teamScoped,
     // Each package's downloads readied before it is assessed
     // (scan-downloads.ts), so that none waits on npm's downloads API; a

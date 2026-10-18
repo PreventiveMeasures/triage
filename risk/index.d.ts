@@ -180,3 +180,70 @@ export function npmReadyDownload(name: string, options: { cache: CacheStore; sig
 export function npmMalwareAdvisory(advisory: { id?: string | undefined; aliases?: readonly string[] | undefined; cwe?: readonly string[] | undefined; title?: string | undefined }): boolean
 
 export function npmFileRisk(path: string, text: string | null, bytes?: number, script?: boolean): unknown
+
+// GitHub Actions (actions/), a workflow GitHub can't run thrown as
+// @preventive/lockfile's YamlError. A finding of a workflow's, its `line` from 1; of a reference's own code,
+// with the `file` it is in.
+export interface ActionsFinding extends Finding {
+  line?: number | null
+  file?: string
+}
+
+// What a `uses:` names: an action's or a reusable workflow's, by its `key`,
+// or the repository's own.
+export type ActionUses = { kind: 'action' | 'workflow'; uses: string; repo: string; path: string; ref: string; pin: 'sha' | 'short-sha' | 'ref' | 'expression'; comment: string | null; key?: string; line?: number | null }
+export type Uses = ActionUses | { kind: 'local'; uses: string; path: string; self?: true; job?: true; line?: number | null }
+
+export interface ScanOptions {
+  // Whose repository it is, as an unpinned `uses:` of its owner's is yellow.
+  owner?: string | null
+  // Its lockfiles' paths, the packages each locks, as npx runs those, by
+  // name and by `name@version`, and those only devDependencies need.
+  lockfiles?: { path: string; names: ReadonlySet<string>; dev?: ReadonlySet<string> }[]
+  // Its own actions' metadata by their directories, for where they install
+  // its packages; else each counts as installing them anywhere.
+  actions?: ReadonlyMap<string, string> | null
+}
+
+export type WorkflowScan = { uses: Uses[]; findings: ActionsFinding[] } | { error: 'workflow-unreadable'; detail: string }
+
+export function scanWorkflow(kind: 'workflow' | 'action', text: string, options?: ScanOptions): WorkflowScan
+// The actions of the repository's own a workflow or an action uses, by
+// their directories, and a Docker action's Dockerfile, from its own.
+export function ownFilesOf(kind: 'workflow' | 'action', text: string): { actions: string[]; dockerfile: string | null }
+// A Dockerfile's findings, each on its line.
+export function dockerfileFindings(text: string): ActionsFinding[]
+// A reference by its key, as a scan names it; null for none.
+export function usesOfKey(key: string): ActionUses | null
+
+// GitHub as the asker can read it; null for none.
+export interface ActionsSource {
+  // Its name now, where it moved, and the repository it forks.
+  repo(name: string): Promise<{ fullName: string; defaultBranch: string; fork?: string | null; archived?: boolean; private?: boolean } | null>
+  // Every tag's commit; null where it has too many to list.
+  tags(name: string): Promise<{ tag: string; oid: string }[] | null>
+  tag(name: string, tag: string): Promise<string | null>
+  branch(name: string, branch: string): Promise<string | null>
+  // Its branches, and whether those are all.
+  branches(name: string): Promise<{ branches: { branch: string; oid: string }[]; complete: boolean }>
+  // Whether `sha` is `base` or in its history; null for no such commit. Of two
+  // commits, it holds for good.
+  contains(name: string, base: string, sha: string): Promise<boolean | null>
+  file(name: string, path: string, commit: string): Promise<string | null>
+}
+
+// A reference resolved: its repository as GitHub has it now, its ref's
+// commit, what the ref is, the tags on the commit, and the keys of the
+// references its code makes; null for none.
+export interface ResolvedAction extends Pick<ActionUses, 'kind' | 'repo' | 'path' | 'ref'> {
+  key: string
+  repository: { fullName: string; private: boolean } | null
+  commit: string | null
+  at: 'sha' | 'tag' | 'branch' | null
+  tags: string[]
+  findings: ActionsFinding[]
+  uses: string[]
+}
+
+export function resolveAction(uses: ActionUses, source: ActionsSource, options?: { owner?: string | null }): Promise<ResolvedAction>
+export function keptSource(source: ActionsSource): ActionsSource

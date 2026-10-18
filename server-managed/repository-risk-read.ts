@@ -4,17 +4,19 @@
 // each read for its packages (@preventive/lockfile), and access to it checked
 // again before they are told (`recheck`); and its Dependabot alerts, open or dismissed, of
 // npm's, where the source asks them (dependabot-alerts.ts), asked meanwhile
-// and never kept, a failure to have them its own. A listing is kept by the commit it was listed at, and
-// a lockfile's packages by its blob, neither of which changes: in the
-// instance's memory, and the source's `listings` and `lockfiles` for
-// SCAN_READ_KEPT_MS, so that only opening a repository and checking access
-// to it again ask GitHub where all else is kept.
+// and never kept, a failure to have them its own, and its GitHub Actions
+// (repository-actions.ts). A listing is kept by the commit it was listed at,
+// its Actions' files too, and a lockfile's packages by its blob: in the
+// instance's memory, and the source's `listings`, `actionFiles` and
+// `lockfiles` for SCAN_READ_KEPT_MS, so that only opening a repository and
+// checking access to it again ask GitHub where all else is kept.
 import type { LockfileFormat, RepoLockfile } from '@preventive/upstream/github.js'
 import type { AlertsRead } from './dependabot-access.ts'
 import type { DependabotAlert } from './dependabot-alerts.ts'
 import { type LockedPackage, isTestFixture, lockedPackages } from './locked-packages.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
+import { type WorkflowsRead, lastingRead, readActions } from './repository-actions.ts'
 import { type RiskFailure, failureOf } from './repository-risk-assess.ts'
 import type { RepositoryRiskLine, RepositoryRiskRepo } from './repository-risk.ts'
 
@@ -47,13 +49,15 @@ export interface OpenedRepository {
   file(path: string): Promise<string>
   recheck(): Promise<void>
   dependabot?(): Promise<AlertsRead>
+  // Its workflows' paths, none where it has none.
+  workflows?(): Promise<string[]>
 }
 
 // What a repository is read with: the scan's source and caches, and its
 // signal.
 export interface RepositoryReading<R extends RepositoryRiskRepo> {
-  source: { open(repo: R): Promise<OpenedRepository>; listings?: KeptStore<ListedLockfile[]>; lockfiles?: KeptStore<LockfileRead> }
-  caches: { listings: Lru<ListedLockfile[]>; lockfiles: Lru<LockfileRead> }
+  source: { open(repo: R): Promise<OpenedRepository>; listings?: KeptStore<ListedLockfile[]>; lockfiles?: KeptStore<LockfileRead>; actionFiles?: KeptStore<WorkflowsRead> }
+  caches: { listings: Lru<ListedLockfile[]>; lockfiles: Lru<LockfileRead>; actionFiles: Lru<WorkflowsRead> }
   signal: AbortSignal
 }
 
@@ -65,6 +69,8 @@ export interface RepositoryRead {
   commit: string
   lockfiles: { sha: string; line: LockfileLine }[]
   dependabot: DependabotRead | null
+  // Its Actions' files, where it lists its workflows.
+  actions: WorkflowsRead | null
   recheck(): Promise<void>
 }
 
@@ -75,13 +81,14 @@ function lockfileOf(path: string, paths: readonly string[] | undefined) {
 }
 
 // What is kept by `key`: in this instance's memory, else in `store` within
-// SCAN_READ_KEPT_MS, else `read` and kept in both.
-async function keptRead<T>(memory: Lru<T>, store: KeptStore<T> | undefined, key: string, read: () => Promise<T>) {
+// SCAN_READ_KEPT_MS, else `read` and kept in both, where it is to be.
+async function keptRead<T>(memory: Lru<T>, store: KeptStore<T> | undefined, key: string, read: () => Promise<T>, keep = (_value: T) => true) {
   const known = memory.get(key)
   if (known !== undefined) return known
   const kept = await store?.read(key)
   if (kept && Date.now() - kept.at < SCAN_READ_KEPT_MS) { memory.set(key, kept.value); return kept.value }
   const value = await read()
+  if (!keep(value)) return value
   memory.set(key, value)
   await store?.write(key, value, Date.now())
   return value
@@ -134,14 +141,18 @@ async function readDependabot(opened: OpenedRepository, paths: readonly string[]
 }
 
 // A repository read: its lockfiles listed and read, its Dependabot alerts
-// asked meanwhile; its line telling why where listing failed; null where the
-// scan stopped. A test's
+// asked and its Actions read meanwhile; its line telling why where listing
+// failed; null where the scan stopped. A test's
 // fixture or example its reader refuses (isTestFixture) is left out, as a
 // test may keep one so on purpose.
 export async function readRepository<R extends RepositoryRiskRepo>(reading: RepositoryReading<R>, repo: R): Promise<RepositoryRead | RepositoryFailure | null> {
   const listed = await listLockfiles(reading, repo)
   if (!listed || 'type' in listed) return listed
   const alerting = readDependabot(listed.opened, repo.paths)
+  const { opened } = listed, { workflows } = opened
+  const acting = workflows ? keptRead(reading.caches.actionFiles, reading.source.actionFiles, `${repo.repoId}@${opened.commit}`,
+    () => readActions({ workflows, file: path => opened.file(path) }), lastingRead) : Promise.resolve(null)
+  acting.catch(() => {})
   const lockfiles: RepositoryRead['lockfiles'] = []
   for (const lockfile of listed.lockfiles) {
     if (reading.signal.aborted) return null
@@ -149,5 +160,6 @@ export async function readRepository<R extends RepositoryRiskRepo>(reading: Repo
     if (!('error' in line && line.error === 'lockfile-unreadable' && isTestFixture(line.path))) lockfiles.push({ sha: lockfile.sha, line })
   }
   const dependabot = await alerting
-  return reading.signal.aborted ? null : { commit: listed.opened.commit, lockfiles, dependabot, recheck: () => listed.opened.recheck() }
+  const actions = await acting
+  return reading.signal.aborted ? null : { commit: listed.opened.commit, lockfiles, dependabot, actions, recheck: () => listed.opened.recheck() }
 }
