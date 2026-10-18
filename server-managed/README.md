@@ -2000,7 +2000,8 @@ one's tile tells nothing of it, as its list reads no files.
 
 `GET /api/admin/repositories/pull-dependencies?repoId=…&number=…` answers
 `{ number, base, head, lockfiles, cut }`, read and checked as an item is
-(above), and kept by its number as one is. GitHub's comparison of the pull
+(above), the commits it is of kept by its number as one is, what they tell
+kept by them alone (below), not again by its number. GitHub's comparison of the pull
 request's base with its head names where its branch left its base, its merge
 base (`base`), as **Files changed** compares from it, and lists the files it
 changes, three hundred at most; one changing as many has them listed from its
@@ -2023,9 +2024,10 @@ sha1 and pnpm's patch hash where they have them, and the lockfile's format
 (twenty thousand a directory at most, the rest counted), for its review
 (below); none of it is told, but whether a version is `patched`. What a pull
 request's base's and head's commits tell is kept in the database (under
-`repository/pull-dependencies`, a month), as what they hold never changes;
-each lockfile read, in the instance's memory by its commit, so that pull
-requests branching off the same commit, as a bot's do, read it once. The
+`repository/pull-dependencies`, a month), as what they hold never changes,
+read again where it no longer is; each lockfile read, in the instance's
+memory by its commit, so that pull requests branching off the same commit,
+as a bot's do, read it once, one being read with the same token shared. The
 page reads two at a time, those asked first first, and keeps them for the
 session five minutes, as it keeps the tiles. GitHub refusing the
 repository's contents or its pull request is the answer's failure (`502
