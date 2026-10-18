@@ -582,13 +582,19 @@ storage leaves the team `null` (expanded) until a later catalog read succeeds.
 # Live team updates
 
 `GET /api/teams/:id/feed` is a read-only SSE subscription for an approved
-user. One connection carries two invalidations, each with `data: {}`:
+user. One connection carries two invalidations, each with an opaque `revision`:
 
 - `teams`: the current user's memberships, grants, repository scopes, team names,
   and visible reports/bundles across **all teams they belong to**. The client
   refreshes `GET /api/teams`.
-- `triage`: visible triage and comments for **only the focused team**. The client
-  refreshes the existing report annotation APIs.
+- `triage`: visible triage and comments for **only the focused team**. Its
+  `revision` is a digest of what the team's annotations are at, the same
+  `revision` `GET /api/teams/:id/annotations` answers with (read before the
+  annotations, so that a write between them makes the two differ). The client
+  refreshes the existing report annotation APIs, unless the revision is the one
+  it last read at, as when its first load wins over a slow first event or a
+  reconnect finds nothing changed. A public share's feed tells none
+  (`data: {}`).
 
 Team feeds exclude unpublished reports from aggregate triage updates for every
 role. `GET /api/teams/:id/feed?reportId=:reportId` uses the same selection and

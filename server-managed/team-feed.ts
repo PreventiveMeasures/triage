@@ -2,7 +2,7 @@ import type { ServerResponse } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { ManagedHttpDeps } from './http.ts'
 import type { StoredUser, TeamReportAccessSnapshot } from './db.ts'
-import { TeamReportsError, teamSnapshotKey, teamWorkspaceFindingIds } from './team-reports.ts'
+import { TeamReportsError, annotationRevisionDigest, teamAnnotationRevision, teamSnapshotKey, teamWorkspaceFindingIds } from './team-reports.ts'
 import type { WorkspaceShareFeedState } from './workspace-shares.ts'
 
 // Short database reads work across instances without pinning a Neon connection.
@@ -49,7 +49,7 @@ export async function serveTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
 export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDeps,
   sessionId: string, user: StoredUser, teamId: string | null, options: FeedOptions & { reportId?: string | null } = {}): Promise<void> {
   let ids: string[] = [], visibilityKey: string | undefined
-  let focusedKey: string | undefined
+  let focused: TeamReportAccessSnapshot | undefined
   let previousState: { catalog: number; annotations: number } | undefined
   const checkUser = (current: { user: Pick<StoredUser, 'id' | 'role'> } | null) => {
     if (!current) throw new TeamReportsError(401, 'unauthenticated')
@@ -61,10 +61,10 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
     const state = await deps.db.getFeedState(sessionId, Date.now())
     checkUser(state)
     if (state!.catalog === previousState?.catalog && (!teamId || state!.annotations === previousState?.annotations)) return
-    if (teamId && focusedKey !== undefined && state!.catalog === previousState?.catalog) {
+    if (teamId && focused !== undefined && state!.catalog === previousState?.catalog) {
       // Annotation changes cannot change visibility. Read only this workspace's
       // IDs, then fence against concurrent access/content changes before sending.
-      const triage = JSON.stringify([focusedKey, await deps.db.getAnnotationRevision(ids)])
+      const triage = await teamAnnotationRevision(deps.db, focused, ids)
       const after = await deps.db.getFeedState(sessionId, Date.now())
       checkUser(after)
       if (after!.catalog !== state!.catalog) return
@@ -103,29 +103,34 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
         return
       }
     }
-    if (snapshot.teamId) triage = JSON.stringify([key, await deps.db.getAnnotationRevision(ids)])
+    // As GET /api/teams/:id/annotations answers it, so that a client holding
+    // that answer knows this tells nothing new.
+    if (snapshot.teamId) triage = await teamAnnotationRevision(deps.db, snapshot, ids)
     const current = await deps.db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId, options.reportId)
     // A concurrent access/content change discards only the annotation read.
     checkUser(current)
     if (!current || teamSnapshotKey(current) !== key) return
     publish('triage', triage)
-    focusedKey = snapshot.teamId ? key : undefined
+    focused = snapshot.teamId ? snapshot : undefined
     const after = await deps.db.getFeedState(sessionId, Date.now())
     checkUser(after)
     if (after!.catalog === state!.catalog && after!.annotations === state!.annotations) previousState = state!
-  }, options)
+  }, { ...options, triageRevision: true })
 }
 
+// With `triageRevision`, a triage event tells its revision's digest, as the
+// focused team's annotations answer it; else none, as a public share's.
 async function serveFeed(res: ServerResponse, deps: ManagedHttpDeps, read: (publish: Publish) => Promise<void>,
-  { pollMs = TEAM_FEED_POLL_MS, lifetimeMs = TEAM_FEED_LIFETIME_MS }: FeedOptions): Promise<void> {
+  { pollMs = TEAM_FEED_POLL_MS, lifetimeMs = TEAM_FEED_LIFETIME_MS, triageRevision = false }: FeedOptions & { triageRevision?: boolean }): Promise<void> {
   const controller = new AbortController()
   const close = () => controller.abort()
   res.once('close', close)
   const deadline = setTimeout(close, lifetimeMs)
   const stopped = () => controller.signal.aborted || res.destroyed || deps.isShuttingDown()
   // Notifications carry no annotation bodies, finding IDs, or global cursors.
-  // The catalog's opaque version lets clients reuse an identical REST snapshot;
-  // every connection still confirms current access, including after reconnects.
+  // The catalog's opaque version, and a focused team's annotation revision's
+  // digest, let clients reuse an identical REST snapshot; every connection
+  // still confirms current access, including after reconnects.
   function write(frame: string): boolean {
     if (stopped()) return false
     if (res.write(frame)) return true
@@ -145,7 +150,7 @@ async function serveFeed(res: ServerResponse, deps: ManagedHttpDeps, read: (publ
       if (stopped()) return false
       if (revision === undefined) { previous.delete(event); return true }
       if (revision === previous.get(event)) return true
-      const data = event === 'teams' ? JSON.stringify({ revision }) : '{}'
+      const data = event === 'teams' ? JSON.stringify({ revision }) : triageRevision ? JSON.stringify({ revision: annotationRevisionDigest(revision) }) : '{}'
       if (!write(`event: ${event}\ndata: ${data}\n\n`)) return false
       previous.set(event, revision)
       heartbeat = Date.now()

@@ -7,6 +7,8 @@ const state = store({ serverMode: 'managed', currentView: 'findings', localMode:
 const calls = [], refreshes = []
 let refresh = () => Promise.resolve(true)
 let preview = false
+// The revision the mocked annotation reads are answered at.
+let readRevision = null
 mock.module('../client/index.js', { namedExports: { state, isManagedUiMode: () => state.serverMode === 'managed' && !state.localMode } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
   watchTeamFeed: (teamId, options) => {
@@ -16,7 +18,7 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   },
 } })
 mock.module('../ui/view/managed-triage.js', { namedExports: {
-  createManagedAnnotationRead: () => () => Promise.resolve(null),
+  createManagedAnnotationRead: () => Object.assign(() => Promise.resolve(null), { revision: () => readRevision }),
   refreshManagedReportTriage: (id, options) => { refreshes.push(['triage', id]); return refresh(options) },
 } })
 mock.module('../ui/view/managed-comments.js', { namedExports: {
@@ -37,6 +39,7 @@ beforeEach(() => {
   state.managedSession = { id: 'user', role: 'triage' }
   refresh = () => Promise.resolve(true)
   preview = false
+  readRevision = null
   setManagedTeamFeedRefresh(() => Promise.resolve(true))
 })
 afterEach(() => stopManagedTeamFeed())
@@ -217,6 +220,40 @@ test('HTTP fallback loads a stalled feed and a late first event catches changes 
   assert.equal(await update, true)
   assert.equal(reads, 1)
   assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
+})
+
+test('a late first event telling the revision HTTP hydration read at reads nothing again; another revision, or none, reads again', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  readRevision = 'r1'
+  const hydrated = []
+  const ready = open('one', { hydrate: (signal, readAnnotations) => { hydrated.push(readAnnotations); return Promise.resolve(true) } })
+  t.mock.timers.tick(1_000)
+  assert.equal(await ready, true)
+  assert.equal(hydrated[0].revision(), 'r1', 'the view hydrates with the feed\'s annotation read')
+  assert.equal(await calls[0].onUpdate(calls[0].signal, 'r1'), true)
+  assert.deepEqual(refreshes, [], 'the revision hydration read at: nothing read again')
+  readRevision = 'r2'
+  assert.equal(await calls[0].onUpdate(calls[0].signal, 'r2'), true)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']], 'a change since reads again')
+  assert.equal(await calls[0].onUpdate(calls[0].signal, 'r2'), true)
+  assert.equal(refreshes.length, 2, 'a reconnect telling the revision last read reads nothing')
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  assert.equal(refreshes.length, 4, 'an event telling no revision reads again')
+  assert.equal(hydrated.length, 1)
+})
+
+test('a first event arriving while HTTP hydration reads, telling the revision it reads at, reads nothing once it is done', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  readRevision = 'r1'
+  const pending = Promise.withResolvers()
+  const ready = open('one', { hydrate: () => pending.promise })
+  t.mock.timers.tick(1_000)
+  await Promise.resolve()
+  const update = calls[0].onUpdate(calls[0].signal, 'r1')
+  pending.resolve(true)
+  assert.equal(await ready, true)
+  assert.equal(await update, true)
+  assert.deepEqual(refreshes, [])
 })
 
 test('the first reactive render after hydration keeps the same report scope and live subscription', async t => {

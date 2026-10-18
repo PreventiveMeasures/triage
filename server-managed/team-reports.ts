@@ -2,6 +2,7 @@
 // Bounded snapshots retain filtered content and visibility for repeated reads.
 import { mergeLinkGroups } from './link-reports.ts'
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import { backfillFindingIds, reportEntries, stampSecurityGroups } from '@preventive/report'
 import { managedFindingSourcePaths, readManagedReport } from '../common/managed/report-content.ts'
 import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
@@ -197,6 +198,19 @@ export async function teamWorkspaceFindingIds(db: ManagedDb, store: BlobStore, s
   for (const report of (await teamVisibility(db, store, snapshot)).values()) for (const id of report.ids) ids.add(id)
   return ids
 }
+
+// What a focused team's annotations are at, for the snapshot reading them, as
+// its feed tells it (team-feed.ts serveUserTeamFeed) and its annotations
+// answer it (loadTeamAnnotations): the snapshot's key and the revision of
+// every visible finding's annotations (getAnnotationRevision), its workspace's
+// findings being `ids` (teamWorkspaceFindingIds).
+export async function teamAnnotationRevision(db: ManagedDb, snapshot: TeamReportAccessSnapshot, ids: readonly string[]): Promise<string> {
+  return JSON.stringify([teamSnapshotKey(snapshot), await db.getAnnotationRevision(ids)])
+}
+
+// A revision as the client is told it: a digest, telling only whether what it
+// covers changed, none of the finding IDs, batches or issues it is read from.
+export const annotationRevisionDigest = (revision: string): string => createHash('sha256').update(revision).digest('base64url')
 export async function teamReportVisibility(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot, reportId: string): Promise<ReportVisibility> {
   if (!snapshot.reports.some(r => r.id === reportId)) throw new TeamReportsError(404, 'no-report')
   const visible = await teamVisibility(db, store, snapshot)
@@ -223,18 +237,25 @@ export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId
 
 // Serialize shared annotation bodies once. Reports carry only the annotated
 // finding IDs visible in that report; callers revalidate access before sending.
+// With them, the digest of the revision the whole workspace's are at, as the
+// team's feed tells it (`revision`), read before them: a write between leaves
+// it older than what is sent, so the feed's next differs and the client reads
+// again, never the reverse.
 export async function loadTeamAnnotations(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot, reportId: string | null = null) {
   // Restrict annotation reads only after classifying the complete workspace:
   // links and findings in other reports can affect this report's visibility.
-  const visible = reportId === null ? await teamVisibility(db, store, snapshot)
-    : new Map([[reportId, await teamReportVisibility(db, store, snapshot, reportId)]])
-  const ids = new Set<string>()
+  if (reportId !== null && !snapshot.reports.some(r => r.id === reportId)) throw new TeamReportsError(404, 'no-report')
+  const workspace = await teamVisibility(db, store, snapshot)
+  const visible = reportId === null ? workspace : new Map([[reportId, workspace.get(reportId)!]])
+  const all = new Set<string>(), ids = new Set<string>()
   for (const report of visible.values()) for (const id of report.ids) ids.add(id)
+  for (const report of workspace.values()) for (const id of report.ids) all.add(id)
+  const revision = await teamAnnotationRevision(db, snapshot, [...all])
   const { triage, comments, issues: savedIssues } = await db.getAnnotations([...ids])
   const issues = Object.fromEntries(visibleManagedIssues(savedIssues, snapshot)
     .map(issue => [issue.findingId, { url: issue.issueUrl!, autoFix: issue.autoFixUrl }]))
   const entries = Object.fromEntries(triage.map(row => [row.findingId, triageWireEntry(row)]))
   const annotated = new Set([...triage.map(row => row.findingId), ...comments.map(comment => comment.findingId), ...Object.keys(issues)])
   const reports = Object.fromEntries([...visible].map(([id, report]) => [id, [...report.ids].filter(finding => annotated.has(finding))]))
-  return { reports, entries, comments, issues }
+  return { reports, entries, comments, issues, revision: annotationRevisionDigest(revision) }
 }

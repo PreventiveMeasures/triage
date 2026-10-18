@@ -212,7 +212,8 @@ test('revocation during a revision read closes before emitting an update', async
 
 const teamEvents = res => res.frames.filter(frame => frame.startsWith('event: teams\n')).length
 const eventNames = res => res.frames.map(frame => frame.split('\n')[0])
-const triageEvents = res => res.frames.filter(frame => frame === 'event: triage\ndata: {}\n\n').length
+// A public share's tell no revision; a user's focused team's, its digest alone.
+const triageEvents = res => res.frames.filter(frame => /^event: triage\ndata: (?:\{\}|\{"revision":"[\w-]{43}"\})\n\n$/u.test(frame)).length
 
 test('public feeds skip unchanged snapshots and ignore unrelated annotation changes', async t => {
   const h = await fixture(t)
@@ -330,7 +331,7 @@ test('one feed covers own memberships and all member teams, but only focused tri
   await writer.removeTeamMember('other', session.userId)
   await until(() => teamEvents(res) === 7)
   assert.equal(res.ended, undefined)
-  assert.ok(res.frames.every(frame => /^event: (teams\ndata: \{"revision":"[\w-]{43}"\}|triage\ndata: \{\})\n\n$/u.test(frame)))
+  assert.ok(res.frames.every(frame => /^event: (?:teams|triage)\ndata: \{"revision":"[\w-]{43}"\}\n\n$/u.test(frame)), 'opaque digests alone')
 })
 
 test('repairing a report link to an existing bundle notifies the feed across instances', async t => {
@@ -539,4 +540,19 @@ test('manager aggregate feeds exclude hidden findings while a focused hidden rep
   await h.writer.setTriage('visible', { color: 'blue' }, null, null, 1)
   await until(() => triageFrames(focused.res) === 2)
   assert.equal(triageFrames(aggregate.res), 1)
+})
+
+test('a focused team\'s triage events tell the revision its annotations answer at: the same where nothing changed between them, another after a write', async t => {
+  const h = await fixture(t)
+  const annotations = async () => { const { res, done } = h.request('/api/teams/team/annotations'); await done; return JSON.parse(res.body) }
+  const read = await annotations()
+  assert.match(read.revision, /^[\w-]{43}$/u, 'an opaque digest')
+  const { res } = await h.userFeed()
+  const told = () => res.frames.filter(frame => frame.startsWith('event: triage\n')).map(frame => JSON.parse(frame.slice(frame.indexOf('data: ') + 6)).revision)
+  await until(() => told().length === 1)
+  assert.deepEqual(told(), [read.revision], 'nothing changed since the annotations were read')
+  await h.writer.setTriage('visible', { color: 'red' }, null, null, 1)
+  await until(() => told().length === 2)
+  assert.notEqual(told()[1], read.revision, 'a write since tells another')
+  assert.equal((await annotations()).revision, told()[1], 'as the annotations read since answer')
 })

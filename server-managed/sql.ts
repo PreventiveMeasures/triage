@@ -23,7 +23,7 @@ const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'g
   'userCanReadReport', 'userCanReadRepo', 'userCanReadRepoPath', 'userCanReadBundle', 'reportPermissionsFor', 'listComments', 'listManagedIssues',
   'listTriageHistory', 'listUsers', 'listUserOptions', 'listActivityReports', 'getRepoFullName', 'getUser', 'getSessionWithUser', 'getViewSessionWithUser',
   'listTriageFixes',
-  'sessionWithUser', 'getTeamReportAccessSnapshot', 'getReportAccessSnapshot', 'getReportView', 'getUserGithubId', 'getUserTeamFeedSnapshot', 'getAnnotations', 'getUserTokens',
+  'sessionWithUser', 'getTeamReportAccessSnapshot', 'getReportAccessSnapshot', 'getReportView', 'getUserGithubId', 'getUserTeamFeedSnapshot', 'getAnnotations', 'getAnnotationRevision', 'getUserTokens',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
   'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'getFirstUpstreamCacheEntries', 'setUpstreamCacheEntry', 'setUpstreamCacheEntries', 'ensureSessionUploadKey',

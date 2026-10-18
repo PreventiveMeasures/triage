@@ -841,8 +841,9 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   // above, so overlapping findings are sent to a report that actually owns
   // them instead of silently posting them to the first report only.
   if (findings.length > 0) {
-    const hydrate = async signal => {
-      const readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal)
+    // With the team feed, its annotation read (managed-feed.js), which knows
+    // the revision it reads at; else one of its own.
+    const hydrate = async (signal, readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal)) => {
       const results = await Promise.all(findings.flatMap(entry => [
         hydrateManagedReportTriage(entry.id, { renderView: false, signal, readAnnotations }),
         loadManagedReportComments(entry.id, { signal, readAnnotations }),

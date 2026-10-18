@@ -169,8 +169,10 @@ users with no memberships. The browser keeps one stream at a time.
 
 Each stream ends after 240 seconds, leaving headroom below this deployment's
 300-second invocation limit. Reconnection refreshes the catalog and any focused
-annotations. Idle streams send 15-second heartbeats; stalled streams and
-transient failures retry with backoff. Navigation aborts the previous request.
+annotations, the annotations only where the revision the stream's first event
+tells is not the one last read. Idle streams send 15-second heartbeats; stalled
+streams and transient failures retry with backoff. Navigation aborts the
+previous request.
 
 The function stays awaited until the stream closes. It polls shared database
 state every three seconds using short read-only transactions, releasing its
