@@ -6,8 +6,8 @@
 // kept for every scan (sharedSource), as many repositories use the same few
 // actions; a private one's is the admin's own access's alone.
 import { YamlError } from '@preventive/lockfile/yaml.js'
-import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, actionInstalls, keptSource, readWorkflow, resolveAction,
-  scanWorkflow, usesOfKey, workflowUses } from '../risk/index.js'
+import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, actionInstalls, dockerfileFindings, keptSource, readWorkflow,
+  resolveAction, scanWorkflow, usesOfKey, workflowUses } from '../risk/index.js'
 import type { OpenedRepository } from './repository-risk-read.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
@@ -24,16 +24,16 @@ const MAX_ACTIONS = 1000
 const MAX_DEPTH = 4
 const RESOLVERS = 4
 
-// A file of a repository's Actions read: a workflow, or an action of its
-// own, its text or why it couldn't be had.
-export type ActionsFile = { path: string; kind: 'workflow' | 'action' } & ({ text: string } | RiskFailure)
+// A file of a repository's Actions read: a workflow, an action of its own,
+// or such an action's Dockerfile, its text or why it couldn't be had.
+export type ActionsFile = { path: string; kind: 'workflow' | 'action' | 'dockerfile' } & ({ text: string } | RiskFailure)
 export type WorkflowsRead = { files: ActionsFile[] } | RiskFailure
 
 // What a scan tells of them: a repository's workflows' paths, each file's
 // findings and references, or why not, and each reference resolved, or why
 // not, by its key and the owner of the workflow that named it first.
 export type WorkflowsLine = { type: 'workflows'; repo: number } & ({ paths: string[] } | RiskFailure)
-export type WorkflowLine = { type: 'workflow'; repo: number; path: string; kind: 'workflow' | 'action' } & (WorkflowScan | RiskFailure)
+export type WorkflowLine = { type: 'workflow'; repo: number; path: string; kind: ActionsFile['kind'] } & (WorkflowScan | RiskFailure)
 export type ActionLine = { type: 'action' } & (ResolvedAction | { key: string } & RiskFailure)
 
 // A reference to resolve: its key, the owner of the workflow naming it, and
@@ -55,20 +55,29 @@ async function readFile(reading: ActionsReading, path: string): Promise<{ text: 
 // couldn't be had for a while, as GitHub's limits are.
 export const lastingRead = (read: WorkflowsRead) => !('error' in read) && read.files.every(file => 'text' in file || file.error === 'workflow-too-large' || file.error === 'github-not-found')
 
-// The actions of the repository's own a file uses, by the directory each is
-// in: `./path` as the workspace has it, which is the repository where it
-// was checked out first, and `$/path`.
-function ownActions(text: string, kind: 'workflow' | 'action') {
+// An action's directory, by its metadata's path.
+const actionDir = (path: string) => path.replace(/\/?action\.ya?ml$/u, '')
+const inRepository = (path: string) => !path.split('/').includes('..')
+
+// The actions of the repository's own a workflow or an action uses, by the
+// directory each is in: `./path` as the workspace has it, which is the
+// repository where it was checked out first, and `$/path`; and a Docker
+// action's Dockerfile, by its path.
+function ownFiles(path: string, kind: 'workflow' | 'action', text: string): { actions: string[]; dockerfile: string | null } {
   try {
-    return workflowUses(readWorkflow(kind, text)).flatMap(uses => uses.kind === 'local' && !/\.ya?ml$/iu.test(uses.path) && !uses.path.split('/').includes('..') ? [uses.path] : [])
+    const read = readWorkflow(kind, text)
+    const dockerfile = read.dockerfile && [actionDir(path), read.dockerfile.path.replace(/^\.\//u, '')].filter(Boolean).join('/')
+    return { actions: workflowUses(read).flatMap(uses => uses.kind === 'local' && !/\.ya?ml$/iu.test(uses.path) && inRepository(uses.path) ? [uses.path] : []),
+      dockerfile: dockerfile && inRepository(dockerfile) ? dockerfile : null }
   } catch (error) {
-    if (error instanceof YamlError) return []
+    if (error instanceof YamlError) return { actions: [], dockerfile: null }
     throw error
   }
 }
 
 // A repository's workflows and the actions of its own they use, in turn,
-// MAX_FILES at most; why not, where they couldn't be listed.
+// and those's Dockerfiles, MAX_FILES at most; why not, where they couldn't
+// be listed.
 export async function readActions(reading: ActionsReading): Promise<WorkflowsRead> {
   let listed
   try { listed = await reading.workflows() } catch (error) { return failureOf(error, 'listing its workflows') }
@@ -77,7 +86,10 @@ export async function readActions(reading: ActionsReading): Promise<WorkflowsRea
   const dirs = new Set<string>()
   for (let at = 0; at < files.length && files.length < MAX_FILES; at++) {
     const file = files[at]!
-    for (const dir of 'text' in file ? ownActions(file.text, file.kind) : []) {
+    if (!('text' in file) || file.kind === 'dockerfile') continue
+    const { actions, dockerfile } = ownFiles(file.path, file.kind, file.text)
+    if (dockerfile) files.push({ path: dockerfile, kind: 'dockerfile', ...await readFile(reading, dockerfile) })
+    for (const dir of actions) {
       if (dirs.has(dir)) continue
       dirs.add(dir)
       const named = dir === '' ? 'action' : `${dir}/action`
@@ -98,19 +110,22 @@ export function actionsLines(repo: number, owner: string, read: WorkflowsRead, l
   if ('error' in read) return { lines: [{ type: 'workflows', repo, ...read } as WorkflowsLine], refs: [] as ActionRef[] }
   const lines: (WorkflowsLine | WorkflowLine)[] = [{ type: 'workflows', repo, paths: read.files.filter(file => file.kind === 'workflow').map(file => file.path) }]
   const refs = new Map<string, ActionRef>()
-  // The directories of its own actions that install its packages, or use
-  // one of those that does.
-  const actions = read.files.flatMap(file => file.kind === 'action' && 'text' in file ? [{ dir: file.path.replace(/\/?action\.ya?ml$/u, ''), text: file.text }] : [])
-  const installers = new Set<string>()
+  // Where its own actions install its packages, by their directories: by
+  // their steps, and the actions of its own those use in turn.
+  const actions = read.files.flatMap(file => file.kind === 'action' && 'text' in file ? [{ dir: actionDir(file.path), text: file.text }] : [])
+  const installers = new Map<string, (string | null)[]>()
   for (let grew = true; grew;) {
     grew = false
-    for (const { dir, text } of actions) if (!installers.has(dir) && actionInstalls(text, installers)) grew = Boolean(installers.add(dir))
+    for (const { dir, text } of actions) {
+      const at = installers.has(dir) ? [] : actionInstalls(text, installers)
+      if (at.length > 0) grew = Boolean(installers.set(dir, at))
+    }
   }
   for (const file of read.files) {
     if (!('text' in file)) { lines.push({ type: 'workflow', repo, ...file }); continue }
     const at = { type: 'workflow', repo, path: file.path, kind: file.kind } as const
     try {
-      const scan = scanWorkflow(file.kind, file.text, { owner, lockfiles, installers })
+      const scan = file.kind === 'dockerfile' ? { uses: [], findings: dockerfileFindings(file.text) } : scanWorkflow(file.kind, file.text, { owner, lockfiles, installers })
       lines.push({ ...at, ...scan })
       for (const uses of scan.uses) if (uses.kind === 'action' || uses.kind === 'workflow') refs.set(uses.key!, { key: uses.key!, owner, depth: 0 })
     } catch (error) {

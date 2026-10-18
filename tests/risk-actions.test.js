@@ -141,15 +141,17 @@ describe('a script\'s findings, graded', () => {
     const lockfiles = [{ path: 'package-lock.json', names: new Set(['eslint']) }]
     const workflow = 'on: push\njobs:\n  a:\n    steps:\n      - uses: ./.github/actions/setup\n      - run: npx eslint .\n'
     const scan = installers => ids(scanWorkflow('workflow', workflow, { lockfiles, installers }).findings)
-    assert.deepEqual(scan(new Set(['.github/actions/setup'])), [])
-    assert.deepEqual(scan(new Set()), ['fetched-package/high@6'], 'one that doesn\'t')
+    assert.deepEqual(scan(new Map([['.github/actions/setup', ['']]])), [])
+    assert.deepEqual(scan(new Map()), ['fetched-package/high@6'], 'one that doesn\'t')
+    assert.deepEqual(scan(new Map([['.github/actions/setup', ['web']]])), ['fetched-package/high@6'], 'one that installs another directory\'s')
     assert.deepEqual(scan(undefined), [], 'none told')
     const action = script => `runs:\n  using: composite\n  steps:\n    - run: ${script}\n      shell: bash\n`
-    assert.equal(actionInstalls(action('npm ci'), new Set()), true)
-    assert.equal(actionInstalls(action('npm run lint'), new Set()), false)
-    assert.equal(actionInstalls('runs: [', new Set()), false, 'one GitHub can\'t run')
+    assert.deepEqual(actionInstalls(action('npm ci'), new Map()), [''])
+    assert.deepEqual(actionInstalls(action('npm ci --prefix web'), new Map()), ['web'])
+    assert.deepEqual(actionInstalls(action('npm run lint'), new Map()), [])
+    assert.deepEqual(actionInstalls('runs: [', new Map()), [], 'one GitHub can\'t run')
     const wrapper = 'runs:\n  using: composite\n  steps:\n    - uses: ./lint\n'
-    assert.deepEqual([actionInstalls(wrapper, new Set()), actionInstalls(wrapper, new Set(['lint']))], [false, true], 'one using an action of its own, by that one')
+    assert.deepEqual([actionInstalls(wrapper, new Map()), actionInstalls(wrapper, new Map([['lint', ['api']]]))], [[], ['api']], 'one using an action of its own, by that one')
   })
 
   it('an action that installs a project\'s packages, by its name, not another tool\'s', () => {

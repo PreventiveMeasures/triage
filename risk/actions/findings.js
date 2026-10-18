@@ -20,12 +20,12 @@ function usesFinding(uses, owner) {
 const INSTALLER = /(?:npm|yarn|pnpm|bun|node[-_]?modules)[-_]?(?:ci|install)|install[-_]?(?:npm|yarn|pnpm|bun|node[-_]?modules|dep(?:endencie)?s|packages)/iu
 
 // Where a step installs a project's packages: each install's of a script,
-// its directory or the one it names; anywhere (null) for an action that
-// installs them (cypress-io/github-action's unless `install: false`,
-// pnpm/action-setup's with `run_install`), and one of its own of
-// `installers` (ScanOptions), or any where none are told.
+// its directory or the one it names; where an action of its own does, by
+// `installers` (ScanOptions), anywhere (null) where none are told; and
+// anywhere for an action that installs them (cypress-io/github-action's
+// unless `install: false`, pnpm/action-setup's with `run_install`).
 function installs(step, installers) {
-  if (step.uses?.kind === 'local') return !installers || installers.has(step.uses.path) ? [null] : []
+  if (step.uses?.kind === 'local') return installers ? installers.get(step.uses.path) ?? [] : [null]
   const repo = step.uses?.repo?.toLowerCase()
   if (repo && (INSTALLER.test(repo) || (repo === 'cypress-io/github-action' && String(step.with?.install) !== 'false'))) return [null]
   if (repo === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return [null]
@@ -112,14 +112,14 @@ export function workflowUses(read) {
   })
 }
 
-// Whether an action's metadata installs a project's packages, as a step
-// using it does, an action of its own of `installers` (ScanOptions) among
-// those: false for one GitHub can't run.
+// Where an action's metadata installs a project's packages, as a step using
+// it does, by `installers` (ScanOptions) where it uses an action of its own:
+// each install's directory, null for anywhere; none for one GitHub can't run.
 export function actionInstalls(text, installers) {
   try {
-    return readWorkflow('action', text).jobs.some(job => job.steps.some(step => installs(step, installers).length > 0))
+    return readWorkflow('action', text).jobs.flatMap(job => job.steps.flatMap(step => installs(step, installers)))
   } catch (error) {
-    if (error instanceof YamlError) return false
+    if (error instanceof YamlError) return []
     throw error
   }
 }

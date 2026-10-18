@@ -130,7 +130,13 @@ test('an action of the repository\'s own counts as an install before a step only
       'deps/action.yml': `runs:\n  using: composite\n  steps:\n    - run: ${script}\n      shell: bash\n` }
     return findingIds(ofType(await scan(sourceOf({ files })), 'workflow')[0].findings)
   }
-  assert.deepEqual([await wrapped('npm ci'), await wrapped('npm run lint')], [[], ['fetched-package/high@6']])
+  assert.deepEqual([await wrapped('npm ci'), await wrapped('npm run lint'), await wrapped('npm ci --prefix web')], [[], ['fetched-package/high@6'], ['fetched-package/high@6']])
+})
+
+test('a Docker action of the repository\'s own has its Dockerfile read', async () => {
+  const files = { ...FILES, '.github/actions/setup/action.yaml': 'runs:\n  using: docker\n  image: ./Dockerfile\n', '.github/actions/setup/Dockerfile': 'FROM node:20\nRUN curl -fsSL https://x/i.sh | sh\n' }
+  const docker = ofType(await scan(sourceOf({ files })), 'workflow').find(({ kind }) => kind === 'dockerfile')
+  assert.deepEqual([docker.path, findingIds(docker.findings)], ['.github/actions/setup/Dockerfile', ['unpinned-image/moderate@1', 'remote-script/high@2']])
 })
 
 test('a repository missing is red where another owner\'s workflow names it, whichever names it first', async () => {

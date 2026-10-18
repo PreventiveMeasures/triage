@@ -132,7 +132,7 @@ import { keptSource, resolveAction, scanWorkflow, usesOfKey } from './risk/index
 const { uses, findings } = scanWorkflow('workflow', text, {
   owner: 'org', // whose repository it is: an unpinned `uses:` of the same owner's, as of GitHub's own, is yellow, another's orange
   lockfiles: [{ path: 'web/package-lock.json', names: new Set(['eslint']) }], // what npx runs of the project's own, by where its step runs
-  installers: new Set(['.github/actions/setup']), // its own actions that install its packages (actionInstalls); else each counts as one
+  installers: new Map([['.github/actions/setup', ['']]]), // where its own actions install its packages (actionInstalls); else each anywhere
 })
 
 // A reference resolved on GitHub, its own code read in turn.

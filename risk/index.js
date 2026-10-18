@@ -8,5 +8,5 @@ export { NpmRiskError, npmReadyDownload, npmReadyDownloads } from './npm/registr
 export { SEVERITIES, npmFileRisk } from './files/stamps.js'
 export { readWorkflow } from './actions/workflow.js'
 export { actionInstalls, scanWorkflow, workflowUses } from './actions/findings.js'
-export { keptSource, resolveAction } from './actions/resolve.js'
+export { dockerfileFindings, keptSource, resolveAction } from './actions/resolve.js'
 export { usesOfKey } from './actions/uses.js'
