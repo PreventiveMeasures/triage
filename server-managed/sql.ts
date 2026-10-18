@@ -19,7 +19,9 @@ export interface ManagedSqlDriver extends ManagedSql {
 // These operations execute exactly one SQL statement. Postgres already gives
 // that statement an atomic snapshot; an explicit BEGIN/COMMIT adds only trips.
 // Lease and cache writes coordinate through their conditional UPSERT/UPDATE alone.
-const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'getStorageEncryption',
+const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'getStorageEncryption', 'getTeam', 'getComment',
+  'userCanReadReport', 'userCanReadRepo', 'userCanReadRepoPath', 'userCanReadBundle', 'reportPermissionsFor', 'listComments', 'listManagedIssues',
+  'listTriageHistory', 'listUsers', 'listUserOptions', 'listActivityReports',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
   'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'setUpstreamCacheEntry', 'setUpstreamCacheEntries', 'ensureSessionUploadKey',

@@ -782,6 +782,10 @@ test('Postgres report batches snapshot sessions, scoped grants, and metadata wit
     assert.equal(report.repo.github, 'org/repo')
   }
   queries.length = 0
+  assert.equal(await db.userCanReadReport(viewer, ids[0]), true)
+  assert.deepEqual(await db.reportPermissionsFor(viewer, ids[1]), { dependencies: true, security: true })
+  assert.equal(queries.length, 2, 'single-statement reads take no transaction')
+  queries.length = 0
   const app = await db.getTeamReportAccessSnapshot('session', 10, 'app')
   assert.equal(queries.length, 7, 'one transaction: session, membership, reports, repository scopes and links')
   assert.deepEqual(app.repositories, [{ repoId: 7, github: 'org/repo', path: 'packages/app' }])
