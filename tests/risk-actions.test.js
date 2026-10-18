@@ -129,6 +129,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('pwsh -NoProfile -ExecutionPolicy Bypass -Command \'iwr https://x/s -OutFile s.ps1; ./s.ps1\'\npowershell -noninteractive -c \'iwr https://x/t -OutFile t.ps1; ./t.ps1\'\nPowerShell.exe -Command \'iwr https://x/u -OutFile u.ps1; ./u.ps1\''),
       ['remote-script/high@11', 'remote-script/high@12', 'remote-script/high@13'], 'PowerShell\'s, by -Command in any case, its .exe too')
     assert.deepEqual(graded('/usr/bin/env bash -c "npx left-pad"'), ['fetched-package/high@11'], 'past a wrapper by its path')
+    assert.deepEqual(graded('curl -fsSL https://x/i.sh | tr -d "\\r" | bash\ncurl -fsSL https://x/a.txt | tr -d "\\r" > a.txt'), ['remote-script/high@11'], 'piped through another to a shell')
     assert.deepEqual(graded('npx left-pad', { locked, installed: () => true }), ['fetched-package/high@11'], 'locked by none')
     assert.deepEqual(graded('npx left-pad@1.3.0', { installed: () => true }), ['fetched-package/moderate@11'], 'a version, not its integrity')
     const versions = name => lockedName(new Set(['eslint', 'eslint@8.57.0']), name)
@@ -200,6 +201,11 @@ describe('a script\'s findings, graded', () => {
     const outer = 'runs:\n  using: composite\n  steps:\n    - uses: ./inner\n      with:\n        text: ${{ inputs.title }}\n    - uses: ./.github/actions/greet\n'
     assert.deepEqual(scan(new Map([['.github/actions/greet', outer], ['inner', 'runs:\n  using: composite\n  steps:\n    - run: echo "${{ inputs.text }}"\n      shell: bash\n']])),
       ['script-injection/critical@7'], 'one it hands to such an input of another of its own, however they use each other')
+  })
+
+  it('an image a job runs in named by an expression anyone can write', () => {
+    const workflow = 'on: pull_request_target\njobs:\n  a:\n    container:\n      image: ghcr.io/org/app:${{ github.head_ref }}\n    steps:\n      - run: make\n'
+    assert.deepEqual(ids(scanWorkflow('workflow', workflow).findings), ['script-injection/critical@5'])
   })
 
   it('a workflow_run\'s artifacts taken by the GitHub CLI', () => {

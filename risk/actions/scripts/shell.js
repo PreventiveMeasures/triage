@@ -136,8 +136,9 @@ export const pathFrom = (dir, to) => /^[$~/-]/u.test(to) ? to : resolved(dir ? d
 
 // Each command of a script, in the order they run (`order`): its `line` from
 // 0, the directory the `cd`s before it moved to (`dir`, by pathFrom), and
-// `next`, the command a pipe feeds it to; a command substitution's before
-// its command's, a shell's command line's (`sh -c`) after it.
+// `pipedTo`, the commands its output is piped through; a command
+// substitution's before its command's, a shell's command line's (`sh -c`)
+// after it.
 export function scriptCommands(script) {
   const found = []
   let dir = '', read = 0
@@ -146,7 +147,8 @@ export function scriptCommands(script) {
     const { commands, nested } = commandsOf(text)
     commands.forEach(({ nested: substituted, ...command }, at) => {
       for (const each of substituted) readLine(each, line)
-      found.push({ ...command, line, dir, order: found.length, next: commands[at + 1]?.piped ? commands[at + 1] : null })
+      const end = commands.findIndex((each, after) => after > at && !each.piped)
+      found.push({ ...command, line, dir, order: found.length, pipedTo: commands.slice(at + 1, end === -1 ? undefined : end) })
       if (command.argv[0] === 'cd') dir = pathFrom(dir, command.argv.slice(1).find(word => !/^-[LPe@]+$/u.test(word)) ?? '~')
       const shell = shellLine(command.argv)
       if (shell) readLine(shell, line)

@@ -165,7 +165,7 @@ export function scriptFinds(script) {
   const saved = new Map()
   for (const command of scriptCommands(script)) {
     const program = programOf(command.argv[0])
-    if (FETCHERS.test(program) && command.next && SHELLS.test(programOf(command.next.argv[0]))) found.push({ kind: 'remote-script', line: command.line, command: excerpt(lines.get(command.line) ?? '') })
+    if (FETCHERS.test(program) && command.pipedTo.some(each => SHELLS.test(programOf(each.argv[0])))) found.push({ kind: 'remote-script', line: command.line, command: excerpt(lines.get(command.line) ?? '') })
     const file = FETCHERS.test(program) ? savedTo(program, command.argv) ?? command.out : null
     if (file) saved.set(file, command.line)
     for (const [name, at] of saved) {

@@ -101,7 +101,10 @@ function jobFindings(job, triggers, { owner, lockfiles, external, actions }) {
     // An input of a reusable workflow, which one writes into its scripts.
     for (const [input, value] of Object.entries(job.with ?? {})) for (const { index: _index, ...injected } of scriptInjections(value, triggers)) found.push({ ...injected, line: job.withLines[input] })
   }
-  for (const image of job.images) if (!image.read?.digest && !image.text.includes('${{')) found.push({ ...imageFinding(image.text, image.read), line: image.line })
+  for (const image of job.images) {
+    if (!image.read?.digest && !image.text.includes('${{')) found.push({ ...imageFinding(image.text, image.read), line: image.line })
+    for (const { index: _index, ...injected } of scriptInjections(image.text, triggers)) found.push({ ...injected, line: image.line })
+  }
   const installed = []
   for (const step of job.steps) {
     const finding = step.uses && usesFinding(step.uses, owner)
