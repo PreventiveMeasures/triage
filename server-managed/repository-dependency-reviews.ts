@@ -45,6 +45,8 @@ export interface RepositoryDependencyReviewStore {
   listRepoDependencyReviews(): Promise<Map<number, RepoDependencyReview>>
   // One repository's, none where it isn't connected.
   repoDependencyReview(repoId: number): Promise<RepoDependencyReview | null>
+  // Those of `repoIds` connected, by their ids, in one statement.
+  getRepoDependencyReviews(repoIds: number[]): Promise<Map<number, RepoDependencyReview>>
   // The teams whose published reviews count for each repository (COUNTING_TEAM),
   // by name.
   listRepoReviewTeams(): Promise<Map<number, { id: string; name: string }[]>>
@@ -122,6 +124,11 @@ export function repositoryDependencyReviewMethods(db: ManagedSql): RepositoryDep
       return new Map(rows.map(row => [row.repoId, setting(row)]))
     },
     repoDependencyReview: readSetting,
+    async getRepoDependencyReviews(repoIds) {
+      if (repoIds.length === 0) return new Map()
+      const rows = await db.prepare(`SELECT ${columns} FROM managed_selected_repo WHERE repo_id IN (${repoIds.map(() => '?').join(',')})`).all(...repoIds) as SettingRow[]
+      return new Map(rows.map(row => [row.repoId, setting(row)]))
+    },
     async listRepoReviewTeams() {
       const rows = await db.prepare(`SELECT DISTINCT tr.repo_id AS repoId, t.id AS id, t.name AS name FROM managed_team_repo tr
         JOIN managed_team t ON t.id = tr.team_id WHERE t.hidden = 0 AND t.dependency_review = 1 ORDER BY t.name, t.id`).all() as { repoId: number; id: string; name: string }[]

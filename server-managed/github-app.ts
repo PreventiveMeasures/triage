@@ -8,6 +8,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import type { ManagedConfig } from './config.ts'
 import { GithubApiError, githubUnreachable, throwGithubResponseError, upstreamGithub } from './github-errors.ts'
 import { onTokenRejected, shareGithubRead, tokenRejected } from './github-requests.ts'
+import { timed } from './request-timing.ts'
 
 export { GithubApiError } from './github-errors.ts'
 export { onTokenRejected } from './github-requests.ts'
@@ -74,31 +75,34 @@ export function mergeRepos(...lists: ConnectedRepo[][]): ConnectedRepo[] {
 // GithubApiError (401 passes through for the caller to handle). Identical GETs
 // share an outstanding read through its body. POSTs only opt in for read-only
 // GraphQL queries (repository-history.ts), never for mutations or token mints.
-export async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET', body?: unknown,
+export function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET', body?: unknown,
   readOnly = method === 'GET'): Promise<unknown> {
   if (readOnly) return shareGithubRead(fetchImpl, JSON.stringify([url, token, method, body]), () => githubJson(url, token, fetchImpl, method, body, false))
-  let res: Response
-  const started = Date.now()
-  try {
-    res = await fetchImpl(url, {
-      method,
-      signal: AbortSignal.timeout(body === undefined ? 10_000 : 20_000),
-      redirect: 'error',
-      headers: {
-        ...(token == null ? {} : { authorization: `Bearer ${token}` }), 'accept': 'application/vnd.github+json',
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }), 'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    })
-  } catch (error) { throw githubUnreachable(error, started) }
-  if (res.status === 401 && token) tokenRejected(token, fetchImpl)
-  if (!res.ok) await throwGithubResponseError(res)
-  // The answer's body is read within the same timeout: one not read whole is
-  // GitHub not reached, as one not answered is; only one that isn't JSON is
-  // malformed.
-  try { return await res.json() } catch (error) {
-    throw error instanceof SyntaxError ? new GithubApiError(502, 'github-malformed') : githubUnreachable(error, started)
-  }
+  // Each call told in its request's Server-Timing (request-timing.ts).
+  return timed('gh', async () => {
+    let res: Response
+    const started = Date.now()
+    try {
+      res = await fetchImpl(url, {
+        method,
+        signal: AbortSignal.timeout(body === undefined ? 10_000 : 20_000),
+        redirect: 'error',
+        headers: {
+          ...(token == null ? {} : { authorization: `Bearer ${token}` }), 'accept': 'application/vnd.github+json',
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }), 'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+    } catch (error) { throw githubUnreachable(error, started) }
+    if (res.status === 401 && token) tokenRejected(token, fetchImpl)
+    if (!res.ok) await throwGithubResponseError(res)
+    // The answer's body is read within the same timeout: one not read whole is
+    // GitHub not reached, as one not answered is; only one that isn't JSON is
+    // malformed.
+    try { return await res.json() } catch (error) {
+      throw error instanceof SyntaxError ? new GithubApiError(502, 'github-malformed') : githubUnreachable(error, started)
+    }
+  })
 }
 
 // Validate one repo object into a ConnectedRepo (or null to skip), tagging it

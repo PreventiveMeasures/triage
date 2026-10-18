@@ -187,6 +187,7 @@
     "server-managed/repository-changes.ts",
     "server-managed/repository-code.ts",
     "server-managed/repository-dependency-reviews.ts",
+    "server-managed/request-timing.ts",
     "server-managed/reviewed-dependencies.ts",
     "server-managed/repository-agents.ts",
     "server-managed/repository-history.ts",

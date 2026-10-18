@@ -154,6 +154,22 @@ export function npmDelta(base: Side | null, other: Side, kept: KeptStore<NpmDelt
   return work
 }
 
+// The deltas of those of `sides` (each the integrities of the version it is
+// against, or none, and of the version) held or kept, by their keys
+// (npmDelta's), in one read of `kept` for those not held: none worked out.
+export async function keptNpmDeltas(sides: [string | null, string][], kept: KeptStore<NpmDelta>): Promise<Map<string, NpmDelta>> {
+  const keys = [...new Set(sides.map(([base, other]) => `${base ?? '(empty)'}\0${other}`))]
+  const found = new Map(keys.flatMap(key => { const known = deltas.get(key); return known ? [[key, known] as const] : [] }))
+  const unheld = keys.filter(key => !found.has(key))
+  for (const [key, row] of unheld.length > 0 ? await kept.readMany(unheld) : []) {
+    const known = deltaOf(row.value)
+    if (!known) continue
+    deltas.set(key, known)
+    found.set(key, known)
+  }
+  return found
+}
+
 // As kept, else its turn awaited, then both sides' files read, counted and kept.
 async function worked(key: string, base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null): Promise<NpmDelta> {
   const known = deltaOf((await kept?.read(key))?.value)

@@ -137,7 +137,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore,
   repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
-import { type NpmDelta, npmDelta } from './npm-delta.ts'
+import { type NpmDelta, keptNpmDeltas, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -184,6 +184,8 @@ import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, sco
 import { type Lru, lru } from './lru.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, cacheAvatar, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession, runRequestPresence } from './session.ts'
+import { runTimed } from './request-timing.ts'
+import { isExactVersion } from '@preventive/upstream/semver.js'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
@@ -198,7 +200,7 @@ import { LINK_LOGIN_PATH, isLinkOAuthCallback, linkLoginRedirect, linkOAuthCallb
 import type { ProfileChoice } from './github-links.ts'
 import { withAppUsers } from './github-users.ts'
 import { isBlobId } from './object-storage.ts'
-import { attachmentDisposition, sendJson, sendLines, writeResponse, writeResponseParts } from './http-response.ts'
+import { attachmentDisposition, openLines, sendJson, sendLines, writeResponse, writeResponseParts } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
@@ -207,8 +209,7 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, canReadPrivateNpm, npmFileRows, npmPublishTime, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions,
-  readTogether } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, VERSION_KEPT_MS, canReadPrivateNpm, npmFileRows, npmPublishTime, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
@@ -219,7 +220,7 @@ import { AGENTS_READ_VERSION, COMMITS_CURSOR, repositoryAgents } from './reposit
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
 import { type GithubAsked, lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
-import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
+import { MAX_REQUIRED_REVIEWS, type RepoDependencyReview, SINCE_COMMIT } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, heldTo, scopeOf } from './lockfile-scope.ts'
 import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import { formattedPull, withFormatted } from './dependency-review-comments.ts'
@@ -310,6 +311,7 @@ const NPM_TYPE_ONLY_PATH = '/api/npm/type-only'
 const NPM_COMPARISON_PATH = '/api/npm/comparison'
 const NPM_RISK_PATH = '/api/npm/risk'
 const NPM_DELTA_PATH = '/api/npm/delta'
+const NPM_DELTAS_PATH = '/api/npm/deltas'
 // What risk's errors (risk/npm/registry.js NpmRiskError) are answered as: npm
 // having no such package or version, or a tarball unpacking past risk's
 // bounds; npm failing otherwise a 502.
@@ -1548,12 +1550,25 @@ function repositoryQuery(res: ServerResponse, query: URLSearchParams) {
 async function authorizeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number, path: string) {
   const s = await readWorkspaceSession(res, deps, cookie)
   if (!s) return null
-  // bundleRepos's reads, the reader's scopes read once for both.
-  const access = await contentAccess(deps.db, s.user)
-  const repo = (await deps.db.listSelectedRepos()).filter(access.bundle).find(item => item.repoId === repoId)
-  if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }
+  const access = repositoryAccessIn(await repositoryGrants(deps, s.user), repoId, path)
+  if (!access) { sendJson(res, 404, { error: 'no-repository' }); return null }
+  return { ...access, user: s.user }
+}
+
+// What a reader's grants let them read of the repositories (bundleRepos's
+// reads, the reader's scopes read once for both), for repositoryAccessIn to
+// tell of each: read once for as many repositories as a request asks of.
+async function repositoryGrants(deps: ManagedHttpDeps, user: StoredUser) {
+  const access = await contentAccess(deps.db, user)
+  return { access, repos: (await deps.db.listSelectedRepos()).filter(access.bundle) }
+}
+// Repository `repoId` as `grants` let it be read at `path`, as
+// authorizeRepository answers it; null where it is none of the reader's.
+function repositoryAccessIn({ access, repos }: Awaited<ReturnType<typeof repositoryGrants>>, repoId: number, path: string) {
+  const repo = repos.find(item => item.repoId === repoId)
+  if (!repo) return null
   const scopes = access.scopes == null ? [null] : access.scopes.filter(scope => scope.repoId === repoId).map(scope => scope.path)
-  return { repo, virtualEntries: scopedDirectory(path, scopes), user: s.user }
+  return { repo, virtualEntries: scopedDirectory(path, scopes) }
 }
 
 // The repository as it was authorized, but for the shared default branch hint,
@@ -2021,28 +2036,55 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
 async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
   answer: (fullName: string, token: string, user: StoredUser) => Promise<{ value: object; kept: boolean }>,
   unread: () => Promise<object | null> = () => Promise.resolve(null)): Promise<void> {
-  const authorize = async () => {
-    const access = await authorizeRepository(res, deps, cookie, repoId, '')
-    if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
-    return access
-  }
-  const access = await authorize()
-  if (!access) return
+  const access = await wholeRepositoryAccess(deps, cookie, repoId)
+  if ('error' in access) { sendRefusal(res, access); return }
   const told = await unread()
   if (told) { sendJson(res, 200, await withAppUsers(deps.db, told)); return }
+  const read = await readWholeRepositoryOf(deps, access, answer, () => wholeRepositoryAccess(deps, cookie, repoId))
+  if ('error' in read) { sendRefusal(res, read); return }
+  sendJson(res, 200, await withAppUsers(deps.db, read.value))
+}
+
+// What a request is refused, as its answer tells it.
+type Refusal = { status: number; error: string; retryAfter?: number }
+const refusal = (status: number, error: string, retryAfter?: number | null): Refusal => ({ status, error, ...retryAfter == null ? {} : { retryAfter } })
+function sendRefusal(res: ServerResponse, { status, error, retryAfter }: Refusal) {
+  sendJson(res, status, { error }, retryAfter == null ? {} : { 'retry-after': String(retryAfter) })
+}
+// The whole of repository `repoId`, where the session `cookie` names may
+// read all of it, and who reads it; else why not: none of it
+// (`no-repository`), or only some (`no-directory`).
+type WholeAccess = { repo: SelectedRepo; user: StoredUser }
+async function wholeRepositoryAccess(deps: ManagedHttpDeps, cookie: string | undefined, repoId: number): Promise<WholeAccess | Refusal> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) return refusal(401, 'unauthenticated')
+  if (!roleAtLeast(s.user.role, 'view')) return refusal(403, 'forbidden')
+  return wholeAccessIn(await repositoryGrants(deps, s.user), s.user, repoId)
+}
+function wholeAccessIn(grants: Awaited<ReturnType<typeof repositoryGrants>>, user: StoredUser, repoId: number): WholeAccess | Refusal {
+  const access = repositoryAccessIn(grants, repoId, '')
+  if (!access) return refusal(404, 'no-repository')
+  if (access.virtualEntries !== null) return refusal(404, 'no-directory')
+  return { repo: access.repo, user }
+}
+// What `answer` reads of the whole of the repository `access` lets its
+// reader read, with their own GitHub access: as kept, else with that access
+// and `reauthorize`'s checked again after; else why it was refused.
+async function readWholeRepositoryOf<T>(deps: ManagedHttpDeps, access: WholeAccess, answer: (fullName: string, token: string, user: StoredUser) => Promise<{ value: T; kept: boolean }>,
+  reauthorize: () => Promise<WholeAccess | Refusal>): Promise<{ value: T; kept: boolean } | Refusal> {
   try {
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const token = reader.readToken()
-    if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
+    if (!token) return refusal(403, 'github-token-required')
     const answered = await answer(access.repo.fullName, token, access.user)
-    if (answered.kept) { sendJson(res, 200, await withAppUsers(deps.db, answered.value)); return }
+    if (answered.kept) return answered
     await reader.recheckAccess()
-    const current = await authorize()
-    if (!current) return
-    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    sendJson(res, 200, await withAppUsers(deps.db, answered.value))
+    const current = await reauthorize()
+    if ('error' in current) return current
+    if (!sameRepository(current.repo, access.repo)) return refusal(409, 'repository-changed')
+    return answered
   } catch (err) {
-    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
+    if (err instanceof GithubApiError) return refusal(err.status === 401 ? 502 : err.status, err.message, err.retryAfter)
     throw err
   }
 }
@@ -2178,28 +2220,35 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
 async function handleRepositoryBranchDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
-  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
-    const headRead = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
-    const head = headRead.value.sha
-    if (!head) return { value: { head: null, review: null }, kept: false }
-    const asked: GithubAsked = { github: !headRead.kept }
-    // Those its review holds to alone read, as many as are read of them.
-    const setting = await deps.db.repoDependencyReview(repoId)
-    if (!setting?.enabled) return { value: { head, review: null }, kept: false }
-    const read = await lockedAt(fullName, token, head, path => heldTo(setting.lockfiles, path), asked)
-    const { packages, paths } = lockedIn(read)
-    const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
-      ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
-    const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
-    if (!now) return { value: { head, review: null }, kept: !asked.github }
-    // Told by the lockfiles it held to as they were read, though they have
-    // changed since.
-    const state = { ...now, lockfiles: setting.lockfiles }
-    const reviewed = deps.reviewedDependencies ?? null
-    const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null }
-      : await baselineFor(fullName, token, repoId, state, baselineKept(deps), asked)
-    return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: !asked.github }
-  }, async () => (await deps.db.repoDependencyReview(repoId))?.enabled ? null : { review: null })
+  await answerWholeRepository(res, deps, cookie, repoId, (fullName, token, user) => branchDependencyAnswer(deps, fullName, token, user, repoId),
+    async () => (await deps.db.repoDependencyReview(repoId))?.enabled ? null : { review: null })
+}
+
+// The default branch's answer, as GET branch-dependencies gives it, and
+// whether all of it was kept, GitHub asked for none of it; its review's
+// setting as read already (`known`), where it was.
+async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number,
+  known?: RepoDependencyReview | null): Promise<{ value: object; kept: boolean }> {
+  const headRead = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
+  const head = headRead.value.sha
+  if (!head) return { value: { head: null, review: null }, kept: false }
+  const asked: GithubAsked = { github: !headRead.kept }
+  // Those its review holds to alone read, as many as are read of them.
+  const setting = known === undefined ? await deps.db.repoDependencyReview(repoId) : known
+  if (!setting?.enabled) return { value: { head, review: null }, kept: false }
+  const read = await lockedAt(fullName, token, head, path => heldTo(setting.lockfiles, path), asked)
+  const { packages, paths } = lockedIn(read)
+  const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
+    ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
+  const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
+  if (!now) return { value: { head, review: null }, kept: !asked.github }
+  // Told by the lockfiles it held to as they were read, though they have
+  // changed since.
+  const state = { ...now, lockfiles: setting.lockfiles }
+  const reviewed = deps.reviewedDependencies ?? null
+  const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null }
+    : await baselineFor(fullName, token, repoId, state, baselineKept(deps), asked)
+  return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: !asked.github }
 }
 
 // GET /api/admin/repositories/lockfiles: the lockfiles of the repository's
@@ -2212,6 +2261,162 @@ async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpD
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
     return { value: { head, lockfiles: head ? (await lockfilesAt(fullName, token, head)).map(({ path, format }) => ({ path, format })) : [] }, kept: false }
+  })
+}
+
+// GET /api/teams/:id/dependencies: what the team's Dependencies tab shows
+// (team-dependencies.js), in one request rather than one a repository, a
+// page of its pull requests and a batch of their dependencies: of each of
+// the team's repositories (those `repoIds` names alone, where it names
+// some), as lines of JSON as each is read, as the endpoints of each read
+// them: its default branch's dependencies and its open pull requests
+// (`{ repoId, branch, pulls: { items, more } }`) where its review is in
+// effect for the reader, else `{ repoId, branch: null }`, as for one they
+// may read only some of, or `{ repoId, error, status }`; then its pull
+// requests' dependencies, of those changing a lockfile or that may,
+// TEAM_PULLS_TOGETHER at a time (`{ repoId, dependencies }`); and the lines
+// of their versions wanting reviews, where they are counted already
+// (`{ repoId, deltas }`, npm-delta.ts keptNpmDeltas). Last, `{ done: true
+// }`, or, its time up, `{ done: false, unread }`, the repositories left for
+// the reader to ask for again. The team's repositories, the reader's grants
+// and the repositories' reviews read once, those reviewing none answered at
+// once, GitHub asked nothing of them; each read with GitHub has its access
+// checked again after (readWholeRepositoryOf), and the reader's session
+// before each line.
+const TEAM_REPOSITORIES_AT_ONCE = 4
+const TEAM_DEPENDENCIES_MS = 240_000
+const TEAM_PULL_PAGES = 20
+const TEAM_PULLS_TOGETHER = 20
+const PARTIAL_ACCESS = new Set(['no-directory', 'no-repository'])
+type TeamDependencyLine = Record<string, unknown> & { repoId?: number }
+type TeamPull = { number: number; touchesLockfile?: boolean | null }
+async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, s: { session: ManagedSession; user: StoredUser },
+  teamId: string, query: URLSearchParams): Promise<void> {
+  const named = query.get('repoIds')
+  const only = named === null ? null : new Set(named.split(',').map(Number))
+  if (only && (only.size === 0 || only.size > 1000 || [...only].some(id => !Number.isSafeInteger(id) || id <= 0))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const snapshot = await teamSnapshot(deps.db, s.session.id, teamId)
+  const repoIds = [...new Set(snapshot.repositories.map(repo => repo.repoId))].filter(id => !only || only.has(id))
+  const grants = await repositoryGrants(deps, s.user)
+  const settings = await deps.db.getRepoDependencyReviews(repoIds)
+  const deadline = Date.now() + TEAM_DEPENDENCIES_MS
+  const out = openLines(res)
+  let stopped = false
+  // Lines written once the reader's session is still theirs; none, and the
+  // answer cut short, where it isn't, or the reader is gone.
+  const send = async (...lines: TeamDependencyLine[]) => {
+    if (stopped) return false
+    const now = await readSession(deps.config, deps.db, cookie, Date.now())
+    if (now?.user.id !== s.user.id || !roleAtLeast(now.user.role, 'view')) stopped = true
+    for (const line of lines) if (stopped || !await out.write(line)) stopped = true
+    if (stopped) out.cut()
+    return !stopped
+  }
+  const reading: { access: WholeAccess; setting: RepoDependencyReview }[] = []
+  const answered: TeamDependencyLine[] = []
+  for (const repoId of repoIds) {
+    const access = wholeAccessIn(grants, s.user, repoId), setting = settings.get(repoId)
+    if ('error' in access || !setting?.enabled) answered.push({ repoId, branch: null })
+    else reading.push({ access, setting })
+  }
+  if (answered.length > 0 && !await send(...answered)) return
+  const done = await eachOf(reading, TEAM_REPOSITORIES_AT_ONCE, ({ access, setting }) => stopped || Date.now() > deadline ? Promise.resolve(false)
+    : teamRepositoryDependencies(deps, access, setting, deadline, send, () => wholeRepositoryAccess(deps, cookie, access.repo.repoId)))
+  if (stopped) return
+  const unread = reading.filter((_, at) => !done[at]).map(({ access }) => access.repo.repoId)
+  if (!await send(unread.length === 0 ? { done: true } : { done: false, unread })) return
+  await out.end()
+}
+
+// A repository's lines of its team's Dependencies, as handleTeamDependencies
+// tells them; whether all were written, none left for its time.
+async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
+  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>): Promise<boolean> {
+  const repoId = access.repo.repoId
+  const read = await readWholeRepositoryOf<{ branch: object | null; pulls?: { items: TeamPull[]; more: boolean } }>(deps, access, async (fullName, token, user) => {
+    const branch = await branchDependencyAnswer(deps, fullName, token, user, repoId, setting)
+    if (!(branch.value as { review?: unknown }).review) return { value: { branch: null }, kept: branch.kept }
+    const pulls = await teamOpenPulls(deps, repoId, fullName, token)
+    return { value: { branch: branch.value, pulls: { items: pulls.items, more: pulls.more } }, kept: branch.kept && pulls.kept }
+  }, reauthorize)
+  if ('error' in read) return send({ repoId, ...PARTIAL_ACCESS.has(read.error) ? { branch: null } : { error: read.error, status: read.status } })
+  if (!await send({ repoId, ...read.value })) return false
+  if (!read.value.branch) return true
+  const told: object[] = [read.value.branch]
+  const numbers = read.value.pulls!.items.filter(item => item.touchesLockfile === true || item.touchesLockfile === null).map(item => item.number)
+  for (let at = 0; at < numbers.length; at += TEAM_PULLS_TOGETHER) {
+    if (Date.now() > deadline) return false
+    const batch = numbers.slice(at, at + TEAM_PULLS_TOGETHER)
+    const pulled = await readWholeRepositoryOf(deps, access, async (fullName, token, user) => {
+      const answers = await eachOf(batch, PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, true).catch((err: unknown) => {
+        // GitHub asked, though it failed: its access asked again after.
+        if (err instanceof GithubApiError) return { value: { number, error: err.message }, kept: false }
+        throw err
+      }))
+      return { value: answers.map(({ value }) => value), kept: answers.every(({ kept }) => kept) }
+    }, reauthorize)
+    const dependencies = 'error' in pulled ? batch.map(number => ({ number, error: pulled.error })) : pulled.value
+    told.push(...dependencies)
+    if (!await send({ repoId, dependencies })) return false
+  }
+  const deltas = await teamDeltas(deps, told)
+  return deltas.length === 0 || send({ repoId, deltas })
+}
+
+// A repository's open pull requests, as many pages of them as
+// TEAM_PULL_PAGES, each read and kept as GET issues reads it; whether it has
+// more, and whether all were kept.
+async function teamOpenPulls(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string) {
+  const items: TeamPull[] = []
+  let after: string | null = null, kept = true
+  for (let page = 0; page < TEAM_PULL_PAGES; page++) {
+    const cursor = after
+    const answer = await keptAnswer(deps, `${repoId}\0issues\0${ISSUES_READ_VERSION}\0pulls\0open\0${cursor ?? ''}`,
+      async () => ({ kind: 'pulls', state: 'open', ...await repositoryIssues(fullName, token, 'pulls', 'open', cursor) }))
+    kept &&= answer.kept
+    const value = answer.value as { items?: unknown; more?: unknown; after?: unknown }
+    items.push(...(Array.isArray(value.items) ? value.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0))
+    if (value.more !== true || typeof value.after !== 'string') return { items, more: false, kept }
+    after = value.after
+  }
+  return { items, more: true, kept }
+}
+
+// The lines the versions wanting reviews of `answers` change, as their rows
+// show them (npm-delta.js deltaBase), where they are counted already: of
+// public versions alone, those npm answered for in a day (npmVersionStore),
+// their integrities those npmDelta keys them by. `[name, version, base,
+// delta]` each, none counted here.
+async function teamDeltas(deps: ManagedHttpDeps, answers: object[]) {
+  const asked = new Map<string, [string, string, string]>()
+  for (const answer of answers as { lockfiles?: { added?: unknown; unreviewed?: unknown }[]; review?: { required?: number } }[]) {
+    const required = answer.review?.required
+    if (!Number.isSafeInteger(required)) continue
+    for (const pkg of (answer.lockfiles ?? []).flatMap(dir => [...Array.isArray(dir.added) ? dir.added : [], ...Array.isArray(dir.unreviewed) ? dir.unreviewed : []]) as
+      { name?: unknown; version?: unknown; source?: unknown; was?: unknown; reviews?: unknown; rejected?: unknown; baseline?: unknown; reviewed?: unknown; unsupported?: unknown }[]) {
+      if (pkg.source !== 'registry' || typeof pkg.name !== 'string' || typeof pkg.version !== 'string' || !isExactVersion(pkg.version)) continue
+      if (pkg.unsupported || pkg.baseline || pkg.reviewed || typeof pkg.reviews !== 'number' || (pkg.reviews >= required! && !pkg.rejected)) continue
+      const was = Array.isArray(pkg.was) ? pkg.was.find(prior => typeof prior === 'string' && prior !== pkg.version) as string | undefined : undefined
+      asked.set(`${pkg.name}\0${pkg.version}\0${was ?? '(empty)'}`, [pkg.name, pkg.version, was ?? '(empty)'])
+    }
+  }
+  if (asked.size === 0) return []
+  const versions = [...asked.values()].flatMap(([name, version, base]) => [{ name, version }, ...base === '(empty)' || !isExactVersion(base) ? [] : [{ name, version: base }]])
+  const kept = await npmVersionStore(deps.db, deps.config.debug).readMany!(versions)
+  const integrity = (name: string, version: string) => {
+    const hit = kept.get(`${name}@${version}`)
+    const dist = hit && Date.now() - hit.at < VERSION_KEPT_MS ? hit.json['dist'] : null
+    return typeof dist === 'object' && dist !== null && typeof (dist as { integrity?: unknown }).integrity === 'string' ? (dist as { integrity: string }).integrity : null
+  }
+  const sides = [...asked.values()].flatMap(([name, version, base]) => {
+    const against = base === '(empty)' ? null : integrity(name, base), other = integrity(name, version)
+    return other && (base === '(empty)' || against) ? [{ name, version, base, key: [against, other] as [string | null, string] }] : []
+  })
+  if (sides.length === 0) return []
+  const counted = await keptNpmDeltas(sides.map(({ key }) => key), npmDeltaStore<NpmDelta>(deps.db, deps.config.debug))
+  return sides.flatMap(({ name, version, base, key: [against, other] }) => {
+    const delta = counted.get(`${against ?? '(empty)'}\0${other}`)
+    return delta ? [[name, version, base, delta]] : []
   })
 }
 
@@ -3973,6 +4178,62 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   } finally { res.off('close', onClose) }
 }
 
+// GET /api/npm/deltas?versions=[[name, version, otherVersion], …]: the lines
+// each of up to MAX_ASKED_DELTAS versions changes against another, or
+// `(empty)`, as GET delta counts them, as lines of JSON as each is counted
+// (`{ name, version, otherVersion, …delta }`, or `{ name, version,
+// otherVersion, error, status }`), as a list's rows near the viewport ask
+// for them together (npm-delta.js), DELTAS_AT_ONCE at a time. Each read as
+// GET delta reads it, with the reader's access to its package, which is
+// checked again once it is counted: a private one's told only to a reader
+// who may still read it, none told to one whose session is gone.
+const MAX_ASKED_DELTAS = 50
+const DELTAS_AT_ONCE = 2
+async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, params: URLSearchParams): Promise<void> {
+  if (req.method !== 'GET') { send405(res, 'GET'); return }
+  let asked: unknown = null
+  try { asked = JSON.parse(params.get('versions') ?? '') } catch {}
+  if (!Array.isArray(asked) || asked.length === 0 || asked.length > MAX_ASKED_DELTAS || !asked.every(item => Array.isArray(item) && item.length === 3
+    && isNpmPackageName(item[0]) && isNpmPackageSpec(item[1]) && (item[2] === '(empty)' || isNpmPackageSpec(item[2])))) { sendJson(res, 400, { error: 'bad-package' }); return }
+  const versions = asked as [string, string, string][]
+  const reader = await npmReader(deps, cookie, [...new Set(versions.map(([name]) => name))])
+  if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+  const controller = new AbortController()
+  res.once('close', () => { if (!res.writableEnded) controller.abort() })
+  res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+  const kept = npmDeltaStore<NpmDelta>(deps.db, deps.config.debug), keptVersions = npmVersionStore(deps.db, deps.config.debug)
+  const out = openLines(res)
+  let stopped = false
+  await eachOf(versions, DELTAS_AT_ONCE, async ([name, version, otherVersion]) => {
+    if (stopped || controller.signal.aborted) return
+    const asOne = { name, version, otherVersion }
+    let isPrivate = false, line: Record<string, unknown>
+    try {
+      const privileged = canReadPrivateNpm(reader, name)
+      const together = otherVersion === '(empty)' ? keptVersions : readTogether(keptVersions, [{ name, version }, { name, version: otherVersion }])
+      const [doc, old] = await Promise.all([readNpmVersion(name, version, privileged, controller.signal, together).then(found),
+        otherVersion === '(empty)' ? null : readNpmVersion(name, otherVersion, privileged, controller.signal, together).then(found)])
+      isPrivate = doc.private || old?.private === true
+      const side = (of: NpmVersionDocument) => ({ integrity: of.dist.integrity, files: async () => {
+        const load = loadNpmFiles(of)
+        try { return await load.result } finally { load.release() }
+      } })
+      line = { ...asOne, ...await npmDelta(old ? side(old) : null, side(doc), kept) }
+    } catch (err) {
+      if (controller.signal.aborted) return
+      if (!(err instanceof NpmPackageError)) console.warn('managed: a package delta failed:', err)
+      line = err instanceof NpmPackageError ? { ...asOne, error: err.message, status: err.status } : { ...asOne, error: 'delta-failed', status: 500 }
+    }
+    // A reader who lost their session, or their access to a private one,
+    // while it was counted, is told nothing of it.
+    const current = await npmReader(deps, cookie, isPrivate ? [name] : [])
+    if (current == null) { stopped = true; out.cut(); return }
+    if (isPrivate && !canReadPrivateNpm(current, name)) line = { ...asOne, error: 'package-not-found', status: 404 }
+    if (!stopped && !await out.write(line)) stopped = true
+  })
+  if (!stopped) await out.end()
+}
+
 // GET /api/npm/{package,versions,download,stats,advisories,tags,socket,provenance,pretty,rename-diff,type-only,risk,comparison}. Only readers with private access
 // (canReadPrivateNpm) can be answered from the server's npm token; the rest get
 // what the registry answers anonymously, every time (see npm-packages.ts).
@@ -4595,6 +4856,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (teamId) await teamSnapshot(db, s.session.id, teamId, reportId)
       await serveUserTeamFeed(res, deps, s.session.id, s.user, teamId, { reportId }); return
     }
+    const teamDependencies = /^\/api\/teams\/([^/]+)\/dependencies$/u.exec(path)
+    if (teamDependencies) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleTeamDependencies(res, deps, cookie, workspaceSession!, teamDependencies[1]!, url.searchParams); return
+    }
     const teamFixes = /^\/api\/teams\/([^/]+)\/fixes$/u.exec(path)
     if (teamFixes) {
       if (method !== 'GET') { send405(res, 'GET'); return }
@@ -4743,6 +5009,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === '/api/npm/reviews') {
       await handleNpmReviews(req, res, deps, cookie, url.searchParams); return
     }
+    if (path === NPM_DELTAS_PATH) { await handleNpmDeltas(req, res, deps, cookie, url.searchParams); return }
     if (NPM_PATHS.has(path)) {
       await handleNpm(req, res, deps, cookie, path, url.searchParams); return
     }
@@ -4752,12 +5019,15 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     sendJson(res, 404, { error: 'not-found' }, { connection: 'close' })
   }
 
-  return (req, res) => {
+  // Each request's time told in its Server-Timing header (request-timing.ts).
+  return (req, res) => runTimed(res, () => {
     if (isShuttingDown()) { sendJson(res, 503, { error: 'shutting-down' }, { connection: 'close' }); return }
     if (!deps.originGate.isOriginAllowed(req)) { sendJson(res, 403, { error: 'origin-denied' }); return }
     // Feeds lease a connection per poll, never across streaming sleeps. This
-    // also covers capability-authenticated feeds handled by public-workspace.
-    const feed = /^\/api\/teams(?:\/[^/?]+)?\/feed(?:\?|$)/u.test(req.url ?? '')
+    // also covers capability-authenticated feeds handled by public-workspace;
+    // and a team's dependencies and npm's deltas, streamed as GitHub and npm
+    // are waited on, lease one a statement.
+    const feed = /^\/api\/teams(?:\/[^/?]+)?\/feed(?:\?|$)/u.test(req.url ?? '') || /^\/api\/(?:teams\/[^/?]+\/dependencies|npm\/deltas)(?:\?|$)/u.test(req.url ?? '')
     const serve = () => runRequestPresence(() => db.withRequest && !feed ? db.withRequest(() => route(req, res)) : route(req, res))
     const work = runViewing(viewToken(config, req.headers.cookie) != null, serve).catch((err) => {
       if ((err instanceof TeamReportsError || err instanceof IssueError || err instanceof OAuthError || err instanceof ManagedMutationError) && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
@@ -4767,5 +5037,5 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     })
     track(work)
     return work
-  }
+  })
 }

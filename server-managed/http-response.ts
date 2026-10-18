@@ -38,21 +38,39 @@ export function sendJson(res: ServerResponse, status: number, body: unknown, hea
 // before a line, has the response cut short, as is one whose lines fail: a
 // response that ends is one with every line.
 export async function sendLines(res: ServerResponse, lines: AsyncIterable<unknown>, allowed: () => Promise<boolean>) {
+  const out = openLines(res)
+  try {
+    for await (const line of lines) {
+      if (res.destroyed || !await allowed()) { out.cut(); return }
+      await out.write(line)
+    }
+  } catch (err) {
+    console.warn('managed: a streamed response failed:', err)
+    out.cut()
+    return
+  }
+  await out.end()
+}
+
+// A response of lines of JSON as sendLines sends them, written as its caller
+// has each: `write` sends one, flushed, false where the reader is gone; `end`
+// ends it with every line; `cut` ends it short.
+export function openLines(res: ServerResponse) {
   res.writeHead(200, { 'content-type': 'application/x-ndjson', 'content-encoding': 'br', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' })
   const encoder = createBrotliCompress({ params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } })
   const sent = pipeline(encoder, res).catch(() => {})
   const closed = new Promise(resolve => { res.once('close', resolve) })
-  try {
-    for await (const line of lines) {
-      if (res.destroyed || !await allowed()) { res.destroy(); return }
+  return {
+    async write(line: unknown): Promise<boolean> {
+      if (res.destroyed) return false
       encoder.write(`${JSON.stringify(line)}\n`)
       await Promise.race([new Promise<void>(resolve => { encoder.flush(() => { resolve() }) }), closed])
-    }
-  } catch (err) {
-    console.warn('managed: a streamed response failed:', err)
-    res.destroy()
-    return
+      return !res.destroyed
+    },
+    async end() {
+      encoder.end()
+      await sent
+    },
+    cut() { res.destroy() },
   }
-  encoder.end()
-  await sent
 }
