@@ -83,7 +83,8 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.match(text, /role="tabpanel" id=team-deps-panel-pulls aria-labelledby=team-deps-tab-pulls>/u, 'the one open under them')
   assert.deepEqual(asked.branches.toSorted(), [7, 8, 9], 'each repository once')
   assert.deepEqual(asked.pulls.map(([repoId, kind, options]) => [repoId, kind, options.state, options.after ?? null]).toSorted(),
-    [[7, 'pulls', 'open', null], [8, 'pulls', 'open', null], [8, 'pulls', 'open', 'p2'], [8, 'pulls', 'open', 'p3']], 'of those whose review is in effect, three pages at most')
+    [[7, 'pulls', 'open', null], [8, 'pulls', 'open', null], ...Array.from({ length: 19 }, (_, at) => [8, 'pulls', 'open', `p${at + 2}`])].toSorted(),
+    'of those whose review is in effect, twenty pages at most')
   assert.deepEqual(asked.dependencies.map(([repoId, number, options]) => [repoId, number, options.review]).toSorted(),
     [[7, 1, true], [7, 10, true], [7, 11, true], [7, 3, true], [7, 9, true], [8, 2, true], [8, 6, true]],
     'those changing a lockfile, of the repositories reviewing them, with their review')

@@ -2164,7 +2164,7 @@ once all is read, gives way to Pull requests, its address too). Pull
 requests and repositories are named without their owner where every
 repository reviewed has the same one (`repo#1`). Of each of its repositories whose review is in
 effect for them (three read at once, one they may read only some of left
-out), it reads the open pull requests (three pages at most, those updated
+out), it reads the open pull requests (twenty pages of fifty at most, those updated
 latest, saying so where there are more) and
 the dependencies, with their review, of those changing a lockfile, as their
 tiles do, and, under Pull requests, lists the pull requests whose versions want reviews, or whose

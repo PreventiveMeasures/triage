@@ -31,10 +31,11 @@ import { managedRouteForIds, managedRoutePath } from '../../common/managed/route
 
 const KEEP_MS = 2 * 60_000
 const RETRY_MS = 30_000
-// Pages of a repository's open pull requests read, and the versions shown
-// of a list, under a pull request or of its sub-tab, the rest shown once
-// asked for.
-const PULL_PAGES = 3
+// Pages of a repository's open pull requests read, fifty each, a thousand
+// at most, its list cheap, those touching no lockfile read no further; and
+// the versions shown of a list, under a pull request or of its sub-tab, the
+// rest shown once asked for.
+const PULL_PAGES = 20
 const SHOWN_VERSIONS = 12
 const SHOWN_LISTED = 48
 const READ_AT_ONCE = 3
