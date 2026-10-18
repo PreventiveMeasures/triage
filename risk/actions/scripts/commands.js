@@ -34,12 +34,14 @@ function savedTo(program, argv) {
   return url ? URL.parse(url)?.pathname.split('/').at(-1) || null : null
 }
 
+// A path from the current directory, its `./` (PowerShell's `.\`, its `\`
+// read as an escape) taken off.
+const local = path => path.replace(/^\.\/?/u, '')
+
 // Whether a command runs `file`, as a program or a shell's script.
 function runsFile({ argv }, file) {
-  const name = file.replace(/^\.\//u, '')
-  const ran = argv[0].replace(/^\.\//u, '')
-  if (ran === name || argv[0] === file) return true
-  return (SHELLS.test(programOf(argv[0])) || argv[0] === 'source' || argv[0] === '.') && argv.slice(1).some(word => word.replace(/^\.\//u, '') === name)
+  if (local(argv[0]) === local(file) || argv[0] === file) return true
+  return (SHELLS.test(programOf(argv[0])) || argv[0] === 'source' || argv[0] === '.') && argv.slice(1).some(word => local(word) === local(file))
 }
 
 const pythonPackage = text => {
@@ -79,7 +81,7 @@ const EXACT_SEMVER = text => /^=?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test(text)
 
 // `go install x@v y@v`, `go run x@v`, a version held to Go's checksum database.
 function go(argv) {
-  const { operands } = optionsOf(argv, 2, /^-(?:o|modfile|tags|ldflags|gcflags|C)$/u)
+  const { operands } = optionsOf(argv, 2, /^-(?:o|modfile|tags|ldflags|gcflags|C|exec)$/u)
   return (argv[1] === 'run' ? operands.slice(0, 1) : operands).filter(target => target.includes('@'))
     .flatMap(target => fetched(`go ${argv[1]}`, atVersion(target, spec => /^v\d+\.\d+\.\d+/u.test(spec)), { ecosystem: 'go' }))
 }
@@ -90,7 +92,7 @@ function cargo(argv) {
   if (argv.includes('--path')) return []
   const options = optionsOf(argv, 2, /^--(?:version|git|branch|rev|tag|root|features|registry|index|bin|example|target|profile|jobs)$|^-[jF]$/u)
   const [git = null] = valuesOf(options, '--git'), [version = null] = valuesOf(options, '--version'), [ref = null] = valuesOf(options, '--rev', '--tag', '--branch')
-  const specs = git ? [{ name: git, spec: ref, exact: valuesOf(options, '--rev').length > 0, registry: false }] : options.operands.map(crate => atVersion(crate, EXACT_SEMVER))
+  const specs = git ? [{ name: git, spec: ref, exact: /^[\da-f]{40}$/u.test(valuesOf(options, '--rev')[0] ?? ''), registry: false }] : options.operands.map(crate => atVersion(crate, EXACT_SEMVER))
   return specs.flatMap(spec => fetched(`cargo ${argv[1]}`, { ...spec, spec: spec.spec ?? version, exact: spec.exact || (!git && EXACT_SEMVER(version ?? '')), locked: argv.includes('--locked') }, { ecosystem: 'crates' }))
 }
 
