@@ -175,7 +175,7 @@ const ownOwners = ({ key, owner }: ActionRef) => key.split('/')[0] === owner?.to
 // Resolves the references added, and those they name in turn, each once a
 // scan, RESOLVERS at once, each told as it is; once more where another
 // owner's workflow names one its own owner's did, as a repository missing is
-// red then. `close` settles once all are told, or the scan stops.
+// red then, or one is met nearer, its own followed as far as they then go. `close` settles once all are told, or the scan stops.
 export function resolvingActions(resolving: ActionsResolving) {
   const source = keptSource(sharedSource(resolving.source, resolving.answers))
   const pending: Queue<ActionRef> = queue(resolving.signal)
@@ -185,10 +185,11 @@ export function resolvingActions(resolving: ActionsResolving) {
   const add = (refs: ActionRef[]) => {
     for (const ref of refs) {
       const first = latest.get(ref.key)
-      if (ref.depth > MAX_DEPTH || (first ? !ownOwners(first) || ownOwners(ref) : latest.size >= MAX_ACTIONS)) continue
-      latest.set(ref.key, ref)
+      if (ref.depth > MAX_DEPTH || (first ? (!ownOwners(first) || ownOwners(ref)) && first.depth <= ref.depth : latest.size >= MAX_ACTIONS)) continue
+      const kept = first ? { ...ref, owner: ownOwners(first) ? ref.owner : first.owner, depth: Math.min(ref.depth, first.depth) } : ref
+      latest.set(ref.key, kept)
       waiting++
-      pending.add(ref)
+      pending.add(kept)
     }
   }
   const work = async () => {

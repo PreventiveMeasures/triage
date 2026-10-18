@@ -124,6 +124,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual([graded('NODE_ENV=production npm ci --include dev && npx eslint .', { locked: dev }), graded('npm ci --omit=dev --include=dev && npx eslint .', { locked: dev })], [[], []],
       'devDependencies included, whatever leaves them out')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
+    assert.deepEqual(graded('npm ci --dry-run && npx eslint .', { locked }).length, 1, 'one that installs nothing')
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\'\nash -c "npx is-odd"'), ['fetched-package/high@11', 'remote-script/high@12', 'fetched-package/high@13'], 'a shell\'s command line')
     assert.deepEqual(graded('pwsh -NoProfile -ExecutionPolicy Bypass -Command \'iwr https://x/s -OutFile s.ps1; ./s.ps1\'\npowershell -noninteractive -c \'iwr https://x/t -OutFile t.ps1; ./t.ps1\''),
       ['remote-script/high@11', 'remote-script/high@12'], 'PowerShell\'s, by -Command in any case')
@@ -191,10 +192,10 @@ describe('a script\'s findings, graded', () => {
   })
 
   it('an input an action of its own writes into a script, from an expression anyone can write', () => {
-    const workflow = `on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: ./.github/actions/greet\n        with:\n          title: \${{ github.event.pull_request.title }}\n          body: \${{ github.event.pull_request.body }}\n`
-    const action = 'runs:\n  using: composite\n  steps:\n    - run: echo "${{ inputs.title }}"\n      shell: bash\n    - run: echo "$BODY"\n      env:\n        BODY: ${{ inputs.body }}\n      shell: bash\n'
+    const workflow = `on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: ./.github/actions/greet\n        with:\n          title: \${{ github.event.pull_request.title }}\n          body: \${{ github.event.pull_request.body }}\n          branch: \${{ github.head_ref }}\n`
+    const action = 'runs:\n  using: composite\n  steps:\n    - run: echo "${{ inputs.title }} ${{ inputs[\'branch\'] }}"\n      shell: bash\n    - run: echo "$BODY"\n      env:\n        BODY: ${{ inputs.body }}\n      shell: bash\n'
     const scan = actions => ids(scanWorkflow('workflow', workflow, { actions }).findings)
-    assert.deepEqual([scan(new Map([['.github/actions/greet', action]])), scan(null)], [['script-injection/critical@7'], []])
+    assert.deepEqual([scan(new Map([['.github/actions/greet', action]])), scan(null)], [['script-injection/critical@7', 'script-injection/critical@9'], []], 'by either syntax, not one it sets in env')
   })
 
   it('a workflow_run\'s artifacts taken by the GitHub CLI', () => {

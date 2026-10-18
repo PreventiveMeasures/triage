@@ -2,7 +2,7 @@
 import { YamlError } from '@preventive/lockfile/yaml.js'
 import { readWorkflow } from './workflow.js'
 import { installsOf } from './scripts/commands.js'
-import { imageFinding, lockedName, namesPullHead, scriptFindings, scriptInjections, within } from './scripts/grade.js'
+import { dotted, imageFinding, lockedName, namesPullHead, scriptFindings, scriptInjections, within } from './scripts/grade.js'
 import { ownerKind, usesKey } from './uses.js'
 import { resolved } from '../npm/files.js'
 
@@ -68,7 +68,7 @@ function scriptInputs(step, actions) {
   if (step.uses?.repo?.toLowerCase() === 'actions/github-script') return ['script']
   const read = step.uses?.kind === 'local' && actions?.has(step.uses.path) ? readWorkflow('action', actions.get(step.uses.path)) : null
   if (!read || read instanceof YamlError) return []
-  return [...new Set(read.jobs.flatMap(job => job.steps.flatMap(each => [...(each.run?.script ?? '').matchAll(/\$\{\{[^}]*?\binputs\s*\.\s*([\w-]+)/gu)].map(match => match[1]))))]
+  return [...new Set(read.jobs.flatMap(job => job.steps.flatMap(each => [...dotted(each.run?.script ?? '').matchAll(/\$\{\{[^}]*?\binputs\s*\.\s*([\w-]+)/gu)].map(match => match[1]))))]
 }
 
 // Injections through the inputs an action writes into its scripts, and a

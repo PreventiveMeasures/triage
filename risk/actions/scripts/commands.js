@@ -130,7 +130,7 @@ function commandFinds(command) {
 
 const INSTALLS = { npm: new RegExp(`^(?:ci|clean-install|ic|install-clean|${NPM_INSTALLS})$`, 'u'), pnpm: /^(?:i|install|add)$/u, bun: /^(?:i|install|add)$/u }
 // An install's options that leave the project's node_modules as they are.
-const NOT_LOCAL = /^(?:-g|--global|--location=global|--package-lock-only|--lockfile-only)$/u
+const NOT_LOCAL = /^(?:-g|--global|--location=global|--package-lock-only|--lockfile-only|--dry-run)$/u
 
 // A script's installs of a project's packages: each one's `order`, the
 // directory it installs into, by its `cd`s and the one it names (`into`, a

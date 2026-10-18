@@ -24,7 +24,7 @@ const UNTRUSTED = new RegExp(String.raw`\bgithub\s*\.\s*(?:head_ref|event\s*\.\s
 
 // An expression with its index syntax's properties (`github['event']`) as
 // dereferences, as GitHub reads either.
-const dotted = text => text.replaceAll(/\[\s*'([\w-]+)'\s*\]/gu, '.$1')
+export const dotted = text => text.replaceAll(/\[\s*'([\w-]+)'\s*\]/gu, '.$1')
 
 // Each expression anyone can write in a script's `text`, a finding with
 // the `index` its `${{` is at: red where the workflow runs with its secrets

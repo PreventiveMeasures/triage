@@ -155,6 +155,19 @@ test('a repository missing is red where another owner\'s workflow names it, whic
   }
 })
 
+test('a reference first met too deep to follow is followed where met again nearer', async () => {
+  for (const wait of [false, true]) {
+    const told = []
+    const caches = riskCaches()
+    const resolving = resolvingActions({ source: actionsSource(), signal: new AbortController().signal, tell: line => { told.push(line.key) }, memory: caches.actions, answers: caches.actionAnswers })
+    resolving.add([{ key: 'third/party@v1', owner: 'org', depth: 4 }])
+    if (wait) while (!told.includes('third/party@v1')) await setImmediate()
+    resolving.add([{ key: 'third/party@v1', owner: 'org', depth: 0 }])
+    await resolving.close()
+    assert.ok(told.includes('nested/one@main'), wait ? 'once resolved' : 'before')
+  }
+})
+
 test('what a scan resolved and read of a repository\'s Actions is kept: a scan again asks GitHub none of it but a private repository\'s', async () => {
   const caches = riskCaches()
   const first = sourceOf()
