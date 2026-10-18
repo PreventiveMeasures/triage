@@ -321,7 +321,10 @@ describe('a reference resolved on GitHub', () => {
     assert.deepEqual((await resolve(`org/act@${SHA('c')}`)).found, [], 'action.yaml, where no action.yml is')
     const imposter = await resolve(`org/act@${SHA('f')}`)
     assert.deepEqual(imposter.found, ['imposter-commit/critical', 'action-missing/moderate'])
-    assert.deepEqual(imposter.asked.filter(([what]) => what === 'contains').map(([, base]) => base), ['main', SHA('a'), SHA('b'), SHA('9')], 'its default branch, each line\'s latest release, its other branches')
+    assert.deepEqual(imposter.asked.filter(([what]) => what === 'contains').map(([, base]) => base), [SHA('a'), SHA('b'), SHA('9')],
+      'its default branch\'s head, each line\'s latest release, its other branches, each commit once')
+    const branches = Array.from({ length: 30 }, (_, at) => ({ branch: `b${at}`, oid: at.toString(16).padStart(40, '7') }))
+    assert.deepEqual((await resolve(`org/act@${SHA('f')}`, null, { 'org/act': { ...ACT, branches: [...ACT.branches, ...branches] } })).found.slice(0, 1), ['imposter-commit/critical'], 'every branch listed')
     assert.deepEqual((await resolve(`org/act@${SHA('f')}`, null, { 'org/act': { ...ACT, complete: false } })).found.slice(0, 1), ['unverified-commit/high'], 'where more branches are')
     assert.deepEqual((await resolve(`org/act@${SHA('0')}`)).found, ['commit-missing/high'], 'its code not read')
     const untagged = await resolve(`org/act@${SHA('c')}`, null, { 'org/act': { ...ACT, tags: [] } })

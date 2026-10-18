@@ -45,7 +45,8 @@ import { type DependabotRead, type ListedLockfile, type LockfileRead, type Opene
   readRepository } from './repository-risk-read.ts'
 import { type DependabotAlert, alertVersions } from './dependabot-alerts.ts'
 import type { ActionsSource } from '../risk/index.js'
-import { type ActionLine, type ActionRef, type WorkflowLine, type WorkflowsLine, type WorkflowsRead, actionsLines, resolvingActions } from './repository-actions.ts'
+import { type ActionAnswers, type ActionLine, type ActionRef, type WorkflowLine, type WorkflowsLine, type WorkflowsRead, actionsLines, answerWeight,
+  resolvingActions } from './repository-actions.ts'
 
 export { RISK_KEPT_MS, highestSeverity } from './repository-risk-assess.ts'
 export { type OpenedRepository, SCAN_READ_KEPT_MS } from './repository-risk-read.ts'
@@ -143,6 +144,7 @@ export interface RiskCaches {
   advisories: Lru<{ at: number; audit: Audit }>
   actionFiles: Lru<WorkflowsRead>
   actions: Lru<{ at: number; line: ActionLine }>
+  actionAnswers: ActionAnswers
 }
 export const riskCaches = (): RiskCaches => ({
   listings: lru(1000),
@@ -153,6 +155,8 @@ export const riskCaches = (): RiskCaches => ({
   // By their text, a kilobyte at a time.
   actionFiles: lru(64 * 1024, read => 'files' in read ? read.files.reduce((sum, file) => sum + ('text' in file ? Math.ceil(file.text.length / 1024) : 1), 1) : 1),
   actions: lru(10_000),
+  // What GitHub answered of public repositories' actions, by answerWeight.
+  actionAnswers: lru(200_000, answerWeight),
 })
 // How many repositories are read at once (repository-risk-read.ts), ahead of
 // the one told: each asks GitHub one thing after another (opening it, and
@@ -442,7 +446,8 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
   const lines = queue<RepositoryRiskLine>(AbortSignal.any([signal, part.signal]), { drain: true })
   // What repositories' Actions name is resolved alongside the assessments,
   // and waited on before the scan is done.
-  const actions = source.actions ? resolvingActions({ source: source.actions, signal: running, tell: line => { lines.add(line) }, memory: caches.actions, store: source.actionLines }) : null
+  const actions = source.actions ? resolvingActions({ source: source.actions, signal: running, tell: line => { lines.add(line) }, memory: caches.actions,
+    answers: caches.actionAnswers, store: source.actionLines }) : null
   const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [], told: new Map(), actions }
   const failed: unknown[] = []
   void (async () => {

@@ -84,8 +84,7 @@ export function dockerfileFindings(text) {
   return findings.toSorted((a, b) => a.line - b.line)
 }
 
-// How many other branches, and major lines' releases, a commit is looked for in.
-const MAX_BRANCHES = 10
+// How many major lines' releases a commit is looked for in.
 const MAX_LINES = 10
 
 async function repositoryOf(uses, source, owner) {
@@ -101,18 +100,21 @@ async function repositoryOf(uses, source, owner) {
 // Where `sha` is in the repository's history: on its default branch
 // (`default`), in a release's (`release`), on another branch (`branch`); in
 // none (`none`), or none of those looked at where more are (`unknown`); or
-// `missing`, a commit GitHub hasn't.
+// `missing`, a commit GitHub hasn't. Each looked in once, from its commit,
+// as what GitHub answers of two commits holds for good.
 async function reachable(source, info, sha, tags) {
   const name = info.fullName, releases = newestOfLines(tags ?? []).slice(0, MAX_LINES)
   if (releases.some(({ oid }) => oid === sha)) return 'release'
-  const onDefault = await source.contains(name, info.defaultBranch, sha)
+  const head = await source.branch(name, info.defaultBranch)
+  const onDefault = await source.contains(name, head ?? info.defaultBranch, sha)
   if (onDefault === null) return 'missing'
   if (onDefault) return 'default'
-  for (const { oid } of releases) if (await source.contains(name, oid, sha)) return 'release'
+  const looked = new Set([head])
+  const contains = oid => !looked.has(oid) && looked.add(oid) && source.contains(name, oid, sha)
+  for (const { oid } of releases) if (await contains(oid)) return 'release'
   const { branches, complete } = await source.branches(name)
-  const others = branches.filter(({ branch }) => branch !== info.defaultBranch)
-  for (const { oid } of others.slice(0, MAX_BRANCHES)) if (oid === sha || await source.contains(name, oid, sha)) return 'branch'
-  return complete && others.length <= MAX_BRANCHES && tags !== null ? 'none' : 'unknown'
+  for (const { oid } of branches) if (oid === sha || await contains(oid)) return 'branch'
+  return complete && tags !== null ? 'none' : 'unknown'
 }
 
 const tagsOn = (tags, commit) => tags?.filter(({ oid }) => oid === commit).map(({ tag }) => tag) ?? []

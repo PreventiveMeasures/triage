@@ -228,7 +228,8 @@ export interface ActionsSource {
   branch(name: string, branch: string): Promise<string | null>
   // Its branches, and whether those are all.
   branches(name: string): Promise<{ branches: { branch: string; oid: string }[]; complete: boolean }>
-  // Whether `sha` is `base` or in its history; null for no such commit.
+  // Whether `sha` is `base` or in its history; null for no such commit. Of two
+  // commits, it holds for good.
   contains(name: string, base: string, sha: string): Promise<boolean | null>
   file(name: string, path: string, commit: string): Promise<string | null>
 }

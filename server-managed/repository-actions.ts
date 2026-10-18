@@ -1,8 +1,10 @@
 // A repository's GitHub Actions in a repository risk scan (repository-risk.ts):
 // its workflows and the actions of its own they use, each scanned (risk
 // scanWorkflow), and the references they make resolved (risk resolveAction),
-// MAX_DEPTH deep and MAX_ACTIONS in all, a public repository's kept for
-// RISK_KEPT_MS by its key: a private one's is the admin's own access's alone.
+// MAX_DEPTH deep and MAX_ACTIONS in all. Of a public repository, a reference
+// resolved is kept for RISK_KEPT_MS by its key, and what GitHub answers is
+// kept for every scan (sharedSource), as many repositories use the same few
+// actions; a private one's is the admin's own access's alone.
 import { YamlError } from '@preventive/lockfile/yaml.js'
 import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, actionInstalls, keptSource, readWorkflow, resolveAction,
   scanWorkflow, usesOfKey, workflowUses } from '../risk/index.js'
@@ -113,11 +115,58 @@ export function actionsLines(repo: number, owner: string, read: WorkflowsRead, l
   return { lines, refs: [...refs.values()] }
 }
 
+// What GitHub answered of public repositories, as sharedSource keeps it.
+export type ActionAnswers = Lru<{ at: number; answer: unknown }>
+// An answer's weight: an entry of a list, a kilobyte of a file.
+export const answerWeight = ({ answer }: { at: number; answer: unknown }) => Array.isArray(answer) ? answer.length + 1
+  : typeof answer === 'string' ? Math.ceil(answer.length / 1024) + 1 : ((answer as { branches?: unknown[] } | null)?.branches?.length ?? 0) + 1
+
+const isCommit = (text: string) => /^[\da-f]{40}$/u.test(text)
+
+// `source`, what it answers of a public repository kept in `answers` for
+// every scan, as it is the same whoever asks: the repository, its tags and
+// branches for RISK_KEPT_MS, as they move, and of a commit (one in another's
+// history, a file at it) while kept, but none, as a commit can be pushed
+// later. Of a private repository, or one GitHub has none of, which may only
+// be one the asker can't read, none.
+export function sharedSource(source: ActionsSource, answers: ActionAnswers): ActionsSource {
+  const keyOf = (what: string, name: string, ...more: string[]) => [what, name.toLowerCase(), ...more].join('\0')
+  const kept = (key: string, lasting = false) => {
+    const at = answers.get(key)
+    return at && ((lasting && at.answer !== null) || Date.now() - at.at < RISK_KEPT_MS) ? at : undefined
+  }
+  // A public repository's, kept once its own answer is.
+  async function shared<T>(name: string, key: string, lasting: boolean, ask: () => Promise<T>): Promise<T> {
+    if (!kept(keyOf('repo', name))) return ask()
+    const at = kept(key, lasting)
+    if (at) return at.answer as T
+    const answer = await ask()
+    answers.set(key, { at: Date.now(), answer })
+    return answer
+  }
+  return {
+    async repo(name) {
+      const at = kept(keyOf('repo', name))
+      if (at) return at.answer as Awaited<ReturnType<ActionsSource['repo']>>
+      const info = await source.repo(name)
+      if (info?.private === false) for (const each of [name, info.fullName]) answers.set(keyOf('repo', each), { at: Date.now(), answer: info })
+      return info
+    },
+    tags: name => shared(name, keyOf('tags', name), false, () => source.tags(name)),
+    tag: (name, tag) => shared(name, keyOf('tag', name, tag), false, () => source.tag(name, tag)),
+    branch: (name, branch) => shared(name, keyOf('branch', name, branch), false, () => source.branch(name, branch)),
+    branches: name => shared(name, keyOf('branches', name), false, () => source.branches(name)),
+    contains: (name, base, sha) => shared(name, keyOf('contains', name, base, sha), isCommit(base), () => source.contains(name, base, sha)),
+    file: (name, path, commit) => shared(name, keyOf('file', name, path, commit), isCommit(commit), () => source.file(name, path, commit)),
+  }
+}
+
 export interface ActionsResolving {
   source: ActionsSource
   signal: AbortSignal
   tell(line: ActionLine): void
   memory: Lru<{ at: number; line: ActionLine }>
+  answers: ActionAnswers
   store?: KeptStore<ActionLine> | undefined
 }
 
@@ -145,11 +194,12 @@ const ownOwners = ({ key, owner }: ActionRef) => key.split('/')[0] === owner?.to
 
 // Resolves the references added (`add`), each once a scan, RESOLVERS at once,
 // each told as it is, and those it names in turn, `source`'s answers kept
-// for the scan; once more where another owner's workflow names one its own
-// owner's did, as a repository missing is red then (risk resolve.js), its
-// line the one told. `close` settles once all are told, or the scan stops.
+// for the scan, and a public repository's for every scan (sharedSource);
+// once more where another owner's workflow names one its own owner's did,
+// as a repository missing is red then (risk resolve.js), its line the one
+// told. `close` settles once all are told, or the scan stops.
 export function resolvingActions(resolving: ActionsResolving) {
-  const source = keptSource(resolving.source)
+  const source = keptSource(sharedSource(resolving.source, resolving.answers))
   const pending: Queue<ActionRef> = queue(resolving.signal)
   const latest = new Map<string, ActionRef>()
   let closed = false, waiting = 0

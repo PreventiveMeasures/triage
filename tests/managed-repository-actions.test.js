@@ -130,7 +130,8 @@ test('a repository missing is red where another owner\'s workflow names it, whic
   for (const owners of [['missing', 'org'], ['org', 'missing']]) {
     for (const wait of [false, true]) {
       const told = []
-      const resolving = resolvingActions({ source: actionsSource(), signal: new AbortController().signal, tell: line => { told.push(line) }, memory: riskCaches().actions })
+      const caches = riskCaches()
+      const resolving = resolvingActions({ source: actionsSource(), signal: new AbortController().signal, tell: line => { told.push(line) }, memory: caches.actions, answers: caches.actionAnswers })
       for (const owner of owners) {
         resolving.add([{ key: 'missing/action@v1', owner, depth: 0 }])
         if (wait) await setImmediate()
@@ -156,6 +157,26 @@ test('what a scan resolved and read of a repository\'s Actions is kept: a scan a
   const theirs = await scan(sourceOf({ actions: other }), caches)
   const nested = ofType(theirs, 'action').find(({ key }) => key === 'nested/one@main')
   assert.deepEqual([nested.commit, nested.findings.map(({ id }) => id)], [null, ['repo-missing']])
+})
+
+test('what GitHub answers of a public repository is kept for every scan, whichever reference asks; a private one\'s for none', async () => {
+  const caches = riskCaches()
+  // What a scan resolving `keys` asks GitHub, by what and of which repository.
+  const asked = async keys => {
+    const calls = [], source = actionsSource()
+    for (const method of ['repo', 'tags', 'tag', 'branch', 'branches', 'contains', 'file']) {
+      const ask = source[method]
+      source[method] = (...args) => { calls.push(`${method} ${args[0]}`); return ask(...args) }
+    }
+    const resolving = resolvingActions({ source, signal: new AbortController().signal, tell: () => {}, memory: caches.actions, answers: caches.actionAnswers })
+    resolving.add(keys.map(key => ({ key, owner: 'org', depth: 0 })))
+    await resolving.close()
+    return calls
+  }
+  assert.ok((await asked(['third/party@v1'])).includes('file third/party'))
+  // Other references of third/party, at the same commit, and nested/one, private, again.
+  const again = await asked([`third/party@${SHA('b')} # v1.0.0`, `third/party@${SHA('b')}`])
+  assert.deepEqual([...new Set(again)].toSorted(), ['branch nested/one', 'file nested/one', 'repo nested/one', 'tags nested/one'])
 })
 
 test('a reference of a public repository is kept beyond the instance, a private one\'s not', async () => {
