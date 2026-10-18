@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { test } from 'node:test'
 import { gzipSync } from 'node:zlib'
+import { ArchiveError } from '@preventive/archive/tar.js'
 import publishers from '@preventive/publishers/npm.js'
 import knownScopes from '@preventive/publishers/npm-scopes.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, NpmRiskError, assessNpm, npmFileRisk, npmMalwareAdvisory } from '../risk/index.js'
@@ -21,7 +22,7 @@ import { npmAssessmentOf } from '../risk/npm/assess.js'
 import { npmPublicFacts } from '../risk/npm/registry.js'
 import { npmSettledDownloads } from '../risk/npm/downloads.js'
 import { npmRiskScore } from '../risk/npm/score.js'
-import { REGISTRY, packageOf } from './_managed-npm.js'
+import { REGISTRY, packageOf, tar } from './_managed-npm.js'
 
 const DAY = 24 * 60 * 60_000
 const HOUR = 60 * 60_000
@@ -948,6 +949,16 @@ test('a tarball unpacking past risk\'s bounds is given up on as it unpacks', asy
   await assert.rejects(npmTarballVersion(bomb.tgz), /package-too-large/u)
   npm(t, [{ name: 'bomb', versions: [bomb] }])
   await assert.rejects(assessNpm('bomb', '1.0.0', { now: NOW, downloads: false }), error => error instanceof NpmRiskError && error.code === 'package-too-large')
+})
+
+test('a tarball @preventive/archive refuses is npm\'s answer unread, saying why', async t => {
+  const twice = version('twice', '1.0.0', { 'package.json': '{}' }, {}, ago(30))
+  twice.tgz = gzipSync(tar([{ name: 'package/package.json', data: '{}' }, { name: 'package/index.js', data: 'one' }, { name: 'package/index.js', data: 'two' }]))
+  twice.doc.dist.integrity = `sha512-${createHash('sha512').update(twice.tgz).digest('base64')}`
+  await assert.rejects(npmTarballVersion(twice.tgz), ArchiveError)
+  npm(t, [{ name: 'twice', versions: [twice] }])
+  await assert.rejects(assessNpm('twice', '1.0.0', { now: NOW, downloads: false }),
+    error => error instanceof NpmRiskError && error.code === 'upstream-invalid' && error.message.includes('duplicate entry "package/index.js" differs in data'))
 })
 
 test('npm\'s documents read within bounds: risk\'s own, or the caller\'s in its stead', async t => {

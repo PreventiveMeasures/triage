@@ -104,9 +104,9 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
   const files = readNpmTar(tar([
     { name: 'package/', type: '5' },
     { name: 'package/index.js', data: 'module.exports = 1\n' },
-    { name: 'package/link', type: '2' },
-    { name: 'package/../escape.js', data: 'nope' },
+    { name: 'package/link', type: '2', linkname: 'index.js' },
     { name: 'package/./a/./b.js', data: 'b' },
+    { name: 'package/a/b.js', data: 'b' },
     { name: 'deep/name.js', prefix: 'package/very/long', data: 'prefixed' },
     { name: 'PaxHeader', type: 'x', data: pax('package/from-pax.js') },
     { name: 'package/short', data: 'pax' },
@@ -114,7 +114,8 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
     { name: 'package/short-utf8', data: 'utf8' },
     { name: '././@LongLink', type: 'L', data: 'package/from-gnu.js\0' },
     { name: 'package/trunc', data: 'gnu' },
-    { name: 'package/index.js', data: 'replaced' },
+    { name: 'top.js', data: 'not extracted' },
+    { name: 'other-root/index.js', data: 'replaced' },
     { name: 'other-root/bin.dat', data: Buffer.from([0, 1, 2]) },
   ]))
   assert.deepEqual(files.map(file => [file.path, Buffer.from(file.bytes).toString()]), [
@@ -124,7 +125,15 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
   assert.equal(npmFileText(files[1].bytes), null, 'binary has no text')
   assert.equal(npmFileText(Buffer.from([0xff, 0xfe])), null)
   assert.equal(npmFileText(Buffer.from('\uFEFFtext')), '\uFEFFtext', 'a BOM is kept, as the bytes have it')
-  assert.throws(() => readNpmTar(tar([{ name: 'package/a', data: 'abc' }]).subarray(0, 514)), (err) => err instanceof NpmPackageError && err.message === 'bad-tarball')
+  const refused = (err) => err instanceof NpmPackageError && err.status === 422 && err.message === 'bad-tarball'
+  assert.throws(() => readNpmTar(tar([{ name: 'package/a', data: 'abc' }]).subarray(0, 514)), refused, 'truncated')
+  for (const [entries, why] of [
+    [[{ name: 'package/../escape.js', data: 'nope' }], 'a name climbing out'],
+    [[{ name: 'package/index.js', data: 'one' }, { name: 'package/index.js', data: 'two' }], 'a name repeated as another entry'],
+    [[{ name: 'package/a', data: 'file' }, { name: 'package/a/b.js', data: 'inside' }], 'an entry inside a file'],
+    [[{ name: 'package/link', type: '2', linkname: '../../outside' }], 'a symlink climbing out'],
+    [[{ name: 'package/link', type: '2', linkname: '/etc/passwd' }], 'an absolute symlink'],
+  ]) assert.throws(() => readNpmTar(tar(entries)), refused, why)
   assert.throws(() => readNpmTar(tar([{ name: 'package/a', data: Buffer.alloc(MAX_NPM_PACKAGE_BYTES + 1) }])), /package-too-large/u)
 })
 

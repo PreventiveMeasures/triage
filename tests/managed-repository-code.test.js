@@ -19,6 +19,13 @@ const files = {
   'src/allowed/logo.png': '\0PNG',
   'src/other/secret.js': 'export const c = 3\n',
 }
+// Symlinks by path, to their targets: a package's license linked to the
+// workspace root's, as a monorepo links one.
+const links = {
+  'src/linked/LICENSE': '../../README.md',
+}
+const blobOf = path => Buffer.from(files[path] ?? links[path])
+const modeOf = path => Object.hasOwn(links, path) ? '120000' : '100644'
 
 // Git's ids, as GitHub names a commit's trees and blobs.
 const objectId = (type, body) => createHash('sha1').update(`${type} ${body.length}\0`).update(body).digest()
@@ -26,7 +33,7 @@ const objectId = (type, body) => createHash('sha1').update(`${type} ${body.lengt
 // The directory tree of `paths` under `prefix`: names to file paths or subtrees.
 function treeOf(prefix) {
   const root = new Map()
-  for (const path of Object.keys(files).filter(candidate => candidate.startsWith(prefix))) {
+  for (const path of [...Object.keys(files), ...Object.keys(links)].filter(candidate => candidate.startsWith(prefix))) {
     const parts = path.slice(prefix.length).split('/')
     let dir = root
     for (const part of parts.slice(0, -1)) {
@@ -39,14 +46,14 @@ function treeOf(prefix) {
 }
 
 function treeId(dir) {
-  const entries = [...dir].map(([name, entry]) => entry instanceof Map ? [`${name}/`, '40000', name, treeId(entry)] : [name, '100644', name, objectId('blob', Buffer.from(files[entry]))])
+  const entries = [...dir].map(([name, entry]) => entry instanceof Map ? [`${name}/`, '40000', name, treeId(entry)] : [name, modeOf(entry), name, objectId('blob', blobOf(entry))])
   entries.sort(([a], [b]) => a < b ? -1 : Number(a > b))
   return objectId('tree', Buffer.concat(entries.flatMap(([, mode, name, id]) => [Buffer.from(`${mode} ${name}\0`), id])))
 }
 
 // Every tree of the fixture by its id: its directory, `''` the root.
 const trees = new Map()
-for (const prefix of ['', 'src/', 'src/allowed/', 'src/allowed/lib/', 'src/other/']) trees.set(treeId(treeOf(prefix)).toString('hex'), prefix.replace(/\/$/u, ''))
+for (const prefix of ['', 'src/', 'src/allowed/', 'src/allowed/lib/', 'src/linked/', 'src/other/']) trees.set(treeId(treeOf(prefix)).toString('hex'), prefix.replace(/\/$/u, ''))
 const treeAt = path => [...trees].find(([, dir]) => dir === path)[0]
 
 // GitHub's listing of a tree, as git/trees answers it: its own entries, or
@@ -55,7 +62,7 @@ function listing(tree, recursive) {
   const prefix = trees.get(tree) ? `${trees.get(tree)}/` : ''
   const walk = (dir, at) => [...dir].flatMap(([name, entry]) => entry instanceof Map
     ? [{ path: at + name, mode: '040000', type: 'tree', sha: treeId(entry).toString('hex') }, ...recursive ? walk(entry, `${at}${name}/`) : []]
-    : [{ path: at + name, mode: '100644', type: 'blob', sha: objectId('blob', Buffer.from(files[entry])).toString('hex'), size: Buffer.byteLength(files[entry]) }])
+    : [{ path: at + name, mode: modeOf(entry), type: 'blob', sha: objectId('blob', blobOf(entry)).toString('hex'), size: blobOf(entry).length }])
   return { sha: tree, tree: walk(treeOf(prefix), ''), truncated: false }
 }
 
@@ -64,16 +71,17 @@ function listing(tree, recursive) {
 function tarball(tree) {
   const prefix = trees.get(tree) ? `${trees.get(tree)}/` : ''
   const blocks = []
-  const entry = (path, type, body = Buffer.alloc(0)) => {
+  const entry = (path, type, body = Buffer.alloc(0), linkname = '') => {
     const header = Buffer.alloc(512)
     header.write(path, 0, 100)
-    header.write(type === '5' ? '0000755\0' : '0000644\0', 100)
+    header.write(type === '5' ? '0000755\0' : type === '2' ? '0000777\0' : '0000644\0', 100)
     header.write('0000000\0', 108)
     header.write('0000000\0', 116)
     header.write(`${body.length.toString(8).padStart(11, '0')}\0`, 124)
     header.write('00000000000\0', 136)
     header.fill(32, 148, 156)
     header.write(type, 156)
+    header.write(linkname, 157, 100)
     header.write('ustar\0', 257)
     header.write('00', 263)
     header.write('root', 265)
@@ -83,6 +91,7 @@ function tarball(tree) {
   }
   entry('org-repo-aaaaaaa/', '5')
   for (const [file, text] of Object.entries(files).filter(([candidate]) => candidate.startsWith(prefix))) entry(`org-repo-aaaaaaa/${file.slice(prefix.length)}`, '0', Buffer.from(text))
+  for (const [link, target] of Object.entries(links).filter(([candidate]) => candidate.startsWith(prefix))) entry(`org-repo-aaaaaaa/${link.slice(prefix.length)}`, '2', undefined, target)
   return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]))
 }
 
@@ -174,6 +183,15 @@ test('an admin reads the whole repository; a manager, or any team member, only t
     assert.equal((await member({ repoId: '1', ref: commit, path: '' })).body.error, 'no-directory', role)
   }
   assert.equal((await (await fixture(t, { role: 'none' }))({ repoId: '1', ref: commit, path: 'src/allowed/lib' })).status, 403)
+})
+
+test('a directory holding a symlink out of it past its parent is unreadable, as @preventive/archive refuses its tarball; its parent reads', async t => {
+  const request = await fixture(t, { role: 'admin' })
+  github(t)
+  assert.deepEqual(await request({ repoId: '1', ref: commit, path: 'src/linked' }),
+    { status: 422, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: { error: 'directory-unreadable' } })
+  assert.deepEqual((await request({ repoId: '1', ref: commit, path: 'src' })).body.files.map(([path]) => path), ['allowed/index.js', 'allowed/lib/util.js', 'allowed/logo.png', 'other/secret.js'],
+    'from src, the link climbs to the archive\'s root alone, and is no file to read')
 })
 
 test('a directory too large to hold, or listed short, is refused before its tarball is asked for', async t => {
