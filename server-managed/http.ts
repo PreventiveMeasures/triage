@@ -197,7 +197,7 @@ import { LINK_LOGIN_PATH, isLinkOAuthCallback, linkLoginRedirect, linkOAuthCallb
 import type { ProfileChoice } from './github-links.ts'
 import { withAppUsers } from './github-users.ts'
 import { isBlobId } from './object-storage.ts'
-import { attachmentDisposition, sendJson, sendLines, writeResponse } from './http-response.ts'
+import { attachmentDisposition, sendJson, sendLines, writeResponse, writeResponseParts } from './http-response.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { handlePublicWorkspace } from './public-workspace.ts'
 import { serveUserTeamFeed } from './team-feed.ts'
@@ -3251,7 +3251,7 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   if (outputBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
   parts.push(suffix)
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
-  writeResponse(res, Buffer.concat(parts, outputBytes))
+  writeResponseParts(res, parts, outputBytes)
 }
 
 // The server selects the complete published workspace for classification.

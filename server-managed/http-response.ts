@@ -15,8 +15,16 @@ export function attachmentDisposition(filename: string): string {
 // already materialized by the authorization/filtering layer before we get here.
 export function writeResponse(res: ServerResponse, body: string | Buffer): void {
   const bytes = typeof body === 'string' ? Buffer.from(body) : body
-  if (bytes.length <= UPLOAD_CHUNK_BYTES) { res.end(body); return }
-  for (let offset = 0; offset < bytes.length; offset += 64 * 1024) res.write(bytes.subarray(offset, offset + 64 * 1024))
+  writeResponseParts(res, [bytes], bytes.length)
+}
+
+// A body of `length` bytes held in parts, written as writeResponse writes
+// one without first copying them into one buffer.
+export function writeResponseParts(res: ServerResponse, parts: Buffer[], length: number): void {
+  if (length <= UPLOAD_CHUNK_BYTES) { res.end(parts.length === 1 ? parts[0] : Buffer.concat(parts, length)); return }
+  for (const part of parts) {
+    for (let offset = 0; offset < part.length; offset += 64 * 1024) res.write(part.subarray(offset, offset + 64 * 1024))
+  }
   res.end()
 }
 
