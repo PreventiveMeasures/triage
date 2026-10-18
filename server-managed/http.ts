@@ -336,7 +336,7 @@ async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, 
   if (!s) return
   const snapshot = await teamSnapshot(deps.db, s.session.id, teamId, reportId)
   const ids = [...await teamWorkspaceFindingIds(deps.db, deps.reportStore, snapshot)]
-  const manualUrls = storedFixUrls(await deps.db.listTriage(ids))
+  const manualUrls = storedFixUrls(await deps.db.listTriageFixes(ids))
   const storedIssues = await deps.db.listManagedIssues(ids)
   const issues = visibleManagedIssues(storedIssues, snapshot)
   const visibleIds = new Set(issues.map(issue => issue.findingId))
@@ -347,7 +347,7 @@ async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, 
     : { fixes: await lookupFixes(deps.config, deps.db, snapshot, urls), updates: [] }
   // Cold report reads, token refresh and upstream batches can outlive changes
   // to security/links, team grants, publication, sessions or the Fix links.
-  const currentUrls = storedFixUrls(await deps.db.listTriage(ids))
+  const currentUrls = storedFixUrls(await deps.db.listTriageFixes(ids))
   if (await readWorkspaceSession(res, deps, cookie) == null) return
   await recheckTeam(deps.db, s.session.id, snapshot)
   if (JSON.stringify(currentUrls) !== JSON.stringify(manualUrls)) {

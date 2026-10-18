@@ -465,6 +465,8 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   // stamp nor the trail. Every change also appends to managed_finding_triage_event;
   // listTriageHistory walks one finding's trail, newest first.
   listTriage(findingIds: readonly string[]): Promise<TriageRow[]>
+  // The distinct Fix links of those, without the rest of their entries.
+  listTriageFixes(findingIds: readonly string[]): Promise<string[]>
   getAnnotations(findingIds: readonly string[]): Promise<{ triage: TriageRow[]; comments: Awaited<ReturnType<CommentStore['listComments']>>; issues: Awaited<ReturnType<ManagedIssueStore['listManagedIssues']>> }>
   applyManagedIssueFixes(sessionId: string, snapshot: TeamReportAccessSnapshot, updates: IssueFixUpdate[]): Promise<boolean>
   // A content-free fingerprint of current annotations, read in one snapshot.
@@ -836,6 +838,8 @@ function prepareStatements(db: ManagedSql) {
         WHERE t.finding_id IN (SELECT value FROM json_each(?))
         ORDER BY t.finding_id ASC`,
     ),
+    selectTriageFixesStmt: db.prepare(`SELECT DISTINCT fix FROM managed_finding_triage
+      WHERE finding_id IN (SELECT value FROM json_each(?)) AND fix IS NOT NULL ORDER BY fix`),
     annotationTriageRevisionStmt: db.prepare(`
       SELECT t.finding_id AS id,
         (SELECT e.batch_id FROM managed_finding_triage_event e
@@ -1307,6 +1311,10 @@ function triageMethods(stmts: ReturnType<typeof prepareStatements>, historyLimit
         flagged: r.flagged == null ? null : r.flagged === 1,
         actorId: r.actorId, actorLogin: r.actorLogin, actorName: r.actorName, at: r.at,
       }))
+    },
+    async listTriageFixes(findingIds: readonly string[]): Promise<string[]> {
+      if (findingIds.length === 0) return []
+      return ((await stmts.selectTriageFixesStmt.all(JSON.stringify(findingIds))) as { fix: string }[]).map(row => row.fix)
     },
     async listTriage(findingIds: readonly string[]): Promise<TriageRow[]> {
       if (findingIds.length === 0) return []

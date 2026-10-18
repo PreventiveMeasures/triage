@@ -222,6 +222,6 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   })
 }
 
-export function storedFixUrls(entries: { fix: string | null }[]): string[] {
-  return [...new Set(entries.flatMap(entry => entry.fix && parseGithubFixUrl(entry.fix) ? [entry.fix] : []))].toSorted()
+export function storedFixUrls(fixes: string[]): string[] {
+  return [...new Set(fixes.filter(fix => parseGithubFixUrl(fix)))].toSorted()
 }
