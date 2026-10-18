@@ -96,6 +96,9 @@ It tells the browser when to refetch:
 - **Triage**: triage and comment changes in the focused team only, from its published reports, or from the one unpublished report being previewed.
 
 Home, bundle and Manage pages get catalog changes only, even before the user joins a team.
+Each triage notice carries an opaque revision of the team's annotations, the same one `GET /api/teams/:id/annotations` answers with.
+The browser refetches only when the revision differs from the one it last read, so a reconnect that finds nothing changed reads nothing.
+A public link's feed carries no revision.
 A reconnect catches up on missed changes.
 Notifications never carry finding IDs, annotation text, membership details or history sequence numbers, and the browser refetches through the usual access-checked reads.
 Losing membership of the focused team stops its triage updates.
