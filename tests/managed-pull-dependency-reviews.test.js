@@ -623,6 +623,25 @@ test('a team\'s Dependencies, its time up, tells the repositories left to ask fo
   assert.deepEqual([gone.lines, gone.ended], [[], false], 'cut short before a line')
 })
 
+test('a team\'s Dependencies, read of what is kept, check their reader\'s team and grants again before each line telling a repository\'s: one the team no longer holds, or they may read only part of now, cut short there', async t => {
+  const { db, read } = await teamFixture(t)
+  const whole = (await read()).lines
+  assert.equal(whole.length, 5, 'read once, and kept')
+  const snapshot = db.getTeamReportAccessSnapshot.bind(db)
+  for (const [revoke, why] of [[() => db.removeTeamRepo('one', 1), 'the team no longer holding it'],
+    [() => db.removeTeamRepo('one', 1).then(() => db.setTeamRepo('one', 1, 'src')), 'its grant only part of it']]) {
+    let calls = 0
+    // Read once as the request starts, then again before org/repo's lines.
+    t.mock.method(db, 'getTeamReportAccessSnapshot', async (...args) => {
+      if (++calls === 2) await revoke()
+      return snapshot(...args)
+    })
+    const cut = await read()
+    assert.deepEqual([cut.lines, cut.ended], [whole.slice(0, 2), false], why)
+    await db.setTeamRepo('one', 1, null)
+  }
+})
+
 test('a team\'s Dependencies tell with each line of dependencies the lines its versions wanting reviews change, those counted already, of public versions npm told within a day', async t => {
   const { db, read } = await teamFixture(t)
   const delta = { additions: 2, deletions: 0, typeless: null, binary: false }

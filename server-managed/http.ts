@@ -2283,7 +2283,8 @@ async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpD
 // and the repositories' reviews read once, those reviewing none answered at
 // once, GitHub asked nothing of them; each read with GitHub has its access
 // checked again after (readWholeRepositoryOf), and the reader's session
-// before each line.
+// before each line, their team and grants before each telling a
+// repository's.
 const TEAM_REPOSITORIES_AT_ONCE = 4
 const TEAM_DEPENDENCIES_MS = 240_000
 const TEAM_PULL_PAGES = 20
@@ -2303,15 +2304,29 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
   const settings = await deps.db.getRepoDependencyReviews(repoIds)
   const out = openLines(res)
   let stopped = false
-  // Lines written once the reader's session is still theirs; none, and the
-  // answer cut short, where it isn't, or the reader is gone.
+  // Lines written once their reader still reads them as at the start, the
+  // stream running minutes and a kept answer asking nothing again: their
+  // session theirs, and, where a line tells what a repository holds, the
+  // team still theirs and holding it, their grants still reaching the whole
+  // of it. None, and the answer cut short, where not, or the reader is gone.
   const send = async (...lines: TeamDependencyLine[]) => {
     if (stopped) return false
     const now = await readSession(deps.config, deps.db, cookie, Date.now())
     if (now?.user.id !== s.user.id || !roleAtLeast(now.user.role, 'view')) stopped = true
+    const telling = lines.filter(line => line.repoId !== undefined && (line['branch'] || line['dependencies'])).map(line => line.repoId!)
+    if (!stopped && telling.length > 0 && !await stillReads(now!.user, telling)) stopped = true
     for (const line of lines) if (stopped || !await out.write(line)) stopped = true
     if (stopped) out.cut()
     return !stopped
+  }
+  const stillReads = async (user: StoredUser, ids: number[]) => {
+    const team = await teamSnapshot(deps.db, s.session.id, teamId).catch((err: unknown) => {
+      if (err instanceof TeamReportsError) return null
+      throw err
+    })
+    if (!team) return false
+    const current = await repositoryGrants(deps, user)
+    return ids.every(id => team.repositories.some(repo => repo.repoId === id) && !('error' in wholeAccessIn(current, user, id)))
   }
   const reading: { access: WholeAccess; setting: RepoDependencyReview }[] = []
   const answered: TeamDependencyLine[] = []
