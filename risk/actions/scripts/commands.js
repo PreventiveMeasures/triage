@@ -17,10 +17,13 @@ const FETCHED_AND_RUN = [
   /\b(?:iex|invoke-expression)\b[^|;]*\b(?:irm|iwr|invoke-restmethod|invoke-webrequest|downloadstring)\b/iu,
 ]
 
-// The file curl or wget saves to (`-o f`, `--output f`, curl's `-O`), or null.
+// The file curl or wget saves to (`-o f`, `-of`, `--output f`, curl's `-O`),
+// or null.
 function savedTo(program, argv) {
   for (let at = 1; at < argv.length; at++) {
     const word = argv[at]
+    const attached = { curl: /^-[a-zA-Z]*o(.+)$/u, wget: /^-[a-zA-Z]*O(.+)$/u }[program]?.exec(word)
+    if (attached) return attached[1] === '-' ? null : attached[1]
     if (program === 'curl' && (/^-[a-zA-Z]*o$/u.test(word) || word === '--output')) return argv[at + 1] ?? null
     if (program === 'wget' && (/^-[a-zA-Z]*O$/u.test(word) || word === '--output-document')) return argv[at + 1] === '-' ? null : argv[at + 1] ?? null
     const joined = /^(?:--output|--output-document)=(.+)$/u.exec(word)

