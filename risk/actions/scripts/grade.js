@@ -35,7 +35,7 @@ export function scriptInjections(text, triggers) {
 // A ref or a repository naming a pull request's own code, as
 // `actions/checkout` checks it out: its head's commit or branch, or the
 // fork's repository, whose default branch it is then.
-const PULL_HEAD = new RegExp(String.raw`\bgithub\.(?:head_ref|event\.(?:number|pull_request\.(?:number|head\.(?:sha|ref|repo\.(?:full_name|owner\.login)))|workflow_run\.(?:head_sha|head_branch|head_repository\.(?:full_name|owner\.login))))\b`
+const PULL_HEAD = new RegExp(String.raw`\bgithub\.(?:head_ref|event\.(?:number|pull_request\.(?:number|merge_commit_sha|head\.(?:sha|ref|repo\.(?:full_name|owner\.login)))|workflow_run\.(?:head_sha|head_branch|head_repository\.(?:full_name|owner\.login))))\b`
   .replaceAll('\\.', String.raw`\s*\.\s*`) + String.raw`|refs\/pull\/`, 'u')
 export const namesPullHead = text => typeof text === 'string' && PULL_HEAD.test(text)
 

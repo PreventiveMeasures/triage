@@ -3,8 +3,12 @@
 // each line split at `&&`, `||`, `;`, `&` and `|`, each command's words
 // unquoted, past settings and wrappers (`NAME=value`, `sudo -E`, `env`), a
 // command substitution and a shell's command line (`sh -c '…'`) read as a
-// line of its own. A quick read, not a
-// shell's parse: a command built as the script runs goes unseen.
+// line of its own. A quick read, not a shell's parse: a command built as the
+// script runs goes unseen.
+import { SHELLS } from '../../files/runs-code.js'
+
+// A shell, by its program, wherever it is (risk's runs-code.js SHELLS).
+const SHELL = new RegExp(String.raw`^(?:.*\/)?${SHELLS}$`, 'u')
 
 // A line of a script, its continuations joined, and the line it starts on,
 // counting from 0.
@@ -114,7 +118,7 @@ function commandsOf(text) {
 
 // The command line a shell is given to run (`bash -euc '…'`), else null.
 function shellLine([program, ...words]) {
-  if (!/^(?:\/(?:usr\/)?bin\/)?(?:ba|z|da|k)?sh$/u.test(program)) return null
+  if (!SHELL.test(program)) return null
   const at = words.findIndex(word => /^-[a-z]*c[a-z]*$/u.test(word))
   return at === -1 ? null : words[at + 1] ?? null
 }

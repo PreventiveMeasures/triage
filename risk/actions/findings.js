@@ -51,11 +51,10 @@ function directoryOf(workingDirectory, into = null) {
   return parts.join('/')
 }
 
-// Whether a lockfile at or above `directory`, any for one an expression
-// names, locks what npx runs by `name`: `dev` where only devDependencies
-// need it in each that does.
+// Whether a lockfile at or above `directory` locks what npx runs by `name`:
+// `dev` where only devDependencies need it in each that does.
 function lockedIn(lockfiles, directory) {
-  const applies = directory.includes('$') ? lockfiles : lockfiles.filter(({ path }) => within(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '', directory))
+  const applies = lockfiles.filter(({ path }) => within(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '', directory))
   return name => {
     const locking = applies.filter(({ names }) => lockedName(names, name))
     return locking.length > 0 && (locking.every(({ dev }) => dev && lockedName(dev, name)) ? 'dev' : true)

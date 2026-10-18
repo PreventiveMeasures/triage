@@ -122,7 +122,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual([graded('NODE_ENV=production npm ci && npx eslint .', { locked: dev }).length, graded('export NODE_ENV=production\nnpm ci\nnpx eslint .', { locked: dev }).length,
       graded('NODE_ENV=production npm ci --include=dev && npx eslint .', { locked: dev }).length], [1, 1, 0], 'NODE_ENV production, of the command or exported')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
-    assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\''), ['fetched-package/high@11', 'remote-script/high@12'], 'a shell\'s command line')
+    assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\'\nash -c "npx is-odd"'), ['fetched-package/high@11', 'remote-script/high@12', 'fetched-package/high@13'], 'a shell\'s command line')
     assert.deepEqual(graded('npx eslint .\nnpm ci', { locked }), ['fetched-package/high@11'], 'an install after it')
     assert.deepEqual(graded('npx left-pad', { locked, installed: () => true }), ['fetched-package/high@11'], 'locked by none')
     assert.deepEqual(graded('npx left-pad@1.3.0', { installed: () => true }), ['fetched-package/moderate@11'], 'a version, not its integrity')
@@ -149,6 +149,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api', 'npm install --package-lock-only'), { lockfiles }).findings), ['unlocked-install/moderate@5', 'fetched-package/high@7'], 'one writing the lockfile alone')
     assert.deepEqual(ids(scanWorkflow('workflow', job('${{ matrix.project }}', 'api'), { lockfiles }).findings), ['fetched-package/high@7'], 'one an expression names, for another')
     assert.deepEqual(ids(scanWorkflow('workflow', job('${{ matrix.project }}', '${{ matrix.project }}'), { lockfiles }).findings), [], 'and for the same')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('${{ matrix.project }}', '${{ matrix.project }}'), { lockfiles: lockfiles.slice(0, 1) }).findings), ['fetched-package/high@7'], 'its lockfiles those above any directory')
   })
 
   it('an action of the repository\'s own counts as an install where it installs', () => {
@@ -172,6 +173,7 @@ describe('a script\'s findings, graded', () => {
     const job = (on, repository) => `on: ${on}\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@${SHA('c')}\n        with:\n          repository: \${{ ${repository} }}\n`
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.event.pull_request.head.repo.full_name')).findings), ['pwn-request/critical@7'])
     assert.deepEqual(ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.head_repository.full_name')).findings), ['pwn-request/critical@7'])
+    assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.event.pull_request.merge_commit_sha')).findings), ['pwn-request/critical@7'], 'its merge commit')
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.repository')).findings), [], 'its own')
   })
 
