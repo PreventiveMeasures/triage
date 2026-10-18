@@ -349,8 +349,8 @@ test('GET /api/avatar/<id>: approved users may fetch avatars (401 unauth, 404 mi
   })
   function mockRes() {
     return {
-      statusCode: 0, body: '', ended: false,
-      writeHead(code) { this.statusCode = code; return this },
+      statusCode: 0, headers: {}, body: '', ended: false,
+      writeHead(code, headers) { this.statusCode = code; this.headers = headers ?? {}; return this },
       end(b) { if (b != null) this.body += b; this.ended = true; return this },
       get headersSent() { return this.ended },
     }
@@ -363,7 +363,9 @@ test('GET /api/avatar/<id>: approved users may fetch avatars (401 unauth, 404 mi
   }
   const ck = cookiePair(sess.setCookie)
   assert.equal((await get(`/api/avatar/${s.user.id}`, null)).statusCode, 401)
-  assert.equal((await get(`/api/avatar/${s.user.id}`, ck)).statusCode, 200)
+  const own = await get(`/api/avatar/${s.user.id}`, ck)
+  assert.equal(own.statusCode, 200)
+  assert.equal(own.headers['cache-control'], 'no-store', 'a user\'s never kept by the browser')
   assert.equal((await get('/api/avatar/00000000-0000-4000-8000-000000000000', ck)).statusCode, 404)
   await db.close()
 })
@@ -402,6 +404,7 @@ test('GET /api/avatar/app-<id>: a listed GitHub App\'s avatar, fetched from GitH
     const res = await get('/api/avatar/app-3115942', ck)
     assert.deepEqual([res.statusCode, res.headers['content-type'], [...res.body]], [200, 'image/jpeg', [7, 7]])
     assert.equal(reads, read === 0 ? 2 : 1, read === 0 ? 'read, fetched, read again' : 'one kept is read once')
+    assert.equal(res.headers['cache-control'], 'private, max-age=86400', 'a public mark kept by the browser a day')
   }
   assert.deepEqual(fetched, [['https://avatars.githubusercontent.com/in/3115942', 'manual']], 'fetched once, redirects not followed')
   assert.equal((await get('/api/avatar/app-1', ck)).statusCode, 404, 'an app not listed is not fetched')

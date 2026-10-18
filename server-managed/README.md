@@ -2413,7 +2413,7 @@ lines; its pull requests, commits and issues in their states' colors, as
 many as fit and how many more, a single task's age and lines at the end
 of their row rather than the line above; and its branch. An app agent's mark is its GitHub App's or account's avatar, which the
 server fetches from GitHub once and keeps (`/api/avatar/app-<id>` or
-`/api/avatar/user-<id>`, for those agents alone). A tile clicked opens its session's popup, as an issue's does: who,
+`/api/avatar/user-<id>`, for those agents alone), the browser keeping it a day (a user's avatar it never keeps). A tile clicked opens its session's popup, as an issue's does: who,
 when, its state, tasks and size, its pull requests and issues, each opening
 in its place, its commits and branches, on GitHub, and links to where it ran
 (a Claude Code session or a Codex task) and to GitHub. A pull request's or

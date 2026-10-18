@@ -469,17 +469,18 @@ function firstHeader(v: string | string[] | undefined): string | null {
 }
 
 // `key` is the image chosen for `id`; one not cached falls back to `id`'s own.
-async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: string, key = id): Promise<void> {
-  sendAvatar(res, await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id)))
+// A user's is never kept by the browser, as it changes with their profile.
+async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: string, key = id, cacheControl = 'no-store'): Promise<void> {
+  sendAvatar(res, await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id)), cacheControl)
 }
 
-function sendAvatar(res: ServerResponse, avatar: CachedAvatar | null): void {
+function sendAvatar(res: ServerResponse, avatar: CachedAvatar | null, cacheControl = 'no-store'): void {
   if (avatar == null) { sendJson(res, 404, { error: 'no-avatar' }); return }
   res.writeHead(200, {
     'content-type': avatar.contentType,
     'content-length': String(avatar.bytes.length),
     'x-content-type-options': 'nosniff',
-    'cache-control': 'no-store',
+    'cache-control': cacheControl,
   })
   res.end(avatar.bytes)
 }
@@ -493,16 +494,20 @@ function sendAvatar(res: ServerResponse, avatar: CachedAvatar | null): void {
 const AGENT_AVATARS: ReadonlySet<string> = new Set([...APP_AGENTS, ...Object.values(GITHUB_AGENTS)]
   .flatMap(agent => 'avatar' in agent && agent.avatar ? [agent.avatar] : []))
 const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
+// An agent's mark is a public GitHub image that never changes with anyone's
+// profile, drawn on every tile and comment by it: kept by the browser a day,
+// for it alone.
+const AGENT_AVATAR_CACHE = 'private, max-age=86400'
 
 async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {
   const [, kind, id] = AGENT_AVATAR.exec(avatar)!
   const key = `00000000-0000-0000-000${kind === 'app' ? 0 : 1}-${id!.padStart(12, '0')}`
   // Read once where it is kept; read again only past fetching it.
   const kept = await avatarStore.get(key)
-  if (kept != null) { sendAvatar(res, kept); return }
+  if (kept != null) { sendAvatar(res, kept, AGENT_AVATAR_CACHE); return }
   await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/${kind === 'app' ? 'in' : 'u'}/${id}`, globalThis.fetch)
     .catch((err) => { console.warn('managed: agent avatar caching failed:', err) })
-  await serveAvatar(res, avatarStore, key)
+  await serveAvatar(res, avatarStore, key, key, AGENT_AVATAR_CACHE)
 }
 
 const MAX_JSON_BODY_BYTES = 4096
