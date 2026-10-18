@@ -305,6 +305,23 @@ test('GET pull-dependencies answers a pull request\'s new package versions by it
   }
 })
 
+test('GET pull-dependencies answers several of a repository\'s pull requests together, one GitHub fails told apart, its access asked once before and once after', async t => {
+  const request = await fixture(t)
+  github(t)
+  const metadata = () => globalThis.fetch.mock.calls.filter(call => new URL(call.arguments[0]).pathname === '/repos/org/repo').length
+  const answer = await request('pull-dependencies', { repoId: '1', numbers: '6,5' })
+  assert.equal(answer.status, 200)
+  assert.equal(metadata(), 2, 'its access asked before and after reading, not for each')
+  const { users: _users, ...single } = (await request('pull-dependencies', { repoId: '1', number: '5' })).body
+  assert.deepEqual([answer.body.pulls, answer.body.users], [[{ number: 6, error: 'github-not-found' }, single], {}], 'each in the order asked, the app\'s users they name once')
+  const before = metadata()
+  assert.deepEqual((await request('pull-dependencies', { repoId: '1', numbers: '6,5' })).body.pulls, answer.body.pulls)
+  assert.equal(metadata() - before, 1, 'all kept, but the one failed: asked before alone')
+  for (const numbers of ['5,5', 'x', '', Array.from({ length: 21 }, (_, at) => at + 1).join(',')]) {
+    assert.equal((await request('pull-dependencies', { repoId: '1', numbers })).status, 400, numbers)
+  }
+})
+
 test('an open pull request\'s tile, and any one\'s popup, tell whether it changes a lockfile, by the files GitHub lists of it', async t => {
   const request = await fixture(t)
   const queries = []

@@ -109,6 +109,10 @@ export async function fetchPullDependencies(repoId, number, options) {
   return (await loadManagedBundle()).fetchPullDependencies(repoId, number, options)
 }
 
+export async function fetchPullDependenciesOf(repoId, numbers, options) {
+  return (await loadManagedBundle()).fetchPullDependenciesOf(repoId, numbers, options)
+}
+
 export async function fetchBranchDependencies(repoId, options) {
   return (await loadManagedBundle()).fetchBranchDependencies(repoId, options)
 }

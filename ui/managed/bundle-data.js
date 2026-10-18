@@ -244,6 +244,14 @@ export function fetchPullDependencies(repoId, number, { review = false, signal }
   return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number, ...review ? { review: '1' } : {} })}`,
     PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
 }
+// Those of several of a repository's pull requests at once, by number, each
+// its answer, else an error of why GitHub failed it.
+export async function fetchPullDependenciesOf(repoId, numbers, { review = false, signal } = {}) {
+  const { pulls } = await request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, numbers: numbers.join(','), ...review ? { review: '1' } : {} })}`,
+    PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
+  return new Map((Array.isArray(pulls) ? pulls : []).filter(pull => Number.isSafeInteger(pull?.number)).map(pull => [pull.number, typeof pull.error === 'string'
+    ? Object.assign(new Error(PULL_DEPENDENCIES_ERRORS[pull.error] ?? `It couldn’t be read (${pull.error}).`), { code: pull.error }) : pull]))
+}
 
 // The versions the repository's default branch's lockfiles lock that want
 // review, where its review is in effect for the reader (`review`, else none).

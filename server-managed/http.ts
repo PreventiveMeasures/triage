@@ -51,7 +51,8 @@
 //        description's Markdown | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pull-dependencies?repoId=&number= → the package versions a pull request's npm, pnpm and
 //        Yarn 1 lockfiles lock that they didn't at its merge base, an update's with those it was, by directory; with review=1, each's
-//        review, where its repository reviews dependencies | 400/401/403/404/409/429/502
+//        review, where its repository reviews dependencies; with numbers=1,2,3 (twenty at most) in place of number, those of each,
+//        { pulls }, one GitHub fails told { number, error } | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/branch-dependencies?repoId= → the versions the default branch's lockfiles lock that want review, where
 //        its review is in effect for the reader, GitHub not asked where it reviews none | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/lockfiles?repoId= → the lockfiles of the default branch its dependency review reads, by their
@@ -2044,43 +2045,63 @@ function itemNumber(query: URLSearchParams): number | null {
 // each version's review (pull-dependency-reviews.ts), read afresh as each
 // asks, reviews being published meanwhile; its baseline kept, where the host
 // registered no reviewed dependencies, which are asked in its place.
+// Up to MAX_ASKED_PULLS pull requests asked together (`numbers=1,2,3`) are
+// answered together, as many read at once as PULLS_AT_ONCE, `{ pulls }`,
+// each's answer, else `{ number, error }` where GitHub fails it, with one
+// check of its access before and one after.
+const MAX_ASKED_PULLS = 20
+const PULLS_AT_ONCE = 3
 async function handleRepositoryPullDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
-  const number = itemNumber(query)
   const review = query.get('review') === '1'
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || number === null || !['1', null].includes(query.get('review'))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const listed = query.get('numbers')
+  const numbers = listed === null ? [itemNumber(query)] : listed.split(',').map(text => itemNumber(new URLSearchParams({ number: text })))
+  if (!Number.isSafeInteger(repoId) || repoId <= 0 || numbers.length > MAX_ASKED_PULLS || numbers.some(number => number === null) || new Set(numbers).size < numbers.length
+    || !['1', null].includes(query.get('review'))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
-    const kept = pullDependencyKept(deps, repoId)
-    const reading: { told?: PullDependencies } = {}
-    const answered = await keptAnswer(deps, `${repoId}\0pull-commits\0${PULL_DEPENDENCIES_READ}\0${number}`, async () => {
-      const { commits, told } = await pullDependenciesAt(fullName, token, number, kept)
-      reading.told = told
-      return { commits }
-    })
-    // What its commits tell, as read, else as kept by them, else, no longer
-    // kept, read again.
-    const held = reading.told ?? (typeof answered.value.commits === 'string' ? await kept.read(answered.value.commits) : null)
-    const pulled = { number, ...held ?? (await pullDependenciesAt(fullName, token, number, kept)).told }
-    // Where its review is on, those of lockfiles it leaves out told to none,
-    // whoever asks.
-    const setting = await deps.db.repoDependencyReview(repoId)
-    const scoped = setting?.enabled ? heldDependencies(pulled, setting.lockfiles) : pulled
-    const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(scoped)) : null
-    // Its review by the lockfiles they were told by, though they have changed
-    // since; turned off meanwhile, all of them, as where it is off.
-    const state = now && setting?.enabled ? { ...now, lockfiles: setting.lockfiles } : now
-    const told = review && !now && setting?.enabled && !(await deps.db.repoDependencyReview(repoId))?.enabled ? pulled : scoped
-    const reviewed = deps.reviewedDependencies ?? null
-    const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
-    // Its comments read for reviews, where the host reads them, while it is
-    // open (pull-comment-reviews.ts reads whether it is with them).
-    const parse = reviewed?.parseComments
-    const comments = state && parse ? commentReviews({ fullName, number, token, parse, reviewers: accounts => repoReviewers(deps, repoId, accounts) }) : null
-    // The comment the host formats of the reader's reviews of its versions, for its copy button.
-    const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number })
-    return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: comments }),
-      ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null }
+    if (listed === null) return pullDependencyAnswer(deps, fullName, token, user, repoId, numbers[0]!, review)
+    const answers = await eachOf(numbers as number[], PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, review).catch((err: unknown) => {
+      if (err instanceof GithubApiError) return { value: { number, error: err.message }, kept: true }
+      throw err
+    }))
+    return { value: { pulls: answers.map(({ value }) => value) }, kept: answers.every(({ kept }) => kept) }
   })
+}
+
+// Pull request `number`'s answer, as the endpoint gives it, and whether all
+// of it was kept, GitHub asked for none of it.
+async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number, number: number, review: boolean) {
+  const kept = pullDependencyKept(deps, repoId)
+  const reading: { told?: PullDependencies } = {}
+  const answered = await keptAnswer(deps, `${repoId}\0pull-commits\0${PULL_DEPENDENCIES_READ}\0${number}`, async () => {
+    const { commits, told } = await pullDependenciesAt(fullName, token, number, kept)
+    reading.told = told
+    return { commits }
+  })
+  // What its commits tell, as read, else as kept by them, else, no longer
+  // kept, read again.
+  const held = reading.told ?? (typeof answered.value.commits === 'string' ? await kept.read(answered.value.commits) : null)
+  const pulled = { number, ...held ?? (await pullDependenciesAt(fullName, token, number, kept)).told }
+  // Where its review is on, those of lockfiles it leaves out told to none,
+  // whoever asks.
+  const setting = await deps.db.repoDependencyReview(repoId)
+  const scoped = setting?.enabled ? heldDependencies(pulled, setting.lockfiles) : pulled
+  const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(scoped)) : null
+  // Its review by the lockfiles they were told by, though they have changed
+  // since; turned off meanwhile, all of them, as where it is off.
+  const state = now && setting?.enabled ? { ...now, lockfiles: setting.lockfiles } : now
+  const told = review && !now && setting?.enabled && !(await deps.db.repoDependencyReview(repoId))?.enabled ? pulled : scoped
+  const reviewed = deps.reviewedDependencies ?? null
+  const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
+  // Its comments read for reviews, where the host reads them, while it is
+  // open (pull-comment-reviews.ts reads whether it is with them).
+  const parse = reviewed?.parseComments
+  const comments = state && parse ? commentReviews({ fullName, number, token, parse, reviewers: accounts => repoReviewers(deps, repoId, accounts) }) : null
+  // The comment the host formats of the reader's reviews of its versions, for its copy button.
+  const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number })
+  return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: comments }),
+    ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null }
+
 }
 
 // GET /api/admin/repositories/branch-dependencies: what the lockfiles of the

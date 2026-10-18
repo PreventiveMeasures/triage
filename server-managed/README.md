@@ -2030,9 +2030,14 @@ request's base's and head's commits tell is kept in the database (under
 `repository/pull-dependencies`, a month), as what they hold never changes,
 read again where it no longer is; each lockfile read, in the instance's
 memory by its commit, so that pull requests branching off the same commit,
-as a bot's do, read it once, one being read with the same token shared. The
-page reads two at a time, those asked first first, and keeps them for the
-session five minutes, as it keeps the tiles. GitHub refusing the
+as a bot's do, read it once, one being read with the same token shared.
+With `numbers=1,2,3` in place of `number`, twenty at most, it answers those
+of each, `{ pulls }`, three read at once, one GitHub fails told `{ number,
+error }`, the repository's access asked once before them all and once after.
+The page reads two at a time, those asked first first, a team's
+Dependencies tab's after a tile's or a popup's, as many of a repository's
+waiting as twenty read together, and keeps them for the session five
+minutes, as it keeps the tiles. GitHub refusing the
 repository's contents or its pull request is the answer's failure (`502
 github-status-403`, the popup saying so).
 

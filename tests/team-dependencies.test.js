@@ -12,7 +12,7 @@ import './_polyfills.js'
 import { templateText } from './_lit.js'
 
 const state = { managedSession: { id: 's', role: 'triage' }, managedTeams: [{ id: 'team-1', slug: 'deps' }], teamDependenciesTab: 'pulls' }
-const asked = { branches: [], pulls: [], dependencies: [] }
+const asked = { branches: [], pulls: [], dependencies: [], together: [] }
 const terms = { required: 2, since: null, canReview: true }
 const dir = (more = {}) => ({ paths: ['package-lock.json'], added: [], more: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, moreLocked: 0, ...more })
 const wants = (name, more = {}) => ({ name, version: '1.0.0', source: 'registry', reviews: 0, ...more })
@@ -54,6 +54,12 @@ mock.module('../ui/view/client-managed.js', { exports: {
   },
   fetchRepositoryIssues(repoId, kind, options) { asked.pulls.push([repoId, kind, options]); return Promise.resolve(page(repoId, options.after)) },
   fetchPullDependencies(repoId, number, options) { asked.dependencies.push([repoId, number, options]); return Promise.resolve({ number, ...dependencies[`${repoId}#${number}`] }) },
+  // A repository's asked together, in the background.
+  fetchPullDependenciesOf(repoId, numbers, options) {
+    asked.together.push([repoId, numbers.length])
+    for (const number of numbers) asked.dependencies.push([repoId, number, options])
+    return Promise.resolve(new Map(numbers.map(number => [number, { number, ...dependencies[`${repoId}#${number}`] }])))
+  },
 } })
 const opened = []
 mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
@@ -90,6 +96,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.deepEqual(asked.dependencies.map(([repoId, number, options]) => [repoId, number, options.review]).toSorted(),
     [[7, 1, true], [7, 10, true], [7, 11, true], [7, 3, true], [7, 9, true], [8, 2, true], [8, 6, true]],
     'those changing a lockfile, of the repositories reviewing them, with their review')
+  assert.ok(asked.together.some(([, count]) => count > 1), 'a repository\'s read together once a turn comes')
   assert.match(text, /role="alert">Only b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = cardsOf(text)
