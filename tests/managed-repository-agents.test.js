@@ -1,9 +1,19 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from '../server-managed/app-agents.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { createSession } from '../server-managed/session.ts'
+
+test('the app agents are those of GITHUB_AGENTS with branches of their own, each told by its first account, its prefix and its fingerprint', () => {
+  assert.deepEqual(APP_AGENTS, [
+    { id: 'neo', name: 'Neo', avatar: 'app-3115942', account: { id: 274065190, logins: [] }, prefix: 'neo/', fingerprint: '🤖 Generated with [Neo](' },
+    { id: 'copilot', name: 'Copilot', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
+    { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110', account: { id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }, prefix: 'dependabot/' },
+  ])
+  assert.deepEqual(AGENT_BRANCH_PREFIXES, ['claude/', 'codex/', 'neo/', 'copilot/', 'dependabot/'])
+})
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }

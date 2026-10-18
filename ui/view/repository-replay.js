@@ -52,7 +52,6 @@ const LAYOUT_MS = 250
 const SQUARE_DOT = 1.8
 const END_S = 2
 const STATUS = new Set(['A', 'M', 'D', 'R'])
-const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
 
 const replays = new Map()
 const changesRead = new Map()
@@ -234,7 +233,7 @@ function readChanges(replay) {
 // it has no mark or avatar.
 export function makersOf(commit) {
   const makers = new Map()
-  for (const { login = null, name = null, agent = null, avatar = null } of [{ login: commit.authorLogin, name: commit.authorName }, ...commit.coauthors ?? []]) {
+  for (const { login = null, name = null, agent = null } of [{ login: commit.authorLogin, name: commit.authorName }, ...commit.coauthors ?? []]) {
     if (typeof login !== 'string' && typeof name !== 'string') continue
     const drawn = typeof agent === 'string' && Object.hasOwn(GITHUB_AGENTS, agent) ? agent : commitAgent(login, name)
     const user = drawn ? null : appUser(login)
@@ -243,7 +242,7 @@ export function makersOf(commit) {
     const label = drawn ? GITHUB_AGENTS[drawn].name : user ? user.name ?? user.login : name ?? login
     const mark = drawn ? GITHUB_AGENTS[drawn].mark ?? null : null
     const image = drawn ? !mark && GITHUB_AGENTS[drawn].avatar ? `/api/avatar/${GITHUB_AGENTS[drawn].avatar}` : null
-      : user ? `/api/avatar/${encodeURIComponent(user.id)}` : typeof avatar === 'string' && AGENT_AVATAR.test(avatar) ? `/api/avatar/${avatar}` : null
+      : user ? `/api/avatar/${encodeURIComponent(user.id)}` : null
     makers.set(key, { key, label, letter: label.trim()[0]?.toUpperCase() ?? '?', agent: drawn, mark, image })
   }
   return [...makers.values()]

@@ -1,8 +1,7 @@
 // Agents by their own GitHub accounts, where a repository's activity names
 // them: each its name, and how the app draws it, by its mark, as the Agents
 // tab does (ui/view/provider-icons.js), or by its avatar, which
-// /api/avatar/<avatar> serves (server-managed/repository-agents.ts
-// APP_AGENTS, the Agents tab's marks); its accounts, each by the logins GitHub's REST and GraphQL APIs
+// /api/avatar/<avatar> serves; its accounts, each by the logins GitHub's REST and GraphQL APIs
 // name it by and its numeric id where known, which GitHub never gives
 // another; and the names its commits carry where GitHub names no account for
 // them. Claude Code's commits are authored as Claude <noreply@anthropic.com>,
@@ -21,21 +20,36 @@
 // in its address. GitHub's Agentic Workflows (gh-aw) post, and approve or
 // review pull requests, as GitHub Actions' bot, `github-actions` (41898282,
 // `[bot]` to the REST API), its mark the GitHub Actions App's avatar; other
-// workflows the bot runs are as much its own. Cursor's agents commit as whoever ran them, with a
+// workflows the bot runs are as much its own. Neo, its GitHub App (3115942),
+// as its account (274065190), known by its id alone, whatever GitHub names
+// it, and drawn by its App's avatar, wherever its account or its fingerprint
+// names it. Cursor's agents commit as whoever ran them, with a
 // `Co-authored-by: Cursor Agent <cursoragent@cursor.com>` trailer; the app
 // has no mark of Cursor's, and draws it by its name's letter. Each by the
 // addresses (`emails`) its commits name it by, as author or co-author.
+//
+// Those the Agents tab tells beside Claude and Codex (whose sessions and
+// tasks it tells them by, common/managed/agent-tasks.ts), the server's app
+// agents (server-managed/app-agents.ts APP_AGENTS), by their branches'
+// prefix (`prefix`), their first account, the one their work is authored by,
+// and the fingerprint (`fingerprint`) they leave as a line of their pull
+// requests' bodies and their commits' messages, where they leave one:
+// Neo's, on `neo/` branches; Copilot's coding agent's, on `copilot/`;
+// Dependabot's, on `dependabot/<ecosystem>/…`. Their work may carry
+// Claude's or Codex's marks too, those its tools.
 export interface GithubAgentAccount { id?: number; logins: readonly string[] }
 export interface GithubAgent { name: string; mark?: 'anthropic' | 'openai' | 'github-copilot'; avatar?: string; accounts: readonly GithubAgentAccount[]; names: readonly string[]
-  emails?: readonly string[] }
+  emails?: readonly string[]; prefix?: string; fingerprint?: string }
 
 export const GITHUB_AGENTS = {
   claude: { name: 'Claude', mark: 'anthropic', accounts: [{ id: 81847, logins: ['claude'] }, { logins: ['claude[bot]'] }], names: ['Claude'], emails: ['noreply@anthropic.com'] },
   codex: { name: 'Codex', mark: 'openai', accounts: [{ id: 199175422, logins: ['chatgpt-codex-connector', 'chatgpt-codex-connector[bot]'] }], names: ['Codex'],
     emails: ['codex@openai.com'] },
+  neo: { name: 'Neo', avatar: 'app-3115942', accounts: [{ id: 274065190, logins: [] }], names: [], prefix: 'neo/', fingerprint: '🤖 Generated with [Neo](' },
   copilot: { name: 'Copilot', mark: 'github-copilot', accounts: [{ id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] },
-    { id: 175728472, logins: ['Copilot', 'copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]'] }], names: ['Copilot'] },
-  dependabot: { name: 'Dependabot', avatar: 'app-29110', accounts: [{ id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }], names: ['dependabot[bot]'] },
+    { id: 175728472, logins: ['Copilot', 'copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]'] }], names: ['Copilot'], prefix: 'copilot/' },
+  dependabot: { name: 'Dependabot', avatar: 'app-29110', accounts: [{ id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }], names: ['dependabot[bot]'],
+    prefix: 'dependabot/' },
   actions: { name: 'GitHub Actions', avatar: 'app-15368', accounts: [{ id: 41898282, logins: ['github-actions', 'github-actions[bot]'] }], names: ['github-actions[bot]'] },
   cursor: { name: 'Cursor', accounts: [], names: ['Cursor Agent'], emails: ['cursoragent@cursor.com'] },
 } as const satisfies Record<string, GithubAgent>
@@ -50,6 +64,8 @@ for (const [agent, { accounts }] of agents) {
     for (const login of logins) byLogin.set(login.toLowerCase(), { agent, ids: [...byLogin.get(login.toLowerCase())?.ids ?? [], id] })
   }
 }
+// The accounts known by their ids alone, no login of theirs: each its agent.
+const byId = new Map(agents.flatMap(([agent, { accounts }]) => accounts.flatMap(({ id, logins }) => id !== undefined && logins.length === 0 ? [[id, agent] as const] : [])))
 const byName = new Map(agents.flatMap(([agent, { names }]) => names.map(name => [name.toLowerCase(), agent] as const)))
 const byEmail = new Map(agents.flatMap(([agent, { emails = [] }]) => emails.map(email => [email, agent] as const)))
 
@@ -60,13 +76,15 @@ export const emailAgent = (email: unknown): GithubAgentId | null => typeof email
 // The agent an author is: by their login, GitHub matching logins regardless
 // of case, their account's id the agent's where both are known, so another
 // account GitHub names by the same login (a user's, the bot's GraphQL login
-// may be) is not; for an author GitHub names no account for, by the name
-// they carry. Null for anyone else: a human's account is theirs, whatever
-// their commits name them.
+// may be) is not; an account known by its id alone, by that, whatever its
+// login; for an author GitHub names no account for, by the name they carry.
+// Null for anyone else: a human's account is theirs, whatever their commits
+// name them.
 export function githubAgent(login: string | null, account: number | null = null, name: string | null = null): GithubAgentId | null {
   if (typeof login !== 'string') return typeof name === 'string' ? byName.get(name.trim().toLowerCase()) ?? null : null
   const known = byLogin.get(login.toLowerCase())
-  return known && (account === null || known.ids.includes(undefined) || known.ids.includes(account)) ? known.agent : null
+  if (known && (account === null || known.ids.includes(undefined) || known.ids.includes(account))) return known.agent
+  return account === null ? null : byId.get(account) ?? null
 }
 
 // Whether the accounts `ids` a login is named by are all one agent's, as

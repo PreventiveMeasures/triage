@@ -184,24 +184,20 @@ export function commitAuthorName(login, name = null) {
   return agent ? GITHUB_AGENTS[agent].name : name
 }
 
-// An app agent's avatar, as the server serves it (server-managed/app-agents.ts).
-const AGENT_AVATAR = /^(?:app|user)-[1-9]\d{0,11}$/u
 const MAX_COAUTHORS = 3
 const agentOf = agent => typeof agent === 'string' && Object.hasOwn(GITHUB_AGENTS, agent) ? agent : null
 const listed = names => names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0] ?? ''
 
 // One who made a commit, on a disc in Commits' stack of them: an agent by its
 // mark, solid as its app's icon is (app-user.css), or avatar, one the app
-// has neither of by its name's letter; an app
-// agent by its avatar; a user of the app by theirs, their name's letter under
-// it; anyone else by their name's letter.
-function commitAvatar({ login = null, name = null, agent = null, avatar = null }) {
+// has neither of by its name's letter; a user of the app by theirs, their
+// name's letter under it; anyone else by their name's letter.
+function commitAvatar({ login = null, name = null, agent = null }) {
   const drawn = agentOf(agent) ?? commitAgent(login, name)
   if (drawn) {
     const { name: called, mark, avatar: image } = GITHUB_AGENTS[drawn]
     return html`<span class=${`commit-avatar is-${drawn}`}>${mark ? providerIcon(mark) : image ? avatarImage(`/api/avatar/${image}`) : called[0]}</span>`
   }
-  if (typeof avatar === 'string' && AGENT_AVATAR.test(avatar)) return html`<span class="commit-avatar">${avatarImage(`/api/avatar/${avatar}`)}</span>`
   const user = appUser(login)
   const letter = (user?.name ?? user?.login ?? name ?? login ?? '').trim()[0]?.toUpperCase() ?? '?'
   return html`<span class="commit-avatar">${letter}${user ? userImage(user) : nothing}</span>`

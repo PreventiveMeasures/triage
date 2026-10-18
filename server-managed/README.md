@@ -133,13 +133,16 @@ REST API matches them. Commits read before IDs were kept show by login.
 
 Agents show as the Agents tab draws them, the server naming them in `users`
 as `{ "agent": <id> }`: Claude, Codex and Copilot by their marks, which the
-app draws itself, Dependabot by its avatar. Each is matched by its accounts' logins, the account's ID
-confirming it wherever both are known, as the Agents tab tells them: Claude's
+app draws itself, Dependabot and Neo by their avatars. Each is matched by its accounts' logins, the account's ID
+confirming it wherever both are known, or by its ID alone for an account
+known by no login, as the Agents tab tells them: Claude's
 `claude` (Claude Code's commits, authored as `Claude <noreply@anthropic.com>`)
 and `claude[bot]`, Codex's `chatgpt-codex-connector[bot]`, Copilot's coding
 agent's `Copilot`, its code review's bot's `Copilot` too (and
 `copilot-pull-request-reviewer` on its reviews), a login named by both of
-Copilot's accounts still Copilot's, and Dependabot's `dependabot[bot]`
+Copilot's accounts still Copilot's, Dependabot's `dependabot[bot]`, and
+Neo's account, 274065190, whatever its login, drawn by its GitHub App's
+(3115942) avatar as where its fingerprint names it
 (`common/managed/github-agents.ts`). Commits GitHub names no account for are
 matched by the name they carry: Claude, Codex, Copilot or `dependabot[bot]`.
 Codex otherwise commits as whoever ran it, and those commits show as theirs,
@@ -1803,8 +1806,8 @@ Cursor by its agents' trailer
 an app agent by its fingerprint (as the Agents tab tells them, below). An
 agent shows by its mark, a solid avatar as its app's icon is (Claude's
 white on its orange, OpenAI's black on white for Codex, Copilot's white on
-GitHub's dark, as Replay draws them), or its avatar (Dependabot's, an app
-agent's), Cursor, whose mark the app has none of, by its letter; the author
+GitHub's dark, as Replay draws them), or its avatar (Dependabot's,
+Neo's), Cursor, whose mark the app has none of, by its letter; the author
 none of them (`server-managed/commit-coauthors.ts`).
 The server reads each commit's message for them, keeping and answering
 those alone, never the message; a page kept before they were read, or
@@ -2370,14 +2373,18 @@ pull request merged. It is told by the links and marks the agents leave:
   (`Co-Authored-By: Claude`, `Generated with [Claude Code]`, a commit Claude
   authored), a pull request or commit its own session;
 - an agent known by its GitHub App or account (`APP_AGENTS` in
-  `repository-agents.ts`, each its id, name, avatar, branches' prefix, and
+  `app-agents.ts`: those of `GITHUB_AGENTS`, in
+  `common/managed/github-agents.ts`, with a branches' prefix, each told
+  there by its id, name, avatar, branches' prefix, and
   its fingerprint or the account its work is authored by: now Neo, by
-  `🤖 Generated with [Neo](` and `neo/…`; Copilot, by its account, 198982749,
+  `🤖 Generated with [Neo](`, its account, 274065190, by its ID alone, and
+  `neo/…`; Copilot, by its account, 198982749,
   `Copilot` or `copilot-swe-agent`, and `copilot/…`; and Dependabot, by its
   account, 49699333, `dependabot` or `dependabot[bot]`, and `dependabot/…`),
   by its fingerprint beginning a line of the same texts (one quoting it, as a
   review does, isn't its), its account authoring the pull request, commit or
-  branch's tip, told by its id and login both (a commit's by its GitHub
+  branch's tip, told by its id and login both, or its id alone for one
+  known by no login (a commit's by its GitHub
   no-reply address, `<id>+<login>@users.noreply.github.com`, where GitHub
   names no user for it, as for a bot's), or its branch's prefix. It names no
   session, so a pull request of its is a session

@@ -10,15 +10,14 @@ export const MAX_COAUTHORS = 3
 // The rules co-authors are read by, the agents' addresses and names among
 // them: what was kept read by others (history pages, squashed pull requests)
 // read again by these, once raised.
-export const COAUTHORS_READ = 2
+export const COAUTHORS_READ = 3
 const MAX_NAME = 256
 const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 
 // One who made a commit beside its author: by name and account, as its
-// author is, and the agent it is where known, one GitHub knows by its account
-// or its commits' address or name (common/managed/github-agents.ts) or one
-// the server knows by its app (app-agents.ts), with its avatar.
-export interface Coauthor { name: string | null; login: string | null; id: number | null; agent?: string; avatar?: string }
+// author is, and the agent it is where known (common/managed/github-agents.ts),
+// by its account, its commits' address or name, or the marks it leaves.
+export interface Coauthor { name: string | null; login: string | null; id: number | null; agent?: string }
 
 // `Co-authored-by: <name> <address>` trailers, GitHub matching the key
 // regardless of case; Cursor's agents' links, as their work carries them;
@@ -75,9 +74,6 @@ export function coauthorsOf(message: unknown, author: Maker, listed: Maker[] | n
     const { login, id } = agent && maker.account.login && githubAgent(maker.account.login, maker.account.id) !== agent ? { login: null, id: null } : maker.account
     add({ name: textOf(maker.name, MAX_NAME), login, id, ...agent ? { agent } : {} }, maker.email)
   }
-  for (const agent of marked) {
-    const app = APP_AGENTS.find(known => known.id === agent && !Object.hasOwn(GITHUB_AGENTS, known.id))
-    add({ name: app?.name ?? GITHUB_AGENTS[agent as GithubAgentId].name, login: null, id: null, agent, ...app?.avatar ? { avatar: app.avatar } : {} })
-  }
+  for (const agent of marked) add({ name: GITHUB_AGENTS[agent as GithubAgentId].name, login: null, id: null, agent })
   return coauthors
 }

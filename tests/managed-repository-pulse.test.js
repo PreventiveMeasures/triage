@@ -382,6 +382,13 @@ test('a year counts a commit an account agents work as pushed directly with agen
   assert.deepEqual(read.directCommits.map(item => [item.sha, item.kind]).toSorted(), [['by hand', 'without'], ['by login', 'agent'], ['pushed', 'agent']])
 })
 
+test('a year counts a commit Neo\'s account made with agents, by its id whatever its login; its GitHub App\'s id no account of its', () => {
+  const first = Date.UTC(2025, 9, 19)
+  const commit = (sha, authorLogin, authorId) => ({ sha, parents: ['p'], subject: '', authorName: authorLogin, authorLogin, authorId, committedAt: first + DAY, coauthors: [] })
+  const read = commitStats([commit('neo', 'any-login[bot]', 274065190), commit('someone', 'someone', 3115942)], first)
+  assert.deepEqual([read.weeks[0].days[1], read.weeks[0].agentDays[1]], [2, 1])
+})
+
 test('a year counts the commits that release the repository apart, none of them with agents whoever made them', () => {
   const first = Date.UTC(2025, 9, 19)
   const claude = { name: 'Claude', login: null, id: null, agent: 'claude' }
