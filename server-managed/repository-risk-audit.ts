@@ -33,6 +33,19 @@ const AUDIT_FAILED_KEPT_MS = 10 * 60_000
 // RISK_KEPT_MS, why they couldn't be had within AUDIT_FAILED_KEPT_MS.
 const isFresh = ({ at, audit }: { at: number; audit: Audit }) => Date.now() - at < (Array.isArray(audit) ? RISK_KEPT_MS : AUDIT_FAILED_KEPT_MS)
 
+// The audits of lockfiles, each of its `packages` by its `key` (auditLockfile),
+// `inTurn` with others, asked at once: each null where it has none to ask
+// of, or once `signal` aborts. Each is the caller's to tell once it may.
+export function auditLockfiles(source: AuditSource, memory: Lru<{ at: number; audit: Audit }>, signal: AbortSignal,
+  lockfiles: { key: string; packages: readonly LockedPackage[] | null }[], inTurn: <T>(work: () => Promise<T>) => Promise<T>): Promise<Audit | null>[] {
+  return lockfiles.map(({ key, packages }) => {
+    const audit = packages ? inTurn(() => (signal.aborted ? Promise.resolve(null) : auditLockfile(source, memory, signal, key, packages))) : Promise.resolve(null)
+    // One no longer waited on, as the scan stopped, fails alone.
+    audit.catch(() => {})
+    return audit
+  })
+}
+
 // The audit of a lockfile's `packages`, by its `key` as kept (`memory`, then
 // the source's), else asked and kept; null where it locks none to ask of, or
 // once `signal` aborts.

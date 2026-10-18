@@ -210,7 +210,7 @@ test('what GitHub answers of a public repository is kept for every scan, whichev
 
 test('a reference of a public repository is kept beyond the instance, a private one\'s not', async () => {
   const rows = new Map()
-  const actionLines = { read: key => Promise.resolve(rows.get(key) ?? null), readMany: () => Promise.resolve(new Map()),
+  const actionLines = { read: key => Promise.resolve(rows.get(key) ?? null), readMany: keys => Promise.resolve(new Map(keys.flatMap(key => rows.has(key) ? [[key, rows.get(key)]] : []))),
     write(key, value, at) { rows.set(key, { at, value }); return Promise.resolve() } }
   await scan(Object.assign(sourceOf(), { actionLines }))
   assert.deepEqual([...rows.values()].map(({ value }) => value.key).toSorted(), ['actions/checkout@v4', `third/party@${SHA('b')} # v1.0.0`, 'third/party@v1'])
@@ -241,7 +241,8 @@ test('a workflow that isn\'t YAML GitHub reads is told so, a tag making code amo
 test('a scan in parts resolves in the next what a part before named but didn\'t resolve', async () => {
   // Where its lockfile is kept beyond an instance, as the server keeps it.
   const keptLockfiles = new Map()
-  const lockfiles = { read: key => Promise.resolve(keptLockfiles.get(key) ?? null), readMany: () => Promise.resolve(new Map()),
+  const lockfiles = { read: key => Promise.resolve(keptLockfiles.get(key) ?? null),
+    readMany: keys => Promise.resolve(new Map(keys.flatMap(key => keptLockfiles.has(key) ? [[key, keptLockfiles.get(key)]] : []))),
     write(key, value, at) { keptLockfiles.set(key, { at, value }); return Promise.resolve() } }
   let kept = null
   const progress = { read: () => Promise.resolve(kept && { at: Date.now(), value: kept }), write: value => { kept = structuredClone(value); return Promise.resolve() } }

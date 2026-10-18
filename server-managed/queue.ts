@@ -21,3 +21,19 @@ export function queue<T>(signal: AbortSignal, { drain = false } = {}): Queue<T> 
     },
   }
 }
+
+// Work done `count` at a time, in the order asked, the rest waiting their
+// turn.
+export function inTurns(count: number): <T>(work: () => Promise<T>) => Promise<T> {
+  let active = 0
+  const waiting: (() => void)[] = []
+  return async work => {
+    if (active < count) active++
+    else await new Promise<void>(resolve => { waiting.push(resolve) })
+    try { return await work() } finally {
+      const next = waiting.shift()
+      if (next) next()
+      else active--
+    }
+  }
+}

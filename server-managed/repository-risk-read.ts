@@ -16,6 +16,7 @@ import type { DependabotAlert } from './dependabot-alerts.ts'
 import { type LockedPackage, isTestFixture, lockedPackages } from './locked-packages.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
+import { inTurns } from './queue.ts'
 import { type WorkflowsRead, lastingRead, readActions } from './repository-actions.ts'
 import { type RiskFailure, failureOf } from './repository-risk-assess.ts'
 import type { RepositoryRiskLine, RepositoryRiskRepo } from './repository-risk.ts'
@@ -28,6 +29,9 @@ const READ_FORMATS: ReadonlySet<LockfileFormat> = new Set(['npm', 'pnpm', 'yarn'
 // How long the source's `listings` and `lockfiles` are read for: what
 // GitHub has at a commit or a blob doesn't change, how it is read here may.
 export const SCAN_READ_KEPT_MS = 24 * 60 * 60_000
+// How many of a repository's lockfiles are read at once: each one GitHub is
+// asked for where it isn't kept, then parsed.
+const LOCKFILES_AT_ONCE = 4
 
 export type ListedLockfile = Pick<RepoLockfile, 'path' | 'format' | 'sha'>
 export type LockfileRead = { packages: LockedPackage[] } | RiskFailure
@@ -140,8 +144,8 @@ async function readDependabot(opened: OpenedRepository, paths: readonly string[]
   }
 }
 
-// A repository read: its lockfiles listed and read, its Dependabot alerts
-// asked and its Actions read meanwhile; its line telling why where listing
+// A repository read: its lockfiles listed and read, a few at once, its
+// Dependabot alerts asked and its Actions read meanwhile; its line telling why where listing
 // failed; null where the scan stopped. A test's
 // fixture or example its reader refuses (isTestFixture) is left out, as a
 // test may keep one so on purpose.
@@ -153,11 +157,12 @@ export async function readRepository<R extends RepositoryRiskRepo>(reading: Repo
   const acting = workflows ? keptRead(reading.caches.actionFiles, reading.source.actionFiles, `${repo.repoId}@${opened.commit}`,
     () => readActions({ workflows, file: path => opened.file(path) }), lastingRead) : Promise.resolve(null)
   acting.catch(() => {})
+  const inTurn = inTurns(LOCKFILES_AT_ONCE)
+  const lines = await Promise.all(listed.lockfiles.map(lockfile => inTurn(() => (reading.signal.aborted ? Promise.resolve(null) : readLockfile(reading, repo.repoId, opened, lockfile)))))
   const lockfiles: RepositoryRead['lockfiles'] = []
-  for (const lockfile of listed.lockfiles) {
-    if (reading.signal.aborted) return null
-    const line = await readLockfile(reading, repo.repoId, listed.opened, lockfile)
-    if (!('error' in line && line.error === 'lockfile-unreadable' && isTestFixture(line.path))) lockfiles.push({ sha: lockfile.sha, line })
+  for (const [at, line] of lines.entries()) {
+    if (!line) return null
+    if (!('error' in line && line.error === 'lockfile-unreadable' && isTestFixture(line.path))) lockfiles.push({ sha: listed.lockfiles[at]!.sha, line })
   }
   const dependabot = await alerting
   const actions = await acting
