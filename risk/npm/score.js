@@ -7,7 +7,7 @@ import { DAY_MS } from './downloads.js'
 // How much each finding raises the score, by its severity: a version's
 // findings combined as independent chances are (1 − Π(1 − weight)), so that
 // each adds less the more there are, none past 100. One red finding alone is
-// 50; two, or one with two orange, past 75, as attacks show.
+// 50; two are 75, and one with two orange 68, as attacks show.
 const WEIGHTS = { critical: 0.5, high: 0.2, moderate: 0.08, low: 0.03, notice: 0 }
 // What the version's age tells instead (`too-new`), as exposure does below.
 const TOLD_BY_AGE = new Set(['too-new'])

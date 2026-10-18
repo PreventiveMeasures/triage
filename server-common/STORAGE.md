@@ -1,28 +1,25 @@
 # Storage separation between e2e and managed
 
-E2e persists client-encrypted revisions and objects. Managed persists
-server-readable users, sessions, permissions, reports, bundles, triage,
-comments, and activity. They can share one Postgres database and private Blob
-store: their tables and object paths are separate. Sharing infrastructure does
-not convert or synchronize application data between modes.
+E2e persists client-encrypted revisions and objects.
+Managed persists server-readable users, sessions, permissions, reports, bundles, triage, comments and activity.
+They can share one Postgres database and private Blob store, because their tables and object paths are separate.
+Sharing infrastructure does not convert or synchronize application data between modes.
 
-The cloud deployment model is multiple concurrent instances sharing the same
-database and Blob storage. Instances use the same table/object namespaces;
-there is no per-instance storage. This is logical separation between modes,
-not a security boundary against holders of the shared provider credentials.
+In the cloud deployment model, multiple concurrent instances share the same database and Blob storage.
+Instances use the same table and object namespaces; there is no per-instance storage.
+This is logical separation between modes, not a security boundary against holders of the shared provider credentials.
 
 ## Database configuration
 
 Use one of two configurations:
 
 - `DATABASE_URL`: a shared Neon Postgres URL for every enabled mode.
-- `E2E_DATABASE_URL` and `MANAGED_DATABASE_URL`: independently configured URLs
-  for the corresponding modes. They may point to the same or different databases.
+- `E2E_DATABASE_URL` and `MANAGED_DATABASE_URL`: independently configured URLs for the corresponding modes.
+  They may point to the same database or to different ones.
 
-`DATABASE_URL` cannot be combined with either per-mode URL, even when their
-values are identical or the other mode is disabled. Empty values count as
-unset. Validation happens before storage is opened, including in cleanup
-handlers.
+`DATABASE_URL` cannot be combined with either per-mode URL, even when their values are identical or the other mode is disabled.
+Empty values count as unset.
+Validation happens before storage is opened, including in cleanup handlers.
 
 Combined mode requires both backends to be cloud-backed or both to be local:
 
@@ -34,15 +31,14 @@ Combined mode requires both backends to be cloud-backed or both to be local:
 | Only one per-mode URL | Rejected: mixed cloud/local backends | Rejected |
 | Global URL plus either per-mode URL | Rejected: ambiguous configuration | Rejected |
 
-Both combined launch modes (`managed-e2e` and `e2e-managed`) use these rules;
-their order changes only the client's default mode. Standalone mode selects its
-own backend, so the inactive mode's dedicated URL does not select its storage
-or require matching backends. Managed Vercel functions require a managed URL
-(global or dedicated); they cannot fall back to local storage.
+Both combined launch modes (`managed-e2e` and `e2e-managed`) use these rules.
+Their order changes only the client's default mode.
+Standalone mode selects only its own backend, so the inactive mode's dedicated URL neither selects its storage nor requires matching backends.
+Managed Vercel functions require a managed URL (global or dedicated) and cannot fall back to local storage.
 
-Neon requires `BLOB_READ_WRITE_TOKEN`. E2e also requires a shared
-`OBJSTORE_TOKEN_SECRET` so REST tokens work across instances. Both modes select
-complete pairings; launchers do not expose SQLite with Blob or Neon with files.
+Neon requires `BLOB_READ_WRITE_TOKEN`.
+E2e also requires a shared `OBJSTORE_TOKEN_SECRET`, so that REST tokens work across instances.
+Both modes select complete pairings: launchers do not offer SQLite with Blob, or Neon with files.
 A Blob token alone does not select Neon.
 
 | Local setting | Selection when that mode uses SQLite |
@@ -56,37 +52,42 @@ A Blob token alone does not select Neon.
 Local paths are ignored when the corresponding database URL selects Neon.
 `:memory:` makes SQLite temporary, but does not make byte storage temporary.
 
-Sources: [shared URL validation](database-config.ts),
-[e2e configuration](../server-e2e/config.ts),
-[managed configuration](../server-managed/config.ts), and
-[managed storage](../server-managed/storage.ts).
+Sources:
+
+- [shared URL validation](database-config.ts)
+- [e2e configuration](../server-e2e/config.ts)
+- [managed configuration](../server-managed/config.ts)
+- [managed storage](../server-managed/storage.ts)
 
 ## Tables
 
-All managed tables carry the `managed_` prefix. Both modes use the connection's
-SQL schema; neither creates a separate PostgreSQL schema or database role.
+All managed tables carry the `managed_` prefix.
+Both modes use the connection's SQL schema; neither creates a separate PostgreSQL schema or database role.
 
 | Owner | Tables |
 | --- | --- |
 | E2e revisions | `workspace_revision` |
 | E2e object metadata/staging | `workspace_object`, `workspace_object_staging` |
-| Managed identity | `managed_user`, `managed_session` |
-| Managed repositories and teams | `managed_selected_repo`, `managed_team`, `managed_team_repo`, `managed_team_user` |
-| Managed uploads | `managed_report`, `managed_bundle` |
-| Managed triage | `managed_finding_triage`, `managed_finding_triage_event` |
+| Managed identity | `managed_user`, `managed_session`, `managed_github_link` |
+| Managed repositories and teams | `managed_selected_repo`, `managed_team`, `managed_team_repo`, `managed_team_user`, `managed_team_npm_scope`, `managed_repository_alias`, `managed_workspace_share` |
+| Managed uploads | `managed_report`, `managed_bundle`, `managed_bundle_build_lease` |
+| Managed deduplication link reports | `managed_link_report` |
+| Managed triage and issues | `managed_finding_triage`, `managed_finding_triage_event`, `managed_finding_issue` |
 | Managed comments | `managed_finding_comment`, `managed_finding_comment_event` |
+| Managed dependency reviews | `managed_dependency_review`, `managed_dependency_file_review`, `managed_dependency_review_team` |
+| Managed GitHub and upstream caches | `managed_github_metadata`, `managed_github_repository_visibility`, `managed_github_commit`, `managed_github_tag`, `managed_github_tag_listing`, `managed_upstream_cache` |
 | Managed activity and schema versions | `managed_activity`, `managed_schema_version` |
+| Managed maintenance and change counters | `managed_maintenance_lease`, `managed_change_revision` |
 | Managed encryption activation and migration | `managed_storage_encryption`; wrapped data keys on the existing bundle/report rows |
 
-Startup renames tables in an existing managed database transactionally while
-retaining rows, foreign keys, and upload triggers. Conflicting source/destination
-tables stop initialization. Instances using that managed database must use the
-same schema names. E2e tables are unaffected.
+Startup renames tables in an existing managed database transactionally, keeping rows, foreign keys and upload triggers.
+Conflicting source and destination tables stop initialization.
+Instances using that managed database must use the same schema names.
+E2e tables are unaffected.
 
-The combined launcher requires distinct SQLite file paths (except separate
-`:memory:` databases). Its guard uses `path.resolve`, not filesystem identity,
-so symlink/hard-link aliases are not detected. The low-level schemas are
-compatible with a shared file, but the launcher requires separate files.
+The combined launcher requires distinct SQLite file paths (except separate `:memory:` databases).
+Its guard uses `path.resolve`, not filesystem identity, so symlink and hard-link aliases are not detected.
+The low-level schemas are compatible with a shared file, but the launcher requires separate files.
 
 ## Byte storage and cleanup
 
@@ -94,7 +95,7 @@ compatible with a shared file, but the launcher requires separate files.
 | --- | --- | --- |
 | E2e objects | `OBJSTORE_DIR/<workspaceTag>/<contentHash>.bin` | `<workspaceTag>/<contentHash>.bin` |
 | E2e staging | `OBJSTORE_DIR/<workspaceTag>/.staging/<stagingId>.bin` | `<workspaceTag>/.staging/<stagingId>.bin` |
-| Managed reports | `reports/<uuid>` | `.managed/reports/<uuid>` |
+| Managed reports | `reports/<uuid>.br` (legacy `reports/<uuid>`) | `.managed/reports/<uuid>.br` (legacy `.managed/reports/<uuid>`) |
 | Managed bundles | `bundles/<uuid>` or `<uuid>.map.br` | `.managed/bundles/<uuid>` or `<uuid>.map.br` |
 | Managed avatars | `avatars/<uuid>` plus `.type` sidecar | `.managed/avatars/<uuid>` with embedded content type |
 | Bundle metadata cache | `cache/bundles/<uuid>/...` | `.managed/cache/bundles/<uuid>/...` |
@@ -103,78 +104,78 @@ compatible with a shared file, but the launcher requires separate files.
 | Managed upload parts | Not enabled by the disk adapter | `.managed/uploads/<derivedUuid>` |
 | Managed encrypted caches (when enabled) | `cache-encrypted-v1/` | `.managed/cache-encrypted-v1/` |
 
-Once startup enables encryption with `MANAGED_STORAGE_ENCRYPTION_KEY`, reports and
-bundles retain their paths and get random data keys wrapped in their SQL rows.
-Caches rebuild in the encrypted cache namespace using their bundle key. Legacy
-payloads migrate in place through resumable SQL-row batches. GitHub access and
-refresh tokens are encrypted too; other SQL data and e2e encryption are unchanged. See
-[managed storage encryption](../server-managed/STORAGE-ENCRYPTION.md).
+Once startup enables encryption with `MANAGED_STORAGE_ENCRYPTION_KEY`, reports and bundles keep their paths and get random data keys, wrapped in their SQL rows.
+Caches rebuild in the encrypted cache namespace using their bundle's key.
+Legacy payloads migrate in place through resumable SQL-row batches.
+GitHub access and refresh tokens are encrypted too, and so are deduplication link reports (`managed_link_report`).
+Other SQL data and e2e encryption are unchanged.
+See [managed storage encryption](../server-managed/STORAGE-ENCRYPTION.md).
 
-Managed filesystem paths are relative to the database's parent, not its
-filename. In combined cloud mode, both servers use `BLOB_READ_WRITE_TOKEN`.
-Selecting separate per-mode database URLs does not select separate Blob stores;
-the mode namespaces remain distinct inside the shared store.
+Managed filesystem paths are relative to the database's parent directory, not its filename.
+In combined cloud mode, both servers use `BLOB_READ_WRITE_TOKEN`.
+Separate per-mode database URLs do not select separate Blob stores; the mode namespaces stay distinct inside the shared store.
 
-E2e cleanup excludes `.managed/` because dots are invalid workspace-tag
-characters. It collects unreferenced e2e blobs after an age grace period and
-reclaims stale/orphaned staging. Managed deletes target its UUID objects or
-slash-delimited cache prefixes. Managed maintenance removes expired sessions
-and, on Vercel only, upload parts older than 24 hours; it is not a general orphan-object sweep.
-Pretty-printed copies are named by `PRETTY_VERSION` (`server-managed/pretty-print.ts`): a
-bundle's, under its cache directory, go with the bundle; maintenance removes the public npm
-copies of every earlier version, `cache/npm/pretty-v1/` up to the one before, once per process.
-Ordinary managed requests trigger maintenance on the first request per instance, then
-hourly while traffic continues (one-minute retry backoff after failures).
-The response proceeds alongside cleanup, and the triggering invocation awaits
-both; concurrent requests share the sweep. Results and failures are logged as
-`managed-reaper:` under the triggering request. Persistent servers also have an
-hourly timer; serverless instances need traffic or the optional cron when idle.
-With `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1`, maintenance also migrates referenced
-plaintext and removes legacy caches, orphan plaintext and stale atomic-write
-temporary files. Cleanup recognizes managed UUID filenames and bundle cache
-directories; unrelated files in a shared database directory are left alone. It does not collect
-encrypted orphan report/bundle files; those no longer have a live SQL data key.
+E2e cleanup excludes `.managed/`, because dots are invalid workspace-tag characters.
+It collects unreferenced e2e blobs after an age grace period and reclaims stale or orphaned staging.
+Managed deletes target its UUID objects or slash-delimited cache prefixes.
+Managed maintenance removes expired sessions and, with Neon and Blob storage only, upload parts older than 24 hours.
+It is not a general orphan-object sweep.
+Pretty-printed copies are named by `PRETTY_VERSION` (`server-managed/pretty-print.ts`).
+A bundle's copies sit under its cache directory and go with the bundle.
+Maintenance removes the public npm copies of every earlier version, `cache/npm/pretty-v1/` up to the one before, once per process.
 
-E2e commits and reaping are designed for concurrent instances: version updates
-use database compare-and-set operations; cleanup rechecks live references and
-uses conditional staging deletion. Managed writers use a shared transactional
-Postgres advisory lock; readers use consistent snapshots. Cache builders
-recheck references after publishing. Repeated/concurrent cleanup is supported.
+Ordinary managed requests trigger maintenance on the first request per instance, then hourly while traffic continues, with a one-minute retry backoff after failures.
+The response proceeds alongside cleanup, and the triggering invocation awaits both.
+Concurrent requests share the sweep.
+Results and failures are logged as `managed-reaper:` under the triggering request.
+Persistent servers also have an hourly timer; serverless instances need traffic, or the optional cron, when idle.
+With `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1`, maintenance also migrates referenced plaintext and removes legacy caches, orphan plaintext and stale atomic-write temporary files.
+Cleanup recognizes managed UUID filenames and bundle cache directories, and leaves unrelated files in a shared database directory alone.
+It does not collect encrypted orphan report or bundle files, which no longer have a live SQL data key.
+
+E2e commits and reaping are designed for concurrent instances.
+Version updates use database compare-and-set operations.
+Cleanup rechecks live references and uses conditional staging deletion.
+Managed writers use a shared transactional Postgres advisory lock, and readers use consistent snapshots.
+Cache builders recheck references after publishing.
+Repeated and concurrent cleanup is supported.
 All replicas of a mode must use the same configured database and byte storage.
 
-`GET /api/reap` is mounted by the top-level servers and runs cleanup for every
-enabled mode using its already-open storage. Standalone e2e runs object cleanup;
-standalone managed runs session/upload cleanup and encrypted-storage maintenance
-when enabled; either combined mode runs both.
-`Authorization: Bearer <CRON_SECRET>` is required (401 if unset or incorrect).
-Other methods return 405. Cleanup waits for all enabled modes and returns 500
-if any fails. Concurrent requests share each mode's in-flight sweep.
+`GET /api/reap` is mounted by the top-level servers and runs cleanup for every enabled mode, using its already-open storage:
 
-On Vercel, the e2e function `api/reap.ts` opens the configured e2e store for each
-sweep. The managed function `api/managed.ts` handles `/api/reap` using its managed
-app. Both use the startup database URL validator. `OBJSTORE_REAP_DISABLED` disables
-automatic e2e sweeps; explicit `/api/reap` requests still run them.
+- Standalone e2e runs object cleanup.
+- Standalone managed runs session/upload cleanup, and encrypted-storage maintenance when enabled.
+- Either combined mode runs both.
 
-Switching backends does not migrate metadata or bytes. Managed users default to
-No access. The configured `MANAGED_INITIAL_ADMIN_GITHUB_ID` is promoted on login
-only while that account has No access and is the sole user, including when it
-registered before the variable was set. Any other user blocks promotion. See
-[account approval](../server-managed/README.md#account-approval).
+It requires `Authorization: Bearer <CRON_SECRET>` (401 if unset or incorrect).
+Other methods return 405.
+Cleanup waits for all enabled modes and returns 500 if any fails.
+Concurrent requests share each mode's in-flight sweep.
+
+On Vercel, the e2e function `api/reap.ts` opens the configured e2e store for each sweep.
+The managed function `api/managed.ts` handles `/api/reap` using its managed app.
+Both use the startup database URL validator.
+`OBJSTORE_REAP_DISABLED` disables automatic e2e sweeps; explicit `/api/reap` requests still run them.
+
+Switching backends does not migrate metadata or bytes.
+Managed users default to No access.
+The configured `MANAGED_INITIAL_ADMIN_GITHUB_ID` is promoted on login only while that account has No access and is the sole user, including when it registered before the variable was set.
+Any other user blocks promotion.
+See [account approval](../server-managed/README.md#account-approval).
 
 ## Verification
 
-Configuration and launcher tests cover shared/dedicated URLs, conflicting
-settings, mixed-backend rejection, and standalone selection. Table migration
-tests cover data preservation, foreign keys, triggers, rollback, and repeated
-initialization. Storage isolation tests exercise both schemas in one database
-and both cleanup directions in one Blob namespace. E2e replica tests exercise
-competing commits and cleanup against shared storage.
+Configuration and launcher tests cover shared and dedicated URLs, conflicting settings, mixed-backend rejection and standalone selection.
+Table migration tests cover data preservation, foreign keys, triggers, rollback and repeated initialization.
+Storage isolation tests exercise both schemas in one database and both cleanup directions in one Blob namespace.
+E2e replica tests exercise competing commits and cleanup against shared storage.
 
-PostgreSQL tests use PGlite; Blob tests use SDK fixtures. They verify SQL and
-adapter behavior, but do not reproduce independent concurrent Neon connections
-or validate live provider credentials, IAM, networking, and platform limits.
+PostgreSQL tests use PGlite, and Blob tests use SDK fixtures.
+They verify SQL and adapter behavior.
+They do not reproduce independent concurrent Neon connections, or validate live provider credentials, IAM, networking and platform limits.
 
-The existing [e2e race suite](../tests/objstore-server-races.test.js) tracks three
-limits as TODOs: concurrent new objects can overshoot the per-workspace count
-cap; an upload that outlives its staging TTL can be reaped while finishing;
-and cleanup does not repair live metadata rows whose blob is already missing.
+The existing [e2e race suite](../tests/objstore-server-races.test.js) tracks three limits as TODOs:
+
+- Concurrent new objects can overshoot the per-workspace count cap.
+- An upload that outlives its staging TTL can be reaped while finishing.
+- Cleanup does not repair live metadata rows whose blob is already missing.
