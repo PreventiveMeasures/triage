@@ -39,7 +39,11 @@ function decryptGroups(key: StorageKey | null, id: string, payload: string): str
   try { return JSON.parse(plain.toString('utf8')) as string[][] } finally { plain.fill(0) }
 }
 export async function linkRevision(db: ManagedSql): Promise<string> {
-  const rows = await db.prepare('SELECT id, sha256 FROM managed_link_report WHERE enabled = 1 ORDER BY id').all()
+  return linkRevisionOf(await db.prepare('SELECT id, sha256 FROM managed_link_report WHERE enabled = 1 ORDER BY id').all())
+}
+// The revision of the enabled link reports' `{ id, sha256 }` rows, by id,
+// however they were read.
+export function linkRevisionOf(rows: unknown[]): string {
   return rows.length > 0 ? createHash('sha256').update(JSON.stringify(rows)).digest('base64url') : ''
 }
 function parseLinkReport(content: string) {

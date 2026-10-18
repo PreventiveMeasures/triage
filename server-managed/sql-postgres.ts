@@ -10,6 +10,9 @@ export function postgresSql(source: string): { sql: string; names: string[] } {
     .replaceAll('INSERT OR IGNORE INTO', 'INSERT INTO')
     .replaceAll('CROSS JOIN', 'JOIN')
     .replaceAll(/\binstr\(/gu, 'strpos(')
+    // Rows gathered as one JSON array value, NULL (not '[]') where none are.
+    .replaceAll(/\bjson_group_array\(/gu, 'json_agg(')
+    .replaceAll(/\bjson_object\(/gu, 'json_build_object(')
   // Quoted literals (including ':') are never placeholders or identifiers.
   sql = sql.split(/('(?:''|[^'])*')/u).map((part, i) => i % 2 ? part : part
     .replaceAll(/\?|(?<!:):([a-zA-Z]\w*)/gu, (_match, name: string | undefined) => {

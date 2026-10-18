@@ -1550,9 +1550,11 @@ function repositoryQuery(res: ServerResponse, query: URLSearchParams) {
 async function authorizeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number, path: string) {
   const s = await readWorkspaceSession(res, deps, cookie)
   if (!s) return null
-  const repo = (await bundleRepos(deps, s.user)).find(item => item.repoId === repoId)
+  // bundleRepos's reads, the reader's scopes read once for both.
+  const access = await contentAccess(deps.db, s.user)
+  const repo = (await deps.db.listSelectedRepos()).filter(access.bundle).find(item => item.repoId === repoId)
   if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }
-  const scopes = s.user.role === 'admin' ? [null] : (await deps.db.listRepoScopesForUser(s.user.id)).filter(scope => scope.repoId === repoId).map(scope => scope.path)
+  const scopes = access.scopes == null ? [null] : access.scopes.filter(scope => scope.repoId === repoId).map(scope => scope.path)
   return { repo, virtualEntries: scopedDirectory(path, scopes), user: s.user }
 }
 
@@ -3022,12 +3024,11 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, session
 // need a published report in their teams; ownership never overrides role none.
 async function canViewReport(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
   if (!roleAtLeast(user.role, 'view')) return false
-  const report = await deps.db.getReport(reportId)
+  const report = await deps.db.getReportView(user.id, reportId)
   if (report == null) return false
   if (user.role === 'admin') return true
-  if (user.role === 'manage') return report.uploadedBy === user.id || deps.db.userCanReadReport(user.id, reportId)
-  if (!report.visible) return false
-  return deps.db.userCanReadReport(user.id, reportId)
+  if (user.role === 'manage') return report.uploadedBy === user.id || report.readable
+  return report.visible && report.readable
 }
 
 // GET/HEAD /api/reports/:id/sources. Only the linked bundle's files cited by
