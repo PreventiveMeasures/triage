@@ -77,10 +77,11 @@ function python(program, argv) {
 
 const EXACT_SEMVER = text => /^=?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test(text)
 
-// `go install|run x@v`, a version held to Go's checksum database.
+// `go install x@v y@v`, `go run x@v`, a version held to Go's checksum database.
 function go(argv) {
-  const [target] = optionsOf(argv, 2, /^-(?:o|modfile|tags|ldflags|gcflags|C)$/u).operands
-  return target?.includes('@') ? fetched(`go ${argv[1]}`, atVersion(target, spec => /^v\d+\.\d+\.\d+/u.test(spec)), { ecosystem: 'go' }) : []
+  const { operands } = optionsOf(argv, 2, /^-(?:o|modfile|tags|ldflags|gcflags|C)$/u)
+  return (argv[1] === 'run' ? operands.slice(0, 1) : operands).filter(target => target.includes('@'))
+    .flatMap(target => fetched(`go ${argv[1]}`, atVersion(target, spec => /^v\d+\.\d+\.\d+/u.test(spec)), { ecosystem: 'go' }))
 }
 
 // `cargo install`: each crate by its version, or a repository by its commit;

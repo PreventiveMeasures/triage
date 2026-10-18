@@ -60,6 +60,8 @@ function wordsOf(text) {
       if (word !== null) words.push(word)
       word = null
     } else if (char === '"' || char === "'") { quote = char; word ??= '' }
+    // A redirection joined to a word before it (`url>file`) starts its own.
+    else if ((char === '>' || char === '<') && word !== null && !/^\d*&?$|[<>]$/u.test(word)) { words.push(word); word = char }
     else word = (word ?? '') + (char === '\\' && at + 1 < text.length ? text[++at] : char)
   }
   const kept = []

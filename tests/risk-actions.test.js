@@ -196,6 +196,9 @@ describe('a script\'s findings, graded', () => {
     const action = 'runs:\n  using: composite\n  steps:\n    - run: echo "${{ inputs.title }} ${{ inputs[\'branch\'] }}"\n      shell: bash\n    - run: echo "$BODY"\n      env:\n        BODY: ${{ inputs.body }}\n      shell: bash\n'
     const scan = actions => ids(scanWorkflow('workflow', workflow, { actions }).findings)
     assert.deepEqual([scan(new Map([['.github/actions/greet', action]])), scan(null)], [['script-injection/critical@7', 'script-injection/critical@9'], []], 'by either syntax, not one it sets in env')
+    const outer = 'runs:\n  using: composite\n  steps:\n    - uses: ./inner\n      with:\n        text: ${{ inputs.title }}\n    - uses: ./.github/actions/greet\n'
+    assert.deepEqual(scan(new Map([['.github/actions/greet', outer], ['inner', 'runs:\n  using: composite\n  steps:\n    - run: echo "${{ inputs.text }}"\n      shell: bash\n']])),
+      ['script-injection/critical@7'], 'one it hands to such an input of another of its own, however they use each other')
   })
 
   it('a workflow_run\'s artifacts taken by the GitHub CLI', () => {
@@ -213,7 +216,8 @@ describe('a script\'s findings, graded', () => {
 
   it('other tools by how they are pinned', () => {
     assert.deepEqual(graded('pip install --upgrade pip setuptools\npip install flask==3.0.0\npip install flask'), ['fetched-package/notice@11', 'fetched-package/notice@11', 'fetched-package/moderate@12', 'fetched-package/high@13'])
-    assert.deepEqual(graded('go install x.dev/y@v1.2.3\ngo install x.dev/y@latest'), ['fetched-package/high@12'], 'a Go version held to its checksum database')
+    assert.deepEqual(graded('go install x.dev/y@v1.2.3\ngo install x.dev/y@latest\ngo install x.dev/a@v1.0.0 x.dev/b@latest\ngo run x.dev/c@v1.0.0 d@latest'), ['fetched-package/high@12', 'fetched-package/high@13'],
+      'a Go version held to its checksum database, each package installed, not the arguments of one run')
     assert.deepEqual(graded('cargo install --locked x@1.0.0\ncargo install x@1.0.0\ncargo install --locked x@1.0.0 y'), ['fetched-package/moderate@12', 'fetched-package/high@13'], 'each crate')
     assert.deepEqual(graded('npm install\nyarn\nbun install'), ['unlocked-install/moderate@11', 'unlocked-install/low@12', 'unlocked-install/low@13'])
     assert.deepEqual(graded('docker run alpine\ndocker run node:20\ndocker pull node@sha256:' + 'c'.repeat(64)), ['unpinned-image/high@11', 'unpinned-image/moderate@12'])
@@ -222,7 +226,8 @@ describe('a script\'s findings, graded', () => {
   it('a fork\'s repository\'s description, which its owner writes, and a script saved by curl\'s -o joined to its file', () => {
     assert.deepEqual(graded('echo "${{ github.event.pull_request.head.repo.description }}"\necho "${{ github.event.workflow_run.head_repository.homepage }}"'),
       ['script-injection/high@11', 'script-injection/high@12'])
-    assert.deepEqual(graded('curl -fsSLo/tmp/setup https://x/s.sh && sh /tmp/setup\nwget -qO- https://x/a.txt\nwget https://x/install.sh && sh install.sh\niwr https://x/s -OutFile setup.ps1; pwsh ./setup.ps1\ncurl -o env.sh https://x/e && . ./env.sh'), ['remote-script/high@11', 'remote-script/high@13', 'remote-script/high@14', 'remote-script/high@15'])
+    assert.deepEqual(graded('curl -fsSLo/tmp/setup https://x/s.sh && sh /tmp/setup\nwget -qO- https://x/a.txt\nwget https://x/install.sh && sh install.sh\niwr https://x/s -OutFile setup.ps1; pwsh ./setup.ps1\ncurl -o env.sh https://x/e && . ./env.sh\ncurl https://x/s.sh>s.sh 2>&1 && sh s.sh'),
+      ['remote-script/high@11', 'remote-script/high@13', 'remote-script/high@14', 'remote-script/high@15', 'remote-script/high@16'])
     assert.deepEqual(graded('echo "${{ github.event.workflow_run.head_repository.default_branch }}"'), ['script-injection/high@11'])
     assert.deepEqual(graded('echo "${{ github[\'event\'][ \'pull_request\' ].title }}"'), ['script-injection/high@11'], 'by index syntax')
     assert.deepEqual(graded('curl -fsSL https://x/i.sh |\n  sh\n# a |\nnpx left-pad'), ['remote-script/high@11', 'fetched-package/high@14'], 'a pipe the next line goes on from, not a comment\'s')

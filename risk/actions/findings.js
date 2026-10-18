@@ -61,14 +61,19 @@ function lockedIn(lockfiles, directory, name) {
   return locking.length > 0 && (locking.every(({ dev }) => dev && lockedName(dev, name)) ? 'dev' : true)
 }
 
+// The inputs a text names (`${{ inputs.title }}`).
+const inputsIn = text => typeof text === 'string' ? [...dotted(text).matchAll(/\$\{\{[^}]*?\binputs\s*\.\s*([\w-]+)/gu)].map(match => match[1]) : []
+
 // The inputs a step's action writes into a script: github-script's
 // `script`, and those an action of the repository's own (ScanOptions
-// `actions`) names in its `run:`s.
-function scriptInputs(step, actions) {
+// `actions`) names in its `run:`s or hands to such an input of a step's.
+function scriptInputs(step, actions, seen = new Set()) {
   if (step.uses?.repo?.toLowerCase() === 'actions/github-script') return ['script']
-  const read = step.uses?.kind === 'local' && actions?.has(step.uses.path) ? readWorkflow('action', actions.get(step.uses.path)) : null
+  const dir = step.uses?.kind === 'local' && actions?.has(step.uses.path) && !seen.has(step.uses.path) ? step.uses.path : null
+  const read = dir === null ? null : readWorkflow('action', actions.get(dir))
   if (!read || read instanceof YamlError) return []
-  return [...new Set(read.jobs.flatMap(job => job.steps.flatMap(each => [...dotted(each.run?.script ?? '').matchAll(/\$\{\{[^}]*?\binputs\s*\.\s*([\w-]+)/gu)].map(match => match[1]))))]
+  return [...new Set(read.jobs.flatMap(job => job.steps.flatMap(each => [...inputsIn(each.run?.script),
+    ...scriptInputs(each, actions, new Set(seen).add(dir)).flatMap(input => inputsIn(each.with?.[input]))])))]
 }
 
 // Injections through the inputs an action writes into its scripts, and a
