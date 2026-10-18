@@ -109,6 +109,8 @@ export interface PullDependencyStore {
 // scan's are (repository-risk.ts riskCaches).
 type LockfileRead = { packages: LockedPackage[] } | { error: string; detail?: string }
 const lockfileReads: Lru<LockfileRead> = lru(200_000, read => 'packages' in read ? read.packages.length + 1 : 1)
+// Those being read, by the token reading them too, lest each asking at once read them.
+const lockfilesReading = new Map<string, Promise<LockfileRead>>()
 
 const api = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
 
@@ -169,14 +171,21 @@ function lockfilesChanged(files: ChangedFile[]) {
     omitted: all.slice(MAX_DIRECTORIES).flatMap(([, directory]) => [...directory.paths]).toSorted() }
 }
 
-// A lockfile's packages at `ref`, as read in this instance, else of GitHub;
-// a lockfile its reader refuses, why. Any failure to read it of GitHub but
-// its having none there is the whole answer's, as it would be every file's.
-export async function readLockfile(fullName: string, token: string, ref: string, { path, format }: { path: string; format: Format }): Promise<LockfileRead> {
-  if (format === 'bun') return { error: 'lockfile-unsupported' }
-  const key = `${fullName}\0${ref}\0${path}`
+// A lockfile's packages at `ref`, as read in this instance, else shared with
+// a read of it with the same token still under way, else of GitHub; a
+// lockfile its reader refuses, why. Any failure to read it of GitHub but its
+// having none there is the whole answer's, as it would be every file's.
+export function readLockfile(fullName: string, token: string, ref: string, lockfile: { path: string; format: Format }): Promise<LockfileRead> {
+  if (lockfile.format === 'bun') return Promise.resolve({ error: 'lockfile-unsupported' })
+  const key = `${fullName}\0${ref}\0${lockfile.path}`
   const known = lockfileReads.get(key)
-  if (known) return known
+  if (known) return Promise.resolve(known)
+  const shared = `${token}\0${key}`
+  const reading = lockfilesReading.get(shared) ?? readOf(fullName, token, ref, lockfile, key).finally(() => lockfilesReading.delete(shared))
+  lockfilesReading.set(shared, reading)
+  return reading
+}
+async function readOf(fullName: string, token: string, ref: string, { path, format }: { path: string; format: Format }, key: string): Promise<LockfileRead> {
   let text: string
   try {
     text = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).getRepoFile({ repo: fullName, path, ref }))

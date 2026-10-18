@@ -11,8 +11,9 @@
 // pull requests adding it; what each repository's default branch locks that
 // wants one, where any does; and the reviews published to the team
 // (dependency-review-list.js). A repository's are held for the session a
-// while (KEEP_MS), its pull requests' as their tiles hold them; and read again
-// once a repository's or a team's review is set anew. As many repositories
+// while (KEEP_MS), its pull requests' as their tiles hold them, read after
+// those a tile or a popup asks for, each shown as it was while read again;
+// and read anew once a repository's or a team's review is set anew. As many repositories
 // are read at once as READ_AT_ONCE. A pull request is named without its
 // repository's owner where every repository reviewed has the same one.
 import { html, nothing, svg } from 'lit'
@@ -110,19 +111,23 @@ async function readRepository(repoId) {
     throw err
   }
 }
+// As held, one grown old shown while it is read again (`refreshing`), lest
+// its pull requests leave the tab meanwhile.
 function repositoryRead(repoId) {
   const data = sessionHeld()
   const entry = data.get(repoId)
   if (entry && Date.now() < entry.until) return entry
-  const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
+  const loading = entry?.status === 'ready' ? { ...entry, until: Number.POSITIVE_INFINITY, refreshing: true } : { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(repoId, loading)
   waiting.push(() => readRepository(repoId).then(read => {
     if (data.get(repoId) === loading) data.set(repoId, { status: 'ready', until: Date.now() + KEEP_MS, ...read })
     return null
   }, err => {
     if (data.get(repoId) !== loading) return null
-    if (err?.name === 'AbortError') data.delete(repoId)
-    else data.set(repoId, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'It couldn’t be read.' })
+    if (err?.name === 'AbortError') {
+      if (entry?.status === 'ready') data.set(repoId, entry)
+      else data.delete(repoId)
+    } else data.set(repoId, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'It couldn’t be read.' })
     return null
   }))
   readNext()
@@ -256,7 +261,7 @@ class TeamDependencies extends StateElement {
     const reads = repos.map(repo => ({ repo, read: repositoryRead(repo.repoId) }))
     const reviewed = reads.filter(({ read }) => read.status === 'ready' && read.branch)
     const pulls = reviewed.flatMap(({ repo, read }) => read.pulls.items.filter(readsDependencies)
-      .map(item => ({ repo, item, entry: pullDependencies(repo.repoId, item.number, true) })))
+      .map(item => ({ repo, item, entry: pullDependencies(repo.repoId, item.number, true, { background: true }) })))
     // Each pull request's versions wanting reviews, as many as its answer
     // tells, and how many in all, those past them too (`toReview`), by which
     // it is kept and ordered; and the other versions its lockfiles lock that
@@ -273,8 +278,16 @@ class TeamDependencies extends StateElement {
         || (a.repo.name < b.repo.name ? -1 : a.repo.name > b.repo.name ? 1 : b.item.number - a.item.number))
     // The repositories whose open pull requests are more than are read.
     const unchecked = reviewed.filter(({ read }) => read.pulls.more)
+    // Each version wanting reviews, as the first adding it tells it, by the
+    // pull requests adding it.
     const adding = new Map()
-    for (const pull of wanting) for (const pkg of pull.wanted) adding.set(versionKey(pkg), [...adding.get(versionKey(pkg)) ?? [], pull])
+    for (const pull of wanting) {
+      for (const pkg of pull.wanted) {
+        const added = adding.get(versionKey(pkg))
+        if (added) added.pulls.push(pull)
+        else adding.set(versionKey(pkg), { pkg, pulls: [pull] })
+      }
+    }
     const reading = reads.some(({ read }) => read.status === 'loading') || pulls.some(({ entry }) => entry.status === 'loading')
     const failures = [...reads.filter(({ read }) => read.status === 'error').map(({ repo, read }) => [repo.name, read.error]),
       ...pulls.filter(({ entry }) => entry.status === 'error').map(pull => [pullName(pull), pull.entry.error])]
@@ -289,7 +302,7 @@ class TeamDependencies extends StateElement {
     const commentedIn = new Map()
     for (const pull of pulls.filter(({ entry }) => entry.status === 'ready' && entry.review)) {
       for (const pkg of [...addedVersions(pull.entry).versions, ...unreviewedVersions(pull.entry).versions]) {
-        if (pkg.commented > 0 && !pkg.patched) commentedIn.set(versionKey(pkg), new Set([...commentedIn.get(versionKey(pkg)) ?? [], pullName(pull)]))
+        if (pkg.commented > 0 && !pkg.patched) (commentedIn.get(versionKey(pkg)) ?? commentedIn.set(versionKey(pkg), new Set()).get(versionKey(pkg))).add(pullName(pull))
       }
     }
     // Repositories and pull requests named without their owner where every
@@ -339,7 +352,7 @@ class TeamDependencies extends StateElement {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
     }
     const told = new Set()
-    const row = pull => pkg => versionRow(pkg, pull.entry.review, { others: (adding.get(versionKey(pkg)) ?? []).filter(other => other !== pull).map(named),
+    const row = pull => pkg => versionRow(pkg, pull.entry.review, { others: (adding.get(versionKey(pkg))?.pulls ?? []).filter(other => other !== pull).map(named),
       elsewhere: elsewhere(pkg, pull) })
     return html`<ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
       const own = pull.wanted.filter(pkg => !told.has(versionKey(pkg)))
@@ -372,10 +385,8 @@ class TeamDependencies extends StateElement {
   renderVersions(adding, reading, { elsewhere, named }) {
     if (adding.size === 0) return reading ? nothing : html`<p class="workspace-content-empty">No version an open pull request adds wants a review.</p>`
     return html`<section class="team-deps-section" aria-label="Versions to review">
-      ${this.rows('versions', [...adding.entries()], ([key, pulls]) => {
-        const pkg = pulls[0].wanted.find(one => versionKey(one) === key)
-        return versionRow(pkg, pulls[0].entry.review, { others: pulls.map(named), adders: true, elsewhere: elsewhere(pkg) })
-      }, Number.POSITIVE_INFINITY)}
+      ${this.rows('versions', [...adding.values()], ({ pkg, pulls }) => versionRow(pkg, pulls[0].entry.review, { others: pulls.map(named), adders: true,
+        elsewhere: elsewhere(pkg) }), Number.POSITIVE_INFINITY)}
     </section>`
   }
 

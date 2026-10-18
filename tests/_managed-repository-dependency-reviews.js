@@ -51,7 +51,8 @@ export const context = (name, version, base = null) => ({ ecosystem: 'npm', pack
 
 export async function checkRepositoryDependencyReviews(db) {
   const users = await people(db)
-  assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, ['pkg']), null, 'not enabled')
+  const pkg = { name: 'pkg', version: '1.0.0' }
+  assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, [pkg]), null, 'not enabled')
   assert.equal(await db.setRepoDependencyReview(999, { enabled: true, required: 2, since: null }), null)
   assert.deepEqual(await db.setRepoDependencyReview(1, { enabled: false, required: 3, since }), { enabled: false, required: 3, since, lockfiles: { mode: 'exclude', paths: [] } })
   const lockfiles = { mode: 'exclude', paths: ['examples/'] }
@@ -72,18 +73,23 @@ export async function checkRepositoryDependencyReviews(db) {
   await db.changeDependencyReview(context('pkg', '1.0.0', '0.6.0'), users.bob.sid, { action: 'save', reviewId: null, revision: null, entryId: null,
     entry: { file: 'index.js', status: 'accept', comment: '' } }, Date.now())
   await publish(db, users.alice, context('elsewhere', '1.0.0'), ['one'])
+  await publish(db, users.alice, context('pkg', '2.0.0'), ['one'])
+  await publish(db, users.alice, context('other', '2.0.0'), ['one'])
 
-  const state = await db.repoDependencyReviewState(1, users.alice.userId, ['pkg', 'pkg'])
+  const state = await db.repoDependencyReviewState(1, users.alice.userId, [pkg, pkg, { name: 'other', version: '1.0.0' }])
   const told = review => [review.reviewer === users.alice.userId ? 'alice' : review.reviewer === users.bob.userId ? 'bob' : review.reviewer, review.baseVersion, review.status, review.full]
   assert.deepEqual([state.required, state.since, state.canReview, state.lockfiles], [2, since, true, lockfiles])
   assert.deepEqual(state.reviews.map(told).toSorted(), [['alice', null, 'accept', true], ['alice', '0.9.0', 'accept', false], ['bob', null, 'accept-with-nits', true],
-    ['bob', '0.9.0', 'reject', true]], 'every published one, partial and rejecting too, but neither one to a team without the repository, a revoked one, a draft, nor another package\'s')
+    ['bob', '0.9.0', 'reject', true]], 'every published one, partial and rejecting too, but neither one to a team without the repository, a revoked one, a draft, another package\'s,'
+    + ' nor another version\'s, though another package asked has that version')
+  assert.deepEqual((await db.repoDependencyReview(1)), { enabled: true, required: 2, since, lockfiles }, 'one repository\'s setting')
+  assert.equal(await db.repoDependencyReview(999), null)
   assert.ok(state.reviews.every(review => review.integrity === sri('pkg@1.0.0') && Number.isSafeInteger(review.time)), 'each when it was published')
   assert.deepEqual((await db.listRepoReviewTeams()).get(1), [{ id: 'one', name: 'one' }], 'the teams whose reviews count, neither one that reviews none nor a hidden one')
   for (const [who, canReview] of [['admin', true], ['bob', true], ['carol', false], ['manager', false]]) {
     assert.equal((await db.repoDependencyReviewState(1, users[who].userId, [])).canReview, canReview, `${who} ${canReview ? 'publishes' : 'publishes none'} to a team that counts`)
   }
   await db.setTeamDependencyReview(users.admin.sid, 'one', false)
-  assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, ['pkg']), null, 'no team reviewing dependencies has it but a hidden one')
+  assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, [pkg]), null, 'no team reviewing dependencies has it but a hidden one')
   assert.equal((await db.listRepoReviewTeams()).get(1), undefined)
 }

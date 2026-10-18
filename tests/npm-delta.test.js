@@ -72,3 +72,23 @@ test('its element is a box wherever it is styled, as its viewport\'s observer se
     assert.match(rule, /min-width: 1px/u, sheet)
   }
 })
+
+test('a delta read draws again its own rows alone, those near the viewport, each no longer watched for it once near', async () => {
+  const drawn = []
+  const Counted = class extends customElements.get('npm-delta') { requestUpdate() { drawn.push(this.name) } }
+  const [one, other, far] = [['one', '1.0.0'], ['other', '1.0.0'], ['one', '1.0.0']].map(([name, version]) => Object.assign(new Counted(), { name, version, base: '(empty)' }))
+  for (const element of [one, other, far]) element._watch()
+  near.get(one)(true)
+  near.get(other)(true)
+  assert.equal(near.has(one), false, 'no longer watched once near')
+  drawn.length = 0
+  one.render()
+  other.render()
+  const at = pending.length
+  pending[at - 2].resolve({ additions: 1, deletions: 0, typeless: null })
+  await setImmediate()
+  assert.deepEqual(drawn, ['one'], 'its own row, not another\'s, nor one not yet near')
+  pending[at - 1].resolve({ additions: 2, deletions: 0, typeless: null })
+  await setImmediate()
+  for (const element of [one, other, far]) element._unwatch()
+})

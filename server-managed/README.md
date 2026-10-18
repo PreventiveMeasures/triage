@@ -2195,14 +2195,16 @@ too, the latest published first, by whom, fifty a page (`GET
 of one who reads reviews in it, else `404 no-team`, each held to the
 reader's npm access as My reviews' are), with no **Copy dependency review** button,
 which is for one's own. What it reads is held for the session two minutes,
-and read again once a repository's review is set. Each version wanting
+shown as it was while it is read again, and read anew once a repository's
+review is set; its pull requests' dependencies read after those a tile or a
+popup asks for, one of them asked for meanwhile read first. Each version wanting
 reviews, there and in a pull request's popup, tells the lines it changes
 against the version it was, or its whole package's, `+x −y`, `, binary`
 after them where a binary file, which no line counts, was added, removed or
 changed (one moved as it was is not), and `(+z −w -types)` where
 declaration files changed in types alone (`GET /api/npm/delta`,
 `npm-delta.js`), read once its row nears the viewport, two at a time, held
-for the session.
+for the session, a row drawn again as its own is read alone.
 
 #### Reviewed dependencies of the host
 

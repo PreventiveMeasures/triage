@@ -4,18 +4,20 @@
 // read as a pull request's are (pull-dependencies.ts readLockfile, kept in
 // this instance by the commit and path), as many as MAX_LOCKFILES of those,
 // each's versions (`lockfiles`), and those its reader refuses, of Bun's, or
-// past MAX_LOCKFILES (`unread`); and those of some of them (lockedIn), each
-// version once by what its reviews are held to (lockedWith), dev only where
-// it is wherever it is locked. GitHub having none of a lockfile it lists
-// there fails the whole, as it would for any file.
+// past MAX_LOCKFILES (`unread`), as many read at once as READ_AT_ONCE; and
+// those of some of them (lockedIn), each version once by what its reviews
+// are held to (lockedWith), dev only where it is wherever it is locked.
+// GitHub having none of a lockfile it lists there fails the whole, as it
+// would for any file.
 import { createClient } from '@preventive/upstream/github.js'
 import { upstreamGithub } from './github-errors.ts'
 import { GithubApiError } from './github-app.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
-import { lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
+import { eachOf, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
 
 export const MAX_LOCKFILES = 100
+const READ_AT_ONCE = 4
 
 export interface CommitLockfiles { lockfiles: { path: string; packages: LockedPackage[] }[]; unread: string[] }
 
@@ -36,8 +38,10 @@ export async function lockedAt(fullName: string, token: string, sha: string, hel
   const listed = (await lockfilesAt(fullName, token, sha)).filter(({ path }) => held(path))
   const unread = listed.slice(MAX_LOCKFILES).map(({ path }) => path)
   const lockfiles: CommitLockfiles['lockfiles'] = []
-  for (const lockfile of listed.slice(0, MAX_LOCKFILES)) {
-    const read = await readLockfile(fullName, token, sha, lockfile)
+  const reading = listed.slice(0, MAX_LOCKFILES)
+  const reads = await eachOf(reading, READ_AT_ONCE, lockfile => readLockfile(fullName, token, sha, lockfile))
+  for (const [at, lockfile] of reading.entries()) {
+    const read = reads[at]!
     if ('error' in read && read.error === 'github-not-found') throw new GithubApiError(404, 'github-not-found')
     if ('error' in read) unread.push(lockfile.path)
     else lockfiles.push({ path: lockfile.path, packages: read.packages })

@@ -2053,13 +2053,13 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
       async () => ({ number, ...await pullDependencies(fullName, token, number, pullDependencyKept(deps, repoId)) }))
     // Where its review is on, those of lockfiles it leaves out told to none,
     // whoever asks.
-    const setting = (await deps.db.listRepoDependencyReviews()).get(repoId)
+    const setting = await deps.db.repoDependencyReview(repoId)
     const held = setting?.enabled ? heldDependencies(answered.value, setting.lockfiles) : answered.value
     const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(held)) : null
     // Its review by the lockfiles they were told by, though they have changed
     // since; turned off meanwhile, all of them, as where it is off.
     const state = now && setting?.enabled ? { ...now, lockfiles: setting.lockfiles } : now
-    const told = review && !now && setting?.enabled && !(await deps.db.listRepoDependencyReviews()).get(repoId)?.enabled ? answered.value : held
+    const told = review && !now && setting?.enabled && !(await deps.db.repoDependencyReview(repoId))?.enabled ? answered.value : held
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
     // Its comments read for reviews, where the host reads them, while it is
@@ -2088,7 +2088,7 @@ async function handleRepositoryBranchDependencies(res: ServerResponse, deps: Man
     const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
     if (!head) return { value: { head: null, review: null }, kept: false }
     // Those its review holds to alone read, as many as are read of them.
-    const setting = (await deps.db.listRepoDependencyReviews()).get(repoId)
+    const setting = await deps.db.repoDependencyReview(repoId)
     if (!setting?.enabled) return { value: { head, review: null }, kept: false }
     const read = await lockedAt(fullName, token, head, path => heldTo(setting.lockfiles, path))
     const { packages, paths } = lockedIn(read)
@@ -2102,7 +2102,7 @@ async function handleRepositoryBranchDependencies(res: ServerResponse, deps: Man
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null } : await baselineFor(fullName, token, repoId, state, baselineKept(deps))
     return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: false }
-  }, async () => (await deps.db.listRepoDependencyReviews()).get(repoId)?.enabled ? null : { review: null })
+  }, async () => (await deps.db.repoDependencyReview(repoId))?.enabled ? null : { review: null })
 }
 
 // GET /api/admin/repositories/lockfiles: the lockfiles of the repository's

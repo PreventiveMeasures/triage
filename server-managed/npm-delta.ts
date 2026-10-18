@@ -10,11 +10,12 @@
 // leaving those out; and whether a binary file, which they count none of,
 // was added, removed or changed (`binary`), one moved as it was not. Worked
 // out in a worker, off the event loop, as many at once per process as
-// MAX_ACTIVE, their files read only once their turn has come, those waiting
-// past MAX_WAITING refused, each waiting a minute at most and counting in a
-// minute at most; one asked again meanwhile sharing the first's; and kept by
-// both sides' integrities, in this instance and beyond it (`kept`), what a
-// version holds never changing. Access is the caller's to check.
+// MAX_ACTIVE, both sides' files read together only once their turn has come,
+// those waiting past MAX_WAITING refused, each waiting a minute at most and
+// counting in a minute at most; one asked again meanwhile sharing the
+// first's; and kept by both sides' integrities, in this instance and beyond
+// it (`kept`), what a version holds never changing. Access is the caller's
+// to check.
 import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
 import type { KeptStore } from './npm-kept.ts'
@@ -160,7 +161,8 @@ async function worked(key: string, base: Side | null, other: Side, kept: KeptSto
   await turn(Date.now() + DELTA_TIMEOUT_MS)
   let binary, told
   try {
-    const [olds, news] = [texts(base ? await base.files() : null), texts(await other.files())]
+    const [baseFiles, otherFiles] = await Promise.all([base ? base.files() : null, other.files()])
+    const [olds, news] = [texts(baseFiles), texts(otherFiles)]
     if (olds.length + news.length > MAX_TEXT_LENGTH) throw new NpmPackageError(413, 'package-too-large')
     binary = binaryChanged(olds.binaries, news.binaries)
     told = await counted(olds.read, news.read, Date.now() + DELTA_TIMEOUT_MS)

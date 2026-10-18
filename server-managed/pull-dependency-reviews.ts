@@ -298,10 +298,10 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
     ...unread.length > 0 && !reviewed ? { baselineUnread: unread.slice(0, MAX_UNREVIEWED) } : {}, ...isEvery(scope) ? {} : { lockfiles: scope } } }
 }
 
-// The packages a pull request's lockfiles lock that its reviews here may
-// pass, whose reviews are asked: those that can be reviewed, unpatched.
+// The package versions a pull request's lockfiles lock that its reviews here
+// may pass, whose reviews are asked: those that can be reviewed, unpatched.
 export const reviewedPackages = (told: PullDependencies) => told.lockfiles
-  .flatMap(dir => 'error' in dir ? [] : dir.locked.filter(pkg => reviewedAs(pkg) === 'version' && !pkg.patchHash).map(pkg => pkg.name))
+  .flatMap(dir => 'error' in dir ? [] : dir.locked.filter(pkg => reviewedAs(pkg) === 'version' && !pkg.patchHash).map(pkg => ({ name: pkg.name, version: pkg.version! })))
 
 // A repository's baseline as read for a pull request: its versions and the
 // lockfiles there left unread; none where it reviews since no commit; and

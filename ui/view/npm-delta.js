@@ -21,7 +21,8 @@ const waiting = []
 const listeners = new Set()
 let heldFor = null
 let inFlight = 0
-const changed = () => { for (const notify of listeners) notify() }
+// Each listener told of the delta that changed (its key), none where all may have.
+const changed = key => { for (const notify of listeners) notify(key) }
 
 function sessionHeld() {
   const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
@@ -34,13 +35,14 @@ function sessionHeld() {
 }
 function readNext() {
   while (inFlight < READ_AT_ONCE && waiting.length > 0) {
+    const { key, read } = waiting.shift()
     inFlight++
-    waiting.shift()().finally(readDone)
+    read().finally(() => readDone(key))
   }
 }
-function readDone() {
+function readDone(key) {
   inFlight--
-  changed()
+  changed(key)
   readNext()
 }
 
@@ -57,7 +59,7 @@ export function npmDelta(name, version, base) {
   if (entry && Date.now() < entry.until) return entry
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
-  waiting.push(() => fetchNpmDelta(name, version, base).then(told => {
+  waiting.push({ key, read: () => fetchNpmDelta(name, version, base).then(told => {
     const all = lines(told)
     if (data.get(key) !== loading) return null
     data.set(key, all ? { status: 'ready', until: Number.POSITIVE_INFINITY, ...all, typeless: lines(told.typeless), binary: told.binary === true }
@@ -68,7 +70,7 @@ export function npmDelta(name, version, base) {
     if (err?.name === 'AbortError') data.delete(key)
     else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'Its lines couldn’t be counted.' })
     return null
-  }))
+  }) })
   readNext()
   return loading
 }
@@ -86,7 +88,8 @@ class NpmDeltaElement extends LitElement {
   constructor() {
     super()
     this._near = false
-    this._notify = () => this.requestUpdate()
+    // Drawn again as its own delta is read, or all may have changed.
+    this._notify = key => { if (this._near && (!key || key === `${this.name}\0${this.version}\0${this.base ?? '(empty)'}`)) this.requestUpdate() }
   }
 
   connectedCallback() {
@@ -99,12 +102,15 @@ class NpmDeltaElement extends LitElement {
     this._unwatch()
   }
 
-  // Told as what is held changes, and read once it nears the viewport.
+  // Told as what is held changes, and read once it nears the viewport, no
+  // longer watched for it then.
   _watch() {
     listeners.add(this._notify)
+    if (this._near) return
     watchNearViewport(this, near => {
       if (!near || this._near) return
       this._near = true
+      unwatchNearViewport(this)
       this.requestUpdate()
     })
   }
