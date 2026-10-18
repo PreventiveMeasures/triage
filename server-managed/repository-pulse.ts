@@ -14,6 +14,7 @@
 // issues closed and opened, how many and the latest of each.
 import { agentOperated, githubAgent } from '../common/managed/github-agents.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
+import { shareGithubRead } from './github-requests.ts'
 import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accountOf, actorOf, githubGraphql, historyFrom } from './repository-history.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
@@ -99,7 +100,13 @@ const emptyPunch = () => Array.from({ length: 7 }, () => Array.from({ length: 24
 // One statistic: its rows once GitHub has computed it, 'pending' while it
 // computes them (202), none for a repository with no commits (204, no body),
 // 'too-large' where it counts none (lines past 10,000 commits, 422).
-async function statistic(fullName: string, token: string | null, kind: string, fetchImpl: typeof fetch): Promise<unknown[] | 'pending' | 'too-large'> {
+function statistic(fullName: string, token: string | null, kind: string, fetchImpl: typeof fetch) {
+  // Stats and lines both need contributors. Share by the original transport;
+  // the per-call status wrapper below would otherwise give each its own read.
+  return shareGithubRead(fetchImpl, JSON.stringify(['statistic', fullName, token, kind]), () => readStatistic(fullName, token, kind, fetchImpl))
+}
+
+async function readStatistic(fullName: string, token: string | null, kind: string, fetchImpl: typeof fetch): Promise<unknown[] | 'pending' | 'too-large'> {
   let status = 0
   const answered: typeof fetch = async (input, init) => {
     const res = await fetchImpl(input, init)

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -64,6 +65,48 @@ async function fixture(t, { role = 'admin', tokens = null } = {}) {
     return { status: res.status, body: JSON.parse(res.body) }
   }, { db })
 }
+
+test('open pull heads start alongside history and their failure does not discard the history', async t => {
+  const request = await fixture(t, { tokens: userTokens })
+  const gate = Promise.withResolvers()
+  const asked = []
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (new URL(url).pathname === '/repos/org/repo') return Response.json(publicMetadata)
+    const { query } = JSON.parse(options.body)
+    asked.push(query)
+    if (query.includes('pullRequests(states: OPEN')) return Response.json({}, { status: 503 })
+    await gate.promise
+    return Response.json({ data: { repository: { defaultBranchRef: null, branches: { nodes: [], pageInfo: { hasNextPage: false } }, tags: { nodes: [] } } } })
+  })
+  const reading = request({ repoId: '1', all: 'true' })
+  await setImmediate()
+  const startedTogether = asked.some(query => query.includes('pullRequests(states: OPEN')) && asked.some(query => query.includes('refs/heads/'))
+  gate.resolve()
+  const answer = await reading
+  assert.equal(startedTogether, true, 'open pulls do not wait for commit history to finish')
+  assert.equal(answer.status, 200)
+  assert.deepEqual(answer.body.commits, [])
+})
+
+test('a failed history waits for its independent pull read before releasing the request', async t => {
+  const request = await fixture(t, { tokens: userTokens })
+  const gate = Promise.withResolvers()
+  let finished = false, pullStarted = false
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (new URL(url).pathname === '/repos/org/repo') return Response.json(publicMetadata)
+    const { query } = JSON.parse(options.body)
+    if (!query.includes('pullRequests(states: OPEN')) return Response.json({}, { status: 503 })
+    pullStarted = true
+    await gate.promise
+    return Response.json({ data: { repository: { pullRequests: { nodes: [] } } } })
+  })
+  const reading = request({ repoId: '1', all: 'true' }).finally(() => { finished = true })
+  await setImmediate()
+  const retained = pullStarted && !finished
+  gate.resolve()
+  assert.equal((await reading).status, 502)
+  assert.equal(retained, true, 'the database lease outlives the parallel cache write')
+})
 
 test('a revision\'s history reads a page of its commits, each with its parents, subject, author and time, and the branches and tags naming commits', async t => {
   const request = await fixture(t)

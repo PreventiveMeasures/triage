@@ -7,8 +7,10 @@ import { createHash, createSign } from 'node:crypto'
 import { createClient } from '@preventive/upstream/github.js'
 import type { ManagedConfig } from './config.ts'
 import { GithubApiError, githubUnreachable, throwGithubResponseError, upstreamGithub } from './github-errors.ts'
+import { onTokenRejected, shareGithubRead, tokenRejected } from './github-requests.ts'
 
 export { GithubApiError } from './github-errors.ts'
+export { onTokenRejected } from './github-requests.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
@@ -22,22 +24,12 @@ interface InstallationTokenEntry { token: string | null; expiresAt: number; pend
 // cached here. Bound memory per transport and separate App/key/install scopes.
 const installationTokens = new WeakMap<typeof fetch, Map<string, InstallationTokenEntry>>()
 
-// What others keep by a token, as GitHub answered it (repository-browser.ts's
-// access answers), told when GitHub rejects that token, to keep it no longer.
-const rejectedTokenListeners = new Set<(token: string, fetchImpl: typeof fetch) => void>()
-export function onTokenRejected(listener: (token: string, fetchImpl: typeof fetch) => void): void {
-  rejectedTokenListeners.add(listener)
-}
-
-// A token GitHub rejected (401): an installation's no longer reused, and
-// those keeping what it was answered told.
-function discardRejectedToken(token: string | null, fetchImpl: typeof fetch): void {
-  if (!token) return
-  for (const listener of rejectedTokenListeners) listener(token, fetchImpl)
+// A token GitHub rejected (401): an installation's no longer reused.
+onTokenRejected((token, fetchImpl) => {
   const cache = installationTokens.get(fetchImpl)
   if (!cache) return
   for (const [key, entry] of cache) if (entry.token === token) cache.delete(key)
-}
+})
 
 // One listed repository. Carries the context to read its contents later:
 // `installationId` mints an App installation token (Contents: Read) for a repo
@@ -79,8 +71,12 @@ export function mergeRepos(...lists: ConnectedRepo[][]): ConnectedRepo[] {
 // One GitHub API call returning parsed JSON, optionally Bearer-authed by a
 // user token, App JWT, or installation token, `body` sent as JSON (a GraphQL
 // query's, given longer to answer). Network / non-2xx / malformed fold into a
-// GithubApiError (401 passes through for the caller to handle).
-export async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET', body?: unknown): Promise<unknown> {
+// GithubApiError (401 passes through for the caller to handle). Identical GETs
+// share an outstanding read through its body. POSTs only opt in for read-only
+// GraphQL queries (repository-history.ts), never for mutations or token mints.
+export async function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET', body?: unknown,
+  readOnly = method === 'GET'): Promise<unknown> {
+  if (readOnly) return shareGithubRead(fetchImpl, JSON.stringify([url, token, method, body]), () => githubJson(url, token, fetchImpl, method, body, false))
   let res: Response
   const started = Date.now()
   try {
@@ -95,7 +91,7 @@ export async function githubJson(url: string, token: string | null, fetchImpl: t
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
   } catch (error) { throw githubUnreachable(error, started) }
-  if (res.status === 401) discardRejectedToken(token, fetchImpl)
+  if (res.status === 401 && token) tokenRejected(token, fetchImpl)
   if (!res.ok) await throwGithubResponseError(res)
   // The answer's body is read within the same timeout: one not read whole is
   // GitHub not reached, as one not answered is; only one that isn't JSON is

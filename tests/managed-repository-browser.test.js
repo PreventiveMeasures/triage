@@ -296,7 +296,7 @@ test('browser responses recheck managed access after refreshing the tag cache', 
 })
 
 test('an older overlapping tag listing cannot restore tags a newer one deleted', async t => {
-  const { db, request } = await fixture(t, { role: 'admin' })
+  const { db, request, userId } = await fixture(t, { role: 'admin' })
   let listed, release
   const started = new Promise(resolve => { listed = resolve })
   const gate = new Promise(resolve => { release = resolve })
@@ -313,6 +313,9 @@ test('an older overlapping tag listing cannot restore tags a newer one deleted',
   })
   const older = request({ repoId: '1' }, { route: 'refs' })
   await started
+  // A different credential starts an independent read while the anonymous
+  // one is pending; identical reads now share that pending response.
+  await db.setUserTokens(userId, { accessToken: 'new-token', refreshToken: null, expiresAt: null })
   assert.equal((await request({ repoId: '1' }, { route: 'refs' })).status, 200)
   release()
   assert.equal((await older).status, 200)
@@ -964,6 +967,20 @@ function privateGithub(permissions = alicePermitted) {
 }
 const keptConfig = { ...appConfig, repositoryAccessCacheMs: 300_000 }
 const alice = { githubUserId: 1, token: 'alice' }
+
+test('concurrent cold private repository readers share metadata, identity, permission and token reads', async () => {
+  const { fetch: github, calls, asked } = privateGithub()
+  const fetch = async (url, options) => {
+    await setImmediate()
+    return github(url, options)
+  }
+  const readers = await Promise.all(Array.from({ length: 6 }, () => createRepositoryBrowser(keptConfig, alice, fetch).reader(privateRepo)))
+  assert.equal(calls.length, 4, 'one metadata, identity, installation token and permission request')
+  assert.equal(asked().length, 3)
+  assert.ok(readers.every(reader => reader.readToken() === 'installation' && reader.permission() === 'read'))
+  await Promise.all(readers.map(reader => reader.recheckAccess()))
+  assert.equal(calls.length, 4, 'the access verdict still serves later checks')
+})
 
 test('GitHub\'s answer on a user\'s access to a repository is kept for them: rechecks and their next request answered as kept, asked again past it', async t => {
   const { fetch, asked } = privateGithub()

@@ -1683,12 +1683,22 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   }
   const access = await authorize()
   if (!access) return
+  let readingPulls: Promise<{ number: number; sha: string }[] | null> = Promise.resolve(null)
   try {
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const repo = access.repo.fullName
     const token = reader.readToken()
     // With a token, as GraphQL reads them.
     const pages = historyPages(deps, repoId, token !== null)
+    const quiet = <T>(fallback: T) => (err: unknown) => {
+      if (deps.config.debug) console.warn('managed: history pull requests read failed:', err)
+      return fallback
+    }
+    // Open pull heads do not depend on the commit history. Start them with
+    // it, handling failures immediately even if the history fails first.
+    if (token && path === '' && page === 1) {
+      readingPulls = keptAnswer(deps, `${repoId}\0openPulls`, () => openPullHeads(repo, token), undefined, fresh).then(answer => answer.value.pulls, quiet(null))
+    }
     let body: object
     if (all) {
       if (!token) { sendJson(res, 403, { error: 'github-token-required' }); return }
@@ -1723,13 +1733,9 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     // naming commits: with a token, as far as GitHub answers them, the
     // history sent all the same where it doesn't.
     const listed = (body as { commits: HistoryCommit[] }).commits
-    const quiet = <T>(fallback: T) => (err: unknown) => {
-      if (deps.config.debug) console.warn('managed: history pull requests read failed:', err)
-      return fallback
-    }
     const [pulls, openPulls] = token && path === '' ? await Promise.all([
       squashedPulls(repo, token, listed, historySquashes(deps, repoId)).catch(quiet<SquashedPull[]>([])),
-      page === 1 ? keptAnswer(deps, `${repoId}\0openPulls`, () => openPullHeads(repo, token), undefined, fresh).then(answer => answer.value.pulls, quiet(null)) : null,
+      readingPulls,
     ]) : [[], null]
     await reader.recheckAccess()
     const current = await authorize()
@@ -1744,6 +1750,10 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
+  } finally {
+    // A failed history must not release the request's database lease while
+    // its independent pull read is still writing to the cache.
+    await readingPulls
   }
 }
 

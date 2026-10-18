@@ -122,7 +122,7 @@ const TIMED_OUT = /\btimeout\b/iu
 // are logged, those read past too.
 export async function githubGraphql(query: string, variables: Record<string, unknown>, token: string, fetchImpl: typeof fetch,
   tolerated: (error: GraphqlError) => boolean = () => false) {
-  const body = await githubJson('https://api.github.com/graphql', token, fetchImpl, 'POST', { query, variables }) as { data?: unknown; errors?: GraphqlError[] } | null
+  const body = await githubJson('https://api.github.com/graphql', token, fetchImpl, 'POST', { query, variables }, true) as { data?: unknown; errors?: GraphqlError[] } | null
   const all = Array.isArray(body?.errors) ? body.errors : []
   const unnamed = all.filter(error => !NAMED_ERRORS.has(String(error?.type)))
   if (unnamed.length > 0) {
