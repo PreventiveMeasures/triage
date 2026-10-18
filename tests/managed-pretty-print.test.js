@@ -619,6 +619,12 @@ test('the pairs of minified JavaScript files that changed between two bundles ar
   assert.equal(lines[0].reason, null)
   assert.equal(lines[0].blocks.length, 1, 'its renamed names hidden, its changed line shown')
   assert.ok(lines[0].ignoringWhitespace.blocks.length === 1 && lines[0].marks.length > 0, 'whitespace changes hidden too, and renamed lines marked')
+  const opens = t.mock.method(h.stores.cacheStorage, 'open')
+  assert.deepEqual(linesOf(await h.send(bundleRenameDiffs(base, other))), lines)
+  const copyOf = hash => `pretty-v4/${Buffer.from(hash.slice(7), 'base64').toString('hex')}.js.br`
+  const failed = new Set(lines.filter(line => line.error).flatMap(line => [line.hash, line.otherHash].map(copyOf)))
+  const read = opens.mock.calls.map(call => call.arguments[1]).filter(file => file.startsWith('pretty-'))
+  assert.ok(read.length > 0 && read.every(file => failed.has(file)), 'diffs kept answered without reading their copies, those of one that failed read again')
   assert.equal((await h.send(bundleRenameDiffs(base, other), 'outsider')).status, 404)
   assert.equal((await h.send(bundleRenameDiffs(base, other), null)).status, 401)
   assert.equal((await h.send(bundleRenameDiffs(base, 'nope'))).status, 400)

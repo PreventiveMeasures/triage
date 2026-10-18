@@ -179,7 +179,10 @@ export async function renameDiffOf(request: RenameDiffRequest, texts: () => Prom
   return opened(await answerOf(request, texts, keep))
 }
 
-async function answerOf(request: RenameDiffRequest, texts: () => Promise<[string, string]>, keep: boolean): Promise<Buffer> {
+// Sides `verified` to be the files the request names (renamedPairs) are read
+// only where no answer is kept or on its way; others are read first, as
+// reading them checks they are.
+async function answerOf(request: RenameDiffRequest, texts: () => Promise<[string, string]>, keep: boolean, verified = false): Promise<Buffer> {
   // Sides not kept are formatted again for each diff (pretty-print.ts), so
   // they are read in its turn: the files a Diff view asks for at once wait
   // here rather than being refused by the formats running. Within its minute
@@ -193,21 +196,27 @@ async function answerOf(request: RenameDiffRequest, texts: () => Promise<[string
     })
     return encoded(diff, request, sides)
   }
-  const [before, after] = await texts()
   // A file's type is part of how it is read: the same text as a script and as a module differ.
   const key = `${request.base.hash}\0${request.base.extension}\0${request.other.hash}\0${request.other.extension}`
-  const found = kept.get(key)
-  if (found) {
-    kept.delete(key)
-    kept.set(key, found)
-    return found
+  const held = () => {
+    const found = kept.get(key)
+    if (found) {
+      kept.delete(key)
+      kept.set(key, found)
+    }
+    return found ?? pending.get(key)
   }
-  let job = pending.get(key)
-  if (!job) {
-    const deadline = Date.now() + DIFF_TIMEOUT_MS
-    pending.set(key, job = inTurn(deadline, () => inWorker(before, after, request, deadline)).then(diff => encoded(diff, request, [before, after])).finally(() => pending.delete(key)))
+  let answer = verified ? held() : undefined
+  if (!answer) {
+    const [before, after] = await texts()
+    answer = held()
+    if (!answer) {
+      const deadline = Date.now() + DIFF_TIMEOUT_MS
+      const job = inTurn(deadline, () => inWorker(before, after, request, deadline)).then(diff => encoded(diff, request, [before, after])).finally(() => pending.delete(key))
+      pending.set(key, answer = job)
+    }
   }
-  const body = await job
+  const body = await answer
   kept.set(key, body)
   if (kept.size > KEPT_DIFFS) kept.delete(kept.keys().next().value!)
   return body
@@ -258,7 +267,7 @@ export function renamedPairs([base, other]: readonly [ComparedSide, ComparedSide
       const named = { path: from.path, hash: from.hash, otherPath: to.path, otherHash: to.hash }
       const copy = async (side: ComparedSide, { text, ...file }: typeof from) => prettyText(await side.kept(file) ?? await side.made(file, text))
       let body
-      try { body = await answerOf(request, async () => [await copy(base, from), await copy(other, to)], keep) }
+      try { body = await answerOf(request, async () => [await copy(base, from), await copy(other, to)], keep, true) }
       catch (err) {
         if (!(err instanceof PrettyError)) throw err
         yield { ...named, error: err.message, status: err.status }
