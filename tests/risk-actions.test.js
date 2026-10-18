@@ -251,6 +251,9 @@ describe('a script\'s findings, graded', () => {
     const workflows = new Map([['.github/workflows/build.yml', build], ['.github/workflows/echo.yml', 'on: workflow_call\njobs:\n  d:\n    steps:\n      - run: echo "${{ inputs.text }}"\n']])
     assert.deepEqual([ids(scanWorkflow('workflow', own, { actions: workflows }).findings), ids(scanWorkflow('workflow', own).findings)],
       [['script-injection/critical@6'], ['script-injection/critical@6', 'script-injection/critical@7']], 'one of its own by those it writes into its scripts, however deep, else each')
+    const handing = build.replace('./.github/workflows/echo.yml', `other/repo/.github/workflows/run.yml@${SHA('d')}`).replace('steps:', 'container:\n      image: org/app:${{ inputs.branch }}\n    steps:')
+    assert.deepEqual(ids(scanWorkflow('workflow', own, { actions: new Map([['.github/workflows/build.yml', handing]]) }).findings), ['script-injection/critical@6', 'script-injection/critical@7'],
+      'and those it hands to another\'s reusable workflow, or names in a job\'s image')
   })
 
   it('services that exfiltrate, by risk\'s tags, and expressions anyone can write', () => {
