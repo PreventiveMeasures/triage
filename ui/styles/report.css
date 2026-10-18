@@ -3158,6 +3158,18 @@ body.report-fullscreen {
     &:hover { border-color: var(--accent); color: var(--accent); }
   }
 }
+/* A package's or repository's row skips its layout and paint while
+   off screen, as a finding's does (finding-table.css): a library lists
+   thousands, each drawn on every render. The browser remembers a row's
+   height once drawn; till then it takes a name and a meta line's.
+   Its tooltips live on the body, outside the row's paint containment.
+   Gated off print, as there. */
+@media not print {
+  .packages-view .packages-list > li {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 2.9rem;
+  }
+}
 /* Details panel content — meta dl, severity chip strip, file list,
    reports list. Same visual rhythm as `.bundles-detail-meta`. */
 .packages-detail-meta {
