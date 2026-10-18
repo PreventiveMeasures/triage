@@ -1893,13 +1893,21 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   & > h2 { margin: 0 0 .25rem; font-size: .875rem; font-weight: 500; color: var(--text); }
   & > .team-deps-quiet:first-child, & > h2 + .team-deps-quiet { margin: 0 0 .25rem; }
 }
+/* The pull requests' cards in columns a little wider than their versions',
+   each as many as its versions want, those listing few side by side, in
+   their order where they fit (team-dependencies.js CARD_SPANS): two only
+   where two fit, lest a span past them widen the page. */
 .team-deps-pulls {
-  display: flex; flex-direction: column; gap: .625rem; margin: 0; padding: 0; list-style: none;
+  container: team-deps-pulls / inline-size;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 32rem), 1fr)); grid-auto-flow: row dense;
+  align-items: start; gap: .625rem; margin: 0; padding: 0; list-style: none;
 }
 .team-deps-pull {
   min-width: 0; padding: .625rem .875rem .5rem;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 10px); background: var(--surface);
+  &.is-wide { grid-column: 1 / -1; }
 }
+@container team-deps-pulls (min-width: 64.625rem) { .team-deps-pull.is-span-2 { grid-column: span 2; } }
 /* Its head, the reader's reviews of its versions to copy at its end. */
 .team-deps-pull-top {
   display: flex; align-items: center; gap: .5rem; min-width: 0;

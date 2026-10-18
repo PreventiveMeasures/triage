@@ -2170,7 +2170,9 @@ the dependencies, with their review, of those changing a lockfile, as their
 tiles do, and, under Pull requests, lists the pull requests whose versions want reviews, or whose
 review fails, those adding fewest first, then those held only by other
 versions their lockfiles lock (the default branch's mostly), each a card
-opening its popup: how many versions it wants reviewed, and its versions
+opening its popup, as wide as its versions want (one column of them for
+one, two for two, else, or a list of it opened, the whole width), those
+listing few side by side: how many versions it wants reviewed, and its versions
 with their review (`0/2`, **rejected**, **patched** or **can't review**), as
 many columns as fit, twelve at first, the rest shown as asked for, those
 past the versions its answer lists counted; and, each opened as asked for,
@@ -2184,10 +2186,10 @@ reviewers are in its comments, a patched one never, as two pull requests may
 patch it apart; reviews published here count everywhere, and none says so.
 One wanting no reviews, its versions passed by reviews or the host's
 reviewed dependencies, is not listed; the reader's reviews of its versions
-are copied in its popup (`formatted`, below). Versions lists every version they add wanting reviews, each once,
-with the pull requests adding it; Default branch, of each repository, what
-its default branch locks that wants reviews or fails it, its lockfiles left
-unread named, each list forty-eight at first; and Reviews the reviews published to the team, revoked ones
+are copied in its popup (`formatted`, below). Versions lists every version they add wanting reviews, each once, all of
+them, with the pull requests adding it; Default branch, of each repository,
+what its default branch locks that wants reviews or fails it, its lockfiles
+left unread named, each list forty-eight at first; and Reviews the reviews published to the team, revoked ones
 too, the latest published first, by whom, fifty a page (`GET
 /api/npm/reviews/team?teamId=…&beforeTime=&beforeId=`, `{ reviews, next }`,
 of one who reads reviews in it, else `404 no-team`, each held to the

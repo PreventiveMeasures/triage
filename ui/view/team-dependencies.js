@@ -33,11 +33,14 @@ const KEEP_MS = 2 * 60_000
 const RETRY_MS = 30_000
 // Pages of a repository's open pull requests read, fifty each, a thousand
 // at most, its list cheap, those touching no lockfile read no further; and
-// the versions shown of a list, under a pull request or of its sub-tab, the
-// rest shown once asked for.
+// the versions shown of a list, under a pull request or a default branch,
+// the rest shown once asked for.
 const PULL_PAGES = 20
 const SHOWN_VERSIONS = 12
 const SHOWN_LISTED = 48
+// A pull request's card by how many versions it lists: a column's, two
+// columns', else every column's.
+const CARD_SPANS = ['', '', ' is-span-2']
 const READ_AT_ONCE = 3
 // Its sub-tabs, each at an address of its own, the one last picked
 // opened again by the team's Dependencies tab (ingest.js
@@ -328,7 +331,9 @@ class TeamDependencies extends StateElement {
   // other pull requests review in their comments told so (`elsewhere`); and
   // the reader's reviews of its versions to copy, where the server's host
   // formats them (dependency-review-copy.js); one wanting none is not
-  // listed, its copy in its popup. Each named as `naming` names it.
+  // listed, its copy in its popup. Each named as `naming` names it, a card
+  // as wide as its versions want (CARD_SPANS): one column of them for one,
+  // two for two, else, or a list of it opened, every column.
   renderPulls(wanting, adding, reading, unchecked, { elsewhere, named }) {
     if (wanting.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
@@ -343,7 +348,8 @@ class TeamDependencies extends StateElement {
       const key = pullName(pull)
       const others = unreviewedVersions(pull.entry)
       const href = `https://github.com/${pull.repo.name}/pull/${pull.item.number}`
-      return html`<li class="team-deps-pull">
+      const opened = ['own', 'above', 'others'].some(list => this._open.has(`${key}:${list}`))
+      return html`<li class=${`team-deps-pull${opened ? ' is-wide' : CARD_SPANS[own.length] ?? ' is-wide'}`}>
         <div class="team-deps-pull-top"><a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
           <span class="team-deps-pull-name">${named(pull)}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
           <span class=${`team-deps-count${pull.failed ? ' is-failed' : ''}`}>${pull.failed ? 'review fails' : pull.size > 0 ? `${plural(pull.toReview, 'version')} to review`
@@ -360,9 +366,9 @@ class TeamDependencies extends StateElement {
     })}</ol>`
   }
 
-  // Every version the pull requests add wanting reviews, each once, by the
-  // pull requests adding it, every one reviewing it in its comments told so,
-  // the first adding it, whose count it shows, too.
+  // Every version the pull requests add wanting reviews, each once, all of
+  // them listed, by the pull requests adding it, every one reviewing it in
+  // its comments told so, the first adding it, whose count it shows, too.
   renderVersions(adding, reading, { elsewhere, named }) {
     if (adding.size === 0) return reading ? nothing : html`<p class="workspace-content-empty">No version an open pull request adds wants a review.</p>`
     return html`<section class="team-deps-section" aria-label="Versions to review"><p class="team-deps-quiet">${plural(adding.size, 'version')} to review, each once,
@@ -370,7 +376,7 @@ class TeamDependencies extends StateElement {
       ${this.rows('versions', [...adding.entries()], ([key, pulls]) => {
         const pkg = pulls[0].wanted.find(one => versionKey(one) === key)
         return versionRow(pkg, pulls[0].entry.review, { others: pulls.map(named), adders: true, elsewhere: elsewhere(pkg) })
-      }, SHOWN_LISTED)}
+      }, Number.POSITIVE_INFINITY)}
     </section>`
   }
 
