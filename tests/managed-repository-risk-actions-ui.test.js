@@ -43,6 +43,7 @@ test('the Actions tab lists each reference, resolved, and what steps fetch, the 
   page._tab = 'actions'
   const text = templateText(page.render())
   assert.match(text, /Actions<span class="n">3<\/span>/u, 'its count on its tab')
+  assert.match(text, /aria-pressed=false @click=\(\) => choose\(kind\)>Steps<span class="n">2<\/span>/u, 'its toggle told by its label alone, no tooltip')
   assert.deepEqual(page._metrics().filter(({ label }) => label === 'Repositories' || label.startsWith('Actions')).map(({ label, value, of, split }) => [label, value, of, split]),
     [['Repositories', 1, 1, [['workflows', 1, 1]]], ['Actions', 3, 3, undefined], ['Actions flagged', 3, undefined, undefined]], 'the workflows read told with the repositories')
   assert.match(text, /<th>Uses<\/th><th>Pinned to<\/th><th>Findings<\/th>/u)

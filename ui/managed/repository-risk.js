@@ -163,17 +163,10 @@ const DIFFERS_SAID = 'Its lockfile’s integrity, a mirror’s, isn’t npm’s 
 // The advisories shown, by the versions they affect: those some lockfile
 // needs as more than devDependencies do, or doesn't tell (Yarn 1's), or those
 // only devDependencies need. Malware's are shown either way.
-const KINDS = {
-  production: ['Production', 'Advisories of versions an install for production takes: some lockfile needs them as more than devDependencies do, or doesn’t say. Malware’s are shown either way.'],
-  development: ['Development', 'Advisories of versions only devDependencies need, in every lockfile that locks them. Malware’s are shown either way.'],
-}
+const KINDS = { production: 'Production', development: 'Development' }
 // The packages shown: all, those an install for production takes, or those
 // only devDependencies need (ofKind).
-const PACKAGE_KINDS = {
-  all: ['All'],
-  production: ['Production', 'Packages an install for production takes: some lockfile needs them as more than devDependencies do, or doesn’t say. Malware, and a copy differing from npm’s, is shown either way.'],
-  development: ['Development', 'Packages only devDependencies need, in every lockfile that locks them. Malware, and a copy differing from npm’s, is shown either way.'],
-}
+const PACKAGE_KINDS = { all: 'All', production: 'Production', development: 'Development' }
 const devTag = said => html`<span class="risk-dev" data-tooltip=${said}>dev</span>`
 
 // A package's cell: npm's mark, or a package's for one from elsewhere (git, a
@@ -731,12 +724,12 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   }
 
-  // A toggle (`name`d) of `kinds` ({ kind: [label, tooltip] }, a tooltip
-  // where one tells more), the one `value` names pressed, each with how many
-  // there are (`counts`) in a bubble, another `choose`n.
+  // A toggle (`name`d) of `kinds` ({ kind: label }), the one `value` names
+  // pressed, each with how many there are (`counts`) in a bubble, another
+  // `choose`n.
   _kindToggle(name, kinds, counts, value, choose) {
-    return html`<div class="risk-scope" role="group" aria-label=${name}>${Object.entries(kinds).map(([kind, [label, said]]) => html`<button type="button"
-      aria-pressed=${value === kind} data-tooltip=${said ?? nothing} @click=${() => choose(kind)}>${label}<span class="n">${formatCount.format(counts[kind])}</span></button>`)}</div>`
+    return html`<div class="risk-scope" role="group" aria-label=${name}>${Object.entries(kinds).map(([kind, label]) => html`<button type="button"
+      aria-pressed=${value === kind} @click=${() => choose(kind)}>${label}<span class="n">${formatCount.format(counts[kind])}</span></button>`)}</div>`
   }
 
   // Which of `rows`, a kind's, are shown, by FILTERS, each with how many:
@@ -745,7 +738,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _filterToggle(rows) {
     const counts = Object.fromEntries(Object.entries(FILTERS).map(([filter, [, shown]]) => [filter, rows.filter(shown).length]))
     const offered = Object.entries(FILTERS).filter(([filter]) => filter === 'all' || filter === this._filter || counts[filter] > 0)
-    return offered.length === 1 ? nothing : this._kindToggle('Show packages', Object.fromEntries(offered.map(([filter, [label]]) => [filter, [label]])),
+    return offered.length === 1 ? nothing : this._kindToggle('Show packages', Object.fromEntries(offered.map(([filter, [label]]) => [filter, label])),
       counts, this._filter, filter => { this._filter = filter })
   }
 
