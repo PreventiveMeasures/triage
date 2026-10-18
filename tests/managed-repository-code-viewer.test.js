@@ -98,9 +98,16 @@ test('a directory shows as a bundle of its files, text alone as source, opening 
   const details = repositoryCodeDetails(entry, data)
   assert.deepEqual([...bundleSourcesAsMap(details)], [['README.md', '# app\n'], ['src/index.js', 'export {}\n']])
   assert.deepEqual([...details.npmBinaries], [['logo.png', { size: 4, digest: 'sha256-png' }]])
-  assert.deepEqual(details.npmEntries, ['README.md'])
-  assert.deepEqual(repositoryCodeEntries(['docs/README.md', 'README', 'readme.md', 'index.js']), ['readme.md'])
-  assert.deepEqual(repositoryCodeEntries(['index.js']), [])
+  assert.deepEqual(details.npmEntries, ['README.md', 'src/index.js'], 'text alone')
+  assert.deepEqual(repositoryCodeEntries(['docs/README.md', 'README', 'readme.md', 'index.js']), ['readme.md', 'README', 'index.js', 'docs/README.md'])
+  assert.deepEqual(repositoryCodeEntries(['index.js']), ['index.js'])
+  const sizes = new Map([['libraries/abc/src/__tests__/_fixtures.json', 4 << 20], ['libraries/abc/index.js', 50], ['libraries/README.md', 10],
+    ['tsconfig.json', 500], ['package.json', 300]])
+  const paths = [...sizes.keys()]
+  assert.equal(repositoryCodeEntries(paths, sizes)[0], 'package.json', 'its package.json, where it has no readme')
+  assert.equal(repositoryCodeEntries(paths.filter(path => path !== 'package.json'), sizes)[0], 'tsconfig.json', 'its largest file at its top')
+  assert.equal(repositoryCodeEntries(paths.filter(path => path.includes('/')), sizes)[0], 'libraries/README.md', 'else the largest a level down')
+  assert.equal(repositoryCodeEntries(paths.filter(path => path.startsWith('libraries/abc/')), sizes)[0], 'libraries/abc/index.js', 'never a fixture deeper')
   assert.equal(bundleFileGithub(details, 'src/index.js').href, `https://github.com/org/repo/blob/${commit}/packages/app/src/index.js`)
   assert.equal(bundleFileGithub(repositoryCodeDetails(repositoryCodeEntry({ ...data, path: '' }), data), 'src/index.js').href,
     `https://github.com/org/repo/blob/${commit}/src/index.js`)
