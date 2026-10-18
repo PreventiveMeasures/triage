@@ -10,7 +10,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { createRepositoryBrowser, scopedDirectory } from '../server-managed/repository-browser.ts'
-import { GithubApiError } from '../server-managed/github-app.ts'
+import { GithubApiError, githubJson } from '../server-managed/github-app.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
@@ -1030,4 +1030,20 @@ test('access read with a token GitHub rejects since is kept no longer: the next 
   const next = await createRepositoryBrowser(keptConfig, alice, fetch).reader(repo)
   assert.equal(next.readToken(), null, 'asked again, read anonymously')
   assert.deepEqual(calls.filter(([path]) => path === '/repos/org/repo'), [['/repos/org/repo', 'Bearer alice'], ['/repos/org/repo', 'Bearer alice'], ['/repos/org/repo', null]])
+})
+
+test('a private repository\'s access, read with the installation\'s token, is kept no longer once GitHub rejects the user\'s', async () => {
+  const { fetch: github, asked } = privateGithub()
+  let revoked = false
+  const fetch = (url, options) => revoked && options.headers.authorization === 'Bearer alice'
+    ? Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 })) : github(url, options)
+  assert.equal((await createRepositoryBrowser(keptConfig, alice, fetch).reader(privateRepo)).readToken(), 'installation')
+  assert.equal((await createRepositoryBrowser(keptConfig, alice, fetch).reader(privateRepo)).readToken(), 'installation', 'answered as kept')
+  assert.equal(asked().length, 3)
+  revoked = true
+  // Any read with their token GitHub rejects, another repository's or their own.
+  await assert.rejects(githubJson('https://api.github.com/user', 'alice', fetch), GithubApiError)
+  // Asked again: who they are, with their token, GitHub refuses.
+  await assert.rejects(createRepositoryBrowser(keptConfig, alice, fetch).reader(privateRepo), GithubApiError)
+  assert.ok(asked().length > 3, 'GitHub asked again')
 })

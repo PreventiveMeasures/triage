@@ -47,9 +47,10 @@ function credentialFailure(err: unknown): err is GithubApiError {
 // and the permission level GitHub told, where it was asked. Kept per user, by
 // their GitHub id and token, and per repository, by its id, name and
 // installation, for config.repositoryAccessCacheMs; only access granted is kept.
-// One read with the user's token is kept no longer once GitHub rejects that
-// token (`userToken`, hashed): the next check asks GitHub, falling back to
-// the installation's or none as it does.
+// One answered for a user with a token is kept no longer once GitHub rejects
+// that token (`userToken`, hashed), whichever credential reads it: a private
+// repository's was granted on who that token told GitHub they are. The next
+// check asks GitHub, falling back to the installation's or none as it does.
 type RepoMetadata = { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown; default_branch?: unknown }
 type AccessVerdict = { until: number; data: RepoMetadata; credential: 'user' | 'app' | 'none'; level: string | null; userToken: string | null }
 type VerdictCache = { get(): AccessVerdict | undefined; set(verdict: Omit<AccessVerdict, 'until' | 'userToken'>): void }
@@ -81,7 +82,7 @@ function verdictCache(config: ManagedConfig, user: RepositoryBrowserUser, repo: 
     },
     set(verdict) {
       kept.delete(key)
-      kept.set(key, { ...verdict, until: Date.now() + keepMs, userToken: verdict.credential === 'user' && user.token ? hashed(user.token) : null })
+      kept.set(key, { ...verdict, until: Date.now() + keepMs, userToken: user.token ? hashed(user.token) : null })
       while (kept.size > MAX_ACCESS_VERDICTS) kept.delete(kept.keys().next().value!)
     },
   }
