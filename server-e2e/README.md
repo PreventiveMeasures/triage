@@ -99,7 +99,7 @@ Standalone managed still accepts `DB_PATH`, and `MANAGED_DB_PATH` takes preceden
 Managed reports, bundles and avatars live beside its database.
 
 Managed and combined servers also serve the built UI with nested page URLs.
-See [managed browser navigation](../server-managed/README.md) for the page list and mode-switch behavior.
+See [managed navigation](../doc/navigation.md) for the page list and mode-switch behavior.
 E2E page navigation is unchanged.
 
 Set `GITHUB_NEW_ISSUE_LABELS` to a comma-separated list of extra labels for prefilled GitHub issue forms, for example `team,needs-review`.

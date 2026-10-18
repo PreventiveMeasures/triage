@@ -1,6 +1,6 @@
 // A repository's Dependabot alerts for a repository risk scan, read with the
 // App's installation token where the admin's own access lets them see them on
-// GitHub, as the README's repository risk section tells.
+// GitHub, as doc/bundles.md's repository risk scan section tells.
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
 import { type DependabotAlert, dependabotAlerts } from './dependabot-alerts.ts'
