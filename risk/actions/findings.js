@@ -81,7 +81,7 @@ function scriptInputs(step, actions, seen = new Set()) {
 function stepFindings(step, triggers, actions) {
   const repo = step.uses?.repo?.toLowerCase()
   const found = scriptInputs(step, actions).flatMap(input => scriptInjections(step.with?.[input], triggers).map(({ index: _index, ...finding }) => ({ ...finding, line: step.withLines[input] })))
-  const forks = triggers.includes('pull_request_target') || triggers.includes('workflow_run')
+  const forks = ['pull_request_target', 'workflow_run', 'issue_comment'].some(event => triggers.includes(event))
   if (forks && repo === 'actions/checkout' && (namesPullHead(step.with?.ref) || namesPullHead(step.with?.repository))) {
     found.push({ id: 'pwn-request', severity: 'critical', ref: String(step.with.ref ?? step.with.repository), line: step.withLines.ref ?? step.withLines.repository ?? step.line })
   }
