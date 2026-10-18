@@ -16,6 +16,10 @@ mock.module('../ui/view/client-managed.js', { exports: {
     asked.push(number)
     return new Promise((resolve, reject) => { pending.push({ resolve, reject }) })
   },
+  fetchPullDependenciesOf(repoId, numbers) {
+    asked.push(numbers)
+    return new Promise((resolve, reject) => { pending.push({ resolve: answers => resolve(new Map(numbers.map(number => [number, answers[number]]))), reject }) })
+  },
 } })
 const { addedVersions, pullDependencies, reviewFailures, subscribePullDependencies, unreviewedVersions } = await import('../ui/view/pull-dependencies.js')
 
@@ -69,4 +73,29 @@ test('one grown old is shown as it was while read again, its versions worked out
   } finally {
     mock.timers.reset()
   }
+})
+
+test('those of a repository asked in the background are read together once a turn comes, twenty at most, each told its own answer or failure', async () => {
+  asked.length = 0
+  pullDependencies(3, 1, true)
+  pullDependencies(3, 2, true)
+  const numbers = Array.from({ length: 23 }, (_, at) => 10 + at)
+  for (const number of numbers) pullDependencies(3, number, true, { background: true })
+  pullDependencies(4, 1, true, { background: true })
+  assert.deepEqual(asked, [1, 2], 'every turn taken')
+  pending.shift().resolve(answer('a'))
+  await setImmediate()
+  assert.deepEqual(asked.at(-1), numbers.slice(0, 20), 'the repository\'s twenty waiting, together')
+  const together = pending.at(-1)
+  pending.shift().resolve(answer('b'))
+  await setImmediate()
+  assert.deepEqual(asked.at(-1), numbers.slice(20), 'the rest of them, together, before another repository\'s')
+  together.resolve({ ...Object.fromEntries(numbers.slice(0, 19).map(number => [number, answer(`p${number}`)])), [numbers[19]]: new Error('GitHub has no pull request of that number here.') })
+  await setImmediate()
+  assert.deepEqual(addedVersions(pullDependencies(3, 10, true)).versions.map(pkg => pkg.name), ['p10'])
+  assert.deepEqual([pullDependencies(3, 29, true).status, pullDependencies(3, 29, true).error], ['error', 'GitHub has no pull request of that number here.'])
+  for (const read of pending.splice(0)) read.resolve({})
+  await setImmediate()
+  for (const read of pending.splice(0)) read.resolve(answer('c'))
+  await setImmediate()
 })

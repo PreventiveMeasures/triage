@@ -45,9 +45,10 @@ function credentialFailure(err: unknown): err is GithubApiError {
 export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryBrowserUser, fetchImpl: typeof fetch = globalThis.fetch) {
   const tokens = new Map<number, Promise<string | null>>()
   let identity: Promise<GithubIdentity> | undefined
-  const getIdentity = (fresh = false): Promise<GithubIdentity> => {
+  // The user as GitHub tells them, asked once a request.
+  const getIdentity = (): Promise<GithubIdentity> => {
     if (!user.token || user.githubUserId == null) return Promise.reject(new GithubApiError(404, 'no-repository'))
-    if (!identity || fresh) {
+    if (!identity) {
       identity = githubUserIdentity(user.token, fetchImpl).then(value => {
         if (value.id !== user.githubUserId) throw new GithubApiError(404, 'no-repository')
         return value
@@ -118,7 +119,7 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
       return read('')
     }
   }
-  const checkAccess = async (freshIdentity = false) => {
+  const checkAccess = async () => {
     // Stored visibility can be stale (or internal with private=false). Require
     // current, explicit public visibility or the caller's effective permission.
     const data = await metadata() as { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown; default_branch?: unknown }
@@ -129,7 +130,7 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
     if (!token) throw new GithubApiError(404, 'no-repository')
     const appToken = await installationToken()
     if (!appToken) throw new GithubApiError(404, 'no-repository')
-    level = await githubRepoPermission(repo.fullName, appToken, await getIdentity(freshIdentity), fetchImpl)
+    level = await githubRepoPermission(repo.fullName, appToken, await getIdentity(), fetchImpl)
     if (!READ_PERMISSIONS.has(level)) throw new GithubApiError(404, 'no-repository')
     token = appToken
     return data
@@ -137,7 +138,9 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
   const current = await checkAccess()
   const defaultBranch = typeof current.default_branch === 'string' ? current.default_branch : ''
   return {
-    recheckAccess: () => checkAccess(true),
+    // Its visibility and the user's permission asked again, the user as
+    // GitHub told them earlier in the request, not asked again.
+    recheckAccess: () => checkAccess(),
     // Server-only credential, selected by the same live visibility/permission
     // gate as directory browsing. Never included in an HTTP response.
     readToken: () => token,

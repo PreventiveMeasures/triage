@@ -83,6 +83,10 @@ export function npmVersionStore(db: UpstreamCacheStore, debug = false): NpmVersi
       const hit = await kept.read(`${name}@${version}`)
       return hit && plainObject(hit.value) ? { at: hit.at, json: hit.value } : null
     },
+    async readMany(versions) {
+      const hits = await kept.readMany(versions.map(({ name, version }) => `${name}@${version}`))
+      return new Map([...hits].flatMap(([key, hit]) => plainObject(hit.value) ? [[key, { at: hit.at, json: hit.value }] as const] : []))
+    },
     write: (name, version, json) => kept.write(`${name}@${version}`, json, Date.now()),
   }
 }

@@ -15,6 +15,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryIssues(repoId, kind, options) { requests.push([repoId, kind, options]); return answer(repoId, kind, options) },
   fetchRepositoryHistory: () => new Promise(() => {}),
   fetchPullDependencies(repoId, number, options) { dependencyRequests.push([repoId, number]); dependencyOptions.push(options); return dependencies(repoId, number) },
+  fetchPullDependenciesOf() { throw new Error('tiles read each alone') },
 } })
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
 const opened = []

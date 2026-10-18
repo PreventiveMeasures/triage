@@ -6,19 +6,21 @@
 // changes a lockfile, or may, its files more than it listed
 // (`touchesLockfile`), as many at once as READ_AT_ONCE, those asked first
 // read first, as a page of tiles asks of each in turn, those a page asks of
-// in the background (a team's Dependencies tab) after the rest, one asked of
-// meanwhile moved before them; and kept for the session that read them a
+// in the background (a team's Dependencies tab) after the rest, as many of a
+// repository's as READ_TOGETHER asked together, one asked of meanwhile moved
+// before them; and kept for the session that read them a
 // while, as the tiles are, one grown old shown while it is read again. Each
 // answer's versions are worked out once (`once`). An open one's are asked
 // with their review, where the repository reviews dependencies
 // (server-managed/pull-dependency-reviews.ts): each version's, the other
 // versions its lockfiles lock that want reviews, and what fails it.
 import { state } from '#client/index.js'
-import { fetchPullDependencies } from './client-managed.js'
+import { fetchPullDependencies, fetchPullDependenciesOf } from './client-managed.js'
 
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
 const READ_AT_ONCE = 2
+const READ_TOGETHER = 20
 
 const held = new Map()
 // Those waiting their turn, those asked in the background after (`behind`),
@@ -115,19 +117,36 @@ export function checked(answer) {
 }
 
 // The next asked read as one is, as many at once as READ_AT_ONCE, those
-// asked in the background after the rest.
+// asked in the background after the rest, one of them read with as many of
+// its repository's waiting as READ_TOGETHER.
 function readNext() {
   while (reading < READ_AT_ONCE && waiting.length + behind.length > 0) {
-    const job = waiting.shift() ?? behind.shift()
-    queued.delete(job.key)
+    const first = waiting.shift() ?? behind.shift()
+    const jobs = [first]
+    for (let at = 0; first.background && at < behind.length && jobs.length < READ_TOGETHER;) {
+      const job = behind[at]
+      if (job.pull.repoId === first.pull.repoId && job.review === first.review) jobs.push(...behind.splice(at, 1))
+      else at++
+    }
+    for (const job of jobs) queued.delete(job.key)
     reading++
-    job.read().finally(() => readDone(job.pull))
+    readOf(jobs).finally(() => readDone(jobs))
   }
 }
-function readDone(pull) {
+function readDone(jobs) {
   reading--
-  changed(pull)
+  for (const job of jobs) changed(job.pull)
   readNext()
+}
+// `jobs`, one alone, else several of a repository's together, each told
+// its answer or why it failed.
+function readOf(jobs) {
+  const [{ pull: { repoId, number }, review }] = jobs
+  if (jobs.length === 1) return fetchPullDependencies(repoId, number, { review }).then(jobs[0].settle, jobs[0].settle)
+  return fetchPullDependenciesOf(repoId, jobs.map(job => job.pull.number), { review }).then(answers => {
+    for (const job of jobs) job.settle(answers.get(job.pull.number) ?? new Error('The server answered with none of it.'))
+    return null
+  }, err => { for (const job of jobs) job.settle(err) })
 }
 
 // What pull request `number` of repository `repoId` adds, as held, else
@@ -151,17 +170,19 @@ export function pullDependencies(repoId, number, review = false, { background = 
   }
   const loading = entry?.status === 'ready' ? { ...entry, until: Number.POSITIVE_INFINITY, refreshing: true } : { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
-  const job = { key, background, pull: { repoId, number }, read: () => fetchPullDependencies(repoId, number, { review }).then(checked).then(answer => {
-    if (data.get(key) === loading) data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, ...answer })
-    return null
-  }, err => {
-    if (data.get(key) !== loading) return null
-    if (err?.name === 'AbortError') {
+  // Its answer, else why it failed, held as it is.
+  const settle = told => {
+    if (data.get(key) !== loading) return
+    let failure = told instanceof Error ? told : null
+    if (!failure) {
+      try { data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, ...checked(told) }); return } catch (err) { failure = err }
+    }
+    if (failure?.name === 'AbortError') {
       if (entry?.status === 'ready') data.set(key, entry)
       else data.delete(key)
-    } else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'Its lockfiles could not be read.' })
-    return null
-  }) }
+    } else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: failure?.message || 'Its lockfiles could not be read.' })
+  }
+  const job = { key, background, review, pull: { repoId, number }, settle }
   queued.set(key, job)
   ;(background ? behind : waiting).push(job)
   readNext()

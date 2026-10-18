@@ -134,13 +134,23 @@ async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Pro
     JOIN managed_dependency_review r ON r.id = rt.review_id JOIN managed_team t ON t.id = rt.team_id JOIN managed_user u ON u.id = ?
     WHERE rt.review_id IN (${placeholders}) AND (r.user_id = u.id OR (${reviewsIn(false)}))
     ORDER BY t.name, t.id`).all(user, ...ids) as (ReviewTeam & { reviewId: string })[]
+  // Each review's own, in their order, by its id.
+  const byReview = <T extends { reviewId: string }>(list: T[]) => {
+    const of = new Map<string, Omit<T, 'reviewId'>[]>()
+    for (const { reviewId, ...row } of list) {
+      const own = of.get(reviewId)
+      if (own) own.push(row)
+      else of.set(reviewId, [row])
+    }
+    return of
+  }
+  const [entriesOf, teamsOf] = [byReview(entries), byReview(linked)]
   return reviews.map(review => {
     const snapshot = review.files === null ? null : JSON.parse(review.files) as string[] | { paths: string[]; nonTextFiles: string[] }
     const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
     const nonTextFiles = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
-    const ownEntries = fileEntries(entries.filter(entry => entry.reviewId === review.id).map(({ reviewId: _reviewId, ...entry }) => entry))
-    return { ...review, files, nonTextFiles, entries: ownEntries, ...summarizeReview(ownEntries, files, nonTextFiles),
-      teams: linked.filter(team => team.reviewId === review.id).map(({ reviewId: _reviewId, ...team }) => team) }
+    const ownEntries = fileEntries((entriesOf.get(review.id) ?? []) as ReviewEntry[])
+    return { ...review, files, nonTextFiles, entries: ownEntries, ...summarizeReview(ownEntries, files, nonTextFiles), teams: (teamsOf.get(review.id) ?? []) as ReviewTeam[] }
   })
 }
 

@@ -987,7 +987,10 @@ Private repositories use the configured repository App, but its installation
 access alone is never a user grant. Existing upload/link pickers retain their
 managed-data permissions; they do not grant live source browsing.
 The picker shares installation tokens and the GitHub identity lookup within one
-request, but checks every repository's current visibility and permission. Stale
+request, but checks every repository's current visibility and permission. A
+request asks GitHub who its user is once, its recheck after source reads asking
+the repository's visibility and their permission again, not who they are; an
+identity changed since fails the next request. Stale
 installation access falls back to anonymous source reads only after GitHub confirms
 that the repository is public; private and internal repositories remain gated.
 The GitHub Contents API limits directory listings to
@@ -2000,7 +2003,8 @@ one's tile tells nothing of it, as its list reads no files.
 
 `GET /api/admin/repositories/pull-dependencies?repoId=…&number=…` answers
 `{ number, base, head, lockfiles, cut }`, read and checked as an item is
-(above), and kept by its number as one is. GitHub's comparison of the pull
+(above), the commits it is of kept by its number as one is, what they tell
+kept by them alone (below), not again by its number. GitHub's comparison of the pull
 request's base with its head names where its branch left its base, its merge
 base (`base`), as **Files changed** compares from it, and lists the files it
 changes, three hundred at most; one changing as many has them listed from its
@@ -2023,11 +2027,18 @@ sha1 and pnpm's patch hash where they have them, and the lockfile's format
 (twenty thousand a directory at most, the rest counted), for its review
 (below); none of it is told, but whether a version is `patched`. What a pull
 request's base's and head's commits tell is kept in the database (under
-`repository/pull-dependencies`, a month), as what they hold never changes;
-each lockfile read, in the instance's memory by its commit, so that pull
-requests branching off the same commit, as a bot's do, read it once. The
-page reads two at a time, those asked first first, and keeps them for the
-session five minutes, as it keeps the tiles. GitHub refusing the
+`repository/pull-dependencies`, a month), as what they hold never changes,
+read again where it no longer is; each lockfile read, in the instance's
+memory by its commit, so that pull requests branching off the same commit,
+as a bot's do, read it once, one being read with the same token shared.
+With `numbers=1,2,3` in place of `number`, twenty at most, it answers those
+of each, `{ pulls }`, three read at once, one GitHub fails told `{ number,
+error }`, the repository's access asked once before them all and once after,
+unless every one was kept, none failing.
+The page reads two at a time, those asked first first, a team's
+Dependencies tab's after a tile's or a popup's, as many of a repository's
+waiting as twenty read together, and keeps them for the session five
+minutes, as it keeps the tiles. GitHub refusing the
 repository's contents or its pull request is the answer's failure (`502
 github-status-403`, the popup saying so).
 
@@ -2117,7 +2128,8 @@ added, each wanting reviews among `unreviewed`, and each lockfile its reader
 refuses, or past the hundred, a directory of its own failing the review
 (`lockfile-unreadable`, or `lockfile-unsupported`, Bun's), told by the
 lockfiles its review held to as they were read, though they change
-meanwhile; `{ head, review: null }` where none is in effect
+meanwhile, sent without asking its access again where its head was kept and
+its lockfiles and baseline held, GitHub asked for none of them; `{ head, review: null }` where none is in effect
 for the reader, `head` none where the branch has no commit; and `{ review:
 null }` where the repository reviews none, once the reader's access in the
 app is checked, GitHub never asked, as a team's Dependencies tab asks of

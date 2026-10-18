@@ -512,6 +512,9 @@ test('the default branch\'s dependencies, with their review, tell what its lockf
       unsupported: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }], moreUnsupported: 0 },
     { paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' }, { paths: ['bun.lock'], error: 'lockfile-unsupported' }] },
   'ms reviewed, left-pad locked at the commit reviewed since; kept wanting reviews, mine, from git, failing it, as do the lockfiles left unread')
+  const before = globalThis.fetch.mock.callCount()
+  assert.deepEqual((await ask()).body, answer.body)
+  assert.equal(globalThis.fetch.mock.callCount() - before, 1, 'its head kept, its lockfiles and baseline held: its access asked once, not again')
   assert.equal((await ask('x')).status, 400)
 
   // Those its review leaves out neither read for it nor failing it, there or at the commit reviewed since.

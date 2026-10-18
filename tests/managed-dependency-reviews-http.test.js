@@ -202,7 +202,12 @@ test('review API validates bytes and file scope, protects identity, and publishe
   assert.equal(published.body.review.status, 'accept')
   assert.equal(published.body.review.comment, 'Removal checked.')
   assert.equal(published.body.review.entries.find(entry => entry.file === 'removed.js').comment, body.comment)
+  // A list's versions kept read of the database at once, none apart.
+  const [one, many] = [t.mock.method(h.db, 'getUpstreamCacheEntry'), t.mock.method(h.db, 'getUpstreamCacheEntries')]
   assert.equal((await h.send('/api/npm/reviews/mine')).body.reviews[0].id, review.id)
+  assert.deepEqual([one.mock.calls.filter(call => call.arguments[0].startsWith('npm/version-documents/')).length, many.mock.callCount()], [0, 1])
+  one.mock.restore()
+  many.mock.restore()
   assert.deepEqual((await h.send('/api/npm/reviews/mine', { who: 'admin' })).body.reviews, [])
   const edited = await h.send('/api/npm/reviews', { body: { ...body, reviewId: review.id, revision: published.body.review.revision, entryId: review.entries[0].id, comment: 'overwrite' } })
   assert.equal(edited.status, 409)

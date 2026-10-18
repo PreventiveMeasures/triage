@@ -774,7 +774,7 @@ test('reusing an installation token still rechecks user permissions, public visi
   assert.equal((await request(params)).status, 200)
   assert.equal((await request(params)).status, 200)
   assert.equal(calls.filter(path => path.endsWith('/access_tokens')).length, 1)
-  assert.equal(calls.filter(path => path === '/user').length, 4, 'identities remain request-local and are rechecked after reading')
+  assert.equal(calls.filter(path => path === '/user').length, 2, 'identities remain request-local, each request\'s asked once')
   assert.equal(calls.filter(path => path.includes('/collaborators/')).length, 4)
   state.permission = 'none'
   assert.equal((await request(params)).status, 404)
@@ -810,13 +810,14 @@ test('users share installation credentials without sharing private repository au
   assert.deepEqual(permissions, ['/repos/org/repo/collaborators/alice/permission', '/repos/org/repo/collaborators/bob/permission'])
 })
 
-test('source reads refresh the cached GitHub identity before returning data', async t => {
+test('a request asks its GitHub identity once, its permission again after reading; an identity changed since fails the next request', async t => {
   const { request } = await fixture(t, { selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
   const { calls, state } = githubFixture(t)
   state.duringRead = () => { state.identityId = 99 }
+  assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).status, 200, 'the identity it began with')
+  assert.deepEqual([calls.filter(path => path === '/user').length, calls.filter(path => path.includes('/collaborators/')).length], [1, 2], 'asked once, its permission twice')
   const response = await request({ repoId: '1', ref: commit, path: 'src/allowed' })
   assert.equal(response.status, 404)
-  assert.equal(calls.filter(path => path === '/user').length, 2)
   assert.ok(!JSON.stringify(response.body).includes('entry.ts'))
 })
 

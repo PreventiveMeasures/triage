@@ -171,6 +171,11 @@ function lockfilesChanged(files: ChangedFile[]) {
     omitted: all.slice(MAX_DIRECTORIES).flatMap(([, directory]) => [...directory.paths]).toSorted() }
 }
 
+// Whether `lockfile` at `ref` is held in this instance, read without asking
+// GitHub: Bun's, never read, too.
+export const lockfileHeld = (fullName: string, ref: string, { path, format }: { path: string; format: Format }) =>
+  format === 'bun' || lockfileReads.get(`${fullName}\0${ref}\0${path}`) !== undefined
+
 // A lockfile's packages at `ref`, as read in this instance, else shared with
 // a read of it with the same token still under way, else of GitHub; a
 // lockfile its reader refuses, why. Any failure to read it of GitHub but its
@@ -270,10 +275,16 @@ function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[])
 // where it changes no lockfile read here.
 export async function pullDependencies(fullName: string, token: string, number: number, kept: PullDependencyStore,
   fetchImpl: typeof fetch = globalThis.fetch): Promise<PullDependencies> {
+  return (await pullDependenciesAt(fullName, token, number, kept, fetchImpl)).told
+}
+// The same, with the commits it is kept by (`commits`), its base's and
+// head's, by which `kept` reads it.
+export async function pullDependenciesAt(fullName: string, token: string, number: number, kept: PullDependencyStore,
+  fetchImpl: typeof fetch = globalThis.fetch): Promise<{ commits: string; told: PullDependencies }> {
   const { base, head } = await pullCommits(fullName, token, number, fetchImpl)
   const key = `${base}...${head}`
   const held = await kept.read(key)
-  if (held) return held
+  if (held) return { commits: key, told: held }
   const { mergeBase, files, cut: filesCut } = await pullFiles(fullName, token, number, base, head, fetchImpl)
   const { directories, cut, omitted } = lockfilesChanged(files)
   const reads = directories.flatMap(({ before, after }) => [...before.map(lockfile => [mergeBase, lockfile] as const), ...after.map(lockfile => [head, lockfile] as const)])
@@ -285,5 +296,5 @@ export async function pullDependencies(fullName: string, token: string, number: 
   })
   const told = { base: mergeBase, head, lockfiles, cut: filesCut || cut, ...cut && !filesCut && omitted.length <= MAX_OMITTED ? { omitted } : {} }
   await kept.write(key, told)
-  return told
+  return { commits: key, told }
 }

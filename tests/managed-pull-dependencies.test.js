@@ -273,17 +273,22 @@ async function fixture(t) {
   await db.setUserTokens(session.userId, { accessToken: 'token', refreshToken: null, expiresAt: null })
   await db.selectRepo(repo, Date.now())
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
-  return async (route, query) => {
+  return Object.assign(async (route, query) => {
     const res = { status: 0, body: '', writeHead(status) { this.status = status }, end(body) { this.body = body } }
     await handler({ method: 'GET', url: `/api/admin/repositories/${route}?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
     return { status: res.status, body: JSON.parse(res.body) }
-  }
+  }, { db })
 }
 
-test('GET pull-dependencies answers a pull request\'s new package versions by its number, read as its popup\'s item is', async t => {
+test('GET pull-dependencies answers a pull request\'s new package versions by its number, read as its popup\'s item is, the commits kept by its number alone, what they tell by them', async t => {
   const request = await fixture(t)
   const asked = github(t)
+  const written = t.mock.method(request.db, 'setUpstreamCacheEntry')
   const answer = await request('pull-dependencies', { repoId: '1', number: '5' })
+  const kept = Object.fromEntries(written.mock.calls.map(call => [call.arguments[0].split('/').slice(0, 2).join('/'), JSON.parse(call.arguments[1]).value]))
+  assert.deepEqual(kept['repository/reads'], { commits: `${tip}...${head}` }, 'by its number, the commits it is of alone')
+  assert.equal(kept['repository/pull-dependencies'].lockfiles.length, 5, 'what they tell, by them')
+  written.mock.restore()
   assert.equal(answer.status, 200)
   assert.equal(answer.body.number, 5)
   assert.equal(answer.body.base, mergeBase)
@@ -291,8 +296,32 @@ test('GET pull-dependencies answers a pull request\'s new package versions by it
   asked.length = 0
   assert.deepEqual((await request('pull-dependencies', { repoId: '1', number: '5' })).body, answer.body)
   assert.deepEqual(asked, [], 'kept by its number a while')
+  // What its commits tell no longer kept: read again.
+  await request.db.deleteUpstreamCacheEntries('repository/pull-dependencies/', Number.MAX_SAFE_INTEGER)
+  assert.deepEqual((await request('pull-dependencies', { repoId: '1', number: '5' })).body, answer.body)
+  assert.ok(asked.length > 0, 'read again')
   for (const query of [{ repoId: '1', number: '0' }, { repoId: '1', number: '05' }, { repoId: '1', number: String(2 ** 31) }, { repoId: 'x', number: '5' }]) {
     assert.equal((await request('pull-dependencies', query)).status, 400, JSON.stringify(query))
+  }
+})
+
+test('GET pull-dependencies answers several of a repository\'s pull requests together, one GitHub fails told apart, its access asked once before and once after', async t => {
+  const request = await fixture(t)
+  github(t)
+  const metadata = () => globalThis.fetch.mock.calls.filter(call => new URL(call.arguments[0]).pathname === '/repos/org/repo').length
+  const answer = await request('pull-dependencies', { repoId: '1', numbers: '6,5' })
+  assert.equal(answer.status, 200)
+  assert.equal(metadata(), 2, 'its access asked before and after reading, not for each')
+  const { users: _users, ...single } = (await request('pull-dependencies', { repoId: '1', number: '5' })).body
+  assert.deepEqual([answer.body.pulls, answer.body.users], [[{ number: 6, error: 'github-not-found' }, single], {}], 'each in the order asked, the app\'s users they name once')
+  let before = metadata()
+  assert.deepEqual((await request('pull-dependencies', { repoId: '1', numbers: '6,5' })).body.pulls, answer.body.pulls)
+  assert.equal(metadata() - before, 2, 'one failing asked GitHub: its access asked again after')
+  before = metadata()
+  assert.deepEqual((await request('pull-dependencies', { repoId: '1', numbers: '5' })).body.pulls, [single])
+  assert.equal(metadata() - before, 1, 'every one kept: asked before alone')
+  for (const numbers of ['5,5', 'x', '', Array.from({ length: 21 }, (_, at) => at + 1).join(',')]) {
+    assert.equal((await request('pull-dependencies', { repoId: '1', numbers })).status, 400, numbers)
   }
 })
 
