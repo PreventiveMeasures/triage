@@ -32,7 +32,8 @@ export type Agent = string
 export interface AppAgent { id: string; name: string; avatar?: string }
 // How the server tells one: its fingerprint, a line of an artifact's texts
 // starting with it; the GitHub account its work is authored by, its id and
-// the logins GitHub names it by; its branches' prefix.
+// the logins GitHub names it by, none for one known by its id alone; its
+// branches' prefix.
 export interface AppAgentMarks { id: string; fingerprint?: string; account?: { id: number; logins: readonly string[] }; prefix: string }
 // An artifact's author, as GitHub names its account: its login and id.
 export interface AgentAuthor { login: string; id: number }
@@ -120,7 +121,8 @@ export function labelAgents(labels: unknown[], ids: readonly string[]): Agent[] 
 // The sessions and tasks `texts` link, whether they carry Claude's marks and
 // Codex's, and the agents of `apps` whose fingerprints start a line of them
 // (not one a text quotes, as one describing it may), whose account `author`
-// is, by its id and login both, or whose prefix the branch `branch` is under;
+// is, by its id and login both (its id alone where it names no login), or
+// whose prefix the branch `branch` is under;
 // Claude, Codex or the agents of `apps` its `labels` name (labelAgents).
 export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = [], branch: string | null = null,
   author: AgentAuthor | null = null, labels: unknown[] = []): AgentSignals {
@@ -129,7 +131,7 @@ export function agentSignals(texts: unknown[], apps: readonly AppAgentMarks[] = 
   const lines = strings.flatMap(text => text.split('\n').map(line => line.trimStart()))
   const login = author?.login.toLowerCase()
   const authored = ({ account }: AppAgentMarks) => author !== null && account !== undefined && account.id === author.id
-    && account.logins.some(name => name.toLowerCase() === login)
+    && (account.logins.length === 0 || account.logins.some(name => name.toLowerCase() === login))
   const labelled = labelAgents(labels, ['claude', 'codex', ...apps.map(app => app.id)])
   return { sessions: found(SESSION), tasks: found(CODEX_TASK), claude: labelled.includes('claude') || strings.some(text => CLAUDE_MARK.test(text)),
     codex: labelled.includes('codex') || strings.some(text => CODEX_MARK.test(trailerBlock(text))),

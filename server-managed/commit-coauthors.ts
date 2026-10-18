@@ -10,7 +10,7 @@ export const MAX_COAUTHORS = 3
 // The rules co-authors are read by, the agents' addresses and names among
 // them: what was kept read by others (history pages, squashed pull requests)
 // read again by these, once raised.
-export const COAUTHORS_READ = 2
+export const COAUTHORS_READ = 3
 const MAX_NAME = 256
 const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 

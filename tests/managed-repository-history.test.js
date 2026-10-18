@@ -206,7 +206,9 @@ test('all branches reads the 25 most recently committed to, the default branch f
         user: null }, parents: { nodes: [{ oid: d }] } },
     ] } },
     b1: { history: { pageInfo: { hasNextPage: true }, nodes: [
-      { oid: c, message: 'Feature', committedDate: '2026-10-01T12:00:00Z', author: null, parents: { nodes: [{ oid: d }] } },
+      // Neo's, by its account's id, whatever its login, its fingerprint too.
+      { oid: c, message: 'Feature\n\n🤖 Generated with [Neo](https://neo.example)', committedDate: '2026-10-01T12:00:00Z',
+        author: { name: 'any-login[bot]', email: '274065190+any-login[bot]@users.noreply.github.com', user: null }, parents: { nodes: [{ oid: d }] } },
       { oid: d, message: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } },
     ] } },
     b2: { history: { pageInfo: { hasNextPage: false }, nodes: [{ oid: d, message: 'Root', committedDate: '2020-01-01T00:00:00Z', author: null, parents: { nodes: [] } }] } },
@@ -220,8 +222,9 @@ test('all branches reads the 25 most recently committed to, the default branch f
   const { status, body } = await request({ repoId: '1', all: 'true' })
   assert.equal(status, 200)
   assert.deepEqual(body.commits.map(commit => commit.sha), [a, b, c, d])
-  assert.deepEqual(body.commits.map(commit => [commit.authorLogin, commit.authorId]), [['octo', 2], ['dependabot[bot]', 49699333], [null, null], [null, null]])
-  assert.deepEqual(body.users, { 'dependabot[bot]': { agent: 'dependabot' } }, 'an agent as the app draws it')
+  assert.deepEqual(body.commits.map(commit => [commit.authorLogin, commit.authorId]), [['octo', 2], ['dependabot[bot]', 49699333], ['any-login[bot]', 274065190], [null, null]])
+  assert.deepEqual(body.users, { 'dependabot[bot]': { agent: 'dependabot' }, 'any-login[bot]': { agent: 'neo' } }, 'an agent as the app draws it')
+  assert.deepEqual(body.commits[2].coauthors, [], 'Neo its author, its fingerprint no one beside it')
   assert.deepEqual(body.branches.map(branch => branch.name), [...stale.map(ref => ref.name), 'feature', 'main'], 'every branch naming a commit listed')
   assert.deepEqual(body.tags, [{ name: 'v1', sha: d }, { name: 'v2', sha: c }, { name: 'light', sha: c }])
   assert.equal(body.defaultBranch, 'main')

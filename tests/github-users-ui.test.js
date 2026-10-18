@@ -179,7 +179,7 @@ test('a commit with co-authors shows its author\'s avatar, theirs tucked behind 
     { name: 'Neo', login: null, id: null, agent: 'neo', avatar: 'app-3115942' }, { name: 'Fourth', login: null, id: null }]))
   assert.match(text, /data-tooltip=Ada Lovelace, Mona Lisa, Claude Opus 5\.5 and Neo>/u, 'a user of the app as the app shows them, an agent as its commit names it')
   const avatars = [...text.matchAll(/<span class=("commit-avatar"|commit-avatar is-\w+)>(.)/gu)].map(match => [match[1], match[2]])
-  assert.deepEqual(avatars, [['"commit-avatar"', 'A'], ['"commit-avatar"', 'M'], ['commit-avatar is-claude', '<'], ['"commit-avatar"', '<']],
+  assert.deepEqual(avatars, [['"commit-avatar"', 'A'], ['"commit-avatar"', 'M'], ['commit-avatar is-claude', '<'], ['commit-avatar is-neo', '<']],
     'the author\'s on top, by their name\'s letter; Mona\'s, Claude\'s mark, Neo\'s avatar, three at most')
   assert.match(text, /M<img src=\/api\/avatar\/mona-id /u)
   assert.match(text, /<img src=\/api\/avatar\/app-3115942 /u)

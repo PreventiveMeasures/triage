@@ -5,7 +5,7 @@ import { agentBranch, agentSessions, agentSignals, labelAgents } from '../common
 const none = { sessions: [], tasks: [], claude: false, codex: false, agents: [] }
 const session = id => ({ sessions: [id], tasks: [], claude: true, codex: false, agents: [] })
 // An agent the server knows by its app, as it tells one, and its marks.
-const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
+const apps = [{ id: 'neo', account: { id: 274065190, logins: [] }, fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
   { id: 'dependabot', account: { id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }, prefix: 'dependabot/' }]
 const neo = { ...none, agents: ['neo'] }
 const pull = (number, head, signals = none, more = {}) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: 'ada', createdAt: number * 10,
@@ -38,6 +38,9 @@ test('an artifact\'s texts name the sessions and tasks they link, and Claude\'s 
   // Its account by its id and login both: neither alone.
   assert.deepEqual([agentSignals(['Work'], apps, null, { login: 'Copilot', id: 1 }), agentSignals(['Work'], apps, null, { login: 'ada', id: 198982749 }),
     agentSignals(['Work'], apps, null, { login: 'dependabot', id: 198982749 })], [none, none, none])
+  // One known by no login, by its id alone, whatever its login.
+  assert.deepEqual([agentSignals(['Work'], apps, 'feature/x', { login: 'any-login[bot]', id: 274065190 }), agentSignals(['Work'], apps, null, { login: 'neo', id: 1 })],
+    [neo, none])
   const dependabot = { ...none, agents: ['dependabot'] }
   assert.deepEqual([agentSignals(['Bump ws'], apps, 'dependabot/npm_and_yarn/ws-8.21.0', { login: 'dependabot', id: 49699333 }),
     agentSignals(['Bump ws'], apps, null, { login: 'dependabot[bot]', id: 49699333 }), agentSignals(['@dependabot rebase'], apps, 'feature/ws', { login: 'ada', id: 1 })],

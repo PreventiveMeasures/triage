@@ -36,8 +36,8 @@ test('the agents a commit\'s message marks come after its trailers\', each once,
   assert.deepEqual(coauthorsOf(`Fix\n\n${claudeSession}`, ada), [{ name: 'Claude', login: null, id: null, agent: 'claude' }])
   assert.deepEqual(coauthorsOf('Fix\n\nSee https://claude.ai/code/session_01Abcdef', ada), [{ name: 'Claude', login: null, id: null, agent: 'claude' }], 'its session\'s link')
   assert.deepEqual(coauthorsOf('Fix\n\n[Open in Cursor](https://cursor.com/agents?id=bc-1234)', ada), [{ name: 'Cursor', login: null, id: null, agent: 'cursor' }])
-  assert.deepEqual(coauthorsOf('Fix\n\n🤖 Generated with [Neo](https://neo.example)', ada), [{ name: 'Neo', login: null, id: null, agent: 'neo', avatar: 'app-3115942' }],
-    'an app agent by its fingerprint, with its avatar')
+  assert.deepEqual(coauthorsOf('Fix\n\n🤖 Generated with [Neo](https://neo.example)', ada), [{ name: 'Neo', login: null, id: null, agent: 'neo' }],
+    'an app agent by its fingerprint')
   assert.deepEqual(coauthorsOf('Fix\n\n> 🤖 Generated with [Neo](https://neo.example)', ada), [], 'one a message quotes, not')
   // Claude's own commits: Claude their author, none beside it.
   assert.deepEqual(coauthorsOf(`Fix\n\n${claudeSession}\nCo-Authored-By: Claude <noreply@anthropic.com>`, { name: 'Claude', email: 'noreply@anthropic.com', account: nobody }), [])
@@ -49,4 +49,13 @@ test('the agents a commit\'s message marks come after its trailers\', each once,
     { name: 'Ada', login: null, id: null }, { name: 'Sam', login: null, id: null }, { name: 'Sam', login: null, id: null },
   ])
   assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Sam <sam@one.example>\nCo-authored-by: Sam <SAM@one.example>', ada), [{ name: 'Sam', login: null, id: null }], 'one address, once')
+})
+
+test('Neo is its account, by its id whatever its login, as it is its fingerprint: one agent, its GitHub App\'s id no account of its', () => {
+  const neo = { name: 'any-login[bot]', email: '274065190+any-login[bot]@users.noreply.github.com', account: { login: 'any-login[bot]', id: 274065190 } }
+  assert.deepEqual(coauthorsOf('Fix\n\n🤖 Generated with [Neo](https://neo.example)', neo), [], 'its own commit, Neo its author, none beside it')
+  assert.deepEqual(coauthorsOf('Fix\n\n🤖 Generated with [Neo](https://neo.example)\n\nCo-authored-by: any-login[bot] <274065190+any-login[bot]@users.noreply.github.com>', ada),
+    [{ name: 'any-login[bot]', login: 'any-login[bot]', id: 274065190, agent: 'neo' }], 'its trailer and its fingerprint, once')
+  assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Someone <3115942+someone@users.noreply.github.com>', ada), [{ name: 'Someone', login: 'someone', id: 3115942 }],
+    'an account of its App\'s id, someone else\'s')
 })

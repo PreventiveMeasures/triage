@@ -250,3 +250,13 @@ test('who made a commit: its author and co-authors once each, a user of the app 
   'agents by their marks as Commits draws them, Dependabot by its avatar, Cursor, with neither, by its letter')
   assert.deepEqual(makersOf({ authorLogin: 'Octo', authorName: null }), [{ key: 'login:octo', label: 'Octo', letter: 'O', agent: null, mark: null, image: null }])
 })
+
+test('Neo is one, by its name and its GitHub App\'s avatar, whether its account made a commit or its fingerprint marks one', () => {
+  knowGithubUsers({ users: { 'any-login[bot]': { agent: 'neo' } } })
+  const neo = { key: 'agent:neo', label: 'Neo', letter: 'N', agent: 'neo', mark: null, image: '/api/avatar/app-3115942' }
+  assert.deepEqual(makersOf({ authorLogin: 'any-login[bot]', authorName: 'any-login[bot]', coauthors: [{ login: null, name: 'Neo', agent: 'neo' }] }), [neo],
+    'its account and its fingerprint, once')
+  assert.deepEqual([makersOf({ authorLogin: null, authorName: 'Ada', coauthors: [{ login: null, name: 'Neo', agent: 'neo', avatar: 'app-3115942' }] })[1],
+    makersOf({ authorLogin: 'mona', authorName: 'Mona', coauthors: [{ login: 'any-login[bot]', name: 'any-login[bot]', id: 274065190, agent: 'neo' }] })[1]], [neo, neo],
+  'by its fingerprint, as kept before it was an agent of its account, or by its co-author trailer')
+})
