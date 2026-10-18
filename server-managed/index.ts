@@ -22,7 +22,8 @@ import { setCacheDir } from '@preventive/upstream/npm.js'
 const REAP_INTERVAL_MS = 3_600_000
 const REAP_RETRY_MS = 60_000
 
-type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown' | 'reviewedDependencies'>>
+// `ui: false` serves only the API: `out/` is never read.
+type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown' | 'reviewedDependencies'>> & { ui?: boolean }
 
 export async function createManagedApp(config: ManagedConfig, options: ManagedAppOptions = {}) {
   // Audits keep upstream's records on disk where the config has a cache
@@ -41,7 +42,7 @@ export async function createManagedApp(config: ManagedConfig, options: ManagedAp
   return await initializeApp(rollback => assembleManagedApp(config, assembled, rollback, waitUntil))
 }
 
-async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOptions, rollback: AsyncDisposableStack, waitUntil?: (promise: Promise<unknown>) => void) {
+async function assembleManagedApp(config: ManagedConfig, { ui = true, ...options }: ManagedAppOptions, rollback: AsyncDisposableStack, waitUntil?: (promise: Promise<unknown>) => void) {
   const storage = await openManagedStorage(config)
   const { db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, prettyCache, npmCacheStorage } = storage
   rollback.defer(() => db.close())
@@ -55,9 +56,9 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
     p.finally(() => inFlight.delete(p)).catch(() => {})
   }
 
-  const serveStatic = loadManagedStatic(fileURLToPath(new URL('../out/', import.meta.url)), {
+  const serveStatic = ui ? loadManagedStatic(fileURLToPath(new URL('../out/', import.meta.url)), {
     indexOnly: options.next != null, scanServer: options.serverInfo?.deepviewScanServer ?? null,
-  })
+  }) : () => false
   const routeRequest = createManagedRequestHandler({
     ...options, config, db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, prettyCache, npmCacheStorage, originGate, serveStatic,
     ...(storage.uploadStore ? { uploadStore: storage.uploadStore } : {}),
@@ -137,8 +138,8 @@ export function logManagedStartup(config: ManagedConfig, port: number, mode = 'm
   ].join('\n'))
 }
 
-export async function init(config = loadManagedConfig()): Promise<Server> {
-  const app = await createManagedApp(config)
+export async function init(config = loadManagedConfig(), options: Pick<ManagedAppOptions, 'ui'> = {}): Promise<Server> {
+  const app = await createManagedApp(config, options)
   const server = createServer(withReap(app.handleRequest, { managed: app.reap }, { isShuttingDown: app.isShuttingDown }))
   let disposal: Promise<void> | undefined
   function dispose(): Promise<void> {

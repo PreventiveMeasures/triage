@@ -10,13 +10,13 @@ import { loadManagedConfig } from './config.ts'
 import { LOGIN_PATH } from './github-oauth.ts'
 import { createManagedApp, logManagedStartup } from './index.ts'
 
-export async function init(mode: 'managed+e2e' | 'e2e+managed'): Promise<Server> {
+export async function init(mode: 'managed+e2e' | 'e2e+managed', { ui = true }: { ui?: boolean } = {}): Promise<Server> {
   const config = loadManagedConfig({ combined: true })
   const e2eConfig = loadConfig()
   if (!e2eConfig.neonUrl && !config.neonUrl && config.dbPath !== ':memory:' && resolve(config.dbPath) === resolve(e2eConfig.dbPath)) {
     throw new Error('MANAGED_DB_PATH must differ from e2e DB_PATH in combined mode.')
   }
-  const e2e = await createE2eApp(e2eConfig)
+  const e2e = await createE2eApp(e2eConfig, { ui })
   // Replace the assembled server's single
   // request listener; adding a second would write two responses per request.
   const handlers = e2e.httpServer.listeners('request')
@@ -25,6 +25,7 @@ export async function init(mode: 'managed+e2e' | 'e2e+managed'): Promise<Server>
   const managed = await createManagedApp(config, {
     next: e2e.handleRequest,
     isShuttingDown: e2e.isShuttingDown,
+    ui,
     serverInfo: {
       mode, managed: { loginPath: LOGIN_PATH, cookieName: config.sessionCookieName },
       ...(e2eConfig.deepviewScanServer ? { deepviewScanServer: e2eConfig.deepviewScanServer } : {}),

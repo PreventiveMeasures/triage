@@ -21,20 +21,29 @@ function parseMode(mode: string): ServerMode {
   throw new Error(`Unknown mode: ${mode}. Expected ${modes.join(', ')}.`)
 }
 
+export type InitOptions = {
+  mode?: ServerMode
+  // False serves only the API: `out/` is never read, nor its UI served, for
+  // hosts that serve the UI themselves.
+  ui?: boolean
+}
+
 // Assemble the selected server without binding a port. Hosts can reuse its
-// request/upgrade listeners or call listen() themselves.
-export async function init(mode: ServerMode = 'e2e'): Promise<Server> {
+// request/upgrade listeners or call listen() themselves. `init(mode)` is
+// `init({ mode })`.
+export async function init(options: ServerMode | InitOptions = {}): Promise<Server> {
+  const { mode = 'e2e', ui = true }: InitOptions = typeof options === 'string' ? { mode: options } : options
   const selected = parseMode(mode)
   if (selected === 'e2e') {
     const { createE2eApp } = await import('./server-e2e/app.ts')
-    return (await createE2eApp()).httpServer
+    return (await createE2eApp(undefined, { ui })).httpServer
   }
   if (selected === 'managed') {
     const managed = await import('./server-managed/index.ts')
-    return managed.init()
+    return managed.init(undefined, { ui })
   }
   const combined = await import('./server-managed/combined.ts')
-  return combined.init(selected === 'managed-e2e' ? 'managed+e2e' : 'e2e+managed')
+  return combined.init(selected === 'managed-e2e' ? 'managed+e2e' : 'e2e+managed', { ui })
 }
 
 export async function start(): Promise<void> {

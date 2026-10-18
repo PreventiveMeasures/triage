@@ -59,6 +59,9 @@ export type HttpServerDeps = {
   handleSaveRest: (req: HttpRequest, res: ServerResponse) => Promise<void>
   restPutIdleTimeoutMs: number
   debug: boolean
+  // Serve the static UI bundle (default). False serves only the API and
+  // never reads `out/`, for hosts that serve the UI themselves.
+  ui?: boolean
 }
 
 // `POST /api/sync/save` dispatch. Returns the in-flight handler promise when
@@ -114,12 +117,12 @@ function dispatchSaveRest(
 }
 
 export function createHttpServer(deps: HttpServerDeps): Server {
-  const { wss, restDeps, sseServer, serverInfo, isOriginAllowed, isShuttingDown, track, handleSaveRest, restPutIdleTimeoutMs, debug } = deps
+  const { wss, restDeps, sseServer, serverInfo, isOriginAllowed, isShuttingDown, track, handleSaveRest, restPutIdleTimeoutMs, debug, ui = true } = deps
   // Static-file plane (see ./static.ts). The directory is the
   // `build.js build` output sibling to this file; the loader handles
   // enumeration, pre-compression, and ETag derivation. Plugged in after
   // the `/api/objstore/...` REST branch.
-  const handleStatic = loadStatic(fileURLToPath(new URL('../out', import.meta.url)), serverInfo.deepviewScanServer ?? null)
+  const handleStatic = ui ? loadStatic(fileURLToPath(new URL('../out', import.meta.url)), serverInfo.deepviewScanServer ?? null) : () => false
 
   const httpServer = createServer((req: HttpRequest, res: ServerResponse) => {
     // Static mode probe: GET /api/config → this server's `server-info` as JSON.

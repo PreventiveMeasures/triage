@@ -39,16 +39,25 @@ The published `triage-server` command runs the same launcher and accepts these
 `--mode` values. `triage-e2e-server` and `triage-managed-server` run the individual
 servers directly.
 
-To embed any mode, initialize it once during host startup. `init(mode)` returns
-an unbound Node HTTP server with its request and upgrade listeners installed:
+To embed any mode, initialize it once during host startup. `init({ mode })`, or
+its shorthand `init(mode)`, returns an unbound Node HTTP server with its request
+and upgrade listeners installed:
 
 ```js
 import { init } from '@preventive/triage/server'
 
-const httpServer = await init('managed-e2e')
+const httpServer = await init({ mode: 'managed-e2e' })
 const [triageRequestListener] = httpServer.listeners('request')
 const [triageUpgradeListener] = httpServer.listeners('upgrade')
 ```
+
+By default the server also serves the UI from `out/`, which initialization reads
+and compresses. Pass `ui: false` (`init({ mode, ui: false })`) to serve only the
+API: `out/` is never read, and requests outside `/api/` answer 404. The host
+then serves `out/` itself, and in managed modes `index.html` at the page URLs
+too. The server would rewrite that file's `./` asset URLs to absolute ones,
+which deep page URLs need, and add the `DEEPVIEW_SCAN_SERVER` origin to its
+`connect-src`; a host serving it unchanged does neither.
 
 For an installed package, run the host with
 `node --import @preventive/triage/strip-types-loader host.js` so Node can load
