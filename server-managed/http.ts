@@ -2372,11 +2372,9 @@ function scanProgress(deps: ManagedHttpDeps, key: string, scan: string | null) {
 // their scope, and each lockfile's asked of npm's advisories at once; each
 // repository's Dependabot alerts, open or dismissed, read with the App's
 // installation token where the admin's own access to it lets them see them on
-// GitHub (dependabot-access.ts); and its workflows and the actions of its own
-// they use, read with its access too, the actions and reusable workflows of
-// others they name resolved with the admin's own GitHub token
-// (github-actions.ts), or none, for public repositories alone, where they
-// have none. The reader leaving, losing their admin role or
+// GitHub (dependabot-access.ts); and its GitHub Actions, the references they
+// make resolved with the admin's own GitHub token (github-actions.ts). The
+// reader leaving, losing their admin role or
 // the server shutting down stops it.
 async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const s = await readAdminSession(res, deps, cookie)
@@ -2418,10 +2416,8 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
         recheck: async () => { await reader.recheckAccess() },
         // As GitHub has them now, where the admin's own access lets them see them.
         dependabot: () => reader.dependabotAlerts(),
-        workflows: () => upstreamGithub(() => client.listRepoDir({ repo: repo.fullName, sha: commit, directory: WORKFLOWS_DIR })
-          .catch((error: unknown) => { if (error instanceof Error && /has no directory at/u.test(error.message)) return []; throw error }))
-          .then(entries => entries.filter(entry => entry.type === 'blob' && entry.mode !== '120000' && /\.ya?ml$/iu.test(entry.path))
-            .map(entry => `${WORKFLOWS_DIR}/${entry.path}`)),
+        workflows: () => reader.directory(WORKFLOWS_DIR, commit).then(({ entries }) => entries.filter(entry => entry.type === 'file' && /\.ya?ml$/iu.test(entry.name)).map(entry => entry.path),
+          (error: unknown) => { if (error instanceof GithubApiError && error.status === 404) return []; throw error }),
       }
     },
     actions: githubActionsSource(user.token),

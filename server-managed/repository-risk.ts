@@ -45,8 +45,7 @@ import { type DependabotRead, type ListedLockfile, type LockfileRead, type Opene
   readRepository } from './repository-risk-read.ts'
 import { type DependabotAlert, alertVersions } from './dependabot-alerts.ts'
 import type { ActionsSource } from '../risk/index.js'
-import { type ActionLine, type ActionRef, type ActionsResolver, type WorkflowLine, type WorkflowsLine, type WorkflowsRead, actionsLines,
-  resolvingActions } from './repository-actions.ts'
+import { type ActionLine, type ActionRef, type WorkflowLine, type WorkflowsLine, type WorkflowsRead, actionsLines, resolvingActions } from './repository-actions.ts'
 
 export { RISK_KEPT_MS, highestSeverity } from './repository-risk-assess.ts'
 export { type OpenedRepository, SCAN_READ_KEPT_MS } from './repository-risk-read.ts'
@@ -183,7 +182,7 @@ interface Scan {
   told: Map<number, ToldRepository>
   // Resolves the references repositories' Actions make, where the source
   // does.
-  actions: ActionsResolver | null
+  actions: ReturnType<typeof resolvingActions> | null
 }
 
 // A package as a scan meets it: by its name, version and a mirror's integrity.
@@ -441,13 +440,10 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
   // none waited for: the work under way, such as a request to GitHub, which
   // isn't given up on at once, outlasting it.
   const lines = queue<RepositoryRiskLine>(AbortSignal.any([signal, part.signal]), { drain: true })
-  const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [], told: new Map(), actions: null }
-  if (source.actions) {
-    scan.actions = resolvingActions({ source: source.actions, signal: running, tell: line => { lines.add(line) }, memory: caches.actions, store: source.actionLines })
-  }
-  // Once the repositories are read, what their Actions name is resolved
-  // alongside the assessments, and waited on before the scan is done.
-  let resolving: Promise<void> | undefined
+  // What repositories' Actions name is resolved alongside the assessments,
+  // and waited on before the scan is done.
+  const actions = source.actions ? resolvingActions({ source: source.actions, signal: running, tell: line => { lines.add(line) }, memory: caches.actions, store: source.actionLines }) : null
+  const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [], told: new Map(), actions }
   const failed: unknown[] = []
   void (async () => {
     try {
@@ -455,17 +451,14 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
       await assessing(scan, async assess => {
         const looking = lookUp(scan, assess)
         // stopped at once where reading fails;
-        try { await readRepositories(scan) } catch (error) { failed.push(error); stopped.abort() } finally {
-          scan.lookups.close()
-          resolving = scan.actions?.close()
-        }
+        try { await readRepositories(scan) } catch (error) { failed.push(error); stopped.abort() } finally { scan.lookups.close() }
         await looking
       })
       // then those told stale, and those only devDependencies need, in turn.
       for (const left of leftOver(scan)) {
         if (!running.aborted && left.length > 0) await assessing(scan, assess => { assess(left); return Promise.resolve() })
       }
-      await resolving
+      await actions?.close()
       if (!running.aborted) scan.lines.add({ type: 'done' })
     } catch (error) {
       failed.push(error)

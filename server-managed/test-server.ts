@@ -1136,19 +1136,18 @@ function fixtureActions(): RiskFixtureLine[] {
   const commit = (char: string) => char.repeat(40)
   // Its `repo` the repository's name, as a reference names it, not an id.
   const action = (key: string, more: Record<string, unknown>) => {
-    const { kind, repo, path, ref, pin } = usesOfKey(key)!
-    return { type: 'action', key, kind, repo, path, ref, pin, repository: { fullName: repo, fork: null, archived: false, private: false }, latest: null, using: 'node24',
-      file: `${path ? `${path}/` : ''}action.yml`, uses: [], findings: [], ...more } as unknown as RiskFixtureLine
+    const { kind, repo, path, ref } = usesOfKey(key)!
+    return { type: 'action', key, kind, repo, path, ref, repository: { fullName: repo, private: false }, uses: [], findings: [], ...more } as unknown as RiskFixtureLine
   }
   return [
-    action('actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.1', { commit: 'de0fac2e4500dabe0009e67214ff5f5447ce83dd', at: 'sha', tags: ['v6.0.1', 'v6'], latest: 'v6.0.1' }),
-    action('actions/setup-node@v4', { commit: commit('4'), at: 'tag', tags: ['v4.4.0', 'v4'], latest: 'v6.0.0', findings: [{ id: 'outdated', severity: 'low', latest: 'v6.0.0' }] }),
-    action('tj-actions/changed-files@v45', { commit: commit('0'), at: 'tag', tags: ['v45'], latest: 'v45.0.7', using: 'composite', uses: [{ key: 'tj-actions/glob@main', line: 12, file: 'action.yml' }],
+    action('actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.1', { commit: 'de0fac2e4500dabe0009e67214ff5f5447ce83dd', at: 'sha', tags: ['v6.0.1', 'v6'] }),
+    action('actions/setup-node@v4', { commit: commit('4'), at: 'tag', tags: ['v4.4.0', 'v4'], findings: [{ id: 'outdated', severity: 'low', latest: 'v6.0.0' }] }),
+    action('tj-actions/changed-files@v45', { commit: commit('0'), at: 'tag', tags: ['v45'], uses: [{ key: 'tj-actions/glob@main', line: 12, file: 'action.yml' }],
       findings: [{ id: 'tag-off-release', severity: 'high', release: 'v45.0.7' }, { id: 'tag-off-branch', severity: 'low' },
         { id: 'remote-script', severity: 'high', file: 'action.yml', line: 20 }, { id: 'hosts', severity: 'critical', tag: 'Exfiltration', services: ['webhook-site'], file: 'action.yml', line: 21 }] }),
-    action('someone/deploy-action@0123456789abcdef0123456789abcdef01234567 # v2.1.0', { commit: '0123456789abcdef0123456789abcdef01234567', at: 'sha', tags: [], latest: 'v2.1.0',
+    action('someone/deploy-action@0123456789abcdef0123456789abcdef01234567 # v2.1.0', { commit: '0123456789abcdef0123456789abcdef01234567', at: 'sha', tags: [],
       findings: [{ id: 'imposter-commit', severity: 'critical' }, { id: 'comment-mismatch', severity: 'high', comment: 'v2.1.0', tags: [] }] }),
-    action('pnpm/action-setup@main', { commit: commit('9'), at: 'branch', tags: [], latest: 'v4.2.0', findings: [{ id: 'branch-ref', severity: 'high' }] }),
+    action('pnpm/action-setup@main', { commit: commit('9'), at: 'branch', tags: [], findings: [{ id: 'branch-ref', severity: 'high' }] }),
     action('tj-actions/glob@main', { commit: commit('8'), at: 'branch', tags: [], findings: [{ id: 'branch-ref', severity: 'high' }, { id: 'repo-moved', severity: 'high', to: 'tj-actions/glob-v2' }] }),
   ]
 }

@@ -1,18 +1,12 @@
-// A repository's GitHub Actions, as a repository risk scan reads them
-// (repository-risk.ts): its workflows (.github/workflows/*.yml and .yaml) at
-// the commit read, and the actions of its own they use (`./path`,
-// `$/path`), each read for what it calls for by its own text (risk
-// scanWorkflow), npx held to its lockfiles' packages; and each action and
-// reusable workflow of another repository they name, resolved once a scan
-// (risk resolveAction), what it names in turn too, MAX_DEPTH deep and
-// MAX_ACTIONS in all. A repository's files are kept by the commit they were
-// read at (repository-risk-read.ts), where none failed for a while
-// (lastingRead); a reference of a public repository resolved, by its key,
-// in the instance's memory and the source's `actions` for RISK_KEPT_MS: one
-// of a private repository is resolved with the admin's own access, and what
-// it tells is for them alone.
-import { ActionsScanError, type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, keptSource, resolveAction, scanWorkflow,
-  usesOfKey } from '../risk/index.js'
+// A repository's GitHub Actions in a repository risk scan (repository-risk.ts):
+// its workflows and the actions of its own they use, each scanned (risk
+// scanWorkflow), and the references they make resolved (risk resolveAction),
+// MAX_DEPTH deep and MAX_ACTIONS in all, a public repository's kept for
+// RISK_KEPT_MS by its key: a private one's is the admin's own access's alone.
+import { YamlError } from '@preventive/lockfile/yaml.js'
+import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, keptSource, readWorkflow, resolveAction, scanWorkflow,
+  usesOfKey, workflowUses } from '../risk/index.js'
+import type { OpenedRepository } from './repository-risk-read.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
 import { type Queue, queue } from './queue.ts'
@@ -44,12 +38,8 @@ export type ActionLine = { type: 'action' } & (ResolvedAction | { key: string } 
 // how deep it is named.
 export interface ActionRef { key: string; owner: string | null; depth: number }
 
-// What reading a repository's Actions asks of it: its workflows' paths, and
-// a file's text, at the commit read.
-export interface ActionsReading {
-  workflows(): Promise<string[]>
-  file(path: string): Promise<string>
-}
+// What reading a repository's Actions asks of it.
+export type ActionsReading = Required<Pick<OpenedRepository, 'workflows' | 'file'>>
 
 // A file's text, or why not: one GitHub hasn't, or larger than read.
 async function readFile(reading: ActionsReading, path: string): Promise<{ text: string } | RiskFailure> {
@@ -68,9 +58,9 @@ export const lastingRead = (read: WorkflowsRead) => !('error' in read) && read.f
 // was checked out first, and `$/path`.
 function ownActions(text: string, kind: 'workflow' | 'action') {
   try {
-    return scanWorkflow(kind, text).uses.flatMap(uses => uses.kind === 'local' && !/\.ya?ml$/iu.test(uses.path) && !uses.path.split('/').includes('..') ? [uses.path] : [])
+    return workflowUses(readWorkflow(kind, text)).flatMap(uses => uses.kind === 'local' && !/\.ya?ml$/iu.test(uses.path) && !uses.path.split('/').includes('..') ? [uses.path] : [])
   } catch (error) {
-    if (error instanceof ActionsScanError) return []
+    if (error instanceof YamlError) return []
     throw error
   }
 }
@@ -114,8 +104,8 @@ export function actionsLines(repo: number, owner: string, read: WorkflowsRead, l
       lines.push({ ...at, ...scan })
       for (const uses of scan.uses) if (uses.kind === 'action' || uses.kind === 'workflow') refs.set(uses.key!, { key: uses.key!, owner, depth: 0 })
     } catch (error) {
-      if (!(error instanceof ActionsScanError)) throw error
-      lines.push({ ...at, error: error.code, detail: error.message.slice(0, 500) })
+      if (!(error instanceof YamlError)) throw error
+      lines.push({ ...at, error: 'workflow-unreadable', detail: error.message.slice(0, 500) })
     }
   }
   return { lines, refs: [...refs.values()] }
@@ -148,16 +138,10 @@ async function resolved(resolving: ActionsResolving, source: ActionsSource, { ke
   return line
 }
 
-export interface ActionsResolver {
-  // References to resolve, each once a scan.
-  add(refs: ActionRef[]): void
-  // Once all added, and all they name, are told, or the scan stops.
-  close(): Promise<void>
-}
-
-// Resolves the references added, RESOLVERS at once, each told as it is,
-// and those it names in turn, `source`'s answers kept for the scan.
-export function resolvingActions(resolving: ActionsResolving): ActionsResolver {
+// Resolves the references added (`add`), each once a scan, RESOLVERS at once,
+// each told as it is, and those it names in turn, `source`'s answers kept
+// for the scan; `close` settles once all are told, or the scan stops.
+export function resolvingActions(resolving: ActionsResolving) {
   const source = keptSource(resolving.source)
   const pending: Queue<ActionRef> = queue(resolving.signal)
   const seen = new Set<string>()

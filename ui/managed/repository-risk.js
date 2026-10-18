@@ -93,6 +93,8 @@ const ERRORS = {
   'invalid-uses': 'Not a reference GitHub reads',
 }
 const errorText = code => ERRORS[code] ?? code
+// Why something couldn't be had, its detail in its tooltip.
+const failure = ({ error, detail }) => html`<span class="risk-error" data-tooltip=${detail ?? nothing}>${errorText(error)}</span>`
 const START_ERRORS = { 401: 'Sign in again to scan repositories.', 403: 'Only admins can scan repositories.',
   404: 'That team or repository is no longer connected. Choose again.' }
 
@@ -889,14 +891,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   // What a repository's row says in place of its lockfiles, where it has none
   // to list; null where it has.
   _repoStatus(repo) {
-    if (repo.error) return html`<span class="risk-error" data-tooltip=${repo.detail ?? nothing}>${errorText(repo.error)}</span>`
+    if (repo.error) return failure(repo)
     if (repo.lockfiles === null) return this._pending('Waiting…', 'Not read')
     const workflows = this._actions.listed.get(repo.id)?.error || this._actions.filesOf(repo.id).length > 0
     return repo.lockfiles.size === 0 && !workflows ? html`<span class="risk-none">No npm lockfiles</span>` : null
   }
 
   _lockfileStatus(lockfile) {
-    if (lockfile.error) return html`<span class="risk-error" data-tooltip=${lockfile.detail ?? nothing}>${errorText(lockfile.error)}</span>`
+    if (lockfile.error) return failure(lockfile)
     return lockfile.packages === null ? this._pending('Reading…', 'Not read') : `${formatCount.format(lockfile.packages)} packages`
   }
 
@@ -921,9 +923,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _workflowItems(repo) {
     const listed = this._actions.listed.get(repo.id)
     if (!listed) return nothing
-    if (listed.error) return html`<li><span class="mono">.github/workflows</span><span class="risk-lockfile-meta"><span class="risk-error" data-tooltip=${listed.detail ?? nothing}>${errorText(listed.error)}</span></span></li>`
-    return this._actions.filesOf(repo.id).map(file => html`<li><span class="mono">${file.path}</span><span class="risk-lockfile-meta">${file.kind} · ${file.error
-      ? html`<span class="risk-error" data-tooltip=${file.detail ?? nothing}>${errorText(file.error)}</span>` : `${formatCount.format(file.findings.length)} findings`}</span></li>`)
+    if (listed.error) return html`<li><span class="mono">.github/workflows</span><span class="risk-lockfile-meta">${failure(listed)}</span></li>`
+    return this._actions.filesOf(repo.id).map(file => html`<li><span class="mono">${file.path}</span><span class="risk-lockfile-meta">${file.kind} · ${file.error ? failure(file)
+      : `${formatCount.format(file.findings.length)} findings`}</span></li>`)
   }
 
   // The tabs and the controls of the results, kept in view as they scroll.
@@ -988,7 +990,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     if (!assessable(row.source)) return html`<span class="risk-none">Not assessed</span>`
     if (!row.risk) return this._pending('Waiting…', 'Not assessed')
     if (differs(row)) return html`<ul class="risk-findings"><li class="risk-critical" data-tooltip=${DIFFERS_SAID}>${errorText(row.risk.error)}</li></ul>`
-    if (row.risk.error) return html`<span class="risk-error" data-tooltip=${row.risk.detail ?? nothing}>${errorText(row.risk.error)}</span>`
+    if (row.risk.error) return failure(row.risk)
     return html`<span class="risk-none">None found</span>`
   }
 
@@ -1034,13 +1036,12 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // A commit cut short, as GitHub shows one; the whole key in its tooltip.
     const ref = row.key.replace(/^[^@]*@/u, '').replace(/^([\da-f]{7})[\da-f]{33}\b/u, '$1')
     const name = row.kind === 'action' ? html`<span data-tooltip=${row.key}>${row.key.replace(/@.*$/u, '')}<span class="risk-version">@${ref}</span></span>` : row.name
-    const status = row.line?.error ? html`<span class="risk-error" data-tooltip=${row.line.detail ?? nothing}>${errorText(row.line.error)}</span>`
-      : row.kind === 'action' && !row.line ? this._pending('Resolving…', 'Not resolved') : nothing
+    const status = row.line?.error ? failure(row.line) : row.kind === 'action' && !row.line ? this._pending('Resolving…', 'Not resolved') : nothing
     return html`<tr>
       <td><span class="risk-package">${icon(row.kind === 'action' ? GITHUB_ICON_SVG : BUNDLE_ICON_SVG)}${href
         ? html`<a class="risk-name mono" href=${href} target="_blank" rel="noopener noreferrer">${name}</a>` : html`<span class="mono">${name}</span>`}</span></td>
-      <td class="mono">${pinnedTo(row.line) ?? (row.kind === 'action' ? status : nothing)}</td>
-      <td>${row.findings.length > 0 ? findingsCell(row.findings) : row.kind === 'action' && row.line && !row.line.error ? html`<span class="risk-none">None found</span>` : pinnedTo(row.line) ? status : nothing}</td>
+      <td class="mono">${pinnedTo(row.line) ?? status}</td>
+      <td>${row.findings.length > 0 ? findingsCell(row.findings) : row.line && !row.line.error ? html`<span class="risk-none">None found</span>` : nothing}</td>
       <td>${this._actionUsedIn(row.usedIn)}</td>
     </tr>`
   }

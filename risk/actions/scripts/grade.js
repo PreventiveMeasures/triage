@@ -1,14 +1,42 @@
-// What a `run:` script fetches and runs past a pin (commands.js), graded as
-// findings, each `{ id, severity, line, … }`, `line` the file's, as
-// README.md tells them.
+// What a `run:` script fetches and runs (commands.js), graded (README.md).
 import { HOST_TAGS, npmExfiltration, npmHostTags } from '../../files/hosts.js'
 import { lineOf } from '../../files/script.js'
 import { installLine, scriptFinds } from './commands.js'
-import { scriptInjections } from '../expressions.js'
 
-// Programs whose package is named otherwise, as npx finds a package by the
-// program it runs: `npx tsc` runs typescript's where it is installed, and
-// fetches the package named `tsc` where it isn't.
+// What of a workflow's expressions anyone can write (a title, a body, a
+// branch's name, a commit's message), which a script runs as its own code, and the events a workflow runs on with
+// its secrets for a fork's or anyone's.
+const PRIVILEGED_TRIGGERS = new Set(['pull_request_target', 'workflow_run', 'issue_comment', 'issues', 'discussion', 'discussion_comment',
+  'pull_request_review', 'pull_request_review_comment', 'fork', 'watch'])
+
+const INDEX = String.raw`(?:\s*\[[^\]]*\]|\.\*)`
+const AUTHOR = String.raw`(?:author|committer)\.(?:email|name)`
+const UNTRUSTED = new RegExp(String.raw`\bgithub\s*\.\s*(?:head_ref|event\s*\.\s*(?:`
+  + [String.raw`issue\.(?:title|body)`,
+    String.raw`pull_request\.(?:title|body|head\.(?:ref|label|repo\.default_branch))`,
+    String.raw`(?:comment|review|review_comment)\.body`,
+    String.raw`pages${INDEX}\.page_name`,
+    String.raw`commits${INDEX}\.(?:message|${AUTHOR})`,
+    String.raw`head_commit\.(?:message|${AUTHOR})`,
+    String.raw`workflow_run\.(?:head_branch|display_title|head_commit\.(?:message|${AUTHOR})|pull_requests${INDEX}\.head\.ref)`,
+    String.raw`discussion\.(?:title|body)`].join('|')
+  + String.raw`))(?![\w-])`, 'gu')
+
+// Each expression anyone can write in a script's `text`, a finding with
+// the `index` its `${{` is at: red where the workflow runs with its secrets
+// for anyone (`triggers`), else orange.
+export function scriptInjections(text, triggers) {
+  if (typeof text !== 'string' || !text.includes('${{')) return []
+  const severity = triggers.some(event => PRIVILEGED_TRIGGERS.has(event)) ? 'critical' : 'high'
+  return [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/gu)].flatMap(({ 1: inner, index }) =>
+    [...inner.matchAll(UNTRUSTED)].map(({ 0: expression }) => ({ id: 'script-injection', severity, expression: expression.replaceAll(/\s+/gu, ''), index })))
+}
+
+// A ref naming a pull request's own code, as `actions/checkout` checks it out.
+const PULL_HEAD = /\bgithub\s*\.\s*(?:head_ref|event\s*\.\s*(?:pull_request\s*\.\s*head\s*\.\s*(?:sha|ref)|workflow_run\s*\.\s*head_(?:sha|branch)|number|pull_request\s*\.\s*number))\b|refs\/pull\//u
+export const namesPullHead = text => typeof text === 'string' && PULL_HEAD.test(text)
+
+// Programs whose package is named otherwise: `npx tsc` runs typescript's.
 const KNOWN_BINS = new Map([['tsc', 'typescript'], ['tsserver', 'typescript'], ['ng', '@angular/cli'], ['nest', '@nestjs/cli'],
   ['changeset', '@changesets/cli'], ['biome', '@biomejs/biome'], ['svelte-kit', '@sveltejs/kit'], ['api-extractor', '@microsoft/api-extractor'],
   ['commitlint', '@commitlint/cli'], ['attw', '@arethetypeswrong/cli'], ['ncu', 'npm-check-updates'], ['vue-cli-service', '@vue/cli-service'],
@@ -16,9 +44,7 @@ const KNOWN_BINS = new Map([['tsc', 'typescript'], ['tsserver', 'typescript'], [
   ['eas', 'eas-cli'], ['expo', 'expo'], ['vsce', '@vscode/vsce'], ['wdio', '@wdio/cli'], ['lhci', '@lhci/cli'], ['tsx', 'tsx'], ['webpack', 'webpack-cli']])
 const PACKAGING = new Set(['pip', 'setuptools', 'wheel'])
 
-// Whether `name`, as npx names a program or a package, is one of `locked`'s
-// packages (a Set of names): by its own name, or the package known to
-// provide it.
+// Whether `locked` (a Set) has what npx runs by `name`, or the package giving it.
 export const lockedName = (locked, name) => locked.has(name) || (KNOWN_BINS.has(name) && locked.has(KNOWN_BINS.get(name)))
 
 // How severe fetching a package is; null for none.
@@ -32,11 +58,9 @@ function packageSeverity(found, { locked, installed, external }) {
   return found.exact || found.spec?.includes('$') ? 'moderate' : 'high'
 }
 
-// What a package fetched is told by.
-const packageOf = ({ tool, ecosystem, name, spec, exact, registry, localFirst }) => ({ tool, ecosystem, name, spec, exact, ...registry ? {} : { registry: false }, ...localFirst ? { localFirst } : {} })
+const packageOf = ({ tool, name, spec, localFirst }) => ({ tool, name, spec, ...localFirst ? { localFirst } : {} })
 
-// The findings of one find of a script; `locked(name)` whether a lockfile
-// that applies locks it, `installed` whether an install ran before.
+// The findings of one find of a script.
 function graded(found, context) {
   if (found.kind === 'package') {
     const locked = found.ecosystem === 'npm' && found.localFirst ? context.locked(found.name) : false
@@ -44,27 +68,19 @@ function graded(found, context) {
     return severity ? [{ id: 'fetched-package', severity, ...packageOf(found), ...found.localFirst ? { locked, installed: context.installed } : {} }] : []
   }
   if (found.kind === 'unlocked-install') return [{ id: 'unlocked-install', severity: /^(?:yarn|bun)\b/u.test(found.tool) ? 'low' : 'moderate', tool: found.tool }]
-  if (found.kind === 'remote-script') return [{ id: 'remote-script', severity: 'high', command: found.command, ...found.saved ? { saved: found.saved } : {} }]
-  if (found.kind === 'image') return found.read?.digest ? [] : [imageFinding(found.text, found.read, found.tool)]
+  if (found.kind === 'remote-script') return [{ id: 'remote-script', severity: 'high', command: found.command }]
+  if (found.kind === 'image') return found.read?.digest ? [] : [imageFinding(found.text, found.read)]
   return found.kind === 'clone' ? [{ id: 'clone', severity: 'low', url: found.url }] : []
 }
 
 // An image run by a tag: orange with none or `latest`, else yellow.
-export function imageFinding(text, read, via) {
-  return { id: 'unpinned-image', severity: !read || read.tag === null || read.tag === 'latest' ? 'high' : 'moderate', image: text, via }
-}
+export const imageFinding = (text, read) => ({ id: 'unpinned-image', severity: !read || read.tag === null || read.tag === 'latest' ? 'high' : 'moderate', image: text })
 
-// The file's line a script's line is on: a `|` block scalar's own, in turn
-// from where its text starts; any other's, the `run:` key's.
+// The file's line a script's line is on: a `|` block scalar's own, else `run:`'s.
 const fileLine = (run, line) => run.start === null ? run.line : run.start + line
 
-// Every finding of a step's `run` script (workflow.js runOf): what it
-// fetches and runs, the services it names, and the expressions anyone can
-// write in it. `context`: `locked(name)`, whether a lockfile that applies
-// to where it runs locks a package of that name; `installed`, whether an
-// install ran before it in its job, an earlier line of it counting too;
-// `external`, whether it is another repository's action's, run in a
-// workflow's workspace it can't tell; `triggers`, the workflow's events.
+// Every finding of a `run` script (workflow.js runOf); `context`'s `locked(name)`
+// whether a lockfile there locks it, `installed` whether an install ran before.
 export function scriptFindings(run, context) {
   const findings = []
   // An install earlier in the script counts as one in a step before.

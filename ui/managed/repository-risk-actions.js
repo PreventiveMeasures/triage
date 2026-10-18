@@ -60,7 +60,7 @@ const findingLabel = finding => finding.id === 'hosts' ? HOST_LABELS[finding.tag
 // What a finding found, as its tooltip tells it beside what it says.
 function findingDetail(finding) {
   const parts = []
-  if (finding.id === 'fetched-package') parts.push(`${finding.tool} ${finding.name}${finding.spec ? `@${finding.spec}` : ''}`, ...finding.localFirst ? [finding.locked ? (finding.installed ? '' : 'locked, but run before any install') : 'no lockfile here locks it'] : [])
+  if (finding.id === 'fetched-package') parts.push(stepName(finding), ...finding.localFirst ? [finding.locked ? (finding.installed ? '' : 'locked, but run before any install') : 'no lockfile here locks it'] : [])
   if (finding.services) parts.push(finding.services.join(', '))
   if (finding.expression) parts.push(`\${{ ${finding.expression} }}`)
   if (finding.to) parts.push(`now ${finding.to}`)

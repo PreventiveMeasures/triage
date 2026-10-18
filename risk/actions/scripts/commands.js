@@ -1,30 +1,23 @@
-// What a `run:` script fetches and runs past what a lockfile or a digest
-// pins, command by command (shell.js): a package (`package`, of npm's tools
-// in packages.js), an install resolving anew (`unlocked-install`), a script
-// fetched and run (`remote-script`), an image by a tag (`image`) and a
-// repository cloned (`clone`), each with its line in the script from 0.
-import { fetched, npmToolFinds } from './packages.js'
+// What a `run:` script fetches and runs past what a lockfile or a digest pins,
+// command by command (shell.js), each with its line in the script from 0.
+import { NPM_INSTALLS, fetched, npmToolFinds } from './packages.js'
 import { scriptCommands, scriptLines } from './shell.js'
 import { SHELLS as SHELL_NAMES } from '../../files/runs-code.js'
 import { readImage } from '../uses.js'
 
-// A program as a command names it: its file's name, lowercase, past its
-// directory and an extension Windows runs it by.
+// A program's file name, lowercase, past its directory and a Windows extension.
 const programOf = word => (word ?? '').split(/[/\\]/u).at(-1).toLowerCase().replace(/\.(?:cmd|exe|bat|ps1)$/u, '')
 
 const SHELLS = new RegExp(String.raw`^(?:${SHELL_NAMES}|python[\d.]*|node|perl|ruby|php|iex|invoke-expression)$`, 'u')
 const FETCHERS = /^(?:curl|wget|irm|iwr|invoke-restmethod|invoke-webrequest)$/u
-// A script fetched and run on one line, as a shell's process substitution or
-// `-c "$(…)"`, PowerShell's `iex` of what it fetches, or `source <(…)`.
+// A script fetched and run on one line: `<(curl …)`, `-c "$(curl …)"`, `iex (irm …)`.
 const FETCHED_AND_RUN = [
   /\b(?:(?:ba|z|da|k)?sh|source|\.)\s+(?:-\S+\s+)*<\(\s*(?:curl|wget)\b/iu,
   /\b(?:(?:ba|z|da|k)?sh|python[\d.]*|node|perl|ruby)\s+(?:-\S+\s+)*-c\s+["']?\$\(\s*(?:curl|wget)\b/iu,
   /\b(?:iex|invoke-expression)\b[^|;]*\b(?:irm|iwr|invoke-restmethod|invoke-webrequest|downloadstring)\b/iu,
 ]
 
-// The file curl or wget saves what it fetches to (`-o f`, `--output f`,
-// `-O f` of wget's, curl's `-O` its URL's last part), or null, for one
-// written to its output's file (`> f`).
+// The file curl or wget saves to (`-o f`, `--output f`, curl's `-O`), or null.
 function savedTo(program, argv) {
   for (let at = 1; at < argv.length; at++) {
     const word = argv[at]
@@ -37,8 +30,7 @@ function savedTo(program, argv) {
   return url ? URL.parse(url)?.pathname.split('/').at(-1) || null : null
 }
 
-// Whether a command runs `file`, saved before: as a program, or a shell's or
-// an interpreter's script.
+// Whether a command runs `file`, as a program or a shell's script.
 function runsFile({ argv }, file) {
   const name = file.replace(/^\.\//u, '')
   const ran = argv[0].replace(/^\.\//u, '')
@@ -52,8 +44,7 @@ const pythonPackage = text => {
   return m && { name: m[1], spec: m[2] || null, exact: /^===?\s*[\w.!+-]+$/u.test(m[2]), registry: true }
 }
 
-// The packages pip installs: those named, not a requirements file's, a path
-// or the project itself (`.`, `-e .`).
+// The packages pip installs by name, not a requirements file's or a path.
 function pip(tool, argv, from) {
   const named = []
   for (let at = from; at < argv.length; at++) {
@@ -97,22 +88,19 @@ function valueOf(argv, names) {
   return null
 }
 
-// The words past `from` that aren't options, the values of those `valued`
-// left out.
+// The words past `from` that aren't options or `valued`'s values.
 const operands = (argv, from, valued) => argv.slice(from).filter((word, at, words) => !word.startsWith('-') && !valued.test(words[at - 1] ?? ''))
 
 const EXACT_SEMVER = text => /^=?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test(text)
 
-// `go install|run x@v`: a version is held to Go's checksum database, so only
-// another (`@latest`, a branch) is told unpinned.
+// `go install|run x@v`, a version held to Go's checksum database.
 function go(argv) {
   const target = operands(argv, 2, /^-(?:o|modfile|tags|ldflags|gcflags|C)$/u)[0]
   return target?.includes('@') ? fetched(`go ${argv[1]}`, atVersion(target, spec => /^v\d+\.\d+\.\d+/u.test(spec)), { ecosystem: 'go' }) : []
 }
 
-// `cargo install`: a crate by its version (`x@1.2.3`, `--version`), or a
-// repository by its commit (`--git … --rev`); `locked` where its own
-// lockfile holds what it builds with (`--locked`).
+// `cargo install`: a crate by its version, or a repository by its commit;
+// `locked` with `--locked`.
 function cargo(argv) {
   if (argv.includes('--path')) return []
   const git = valueOf(argv, /^--git$/u)
@@ -139,7 +127,6 @@ function deno(argv) {
     : { name: target, spec: null, exact: /@v?\d+\.\d+\.\d+/u.test(target), registry: false }, { ecosystem: 'deno' })
 }
 
-// What other ecosystems' tools fetch.
 function others(program, argv) {
   if (program === 'go' && /^(?:install|run)$/u.test(argv[1] ?? '')) return go(argv)
   if (program === 'cargo' && /^(?:install|binstall)$/u.test(argv[1] ?? '')) return cargo(argv)
@@ -147,23 +134,21 @@ function others(program, argv) {
   return program === 'deno' && /^(?:run|install|x|compile)$/u.test(argv[1] ?? '') ? deno(argv) : []
 }
 
-// What a command runs that is fetched or unpinned, apart from a script
-// fetched and run (scriptFinds).
+// What a command fetches or runs unpinned, but a script fetched and run.
 function commandFinds(command) {
   const { argv } = command
   const program = programOf(argv[0])
   if (/^(?:docker|podman)$/u.test(program) && /^(?:run|pull|create)$/u.test(argv[1] ?? '')) {
     const image = argv.slice(2).find((word, at, words) => !word.startsWith('-') && !/^(?:-[evpwulhm]|--(?:env|volume|publish|workdir|user|label|hostname|memory|name|network|entrypoint|platform|mount|env-file|cpus|add-host|cap-add|device|dns|gpus|ipc|pid|restart|runtime|security-opt|shm-size|tmpfs|ulimit|volumes-from|log-driver))$/u.test(words[at - 1] ?? ''))
-    return image ? [{ kind: 'image', tool: `${program} ${argv[1]}`, text: image, read: readImage(image) }] : []
+    return image ? [{ kind: 'image', text: image, read: readImage(image) }] : []
   }
   if (program === 'git' && argv[1] === 'clone') return [{ kind: 'clone', url: argv.slice(2).find(word => /^(?:https?:|git@|git:|ssh:)/u.test(word)) ?? null }]
   return [...npmToolFinds(program, argv), ...python(program, argv), ...others(program, argv)]
 }
 
-const INSTALLS = { npm: /^(?:ci|clean-install|ic|install-clean|i|in|ins|inst|insta|instal|install|isnt|isntall|add|it|install-test)$/u, pnpm: /^(?:i|install|add)$/u, bun: /^(?:i|install|add)$/u }
+const INSTALLS = { npm: new RegExp(`^(?:ci|clean-install|ic|install-clean|${NPM_INSTALLS})$`, 'u'), pnpm: /^(?:i|install|add)$/u, bun: /^(?:i|install|add)$/u }
 
-// The line a script first installs a project's packages on (`npm ci`, `pnpm
-// install`, `yarn`, `bun install`), counting from 0; null where it doesn't.
+// The line a script first installs a project's packages on, from 0; else null.
 export function installLine(script) {
   for (const { argv, line } of scriptCommands(script)) {
     const program = programOf(argv[0])
@@ -173,12 +158,10 @@ export function installLine(script) {
   return null
 }
 
-// A line of a script, as a finding names what it runs: its text trimmed,
-// cut short.
+// A script's line, as a finding names what it runs, cut short.
 const excerpt = text => { const trimmed = text.trim().replaceAll(/\s+/gu, ' '); return trimmed.length > 120 ? `${trimmed.slice(0, 119)}…` : trimmed }
 
-// Everything a script fetches and runs past a pin, each with its `line`, in
-// the script's order; a script fetched and run, with the `command` it is.
+// Everything a script fetches and runs past a pin, in its order.
 export function scriptFinds(script) {
   const found = []
   const lines = new Map(scriptLines(script).map(({ text, line }) => [line, text]))
@@ -193,7 +176,7 @@ export function scriptFinds(script) {
     if (file) saved.set(file, command.line)
     for (const [name, at] of saved) {
       if (FETCHERS.test(program) || !runsFile(command, name)) continue
-      found.push({ kind: 'remote-script', line: command.line, command: excerpt(lines.get(at) ?? ''), saved: name })
+      found.push({ kind: 'remote-script', line: command.line, command: excerpt(lines.get(at) ?? '') })
       saved.delete(name)
     }
     for (const each of commandFinds(command)) found.push({ ...each, line: command.line })

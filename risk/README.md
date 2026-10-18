@@ -170,9 +170,9 @@ A reference's own code is what it runs: a composite action's steps, a reusable w
   - `score.js`: the risk score, from the findings and the version's exposure.
   - `manifest.js`, `tarball.js`, `registry.js`, `assess.js`
 - `actions/`: a repository's GitHub Actions.
-  - `uses.js`: what a `uses:` names, its pin and its key; `versions.js`, tags as versions.
-  - `workflow.js`: a workflow or an action's metadata read; `findings.js`, its findings; `dockerfile.js`, a Dockerfile's.
-  - `scripts/`: a script's commands (`shell.js`), what each fetches (`commands.js`, `packages.js`), graded (`grade.js`); `expressions.js`, what anyone can write of an expression.
-  - `resolve.js`: a reference resolved on GitHub.
+  - `uses.js`: what a `uses:` names, its pin and its key.
+  - `workflow.js`: a workflow or an action's metadata read; `findings.js`, its findings.
+  - `scripts/`: a script's commands (`shell.js`), what each fetches (`commands.js`, `packages.js`), graded (`grade.js`), with what anyone can write of an expression.
+  - `resolve.js`: a reference resolved on GitHub, its tags as versions and its Dockerfile read.
 
 Each pure function takes a version as the viewer holds one (`{ kind: 'sourcemap', npm, json }`), but `held.js` `npmVersionFindings`, which takes what npm says of it now: its deprecation, when it was published, and its package's downloads.

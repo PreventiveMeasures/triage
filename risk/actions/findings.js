@@ -1,58 +1,45 @@
-// What a workflow, or an action's metadata, calls for a look at by its own
-// text (workflow.js), before any reference is resolved on GitHub
-// (resolve.js), each `{ id, severity, line, … }`, as README.md tells them.
-import { namesPullHead, scriptInjections } from './expressions.js'
+// What a workflow, or an action's metadata, calls for by its own text (README.md).
 import { readWorkflow } from './workflow.js'
 import { installLine } from './scripts/commands.js'
-import { imageFinding, lockedName, scriptFindings } from './scripts/grade.js'
+import { imageFinding, lockedName, namesPullHead, scriptFindings, scriptInjections } from './scripts/grade.js'
 import { ownerKind, usesKey } from './uses.js'
 
-// What a `uses:` calls for, by how it pins what it names; of a reference,
-// with its `key`.
+// What a `uses:` calls for by its pin, a reference's with its `key`.
 function usesFinding(uses, owner) {
   if (uses.kind === 'invalid') return { id: 'invalid-uses', severity: 'low', uses: uses.uses }
-  if (uses.kind === 'docker') return uses.digest ? null : imageFinding(uses.uses, uses, 'uses')
+  if (uses.kind === 'docker') return uses.digest ? null : imageFinding(uses.uses, uses)
   if ((uses.kind !== 'action' && uses.kind !== 'workflow') || uses.pin === 'sha') return null
   const at = { uses: uses.uses, key: usesKey(uses) }
   return uses.pin === 'short-sha' ? { id: 'short-sha', severity: 'high', ...at } : { id: 'unpinned', severity: ownerKind(uses.repo, owner) === 'third-party' ? 'high' : 'moderate', ...at, ref: uses.ref }
 }
 
-// Where a step installs a project's packages: a script that runs an install,
-// in the directory it runs in; an action of the repository's own or named
-// for installing, as a setup action of a project's own is, anywhere (null);
-// undefined where it doesn't.
+// Where a step installs a project's packages: a script's directory; anywhere
+// (null) for an action of its own or one named for installing; else undefined.
 function installs(step) {
   if (step.uses?.kind === 'local' || (step.uses?.repo && /install/iu.test(step.uses.repo))) return null
   if (step.uses?.repo?.toLowerCase() === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return null
   return step.run && installLine(step.run.script) !== null ? directoryOf(step.run.workingDirectory) : undefined
 }
 
-// Whether an install in `at` (null for anywhere) is one a step in
-// `directory` runs the packages of, as node finds them in its directory or
-// one above.
-const installedFor = (at, directory) => at === null || directory === null || at === '' || directory === at || directory.startsWith(`${at}/`)
+// Whether `dir` is `directory` or above it, as node finds a package there;
+// null, which an expression names, for any.
+const within = (dir, directory) => dir === null || directory === null || dir === '' || directory === dir || directory.startsWith(`${dir}/`)
 
-// The directory a step runs in, from the repository's root: '' for its
-// root, null where an expression names it.
+// A step's directory from the repository's root, '' for it; null for an expression.
 function directoryOf(workingDirectory) {
   if (workingDirectory === null) return ''
   if (workingDirectory.includes('${{')) return null
   return workingDirectory.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '').replace(/^\.$/u, '')
 }
 
-// Whether a lockfile at or above `directory` (any, where it isn't told)
-// locks a package npx would run by `name`.
+// Whether a lockfile at or above `directory` locks what npx runs by `name`.
 function lockedIn(lockfiles, directory) {
-  const applies = lockfiles.filter(({ path }) => {
-    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
-    return directory === null || dir === '' || directory === dir || directory.startsWith(`${dir}/`)
-  })
+  const applies = lockfiles.filter(({ path }) => within(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '', directory))
   return name => applies.some(({ names }) => lockedName(names, name))
 }
 
-// github-script's `script:` with an expression anyone can write in it, and
-// a pull request's code checked out, or artifacts taken from another run,
-// where the workflow runs with its secrets for anyone.
+// github-script's injections, and a fork's code or artifacts taken where the
+// workflow runs with its secrets.
 function stepFindings(step, triggers) {
   const repo = step.uses?.repo?.toLowerCase()
   const found = repo === 'actions/github-script' ? scriptInjections(step.with?.script, triggers).map(({ index: _index, ...finding }) => ({ ...finding, line: step.withLines.script })) : []
@@ -66,8 +53,7 @@ function stepFindings(step, triggers) {
   return found
 }
 
-// A job's findings: its reusable workflow's and its steps', each script's
-// graded with what was installed before it and the lockfiles that apply.
+// A job's findings, each script graded by the installs before it and its lockfiles.
 function jobFindings(job, triggers, { owner, lockfiles, external }) {
   const found = []
   if (job.uses) {
@@ -75,7 +61,7 @@ function jobFindings(job, triggers, { owner, lockfiles, external }) {
     if (finding) found.push({ ...finding, line: job.uses.line })
     if (job.secrets === 'inherit' && job.uses.repo && ownerKind(job.uses.repo, owner) === 'third-party') found.push({ id: 'secrets-inherited', severity: 'high', uses: job.uses.uses, key: usesKey(job.uses), line: job.uses.line })
   }
-  for (const image of job.images) if (!image.read?.digest && !image.text.includes('${{')) found.push({ ...imageFinding(image.text, image.read, image.via), line: image.line })
+  for (const image of job.images) if (!image.read?.digest && !image.text.includes('${{')) found.push({ ...imageFinding(image.text, image.read), line: image.line })
   const installed = []
   for (const step of job.steps) {
     const finding = step.uses && usesFinding(step.uses, owner)
@@ -83,7 +69,7 @@ function jobFindings(job, triggers, { owner, lockfiles, external }) {
     if (step.run) {
       const directory = directoryOf(step.run.workingDirectory)
       const locked = external ? () => false : lockedIn(lockfiles, directory)
-      found.push(...scriptFindings(step.run, { locked, installed: installed.some(at => installedFor(at, directory)), external, triggers }))
+      found.push(...scriptFindings(step.run, { locked, installed: installed.some(at => within(at, directory)), external, triggers }))
     }
     found.push(...stepFindings(step, triggers))
     const at = installs(step)
@@ -92,21 +78,16 @@ function jobFindings(job, triggers, { owner, lockfiles, external }) {
   return found
 }
 
-// Every finding of a workflow or an action's metadata read (workflow.js
-// readWorkflow), by its own text, in its lines' order. `owner`, whose
-// repository it is; `lockfiles`, its repository's, each `{ path, names }`,
-// the names of the packages it locks, a script's npx told locked by those at
-// or above where it runs; `external`, another repository's action, run in
-// a workspace it can't tell.
+// Every finding of a workflow read (readWorkflow), in its lines' order, by
+// index.d.ts ScanOptions.
 export function workflowFindings(read, { owner = null, lockfiles = [], external = false } = {}) {
   const found = read.jobs.flatMap(job => jobFindings(job, read.triggers, { owner, lockfiles, external }))
   if (/^node(?:12|16)$/u.test(read.using ?? '')) found.push({ id: 'deprecated-runtime', severity: 'low', using: read.using, line: read.usingLine })
   return found.toSorted((a, b) => (a.line ?? 0) - (b.line ?? 0))
 }
 
-// What a workflow or an action's metadata names to resolve, in the file's
-// order: its actions and reusable workflows on GitHub (`action`, `workflow`),
-// each with its `key`, and the repository's own (`local`), each with its line.
+// The references a workflow read makes: of GitHub's, each with its `key`, and
+// of its own (`local`).
 export function workflowUses(read) {
   return read.jobs.flatMap(job => [job.uses, ...job.steps.map(step => step.uses)]).flatMap(uses => {
     if (uses?.kind === 'local') return [uses]
@@ -114,11 +95,9 @@ export function workflowUses(read) {
   })
 }
 
-// A workflow's (`kind` 'workflow') or an action's metadata's ('action') text
-// read for what it calls for by itself, and what it names to resolve, each
-// with its line. Throws an ActionsScanError (`workflow-unreadable`) for one
-// that isn't YAML, or isn't shaped as GitHub runs one.
+// A workflow's or an action's metadata's (`kind`) references and findings;
+// a YamlError for one GitHub can't run.
 export function scanWorkflow(kind, text, options = {}) {
   const read = readWorkflow(kind, text)
-  return { triggers: read.triggers, using: read.using, uses: workflowUses(read), findings: workflowFindings(read, options) }
+  return { uses: workflowUses(read), findings: workflowFindings(read, options) }
 }

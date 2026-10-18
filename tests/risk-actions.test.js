@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { ActionsScanError, keptSource, resolveAction, scanWorkflow, usesOfKey } from '../risk/index.js'
+import { YamlError } from '@preventive/lockfile/yaml.js'
+import { keptSource, readWorkflow, resolveAction, scanWorkflow, usesOfKey } from '../risk/index.js'
 import { readUses, usesKey } from '../risk/actions/uses.js'
-import { dockerfileFindings } from '../risk/actions/dockerfile.js'
+import { dockerfileFindings, latestOf, newestOfLines, tagVersion } from '../risk/actions/resolve.js'
 import { scriptFinds } from '../risk/actions/scripts/commands.js'
 import { lockedName, scriptFindings } from '../risk/actions/scripts/grade.js'
-import { latestOf, newestOfLines, tagVersion } from '../risk/actions/versions.js'
 
 const SHA = char => char.repeat(40)
 const ids = findings => findings.map(({ id, severity, line }) => `${id}/${severity}${line === undefined ? '' : `@${line}`}`)
@@ -181,7 +181,7 @@ jobs:
 describe('a workflow\'s findings by its own text', () => {
   it('each uses:, image and step, graded, on its line', () => {
     const scan = scanWorkflow('workflow', WORKFLOW, { owner: 'myorg', lockfiles: [{ path: 'web/package-lock.json', names: new Set(['eslint']) }, { path: 'api/package-lock.json', names: new Set(['left-pad']) }] })
-    assert.deepEqual(scan.triggers, ['pull_request_target', 'workflow_run'])
+    assert.deepEqual(readWorkflow('workflow', WORKFLOW).triggers, ['pull_request_target', 'workflow_run'])
     assert.deepEqual(ids(scan.findings), [
       'unpinned-image/moderate@8', 'unpinned/moderate@13', 'pwn-request/critical@15', 'unpinned/moderate@16', 'unpinned/high@17', 'short-sha/high@19', 'unpinned-image/moderate@20',
       // eslint locked by web's lockfile and installed by the local action; left-pad only api's.
@@ -197,7 +197,7 @@ describe('a workflow\'s findings by its own text', () => {
 
   it('an action\'s metadata: its runtime, its composite steps', () => {
     const scan = scanWorkflow('action', 'name: x\nruns:\n  using: node16\n  main: index.js\n')
-    assert.equal(scan.using, 'node16')
+    assert.equal(readWorkflow('action', 'name: x\nruns:\n  using: node16\n  main: index.js\n').using, 'node16')
     assert.deepEqual(ids(scan.findings), ['deprecated-runtime/low@3'])
     assert.deepEqual(ids(scanWorkflow('action', 'runs:\n  using: composite\n  steps:\n    - uses: a/b@main\n    - run: pnpm dlx x\n      shell: bash\n', { owner: 'a', external: true }).findings),
       ['unpinned/moderate@4', 'fetched-package/high@5'])
@@ -207,9 +207,9 @@ describe('a workflow\'s findings by its own text', () => {
 
   it('refuses what isn\'t YAML, a tag making code among it, or isn\'t a workflow', () => {
     for (const text of ['on: push\njobs:\n  a:\n    steps:\n      - run: !!js/function "function () {}"\n', 'jobs: &j {}\nx:\n  <<: *j\n', 'a:\n\tb: 1\n', '- a\n', 'on: push\n']) {
-      assert.throws(() => scanWorkflow('workflow', text), error => error instanceof ActionsScanError && error.code === 'workflow-unreadable', JSON.stringify(text))
+      assert.throws(() => scanWorkflow('workflow', text), YamlError, JSON.stringify(text))
     }
-    assert.throws(() => scanWorkflow('action', 'name: x\n'), { code: 'workflow-unreadable', message: 'an action has no runs.using' })
+    assert.throws(() => scanWorkflow('action', 'name: x\n'), { name: 'YamlError', message: 'an action has no runs.using' })
     const read = scanWorkflow('workflow', "on: push\njobs:\n  a:\n    steps:\n      - run: 'function () { return 1 }'\n")
     assert.deepEqual(read.findings, [], 'a function\'s text is a script\'s, run by a shell, not code made of it')
   })
@@ -270,7 +270,7 @@ describe('a reference resolved on GitHub', () => {
 
   it('a moving tag where its line\'s release is, an older line than the latest, and its code', async () => {
     const v1 = await resolve('org/act@v1')
-    assert.deepEqual([v1.at, v1.commit, v1.tags, v1.latest, v1.using], ['tag', SHA('b'), ['v1.1.0', 'v1'], 'v2.0.0', 'composite'])
+    assert.deepEqual([v1.at, v1.commit, v1.tags], ['tag', SHA('b'), ['v1.1.0', 'v1']])
     assert.deepEqual(v1.found, ['outdated/low', 'unpinned/high@4', 'remote-script/high@6'])
     assert.deepEqual(v1.findings.slice(1).map(({ file }) => file), ['action.yml', 'action.yml'])
     assert.deepEqual(v1.uses, [{ key: 'other/thing@main', line: 4, file: 'action.yml' }, { key: `org/act/sub@${SHA('b')}`, line: 5, file: 'action.yml' }], 'its own `$/` at the commit read')
