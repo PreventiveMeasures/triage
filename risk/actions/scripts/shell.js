@@ -4,8 +4,9 @@
 import { SHELLS } from '../../files/runs-code.js'
 import { resolved } from '../../npm/files.js'
 
-// A shell, by its program, wherever it is (risk's runs-code.js SHELLS).
-const SHELL = new RegExp(String.raw`^(?:.*\/)?${SHELLS}$`, 'u')
+// A shell, by its program, wherever it is, Windows' `.exe` too (risk's
+// runs-code.js SHELLS).
+const SHELL = new RegExp(String.raw`^(?:.*[\/\\])?${SHELLS}(?:\.exe)?$`, 'iu')
 
 // A line of a script, its continuations joined (an escaped line's end, or a
 // pipe, `&&` or `||` the next line goes on from), and the line it starts
@@ -37,7 +38,7 @@ function argvOf(words) {
   let at = 0
   for (;;) {
     for (; at < words.length && /^[A-Za-z_]\w*=/u.test(words[at]); at++) env[words[at].slice(0, words[at].indexOf('='))] = words[at].slice(words[at].indexOf('=') + 1)
-    const wrapper = words[at]
+    const wrapper = words[at]?.replace(/^.*\//u, '')
     if (!WRAPPERS.has(wrapper)) return { argv: words.slice(at), env }
     at++
     while (at < words.length && words[at].startsWith('-')) at += WRAPPER_VALUES.get(wrapper)?.test(words[at]) ? 2 : 1
