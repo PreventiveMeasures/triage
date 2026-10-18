@@ -199,7 +199,13 @@ function setDepsDir(dir) {
   stripRe = depsStripRe(dir)
 }
 
+// The choice is kept for the reports it was read from, by identity: a
+// render asks on every draw, and the paths it reads never change once a
+// report is ingested, so only a different set can choose differently.
+let depsDirReports = null
 export function configureDepsDir(reports) {
+  if (depsDirReports?.length === reports.length && depsDirReports.every((r, i) => r === reports[i])) return
+  depsDirReports = [...reports]
   setDepsDir(dependencyDirectory(reports))
 }
 
@@ -367,11 +373,22 @@ function stripPackagePrefix(file) {
 // this module stays free of any `#client/...` import so it can ride
 // the lazy graph bundle (see the `fileUrl` note below), so filters.js
 // matches the comment and fix fields itself; see matchesFilters there.
+//
+// Kept per finding, once for each state of the layer: a search asks it
+// of every finding on every keystroke, and none of the fields it reads
+// changes once the finding is ingested.
+const findingTexts = { on: new WeakMap(), off: new WeakMap() }
 export function findingText(f) {
-  // The pass's own words come out of the haystack with the layer: a
-  // search shouldn't match text the card isn't showing.
-  const reval = revalidationOn ? [revalidateStamp(f), f.revalidateVerdict, f.revalidateRecommendation] : []
-  return [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, ...reval, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
+  const kept = revalidationOn ? findingTexts.on : findingTexts.off
+  let text = kept.get(f)
+  if (text === undefined) {
+    // The pass's own words come out of the haystack with the layer: a
+    // search shouldn't match text the card isn't showing.
+    const reval = revalidationOn ? [revalidateStamp(f), f.revalidateVerdict, f.revalidateRecommendation] : []
+    text = [f.file, f.title, f.description, f.impact, f.reproduction, evidenceMarkdown(f), f.recommendation, f.confidenceReason, ...reval, f.discoveredIn, f.repo?.github].filter(Boolean).join('\n').toLowerCase()
+    kept.set(f, text)
+  }
+  return text
 }
 
 // The per-finding run-meta line (@preventive/report/src/finding.js runMetaLine) under

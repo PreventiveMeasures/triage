@@ -1013,8 +1013,10 @@ export const state: State = store<State>({
   // That index walks every report on disk, so it is still filling long
   // after the cards have painted; without the tick a duplicate would
   // keep the "nowhere I know of" look it was first drawn with.
-  // events.js bumps this only while a links file is loaded — nothing
-  // else on the findings surface reads that index per-card.
+  // events.js bumps this when the index changes — on the findings
+  // surface once the walk filling it settles — and group.js keys the
+  // merged rows on it as well, for the security evidence a finding's
+  // copies in other reports lend it.
   findingIndexTick: 0,
   // Reload uses the advertised default unless the URL names a managed page.
   serverMode: resolveServerMode(INITIAL_SERVER_INFO?.mode ?? 'e2e', INITIAL_MODE_SELECTION),

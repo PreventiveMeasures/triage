@@ -424,13 +424,25 @@ function matchesScopeFilters(f) {
   return true
 }
 
+// The search query as matchesFilters reads it — case-folded, and the
+// words long enough to match an ID — worked out once per query rather
+// than once per finding it is asked of.
+let searchQuery = { raw: '', inc: '', idWords: [] }
+function searchOf(raw) {
+  if (searchQuery.raw !== raw) {
+    const inc = raw.toLowerCase()
+    searchQuery = { raw, inc, idWords: inc.length >= 6 ? inc.split(/\s+/u).filter(word => word.length >= 6) : [] }
+  }
+  return searchQuery
+}
+
 // Per-tab filter predicate. Factored out so `applyFilters` (group-level)
 // can ask "does ANY tab in this group match?" — per the user spec,
 // one matching tab keeps the whole group visible.
 export function matchesFilters(f) {
   if (!matchesScopeFilters(f)) return false
   const F = activeFilters()
-  const inc = F.filterInclude.toLowerCase()
+  const { inc, idWords } = searchOf(F.filterInclude)
   // Severity + color filters are multi-select Sets: empty = no
   // filter, non-empty = membership required. Unmarked tabs bucket
   // under the literal `'none'` so ticking only that chip isolates
@@ -476,7 +488,7 @@ export function matchesFilters(f) {
       || (entry?.comment ?? '').toLowerCase().includes(inc)
       || (entry?.fix ?? '').toLowerCase().includes(inc)
       // Short words still search text, but must not match incidental ID fragments.
-      || inc.length >= 6 && inc.split(/\s+/u).some(word => word.length >= 6 && f.id?.toLowerCase().includes(word))
+      || idWords.some(word => f.id?.toLowerCase().includes(word))
     // Negation toggle: when on, the query excludes — keep the findings
     // that DON'T match. Per-finding (a group stays visible if any tab
     // is a non-match, same group rule as every other filter below).

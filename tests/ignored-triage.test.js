@@ -98,6 +98,21 @@ test('migration promotes only App/own report occurrences, preserves unknown scop
   assert.equal(migrateIgnoredReports(map, reports), false)
 })
 
+test('migration passes by reports whose ignores are all settled, and still reaches the one that is not', () => {
+  // Scoped to its report: nothing to promote or scope, however often asked.
+  const settled = new Map([['finding', { ignoredReports: ['dep.json'], scopedIgnoredReports: ['dep.json'] }]])
+  assert.equal(migrateIgnoredReports(settled, [report(dependency), report(own)]), false)
+  assert.deepEqual(settled.get('finding'), { ignoredReports: ['dep.json'], scopedIgnoredReports: ['dep.json'] })
+  // A name held twice is folded even when it is scoped.
+  const twice = new Map([['finding', { ignoredReports: ['dep.json', 'dep.json'], scopedIgnoredReports: ['dep.json'] }]])
+  assert.equal(migrateIgnoredReports(twice, [report(dependency)]), true)
+  assert.deepEqual(twice.get('finding'), { ignoredReports: ['dep.json'], scopedIgnoredReports: ['dep.json'] })
+  // One settled name beside an unsettled one: the unsettled report is still migrated.
+  const mixed = new Map([['finding', { ignoredReports: ['dep.json', 'own.json'], scopedIgnoredReports: ['dep.json'] }]])
+  assert.equal(migrateIgnoredReports(mixed, [report(dependency), report(own)]), true)
+  assert.deepEqual(mixed.get('finding'), { triage: 'ignored', ignoredReports: ['dep.json'], scopedIgnoredReports: ['dep.json'] })
+})
+
 test('report content migration derives App layer, respects dependency directory precedence, and defers missing files', async () => {
   const entries = {
     app: { ignoredReports: ['app.json'] },

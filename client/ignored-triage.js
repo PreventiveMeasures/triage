@@ -42,12 +42,26 @@ export function setFindingTriage(map, finding, target, directory) {
 
 // Only migrate a named report's occurrence once we have its classification.
 // Unknown/deleted reports retain their keys; another saved bucket always wins.
+//
+// The names an ignore holds that are not settled yet: not scoped to their
+// report, or held twice, which the second pass folds. Neither pass changes
+// an entry over a settled name, and neither unsettles one, so a report
+// none of whose findings is filed under an unsettled name is passed by —
+// and the render that asks this every time walks nothing once all are.
 export function migrateIgnoredReports(map, reports) {
-  if (![...map.values()].some(entry => entry?.ignoredReports?.length)) return false
+  const unsettled = new Set()
+  for (const entry of map.values()) {
+    const names = entry?.ignoredReports
+    if (!names?.length) continue
+    const twice = new Set(names).size !== names.length
+    for (const name of names) if (twice || !isReportIgnoreScoped(entry, name)) unsettled.add(name)
+  }
+  if (unsettled.size === 0) return false
   let changed = false
   for (const report of reports) {
-    const directory = dependencyDirectory([report])
     const findings = (report.groups ?? []).flat()
+    if (!findings.some(finding => unsettled.has(finding._reportName ?? report.name ?? report.fileName ?? ''))) continue
+    const directory = dependencyDirectory([report])
     const classified = finding => ({ ...finding, _source: finding._source ?? finding.source ?? report.source })
     const dependencyIds = new Set(findings.filter(f => usesReportIgnore(classified(f), directory)).map(f => f.id ?? String(f._id)))
     for (const finding of findings) {

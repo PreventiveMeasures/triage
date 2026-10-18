@@ -5,6 +5,7 @@
 // sibling client modules keep importing the source modules directly.
 
 export {
+  bundleFindingsWalk,
   ensureBundleFindingsIndexed,
   findingTitleForId,
   findingsForFileHash,

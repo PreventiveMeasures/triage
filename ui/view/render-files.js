@@ -44,20 +44,11 @@ function fileCodeButton(fileHash) {
 // Returns a Lit `TemplateResult`; render.js puts a `tree-view-slot`
 // placeholder into #report and `litRender`s the template into it.
 export function renderTreeView(treeData, findingCounts) {
-  const allFiles = Object.keys(treeData).toSorted()
-  // Inverse adjacency: file → list of files that import it.
-  const importedBy = new Map()
-  for (const f of allFiles) {
-    for (const imp of (treeData[f].imports ?? [])) {
-      const arr = importedBy.get(imp) ?? []
-      arr.push(f)
-      importedBy.set(imp, arr)
-    }
-  }
+  const { allFiles, lowerFiles, importedBy } = treeIndex(treeData)
 
   const search = state.filesSearch.trim().toLowerCase()
   const files = search
-    ? allFiles.filter((f) => f.toLowerCase().includes(search))
+    ? allFiles.filter((f, i) => lowerFiles[i].includes(search))
     : allFiles
 
   // Targets that exist in the tree get a fragment link to their card
@@ -95,8 +86,8 @@ export function renderTreeView(treeData, findingCounts) {
     // Re-validate the selection: a search that hides the previously-
     // selected file should collapse the details panel back, otherwise
     // the user sees a panel pinned to a row they can't see.
-    const selected = state.filesSelectedFile && treeData[state.filesSelectedFile]
-      && files.includes(state.filesSelectedFile)
+    const selected = state.filesSelectedFile && Object.hasOwn(treeData, state.filesSelectedFile)
+      && (!search || state.filesSelectedFile.toLowerCase().includes(search))
       ? state.filesSelectedFile
       : null
     // `.with-details` on the outer wrapper mirrors the findings tab's
@@ -159,6 +150,27 @@ export function renderTreeView(treeData, findingCounts) {
       </section>`
     })}
   </div>`
+}
+
+// The tree's files sorted, case-folded for the search, and the inverse
+// adjacency (file → the files that import it), kept for the tree they
+// were read from: the tab draws on every keystroke of its search, and
+// the merged tree is the same map until the loaded reports change
+// (file-counts.js mergeReportsTree).
+let lastIndex = { treeData: null, allFiles: [], lowerFiles: [], importedBy: new Map() }
+function treeIndex(treeData) {
+  if (lastIndex.treeData === treeData) return lastIndex
+  const allFiles = Object.keys(treeData).toSorted()
+  const importedBy = new Map()
+  for (const f of allFiles) {
+    for (const imp of (treeData[f].imports ?? [])) {
+      const arr = importedBy.get(imp) ?? []
+      arr.push(f)
+      importedBy.set(imp, arr)
+    }
+  }
+  lastIndex = { treeData, allFiles, lowerFiles: allFiles.map((f) => f.toLowerCase()), importedBy }
+  return lastIndex
 }
 
 // Per-file hash / imports / imported-by / exports sections — shared

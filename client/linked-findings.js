@@ -63,6 +63,9 @@ function entryId(entry) {
 // A file whose every link normalises away is still a links file; it
 // just has no links, which its view says plainly.
 export function parseLinkedFindings(content) {
+  // Only text opening an array can parse to one, so a report — which
+  // opens an object — is turned away without being parsed twice.
+  if (typeof content === 'string' && !/^\s*\[/u.test(content)) return null
   let data
   try { data = JSON.parse(content) } catch { return null }
   if (!Array.isArray(data) || data.length === 0) return null

@@ -11,7 +11,7 @@ import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, stampUpstreamFindings } from './format.js'
+import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
@@ -271,8 +271,6 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
     fileChip = html`<button type="button" class="file-chip" data-copy-report=${fileNames.map(reportDisplayName).join('\n')}>${multiSticker}<span>${fileNames.length} reports</span></button>`
   }
 
-  const findings = state.reports.flatMap((r) => r.groups.flat())
-
   // Count covers EVERY loaded finding (live + trashed) — trashed
   // entries are still part of the report, just hidden from the active
   // list. The header stays steady so the load total doesn't shift
@@ -281,8 +279,7 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   const countLabel = `${totalCount} ${findingNoun}`
 
   // Analyzer and run metadata belong to individual reports, not the combined view.
-  const stripTags = state.currentWorkspace ? [] : buildAnalyzerTags(findings,
-    singleSource ? COMBO_FIELDS.filter(f => f !== 'type') : COMBO_FIELDS)
+  const stripTags = state.currentWorkspace ? [] : loadedAnalyzerTags(Boolean(singleSource))
 
   // Severity status bar — stacked bar sized proportionally to each
   // severity's group count (using the primary tab's severity, so
@@ -907,7 +904,9 @@ const SEVERITY_LETTERS = {
 }
 function kanbanCardTemplate(g, opts = {}) {
   const { variant = 'kanban', active = false, expandedTrackLast = false } = opts
-  const groupSt = groupState(g)
+  // The board hands over the rollup it bucketed the card by, read this
+  // same render; the rail asks for its own.
+  const groupSt = opts.groupSt ?? groupState(g)
   const activeTab = activeTabFor(g)
   const title = findingTitle(activeTab) || '(untitled finding)'
   const isKanban = variant === 'kanban'
@@ -1325,7 +1324,9 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
   </div>`
 }
 
-function findingsBodyTemplate(filtered, selectedGroup) {
+// `groupStates`: the rollups renderImpl read this render, by group, for
+// the board to bucket and draw its cards by rather than read each again.
+function findingsBodyTemplate(filtered, selectedGroup, groupStates = new Map()) {
   if (state.viewMode === 'table') {
     // Table view is always flat. For 'file' sort we still want
     // line-within-file ordering to match the file-grouped layout's
@@ -1455,8 +1456,13 @@ function findingsBodyTemplate(filtered, selectedGroup) {
       { key: 'ignored',    label: 'Ignored' },
     ]
     const buckets = new Map(columns.map((c) => [c.key, []]))
+    const stateOf = (g) => {
+      let st = groupStates.get(g)
+      if (!st) groupStates.set(g, st = groupState(g))
+      return st
+    }
     for (const g of filtered) {
-      const t = groupState(g).commonTriage
+      const t = stateOf(g).commonTriage
       const key = t ?? 'untriaged'
       const slot = buckets.get(key)
       if (slot) slot.push(g)
@@ -1487,7 +1493,7 @@ function findingsBodyTemplate(filtered, selectedGroup) {
     // guards on `buckets.get`: a triage state no column claims has no
     // rail to show, and degrades to the bare modal.
     const focusColumn = focusGroup
-      ? columns.find((c) => c.key === (groupState(focusGroup).commonTriage ?? 'untriaged'))
+      ? columns.find((c) => c.key === (stateOf(focusGroup).commonTriage ?? 'untriaged'))
       : null
     return html`<div class="kanban-board" style=${styleMap(boardStyle)}>
       ${repeat(shownColumns, (c) => c.key, (c) => {
@@ -1514,6 +1520,7 @@ function findingsBodyTemplate(filtered, selectedGroup) {
               : repeat(items, (g) => groupKey(g), (g, index) => kanbanCardTemplate(g, {
                   active: groupKey(g) === state.kanbanPopoverGid,
                   expandedTrackLast: (index + 1) % columns.length === 0,
+                  groupSt: stateOf(g),
                 }))}
           </div>
         </div>`
@@ -1704,6 +1711,160 @@ const nullLastCmp = (a, b) => {
   return a.localeCompare(b)
 }
 
+// What the toolbar offers off the merged rows alone — none of it triage,
+// which a render follows without the rows changing. Kept for the rows it
+// was read from: getMergedGroups hands back the same array until the
+// loaded set, a lens or the links change, and the paths, repos and run
+// meta it reads never change once a finding is ingested. Kept by the
+// deps dir and the layer as well, which decide `isModule` and the
+// ruled-out rows priority reads.
+let rowFacts = null
+function mergedRowFacts(mergedGroups) {
+  const key = [mergedGroups, depsDirName(), revalidationShown()]
+  if (rowFacts?.key.every((k, i) => k === key[i])) return rowFacts
+  // Priority is offered only when it can order every row. In App view an
+  // App row's source copy cannot supply the missing value: rows carrying App
+  // entries need priority on an App entry as well (see priorityApplies).
+  const hasAnyPriority = priorityApplies(mergedGroups)
+  const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
+  const hasAnySourcePath = mergedGroups.some((g) => g.some((f) => !isModule(f.file)))
+  // File sort is only meaningful across multiple files — a single-file
+  // dataset would have nothing to reorder at the file level, so drop
+  // the option from the dropdown and guard against a stale selection
+  // below (matches the confidence / priority drops).
+  let hasMultipleFiles = false
+  let sawFirstFile = false
+  let firstFindingFile
+  outer: for (const g of mergedGroups) {
+    for (const f of g) {
+      if (!sawFirstFile) { sawFirstFile = true; firstFindingFile = f.file }
+      else if (f.file !== firstFindingFile) { hasMultipleFiles = true; break outer }
+    }
+  }
+  // Repo URL input is useful only when at least one finding could
+  // benefit from it: non-node_modules AND no per-finding repo.github.
+  const repoInputUseful = mergedGroups.some((g) => g.some((f) => !f.repo?.github && !isModule(f.file)))
+  // Single common per-finding `repo.github` across every non-module
+  // finding — drives the read-only repo chip in the header when the
+  // user doesn't need to type anything. `null` for mixed-repo loads
+  // (different findings carry different `repo.github`) so we don't
+  // mislead by showing one of several.
+  const perFindingRepos = new Set()
+  for (const g of mergedGroups) {
+    for (const f of g) {
+      if (!isModule(f.file) && f.repo?.github) perFindingRepos.add(f.repo.github)
+    }
+  }
+  const knownRepo = perFindingRepos.size === 1 ? [...perFindingRepos][0] : null
+  // Distinct analyzers + models across the loaded reports — the two
+  // dimension lists for the toolbar's analyzer/model dropdown. Built
+  // from mergedGroups (not the shownTriage-filtered allGroups) so the
+  // option lists stay stable when the user flips between live and
+  // trash views. Analyzers sort for a stable display order: known
+  // source-marked imports first (in ANALYZER_LABELS' order), the null
+  // bucket last, the rest alphabetical between them. Models (pretty
+  // names — see modelOfFinding) sort alphabetically with the null
+  // bucket pinned last, same shape as the repo options below.
+  const analyzerSet = new Set()
+  const modelSet = new Set()
+  for (const g of mergedGroups) {
+    for (const f of g) {
+      analyzerSet.add(f._analyzer ?? null)
+      modelSet.add(modelOfFinding(f))
+    }
+  }
+  const knownOrder = Object.keys(ANALYZER_LABELS)
+  const rank = (a) => {
+    if (a == null) return Infinity
+    const i = knownOrder.indexOf(a)
+    return i === -1 ? knownOrder.length : i
+  }
+  const analyzerOptions = [...analyzerSet].toSorted((a, b) => {
+    const ai = rank(a)
+    const bi = rank(b)
+    if (ai !== bi) return ai - bi
+    return String(a ?? '').localeCompare(String(b ?? ''))
+  })
+  const modelOptions = [...modelSet].toSorted(nullLastCmp)
+  rowFacts = {
+    key, hasAnyPriority, hasAnyModulesPath, hasAnySourcePath, hasMultipleFiles, repoInputUseful, knownRepo,
+    analyzerSet, modelSet, analyzerOptions, modelOptions,
+  }
+  return rowFacts
+}
+
+// What the detail stop of the App switch would hand back (see canDetailLayer
+// in renderImpl), read raw off the revalidation layer's rows and kept for
+// them: getRevalidationGroups hands back the same array until the set or
+// the links change, and the stamps it reads are the reports' own.
+let detailFacts = null
+function detailLayerFacts(groups, workspace) {
+  if (detailFacts?.groups === groups && detailFacts.workspace === workspace) return detailFacts
+  let hasFoldedRows = false
+  let hasPartialRow = false
+  let hasRuledOutRow = false
+  for (const g of groups) {
+    let passRow = false
+    let ownRow = false
+    for (const f of g) {
+      const raw = revalidateKindOf(f)
+      if (raw === 'partial') hasPartialRow = true
+      if (raw === 'unreachable' || raw === 'refuted') {
+        hasRuledOutRow = true
+        // A workspace dropped this row before its reports' rows merged, so
+        // it is no part of what the detail stop could unfold there — and a
+        // pass row left alone by it has nothing folded underneath.
+        if (workspace) continue
+      }
+      if (raw === 'revalidation') passRow = true
+      else ownRow = true
+    }
+    if (passRow && ownRow) hasFoldedRows = true
+  }
+  detailFacts = { groups, workspace, hasFoldedRows, hasPartialRow, hasRuledOutRow }
+  return detailFacts
+}
+
+// Facts about the loaded set alone, each kept for the reports it was read
+// from — by identity, which is what changes when the set does: a report
+// is never changed once it is ingested, and render asks these of every
+// finding on every draw.
+const sameReports = (kept, reports) => kept.length === reports.length && kept.every((r, i) => r === reports[i])
+
+let droppableLayer = { reports: [], value: false }
+function loadedCanDropRevalidation() {
+  if (!sameReports(droppableLayer.reports, state.reports)) {
+    droppableLayer = { reports: [...state.reports], value: canDropRevalidation(state.reports) }
+  }
+  return droppableLayer.value
+}
+
+// Whether any loaded finding is upstream code, its stamps settled first.
+// Kept by the deps dir as well: the stamps follow it, and only it (format.js
+// stampUpstreamFindings), so with neither changed the walk would find what
+// it found last time and write nothing.
+let upstreamFacts = { reports: [], depsDir: null, value: false }
+function loadedUpstream() {
+  const depsDir = depsDirName()
+  if (upstreamFacts.depsDir !== depsDir || !sameReports(upstreamFacts.reports, state.reports)) {
+    if (stampUpstreamFindings(state.reports)) clearMergedGroups()
+    upstreamFacts = { reports: [...state.reports], depsDir, value: state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream))) }
+  }
+  return upstreamFacts.value
+}
+
+// The header's run-meta chips. Every field they read is the report's own,
+// copied onto its findings at ingest (@preventive/report inheritReportMeta).
+let analyzerTags = { reports: [], single: false, tags: [] }
+function loadedAnalyzerTags(single) {
+  if (analyzerTags.single !== single || !sameReports(analyzerTags.reports, state.reports)) {
+    const findings = state.reports.flatMap((r) => r.groups.flat())
+    analyzerTags = { reports: [...state.reports], single,
+      tags: buildAnalyzerTags(findings, single ? COMBO_FIELDS.filter(f => f !== 'type') : COMBO_FIELDS) }
+  }
+  return analyzerTags.tags
+}
+
 // The revalidation mode a CONFLICT took away, held until the set that
 // carried it is gone (see the conflict branch in renderImpl). Module
 // state rather than `state`: it is this module's bookkeeping between
@@ -1712,7 +1873,7 @@ let modeBeforeConflict = null
 
 export function configureReportRevalidation() {
   const conflicted = state.revalidateConflicts.size > 0
-  const canDropLayer = !conflicted && canDropRevalidation(state.reports)
+  const canDropLayer = !conflicted && loadedCanDropRevalidation()
   if (conflicted) {
     // Remember the mode the conflict takes away, so leaving that set
     // gives it back. Without it the next report opens in the code
@@ -1733,7 +1894,7 @@ export function configureReportRevalidation() {
   }
   // Clear a lens left on by a previous report before configuring the display
   // and opening filters for a set without upstream findings.
-  if (state.upstreamOnly && (!canDropLayer || state.showRevalidation === false || !state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream))))) {
+  if (state.upstreamOnly && (!canDropLayer || state.showRevalidation === false || !loadedUpstream())) {
     state.upstreamOnly = false
   }
   configureRevalidation(state.showRevalidation, state.upstreamOnly)
@@ -1757,9 +1918,9 @@ function renderImpl() {
   configureDepsDir(state.reports)
   if (migrateLoadedIgnores()) queueMicrotask(() => { void saveTriage() })
   // With the dir settled, the source-layer findings that sit in it can
-  // be marked as upstream code. Cheap and idempotent — it only fills a
-  // field in, so a re-render costs a walk and writes nothing new.
-  if (stampUpstreamFindings(state.reports)) clearMergedGroups()
+  // be marked as upstream code. Idempotent — it only fills a field in —
+  // and kept for the set and the dir, so a re-render walks nothing.
+  const anyUpstream = loadedUpstream()
   // Same deal for the revalidation layer — the toolbar's "App" switch.
   // Hand format.js the mode before anything reads a `revalidate` value
   // through it, and every helper below sees one answer for this render
@@ -1791,7 +1952,7 @@ function renderImpl() {
   // lens itself left drawn, the control would keep itself lit and then
   // take its own ground away. `isUpstream` is stamped just above
   // (stampUpstreamFindings), so this sees the settled answer.
-  const canUpstreamLens = state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream)))
+  const canUpstreamLens = anyUpstream
   // configureReportRevalidation already cleared a stale upstream lens before
   // configuring the display, so the first render sees the correct mode.
   // Print-button body class is owned by an observer-util autorun (see
@@ -2084,8 +2245,12 @@ function renderImpl() {
   // per-group helper — runs once per group here, not twice.
   const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
   const allGroups = []
+  // Kept for the board below, which buckets by the same rollup.
+  const groupStates = new Map()
   for (const g of mergedGroups) {
-    const t = groupState(g).commonTriage
+    const st = groupState(g)
+    groupStates.set(g, st)
+    const t = st.commonTriage
     if (t) triageCounts[t]++
     if (isKanban || t === state.shownTriage) allGroups.push(g)
   }
@@ -2148,6 +2313,12 @@ function renderImpl() {
   // rows, rather than a list filtered to nothing under a count that
   // says otherwise.
   const revalidateKinds = new Set()
+  for (const g of allGroups) {
+    for (const f of g) {
+      const kind = revalidateKind(f)
+      if (kind) revalidateKinds.add(kind)
+    }
+  }
   // What the switch's DETAIL stop would hand back, asked of the set
   // rather than of the view it is currently drawing: rows the
   // simplified app view folds under the pass's (a `revalidation` row
@@ -2158,33 +2329,7 @@ function renderImpl() {
   // coming and going under the reader's hand: gated, both answers
   // would go empty the moment the switch reached its code stop, and
   // the control would resize itself mid-click.
-  let hasFoldedRows = false
-  let hasPartialRow = false
-  let hasRuledOutRow = false
-  for (const g of allGroups) {
-    for (const f of g) {
-      const kind = revalidateKind(f)
-      if (kind) revalidateKinds.add(kind)
-    }
-  }
-  for (const g of getRevalidationGroups()) {
-    let passRow = false
-    let ownRow = false
-    for (const f of g) {
-      const raw = revalidateKindOf(f)
-      if (raw === 'partial') hasPartialRow = true
-      if (raw === 'unreachable' || raw === 'refuted') {
-        hasRuledOutRow = true
-        // A workspace dropped this row before its reports' rows merged, so
-        // it is no part of what the detail stop could unfold there — and a
-        // pass row left alone by it has nothing folded underneath.
-        if (state.currentWorkspace) continue
-      }
-      if (raw === 'revalidation') passRow = true
-      else ownRow = true
-    }
-    if (passRow && ownRow) hasFoldedRows = true
-  }
+  const { hasFoldedRows, hasPartialRow, hasRuledOutRow } = detailLayerFacts(getRevalidationGroups(), Boolean(state.currentWorkspace))
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
   const types = [...new Set(state.reports.map((r) => r.type))]
@@ -2239,70 +2384,10 @@ function renderImpl() {
   // ones.
   const visibleAllGroups = allGroups.map(drawnTabs).filter((g) => g.length > 0)
   const hasAnyConfidence = visibleAllGroups.length > 0 && rangeApplies(visibleAllGroups)
-  // Priority is offered only when it can order every row. In App view an
-  // App row's source copy cannot supply the missing value: rows carrying App
-  // entries need priority on an App entry as well (see priorityApplies).
-  const hasAnyPriority = priorityApplies(mergedGroups)
-  const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
-  const hasAnySourcePath = mergedGroups.some((g) => g.some((f) => !isModule(f.file)))
-  // File sort is only meaningful across multiple files — a single-file
-  // dataset would have nothing to reorder at the file level, so drop
-  // the option from the dropdown and guard against a stale selection
-  // below (matches the confidence / priority drops).
-  let hasMultipleFiles = false
-  let sawFirstFile = false
-  let firstFindingFile
-  outer: for (const g of mergedGroups) {
-    for (const f of g) {
-      if (!sawFirstFile) { sawFirstFile = true; firstFindingFile = f.file }
-      else if (f.file !== firstFindingFile) { hasMultipleFiles = true; break outer }
-    }
-  }
-  // Repo URL input is useful only when at least one finding could
-  // benefit from it: non-node_modules AND no per-finding repo.github.
-  const repoInputUseful = mergedGroups.some((g) => g.some((f) => !f.repo?.github && !isModule(f.file)))
-  // Single common per-finding `repo.github` across every non-module
-  // finding — drives the read-only repo chip in the header when the
-  // user doesn't need to type anything. `null` for mixed-repo loads
-  // (different findings carry different `repo.github`) so we don't
-  // mislead by showing one of several.
-  const perFindingRepos = new Set()
-  for (const g of mergedGroups) {
-    for (const f of g) {
-      if (!isModule(f.file) && f.repo?.github) perFindingRepos.add(f.repo.github)
-    }
-  }
-  const knownRepo = perFindingRepos.size === 1 ? [...perFindingRepos][0] : null
-  // Distinct analyzers + models across the loaded reports — the two
-  // dimension lists for the toolbar's analyzer/model dropdown. Built
-  // from mergedGroups (not the shownTriage-filtered allGroups) so the
-  // option lists stay stable when the user flips between live and
-  // trash views. Analyzers sort for a stable display order: known
-  // source-marked imports first (in ANALYZER_LABELS' order), the null
-  // bucket last, the rest alphabetical between them. Models (pretty
-  // names — see modelOfFinding) sort alphabetically with the null
-  // bucket pinned last, same shape as the repo options below.
-  const analyzerSet = new Set()
-  const modelSet = new Set()
-  for (const g of mergedGroups) {
-    for (const f of g) {
-      analyzerSet.add(f._analyzer ?? null)
-      modelSet.add(modelOfFinding(f))
-    }
-  }
-  const knownOrder = Object.keys(ANALYZER_LABELS)
-  const rank = (a) => {
-    if (a == null) return Infinity
-    const i = knownOrder.indexOf(a)
-    return i === -1 ? knownOrder.length : i
-  }
-  const analyzerOptions = [...analyzerSet].toSorted((a, b) => {
-    const ai = rank(a)
-    const bi = rank(b)
-    if (ai !== bi) return ai - bi
-    return String(a ?? '').localeCompare(String(b ?? ''))
-  })
-  const modelOptions = [...modelSet].toSorted(nullLastCmp)
+  const {
+    hasAnyPriority, hasAnyModulesPath, hasAnySourcePath, hasMultipleFiles, repoInputUseful, knownRepo,
+    analyzerSet, modelSet, analyzerOptions, modelOptions,
+  } = mergedRowFacts(mergedGroups)
   // If the previously-selected analyzer / model is no longer present
   // (report unload / workspace switch), clear that dimension so a
   // stale selection can't silently empty the list. Matches the same
@@ -2588,7 +2673,7 @@ function renderImpl() {
         : html`<p style=${styleMap({ color: 'var(--green)' })}>No ${typeLabel} issues found.</p>`
     }
 
-    bodyTemplate = findingsBodyTemplate(filtered, selectedGroup)
+    bodyTemplate = findingsBodyTemplate(filtered, selectedGroup, groupStates)
   }
 
   // Slot-reuse: only rebuild the chrome when the structure
