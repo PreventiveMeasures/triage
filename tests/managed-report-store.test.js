@@ -276,6 +276,44 @@ test('closing a compressed report reader also closes its stored source without a
   assert.equal(source.destroyed, true)
 })
 
+test('reports known to have only a compressed copy are read without asking for an original', async () => {
+  const asked = [], stored = new Map()
+  const blobs = (suffix) => ({
+    put(id, bytes) { stored.set(id + suffix, bytes); return Promise.resolve(null) },
+    get(id) { return Promise.resolve(stored.get(id + suffix) ?? null) },
+    open(id) {
+      asked.push(id + suffix)
+      const bytes = stored.get(id + suffix)
+      return Promise.resolve(bytes ? { size: bytes.length, stream: Readable.from([bytes]) } : null)
+    },
+    delete(id) { stored.delete(id + suffix); return Promise.resolve() },
+  })
+  const compressed = blobs('.br'), legacy = blobs('')
+  const store = createReportStore(legacy, compressed, (id, bytes) => { stored.set(`${id}.br`, bytes); stored.delete(id); return Promise.resolve() })
+  await store.put('uploaded', reportBody)
+  assert.deepEqual(await store.get('uploaded'), reportBody)
+  assert.deepEqual(asked, ['uploaded.br'], 'an upload has no original to ask for')
+  stored.set('old', reportBody)
+  asked.length = 0
+  assert.deepEqual(await store.get('old'), reportBody)
+  assert.deepEqual(await store.get('old'), reportBody)
+  assert.deepEqual(asked, ['old', 'old.br'], 'once converted, its original is not asked for again')
+  stored.set('elsewhere.br', brotliCompressSync(reportBody))
+  asked.length = 0
+  assert.deepEqual(await store.get('elsewhere'), reportBody)
+  assert.deepEqual(await store.get('elsewhere'), reportBody)
+  assert.deepEqual(asked, ['elsewhere', 'elsewhere.br', 'elsewhere.br'])
+  stored.delete('elsewhere.br')
+  stored.set('elsewhere', reportBody)
+  asked.length = 0
+  assert.deepEqual(await store.get('elsewhere'), reportBody, 'a compressed copy gone asks for the original after all')
+  assert.deepEqual(asked, ['elsewhere.br', 'elsewhere'])
+  await store.delete('uploaded')
+  asked.length = 0
+  assert.equal(await store.get('uploaded'), null)
+  assert.deepEqual(asked, ['uploaded', 'uploaded.br'])
+})
+
 test('the 25 MiB default accepts an 11 MiB report and preserves downloads and deduplication after encrypted compression', async t => {
   const previous = { ...process.env }
   t.after(() => {
