@@ -45,25 +45,45 @@ export async function putUploadPart(store: BlobStore, session: string, kind: Upl
   await store.put(partId(session, kind, id, index), bytes)
 }
 
-export async function readUpload(store: BlobStore, req: IncomingMessage, session: string, kind: UploadKind, maxBytes: number): Promise<Buffer> {
+// Parts read at once while an upload is put together.
+const PARTS_READ_AT_ONCE = 6
+
+// The staged upload `req` names, its parts read a few at a time into the one
+// buffer it fills, each as long as its place in it. Its parts are deleted
+// once read, or once it fails: awaited, unless `behind` takes that cleanup to
+// go on past the response (http.ts), which staging maintenance backs up.
+export async function readUpload(store: BlobStore, req: IncomingMessage, session: string, kind: UploadKind, maxBytes: number,
+  behind?: (cleanup: Promise<void>) => void): Promise<Buffer> {
   const id = req.headers['x-upload-id']
   const count = Number(req.headers['x-upload-parts']), size = Number(req.headers['x-upload-size'])
   if (typeof id !== 'string' || !validUpload(id, count)) throw new Error('bad-upload')
   try {
     if (!Number.isSafeInteger(size) || size <= 0 || count !== Math.ceil(size / UPLOAD_CHUNK_BYTES)) throw new Error('bad-upload')
     if (size > maxBytes || size > MAX_STAGED_BYTES) throw new Error('too-large')
-    const parts: Buffer[] = []
-    for (let index = 0; index < count; index++) {
-      const bytes = await store.get(partId(session, kind, id, index))
-      const expected = Math.min(UPLOAD_CHUNK_BYTES, size - index * UPLOAD_CHUNK_BYTES)
-      if (!bytes || bytes.length !== expected) throw new Error('bad-upload')
-      parts.push(bytes)
+    // Every byte of it is written below before it is returned: each part
+    // must fill its place exactly, or the upload fails.
+    const body = Buffer.allocUnsafe(size)
+    let failed = false, next = 0
+    const readParts = async () => {
+      while (!failed && next < count) {
+        const index = next++
+        const bytes = await store.get(partId(session, kind, id, index))
+        const expected = Math.min(UPLOAD_CHUNK_BYTES, size - index * UPLOAD_CHUNK_BYTES)
+        if (!bytes || bytes.length !== expected) { failed = true; throw new Error('bad-upload') }
+        bytes.copy(body, index * UPLOAD_CHUNK_BYTES)
+      }
     }
-    return Buffer.concat(parts, size)
+    // Each read settled before its parts are deleted.
+    const results = await Promise.allSettled(Array.from({ length: Math.min(PARTS_READ_AT_ONCE, count) }, readParts))
+    const rejected = results.find(result => result.status === 'rejected')
+    if (rejected) throw rejected.reason
+    return body
   } finally {
     // These bytes can no longer be finalized. Failed/abandoned chunk uploads
     // are also covered by automatic staging maintenance.
-    await deleteUpload(store, session, kind, id, count).catch(err => console.warn('managed: upload cleanup failed:', err))
+    const cleanup = deleteUpload(store, session, kind, id, count).catch(err => console.warn('managed: upload cleanup failed:', err))
+    if (behind) behind(cleanup)
+    else await cleanup
   }
 }
 

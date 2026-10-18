@@ -164,6 +164,40 @@ test('multipart upload isolation, byte limits, cleanup and orphan expiry', async
   assert.equal(objects.size, 1, 'staging GC never deletes published content')
 })
 
+test('an upload\'s parts are read a few at once into their places, its cleanup handed on to go on past its answer', async t => {
+  const { sdk, objects } = sdkFixture()
+  const { uploadStore } = await vercelStores(t, 'secret', sdk)
+  const count = 9, id = randomUUID(), session = 'session-one'
+  const parts = Array.from({ length: count }, (_, index) => Buffer.alloc(index === count - 1 ? 5 : UPLOAD_CHUNK_BYTES, index))
+  const request = { headers: { 'x-upload-id': id, 'x-upload-parts': String(count), 'x-upload-size': String(parts.reduce((sum, part) => sum + part.length, 0)) } }
+  const put = async () => { for (const [index, part] of parts.entries()) await putUploadPart(uploadStore, session, 'bundles', id, index, part) }
+  await put()
+  // Parts are asked for in order; earlier ones answer later, so they
+  // arrive out of it.
+  const get = uploadStore.get
+  let asked = 0, most = 0, reading = 0
+  uploadStore.get = async key => {
+    most = Math.max(most, ++reading)
+    await new Promise(resolve => { setTimeout(resolve, 2 * (count - asked++)) })
+    try { return await get.call(uploadStore, key) } finally { reading-- }
+  }
+  let cleanup
+  assert.deepEqual(await readUpload(uploadStore, request, session, 'bundles', 10e7, behind => { cleanup = behind }), Buffer.concat(parts))
+  assert.equal(most, 6, 'six parts read at once')
+  assert.ok(cleanup, 'the cleanup handed on')
+  await cleanup
+  assert.equal(objects.size, 0, 'its parts deleted once it settles')
+
+  // A part missing or short: nothing more read once it fails, every part
+  // still deleted.
+  await put()
+  objects.delete([...objects.keys()][1])
+  asked = 0
+  await assert.rejects(readUpload(uploadStore, request, session, 'bundles', 10e7), /bad-upload/u)
+  assert.equal(reading, 0, 'each read settled before it fails')
+  assert.equal(objects.size, 0)
+})
+
 test('upload cleanup is session/kind scoped, bounded for forged counts, and continues after a delete failure', async t => {
   const { sdk, objects } = sdkFixture()
   const { uploadStore } = await vercelStores(t, 'secret', sdk)

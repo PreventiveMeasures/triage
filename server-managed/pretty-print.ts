@@ -45,6 +45,10 @@ const MAX_KEPT_DETAILS_BYTES = 256 * 1024 * 1024
 // Files hashed at once: one at a time, each waits its own round trip to the
 // thread pool; all at once, every one's job is held together.
 const HASHES_AT_ONCE = 32
+// Kept copies a stream reads ahead of the line it is sending (readAhead):
+// one at a time, each waits its own storage round trip; each read whole, as
+// its line will send it.
+const KEPT_AHEAD = 8
 
 export class PrettyError extends Error {
   status: number
@@ -166,6 +170,29 @@ async function prettyLine({ path, hash }: PrettyRequest, copy: () => Promise<Ope
   }
 }
 
+// A file's line from its kept copy, `open` opening it, or null where none is
+// kept.
+async function keptLine(request: PrettyRequest, open: () => Promise<OpenedBlob | null>): Promise<PrettyLine | null> {
+  const copy = await open()
+  return copy && prettyLine(request, () => Promise.resolve(copy))
+}
+
+// Each of `items` with what `read` reads of it, in their order, up to
+// KEPT_AHEAD of them read at once ahead of the one iterated, each answered
+// (or failing) in its turn. One iterated no further starts no more; those
+// under way settle unread.
+async function* readAhead<T, R>(items: readonly T[], read: (item: T) => Promise<R>): AsyncGenerator<[T, R]> {
+  const reads: Promise<R>[] = []
+  for (const [i, item] of items.entries()) {
+    while (reads.length < Math.min(items.length, i + KEPT_AHEAD)) {
+      const reading = read(items[reads.length]!)
+      reading.catch(() => {})
+      reads.push(reading)
+    }
+    yield [item, await reads[i]!]
+  }
+}
+
 // The files that changed between two sides, pretty-printed: each side's
 // formattable files the other has another text at the path of, or, where it
 // has none there, none of their text at a path of its own (a file renamed, or
@@ -174,8 +201,9 @@ async function prettyLine({ path, hash }: PrettyRequest, copy: () => Promise<Ope
 // the viewer diffs but where it pairs files otherwise (among copies of one
 // text, across packages), whose copies it asks for alone. As they are
 // iterated, in path order, the base's first where both have one: those kept,
-// at once; then the rest, formatted one after another, the minified before
-// the others (needsPrettyPrint), as the viewer prints those unasked.
+// at once, a few read ahead (readAhead); then the rest, formatted one after
+// another, the minified before the others (needsPrettyPrint), as the viewer
+// prints those unasked.
 export function compared(sides: readonly [ComparedSide, ComparedSide]): AsyncGenerator<ComparedLine> {
   // Each side's texts at the paths the other hasn't: where a file moved has its own.
   const moved = sides.map((own, i) => new Set([...own.hashes].filter(([path]) => !sides[1 - i]!.hashes.has(path)).map(([, hash]) => hash)))
@@ -185,9 +213,8 @@ export function compared(sides: readonly [ComparedSide, ComparedSide]): AsyncGen
   }).toSorted((a, b) => (a.file.path < b.file.path ? -1 : a.file.path > b.file.path ? 1 : 0))
   return (async function* () {
     const unkept: typeof changed = []
-    for (const { own, file } of changed) {
-      const copy = await own.kept(file)
-      if (copy) yield { side: own.side, ...await prettyLine(file, () => Promise.resolve(copy)) }
+    for await (const [{ own, file }, line] of readAhead(changed, item => keptLine(item.file, () => item.own.kept(item.file)))) {
+      if (line) yield { side: own.side, ...line }
       else unkept.push({ own, file })
     }
     const minified = new Map(unkept.map(({ file }) => [file, needsPrettyPrint(file.path, file.text)]))
@@ -325,15 +352,18 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
       return body
     })
   }
+  // The copy kept for a public version's file, or null where none is (and
+  // for a private version's, which none is kept for).
+  const npmKept = (doc: NpmVersionDocument, request: PrettyRequest) => (doc.private ? Promise.resolve(null) : kept(() => npm.open(prettyFile(request))))
   // A version's file pretty-printed, `read` reading its text (and checking
   // it is the file named): from the copy kept for a public version, else
   // made, and kept for a public one.
   async function npmCopy(doc: NpmVersionDocument, request: PrettyRequest, read: () => Promise<string>): Promise<OpenedBlob> {
+    return await npmKept(doc, request) ?? npmMade(doc, request, read)
+  }
+  // The file pretty-printed from the text `read` reads, kept for a public version.
+  async function npmMade(doc: NpmVersionDocument, request: PrettyRequest, read: () => Promise<string>): Promise<OpenedBlob> {
     const file = prettyFile(request)
-    if (!doc.private) {
-      try { return await npm.open(file) }
-      catch (err) { if (!(err instanceof CacheMissError)) throw err }
-    }
     return opened(await shared(doc.private ? `npm ${doc.dist.integrity} ${file}` : `npm ${file}`, async () => {
       const body = await prettyBody(await read(), request.extension)
       if (!doc.private) await keep(() => npm.put(file, body))
@@ -369,11 +399,14 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
     },
     // Every file of the version that needs pretty-printing (npmPrintable),
     // read before this resolves; then, as they are iterated, each
-    // pretty-printed as `npm` has it, one after another.
+    // pretty-printed as `npm` has it, one after another, those kept a few
+    // read ahead (readAhead).
     async npmAll(doc: NpmVersionDocument): Promise<AsyncGenerator<PrettyLine>> {
       const files = await npmPrintable(doc)
       return (async function* () {
-        for (const { text, ...request } of files) yield await prettyLine(request, () => npmCopy(doc, request, () => Promise.resolve(text)))
+        for await (const [file, line] of readAhead(files, request => keptLine(request, () => npmKept(doc, request)))) {
+          yield line ?? await prettyLine(file, () => npmMade(doc, file, () => Promise.resolve(file.text)))
+        }
       })()
     },
     // Two bundles' sides, or two versions', as a comparison reads them, read
@@ -392,7 +425,7 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
     npmSides(base: NpmVersionDocument, other: NpmVersionDocument): Promise<[ComparedSide, ComparedSide]> {
       const sideOf = async (doc: NpmVersionDocument, side: Side): Promise<ComparedSide> => ({ side, ...await sideFiles(await npmFiles(doc), (_, bytes) => npmFileHash(bytes)),
         packageDirs: null,
-        kept: request => (doc.private ? Promise.resolve(null) : kept(() => npm.open(prettyFile(request)))),
+        kept: request => npmKept(doc, request),
         made: (request, text) => npmCopy(doc, request, () => Promise.resolve(text)) })
       return Promise.all([sideOf(base, 'base'), sideOf(other, 'other')])
     },

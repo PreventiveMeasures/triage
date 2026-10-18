@@ -135,7 +135,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmDeltaStore, npmPublishTimeStore, npmVersionStore, pullDependencyStore,
+import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore,
   repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { type NpmDelta, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
@@ -151,7 +151,7 @@ import { contentAccess } from './content-access.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
-import type { AvatarStore } from './avatar-store.ts'
+import type { AvatarStore, CachedAvatar } from './avatar-store.ts'
 import type { BlobStore, OpenedBlob } from './blob-store.ts'
 import { bundleFilePrefix, bundleIntegrity, bundleKind, bundleRepo, reportBundleHashes } from './bundle.ts'
 import { resolveRepositoryImportLocation } from './repository-aliases.ts'
@@ -181,6 +181,7 @@ import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, type ScanProgress, repositoryRiskLines
 import { WORKFLOWS_DIR } from './repository-actions.ts'
 import { githubActionsSource } from './github-actions.ts'
 import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, scopedDirectory } from './repository-browser.ts'
+import { type Lru, lru } from './lru.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, cacheAvatar, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession, runRequestPresence } from './session.ts'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
@@ -468,14 +469,18 @@ function firstHeader(v: string | string[] | undefined): string | null {
 }
 
 // `key` is the image chosen for `id`; one not cached falls back to `id`'s own.
-async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: string, key = id): Promise<void> {
-  const avatar = await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id))
+// A user's is never kept by the browser, as it changes with their profile.
+async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: string, key = id, cacheControl = 'no-store'): Promise<void> {
+  sendAvatar(res, await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id)), cacheControl)
+}
+
+function sendAvatar(res: ServerResponse, avatar: CachedAvatar | null, cacheControl = 'no-store'): void {
   if (avatar == null) { sendJson(res, 404, { error: 'no-avatar' }); return }
   res.writeHead(200, {
     'content-type': avatar.contentType,
     'content-length': String(avatar.bytes.length),
     'x-content-type-options': 'nosniff',
-    'cache-control': 'no-store',
+    'cache-control': cacheControl,
   })
   res.end(avatar.bytes)
 }
@@ -489,15 +494,20 @@ async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: st
 const AGENT_AVATARS: ReadonlySet<string> = new Set([...APP_AGENTS, ...Object.values(GITHUB_AGENTS)]
   .flatMap(agent => 'avatar' in agent && agent.avatar ? [agent.avatar] : []))
 const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
+// An agent's mark is a public GitHub image that never changes with anyone's
+// profile, drawn on every tile and comment by it: kept by the browser a day,
+// for it alone.
+const AGENT_AVATAR_CACHE = 'private, max-age=86400'
 
 async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {
   const [, kind, id] = AGENT_AVATAR.exec(avatar)!
   const key = `00000000-0000-0000-000${kind === 'app' ? 0 : 1}-${id!.padStart(12, '0')}`
-  if (await avatarStore.get(key) == null) {
-    await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/${kind === 'app' ? 'in' : 'u'}/${id}`, globalThis.fetch)
-      .catch((err) => { console.warn('managed: agent avatar caching failed:', err) })
-  }
-  await serveAvatar(res, avatarStore, key)
+  // Read once where it is kept; read again only past fetching it.
+  const kept = await avatarStore.get(key)
+  if (kept != null) { sendAvatar(res, kept, AGENT_AVATAR_CACHE); return }
+  await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/${kind === 'app' ? 'in' : 'u'}/${id}`, globalThis.fetch)
+    .catch((err) => { console.warn('managed: agent avatar caching failed:', err) })
+  await serveAvatar(res, avatarStore, key, key, AGENT_AVATAR_CACHE)
 }
 
 const MAX_JSON_BODY_BYTES = 4096
@@ -518,14 +528,17 @@ async function readBodyBytes(req: IncomingMessage, maxBytes: number): Promise<Bu
 }
 
 // A file upload's content, opening a body the browser sealed to this session
-// (common/managed/upload-seal.ts). Link reports are never sent in parts.
+// (common/managed/upload-seal.ts). Link reports are never sent in parts; the
+// parts of one sent in them are deleted behind its answer.
 async function readUploadBody(req: IncomingMessage, deps: ManagedHttpDeps, session: ManagedSession, kind: UploadKind | 'links'): Promise<Buffer> {
   const maxBytes = kind === 'bundles' ? deps.config.maxBundleBytes : deps.config.maxReportBytes
   const sealed = req.headers[UPLOAD_SEAL_HEADER] !== undefined
   const limit = sealed ? maxSealedBytes(maxBytes) : maxBytes
   let bytes
   if (kind === 'links' || req.headers['x-upload-id'] == null) bytes = await readBodyBytes(req, limit)
-  else if (deps.uploadStore) bytes = await readUpload(deps.uploadStore, req, session.id, kind, limit)
+  else if (deps.uploadStore) {
+    bytes = await readUpload(deps.uploadStore, req, session.id, kind, limit, cleanup => { deps.track(cleanup); deps.waitUntil?.(cleanup) })
+  }
   else throw new Error('bad-upload')
   return sealed ? await openSessionUpload(session.uploadKey, bytes, maxBytes) : bytes
 }
@@ -640,7 +653,7 @@ async function handleViewAs(req: IncomingMessage, res: ServerResponse, deps: Man
   const userId = (body as { userId?: unknown } | null)?.userId
   if (typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (userId === s.user.id) { sendJson(res, 400, { error: 'cannot-view-as-self' }); return }
-  const target = (await deps.db.listUsers()).find(user => user.id === userId)
+  const target = await deps.db.getUser(userId)
   if (!target) { sendJson(res, 404, { error: 'not-found' }); return }
   // The insert itself rechecks the admin session and role.
   const setCookie = await startViewSession(deps.config, deps.db, s.session, userId, Date.now())
@@ -723,7 +736,7 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
   const role = (body as { role?: unknown } | null)?.role
   if (typeof userId !== 'string' || !isRole(role)) { sendJson(res, 400, { error: 'bad-request' }); return }
   if (userId === s.user.id) { sendJson(res, 403, { error: 'cannot-change-own-role' }); return }
-  const target = (await deps.db.listUsers()).find(user => user.id === userId)
+  const target = await deps.db.getUser(userId)
   // A caller can hold the body open while their admin access is revoked.
   if (await readAdminSession(res, deps, cookie) == null) return
   const ok = await deps.db.setUserRole(userId, role)
@@ -1260,8 +1273,8 @@ async function handleListReports(res: ServerResponse, deps: ManagedHttpDeps, ses
 // declared integrity that has a stored bundle wins (bundleId set). When none is
 // stored yet, keep the first declared integrity so a later bundle upload of it
 // re-links (see linkReportsToBundle). Returns the (bundleId, integrity) to store.
-async function resolveReportBundle(deps: ManagedHttpDeps, user: StoredUser, bytes: Buffer): Promise<{ bundleId: string | null; integrity: string | null }> {
-  const hashes = reportBundleHashes(bytes)
+async function resolveReportBundle(deps: ManagedHttpDeps, user: StoredUser, json: unknown): Promise<{ bundleId: string | null; integrity: string | null }> {
+  const hashes = reportBundleHashes(json)
   for (const h of hashes) {
     const b = await deps.db.getBundleByIntegrity(h)
     if (b != null && await canAccessBundle(deps, user, b.id)) return { bundleId: b.id, integrity: h }
@@ -1371,7 +1384,8 @@ async function handleUploadReport(req: IncomingMessage, res: ServerResponse, dep
   if (existing) { await sendUploadedReport(req, res, deps, cookie, existing, true); return }
   const id = randomUUID()
   const contentType = (firstHeader(req.headers['content-type']) ?? '').split(';', 1)[0]!.trim() || 'application/json'
-  const { bundleId, integrity } = await resolveReportBundle(deps, s.user, bytes)
+  // A JSON report's parse already in hand, not parsed again for its hashes.
+  const { bundleId, integrity } = await resolveReportBundle(deps, s.user, parsed.format === 'json' ? parsed.data : null)
   const dataKey = await deps.reportStore.put(id, bytes)
   let report: ReportRecord
   try {
@@ -1461,8 +1475,10 @@ async function repositoryBrowserUser(deps: ManagedHttpDeps, userId: string) {
 // user's repository access, for the next catalog to send.
 async function backfillCatalogCommits(deps: ManagedHttpDeps, userId: string, missing: readonly CatalogCommit[]): Promise<void> {
   let browser: ReturnType<typeof createRepositoryBrowser> | undefined
+  let repos: ReturnType<ManagedDb['listAllRepos']> | undefined
   await backfillBundleCommits(deps.db, userId, missing, async repoId => {
-    const repo = (await deps.db.listAllRepos()).find(item => item.repoId === repoId)
+    // Read once for the repositories the backfill reaches, not once each.
+    const repo = (await (repos ??= deps.db.listAllRepos())).find(item => item.repoId === repoId)
     if (!repo) return null
     browser ??= createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, userId))
     return browser.reader(repo)
@@ -1534,9 +1550,11 @@ function repositoryQuery(res: ServerResponse, query: URLSearchParams) {
 async function authorizeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number, path: string) {
   const s = await readWorkspaceSession(res, deps, cookie)
   if (!s) return null
-  const repo = (await bundleRepos(deps, s.user)).find(item => item.repoId === repoId)
+  // bundleRepos's reads, the reader's scopes read once for both.
+  const access = await contentAccess(deps.db, s.user)
+  const repo = (await deps.db.listSelectedRepos()).filter(access.bundle).find(item => item.repoId === repoId)
   if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return null }
-  const scopes = s.user.role === 'admin' ? [null] : (await deps.db.listRepoScopesForUser(s.user.id)).filter(scope => scope.repoId === repoId).map(scope => scope.path)
+  const scopes = access.scopes == null ? [null] : access.scopes.filter(scope => scope.repoId === repoId).map(scope => scope.path)
   return { repo, virtualEntries: scopedDirectory(path, scopes), user: s.user }
 }
 
@@ -1602,6 +1620,22 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
 // read, before any of it is sent. The load stays held until this response is
 // written or abandoned, and a reader who stops reading it gives it up after
 // a while.
+// What GitHub answered of a repository's trees for the code viewer, which a
+// commit or tree it names never changes: the tree at a directory of a commit
+// (getRepoTreeId reads the commit, then a listing a level down to it), and
+// how many files a tree holds under it and their bytes (repositoryTreeFiles),
+// by the repository's id, for the next to open it. Asked of them only once
+// the reader's own access has named the commit, as GitHub would have
+// answered them; by the database, as each instance has one.
+const REPOSITORY_TREES_KEPT = 4096
+type TreeFiles = Awaited<ReturnType<typeof repositoryTreeFiles>>
+const repositoryTrees = new WeakMap<ManagedDb, { ids: Lru<string>; files: Lru<TreeFiles> }>()
+function repositoryTreesOf(db: ManagedDb) {
+  let kept = repositoryTrees.get(db)
+  if (!kept) repositoryTrees.set(db, kept = { ids: lru(REPOSITORY_TREES_KEPT), files: lru(REPOSITORY_TREES_KEPT) })
+  return kept
+}
+
 async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const asked = repositoryQuery(res, query)
   if (!asked) return
@@ -1618,10 +1652,12 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
     const commit = await reader.commit(ref)
     const repo = access.repo.fullName
     const client = createClient({ token: reader.readToken() })
+    const treeKey = `${access.repo.repoId}\0${commit}\0${path}`, trees = repositoryTreesOf(deps.db)
     // A directory the commit has none at is none to read, as browsing it says.
-    const tree = await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
+    const tree = trees.ids.get(treeKey) ?? await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
       throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(' has no directory at ') ? new GithubApiError(404, 'no-directory') : err
     }))
+    trees.ids.set(treeKey, tree)
     // Access still held, and the same repository, before anything read is sent.
     const fenced = async () => {
       await reader.recheckAccess()
@@ -1631,7 +1667,9 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
       return true
     }
     // Too large names the commit it was read at, for History to read.
-    const listed = await repositoryTreeFiles(repo, reader.readToken(), tree)
+    const filesKey = `${access.repo.repoId}\0${tree}`
+    let listed = trees.files.get(filesKey)
+    if (listed === undefined) trees.files.set(filesKey, listed = await repositoryTreeFiles(repo, reader.readToken(), tree))
     if (!repositoryCodeFits(listed)) {
       if (await fenced()) sendJson(res, 413, { error: 'directory-too-large', commit })
       return
@@ -2764,9 +2802,8 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
         throw new BundleBuildError(409, 'repository-changed')
       }
       signal.throwIfAborted()
-      const bytes = Buffer.from(built.bytes)
-      await storeUploadedBundle(req, res, deps, cookie, current, bytes, input.repoId, built.directory, built.filename, 'build',
-        bundleIntegrity(bytes), input.conditions)
+      await storeUploadedBundle(req, res, deps, cookie, current, built.bytes, input.repoId, built.directory, built.filename, 'build',
+        bundleIntegrity(built.bytes), input.conditions)
     })
   } catch (error) {
     if (res.destroyed || controller.signal.aborted) return
@@ -2847,15 +2884,17 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
     repo.repoId = null
     directory = ''
   }
-  await storeUploadedBundle(req, res, deps, cookie, s, bytes, repo.repoId, directory, filename, 'upload', integrity)
+  await storeUploadedBundle(req, res, deps, cookie, s, bytes, repo.repoId, directory, filename, 'upload', integrity, null, existing === null)
 }
 
+// `absent` where the caller has just found no bundle of `integrity`: not read
+// again, one inserted since meeting the insert's UNIQUE below as a race does.
 async function storeUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined,
   s: { session: ManagedSession; user: StoredUser }, bytes: Buffer, repoId: number | null, directory: string, filename: string,
-  provenance: BundleProvenance, integrity = bundleIntegrity(bytes), buildConditions: BundleBuildConditions | null = null): Promise<void> {
+  provenance: BundleProvenance, integrity = bundleIntegrity(bytes), buildConditions: BundleBuildConditions | null = null, absent = false): Promise<void> {
   const kind = bundleKind(filename)
   const reuse = { provenance, filename, kind, buildConditions }
-  const existing = await deps.db.getBundleByIntegrity(integrity)
+  const existing = absent ? null : await deps.db.getBundleByIntegrity(integrity)
   if (existing) { await sendUploadedBundle(req, res, deps, cookie, existing, reuse); return }
   const id = randomUUID()
   const dataKey = await deps.bundleStore.put(id, bytes, kind)
@@ -2985,12 +3024,11 @@ async function handleMyTeams(res: ServerResponse, deps: ManagedHttpDeps, session
 // need a published report in their teams; ownership never overrides role none.
 async function canViewReport(deps: ManagedHttpDeps, user: StoredUser, reportId: string): Promise<boolean> {
   if (!roleAtLeast(user.role, 'view')) return false
-  const report = await deps.db.getReport(reportId)
+  const report = await deps.db.getReportView(user.id, reportId)
   if (report == null) return false
   if (user.role === 'admin') return true
-  if (user.role === 'manage') return report.uploadedBy === user.id || deps.db.userCanReadReport(user.id, reportId)
-  if (!report.visible) return false
-  return deps.db.userCanReadReport(user.id, reportId)
+  if (user.role === 'manage') return report.uploadedBy === user.id || report.readable
+  return report.visible && report.readable
 }
 
 // GET/HEAD /api/reports/:id/sources. Only the linked bundle's files cited by
@@ -4231,6 +4269,9 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   const { config, db, avatarStore, isShuttingDown, track } = deps
   const repositoryDiscovery = new RepositoryDiscovery(config)
+  // Kept reads' prunes run behind their writes: tracked, so the database
+  // outlives them, and on serverless kept alive past the answer.
+  ownKeptPrunes(db, prune => { track(prune); deps.waitUntil?.(prune) })
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost')

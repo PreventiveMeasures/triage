@@ -3,7 +3,7 @@ import { openManagedShareDialog } from './client-managed.js'
 import { LitElement, html, render as litRender, nothing, unsafeCSS } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { appMarkup } from './markup.js'
-import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureBundleFindingsIndexed, ensureCounts, ensureLinkedFindingsIndexed, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedModeLink, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
+import { LINKS_KIND, addBundleToWorkspace, addReportToWorkspace, analyzeTriageImpact, clientModeLabel, computeLinkHint, configureClientMode, createWorkspace, ensureCounts, getCount, getKind, getPackagesIndex, getRepositoriesIndex, getWorkspaceAppMetadata, getWorkspaceAppModeHint, hasStandaloneProbeHint, hydrateSecureStorage, isCombinedServerMode, isManagedModeLink, isManagedUiMode, listBundles, listFiles, listWorkspaces, mergeSyncServerInfo, migrateLegacyFilenames, onVaultStateChange, onWorkspaceAppMetadataChanged, probeServerInfo, readCachedServerInfo, reloadTriageFromStorage, rememberStandaloneProbe, removeBundleFromWorkspace, removeReportFromWorkspace, renameWorkspace, setLocalMode, state, syncObservedAfterHydrate, toggleClientMode, waitForServerInfo, writeCachedServerInfo } from '#client/index.js'
 import { deleteBundleFromRemote, deleteFromRemote as deleteRemote, isBundleInRemoteOrCached, isInRemoteOrCached, loadSync, setSyncForceDisabled, triageSync } from './client-sync.js'
 import { clearPreviewRole, fetchManagedBundleCatalog, getPreviewRole, loadManagedBundle, logout as managedLogout, probeSession as managedProbeSession, probeTeams as managedProbeTeams, resetManagedAppState, setManagedAppSession, setManagedReportCatalog, stopViewing } from './client-managed.js'
 import { resetManagedFixes } from './managed-pull-requests.js'
@@ -33,6 +33,7 @@ import { renderLandingWorkspaces } from './landing-workspaces.js'
 import { getLoadedWorkspaceAppMetadata } from './workspace-app-load.js'
 import { updateManagedLanding } from './landing-managed.js'
 import { refreshScanNavigation } from './scan-navigation.js'
+import { startIndexWalks } from './index-walks.js'
 
 // Set on mount (`<app-sidebar>` firstUpdated). `hostEl` is the
 // custom-element host (light DOM — the `.classList` collapse
@@ -584,15 +585,12 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   }
   // Kick the OPFS-wide finding index so the Packages count + page
   // populate in the background without needing the user to open a
-  // bundle first. Idempotent — concurrent calls share the same
-  // in-flight promise; subsequent calls walk listFiles again to
-  // pick up any newly-dropped reports.
-  ensureBundleFindingsIndexed().catch(() => {})
-  // Same deal for the links index, and the same reason to kick it
-  // here rather than from a view: a finding's "Duplicates:" row is
-  // painted by the findings surfaces, which know nothing about links
-  // files, so the index has to be filling before the user opens one.
-  ensureLinkedFindingsIndexed().catch(() => {})
+  // bundle first, and the links index with it: a finding's
+  // "Duplicates:" row is painted by the findings surfaces, which know
+  // nothing about links files, so the index has to be filling before
+  // the user opens one. Not before the boot's first view is restored,
+  // though (index-walks.js).
+  startIndexWalks()
   const names = await listFiles()
   if (modeAtStart !== clientModeLabel()) {
     await renderSidebar()

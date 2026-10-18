@@ -38,15 +38,25 @@ export interface KeptStore<T> {
 // When each database last had the rows under each prefix removed.
 const PRUNE_EVERY_MS = 60 * 60_000
 const pruned = new WeakMap<UpstreamCacheStore, Map<string, number>>()
+// Who sees each database's prunes through (index.ts: its app, which waits
+// for them before closing it, and on serverless keeps its invocation alive
+// till they settle), as a write no longer waits for one.
+const pruneOwners = new WeakMap<UpstreamCacheStore, (prune: Promise<unknown>) => void>()
+export function ownKeptPrunes(db: UpstreamCacheStore, own: (prune: Promise<unknown>) => void) {
+  pruneOwners.set(db, own)
+}
 
 // Removes the rows under `prefix` kept `keptMs` before `at`, at most once an
 // hour a database, as rows under it are written: here, and risk's downloads
-// (npm-risk.ts). A failure is `warn`ed of, and removes nothing.
-export async function pruneKept(db: UpstreamCacheStore, prefix: string, keptMs: number, at: number, warn: (error: unknown) => void) {
+// (npm-risk.ts), each one run handed to the database's owner. A failure is
+// `warn`ed of, and removes nothing.
+export function pruneKept(db: UpstreamCacheStore, prefix: string, keptMs: number, at: number, warn: (error: unknown) => void): Promise<void> {
   const times = pruned.get(db) ?? pruned.set(db, new Map()).get(db)!
-  if (at - (times.get(prefix) ?? -Infinity) < PRUNE_EVERY_MS) return
+  if (at - (times.get(prefix) ?? -Infinity) < PRUNE_EVERY_MS) return Promise.resolve()
   times.set(prefix, at)
-  try { await db.deleteUpstreamCacheEntries(prefix, at - keptMs) } catch (error) { warn(error) }
+  const prune = (async () => { try { await db.deleteUpstreamCacheEntries(prefix, at - keptMs) } catch (error) { warn(error) } })()
+  pruneOwners.get(db)?.(prune)
+  return prune
 }
 
 // Values of `type`, each read for `keptMs` after it was kept.
@@ -79,7 +89,11 @@ function keptStore<T>(db: UpstreamCacheStore, type: string, keptMs: number, debu
     },
     async write(key, value, at) {
       try { await db.setUpstreamCacheEntry(keyOf(key), JSON.stringify({ at, value }), at) } catch (error) { warn('write', error) }
-      await prune(at)
+      // Behind the write, not before it is done: the prune reads the whole
+      // table (no index serves its prefix), which no writer need wait on.
+      // Its hour is marked before it runs, so writes meanwhile start none,
+      // and its database's owner sees it through (ownKeptPrunes).
+      void prune(at)
     },
     async remove(key) {
       try { await db.deleteUpstreamCacheEntries(keyOf(key), Number.MAX_SAFE_INTEGER) } catch (error) { warn('remove', error) }

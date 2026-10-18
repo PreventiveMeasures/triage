@@ -180,8 +180,10 @@ async function convertStoredReport(raw: RawObjectStorage, db: StorageDb, key: St
 
 // Startup enables encryption before constructing stores; validate the persisted
 // requirement even when this adapter is opened without a key.
-async function storagePolicy(db: StorageDb, key: StorageKey | null) {
-  let enabled = await db.getStorageEncryption()
+// `known` is the state the caller read a moment before, where it found it
+// enabled, so a cold start reads it once.
+async function storagePolicy(db: StorageDb, key: StorageKey | null, known: StorageEncryptionState | null) {
+  let enabled = known ?? await db.getStorageEncryption()
   let checkedAt = Date.now()
   return async (fresh = false) => {
     // Enabled is irreversible. Keyless instances cache "off" briefly, while
@@ -196,8 +198,9 @@ async function storagePolicy(db: StorageDb, key: StorageKey | null) {
   }
 }
 
-export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey | null): Promise<ObjectStorage> {
-  const mode = await storagePolicy(db, key)
+export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: StorageDb, key: StorageKey | null,
+  known: StorageEncryptionState | null = null): Promise<ObjectStorage> {
+  const mode = await storagePolicy(db, key, known)
   async function open(identity: string): ReturnType<ObjectStorage['open']> {
     logicalKey(identity)
     const state = await mode()

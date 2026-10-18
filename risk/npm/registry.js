@@ -87,6 +87,11 @@ async function kept({ cache }, type, key, ask, fresh = () => true) {
   return value
 }
 
+// What is kept under each `[type, key]` of `entries`, in their order, null
+// where nothing is: in one read where the cache reads records of any types at
+// once (`readEach`), else one a key.
+const readEach = (cache, entries) => cache.readEach ? cache.readEach(entries) : Promise.all(entries.map(([type, key]) => cache.read(type, key)))
+
 // An answer's body as JSON, read no further than `limit` bytes.
 async function jsonOf(res, limit, what) {
   const tooLarge = () => new NpmRiskError('upstream-too-large', `npm's answer for ${what} is over ${limit} bytes`)
@@ -169,7 +174,7 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
   const given = oldVersion === true ? fresh(picked) ? picked.oldVersion : undefined : oldVersion
   if (cache && given !== undefined) {
     const wanted = given === null ? [version] : [version, given]
-    const [facts, pkg] = await Promise.all([Promise.all(wanted.map(at => cache.read('risk/npm/versions', `${name}@${at}`))), cache.read('risk/npm/packages', name)])
+    const [pkg, ...facts] = await readEach(cache, [['risk/npm/packages', name], ...wanted.map(at => ['risk/npm/versions', `${name}@${at}`])])
     const gone = at => Object.hasOwn(pkg.removed, at)
     if (fresh(pkg) && 'removed' in pkg && wanted.every((at, i) => facts[i] || gone(at))) {
       return { versions: new Map(wanted.flatMap((at, i) => gone(at) ? [] : [[at, facts[i]]])), removed: new Map(wanted.filter(gone).map(at => [at, pkg.removed[at]])),

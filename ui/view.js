@@ -6,6 +6,7 @@ import { dropZone, sidebar } from './view/dom.js'
 import { attachSharedWorkspace, ensureKnownLinkedFindingsIndexed, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isManagedUiMode, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
 import { ensureClientMode, renderSidebar } from './view/sidebar.js'
+import { releaseIndexWalks } from './view/index-walks.js'
 import { BUNDLE_TABS, LAST_FILE_KEY, currentViewGeneration, switchToFile, switchToWorkspace, switchToWorkspaceContent } from './view/ingest.js'
 import { openBundle, selectBundle } from './view/bundle-load.js'
 import { revealFinding } from './view/finding-link-nav.js'
@@ -267,6 +268,9 @@ async function continueBoot() {
     // load. Restoring a report adds `.hidden`; only an empty result
     // reveals the welcome once this initial-load gate is removed.
     dropZone.hidden = false
+    // The full index walks the sidebar asked for start now, behind the
+    // view restored (index-walks.js).
+    releaseIndexWalks()
   }
 }
 
@@ -296,9 +300,10 @@ async function restoreInitialView() {
   // only when the status button is visible (usable URL + ≥1 workspace)
   // and the user hasn't opted out. Boot does NOT pre-load — a user with
   // no workspaces never downloads the sync payload.
-  // Restore the small, known links set before findings can paint. The sidebar
-  // starts full-library verification in the background; awaiting that instead
-  // would put every unrelated report read on the initial view's critical path.
+  // Restore the small, known links set before findings can paint. The sidebar's
+  // full-library walks start in the background once the view is restored
+  // (continueBoot); awaiting them instead would put every unrelated report read
+  // on the initial view's critical path.
   await Promise.all([
     renderSidebar(),
     ensureKnownLinkedFindingsIndexed().catch((err) => console.warn('initial linked findings:', err)),

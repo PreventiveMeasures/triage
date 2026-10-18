@@ -13,6 +13,33 @@ export function stopManagedTeamFeed() {
   active = null
 }
 
+// A tab hidden HIDDEN_PAUSE_MS lets its feed go: the server holds a stream
+// open, polling for it, for every tab, seen or not. Shown again, the tab
+// starts one as its view would, whose first event catches the view up with
+// what changed meanwhile, as a reconnect's does.
+const HIDDEN_PAUSE_MS = 60_000
+let hiddenTimer = null
+let pausedHidden = false
+function pauseOnceHidden() {
+  clearTimeout(hiddenTimer)
+  hiddenTimer = null
+  if (!globalThis.document?.hidden || !active) return
+  hiddenTimer = setTimeout(() => {
+    hiddenTimer = null
+    if (!globalThis.document?.hidden || !active) return
+    stopManagedTeamFeed()
+    pausedHidden = true
+  }, HIDDEN_PAUSE_MS)
+}
+globalThis.document?.addEventListener('visibilitychange', () => {
+  if (globalThis.document.hidden) { pauseOnceHidden(); return }
+  clearTimeout(hiddenTimer)
+  hiddenTimer = null
+  if (!pausedHidden) return
+  pausedHidden = false
+  startManagedTeamFeed()
+})
+
 // Start reads after the feed's initial invalidation, so it supplies the loading
 // baseline instead of immediately repeating the same HTTP reads. A delayed or
 // unavailable stream must not prevent HTTP loading; if that fallback wins, the
@@ -57,6 +84,9 @@ function waitForHydration(promise, signal) {
 // consumer still belongs to the current view, so navigation cancels stale HTTP
 // reads without reconnecting the same stream. A team stream includes the catalog.
 export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
+  // Let go while hidden: the feed the view wants starts when it is shown
+  // again, though a view loading meanwhile still loads.
+  if (pausedHidden && globalThis.document?.hidden && !hydrate) return undefined
   const session = state.managedSession, view = currentViewSignal()
   const focused = ['findings', 'files', 'links'].includes(state.currentView)
   const contentList = ['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)
@@ -77,7 +107,10 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
       && state.managedSession?.id === session.id && state.managedSession?.role === session.role
       && state.managedSession?.csrfToken === session.csrfToken && !!state.managedSession?.publicShare === !!session.publicShare
     active = subscription
+    pausedHidden = false
     watchSubscription(subscription)
+    // One started in a hidden tab goes once the tab has been hidden a while.
+    if (globalThis.document?.hidden) pauseOnceHidden()
   }
   const subscription = active
   // Sidebar renders must not start annotation reads while a report is loading.

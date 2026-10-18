@@ -7,6 +7,7 @@ import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 import { checkGithubLinks, checkUsersByAccount } from './_managed-github-links.js'
 import { checkRepositoryDependencyReviews, reviewedRepo } from './_managed-repository-dependency-reviews.js'
 import { checkBundleBuildConditions, checkBundleProvenance } from './_managed-bundle-provenance.js'
+import { checkFoldedReads } from './_managed-folded-reads.js'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
@@ -413,7 +414,7 @@ test('Postgres management catalogs use a fixed query budget as reports and bundl
   await db.createTeam('team', 'Team', 1)
   await db.setTeamRepo('team', 1, '')
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
-  const budgets = { admin: [9, 14], manage: [11, 16] }
+  const budgets = { admin: [6, 11], manage: [8, 13] }
   for (let count = 1; count <= 20; count++) {
     const bundle = await seedBundle(db, bundles, session.userId)
     const report = await seedReport(db, reports, session.userId)
@@ -468,6 +469,11 @@ test('Postgres public feed validates idle polls with one SQL statement', async t
   assert.equal(await db.getWorkspaceShareFeedState('share'), null)
 })
 
+test('Postgres reads folded into one statement answer as the reads they fold', async t => {
+  const { db } = await database(t)
+  await checkFoldedReads(db)
+})
+
 test('Postgres bundle access snapshots preserve role, owner, directory and advisory grants', async t => {
   const { db } = await database(t)
   await checkBundleAccessSnapshots(db)
@@ -496,7 +502,7 @@ test('Postgres bundle delivery and advisories use bounded authorization reads', 
         headers: { cookie: session.setCookie.split(';')[0] } }, res)
       assert.equal(res.status, 200, `${role}/${part}`)
       const snapshotQueries = role === 'admin' ? 4 : part === 'advisories' && role !== 'manage' ? 6 : 5
-      assert.equal(queries.length, 4 + snapshotQueries * (part === 'advisories' ? 3 : 2))
+      assert.equal(queries.length, 1 + snapshotQueries * (part === 'advisories' ? 3 : 2))
       assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
       t.diagnostic(`${role}/${part}: ${queries.length} SQL statements, ${queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length} presence writes`)
     }
@@ -770,11 +776,11 @@ test('Postgres report batches snapshot sessions, scoped grants, and metadata wit
   const single = await db.getReportAccessSnapshot('session', 10, ids.slice(0, 1))
   const count = queries.length
   assert.equal(single.reports.length, 1)
-  assert.equal(count, 5, 'BEGIN, session SELECT, bulk report SELECT, links SELECT, COMMIT')
+  assert.equal(count, 1, 'one statement: the session, the bulk report grants and the links together')
   queries.length = 0
   const batch = await db.getReportAccessSnapshot('session', 10, [...ids, ids[0], 'missing'])
   assert.equal(queries.length, count)
-  assert.equal(queries[0], 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+  assert.ok(!queries[0].startsWith('BEGIN'))
   assert.equal(batch.reports.length, ids.length)
   for (const [index, id] of ids.entries()) {
     const report = batch.reports.find(entry => entry.id === id)
@@ -787,7 +793,7 @@ test('Postgres report batches snapshot sessions, scoped grants, and metadata wit
   assert.equal(queries.length, 2, 'single-statement reads take no transaction')
   queries.length = 0
   const app = await db.getTeamReportAccessSnapshot('session', 10, 'app')
-  assert.equal(queries.length, 7, 'one transaction: session, membership, reports, repository scopes and links')
+  assert.equal(queries.length, 1, 'one statement: session, membership, reports, repository scopes and links')
   assert.deepEqual(app.repositories, [{ repoId: 7, github: 'org/repo', path: 'packages/app' }])
   assert.equal(app.reports.length, 32)
   assert.ok(app.reports.every(report => !report.permissions.dependencies && report.permissions.security))
@@ -878,6 +884,16 @@ test('Postgres managed store: auth, scopes, uploads, history, comments, and rest
   const scoped = await db.listActivity({ ...query, query: 'hello', userId: user, contexts: [{ finding: 'f', reportId: report, report: 'report.json', repo: 'Owner/Repo' }] })
   assert.equal(scoped.total, 0, 'comment bodies do not leak to history')
   assert.equal((await db.listActivity({ ...query, userId: user, contexts: [] })).total, 3)
+  // A page's rows carry the total; past the last page, it is counted and the last page read.
+  const past = await db.listActivity({ ...query, limit: 3, page: 99 })
+  assert.deepEqual([past.total, past.page, past.history.length], [7, 3, 1])
+  assert.deepEqual(past.history[0], (await db.listActivity({ ...query, limit: 3, page: 3 })).history[0])
+  assert.equal(Object.hasOwn(past.history[0], 'total'), false, 'the total is not an entry field')
+  assert.deepEqual(past.filters, (await db.listActivity(query)).filters)
+  assert.deepEqual(past.filters.repos, ['Owner/Repo'])
+  assert.deepEqual(past.filters.users.map(({ id, login, detail }) => [id, login, detail]), [[`user:${admin}`, 'user1', null], [`user:${user}`, 'user2', null]])
+  assert.deepEqual({ ...await db.getUser(user) }, { id: user, login: 'user2', name: null, avatarUrl: null, role: (await db.listUsers()).find(u => u.id === user).role })
+  assert.equal(await db.getUser('missing'), null)
   assert.equal((await db.listUsers()).find(u => u.id === user).lastActivityAt, 70)
   const restarted = await openPostgresManagedDb(connect)
   assert.equal((await restarted.sessionWithUser('s', 80)).user.id, user)
@@ -1169,10 +1185,11 @@ test('Postgres feed snapshots scope catalogs to the session and release read-onl
   assert.notEqual(afterRepair[0].reports[0].cacheKey, beforeRepair[0].reports[0].cacheKey)
   await peer.setTriage('finding', { color: 'red' }, user, 'user1', 1)
   queries.length = 0
-  assert.equal((await read()).revision, repaired.revision, 'catalogs exclude annotations')
-  assert.equal(queries[0], 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
-  assert.equal(queries.at(-1), 'COMMIT')
+  const annotated = await read()
+  assert.equal(annotated.revision, repaired.revision, 'catalogs exclude annotations')
+  assert.equal(queries.length, 1, 'one statement: the session, the revisions and every list of the catalog')
   assert.equal(queries.some(sql => /UPDATE|INSERT|DELETE/u.test(sql)), false)
+  assert.deepEqual(annotated.teams, await db.listTeamsForUser(user), 'the catalog listTeamsForUser reads apart')
   await peer.removeTeamMember('team', user)
   assert.equal((await read()).revision, initial.revision)
   await peer.deleteSession('feed-session')
@@ -1235,7 +1252,7 @@ test('Postgres warm schemas and single-statement reads avoid DDL and transaction
   let opened = 0
   const db = await openPostgresManagedDb(() => { opened++; return connect() }, {}, true)
   t.after(() => db.close())
-  assert.equal(queries.length, 2)
+  assert.equal(queries.length, 1, 'the schema checked current in one read')
   assert.ok(queries.every(query => query.startsWith('SELECT')))
   opened = 0; queries.length = 0
   await db.withRequest(async () => {
@@ -1253,7 +1270,7 @@ test('Postgres authentication retains last-seen updates without taking the globa
   const id = hashToken(session.setCookie.split(';')[0].slice(4)), now = Date.now() + 100
   queries.length = 0
   assert.equal((await db.sessionWithUser(id, now)).user.id, session.userId)
-  assert.equal(queries.length, 4)
+  assert.equal(queries.length, 1, 'the session read and its presence recorded in one statement')
   assert.ok(queries.every(query => !query.includes('pg_advisory_xact_lock')))
   assert.equal((await db.listUsers()).find(user => user.id === session.userId).lastSeenAt, now)
 })
@@ -1342,6 +1359,29 @@ test('request-owned connections rollback failures and reconnect before subsequen
   assert.equal(released, 3, 'request failures also close the socket')
 })
 
+test('Postgres team routes take a statement per read, none for a transaction', async t => {
+  const { db, queries } = await database(t)
+  const reports = memoryStore(), send = harness(db, reports), session = await setup(db)
+  await db.setUserRole(session.userId, 'triage')
+  await db.createTeam('team', 'Team', Date.now())
+  await db.setTeamRepo('team', 1, null)
+  await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
+  const id = await seedReport(db, reports, session.userId)
+  await db.setReportVisible(id, true)
+  await send('/api/teams/team/reports', { session, method: 'GET' })
+  for (const [path, budget, reads] of [
+    ['/api/teams', 4, 'the session seen, the catalog and its fence, and the classification\'s snapshot'],
+    ['/api/teams/team/reports', 3, 'the session seen, and the team snapshot before and after the kept workspace'],
+    [`/api/reports/${id}/triage?team=team`, 8, 'the session seen, then the session, the report view and the team snapshot, twice, and the entries'],
+  ]) {
+    queries.length = 0
+    const response = await send(path, { session, method: 'GET' })
+    assert.equal(response.status, 200, path)
+    assert.equal(queries.length, budget, `${path}: ${reads}`)
+    assert.equal(queries.filter(sql => /^(?:BEGIN|COMMIT)/u.test(sql)).length, 0, path)
+  }
+})
+
 test('Postgres team annotation batches have a constant query budget across reports', async t => {
   const { db, queries } = await database(t)
   const reports = memoryStore(), send = harness(db, reports), session = await setup(db)
@@ -1363,7 +1403,7 @@ test('Postgres team annotation batches have a constant query budget across repor
   assert.equal(Object.keys(batch.reports).length, 10)
   assert.ok(Object.values(batch.reports).every(ids => ids.includes('shared-finding')))
   assert.deepEqual(batch.entries, { 'shared-finding': { color: 'red' } })
-  assert.equal(queries.length, 23, 'one presence update, two access snapshots including global links, and one annotation snapshot')
+  assert.equal(queries.length, 4, 'one presence update, two one-statement access snapshots including global links, and one annotation statement')
   assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
 
   queries.length = 0
@@ -1377,7 +1417,7 @@ test('Postgres team annotation batches have a constant query budget across repor
   assert.equal(focused.status, 200)
   assert.deepEqual(JSON.parse(focused.body), { reports: { [reportIds[0]]: ['shared-finding'] },
     entries: JSON.parse(triage.body).entries, comments: JSON.parse(comments.body).comments, issues: {} })
-  assert.equal(queries.length, 23, 'focused hydration and refresh share the same constant query budget')
+  assert.equal(queries.length, 4, 'focused hydration and refresh share the same constant query budget')
   assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
   assert.ok(queries.length < separateQueries)
   t.diagnostic(`Focused annotations: ${separateQueries} SQL statements in two requests -> ${queries.length} in one request`)

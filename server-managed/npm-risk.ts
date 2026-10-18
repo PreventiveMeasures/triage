@@ -14,8 +14,15 @@
 //   instance, or this one restarted, asks npm's downloads API, which answers
 //   some 40 lookups a minute, none of them again that week, each removed a
 //   day past it (npm-kept.ts pruneKept); a private one's in memory.
-// - `risk/npm/packages`, `risk/npm/public` and `risk/npm/advisories`, kept an
-//   hour or a day by risk itself: in memory.
+// - `risk/npm/packages`, `risk/npm/old-versions`, `risk/npm/public` and
+//   `risk/npm/advisories`, which risk asks again after an hour: a public
+//   package's in memory and in the database too, read from memory first, so
+//   that a cold instance, as a serverless one starts, reads no whole document
+//   of npm's again that one before it read within the hour; by a hash of
+//   their type and key, as a dependency's spec runs to any length, each
+//   removed a day on, and one past 256 KiB as JSON (a package's deprecated
+//   versions, its messages and all, run long) in memory alone. A private
+//   one's in memory.
 // - `npm/tarballs`: none asked, as tarballs are read as the viewer's loads
 //   read them, kept where they keep them (npm-loads.ts loadNpmTarball), and
 //   an assessment kept needs none.
@@ -69,11 +76,20 @@ function remember(key: string, value: unknown) {
   while (memory.size > MEMORY_ENTRIES || memoryLength > MEMORY_LENGTH) forget(memory.keys().next().value!)
 }
 
-const hashed = (type: string, key: string) => `risk/${createHash('sha256').update(`${type}\0${key}`).digest('hex')}`
-// What of a public package is kept in the database, and for how long its
-// downloads are: risk's week, and a day more.
+const digest = (type: string, key: string) => createHash('sha256').update(`${type}\0${key}`).digest('hex')
+const hashed = (type: string, key: string) => `risk/${digest(type, key)}`
+// What of a public package is kept in the database by its key, and for how
+// long its downloads are: risk's week, and a day more.
 const IN_DATABASE = new Set(['risk/npm/versions', 'risk/npm/downloads'])
 const DOWNLOADS_KEPT_MS = 8 * 24 * 60 * 60_000
+// What of a public package risk asks again after an hour, kept in memory and
+// in the database (HOURLY_PREFIX), each a day, none past HOURLY_LENGTH as
+// JSON there.
+const HOURLY = new Set(['risk/npm/packages', 'risk/npm/old-versions', 'risk/npm/public', 'risk/npm/advisories'])
+const HOURLY_PREFIX = 'risk/hourly/'
+const HOURLY_KEPT_MS = 24 * 60 * 60_000
+const HOURLY_LENGTH = 256 * 1024
+const databaseKey = (type: string, key: string) => HOURLY.has(type) ? `${HOURLY_PREFIX}${digest(type, key)}` : `${type}/${key}`
 
 export interface NpmRiskStores {
   db: UpstreamCacheStore
@@ -82,10 +98,13 @@ export interface NpmRiskStores {
 }
 
 // A cache that reads and writes many of a type at once too, as risk's
-// readying of downloads asks (npmReadyDownloads): one read and one write of
-// the database each, not one a key, as a request's queries take turns on its
-// connection (db-neon.ts).
+// readying of downloads asks (npmReadyDownloads), and reads records of any
+// types at once, as risk reads a package's record and its versions'
+// (registry.js npmPackageFacts): one read and one write of the database each,
+// not one a key, as a request's queries take turns on its connection
+// (db-neon.ts).
 export interface NpmRiskCache extends CacheStore {
+  readEach(entries: [type: string, key: string][]): Promise<unknown[]>
   readMany(type: string, keys: string[]): Promise<Map<string, unknown>>
   writeMany(type: string, entries: [key: string, value: unknown][]): Promise<void>
 }
@@ -94,13 +113,32 @@ export interface NpmRiskCache extends CacheStore {
 // that what is kept of it can be shared.
 export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: boolean): NpmRiskCache {
   const warn = (what: string, error: unknown) => { if (debug) console.warn(`managed: risk cache ${what} failed:`, error) }
+  const memoryKey = (type: string, key: string) => `${isPublic ? '' : 'private\0'}${type}\0${key}`
+  // Whether a record of `type` is read of the database: unless it is one
+  // kept in memory too (HOURLY) and there.
+  const ofDatabase = (type: string, key: string) => isPublic && (IN_DATABASE.has(type) || HOURLY.has(type) && !memory.has(memoryKey(type, key)))
+  // A record as the database keeps it, read: an hourly one kept in memory
+  // too, for the next to ask.
+  const readOf = (type: string, key: string, row: string | null | undefined) => {
+    const value: unknown = row == null ? null : JSON.parse(row)
+    if (value !== null && HOURLY.has(type)) remember(memoryKey(type, key), value)
+    return value
+  }
   const cache: NpmRiskCache = {
+    async readEach(entries) {
+      const asked = new Set(entries.flatMap(([type, key], i) => ofDatabase(type, key) ? [i] : []))
+      let rows = new Map<string, string>()
+      if (asked.size > 0) {
+        try { rows = await db.getUpstreamCacheEntries([...asked].map(i => databaseKey(...entries[i]!))) } catch (error) { warn('read', error) }
+      }
+      return Promise.all(entries.map(([type, key], i) => {
+        if (!asked.has(i)) return cache.read(type, key)
+        try { return readOf(type, key, rows.get(databaseKey(type, key))) } catch (error) { warn('read', error); return null }
+      }))
+    },
     async readMany(type, keys) {
-      if (!isPublic || !IN_DATABASE.has(type)) return new Map(await Promise.all(keys.map(async key => [key, await cache.read(type, key)] as const)))
-      try {
-        const found = await db.getUpstreamCacheEntries(keys.map(key => `${type}/${key}`))
-        return new Map(keys.map(key => { const value = found.get(`${type}/${key}`); return [key, value === undefined ? null : JSON.parse(value)] }))
-      } catch (error) { warn('read', error); return new Map() }
+      const values = await cache.readEach(keys.map(key => [type, key]))
+      return new Map(keys.map((key, i) => [key, values[i]]))
     },
     async writeMany(type, entries) {
       if (!isPublic || !IN_DATABASE.has(type)) { for (const [key, value] of entries) await cache.write(type, key, value); return }
@@ -112,22 +150,31 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
       if (type === 'npm/tarballs') return null
       try {
         if (isPublic && type === 'risk/npm/assessments' && npmCache) return JSON.parse((await buffer((await npmCache.open(hashed(type, key))).stream)).toString('utf8'))
-        if (isPublic && IN_DATABASE.has(type)) { const value = await db.getUpstreamCacheEntry(`${type}/${key}`); return value === null ? null : JSON.parse(value) }
+        if (ofDatabase(type, key)) return readOf(type, key, await db.getUpstreamCacheEntry(databaseKey(type, key)))
       } catch (error) { if (!(error instanceof CacheMissError)) warn('read', error); return null }
-      return memory.get(`${isPublic ? '' : 'private\0'}${type}\0${key}`)?.value ?? null
+      return memory.get(memoryKey(type, key))?.value ?? null
     },
     async write(type, key, value) {
       if (type === 'npm/tarballs') return
+      if (isPublic && HOURLY.has(type)) remember(memoryKey(type, key), value)
       try {
         if (isPublic && type === 'risk/npm/assessments' && npmCache) { await npmCache.put(hashed(type, key), Buffer.from(JSON.stringify(value))); return }
         if (isPublic && IN_DATABASE.has(type)) {
           const at = Date.now()
-          await db.setUpstreamCacheEntry(`${type}/${key}`, JSON.stringify(value), at)
+          await db.setUpstreamCacheEntry(databaseKey(type, key), JSON.stringify(value), at)
           if (type === 'risk/npm/downloads') await pruneKept(db, `${type}/`, DOWNLOADS_KEPT_MS, at, error => { warn('prune', error) })
           return
         }
+        if (isPublic && HOURLY.has(type)) {
+          const json = JSON.stringify(value)
+          if (json.length > HOURLY_LENGTH) return
+          const at = Date.now()
+          await db.setUpstreamCacheEntry(databaseKey(type, key), json, at)
+          await pruneKept(db, HOURLY_PREFIX, HOURLY_KEPT_MS, at, error => { warn('prune', error) })
+          return
+        }
       } catch (error) { warn('write', error); return }
-      remember(`${isPublic ? '' : 'private\0'}${type}\0${key}`, value)
+      remember(memoryKey(type, key), value)
     },
   }
   return cache

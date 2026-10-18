@@ -47,10 +47,18 @@ export function unwrapDataKey(key: StorageKey, type: StorageRowKind, row: Pick<S
   return value
 }
 
+// What storageState reads of managed_storage_encryption, as `alias` names it,
+// for a statement reading it with more (storageStateOf).
+export const storageStateColumns = (alias: string) => `${alias}.test_value AS testValue, ${alias}.enabled_at AS enabledAt,
+  ${alias}.cursor AS cursor, ${alias}.complete AS complete, ${alias}.migrated AS migrated, ${alias}.cleanup_cursor AS cleanupCursor,
+  ${alias}.cleanup_found AS cleanupFound, ${alias}.cleanup_complete AS cleanupComplete`
 export async function storageState(db: ManagedSql, key: StorageKey | null): Promise<StorageEncryptionState | null> {
-  const row = await db.prepare(`SELECT test_value AS testValue, enabled_at AS enabledAt, cursor, complete, migrated,
-    cleanup_cursor AS cleanupCursor, cleanup_found AS cleanupFound, cleanup_complete AS cleanupComplete
-    FROM managed_storage_encryption WHERE id = 1`).get() as (StorageEncryptionState & { testValue: string }) | undefined
+  return storageStateOf(await db.prepare(`SELECT ${storageStateColumns('e')} FROM managed_storage_encryption e WHERE e.id = 1`).get() as StoredState | undefined, key)
+}
+type StoredState = StorageEncryptionState & { testValue: string }
+// The state storageStateColumns read, none where its row is missing, its
+// test value checked against `key`.
+export function storageStateOf(row: StoredState | undefined, key: StorageKey | null): StorageEncryptionState | null {
   if (!row) return null
   if (!key) throw new Error('Managed storage requires its configured encryption key')
   const plain = unwrapStorageValue(key, 'managed_storage_encryption:1', row.testValue)

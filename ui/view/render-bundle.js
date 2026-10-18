@@ -47,12 +47,8 @@ import { NPM_TABS, REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS } from '../../
 import { activityTab } from './repository-activity.js'
 import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryFullName,
   repositoryRefs } from './repository-code.js'
-import './repository-history.js'
-import './repository-agents.js'
-import './repository-pulse.js'
-import './repository-replay.js'
 import './repository-treemap.js'
-import './repository-issues.js'
+import { withRepositoryActivity } from './activity-load.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
@@ -2174,14 +2170,14 @@ const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['s
 
 // The body of a tab of a repository's directory reading none of its files
 // (REPOSITORY_FILELESS_TABS): its Commits, Issues, Pull requests, Agents,
-// Pulse or Replay.
+// Pulse or Replay, once their bundle is here (activity-load.js).
 function repositoryFilelessTab(repository, tab) {
-  return tab === 'commits' ? html`<repository-history .repository=${repository} .repo=${repositoryFullName(repository)}
+  return withRepositoryActivity(() => tab === 'commits' ? html`<repository-history .repository=${repository} .repo=${repositoryFullName(repository)}
     .refs=${repositoryRefs(repository.repoId)}></repository-history>`
     : tab === 'agents' ? html`<repository-agents .repository=${repository} .repo=${repositoryFullName(repository)}></repository-agents>`
     : tab === 'pulse' ? html`<repository-pulse .repository=${repository} .repo=${repositoryFullName(repository)}></repository-pulse>`
     : tab === 'replay' ? html`<repository-replay .repository=${repository} .repo=${repositoryFullName(repository)}></repository-replay>`
-    : html`<repository-issues .repository=${repository} .repo=${repositoryFullName(repository)} .kind=${tab}></repository-issues>`
+    : html`<repository-issues .repository=${repository} .repo=${repositoryFullName(repository)} .kind=${tab}></repository-issues>`)
 }
 
 // The bundle slide: its header, with the bundle's name, or an npm version's

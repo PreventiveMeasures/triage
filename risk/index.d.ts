@@ -40,8 +40,10 @@ export interface AssessNpmOptions {
   // Where what is read is kept, by type (risk/npm/registry.js and assess.js
   // name each): `npm/tarballs`, `risk/npm/versions`, `risk/npm/packages`,
   // `risk/npm/old-versions`, `risk/npm/public`, `risk/npm/downloads`,
-  // `risk/npm/advisories` and `risk/npm/assessments`.
-  cache?: CacheStore | false
+  // `risk/npm/advisories` and `risk/npm/assessments`. One that reads records
+  // of any types at once (`readEach`, each null where none is kept) is read
+  // so where risk reads several together.
+  cache?: (CacheStore & { readEach?(entries: [type: string, key: string][]): Promise<unknown[]> }) | false
   // Asks for a package's whole document in risk's stead, as the managed
   // server does within its bounds: null where npm has none for this asker.
   // `authorized` whether it may be asked with the caller's npm token: the

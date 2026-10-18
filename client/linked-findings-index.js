@@ -123,7 +123,7 @@ async function indexOne(name) {
   if (byFile.has(name)) return false
   const gen = fileGen.get(name) ?? 0
   let content
-  try { content = await readFile(name) } catch { return false }
+  try { content = await readFile(name, { keep: false }) } catch { return false }
   if (content == null) return false
   // A save or delete landed while we were reading — what we hold is
   // the old file. Record nothing (so the name stays unclassified) and

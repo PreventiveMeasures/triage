@@ -166,6 +166,34 @@ test('a directory reads at its revision\'s commit, its files as the npm viewer r
   assert.ok(asked.indexOf(`/repos/org/repo/git/trees/${treeAt('src/allowed')}?recursive=1`) < asked.indexOf(`/repos/org/repo/tarball/${treeAt('src/allowed')}`))
 })
 
+test('a directory opened again at its commit asks GitHub for neither its tree nor its listing again, its reader\'s access still asked', async t => {
+  const request = await fixture(t, { role: 'admin' })
+  const asked = github(t, { reads: 4 })
+  const commits = () => asked.filter(entry => entry === `/repos/org/repo/git/commits/${commit}`).length
+  const listings = () => asked.filter(entry => entry === `/repos/org/repo/git/trees/${treeAt('src/allowed')}?recursive=1`).length
+  const access = () => asked.filter(entry => entry === '/repos/org/repo').length
+  const first = await request({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(first.status, 200)
+  assert.deepEqual([commits(), listings(), access()], [1, 1, 2])
+  const again = await request({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(again.status, 200)
+  assert.deepEqual(again.body, first.body)
+  assert.deepEqual([commits(), listings()], [1, 1], 'the commit\'s tree at the directory, and what it holds, as GitHub answered them')
+  assert.equal(access(), 4, 'the reader\'s access asked as ever, before and after')
+  // The repository gone from GitHub: its reader is refused before anything kept is read.
+  const gone = await request({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.notEqual(gone.status, 200)
+})
+
+test('a directory too large to read is told so again without its listing asked again', async t => {
+  const request = await fixture(t, { role: 'admin' })
+  const asked = github(t, { truncate: true })
+  const listings = () => asked.filter(entry => entry.endsWith('?recursive=1')).length
+  assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).status, 413)
+  assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).status, 413)
+  assert.equal(listings(), 1)
+})
+
 test('an admin reads the whole repository; a manager, or any team member, only the directories their teams reach whole', async t => {
   const admin = await fixture(t, { role: 'admin' })
   github(t)

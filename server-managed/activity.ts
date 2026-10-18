@@ -176,12 +176,21 @@ export function activityMethods(db: ManagedSql): ActivityStore {
       const stmts = contexts == null ? admin : manager
       const scope = contexts == null ? {} : { contexts: JSON.stringify(contexts), userId: userId ?? '' }
       const params = { ...scope, kind, query, repo, actor }
-      const { total } = (await stmts.count.get(params)) as { total: number }
-      const currentPage = Math.min(page, Math.max(1, Math.ceil(total / limit)))
-      const history = (await stmts.rows.all({ ...params, limit, offset: (currentPage - 1) * limit })) as ActivityEntry[]
-      const filters: ActivityFilters = {
-        repos: ((await stmts.repos.all(scope)) as { repo: string }[]).map(row => row.repo),
-        users: ((await stmts.users.all(scope)) as ActivityFilters['users']).map(row => ({ id: row.id, login: row.login, detail: row.detail })),
+      const read = async (at: number) => (await stmts.rows.all({ ...params, limit, offset: (at - 1) * limit })) as (ActivityEntry & { total: number | string })[]
+      // A page's rows carry the total. Only a page past the last has none to
+      // carry it: it is counted, and the last page read in its place.
+      let currentPage = page, rows = await read(page)
+      let total = rows.length > 0 ? Number(rows[0]!.total) : 0
+      if (rows.length === 0 && page > 1) {
+        total = Number(((await stmts.count.get(params)) as { total: number | string }).total)
+        currentPage = Math.min(page, Math.max(1, Math.ceil(total / limit)))
+        if (currentPage !== page) rows = total === 0 ? [] : await read(currentPage)
+      }
+      const history = rows.map(({ total: _total, ...entry }) => entry)
+      const filters: ActivityFilters = { repos: [], users: [] }
+      for (const row of (await stmts.filters.all(scope)) as { facet: string; id: string; login: string; detail: string | null }[]) {
+        if (row.facet === 'repo') filters.repos.push(row.id)
+        else filters.users.push({ id: row.id, login: row.login, detail: row.detail })
       }
       return { history, total, page: currentPage, limit, filters }
     },
@@ -199,17 +208,21 @@ function activityStatements(db: ManagedSql, source: string) {
     AND (:repo = '' OR repo = :repo) AND (:actor = '' OR actorKey = :actor)
     AND (:query = '' OR instr(lower(coalesce(actor, '') || ' ' || action || ' ' ||
       coalesce(repo, '') || ' ' || coalesce(report, '') || ' ' || coalesce(finding, '')), lower(:query)) > 0)`
+  // A page's rows each carry the total, so the source is read once for both;
+  // the selector choices, repositories then users, once between them.
   return {
     count: db.prepare(`SELECT count(*) AS total FROM (${filtered}) AS filtered`),
-    rows: db.prepare(`${filtered} ORDER BY at DESC,
+    rows: db.prepare(`SELECT filtered.*, count(*) OVER () AS total FROM (${filtered}) AS filtered ORDER BY at DESC,
       CASE WHEN kind = 'triage' THEN CAST(substr(id, instr(id, ':') + 1) AS INTEGER) ELSE 0 END DESC,
       id DESC LIMIT :limit OFFSET :offset`),
-    repos: db.prepare(`${activity} SELECT DISTINCT repo FROM activity WHERE repo IS NOT NULL AND repo <> '' ORDER BY repo`),
-    users: db.prepare(`${activity} SELECT a.actorKey AS id, COALESCE(u.login, a.actor, a.actorId) AS login,
-      CASE WHEN a.actorId IS NULL THEN 'Legacy actor' ELSE NULL END AS detail FROM (
+    filters: db.prepare(`${activity} SELECT 'repo' AS facet, repo AS id, repo AS login, NULL AS detail, repo AS sort, '' AS tiebreak
+      FROM (SELECT DISTINCT repo FROM activity WHERE repo IS NOT NULL AND repo <> '') AS repos
+      UNION ALL SELECT 'user' AS facet, a.actorKey AS id, COALESCE(u.login, a.actor, a.actorId) AS login,
+      CASE WHEN a.actorId IS NULL THEN 'Legacy actor' ELSE NULL END AS detail, COALESCE(u.login, a.actor, a.actorId) AS sort, a.actorKey AS tiebreak FROM (
         SELECT actorKey, actorId, actor, ROW_NUMBER() OVER (PARTITION BY actorKey ORDER BY at DESC, id DESC) AS position
         FROM activity WHERE actorKey IS NOT NULL AND actorKey <> 'legacy:'
-      ) a LEFT JOIN managed_user u ON u.id = a.actorId WHERE a.position = 1 ORDER BY login, a.actorKey`),
+      ) a LEFT JOIN managed_user u ON u.id = a.actorId WHERE a.position = 1
+      ORDER BY facet, sort, tiebreak`),
   }
 }
 

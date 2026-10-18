@@ -114,7 +114,7 @@ test('chunk failures and account switches prevent finalization; local servers re
     return Response.json(url === '/api/config' ? { managed: { uploadChunkBytes: CHUNK } } : { error: 'forbidden' }, { status: url === '/api/config' ? 200 : 403 })
   })
   assert.equal((await managedFetch('/api/admin/bundles', options)).status, 403)
-  assert.equal(calls, 4, 'failed chunks trigger a cleanup request')
+  assert.equal(calls, 5, 'both parts sent at once, and failed chunks trigger a cleanup request')
   fetch.mock.mockImplementation(async url => {
     if (url === '/api/config') return Response.json({ managed: { uploadChunkBytes: CHUNK } })
     if (url === KEY_PATH) return keyResponse()
@@ -130,6 +130,43 @@ test('chunk failures and account switches prevent finalization; local servers re
     return Response.json({ ok: true })
   })
   assert.equal((await managedFetch('/api/admin/bundles', options)).ok, true)
+})
+
+test('parts go three at a time, the upload finished once every one has arrived, and one refused cleaned up past every part sent', async t => {
+  const blob = new Blob([new Uint8Array(7 * CHUNK)])
+  for (const refused of [null, 4]) {
+    const calls = []
+    let most = 0, sending = 0
+    const fetch = t.mock.method(globalThis, 'fetch', async (url, init) => {
+      calls.push({ url: url.replace(/[a-f\d-]{36}/u, 'id'), headers: new Headers(init?.headers), sending })
+      if (url === KEY_PATH) return keyResponse()
+      if (url === '/api/config') return Response.json({ managed: { uploadChunkBytes: CHUNK } })
+      const part = /\/uploads\/bundles\/[^/]+\/(\d+)$/u.exec(url)
+      if (!part) return Response.json({ ok: true })
+      most = Math.max(most, ++sending)
+      await new Promise(resolve => { setTimeout(resolve, 5) })
+      sending--
+      return Number(part[1]) === refused ? Response.json({ error: 'forbidden' }, { status: 403 }) : Response.json({ ok: true })
+    })
+    const response = await managedFetch('/api/admin/bundles', { method: 'POST', body: blob })
+    const parts = calls.filter(call => /\/id\/\d+$/u.test(call.url)).map(call => Number(call.url.split('/').at(-1)))
+    const last = calls.at(-1)
+    assert.equal(most, 3, 'three parts in flight at most')
+    assert.deepEqual(parts, parts.toSorted((a, b) => a - b), 'taken in order')
+    assert.equal(last.sending, 0, 'the last request only once every part has settled')
+    if (refused === null) {
+      assert.equal(response.ok, true)
+      assert.equal(parts.length, 8, 'the sealed file in eight parts')
+      assert.equal(last.url, '/api/admin/bundles')
+      assert.equal(last.headers.get('x-upload-parts'), '8')
+    } else {
+      assert.equal(response.status, 403)
+      assert.ok(parts.length < 8, 'no part started once one is refused, past those under way')
+      assert.equal(last.url, '/api/admin/uploads/bundles/id')
+      assert.equal(last.headers.get('x-upload-parts'), String(parts.length), 'the cleanup covers every part sent')
+    }
+    fetch.mock.restore()
+  }
 })
 
 test('cancelling an upload stops sealing before the rest of the file is read', async t => {

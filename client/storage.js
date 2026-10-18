@@ -149,7 +149,7 @@ async function quarantineEmptyEntry(name, observedAtGen) {
   await navigator.locks.request(VAULT_LOCK, { mode: 'exclusive' }, async () => {
     if (currentWriteGen(name) !== observedAtGen) return
     bumpWriteGen(name)
-    cache.delete(name)
+    forgetText(name)
     const dir = await getOpfsDir()
     if (dir) {
       try { await dir.removeEntry(name) } catch {}
@@ -258,13 +258,34 @@ export { gunzipBytes }
 // callers asking for the same file (e.g. workspace + main view race)
 // share a single round-trip rather than each hitting OPFS.
 //
-// Cache is per-page-load. No size cap: the user has already chosen
-// to keep these reports around (they're persisted in OPFS), and the
-// JS-string overhead of the active set is small relative to the
-// rendered DOM. A failed read is NOT cached (the inFlight entry
-// clears in the finally block) so callers can retry.
+// Cache is per-page-load, held to `maxKeptChars` between its texts,
+// the least lately read going first (keepText): the index walks read
+// every report on disk, and a library of them kept whole would hold
+// every report's text for the page's life. Those walks read without
+// keeping (`keep: false`), so the reports a view opens stay kept. A
+// failed read is NOT cached (the inFlight entry clears in the finally
+// block) so callers can retry. `inFlight` holds each read's promise and
+// whether any of its callers asked for it kept.
+let maxKeptChars = 64 * 1024 * 1024
 const cache = new Map()
+let keptChars = 0
 const inFlight = new Map()
+function keepText(name, content) {
+  forgetText(name)
+  if (content.length > maxKeptChars) return
+  cache.set(name, content)
+  keptChars += content.length
+  for (const old of cache.keys()) {
+    if (keptChars <= maxKeptChars) break
+    forgetText(old)
+  }
+}
+function forgetText(name) {
+  const content = cache.get(name)
+  if (content === undefined) return
+  cache.delete(name)
+  keptChars -= content.length
+}
 // Per-name write-generation token. Bumped synchronously by every
 // `saveFile` and `deleteFile` BOTH before AND after its async I/O.
 // `readFile` captures the token at the start of its read and skips
@@ -430,7 +451,7 @@ export async function saveFile(name, content) {
       // either succeeds with the partial / new content or surfaces
       // the failure) instead of silently serving the OLD content.
       // Audit M2 round-8.
-      cache.delete(name)
+      forgetText(name)
       // Bump again so a concurrent in-flight readFile that observed
       // the pre-bump gen treats its result as stale. Audit round-12 H8.
       bumpWriteGen(name)
@@ -444,7 +465,7 @@ export async function saveFile(name, content) {
       await removeIfTruncated(dir, fh, name)
       throw err
     }
-    cache.set(name, content)
+    keepText(name, content)
     // Post-commit bump so any readFile in flight that captured the
     // start-bumped gen but read the pre-commit File snapshot (OPFS
     // createWritable doesn't commit until close) sees the gen
@@ -470,7 +491,7 @@ export async function saveFile(name, content) {
   const stored = lsBytes.toBase64()
   try {
     localStorage.setItem(LS_REPORT_PREFIX + name, stored)
-    cache.set(name, content)
+    keepText(name, content)
     bumpWriteGen(name)
     notifyFileMutated(name, 'save')
   } catch (err) {
@@ -502,9 +523,21 @@ async function readLsEntryText(name, startedAtGen) {
   return decodeUtf8(await gunzipBytes(lsBytes))
 }
 
-export async function readFile(name) {
-  if (cache.has(name)) return cache.get(name)
-  if (inFlight.has(name)) return inFlight.get(name)
+// `keep: false` reads without keeping what it read (a walk over every
+// report), though a text already kept, or a read already under way, is
+// shared all the same.
+export async function readFile(name, { keep = true } = {}) {
+  const kept = cache.get(name)
+  if (kept !== undefined) {
+    // Read lately again: the last to go.
+    if (keep) { cache.delete(name); cache.set(name, kept) }
+    return kept
+  }
+  const pending = inFlight.get(name)
+  if (pending) {
+    if (keep) pending.keep = true
+    return pending.promise
+  }
   // Capture the write generation BEFORE starting the async read.
   // If `saveFile` / `deleteFile` lands while this read is in flight,
   // the gen will have advanced by the time we resolve and we skip
@@ -589,10 +622,11 @@ export async function readFile(name) {
     if (text === null) throw new Error(`File not found: ${name}`)
     return text
   })()
-  inFlight.set(name, promise)
+  const read = { promise, keep }
+  inFlight.set(name, read)
   try {
     const content = await promise
-    if (currentWriteGen(name) === startedAtGen) cache.set(name, content)
+    if (read.keep && currentWriteGen(name) === startedAtGen) keepText(name, content)
     return content
   } finally {
     inFlight.delete(name)
@@ -682,7 +716,7 @@ export async function saveFileBytes(name, bytes) {
     throw new Error(`Refusing to save empty report bytes for "${name}"`)
   }
   bumpWriteGen(name)
-  cache.delete(name)
+  forgetText(name)
   // Shared VAULT_LOCK so concurrent vault transitions wait — same
   // rationale as saveFile.
   return mutateStoredItem('report', name, async () => {
@@ -735,7 +769,7 @@ export async function deleteFile(name) {
   // race this guards (a concurrent readFile resolving with stale
   // bytes after we cleared the cache here). Audit round-9 H1.
   bumpWriteGen(name)
-  cache.delete(name)
+  forgetText(name)
   inFlight.delete(name)
   // Hold shared VAULT_LOCK so vault enable/disable (which acquires
   // it exclusively) waits for our removeEntry to land — mirrors the
@@ -1147,7 +1181,7 @@ async function rawReadAndWrite(name, transform) {
       const bytes = new Uint8Array(await file.arrayBuffer())
       const next = await transform(bytes)
       if (next === null) return
-      cache.delete(name)
+      forgetText(name)
       inFlight.delete(name)
       bumpWriteGen(name)
       const writeFh = await dir.getFileHandle(name, { create: true })
@@ -1169,7 +1203,7 @@ async function rawReadAndWrite(name, transform) {
   const bytes = Uint8Array.fromBase64(stored)
   const next = await transform(bytes)
   if (next === null) return
-  cache.delete(name)
+  forgetText(name)
   inFlight.delete(name)
   bumpWriteGen(name)
   localStorage.setItem(LS_REPORT_PREFIX + name, next.toBase64())
@@ -1303,9 +1337,20 @@ export const migrateOpfsBundlesDecrypt = ({ open }) => migrateOpfsBundles({ open
 // envelope. Without this, a cached plaintext read from BEFORE the
 // vault state changed would keep serving stale data.
 onVaultStateChange(() => {
-  cache.clear()
+  forgetAllText()
   inFlight.clear()
 })
+function forgetAllText() {
+  cache.clear()
+  keptChars = 0
+}
+
+// Test-only: the read cache's bound and what it holds. Not for app code.
+export const __test__ = {
+  setMaxKeptChars(chars) { maxKeptChars = chars },
+  keptChars: () => keptChars,
+  forgetAll: forgetAllText,
+}
 
 // Surface isEncryptionEnabled for the UI without forcing every
 // caller to import the vault module separately.

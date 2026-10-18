@@ -1,4 +1,4 @@
-import { type LinkReportStore, linkReportMethods, linkRevision } from './link-reports.ts'
+import { type LinkReportStore, linkReportMethods, linkRevision, linkRevisionOf } from './link-reports.ts'
 import { type RepositoryAliasStore, repositoryAliasMethods } from './repository-aliases.ts'
 import { type DependencyReviewStore, dependencyReviewMethods } from './dependency-reviews.ts'
 import { type RepositoryDependencyReviewStore, repositoryDependencyReviewMethods } from './repository-dependency-reviews.ts'
@@ -13,7 +13,7 @@ import { preferredSlug } from './slugs.ts'
 import { type CommentStore, commentMethods } from './comments.ts'
 import { type ActivityStore, activityMethods } from './activity.ts'
 import { type GithubCommitStore, type GithubMetadataStore, githubCommitMethods, githubMetadataMethods } from './github-metadata.ts'
-import { type ManagedIssueStore, managedIssueMethods } from './managed-issues.ts'
+import { type ManagedIssue, type ManagedIssueStore, managedIssueMethods } from './managed-issues.ts'
 import type { IssueFixUpdate } from './github-issue-links.ts'
 import { type BundleBuildLeaseStore, bundleBuildLeaseMethods } from './bundle-build-leases.ts'
 import { type UpstreamCacheStore, upstreamCacheMethods } from './upstream-cache.ts'
@@ -23,7 +23,7 @@ import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-sha
 import { ManagedMutationError, type ManagementStore, managementMethods } from './management.ts'
 import { type ManagementCatalogStore, managementCatalogMethods } from './management-catalog.ts'
 import { type StorageKey } from '../server-common/storage-crypto.ts'
-import { type StorageDb, type StoredTokens, decodeStorageTokens, encodeStorageTokens, storageMethods, storageState, validateStorageUpload } from './storage-db.ts'
+import { type StorageDb, type StoredTokens, decodeStorageTokens, encodeStorageTokens, storageMethods, storageState, storageStateColumns, storageStateOf, validateStorageUpload } from './storage-db.ts'
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
 // to the upsert; `githubUserId` is the provider lookup key, never exposed to
@@ -402,6 +402,9 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   deleteSession(id: string): Promise<void>
   deleteExpiredSessions(now: number): Promise<number>
   listUsers(): Promise<AdminUser[]>
+  // One user by id, as their sessions read them, or null; for an action naming
+  // one, where listUsers would work out every user's latest activity.
+  getUser(id: string): Promise<StoredUser | null>
   // Set a user's role; resolves true iff a matching user row was updated.
   setUserRole(id: string, role: Role): Promise<boolean>
   // Persist / read a user's GitHub token (for on-demand repo listing).
@@ -535,6 +538,9 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   // Whether `userId` may read `reportId`: true iff the report's repo belongs to
   // a non-hidden team the user is a member of. Backs the team-scoped report view endpoint.
   userCanReadReport(userId: string, reportId: string): Promise<boolean>
+  // What viewing `reportId` turns on, in one read: who uploaded it, whether it
+  // is published, and whether userCanReadReport; null where there is none.
+  getReportView(userId: string, reportId: string): Promise<{ uploadedBy: string | null; visible: boolean; readable: boolean } | null>
   // The viewer's effective visibility permissions for a report, OR'd across the
   // teams (holding the report's repo) the user belongs to — drives the content
   // filter (a viewer without a permission has those findings stripped).
@@ -563,6 +569,10 @@ const viewSession = (row: ViewSessionRow) => ({
 
 type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number | null; lastActivity: number | null }
 
+// Rows a statement gathered into one JSON array value (json_group_array): its
+// text on SQLite, parsed already on Postgres, where none gather as NULL.
+const jsonRows = <T>(value: unknown): T[] => value == null ? [] : (typeof value === 'string' ? JSON.parse(value) : value) as T[]
+
 // Shared by listing, access checks, and permission aggregation. A team sees
 // reports rooted at its path or below it. Literal substring comparison keeps
 // separators, case, and SQL wildcard characters significant.
@@ -572,6 +582,46 @@ const REPORT_IN_TEAM_PATH_SQL = `(tr.path IS NULL OR tr.path = ''
 
 const BUNDLE_IN_TEAM_PATH_SQL = REPORT_IN_TEAM_PATH_SQL.replaceAll('r.repo_directory', 'b.repo_directory')
 
+// What a user's team catalog reads (listTeamsForUser), for `user`: a
+// placeholder, or a column of a statement reading it with more. Their teams,
+// `dependencyReview` where the user reviews dependencies in the team
+// (dependency-reviews.ts reviewsIn): one that reviews them, and a member
+// who manages, or triages and may see its dependencies; an admin in any.
+const USER_TEAMS_SQL = (user: string) => `SELECT t.id AS id, t.slug AS slug, t.name AS name,
+    CASE WHEN t.dependency_review = 1 AND (u.role IN ('admin', 'manage') OR (u.role = 'triage' AND tu.view_dependencies = 1))
+      THEN 1 ELSE 0 END AS dependencyReview,
+    tu.view_dependencies AS dependencies, tu.view_security AS security
+  FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id JOIN managed_user u ON u.id = tu.user_id
+  WHERE tu.user_id = ${user} AND t.hidden = 0`
+// Their teams' repository scopes.
+const USER_TEAM_SCOPES_SQL = (user: string) => `SELECT tr.team_id AS teamId, tr.repo_id AS repoId, tr.path AS path, sr.full_name AS fullName
+  FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+  JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+  JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
+  WHERE tu.user_id = ${user}`
+// Reports attached to the repos of their teams, tagged by team (a report
+// shows under every team whose repo it's attached to).
+const USER_TEAM_REPORTS_SQL = (user: string) => `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename, r.analyzer, r.visible, r.uploaded_at,
+    r.sha256 AS sha256, r.bundle_id AS bundleId, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+    tu.view_dependencies AS dependencies, tu.view_security AS security,
+    (SELECT role FROM managed_user WHERE id = tu.user_id) AS role
+  FROM managed_team_user tu
+  JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+  JOIN managed_team_repo tr ON tr.team_id = tu.team_id
+  JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+  LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
+  WHERE tu.user_id = ${user} AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) IN ('admin', 'manage'))`
+// Bundles, scoped through the same team -> repository links as reports.
+// Hidden bundles remain available to managers within their team scopes.
+const USER_TEAM_BUNDLES_SQL = (user: string) => `SELECT DISTINCT tr.team_id AS teamId, b.id AS id, b.slug AS slug, b.integrity AS integrity,
+    b.filename AS filename, b.kind, b.visible, b.byte_size AS byteSize, b.repo_id AS repoId, b.repo_directory AS repoDirectory, sr.full_name AS repoFullName, b.uploaded_at, b.provenance
+  FROM managed_team_user tu
+  JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+  JOIN managed_team_repo tr ON tr.team_id = tu.team_id
+  JOIN managed_bundle b ON b.repo_id = tr.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL}
+  JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
+  WHERE tu.user_id = ${user} AND (b.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) IN ('admin', 'manage'))`
+
 // Whether a repeated upload/build renames the stored row. Uploads never rename
 // a built row, or one whose provenance is unknown; builds rename either. The
 // kind must stay readable from its blob store (sourcemaps are stored apart):
@@ -579,6 +629,49 @@ const BUNDLE_IN_TEAM_PATH_SQL = REPORT_IN_TEAM_PATH_SQL.replaceAll('r.repo_direc
 const BUNDLE_RENAMED_SQL = `(:rename = 1 AND (provenance = 'upload' OR (:provenance = 'build' AND provenance IS NULL))
   AND (COALESCE(kind, '') = COALESCE(:kind, '') OR (kind IS NULL AND :kind = 'stasis'))
   AND (filename <> :filename OR kind IS DISTINCT FROM :kind))`
+
+// The rows a user's team catalog is built of (USER_TEAMS_SQL and the rest).
+type UserTeamRows = {
+  teams: { id: string; slug: string; name: string; dependencyReview: number; dependencies: number; security: number }[]
+  scopes: { teamId: string; repoId: number; path: string; fullName: string }[]
+  reports: {
+    teamId: string; id: string; slug: string; filename: string; analyzer: string | null; sha256: string; bundleId: string | null; repoId: number
+    repoDirectory: string; repoFullName: string | null; visible: number; dependencies: number; security: number; role: string
+  }[]
+  bundles: (Omit<UserTeamBundle, 'visible'> & { teamId: string; visible: number })[]
+}
+
+// A user's team catalog from its rows, `links` the link reports' revision.
+function userTeams(teams: UserTeamRows['teams'], scopes: UserTeamRows['scopes'], links: string, reports: UserTeamRows['reports'], bundles: UserTeamRows['bundles']): UserTeam[] {
+  const reportsByTeam = new Map<string, UserTeamReport[]>()
+  for (const r of reports) {
+    const list = reportsByTeam.get(r.teamId) ?? []
+    const cacheKey = createHash('sha256').update(JSON.stringify([
+      r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role, links,
+    ])).digest('base64url')
+    list.push({ id: r.id, slug: r.slug, filename: r.filename, visible: r.visible === 1, analyzer: r.analyzer, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory, cacheKey })
+    reportsByTeam.set(r.teamId, list)
+  }
+  const bundlesByTeam = new Map<string, UserTeamBundle[]>()
+  for (const b of bundles) {
+    const list = bundlesByTeam.get(b.teamId) ?? []
+    list.push({ id: b.id, slug: b.slug, integrity: b.integrity, filename: b.filename, visible: b.visible === 1,
+      kind: b.kind, byteSize: b.byteSize, repoId: b.repoId, repoDirectory: b.repoDirectory, repoFullName: b.repoFullName, provenance: b.provenance })
+    bundlesByTeam.set(b.teamId, list)
+  }
+  return teams.map((t) => ({
+    id: t.id, slug: t.slug, name: t.name,
+    ...(t.dependencyReview === 1 ? { dependencyReview: true } : {}),
+    permissions: { dependencies: t.dependencies === 1, security: t.security === 1 },
+    cacheKey: createHash('sha256').update(JSON.stringify([
+      t.dependencies, t.security, links, scopes.filter(scope => scope.teamId === t.id),
+    ])).digest('base64url'),
+    repos: scopes.filter(scope => scope.teamId === t.id).map(scope => ({ repoId: scope.repoId, fullName: scope.fullName, path: scope.path || null }))
+      .toSorted((a, b) => a.fullName.localeCompare(b.fullName) || (a.path ?? '').localeCompare(b.path ?? '')),
+    reports: reportsByTeam.get(t.id) ?? [],
+    bundles: bundlesByTeam.get(t.id) ?? [],
+  }))
+}
 
 // Prepare every statement the store uses, returned as a bag the factory
 // destructures — keeps openSqliteManagedDb itself small (one place per query).
@@ -618,6 +711,15 @@ function prepareStatements(db: ManagedSql) {
          JOIN managed_user u ON u.id = s.user_id
         WHERE s.id = ? AND s.expires_at > ? AND s.viewer_session IS NULL`,
     ),
+    // selectOwnSessionStmt with touchUserSeenStmt in one statement: the user of
+    // a live own session seen, and returned with it.
+    touchOwnSessionStmt: db.prepare(
+      `UPDATE managed_user SET last_seen_at = CASE WHEN last_seen_at IS NULL OR last_seen_at < ? THEN ? ELSE last_seen_at END
+        WHERE id = (SELECT user_id FROM managed_session WHERE id = ? AND expires_at > ? AND viewer_session IS NULL)
+       RETURNING (SELECT id FROM managed_session WHERE id = ?) AS id, (SELECT csrf_token FROM managed_session WHERE id = ?) AS csrf,
+              (SELECT expires_at FROM managed_session WHERE id = ?) AS exp, (SELECT upload_key FROM managed_session WHERE id = ?) AS uploadKey,
+              id AS uid, login AS login, name AS name, avatar_url AS avatar, role AS role`,
+    ),
     selectViewSessionStmt: db.prepare(
       `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey,
               u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role,
@@ -651,6 +753,7 @@ function prepareStatements(db: ManagedSql) {
               ) AS events) AS lastActivity
          FROM managed_user u ORDER BY u.created_at ASC, u.login ASC`,
     ),
+    selectUserStmt: db.prepare(`SELECT id, login, name, avatar_url AS avatarUrl, role FROM managed_user WHERE id = ?`),
     touchUserSeenStmt: db.prepare(
       `UPDATE managed_user SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)`,
     ),
@@ -660,9 +763,14 @@ function prepareStatements(db: ManagedSql) {
           SET gh_access_token = ?, gh_refresh_token = ?, gh_token_expires_at = ?, gh_tokens_encrypted = ?, updated_at = ?
         WHERE id = ?`,
     ),
-    selectTokensStmt: db.prepare(
-      `SELECT gh_access_token AS access, gh_refresh_token AS refresh, gh_token_expires_at AS exp, gh_tokens_encrypted AS encrypted
-         FROM managed_user WHERE id = ?`,
+    // A user's GitHub tokens with storage-db.ts storageState's read, in one
+    // statement.
+    selectTokensStateStmt: db.prepare(
+      `SELECT u.id AS userId, u.gh_access_token AS access, u.gh_refresh_token AS refresh, u.gh_token_expires_at AS exp, u.gh_tokens_encrypted AS encrypted,
+              e.id AS stateId, ${storageStateColumns('e')}
+         FROM (SELECT 1 AS one) AS o
+         LEFT JOIN managed_user u ON u.id = ?
+         LEFT JOIN managed_storage_encryption e ON e.id = 1`,
     ),
     // Concurrent first requests keep whichever key was stored first.
     ensureUploadKeyStmt: db.prepare(
@@ -752,42 +860,68 @@ function prepareStatements(db: ManagedSql) {
       `SELECT id FROM managed_report WHERE sha256 = ? AND COALESCE(analyzer, '') = COALESCE(?, '')
        ORDER BY uploaded_at, id LIMIT 1`,
     ),
-    selectReportAccessStmt: db.prepare(
-      `WITH requested AS (SELECT value AS id FROM json_each(?)), report_grants AS (
+    // A report access snapshot's reads in one statement, so one snapshot of
+    // the database answers them all: the session's user; those of the
+    // requested reports (a JSON array of ids) they may read, each with the
+    // grants their teams give them (a JSON array); and the enabled link
+    // reports (linkRevision).
+    selectReportSnapshotStmt: db.prepare(
+      `WITH viewer AS (
+         SELECT u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
+           FROM managed_session s JOIN managed_user u ON u.id = s.user_id
+          WHERE s.id = ? AND s.expires_at > ?
+       ), requested AS (SELECT value AS id FROM json_each(?)), report_grants AS (
          SELECT r.id AS id, MAX(tu.view_dependencies) AS dependencies, MAX(tu.view_security) AS security
            FROM managed_report r JOIN requested q ON q.id = r.id
            JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-           JOIN managed_team_user tu ON tu.team_id = tr.team_id AND tu.user_id = ?
+           JOIN managed_team_user tu ON tu.team_id = tr.team_id AND tu.user_id = (SELECT uid FROM viewer)
            JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
           GROUP BY r.id
        )
-       SELECT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256,
-              r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
-              COALESCE(g.dependencies, 0) AS dependencies, COALESCE(g.security, 0) AS security
-         FROM managed_report r JOIN requested q ON q.id = r.id
-         LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
-         LEFT JOIN report_grants g ON g.id = r.id
-        WHERE ? = 1 OR (? = 1 AND r.uploaded_by = ?)
-           OR (g.id IS NOT NULL AND (? = 1 OR r.visible = 1))`,
+       SELECT v.uid AS uid, v.login AS login, v.name AS name, v.avatar AS avatar, v.role AS role,
+              (SELECT json_group_array(json_object('id', r.id, 'filename', r.filename, 'byteSize', r.byte_size, 'sha256', r.sha256,
+                        'repoDirectory', r.repo_directory, 'repoFullName', sr.full_name,
+                        'dependencies', COALESCE(g.dependencies, 0), 'security', COALESCE(g.security, 0)) ORDER BY r.id)
+                 FROM managed_report r JOIN requested q ON q.id = r.id
+                 LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
+                 LEFT JOIN report_grants g ON g.id = r.id
+                WHERE v.role = 'admin' OR (v.role = 'manage' AND r.uploaded_by = v.uid)
+                   OR (g.id IS NOT NULL AND (v.role = 'manage' OR r.visible = 1))) AS reports,
+              (SELECT json_group_array(json_object('id', id, 'sha256', sha256) ORDER BY id) FROM managed_link_report WHERE enabled = 1) AS links
+         FROM viewer v`,
     ),
-    selectTeamAccessStmt: db.prepare(`SELECT 1 FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
-      WHERE tu.user_id = ? AND tu.team_id = ? AND t.hidden = 0`),
-    selectTeamRepositoriesStmt: db.prepare(
-      `SELECT tr.repo_id AS repoId, sr.full_name AS github, tr.path AS path
-         FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
-        WHERE tr.team_id = ? ORDER BY tr.repo_id, tr.path`,
-    ),
-    selectTeamReportAccessStmt: db.prepare(
-      `SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256, r.visible AS visible,
-              r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
-              tu.view_dependencies AS dependencies, tu.view_security AS security
-         FROM managed_team_user tu
-         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-         JOIN managed_team_repo tr ON tr.team_id = tu.team_id
-         JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-         LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
-        WHERE tu.user_id = ? AND tu.team_id = ? AND (r.visible = 1 OR (? = 1 AND r.id = ?))
-        ORDER BY r.id`,
+    // A team snapshot's reads in one statement, so one snapshot of the
+    // database answers them all: the session's user; whether they see the
+    // team; the team's visible reports in the scopes it grants them, with the
+    // grants, and the hidden one asked for where their role may preview it;
+    // the team's repositories (each a JSON array); and the enabled link
+    // reports (linkRevision).
+    selectTeamSnapshotStmt: db.prepare(
+      `WITH viewer AS (
+         SELECT u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
+           FROM managed_session s JOIN managed_user u ON u.id = s.user_id
+          WHERE s.id = ? AND s.expires_at > ?
+       )
+       SELECT v.uid AS uid, v.login AS login, v.name AS name, v.avatar AS avatar, v.role AS role,
+              EXISTS(SELECT 1 FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
+                      WHERE tu.user_id = v.uid AND tu.team_id = ? AND t.hidden = 0) AS member,
+              (SELECT json_group_array(json_object('id', x.id, 'filename', x.filename, 'byteSize', x.byteSize, 'sha256', x.sha256,
+                        'visible', x.visible, 'repoDirectory', x.repoDirectory, 'repoFullName', x.repoFullName,
+                        'dependencies', x.dependencies, 'security', x.security) ORDER BY x.id)
+                 FROM (SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256, r.visible AS visible,
+                              r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+                              tu.view_dependencies AS dependencies, tu.view_security AS security
+                         FROM managed_team_user tu
+                         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+                         JOIN managed_team_repo tr ON tr.team_id = tu.team_id
+                         JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
+                         LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
+                        WHERE tu.user_id = v.uid AND tu.team_id = ? AND (r.visible = 1 OR (v.role IN ('admin', 'manage') AND r.id = ?))) AS x) AS reports,
+              (SELECT json_group_array(json_object('repoId', tr.repo_id, 'github', sr.full_name, 'path', tr.path) ORDER BY tr.repo_id, tr.path)
+                 FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
+                WHERE tr.team_id = ?) AS repositories,
+              (SELECT json_group_array(json_object('id', id, 'sha256', sha256) ORDER BY id) FROM managed_link_report WHERE enabled = 1) AS links
+         FROM viewer v`,
     ),
     reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
@@ -837,6 +971,26 @@ function prepareStatements(db: ManagedSql) {
          LEFT JOIN managed_user u ON u.id = t.updated_by
         WHERE t.finding_id IN (SELECT value FROM json_each(?))
         ORDER BY t.finding_id ASC`,
+    ),
+    // A set of findings' triage (selectTriageStmt), comments (comments.ts
+    // listComments) and issues (managed-issues.ts listManagedIssues), each
+    // a JSON array of the rows those read, in their order, from one snapshot.
+    selectAnnotationsStmt: db.prepare(
+      `WITH requested AS (SELECT value AS id FROM json_each(?))
+       SELECT (SELECT json_group_array(json_object('findingId', t.finding_id, 'color', t.color, 'triage', t.triage, 'comment', t.comment,
+                        'fix', t.fix, 'flagged', t.flagged, 'updatedByLogin', COALESCE(u.login, t.updated_by_login), 'updatedAt', t.updated_at)
+                        ORDER BY t.finding_id ASC)
+                 FROM managed_finding_triage t LEFT JOIN managed_user u ON u.id = t.updated_by
+                WHERE t.finding_id IN (SELECT id FROM requested)) AS triage,
+              (SELECT json_group_array(json_object('id', c.id, 'findingId', c.finding_id, 'body', c.body, 'authorId', c.author_id,
+                        'authorLogin', COALESCE(u.login, c.author_login), 'createdAt', c.created_at, 'updatedAt', c.updated_at, 'version', c.version)
+                        ORDER BY c.created_at NULLS FIRST, c.id)
+                 FROM managed_finding_comment c LEFT JOIN managed_user u ON u.id = c.author_id
+                WHERE c.finding_id IN (SELECT id FROM requested)) AS comments,
+              (SELECT json_group_array(json_object('findingId', i.finding_id, 'repoId', i.repo_id, 'repository', i.repository, 'requestId', i.request_id,
+                        'issueUrl', i.issue_url, 'autoFixUrl', i.auto_fix_url, 'autoFixCheckedAt', i.auto_fix_checked_at,
+                        'createdBy', i.created_by, 'createdAt', i.created_at) ORDER BY i.finding_id)
+                 FROM managed_finding_issue i WHERE i.finding_id IN (SELECT id FROM requested)) AS issues`,
     ),
     selectTriageFixesStmt: db.prepare(`SELECT DISTINCT fix FROM managed_finding_triage
       WHERE finding_id IN (SELECT value FROM json_each(?)) AND fix IS NOT NULL ORDER BY fix`),
@@ -939,51 +1093,39 @@ function prepareStatements(db: ManagedSql) {
     renameTeamStmt: db.prepare(`UPDATE managed_team SET name = ?, updated_at = ? WHERE id = ?`),
     setTeamHiddenStmt: db.prepare(`UPDATE managed_team SET hidden = ?, updated_at = ? WHERE id = ?`),
     selectTeamsStmt: db.prepare(`SELECT id, slug, name, hidden FROM managed_team ORDER BY name ASC`),
-    // `dependencyReview` where the user reviews dependencies in the team
-    // (dependency-reviews.ts reviewsIn): one that reviews them, and a member
-    // who manages, or triages and may see its dependencies; an admin in any.
-    selectTeamsForUserStmt: db.prepare(
-      `SELECT t.id AS id, t.slug AS slug, t.name AS name,
-              CASE WHEN t.dependency_review = 1 AND (u.role IN ('admin', 'manage') OR (u.role = 'triage' AND tu.view_dependencies = 1))
-                THEN 1 ELSE 0 END AS dependencyReview,
-              tu.view_dependencies AS dependencies, tu.view_security AS security
-         FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id JOIN managed_user u ON u.id = tu.user_id
-        WHERE tu.user_id = ? AND t.hidden = 0 ORDER BY t.name ASC, t.id ASC`,
-    ),
-    selectUserTeamScopesStmt: db.prepare(
-      `SELECT tr.team_id AS teamId, tr.repo_id AS repoId, tr.path AS path, sr.full_name AS fullName
-         FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-         JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
-        WHERE tu.user_id = ? ORDER BY tr.team_id, tr.repo_id, tr.path`,
-    ),
-    // Reports attached to the repos of the user's teams, tagged by team (a report
-    // shows under every team whose repo it's attached to). Newest first.
-    selectUserTeamReportsStmt: db.prepare(
-      `SELECT DISTINCT tr.team_id AS teamId, r.id AS id, r.slug AS slug, r.filename AS filename, r.analyzer, r.visible, r.uploaded_at,
-              r.sha256 AS sha256, r.bundle_id AS bundleId, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
-              tu.view_dependencies AS dependencies, tu.view_security AS security,
-              (SELECT role FROM managed_user WHERE id = tu.user_id) AS role
-         FROM managed_team_user tu
-         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-         JOIN managed_team_repo tr ON tr.team_id = tu.team_id
-         JOIN managed_report r ON r.repo_id = tr.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-         LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
-        WHERE tu.user_id = ? AND (r.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) IN ('admin', 'manage'))
-        ORDER BY r.uploaded_at DESC, r.filename ASC, r.id ASC`,
-    ),
-    // Bundles are scoped through the same team -> repository links as reports.
-    // Hidden bundles remain available to managers within their team scopes.
-    selectUserTeamBundlesStmt: db.prepare(
-      `SELECT DISTINCT tr.team_id AS teamId, b.id AS id, b.slug AS slug, b.integrity AS integrity,
-              b.filename AS filename, b.kind, b.visible, b.byte_size AS byteSize, b.repo_id AS repoId, b.repo_directory AS repoDirectory, sr.full_name AS repoFullName, b.uploaded_at, b.provenance
-         FROM managed_team_user tu
-         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-         JOIN managed_team_repo tr ON tr.team_id = tu.team_id
-         JOIN managed_bundle b ON b.repo_id = tr.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL}
-         JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
-        WHERE tu.user_id = ? AND (b.visible = 1 OR (SELECT role FROM managed_user WHERE id = tu.user_id) IN ('admin', 'manage'))
-        ORDER BY b.uploaded_at DESC, b.filename ASC, b.id ASC`,
+    selectTeamsForUserStmt: db.prepare(`${USER_TEAMS_SQL('?')} ORDER BY t.name ASC, t.id ASC`),
+    selectUserTeamScopesStmt: db.prepare(`${USER_TEAM_SCOPES_SQL('?')} ORDER BY tr.team_id, tr.repo_id, tr.path`),
+    selectUserTeamReportsStmt: db.prepare(`${USER_TEAM_REPORTS_SQL('?')} ORDER BY r.uploaded_at DESC, r.filename ASC, r.id ASC`),
+    selectUserTeamBundlesStmt: db.prepare(`${USER_TEAM_BUNDLES_SQL('?')} ORDER BY b.uploaded_at DESC, b.filename ASC, b.id ASC`),
+    // getUserTeamFeedSnapshot's reads in one statement, so one snapshot of the
+    // database answers them all: the session's user and the change revisions
+    // (getFeedState), and listTeamsForUser's lists, each a JSON array in the
+    // order those statements read it.
+    selectUserTeamFeedStmt: db.prepare(
+      `WITH viewer AS (
+         SELECT u.id AS id, u.role AS role, r.catalog AS catalog, r.annotations AS annotations
+           FROM managed_session s JOIN managed_user u ON u.id = s.user_id JOIN managed_change_revision r ON r.id = 1
+          WHERE s.id = ? AND s.expires_at > ?
+       )
+       SELECT v.id AS id, v.role AS role, v.catalog AS catalog, v.annotations AS annotations,
+              (SELECT json_group_array(json_object('id', x.id, 'slug', x.slug, 'name', x.name, 'dependencyReview', x.dependencyReview,
+                        'dependencies', x.dependencies, 'security', x.security) ORDER BY x.name ASC, x.id ASC)
+                 FROM (${USER_TEAMS_SQL('v.id')}) AS x) AS teams,
+              (SELECT json_group_array(json_object('teamId', x.teamId, 'repoId', x.repoId, 'path', x.path, 'fullName', x.fullName)
+                        ORDER BY x.teamId, x.repoId, x.path)
+                 FROM (${USER_TEAM_SCOPES_SQL('v.id')}) AS x) AS scopes,
+              (SELECT json_group_array(json_object('id', id, 'sha256', sha256) ORDER BY id) FROM managed_link_report WHERE enabled = 1) AS links,
+              (SELECT json_group_array(json_object('teamId', x.teamId, 'id', x.id, 'slug', x.slug, 'filename', x.filename, 'analyzer', x.analyzer,
+                        'visible', x.visible, 'sha256', x.sha256, 'bundleId', x.bundleId, 'repoId', x.repoId, 'repoDirectory', x.repoDirectory,
+                        'repoFullName', x.repoFullName, 'dependencies', x.dependencies, 'security', x.security, 'role', x.role)
+                        ORDER BY x.uploaded_at DESC, x.filename ASC, x.id ASC)
+                 FROM (${USER_TEAM_REPORTS_SQL('v.id')}) AS x) AS reports,
+              (SELECT json_group_array(json_object('teamId', x.teamId, 'id', x.id, 'slug', x.slug, 'integrity', x.integrity, 'filename', x.filename,
+                        'kind', x.kind, 'visible', x.visible, 'byteSize', x.byteSize, 'repoId', x.repoId, 'repoDirectory', x.repoDirectory,
+                        'repoFullName', x.repoFullName, 'provenance', x.provenance)
+                        ORDER BY x.uploaded_at DESC, x.filename ASC, x.id ASC)
+                 FROM (${USER_TEAM_BUNDLES_SQL('v.id')}) AS x) AS bundles
+         FROM viewer v`,
     ),
     selectUserRepoScopesStmt: db.prepare(
       `SELECT DISTINCT tr.repo_id AS repoId, NULLIF(tr.path, '') AS path
@@ -998,6 +1140,14 @@ function prepareStatements(db: ManagedSql) {
          JOIN managed_team_user tu ON tu.team_id = tr.team_id
         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
         WHERE r.id = ? AND tu.user_id = ? LIMIT 1`,
+    ),
+    selectReportViewStmt: db.prepare(
+      `SELECT r.uploaded_by AS uploadedBy, r.visible AS visible,
+              EXISTS(SELECT 1 FROM managed_team_repo tr
+                       JOIN managed_team_user tu ON tu.team_id = tr.team_id
+                       JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+                      WHERE tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL} AND tu.user_id = ?) AS readable
+         FROM managed_report r WHERE r.id = ?`,
     ),
     selectBundleSecurityStmt: db.prepare(
       `SELECT 1 FROM managed_bundle b
@@ -1190,39 +1340,40 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       return await stmts.findingCatalogReportsStmt.all(after, limit) as Pick<ReportRecord, 'id' | 'byteSize'>[]
     },
     async getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string, reportId: string | null = null): Promise<TeamReportAccessSnapshot | null> {
-      const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
+      const session = await stmts.selectTeamSnapshotStmt.get(sessionId, now, teamId, teamId, reportId, teamId) as
+        SessionRow & { member: unknown; reports: unknown; repositories: unknown; links: unknown } | undefined
       if (!session) return null
       const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
-      if (user.role === 'none' || !await stmts.selectTeamAccessStmt.get(user.id, teamId)) return { user, teamId: null, reports: [], repositories: [] }
+      if (user.role === 'none' || !session.member) return { user, teamId: null, reports: [], repositories: [] }
       const whole = user.role === 'admin' || user.role === 'manage'
-      const rows = await stmts.selectTeamReportAccessStmt.all(user.id, teamId, whole ? 1 : 0, reportId) as {
+      const rows = jsonRows<{
         id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
         repoFullName: string | null; dependencies: number; security: number; visible: number
-      }[]
+      }>(session.reports)
       // Only privileged callers can receive a hidden row from this query. Give
       // that individual preview its own capacity; published report selections
       // still use the complete workspace for cross-report classification.
       const hidden = rows.find(row => row.id === reportId && row.visible === 0)
       const selected = hidden ? [hidden] : rows
-      const repositories = await stmts.selectTeamRepositoriesStmt.all(teamId) as TeamReportAccessSnapshot['repositories']
-      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, linkRevision: await linkRevision(db), reports: selected.map(row => ({
+      const repositories = jsonRows<TeamReportAccessSnapshot['repositories'][number]>(session.repositories)
+      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, linkRevision: linkRevisionOf(jsonRows(session.links)), reports: selected.map(row => ({
         id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
         repo: { github: row.repoFullName, directory: row.repoDirectory },
         permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },
       })) }
     },
     async getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null> {
-      const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
+      const session = await stmts.selectReportSnapshotStmt.get(sessionId, now, JSON.stringify([...new Set(ids)])) as
+        SessionRow & { reports: unknown; links: unknown } | undefined
       if (!session) return null
       const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
       if (user.role === 'none' || ids.length === 0) return { user, reports: [] }
       const admin = user.role === 'admin', manage = user.role === 'manage'
-      const rows = await stmts.selectReportAccessStmt.all(JSON.stringify([...new Set(ids)]), user.id,
-        admin ? 1 : 0, manage ? 1 : 0, user.id, manage ? 1 : 0) as {
+      const rows = jsonRows<{
         id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
         repoFullName: string | null; dependencies: number; security: number
-      }[]
-      return { user, linkRevision: await linkRevision(db), reports: rows.map(row => ({
+      }>(session.reports)
+      return { user, linkRevision: linkRevisionOf(jsonRows(session.links)), reports: rows.map(row => ({
         id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
         repo: { github: row.repoFullName, directory: row.repoDirectory },
         permissions: { dependencies: admin || manage || row.dependencies === 1, security: admin || manage || row.security === 1 },
@@ -1249,6 +1400,11 @@ type TriageDbRow = {
   comment: string | null; fix: string | null; flagged: number | null
   updatedByLogin: string | null; updatedAt: number
 }
+const triageRow = (r: TriageDbRow): TriageRow => ({
+  findingId: r.findingId, color: r.color, triage: r.triage, comment: r.comment, fix: r.fix,
+  flagged: r.flagged == null ? null : r.flagged === 1,
+  updatedByLogin: r.updatedByLogin, updatedAt: r.updatedAt,
+})
 type TriageStateDbRow = { color: string | null; triage: string | null; comment: string | null; fix: string | null; flagged: number | null }
 type TriageEventDbRow = TriageStateDbRow & {
   seq: number; findingId: string; batchId: string; actorId: string | null; actorLogin: string | null; actorName: string | null; at: number
@@ -1318,12 +1474,7 @@ function triageMethods(stmts: ReturnType<typeof prepareStatements>, historyLimit
     },
     async listTriage(findingIds: readonly string[]): Promise<TriageRow[]> {
       if (findingIds.length === 0) return []
-      const rows = (await selectTriageStmt.all(JSON.stringify(findingIds))) as TriageDbRow[]
-      return rows.map((r) => ({
-        findingId: r.findingId, color: r.color, triage: r.triage, comment: r.comment, fix: r.fix,
-        flagged: r.flagged == null ? null : r.flagged === 1,
-        updatedByLogin: r.updatedByLogin, updatedAt: r.updatedAt,
-      }))
+      return ((await selectTriageStmt.all(JSON.stringify(findingIds))) as TriageDbRow[]).map(triageRow)
     },
     async setTriage(findingId: string, entry: TriageEntryPatch | null, updatedBy: string | null, updatedByLogin: string | null, now: number): Promise<void> {
       // A single write is its own batch. The row and its event go together.
@@ -1525,40 +1676,8 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
       return (await selectUserRepoScopesStmt.all(userId)) as { repoId: number; path: string | null }[]
     },
     async listTeamsForUser(userId: string): Promise<UserTeam[]> {
-      const teams = (await selectTeamsForUserStmt.all(userId)) as { id: string; slug: string; name: string; dependencyReview: number; dependencies: number; security: number }[]
-      const scopes = await stmts.selectUserTeamScopesStmt.all(userId) as { teamId: string; repoId: number; path: string; fullName: string }[]
-      const links = await linkRevision(db)
-      const reportsByTeam = new Map<string, UserTeamReport[]>()
-      for (const r of (await selectUserTeamReportsStmt.all(userId)) as {
-        teamId: string; id: string; slug: string; filename: string; analyzer: string | null; sha256: string; bundleId: string | null; repoId: number
-        repoDirectory: string; repoFullName: string | null; visible: number; dependencies: number; security: number; role: string
-      }[]) {
-        const list = reportsByTeam.get(r.teamId) ?? []
-        const cacheKey = createHash('sha256').update(JSON.stringify([
-          r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role, links,
-        ])).digest('base64url')
-        list.push({ id: r.id, slug: r.slug, filename: r.filename, visible: r.visible === 1, analyzer: r.analyzer, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory, cacheKey })
-        reportsByTeam.set(r.teamId, list)
-      }
-      const bundlesByTeam = new Map<string, UserTeamBundle[]>()
-      for (const b of (await selectUserTeamBundlesStmt.all(userId)) as (Omit<UserTeamBundle, 'visible'> & { teamId: string; visible: number })[]) {
-        const list = bundlesByTeam.get(b.teamId) ?? []
-        list.push({ id: b.id, slug: b.slug, integrity: b.integrity, filename: b.filename, visible: b.visible === 1,
-          kind: b.kind, byteSize: b.byteSize, repoId: b.repoId, repoDirectory: b.repoDirectory, repoFullName: b.repoFullName, provenance: b.provenance })
-        bundlesByTeam.set(b.teamId, list)
-      }
-      return teams.map((t) => ({
-        id: t.id, slug: t.slug, name: t.name,
-        ...(t.dependencyReview === 1 ? { dependencyReview: true } : {}),
-        permissions: { dependencies: t.dependencies === 1, security: t.security === 1 },
-        cacheKey: createHash('sha256').update(JSON.stringify([
-          t.dependencies, t.security, links, scopes.filter(scope => scope.teamId === t.id),
-        ])).digest('base64url'),
-        repos: scopes.filter(scope => scope.teamId === t.id).map(scope => ({ repoId: scope.repoId, fullName: scope.fullName, path: scope.path || null }))
-          .toSorted((a, b) => a.fullName.localeCompare(b.fullName) || (a.path ?? '').localeCompare(b.path ?? '')),
-        reports: reportsByTeam.get(t.id) ?? [],
-        bundles: bundlesByTeam.get(t.id) ?? [],
-      }))
+      return userTeams(await selectTeamsForUserStmt.all(userId) as UserTeamRows['teams'], await stmts.selectUserTeamScopesStmt.all(userId) as UserTeamRows['scopes'],
+        await linkRevision(db), await selectUserTeamReportsStmt.all(userId) as UserTeamRows['reports'], await selectUserTeamBundlesStmt.all(userId) as UserTeamRows['bundles'])
     },
     async getFeedState(sessionId: string, now: number) {
       const row = await db.prepare(`SELECT u.id, u.role, r.catalog, r.annotations FROM managed_session s
@@ -1567,15 +1686,21 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
       return row ? { user: { id: row.id, role: row.role }, catalog: row.catalog, annotations: row.annotations } : null
     },
     async getUserTeamFeedSnapshot(sessionId: string, now: number) {
-      // One short read-only transaction, shared by SQLite and Postgres. Never
-      // touch last-seen timestamps or include other users' memberships.
-      const state = await methods.getFeedState(sessionId, now)
-      if (!state) return null
-      const teams = state.user.role === 'none' ? [] : await methods.listTeamsForUser(state.user.id)
-      return { user: state.user, catalog: state.catalog, teams, revision: teamCatalogRevision(teams) }
+      // One statement, shared by SQLite and Postgres. Never touch last-seen
+      // timestamps or include other users' memberships.
+      const row = await stmts.selectUserTeamFeedStmt.get(sessionId, now) as {
+        id: string; role: Role; catalog: number; annotations: number; teams: unknown; scopes: unknown; links: unknown; reports: unknown; bundles: unknown
+      } | undefined
+      if (!row) return null
+      const teams = row.role === 'none' ? [] : userTeams(jsonRows(row.teams), jsonRows(row.scopes), linkRevisionOf(jsonRows(row.links)), jsonRows(row.reports), jsonRows(row.bundles))
+      return { user: { id: row.id, role: row.role }, catalog: row.catalog, teams, revision: teamCatalogRevision(teams) }
     },
     async userCanReadReport(userId: string, reportId: string): Promise<boolean> {
       return (await selectReportReadableStmt.get(reportId, userId)) != null
+    },
+    async getReportView(userId: string, reportId: string) {
+      const row = await stmts.selectReportViewStmt.get(userId, reportId) as { uploadedBy: string | null; visible: number; readable: unknown } | undefined
+      return row ? { uploadedBy: row.uploadedBy, visible: row.visible === 1, readable: Boolean(row.readable) } : null
     },
     async userCanReadBundleAdvisories(userId: string, bundleId: string, teamId: string | null): Promise<boolean> {
       return (await stmts.selectBundleSecurityStmt.get(bundleId, userId, teamId, teamId)) != null
@@ -1641,9 +1766,15 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0, db)
   const {
     upsertUserStmt, selectLinkedStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectOwnSessionStmt, selectUsersStmt,
-    touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, ensureUploadKeyStmt, deleteSessionStmt, deleteExpiredStmt,
+    selectUserStmt, touchOwnSessionStmt, touchUserSeenStmt, updateRoleStmt, updateTokensStmt, ensureUploadKeyStmt, deleteSessionStmt, deleteExpiredStmt,
     selectViewSessionStmt, deleteOtherViewsStmt, insertViewSessionStmt, deleteDemotedViewsStmt,
   } = stmts
+
+  // Claimed at every automatic reap: prepared once.
+  const claimLeaseStmt = db.prepare(`INSERT INTO managed_maintenance_lease (id, owner, expires_at) VALUES (?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
+    WHERE managed_maintenance_lease.expires_at <= ? RETURNING id`)
+  const finishLeaseStmt = db.prepare('UPDATE managed_maintenance_lease SET expires_at = ? WHERE owner = ?')
 
   const methods: Omit<ManagedDb, keyof ManagementStore | keyof ManagementCatalogStore> = {
     ...storageMethods(db, key),
@@ -1656,12 +1787,10 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...bundleBuildLeaseMethods(db),
     ...upstreamCacheMethods(db),
     async claimMaintenanceLease(owner, now, until, migration = false) {
-      return !!await db.prepare(`INSERT INTO managed_maintenance_lease (id, owner, expires_at) VALUES (?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
-        WHERE managed_maintenance_lease.expires_at <= ? RETURNING id`).get(migration ? 2 : 1, owner, until, now)
+      return !!await claimLeaseStmt.get(migration ? 2 : 1, owner, until, now)
     },
     async finishMaintenanceLease(owner, until) {
-      await db.prepare('UPDATE managed_maintenance_lease SET expires_at = ? WHERE owner = ?').run(until, owner)
+      await finishLeaseStmt.run(until, owner)
     },
     async upsertUser(user, now, initialAdminGithubId = null) {
       if (await selectLinkedStmt.get(user.githubUserId)) return null
@@ -1682,10 +1811,8 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       await touchUserSeenStmt.run(now, session.userId, now)
     },
     async sessionWithUser(id, now) {
-      const row = (await selectOwnSessionStmt.get(id, now)) as SessionRow | undefined
-      if (row == null) return null
-      await touchUserSeenStmt.run(now, row.uid, now)
-      return ownSession(row)
+      const row = (await touchOwnSessionStmt.get(now, now, id, now, id, id, id, id)) as SessionRow | undefined
+      return row == null ? null : ownSession(row)
     },
     async getSessionWithUser(id, now) {
       const row = (await selectOwnSessionStmt.get(id, now)) as SessionRow | undefined
@@ -1720,6 +1847,10 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       const rows = (await selectUsersStmt.all()) as UserRow[]
       return rows.map((r) => ({ id: r.id, login: r.login, name: r.name, role: r.role, createdAt: r.created, lastSeenAt: r.lastSeen, lastActivityAt: r.lastActivity }))
     },
+    async getUser(id) {
+      const row = (await selectUserStmt.get(id)) as StoredUser | undefined
+      return row == null ? null : { id: row.id, login: row.login, name: row.name, avatarUrl: row.avatarUrl, role: row.role }
+    },
     async setUserRole(id, role) {
       if (role !== 'admin') await deleteDemotedViewsStmt.run(id)
       return Number((await updateRoleStmt.run(role, Date.now(), id)).changes) > 0
@@ -1730,8 +1861,11 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       await updateTokensStmt.run(value.access, value.refresh, tokens.expiresAt, state ? 1 : 0, Date.now(), id)
     },
     async getUserTokens(id) {
-      const state = await storageState(db, key)
-      const row = (await selectTokensStmt.get(id)) as StoredTokens | undefined
+      // The tokens and the storage encryption state they were kept under, in
+      // one read: a user missing reads as no tokens, no encryption row as none.
+      const read = (await stmts.selectTokensStateStmt.get(id)) as StoredTokens & Parameters<typeof storageStateOf>[0] & { userId: string | null; stateId: number | null }
+      const state = storageStateOf(read.stateId == null ? undefined : read, key)
+      const row = read.userId == null ? undefined : read
       if (row == null || row.access == null) return null
       if (row.encrypted && !state) throw new Error('Encrypted tokens without storage encryption state')
       if (!row.encrypted && state?.complete) throw new Error('Unexpected plaintext GitHub tokens')
@@ -1749,7 +1883,10 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...activity,
     ...comments,
     async getAnnotations(ids) {
-      return { triage: await triage.listTriage(ids), comments: await comments.listComments(ids), issues: await methods.listManagedIssues(ids) }
+      // listTriage, listComments and listManagedIssues in one statement.
+      const row = await stmts.selectAnnotationsStmt.get(JSON.stringify(ids)) as { triage: unknown; comments: unknown; issues: unknown }
+      return { triage: ids.length > 0 ? jsonRows<TriageDbRow>(row.triage).map(triageRow) : [], comments: ids.length > 0 ? jsonRows<Awaited<ReturnType<CommentStore['listComments']>>[number]>(row.comments) : [],
+        issues: jsonRows<ManagedIssue>(row.issues) }
     },
     async applyManagedIssueFixes(sessionId, snapshot, updates) {
       // Recheck access inside the same write transaction as the derived field.

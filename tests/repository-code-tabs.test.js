@@ -14,6 +14,7 @@ mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { 
 mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog() {} } })
 mock.module('../ui/view/prism-highlight.js', { exports: { langForPath: () => null, langForTag: () => null, highlight: () => Promise.resolve(null) } })
 mock.module('../ui/view/repository-compare.js', { exports: { repositoryCompareSource: () => null } })
+mock.module('../ui/view/activity-load.js', { exports: { withRepositoryActivity: template => template() } })
 mock.module('../ui/view/repository-code.js', { exports: {
   browsableRepositories: () => ({ status: 'ready', value: [] }), openRepositoryCodeTab() {}, repositoryCodeListing: () => '', repositoryCodeName: ({ repo }) => repo,
   repositoryCodePending: () => null, repositoryCodeRoute: () => null, repositoryFullName: ({ repo }) => repo, repositoryRefs: () => ({ status: 'loading' }), navigateToRepositoryCode() {}, shownRevision: () => ({}),

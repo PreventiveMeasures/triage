@@ -1329,7 +1329,8 @@ by `path` and `hash`, once this ends. They are sent
 as Brotli-encoded `application/x-ndjson`, a line a file, `{ side, path, source,
 text }` or `{ side, path, source, error, status }`, `side` `base` (the bundle
 asked about) or `other`, `source` its file's hash: those kept come first, at
-once, then the rest as each is formatted, one after another, the minified
+once, a few read ahead of the line sent, then the rest as each is formatted,
+one after another, the minified
 before the others, in path order otherwise. Both bundles are read before
 anything is answered, for a reader of both (401 or 404 as for one bundle, 400
 `bad-bundle` for an `other` that isn't a bundle ID), whose access is checked
@@ -1677,10 +1678,13 @@ under it with it, says first whether it holds at most 80,000 files and
 256 MiB, bounds of its own, apart from a package's (`repository-code.ts`),
 else `413 directory-too-large`, before its tarball is asked for: the tree's,
 verified against the tree's id as bundle builds verify theirs, and kept in
-upstream's disk cache with them. It is read as a package's is, within those
-bounds, a 384 MiB tar stream of at most 160,000 entries, and its files at
-384 Mi characters of JSON (`413 directory-too-large` past them too), but for
-its symlinks, which may climb as far as the repository's root, as a monorepo
+upstream's disk cache with them. The tree a commit has at a directory, and
+what a tree holds, are kept in memory by the repository's id for the next to
+open it, as neither changes, read of them only once the reader's own access
+has named the commit. It is read as a package's is, within those bounds, a
+384 MiB tar stream of at most 160,000 entries, and its files at 384 Mi
+characters of JSON (`413 directory-too-large` past them too), but for its
+symlinks, which may climb as far as the repository's root, as a monorepo
 package's LICENSE links the root's; one that `@preventive/archive` refuses is `422
 directory-unreadable`: one holding an absolute symlink, or one climbing past
 the repository's root.
@@ -2409,7 +2413,7 @@ lines; its pull requests, commits and issues in their states' colors, as
 many as fit and how many more, a single task's age and lines at the end
 of their row rather than the line above; and its branch. An app agent's mark is its GitHub App's or account's avatar, which the
 server fetches from GitHub once and keeps (`/api/avatar/app-<id>` or
-`/api/avatar/user-<id>`, for those agents alone). A tile clicked opens its session's popup, as an issue's does: who,
+`/api/avatar/user-<id>`, for those agents alone), the browser keeping it a day (a user's avatar it never keeps). A tile clicked opens its session's popup, as an issue's does: who,
 when, its state, tasks and size, its pull requests and issues, each opening
 in its place, its commits and branches, on GitHub, and links to where it ran
 (a Claude Code session or a Codex task) and to GitHub. A pull request's or
@@ -3229,7 +3233,8 @@ needs pretty-printing (`needsPrettyPrint` in `common/pretty-print.js`: one the
 viewer tags minified, of a language formatted, of at most 4 MiB), each
 formatted and checked as a bundle's are (`GET /api/bundles/:id/pretty`), as
 Brotli-encoded `application/x-ndjson`: a line a file, in path order, each sent
-as it is formatted, `{ path, source, text }`, or `{ path, source, error,
+as it is formatted (those kept a few read ahead of the line sent), `{ path,
+source, text }`, or `{ path, source, error,
 status }` where it has no copy (`unformattable`, `pretty-mismatch`,
 `pretty-busy`, …), `source` the `sha512-<base64>` of the file's bytes it was
 formatted from, which the client checks against the text it was sent. With

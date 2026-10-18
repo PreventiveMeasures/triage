@@ -297,7 +297,7 @@ test('reports known to have only a compressed copy are read without asking for a
   asked.length = 0
   assert.deepEqual(await store.get('old'), reportBody)
   assert.deepEqual(await store.get('old'), reportBody)
-  assert.deepEqual(asked, ['old', 'old.br'], 'once converted, its original is not asked for again')
+  assert.deepEqual(asked, ['old', 'old.br', 'old.br'], 'once converted, its original is not asked for again')
   stored.set('elsewhere.br', brotliCompressSync(reportBody))
   asked.length = 0
   assert.deepEqual(await store.get('elsewhere'), reportBody)
@@ -307,11 +307,28 @@ test('reports known to have only a compressed copy are read without asking for a
   stored.set('elsewhere', reportBody)
   asked.length = 0
   assert.deepEqual(await store.get('elsewhere'), reportBody, 'a compressed copy gone asks for the original after all')
-  assert.deepEqual(asked, ['elsewhere.br', 'elsewhere'])
+  assert.deepEqual(asked, ['elsewhere.br', 'elsewhere', 'elsewhere.br'])
   await store.delete('uploaded')
   asked.length = 0
   assert.equal(await store.get('uploaded'), null)
   assert.deepEqual(asked, ['uploaded', 'uploaded.br'])
+})
+
+test('a report not known yet asks for both its copies at once, the original answering where it is still there', async () => {
+  let most = 0, pending = 0
+  const answer = bytes => new Promise(resolve => {
+    pending++; most = Math.max(most, pending)
+    setTimeout(() => { pending--; resolve(bytes ? { size: bytes.length, stream: Readable.from([bytes]) } : null) }, 5)
+  })
+  const copies = new Map([['both', reportBody], ['both.br', brotliCompressSync(Buffer.from('{"stale":true}'))], ['new.br', brotliCompressSync(reportBody)]])
+  const converted = []
+  const store = createReportStore({ open: id => answer(copies.get(id)) }, { open: id => answer(copies.get(`${id}.br`)) },
+    id => { converted.push(id); return Promise.resolve() })
+  assert.deepEqual(await store.get('new'), reportBody)
+  assert.equal(most, 2, 'one round trip of storage, not two')
+  assert.deepEqual(await store.get('both'), reportBody, 'an original left by a conversion that failed is read, and converted again')
+  assert.deepEqual(converted, ['both'])
+  assert.equal(await store.get('none'), null)
 })
 
 test('the 25 MiB default accepts an 11 MiB report and preserves downloads and deduplication after encrypted compression', async t => {

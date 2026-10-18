@@ -6,6 +6,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { format } from '@preventive/compare/pretty.js'
@@ -14,7 +15,7 @@ import { createBundleCache } from '../server-managed/bundle-cache.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
-import { createPrettyCache, prettyBody, stalePrettyRemover } from '../server-managed/pretty-print.ts'
+import { compared, createPrettyCache, prettyBody, stalePrettyRemover } from '../server-managed/pretty-print.ts'
 import { renameDiffOf } from '../server-managed/rename-diff.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
@@ -341,6 +342,54 @@ test('the files that changed between two bundles are pretty-printed in one reque
   assert.equal(one.text(), await formatted('export const b = 2\n'))
   assert.equal(reads.mock.callCount(), 0, 'a copy the comparison made, read alone without decoding the bundle')
   assert.deepEqual(linesOf(await h.send(bundleChanges(base, other))), keptOrder(lines), 'the kept first, the one that failed formatted again after')
+})
+
+// A side of `paths` each changed and each kept, a storage round trip opening
+// each copy, `opened` naming those opened and `open` counting those opening.
+function keptSide(name, paths, opened, open) {
+  const textOf = path => `export const ${name} = '${path}'\n`
+  return {
+    side: name, packageDirs: null,
+    files: paths.map(path => ({ path, hash: fileHash(textOf(path)), extension: 'js', text: textOf(path) })),
+    hashes: new Map(paths.map(path => [path, fileHash(textOf(path))])),
+    async kept({ path }) {
+      opened.push(`${name} ${path}`)
+      open.now++
+      open.most = Math.max(open.most, open.now)
+      await new Promise(resolve => { setImmediate(resolve) })
+      open.now--
+      const body = brotliCompressSync(`${name} ${path}`)
+      return { size: body.byteLength, stream: Readable.from([body]) }
+    },
+    made() { throw new Error('every copy is kept') },
+  }
+}
+
+test('a comparison reads its kept copies a few ahead of the line it sends, sends them in their order, and reads no further once left', async () => {
+  const paths = Array.from({ length: 20 }, (_, i) => `f${String(i).padStart(2, '0')}.js`)
+  const open = { most: 0, now: 0 }, opened = []
+  const sides = () => [keptSide('base', paths, opened, open), keptSide('other', paths, opened, open)]
+  const sent = []
+  for await (const line of compared(sides())) sent.push(`${line.side} ${line.path} ${line.text}`)
+  assert.deepEqual(sent, paths.flatMap(path => [`base ${path} base ${path}`, `other ${path} other ${path}`]), 'in path order, the base\'s first, each its own copy')
+  assert.equal(open.most, 8, 'eight opened at once, not one after another')
+
+  opened.length = 0
+  const left = compared(sides())
+  await left.next()
+  await left.next()
+  await left.return()
+  const asked = opened.length
+  await new Promise(resolve => { setTimeout(resolve, 20) })
+  assert.equal(opened.length, asked, 'none opened once the stream is left')
+  assert.ok(asked <= 2 + 8, `the two sent and those read ahead of them alone: ${asked}`)
+
+  const [failing, other] = sides()
+  const keptOne = failing.kept
+  failing.kept = wanted => (wanted.path === 'f05.js' ? Promise.reject(new Error('storage unreachable')) : keptOne(wanted))
+  const before = []
+  await assert.rejects(async () => { for await (const line of compared([failing, other])) before.push(line.path) }, /storage unreachable/u)
+  assert.equal(before.length, 10, 'a copy that fails to open fails the stream in its turn, those before it sent')
 })
 
 test('a comparison leaves out what moved unchanged, its text at a path its side alone has, however many copies share it', async t => {

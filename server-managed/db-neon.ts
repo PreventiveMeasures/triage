@@ -35,11 +35,18 @@ export type PgConnect = () => Promise<PgConnection>
 // presence updates, and maintenance leases do not take it. Also fences migrations.
 const LOCK = 'SELECT pg_advisory_xact_lock(1937006964, 1835101793)'
 
+// Whether every version up to the latest is recorded, in one round trip at
+// a cold start: a database with no versions table yet (undefined_table) has
+// none. Outside a transaction, so the failed read aborts nothing.
+const SCHEMA_VERSIONS = 31
 async function currentSchema(db: PgConnection): Promise<boolean> {
-  const exists = (await db.query("SELECT to_regclass('managed_schema_version') AS name")).rows[0]?.['name']
-  if (!exists) return false
-  const versions = new Set((await db.query('SELECT version FROM managed_schema_version')).rows.map(row => Number(row['version'])))
-  return Array.from({ length: 31 }, (_, i) => i + 1).every(version => versions.has(version))
+  try {
+    const { rows } = await db.query(`SELECT count(*) AS n FROM managed_schema_version WHERE version BETWEEN 1 AND ${SCHEMA_VERSIONS}`)
+    return Number(rows[0]?.['n']) === SCHEMA_VERSIONS
+  } catch (error) {
+    if ((error as { code?: unknown })?.code === '42P01') return false
+    throw error
+  }
 }
 
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {

@@ -13,7 +13,7 @@ import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_TAR_ENTRIES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmPublishTime, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion,
   readNpmVersions, readTogether, setNpmDocumentCache } from '../server-managed/npm-packages.ts'
 import { npmVersionFields } from '../server-managed/npm-manifest.ts'
-import { npmPublishTimeStore, npmVersionStore, riskLineStore } from '../server-managed/npm-kept.ts'
+import { npmPublishTimeStore, npmVersionStore, ownKeptPrunes, riskLineStore } from '../server-managed/npm-kept.ts'
 import { MAX_TAR_BYTES, loadNpmFiles, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
 import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
@@ -520,6 +520,83 @@ test('risk\'s downloads of a public package are kept in the database, for anothe
   assert.deepEqual(await kept(), ['risk/npm/downloads/is-number@2026-08-01:2026-10-13'], 'nine days on, the first removed as another is written')
 })
 
+// Where risk's hourly records are kept in the database: by a hash of their
+// type and key (npm-risk.ts databaseKey).
+const hourlyKey = (type, key) => `risk/hourly/${createHash('sha256').update(`${type}\0${key}`).digest('hex')}`
+
+test('risk\'s hourly records of a public package kept in the database too, for a cold instance, read of it once; a private one\'s, and one past 256 KiB, in memory alone; removed a day on', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  const DAY = 24 * 60 * 60_000, now = Date.now()
+  const record = { at: now, deprecated: {}, takenDown: false, removed: {} }
+  const long = { ...record, deprecated: Object.fromEntries(Array.from({ length: 3000 }, (_, i) => [`1.0.${i}`, 'x'.repeat(100)])) }
+  await npmRiskCache({ db }, true).write('risk/npm/packages', 'hourly-pad', record)
+  await npmRiskCache({ db }, false).write('risk/npm/packages', '@acme/hourly-secret', record)
+  await npmRiskCache({ db }, true).write('risk/npm/packages', 'hourly-long', long)
+  const kept = names => db.getUpstreamCacheEntries(names.map(([type, key]) => hourlyKey(type, key)))
+  const rows = await kept([['risk/npm/packages', 'hourly-pad'], ['risk/npm/packages', '@acme/hourly-secret'], ['risk/npm/packages', 'hourly-long']])
+  assert.deepEqual([...rows.keys()], [hourlyKey('risk/npm/packages', 'hourly-pad')], 'a public one\'s alone, not a private one\'s, nor one past 256 KiB')
+  assert.deepEqual(JSON.parse(rows.get(hourlyKey('risk/npm/packages', 'hourly-pad'))), record)
+  assert.deepEqual(await npmRiskCache({ db }, true).read('risk/npm/packages', 'hourly-long'), long, 'that one held in memory')
+  assert.deepEqual(await npmRiskCache({ db }, false).read('risk/npm/packages', '@acme/hourly-secret'), record, 'a private one in memory, as before')
+  assert.equal(await npmRiskCache({ db }, true).read('risk/npm/packages', '@acme/hourly-secret'), null, 'apart from public ones')
+
+  // As a cold instance reads one another kept: of the database once, then of memory.
+  const reads = []
+  const counted = Object.assign(Object.create(db), { getUpstreamCacheEntry: key => { reads.push(key); return db.getUpstreamCacheEntry(key) } })
+  const advised = { at: now, osv: true, rows: [] }
+  await db.setUpstreamCacheEntry(hourlyKey('risk/npm/advisories', 'hourly-cold@1.0.0'), JSON.stringify(advised), now)
+  assert.deepEqual(await npmRiskCache({ db: counted }, true).read('risk/npm/advisories', 'hourly-cold@1.0.0'), advised)
+  assert.deepEqual(await npmRiskCache({ db: counted }, true).read('risk/npm/advisories', 'hourly-cold@1.0.0'), advised)
+  assert.deepEqual(reads, [hourlyKey('risk/npm/advisories', 'hourly-cold@1.0.0')], 'the database read once')
+
+  t.mock.timers.enable({ apis: ['Date'], now: now + 2 * DAY })
+  await npmRiskCache({ db }, true).write('risk/npm/public', 'hourly-later', { at: now + 2 * DAY, created: '2020-01-01T00:00:00.000Z' })
+  assert.deepEqual([...(await kept([['risk/npm/packages', 'hourly-pad'], ['risk/npm/advisories', 'hourly-cold@1.0.0'], ['risk/npm/public', 'hourly-later']])).keys()],
+    [hourlyKey('risk/npm/public', 'hourly-later')], 'two days on, those before removed as another is written')
+})
+
+test('an assessment keeps a public package\'s hourly records in the database, a private one\'s none, nor is OSV asked of it', async t => {
+  const open = packageOf('hourly-open', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }), own = packageOf('@acme/hourly-own', '1.0.0', { 'package.json': '{}' }, { dependencies: {} })
+  const asked = []
+  t.mock.method(globalThis, 'fetch', (input, init) => {
+    const url = String(input)
+    asked.push(url)
+    if (url === ADVISORIES) return Promise.resolve(Response.json({}))
+    if (url === OSV) return Promise.resolve(osvNone(init))
+    for (const pkg of [open, own]) if (url === pkg.doc.dist.tarball) return Promise.resolve(new Response(pkg.tgz))
+    if (url.startsWith('https://api.npmjs.org/downloads/range/')) return Promise.resolve(Response.json({ start: '2026-08-01', end: '2026-10-11', package: 'x', downloads: [] }))
+    const pkg = url.includes('hourly-own') ? own : open
+    return Promise.resolve(Response.json({ name: pkg.doc.name, versions: { '1.0.0': pkg.doc }, time: { '1.0.0': '2025-01-01T00:00:00.000Z' } }))
+  })
+  const db = openSqliteManagedDb(':memory:')
+  const docOf = (pkg, isPrivate) => ({ ...pkg.doc, private: isPrivate, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null }, manifest: {} })
+  for (const [pkg, isPrivate] of [[open, false], [own, true]]) await npmRisk(docOf(pkg, isPrivate), null, { db, teamScoped: false, privileged: false, signal: new AbortController().signal })
+  const keys = ['hourly-open', '@acme/hourly-own'].flatMap(name => [hourlyKey('risk/npm/packages', name), hourlyKey('risk/npm/advisories', `${name}@1.0.0`)])
+  assert.deepEqual([...(await db.getUpstreamCacheEntries(keys)).keys()].toSorted(), keys.slice(0, 2).toSorted(), 'the public package\'s record and advisories alone')
+  assert.equal(asked.filter(url => url === OSV).length, 1, 'OSV asked of the public one alone')
+})
+
+test('risk\'s records of any types read of the database at once, those memory holds since left out, a private package\'s none', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const queries = []
+  const counted = Object.assign(Object.create(db), {
+    getUpstreamCacheEntries: keys => { queries.push(keys.length); return db.getUpstreamCacheEntries(keys) },
+    getUpstreamCacheEntry: key => { queries.push(1); return db.getUpstreamCacheEntry(key) },
+  })
+  const fact = { manifest: {}, published: null, dist: {} }, pkg = { at: Date.now(), deprecated: {}, takenDown: false, removed: {} }
+  await db.setUpstreamCacheEntry(hourlyKey('risk/npm/packages', 'each-pad'), JSON.stringify(pkg), Date.now())
+  await db.setUpstreamCacheEntry('risk/npm/versions/each-pad@1.0.0', JSON.stringify(fact), Date.now())
+  const entries = [['risk/npm/packages', 'each-pad'], ['risk/npm/versions', 'each-pad@1.0.0'], ['risk/npm/versions', 'each-pad@2.0.0']]
+  assert.deepEqual(await npmRiskCache({ db: counted }, true).readEach(entries), [pkg, fact, null])
+  assert.deepEqual(queries, [3], 'one read of all three')
+  queries.length = 0
+  assert.deepEqual(await npmRiskCache({ db: counted }, true).readEach(entries), [pkg, fact, null])
+  assert.deepEqual(queries, [2], 'the package\'s record held in memory since')
+  queries.length = 0
+  assert.deepEqual(await npmRiskCache({ db: counted }, false).readEach([['risk/npm/packages', '@acme/each'], ['risk/npm/versions', '@acme/each@1.0.0']]), [null, null])
+  assert.deepEqual(queries, [], 'a private package\'s read of memory alone')
+})
+
 test('a scan reads the database once and writes it once a lookup of npm\'s downloads, as a request\'s queries take turns', async t => {
   const db = openSqliteManagedDb(':memory:')
   const queries = []
@@ -566,6 +643,47 @@ test('risk lines kept in the database are read many at once, by key, however old
   t.mock.timers.enable({ apis: ['Date'], now: now + 31 * DAY })
   await lines.write('ms@2.1.3', { score: 0 }, now + 31 * DAY)
   assert.deepEqual([...(await lines.readMany(['left-pad@1.3.0', 'is-number@7.0.0', 'ms@2.1.3'])).keys()], ['ms@2.1.3'], 'a month on, the older removed')
+})
+
+test('a kept write is done before its prune, which runs behind it once an hour', async () => {
+  const DAY = 24 * 60 * 60_000, now = Date.now()
+  const pruning = [], written = []
+  let release
+  const db = {
+    setUpstreamCacheEntry(key) { written.push(key); return Promise.resolve() },
+    deleteUpstreamCacheEntries(prefix, before) {
+      pruning.push([prefix, before])
+      return new Promise(resolve => { release = resolve })
+    },
+  }
+  const owned = []
+  ownKeptPrunes(db, prune => { owned.push(prune) })
+  const lines = riskLineStore(db, 30 * DAY)
+  await lines.write('left-pad@1.3.0', { score: 7 }, now)
+  assert.equal(written.length, 1, 'written')
+  assert.deepEqual(pruning, [['repository-risk/lines/', now - 30 * DAY]], 'its prune started, and still running')
+  assert.equal(owned.length, 1, 'handed to its database\'s owner, which sees it through')
+  let settled = false
+  void (async () => { await owned[0]; settled = true })()
+  await lines.write('ms@2.1.3', { score: 0 }, now + 1)
+  assert.equal(pruning.length, 1, 'none started again within the hour, the first one under way')
+  assert.equal(owned.length, 1, 'nor handed over again')
+  assert.equal(settled, false)
+  release()
+  await owned[0]
+  assert.equal(settled, true, 'the owner\'s promise settles with the prune')
+})
+
+test('the request handler sees its database\'s prunes through: tracked, and kept alive past the answer on serverless', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const retained = [], tracked = []
+  createManagedRequestHandler({ config: { ...config, serverless: true }, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false,
+    track(work) { tracked.push(work) }, waitUntil(work) { retained.push(work) } })
+  await riskLineStore(db, 24 * 60 * 60_000).write('left-pad@1.3.0', { score: 7 }, Date.now())
+  assert.equal(tracked.length, 1, 'tracked, so the database outlives it')
+  assert.deepEqual(retained, tracked, 'and retained by the function past its answer')
+  await Promise.all(retained)
 })
 
 test('risk lines kept for good are never removed, however old', async t => {

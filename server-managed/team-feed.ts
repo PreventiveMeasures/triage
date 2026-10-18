@@ -74,7 +74,9 @@ export async function serveUserTeamFeed(res: ServerResponse, deps: ManagedHttpDe
     }
     const catalog = await deps.db.getUserTeamFeedSnapshot(sessionId, Date.now())
     checkUser(catalog)
-    checkUser(await deps.db.getReportAccessSnapshot(sessionId, Date.now(), []))
+    // The session read again after the catalog, as the catalog is published
+    // next: one statement, as the poll's own check is.
+    checkUser(await deps.db.getFeedState(sessionId, Date.now()))
     // Publish catalog state before loading any report blobs. A slow or broken
     // focused report must not hide membership/content changes from the client.
     if (!publish('teams', catalog!.revision)) return
