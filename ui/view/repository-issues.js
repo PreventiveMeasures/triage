@@ -50,7 +50,11 @@ function sessionLists() {
 }
 
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
-subscribePullDependencies(repaint)
+// Each list shown drawn again as its repository's pull requests have their
+// dependencies read, or all may have changed.
+subscribePullDependencies(pull => {
+  for (const element of shownElements) if (!pull || element.repository?.repoId === pull.repoId) element.requestUpdate()
+})
 
 // A server's answer, its items those it names by number, and when it read
 // them from GitHub.

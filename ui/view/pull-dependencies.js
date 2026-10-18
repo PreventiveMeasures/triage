@@ -5,8 +5,11 @@
 // /api/admin/repositories/pull-dependencies): read only of one GitHub says
 // changes a lockfile, or may, its files more than it listed
 // (`touchesLockfile`), as many at once as READ_AT_ONCE, those asked first
-// read first, as a page of tiles asks of each in turn; and kept for the
-// session that read them a while, as the tiles are. An open one's are asked
+// read first, as a page of tiles asks of each in turn, those a page asks of
+// in the background (a team's Dependencies tab) after the rest, one asked of
+// meanwhile moved before them; and kept for the session that read them a
+// while, as the tiles are, one grown old shown while it is read again. Each
+// answer's versions are worked out once (`once`). An open one's are asked
 // with their review, where the repository reviews dependencies
 // (server-managed/pull-dependency-reviews.ts): each version's, the other
 // versions its lockfiles lock that want reviews, and what fails it.
@@ -18,31 +21,42 @@ const RETRY_MS = 30_000
 const READ_AT_ONCE = 2
 
 const held = new Map()
+// Those waiting their turn, those asked in the background after (`behind`),
+// by their keys (`queued`).
 const waiting = []
+const behind = []
+const queued = new Map()
 const listeners = new Set()
 let keptFor = null
 let reading = 0
 
-// Calls `notify` as what is held changes, till the returned function is called.
+// Calls `notify` as what is held changes, with the pull request it is of
+// (`{ repoId, number }`), none where all may have, till the returned
+// function is called.
 export function subscribePullDependencies(notify) {
   listeners.add(notify)
   return () => listeners.delete(notify)
 }
-const changed = () => { for (const notify of listeners) notify() }
+const changed = pull => { for (const notify of listeners) notify(pull) }
+
+function forget() {
+  held.clear()
+  waiting.length = 0
+  behind.length = 0
+  queued.clear()
+}
 
 // A repository's review set anew (the admin's repository page): what is
 // held, of pull requests' reviews among it, asked again.
 globalThis.addEventListener?.('dependency-review-changed', () => {
-  held.clear()
-  waiting.length = 0
+  forget()
   changed()
 })
 
 function sessionHeld() {
   const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
   if (session !== keptFor) {
-    held.clear()
-    waiting.length = 0
+    forget()
     keptFor = session
   }
   return held
@@ -100,42 +114,70 @@ export function checked(answer) {
       ? { lockfiles: { mode: review.lockfiles.mode, paths: review.lockfiles.paths } } : {} } } : {} }
 }
 
-// The next asked read as one is, as many at once as READ_AT_ONCE.
+// The next asked read as one is, as many at once as READ_AT_ONCE, those
+// asked in the background after the rest.
 function readNext() {
-  while (reading < READ_AT_ONCE && waiting.length > 0) {
+  while (reading < READ_AT_ONCE && waiting.length + behind.length > 0) {
+    const job = waiting.shift() ?? behind.shift()
+    queued.delete(job.key)
     reading++
-    waiting.shift()().finally(readDone)
+    job.read().finally(() => readDone(job.pull))
   }
 }
-function readDone() {
+function readDone(pull) {
   reading--
-  changed()
+  changed(pull)
   readNext()
 }
 
 // What pull request `number` of repository `repoId` adds, as held, else
 // asked: `{ status }`, 'loading', then 'ready' with its `lockfiles`, `cut`,
 // and with `review` (an open one's), its review's terms where in effect, or
-// 'error' with its `error`; asked again once old, or once an error's retry
-// is due.
-export function pullDependencies(repoId, number, review = false) {
+// 'error' with its `error`; asked again once old, shown as it was meanwhile
+// (`refreshing`), or once an error's retry is due. One asked in the
+// `background` is read after those asked otherwise.
+export function pullDependencies(repoId, number, review = false, { background = false } = {}) {
   const data = sessionHeld()
   const key = `${repoId}\0${number}\0${review}`
   const entry = data.get(key)
-  if (entry && Date.now() < entry.until) return entry
-  const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
+  if (entry && Date.now() < entry.until) {
+    const job = queued.get(key)
+    if (!background && job?.background) {
+      behind.splice(behind.indexOf(job), 1)
+      job.background = false
+      waiting.push(job)
+    }
+    return entry
+  }
+  const loading = entry?.status === 'ready' ? { ...entry, until: Number.POSITIVE_INFINITY, refreshing: true } : { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
-  waiting.push(() => fetchPullDependencies(repoId, number, { review }).then(checked).then(answer => {
+  const job = { key, background, pull: { repoId, number }, read: () => fetchPullDependencies(repoId, number, { review }).then(checked).then(answer => {
     if (data.get(key) === loading) data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, ...answer })
     return null
   }, err => {
     if (data.get(key) !== loading) return null
-    if (err?.name === 'AbortError') data.delete(key)
-    else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'Its lockfiles could not be read.' })
+    if (err?.name === 'AbortError') {
+      if (entry?.status === 'ready') data.set(key, entry)
+      else data.delete(key)
+    } else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'Its lockfiles could not be read.' })
     return null
-  }))
+  }) }
+  queued.set(key, job)
+  ;(background ? behind : waiting).push(job)
   readNext()
   return loading
+}
+
+// `work` of an answer's lockfiles and review, worked out once each, as
+// they never change.
+const worked = new WeakMap()
+function once(name, { lockfiles, review }, work) {
+  const of = worked.get(lockfiles) ?? worked.set(lockfiles, new Map()).get(lockfiles)
+  const known = of.get(name)
+  if (known && known.review === review) return known.value
+  const value = work()
+  of.set(name, { review, value })
+  return value
 }
 
 // What an answer tells new: each package version once, across its
@@ -147,7 +189,10 @@ export function pullDependencies(repoId, number, review = false) {
 // another's is an update, with the versions it was in each, whichever
 // directory comes first; and its review the less passing of theirs
 // (bothReviewed).
-export function addedVersions({ lockfiles, review }) {
+export function addedVersions(answer) {
+  return once('added', answer, () => added(answer))
+}
+function added({ lockfiles, review }) {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.added ?? [])) {
     const key = `${pkg.name}@${pkg.version ?? ''}`
@@ -193,7 +238,10 @@ export function reviewOf(pkg, review) {
 // across its directories, and how many it counts in all (`count`), those it
 // didn't send among them: as its review tells, each once, else as its
 // directories do.
-export function unreviewedVersions({ lockfiles, review }) {
+export function unreviewedVersions(answer) {
+  return once('unreviewed', answer, () => unreviewed(answer))
+}
+function unreviewed({ lockfiles, review }) {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.unreviewed ?? [])) {
     const key = `${pkg.name}@${pkg.version ?? ''}`
@@ -209,7 +257,10 @@ export function unreviewedVersions({ lockfiles, review }) {
 // whose lockfiles couldn't be read (`unread`); how many versions they lock past those checked
 // (`unchecked`); and whether it changes lockfiles left unread (`cut`). Null
 // where nothing does.
-export function reviewFailures({ lockfiles, cut, review }) {
+export function reviewFailures(answer) {
+  return once(answer.cut ? 'failures-cut' : 'failures', answer, () => failures(answer))
+}
+function failures({ lockfiles, cut, review }) {
   if (!review) return null
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.unsupported ?? [])) {

@@ -57,7 +57,10 @@ class RepositoryItemDialog extends AppDialog {
   // requests changes (repository-items.js), a list reading one of them since.
   connectedCallback() {
     super.connectedCallback()
-    this._unsubscribe = subscribePullDependencies(() => this.requestUpdate())
+    // Drawn again as the pull request shown has its dependencies read, or all may have changed.
+    this._unsubscribe = subscribePullDependencies(pull => {
+      if (!pull || (pull.repoId === this.repository?.repoId && pull.number === this._trail.at(-1)?.number)) this.requestUpdate()
+    })
     this._unobserve = autorun(first => {
       knownChanges()
       if (!first) this.requestUpdate()

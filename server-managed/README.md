@@ -2164,13 +2164,15 @@ once all is read, gives way to Pull requests, its address too). Pull
 requests and repositories are named without their owner where every
 repository reviewed has the same one (`repo#1`). Of each of its repositories whose review is in
 effect for them (three read at once, one they may read only some of left
-out), it reads the open pull requests (three pages at most, those updated
+out), it reads the open pull requests (twenty pages of fifty at most, those updated
 latest, saying so where there are more) and
 the dependencies, with their review, of those changing a lockfile, as their
 tiles do, and, under Pull requests, lists the pull requests whose versions want reviews, or whose
 review fails, those adding fewest first, then those held only by other
 versions their lockfiles lock (the default branch's mostly), each a card
-opening its popup: how many versions it wants reviewed, and its versions
+opening its popup, as wide as its versions want (one column of them for
+one, two for two, else, or a list of it opened, the whole width), those
+listing few side by side: how many versions it wants reviewed, and its versions
 with their review (`0/2`, **rejected**, **patched** or **can't review**), as
 many columns as fit, twelve at first, the rest shown as asked for, those
 past the versions its answer lists counted; and, each opened as asked for,
@@ -2184,23 +2186,25 @@ reviewers are in its comments, a patched one never, as two pull requests may
 patch it apart; reviews published here count everywhere, and none says so.
 One wanting no reviews, its versions passed by reviews or the host's
 reviewed dependencies, is not listed; the reader's reviews of its versions
-are copied in its popup (`formatted`, below). Versions lists every version they add wanting reviews, each once,
-with the pull requests adding it; Default branch, of each repository, what
-its default branch locks that wants reviews or fails it, its lockfiles left
-unread named, each list forty-eight at first; and Reviews the reviews published to the team, revoked ones
+are copied in its popup (`formatted`, below). Versions lists every version they add wanting reviews, each once, all of
+them, with the pull requests adding it; Default branch, of each repository,
+what its default branch locks that wants reviews or fails it, its lockfiles
+left unread named, each list forty-eight at first; and Reviews the reviews published to the team, revoked ones
 too, the latest published first, by whom, fifty a page (`GET
 /api/npm/reviews/team?teamId=…&beforeTime=&beforeId=`, `{ reviews, next }`,
 of one who reads reviews in it, else `404 no-team`, each held to the
 reader's npm access as My reviews' are), with no **Copy dependency review** button,
 which is for one's own. What it reads is held for the session two minutes,
-and read again once a repository's review is set. Each version wanting
+shown as it was while it is read again, and read anew once a repository's
+review is set; its pull requests' dependencies read after those a tile or a
+popup asks for, one of them asked for meanwhile read first. Each version wanting
 reviews, there and in a pull request's popup, tells the lines it changes
 against the version it was, or its whole package's, `+x −y`, `, binary`
 after them where a binary file, which no line counts, was added, removed or
 changed (one moved as it was is not), and `(+z −w -types)` where
 declaration files changed in types alone (`GET /api/npm/delta`,
 `npm-delta.js`), read once its row nears the viewport, two at a time, held
-for the session.
+for the session, a row drawn again as its own is read alone.
 
 #### Reviewed dependencies of the host
 

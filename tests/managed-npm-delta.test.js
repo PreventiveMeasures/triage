@@ -112,6 +112,27 @@ test('a delta\'s files are read only once its turn comes, two at a time, and one
   assert.deepEqual(read, ['sha512-one', 'sha512-two', 'sha512-three'])
 })
 
+test('a delta holds its turn till both sides\' files are read, though one fails first', async () => {
+  const { npmDelta } = await import('../server-managed/npm-delta.ts')
+  const read = []
+  const releases = []
+  const held = name => () => { read.push(name); return new Promise(resolve => { releases.push(() => resolve([{ path: 'index.js', bytes: Buffer.from('a\n') }])) }) }
+  const failing = npmDelta({ integrity: 'sha512-fail-base', files: () => { read.push('fail-base'); return Promise.reject(new Error('gone')) } },
+    { integrity: 'sha512-fail-other', files: held('fail-other') })
+  const busy = npmDelta(null, { integrity: 'sha512-busy', files: held('busy') })
+  const waiting = npmDelta(null, { integrity: 'sha512-waiting', files: held('waiting') })
+  await new Promise(resolve => { setTimeout(resolve, 20) })
+  assert.deepEqual(read, ['fail-base', 'fail-other', 'busy'], 'the third waits, the first\'s other side still read')
+  releases[0]()
+  await assert.rejects(failing, /gone/u)
+  await new Promise(resolve => { setTimeout(resolve, 20) })
+  assert.deepEqual(read, ['fail-base', 'fail-other', 'busy', 'waiting'], 'its turn given up once both are')
+  for (const release of releases.slice(1)) release()
+  await new Promise(resolve => { setTimeout(resolve, 20) })
+  for (const release of releases.slice(2)) release()
+  await Promise.all([busy, waiting])
+})
+
 test('a delta asked again while where it is kept is still being looked in shares the first\'s look and work, even where its own look would have ended after that work', async () => {
   const { npmDelta } = await import('../server-managed/npm-delta.ts')
   const [looks, read] = [[], []]

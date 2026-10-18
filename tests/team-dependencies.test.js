@@ -73,7 +73,9 @@ const shown = repositories => Object.assign(new Dependencies(), { repositories, 
 // Its sub-tabs, as a dialog's header tabs, each with its count, and the one picked.
 const tabs = text => [...text.split('class="dlg-tabs"')[1].split('</div>')[0].matchAll(/aria-selected=(true|false)[^]*?\n\s*>([^<]+)(?:<span class="team-deps-tab-n">([^<]+)<\/span>)?<\/button>/gu)]
   .map(m => [m[2], m[3] ?? null, m[1] === 'true'])
-const cardsOf = text => text.slice(text.indexOf('team-deps-pulls'), text.indexOf('</ol>')).split('<li class="team-deps-pull">').slice(1)
+const cardsOf = text => text.slice(text.indexOf('team-deps-pulls'), text.indexOf('</ol>')).split(/<li class=team-deps-pull(?=[ >])/u).slice(1)
+// Each card's width: a column's, two columns', or every column's.
+const widths = text => [...text.matchAll(/<li class=team-deps-pull( is-[a-z\d-]+)?>/gu)].map(m => m[1]?.trim() ?? 'column')
 
 test('the pull requests wanting reviews, fewest first, each version under the first adding it alone, its review shown; every version apart, once; the default branches\'; and the team\'s reviews, a sub-tab each', async () => {
   const view = shown([repo(7, 'org/a'), repo(8, 'org/b'), repo(9, 'other/c'), repo(7, 'org/a')])
@@ -83,7 +85,8 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.match(text, /role="tabpanel" id=team-deps-panel-pulls aria-labelledby=team-deps-tab-pulls>/u, 'the one open under them')
   assert.deepEqual(asked.branches.toSorted(), [7, 8, 9], 'each repository once')
   assert.deepEqual(asked.pulls.map(([repoId, kind, options]) => [repoId, kind, options.state, options.after ?? null]).toSorted(),
-    [[7, 'pulls', 'open', null], [8, 'pulls', 'open', null], [8, 'pulls', 'open', 'p2'], [8, 'pulls', 'open', 'p3']], 'of those whose review is in effect, three pages at most')
+    [[7, 'pulls', 'open', null], [8, 'pulls', 'open', null], ...Array.from({ length: 19 }, (_, at) => [8, 'pulls', 'open', `p${at + 2}`])].toSorted(),
+    'of those whose review is in effect, twenty pages at most')
   assert.deepEqual(asked.dependencies.map(([repoId, number, options]) => [repoId, number, options.review]).toSorted(),
     [[7, 1, true], [7, 10, true], [7, 11, true], [7, 3, true], [7, 9, true], [8, 2, true], [8, 6, true]],
     'those changing a lockfile, of the repositories reviewing them, with their review')
@@ -91,6 +94,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = cardsOf(text)
   assert.equal(cards.length, 4, 'one adding none wanting reviews not shown')
+  assert.deepEqual(widths(text), ['is-span-2', 'column', 'is-wide', 'column'], 'each card as wide as the versions it lists want: two, none, twelve, none')
   assert.doesNotMatch(text, />a#1[01]</u, 'nor one every version of which is reviewed, the reader\'s reviews of it to copy or not: its popup copies them')
   assert.match(cards[3], />a#9<[^]*class=team-deps-count>4 other versions unreviewed<[^]*aria-expanded=false [^]*<\/svg>Its own versions pass; 4 versions its lockfiles locked before want reviews<\/button>/u,
     'one held only by the versions its lockfiles locked before it, last')
@@ -116,6 +120,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
 
   // Each list past those shown opened, and closed again.
   for (const key of ['org/a#1:own', 'org/a#1:above', 'org/a#9:others']) view.toggle(key)
+  assert.deepEqual(widths(templateText(view.render())), ['is-span-2', 'column', 'is-wide', 'is-wide'], 'one whose list is opened every column\'s')
   const expanded = cardsOf(templateText(view.render()))
   assert.equal(expanded[2].split('<li>').length - 1, 15, 'its own, and the one a pull request above adds')
   assert.match(expanded[2], /<\/svg>Show fewer<\/button>[^]*aria-expanded=true [^]*above adds too<\/button>\s*<ul class="team-deps-versions"><li>[^]*shared/u)
@@ -124,12 +129,12 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.doesNotMatch(expanded[2] + expanded[3], /team-deps-elsewhere/u, 'nor told reviewed elsewhere')
   view.toggle('org/a#1:own')
   assert.equal(cardsOf(templateText(view.render()))[2].split('<li>').length - 1, 13)
-  assert.doesNotMatch(text, /versions to review, each once|<h2>a<\/h2>|dependency-review-list/u, 'the other sub-tabs\' apart')
+  assert.doesNotMatch(text, /<h2>a<\/h2>|dependency-review-list/u, 'the other sub-tabs\' apart')
 
   view.pick('versions')
   const versions = templateText(view.render())
   assert.deepEqual(tabs(versions).map(([label, , on]) => on && label).filter(Boolean), ['Versions'])
-  assert.match(versions, /16 versions to review, each once,\s+by the pull requests adding it\./u)
+  assert.doesNotMatch(versions, /versions to review/u, 'counted by its tab alone')
   assert.equal(versions.split('>shared<').length - 1, 1, 'each once')
   assert.match(versions, /shared[^]*in review in\s+a#1[^]*data-tooltip=Added by b#2, a#1>b#2 \+1</u)
   assert.match(versions, />big-0<[^]*>1\/2<\/span>\s*<span class="team-deps-elsewhere"[^>]*>in review in\s+a#1</u, 'the first adding it too, all its pull requests\' alike')

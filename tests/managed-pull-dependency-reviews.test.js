@@ -125,7 +125,8 @@ test('each version a pull request adds is told its review: how many pass it, of 
   'tool by u1 once, another integrity\'s not; kept locked at the commit reviews are counted since; git, a mirror\'s tarball and one with no integrity can\'t be reviewed')
   assert.deepEqual(answer.lockfiles[1], told.lockfiles[1])
   assert.doesNotMatch(JSON.stringify(answer), /"integrity":|"locked":/u, 'neither integrities nor every version locked told')
-  assert.deepEqual(reviewedPackages(told).toSorted(), ['kept', 'ms', 'ms', 'other', 'reviewed', 'tool'], 'the reviews of those reviewed asked alone')
+  assert.deepEqual(reviewedPackages(told).map(({ name, version }) => `${name}@${version}`).toSorted(), ['kept@1.0.0', 'ms@2.1.3', 'ms@2.1.3', 'other@1.0.0', 'reviewed@2.0.0', 'tool@1.0.0'],
+    'the reviews of those reviewed asked alone, of their versions')
 
   assert.equal((await reviewedDependencies(told, state, { baselineError: 'github-not-found' })).review.baselineError, 'github-not-found')
   assert.deepEqual((await reviewedDependencies(told, state)).lockfiles[0].added[2], { ...strip(kept), reviews: 0 }, 'with no baseline, it wants its reviews')
@@ -222,7 +223,7 @@ test('a patched version passes by no review here, only locked so at the commit r
   asked.length = 0
   await reviewedDependencies(told, state, { reviewed: { lookup } })
   assert.deepEqual(asked.map(dependency => dependency.name), ['failing'], 'answers kept a while, but a failure')
-  assert.deepEqual(reviewedPackages(told), ['plain', 'other', 'failing'], 'no patched one\'s reviews asked')
+  assert.deepEqual(reviewedPackages(told).map(({ name }) => name), ['plain', 'other', 'failing'], 'no patched one\'s reviews asked')
 })
 
 // Git's id of an object, as GitHub names a commit's trees and blobs.
