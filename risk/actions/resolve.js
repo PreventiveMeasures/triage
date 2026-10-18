@@ -66,7 +66,8 @@ export function dockerfileFindings(text) {
   const findings = [], script = [], stages = new Set()
   for (const { start, lines } of instructions(text)) {
     const first = /^\s*(FROM|RUN)\s+(.*)$/iu.exec(lines[0])
-    if (first?.[1].toUpperCase() === 'RUN') { script.push(runCommand(first[2]), ...lines.slice(1)); continue }
+    // A RUN's options (`--mount=…`, `--network=…`) aren't its command.
+    if (first?.[1].toUpperCase() === 'RUN') { script.push(runCommand(first[2].replace(/^(?:--[a-z-]+(?:=\S*)?\s+)*/iu, '')), ...lines.slice(1)); continue }
     script.push(...lines.map(() => ''))
     if (!first) continue
     const words = lines.join(' ').replaceAll('\\', ' ').trim().split(/\s+/u).slice(1).filter(word => !word.startsWith('--'))

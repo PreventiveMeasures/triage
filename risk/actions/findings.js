@@ -1,7 +1,7 @@
 // What a workflow, or an action's metadata, calls for by its own text (README.md).
 import { YamlError } from '@preventive/lockfile/yaml.js'
 import { readWorkflow } from './workflow.js'
-import { installOf } from './scripts/commands.js'
+import { installsOf } from './scripts/commands.js'
 import { imageFinding, lockedName, namesPullHead, scriptFindings, scriptInjections } from './scripts/grade.js'
 import { ownerKind, usesKey } from './uses.js'
 
@@ -14,16 +14,15 @@ function usesFinding(uses, owner) {
   return uses.pin === 'short-sha' ? { id: 'short-sha', severity: 'high', ...at } : { id: 'unpinned', severity: ownerKind(uses.repo, owner) === 'third-party' ? 'high' : 'moderate', ...at, ref: uses.ref }
 }
 
-// Where a step installs a project's packages: a script's directory, or the
-// one its install names; anywhere (null) for one named for installing, and
-// an action of its own of `installers` (ScanOptions), or any where none are
-// told; else undefined.
+// Where a step installs a project's packages: each install's of a script,
+// its directory or the one it names; anywhere (null) for an action named for
+// installing, and one of its own of `installers` (ScanOptions), or any where
+// none are told.
 function installs(step, installers) {
-  if (step.uses?.kind === 'local') return !installers || installers.has(step.uses.path) ? null : undefined
-  if (step.uses?.repo && /install/iu.test(step.uses.repo)) return null
-  if (step.uses?.repo?.toLowerCase() === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return null
-  const install = step.run && installOf(step.run.script)
-  return install ? directoryOf(step.run.workingDirectory, install.into) : undefined
+  if (step.uses?.kind === 'local') return !installers || installers.has(step.uses.path) ? [null] : []
+  if (step.uses?.repo && /install/iu.test(step.uses.repo)) return [null]
+  if (step.uses?.repo?.toLowerCase() === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return [null]
+  return step.run ? installsOf(step.run.script).map(({ into }) => directoryOf(step.run.workingDirectory, into)) : []
 }
 
 // Whether `dir` is `directory` or above it, as node finds a package there;
@@ -84,8 +83,7 @@ function jobFindings(job, triggers, { owner, lockfiles, external, installers }) 
       found.push(...scriptFindings(step.run, { locked, installed: installed.some(at => within(at, directory)), external, triggers }))
     }
     found.push(...stepFindings(step, triggers))
-    const at = installs(step, installers)
-    if (at !== undefined) installed.push(at)
+    installed.push(...installs(step, installers))
   }
   return found
 }
@@ -111,7 +109,7 @@ export function workflowUses(read) {
 // using it does: false for one GitHub can't run.
 export function actionInstalls(text) {
   try {
-    return readWorkflow('action', text).jobs.some(job => job.steps.some(step => installs(step, null) !== undefined))
+    return readWorkflow('action', text).jobs.some(job => job.steps.some(step => installs(step, null).length > 0))
   } catch (error) {
     if (error instanceof YamlError) return false
     throw error

@@ -150,17 +150,16 @@ const INSTALLS = { npm: new RegExp(`^(?:ci|clean-install|ic|install-clean|${NPM_
 // An install's options that leave the project's node_modules as they are.
 const NOT_LOCAL = /^(?:-g|--global|--location=global|--package-lock-only|--lockfile-only)$/u
 
-// A script's first install of a project's packages: its line, from 0, its
-// command's `order` (shell.js scriptCommands), and the directory it names
-// (`into`, packages.js projectOf); else null.
-export function installOf(script) {
-  for (const { argv, line, order } of scriptCommands(script)) {
+// A script's installs of a project's packages, in its order: each one's
+// command's `order` (shell.js scriptCommands) and the directory it names
+// (`into`, packages.js projectOf).
+export function installsOf(script) {
+  return scriptCommands(script).flatMap(({ argv, order }) => {
     const program = programOf(argv[0])
     const command = positional(argv, 1)[0]
-    if (argv.some(word => NOT_LOCAL.test(word))) continue
-    if (program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? '')) return { line, order, into: projectOf(argv) }
-  }
-  return null
+    if (argv.some(word => NOT_LOCAL.test(word))) return []
+    return (program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? '')) ? [{ order, into: projectOf(argv) }] : []
+  })
 }
 
 // A script's line, as a finding names what it runs, cut short.

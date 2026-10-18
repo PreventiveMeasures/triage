@@ -77,7 +77,7 @@ export function projectOf(argv) {
 }
 
 const installs = (tool, words) => words.flatMap(text => fetched(tool, npmSpec(text)))
-// npm's install command and its aliases (commands.js installOf).
+// npm's install command and its aliases (commands.js installsOf).
 export const NPM_INSTALLS = 'i|in|ins|inst|insta|instal|install|isnt|isnta|isntal|isntall|add|it|install-test'
 const created = (tool, text) => text ? fetched(tool, createPackage(text)) : []
 const unlocked = tool => [{ kind: 'unlocked-install', tool }]
