@@ -568,6 +568,26 @@ test('risk lines kept in the database are read many at once, by key, however old
   assert.deepEqual([...(await lines.readMany(['left-pad@1.3.0', 'is-number@7.0.0', 'ms@2.1.3'])).keys()], ['ms@2.1.3'], 'a month on, the older removed')
 })
 
+test('a kept write is done before its prune, which runs behind it once an hour', async () => {
+  const DAY = 24 * 60 * 60_000, now = Date.now()
+  const pruning = [], written = []
+  let release
+  const db = {
+    setUpstreamCacheEntry(key) { written.push(key); return Promise.resolve() },
+    deleteUpstreamCacheEntries(prefix, before) {
+      pruning.push([prefix, before])
+      return new Promise(resolve => { release = resolve })
+    },
+  }
+  const lines = riskLineStore(db, 30 * DAY)
+  await lines.write('left-pad@1.3.0', { score: 7 }, now)
+  assert.equal(written.length, 1, 'written')
+  assert.deepEqual(pruning, [['repository-risk/lines/', now - 30 * DAY]], 'its prune started, and still running')
+  await lines.write('ms@2.1.3', { score: 0 }, now + 1)
+  assert.equal(pruning.length, 1, 'none started again within the hour, the first one under way')
+  release()
+})
+
 test('risk lines kept for good are never removed, however old', async t => {
   const db = openSqliteManagedDb(':memory:')
   const DAY = 24 * 60 * 60_000, now = Date.now()

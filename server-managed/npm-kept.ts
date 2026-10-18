@@ -79,7 +79,10 @@ function keptStore<T>(db: UpstreamCacheStore, type: string, keptMs: number, debu
     },
     async write(key, value, at) {
       try { await db.setUpstreamCacheEntry(keyOf(key), JSON.stringify({ at, value }), at) } catch (error) { warn('write', error) }
-      await prune(at)
+      // Behind the write, not before it is done: the prune reads the whole
+      // table (no index serves its prefix), which no writer need wait on.
+      // Its hour is marked before it runs, so writes meanwhile start none.
+      void prune(at)
     },
     async remove(key) {
       try { await db.deleteUpstreamCacheEntries(keyOf(key), Number.MAX_SAFE_INTEGER) } catch (error) { warn('remove', error) }
