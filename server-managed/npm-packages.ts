@@ -31,11 +31,12 @@ const PACKUMENT_BYTES = 64 * 1024 * 1024
 // limit until it is read and parsed: four packuments, or 32 version documents.
 const MAX_DOCUMENT_BYTES = 4 * PACKUMENT_BYTES
 // What a package may unpack to: the files' bytes and their count; the tar
-// stream holding them is bounded in npm-loads.ts.
+// stream holding them is bounded in npm-loads.ts. A repository directory's
+// are its own (repository-code.ts).
 export const MAX_NPM_PACKAGE_BYTES = 64 * 1024 * 1024
 export const MAX_NPM_PACKAGE_FILES = 20_000
 // The entries its tar stream may hold, read before any is counted as a file:
-// a directory's too, as a GitHub tree's tarball has one for each, npm's none.
+// a directory's too, though npm packs none.
 export const MAX_NPM_TAR_ENTRIES = 2 * MAX_NPM_PACKAGE_FILES
 // What the files may take as the viewer's JSON. Escaping grows a text up to
 // six times (a control character becomes `\u0001`), so it is counted before
@@ -367,18 +368,23 @@ export function npmPublishTime(doc: Pick<NpmVersionDocument, 'name' | 'version' 
 
 export interface NpmPackageFile { path: string; bytes: Uint8Array }
 
+// How a tar stream is read (readNpmTar): how far its symlinks may climb above
+// it, and the entries, files and bytes it may hold, a package's unless given.
+export interface TarReading { symlinksAbove?: number; maxEntries?: number; maxFiles?: number; maxBytes?: number }
+
 // The regular files of a tar stream, by package path: npm drops the first
 // component (`package/`, or whatever the archive used), and a file at the top
 // is not extracted. The stream is read by @preventive/archive, which refuses
 // one malformed, a name or a symlink that would climb out of it -- a symlink
 // past `symlinksAbove` levels above it, none unless given -- and a name
-// repeated as another entry, and gives up past MAX_NPM_TAR_ENTRIES before
-// reading on; a file under another top directory at the same path replaces
-// an earlier one, as extraction would. Directories, links and devices hold no
+// repeated as another entry, and gives up past `maxEntries` before reading
+// on; a file under another top directory at the same path replaces an
+// earlier one, as extraction would. Directories, links and devices hold no
 // file content and are skipped.
-export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0 }: { symlinksAbove?: number } = {}): NpmPackageFile[] {
+export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0, maxEntries = MAX_NPM_TAR_ENTRIES, maxFiles = MAX_NPM_PACKAGE_FILES,
+  maxBytes = MAX_NPM_PACKAGE_BYTES }: TarReading = {}): NpmPackageFile[] {
   let entries: Entry[]
-  try { entries = unpack(tar, { maxEntries: MAX_NPM_TAR_ENTRIES, symlinksAbove }) }
+  try { entries = unpack(tar, { maxEntries, symlinksAbove }) }
   catch (err) {
     if (err instanceof ArchiveError) throw err.limited ? new NpmPackageError(413, 'package-too-large') : new NpmPackageError(422, 'bad-tarball')
     throw err
@@ -391,7 +397,7 @@ export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0 }: { symlinksAbo
     const path = name.slice(slash + 1)
     total += data.length - (files.get(path)?.length ?? 0)
     files.set(path, data)
-    if (files.size > MAX_NPM_PACKAGE_FILES || total > MAX_NPM_PACKAGE_BYTES) throw new NpmPackageError(413, 'package-too-large')
+    if (files.size > maxFiles || total > maxBytes) throw new NpmPackageError(413, 'package-too-large')
   }
   return [...files].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
 }
@@ -421,13 +427,14 @@ const ROW_LENGTH = 80
 
 // The files as the viewer gets them: `[path, bytes, text]`, text null for a
 // file that is not UTF-8, which instead carries its bytes' sha256, so a
-// comparison of two versions tells a changed one from an unchanged one.
-export function npmFileRows(files: NpmPackageFile[]): ([string, number, string] | [string, number, null, string])[] {
+// comparison of two versions tells a changed one from an unchanged one. They
+// may take `maxLength` characters of JSON, a package's unless given.
+export function npmFileRows(files: NpmPackageFile[], maxLength = MAX_NPM_JSON_LENGTH): ([string, number, string] | [string, number, null, string])[] {
   let length = 0
   return files.map(({ path, bytes }) => {
     const text = npmFileText(bytes)
     length += ROW_LENGTH + jsonLength(path) + (text === null ? 0 : jsonLength(text))
-    if (length > MAX_NPM_JSON_LENGTH) throw new NpmPackageError(413, 'package-too-large')
+    if (length > maxLength) throw new NpmPackageError(413, 'package-too-large')
     return text === null ? [path, bytes.byteLength, null, `sha256-${createHash('sha256').update(bytes).digest('base64')}`] : [path, bytes.byteLength, text]
   })
 }

@@ -7,12 +7,20 @@
 // active ones (npm-loads.ts sharedLoad).
 import { Buffer } from 'node:buffer'
 import { encodeBrotli } from './brotli.ts'
-import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NpmPackageError, npmFileRows } from './npm-packages.ts'
+import { NpmPackageError, npmFileRows } from './npm-packages.ts'
 import { type NpmLoad, readTarballFiles, sharedLoad } from './npm-loads.ts'
 
-// As much as a package may hold: the viewer holds every file in memory.
-export const MAX_REPOSITORY_CODE_FILES = MAX_NPM_PACKAGE_FILES
-export const MAX_REPOSITORY_CODE_BYTES = MAX_NPM_PACKAGE_BYTES
+// What a directory may hold, bounded apart from a package's (npm-packages.ts),
+// as the viewer holds every file in memory: its files' count and bytes.
+export const MAX_REPOSITORY_CODE_FILES = 80_000
+export const MAX_REPOSITORY_CODE_BYTES = 256 * 1024 * 1024
+// The tarball they come in, bounded in proportion as a package's is: its tar
+// stream, headers and padding included, and its entries, as many again as
+// files, as GitHub's has one for each directory too.
+const REPOSITORY_TAR = { maxFiles: MAX_REPOSITORY_CODE_FILES, maxBytes: MAX_REPOSITORY_CODE_BYTES, maxEntries: 2 * MAX_REPOSITORY_CODE_FILES, maxTarBytes: 384 * 1024 * 1024 }
+// What the files may take as the viewer's JSON, written as one string: short
+// of the longest V8 holds (2^29 - 24 characters).
+const MAX_REPOSITORY_CODE_JSON_LENGTH = 384 * 1024 * 1024
 
 // Whether a directory's files fit, by GitHub's listing of its tree and every
 // tree under it (repository-browser.ts repositoryTreeFiles): asked before
@@ -45,7 +53,7 @@ export function loadRepositoryCodeBody(input: RepositoryCodeInput, tarball: () =
     // A symlink may reach the repository's root, as a monorepo package's
     // LICENSE links the root's, and no further: the directory's depth, less
     // the level the archive's root already stands above its top directory.
-    try { files = npmFileRows(await readTarballFiles(await tarball(), { symlinksAbove: path.split('/').length - 1 })) }
+    try { files = npmFileRows(await readTarballFiles(await tarball(), { ...REPOSITORY_TAR, symlinksAbove: path.split('/').length - 1 }), MAX_REPOSITORY_CODE_JSON_LENGTH) }
     catch (err) { throw directoryError(err) }
     return encodeBrotli(Buffer.from(JSON.stringify({ repoId, repo, commit, path, tree, files })))
   }, 'repository-busy')

@@ -9,8 +9,8 @@ import { join, resolve } from 'node:path'
 import { CompressionError, decompress } from '@preventive/archive/compression.js'
 import { encodeBrotli } from './brotli.ts'
 import { keptBriefly } from './kept-briefly.ts'
-import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument, askUpstream,
-  npmFileRows, npmPublishTime, npmToken, readNpmTar } from './npm-packages.ts'
+import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument, type TarReading,
+  askUpstream, npmFileRows, npmPublishTime, npmToken, readNpmTar } from './npm-packages.ts'
 import { keepFile, readKeptFile, upstreamCachePath } from './upstream-cache.ts'
 
 // The tar stream a package's files may come in, headers and padding included.
@@ -201,10 +201,11 @@ function unpackedOf(doc: NpmVersionDocument): Promise<Unpacked> {
 
 // A gzipped tarball's files, its top directory left out, as npm extracts
 // a package's: a repository tree's as GitHub archives it, too, its symlinks
-// let climb as readNpmTar's `symlinksAbove` says.
-export async function readTarballFiles(tarball: Uint8Array, options: { symlinksAbove?: number } = {}): Promise<NpmPackageFile[]> {
+// let climb as readNpmTar's `symlinksAbove` says, and its tar stream and
+// files bounded as `options` give, a package's bounds unless given.
+export async function readTarballFiles(tarball: Uint8Array, { maxTarBytes = MAX_TAR_BYTES, ...options }: TarReading & { maxTarBytes?: number } = {}): Promise<NpmPackageFile[]> {
   let tar: Uint8Array
-  try { tar = await decompress(tarball, 'gzip', { limit: MAX_TAR_BYTES }) }
+  try { tar = await decompress(tarball, 'gzip', { limit: maxTarBytes }) }
   catch (err) {
     const limited = err instanceof CompressionError && err.limited
     throw new NpmPackageError(limited ? 413 : 422, limited ? 'package-too-large' : 'bad-tarball')

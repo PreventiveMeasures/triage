@@ -1670,13 +1670,15 @@ viewer to hold in memory only while it shows them. It is read as browsing is,
 with the same two gates and the reader's own GitHub access, and only where
 the reader's grants reach the whole directory: an ancestor of a manager's
 grants is `no-directory`, as is a directory the commit has none at. GitHub's listing of the directory's tree, every tree
-under it with it, says first whether it holds at most 20,000 files and
-64 MiB, as a package may (`repository-code.ts`), else `413
-directory-too-large`, before its tarball is asked for: the tree's, verified
-against the tree's id as bundle builds verify theirs, and kept in upstream's
-disk cache with them. It is read as a package's is, but for its symlinks,
-which may climb as far as the repository's root, as a monorepo package's
-LICENSE links the root's; one that `@preventive/archive` refuses is `422
+under it with it, says first whether it holds at most 80,000 files and
+256 MiB, bounds of its own, apart from a package's (`repository-code.ts`),
+else `413 directory-too-large`, before its tarball is asked for: the tree's,
+verified against the tree's id as bundle builds verify theirs, and kept in
+upstream's disk cache with them. It is read as a package's is, within those
+bounds, a 384 MiB tar stream of at most 160,000 entries, and its files at
+384 Mi characters of JSON (`413 directory-too-large` past them too), but for
+its symlinks, which may climb as far as the repository's root, as a monorepo
+package's LICENSE links the root's; one that `@preventive/archive` refuses is `422
 directory-unreadable`: one holding an absolute symlink, or one climbing past
 the repository's root.
 Readers asking for the same directory meanwhile share one load, among the npm
