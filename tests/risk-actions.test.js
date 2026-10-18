@@ -116,7 +116,7 @@ describe('a script\'s findings, graded', () => {
 
   it('an install in a step before counts where node finds what it installed: its directory or one below', () => {
     const lockfiles = [{ path: 'api/package-lock.json', names: new Set(['eslint']) }, { path: 'package-lock.json', names: new Set(['eslint']) }]
-    const job = (install, run) => `on: push\njobs:\n  a:\n    steps:\n      - run: npm ci\n        working-directory: ${install}\n      - run: npx eslint .\n        working-directory: ${run}\n`
+    const job = (install, runs) => `on: push\njobs:\n  a:\n    steps:\n      - run: npm ci\n        working-directory: ${install}\n      - run: npx eslint .\n        working-directory: ${runs}\n`
     assert.deepEqual(ids(scanWorkflow('workflow', job('web', 'api'), { lockfiles }).findings), ['fetched-package/high@7'], 'web installed, api not')
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api'), { lockfiles }).findings), [], 'installed above it')
     assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api'), { lockfiles }).findings), [])
