@@ -29,7 +29,7 @@ export function scriptLines(script) {
 
 const WRAPPERS = new Set(['sudo', 'env', 'time', 'nohup', 'exec', 'command', 'nice', 'stdbuf', 'xvfb-run', 'timeout', 'corepack'])
 // A wrapper's options taking a value, as `sudo -u user`, `timeout 10m` do.
-const WRAPPER_VALUES = new Map([['sudo', /^-[ugCDhpRrTU]$/u], ['env', /^-[uSC]$/u], ['nice', /^-n$/u], ['timeout', /^-[sk]$/u]])
+const WRAPPER_VALUES = new Map([['sudo', /^-[ugCDhpRrTU]$/u], ['env', /^-[uC]$/u], ['nice', /^-n$/u], ['timeout', /^-[sk]$/u]])
 
 // What a command runs (`argv`): its words past settings, kept (`env`), and
 // wrappers, a wrapper's options and their values, and `timeout`'s duration.
