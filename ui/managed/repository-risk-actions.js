@@ -40,11 +40,8 @@ const ACTION_FINDINGS = {
   'action-missing': ['No action.yml', 'No action.yml where it names, at the commit.'],
   'unreadable': ['Unreadable', 'Its file couldn’t be read as GitHub reads it.'],
 }
-export const ACTION_KINDS = {
-  all: ['All'],
-  actions: ['Actions', 'Actions and reusable workflows of other repositories, resolved on GitHub.'],
-  steps: ['Steps', 'What workflows’ steps fetch or run past a pin, and what else they call for.'],
-}
+// The Actions tab's rows shown: all, the references resolved, or what steps fetch.
+export const ACTION_KINDS = { all: 'All', actions: 'Actions', steps: 'Steps' }
 
 export const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const worst = findings => findings.reduce((best, { severity }) => severityRank(severity) < severityRank(best) ? severity : best, null)

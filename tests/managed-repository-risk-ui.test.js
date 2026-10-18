@@ -497,6 +497,7 @@ test('the packages\' filter is a toggle of those it has any of, but All and the 
   page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: null, score: 0, findings: [] })
   assert.deepEqual(filters(), ['All 2', 'Flagged 1', '*Failed 0'], 'the one chosen kept, of none')
   assert.match(templateText(page.render()), /role="tablist" aria-label=Results>[^]*?>Packages<\/button>/u)
+  assert.doesNotMatch(templateText(page.render()), /aria-pressed=\w+ data-tooltip/u, 'its toggles told by their labels alone, no tooltips')
 })
 
 test('the packages\' Source column is left out where every one is from npm\'s registry', () => {
