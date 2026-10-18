@@ -8,7 +8,7 @@ export const REGISTRY = 'https://registry.npmjs.org'
 // A ustar archive of `entries`, each `{ name, data, type, prefix }`, as npm pack writes one.
 export function tar(entries) {
   const blocks = []
-  for (const { name, data = '', type = '0', prefix = '' } of entries) {
+  for (const { name, data = '', type = '0', prefix = '', linkname = '' } of entries) {
     const body = Buffer.from(data)
     const header = Buffer.alloc(512)
     header.write(name, 0, 100)
@@ -16,6 +16,7 @@ export function tar(entries) {
     header.write(`${body.length.toString(8).padStart(11, '0')}\0`, 124)
     header.write('00000000000\0', 136)
     header.write(type, 156)
+    header.write(linkname, 157, 100)
     header.write('ustar\0', 257)
     header.write('00', 263)
     header.write(prefix, 345, 155)

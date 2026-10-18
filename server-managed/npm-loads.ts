@@ -5,8 +5,7 @@
 import { Buffer } from 'node:buffer'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { promisify } from 'node:util'
-import { gunzip } from 'node:zlib'
+import { CompressionError, decompress } from '@preventive/archive/compression.js'
 import { encodeBrotli } from './brotli.ts'
 import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument, askUpstream,
   npmFileRows, npmPublishTime, npmToken, readNpmTar } from './npm-packages.ts'
@@ -20,8 +19,6 @@ const TARBALL_TIMEOUT_MS = 120_000
 // Loads in flight per process; each can hold a tarball, its tar, its files
 // and their encoded JSON.
 const MAX_ACTIVE_LOADS = 4
-
-const gunzipAsync = promisify(gunzip)
 
 // A load's result, shared by its readers, and a reader's release of it.
 export interface NpmLoad<T> { result: Promise<T>; release: () => void }
@@ -133,15 +130,16 @@ async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
 }
 
 // A gzipped tarball's files, its top directory left out, as npm extracts
-// a package's: a repository tree's as GitHub archives it, too.
-export async function readTarballFiles(tarball: Uint8Array): Promise<NpmPackageFile[]> {
-  let tar: Buffer
-  try { tar = await gunzipAsync(tarball, { maxOutputLength: MAX_TAR_BYTES }) }
+// a package's: a repository tree's as GitHub archives it, too, its symlinks
+// let climb as readNpmTar's `symlinksAbove` says.
+export async function readTarballFiles(tarball: Uint8Array, options: { symlinksAbove?: number } = {}): Promise<NpmPackageFile[]> {
+  let tar: Uint8Array
+  try { tar = await decompress(tarball, 'gzip', { limit: MAX_TAR_BYTES }) }
   catch (err) {
-    throw new NpmPackageError((err as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE' ? 413 : 422,
-      (err as { code?: string }).code === 'ERR_BUFFER_TOO_LARGE' ? 'package-too-large' : 'bad-tarball')
+    const limited = err instanceof CompressionError && err.limited
+    throw new NpmPackageError(limited ? 413 : 422, limited ? 'package-too-large' : 'bad-tarball')
   }
-  return readNpmTar(tar)
+  return readNpmTar(tar, options)
 }
 
 // The version's tarball, for download.

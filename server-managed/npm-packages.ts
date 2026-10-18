@@ -14,6 +14,7 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { ArchiveError, type Entry, unpack } from '@preventive/archive/tar.js'
 import { isExactVersion } from '@preventive/upstream/semver.js'
 import { isNpmPackageName, isNpmPackageSpec, npmPackageScope } from '../common/managed/npm-packages.js'
 import type { Role } from '../common/managed/roles.ts'
@@ -33,6 +34,9 @@ const MAX_DOCUMENT_BYTES = 4 * PACKUMENT_BYTES
 // stream holding them is bounded in npm-loads.ts.
 export const MAX_NPM_PACKAGE_BYTES = 64 * 1024 * 1024
 export const MAX_NPM_PACKAGE_FILES = 20_000
+// The entries its tar stream may hold, read before any is counted as a file:
+// a directory's too, as a GitHub tree's tarball has one for each, npm's none.
+export const MAX_NPM_TAR_ENTRIES = 2 * MAX_NPM_PACKAGE_FILES
 // What the files may take as the viewer's JSON. Escaping grows a text up to
 // six times (a control character becomes `\u0001`), so it is counted before
 // anything is serialized.
@@ -277,73 +281,29 @@ export const npmPublishTime = (name: string, version: string): string | null => 
 
 export interface NpmPackageFile { path: string; bytes: Uint8Array }
 
-const textOf = (bytes: Uint8Array, start: number, length: number) => {
-  const field = bytes.subarray(start, start + length)
-  const end = field.indexOf(0)
-  return Buffer.from(end === -1 ? field : field.subarray(0, end)).toString('utf8')
-}
-
-function sizeOf(bytes: Uint8Array, offset: number): number {
-  // GNU base-256 for sizes past the 11 octal digits.
-  if (bytes[offset]! & 0x80) {
-    let size = bytes[offset]! & 0x7f
-    for (let i = 1; i < 12; i++) size = size * 256 + bytes[offset + i]!
-    return size
+// The regular files of a tar stream, by package path: npm drops the first
+// component (`package/`, or whatever the archive used), and a file at the top
+// is not extracted. The stream is read by @preventive/archive, which refuses
+// one malformed, a name or a symlink that would climb out of it -- a symlink
+// past `symlinksAbove` levels above it, none unless given -- and a name
+// repeated as another entry, and gives up past MAX_NPM_TAR_ENTRIES before
+// reading on; a file under another top directory at the same path replaces
+// an earlier one, as extraction would. Directories, links and devices hold no
+// file content and are skipped.
+export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0 }: { symlinksAbove?: number } = {}): NpmPackageFile[] {
+  let entries: Entry[]
+  try { entries = unpack(tar, { maxEntries: MAX_NPM_TAR_ENTRIES, symlinksAbove }) }
+  catch (err) {
+    if (err instanceof ArchiveError) throw err.limited ? new NpmPackageError(413, 'package-too-large') : new NpmPackageError(422, 'bad-tarball')
+    throw err
   }
-  const text = textOf(bytes, offset, 12).trim()
-  return /^[0-7]+$/u.test(text) ? Number.parseInt(text, 8) : Number.NaN
-}
-
-// The path a package's file is installed at: npm drops the first component
-// (`package/`, or whatever the archive used), and a path that would escape the
-// package, or names nothing, is not extracted.
-function packagePath(raw: string): string | null {
-  const parts = raw.split('/').slice(1).filter(part => part !== '' && part !== '.')
-  return parts.length === 0 || parts.includes('..') ? null : parts.join('/')
-}
-
-// A pax header's path. Each record is `<length> <key>=<value>\n`, its length
-// in bytes, so records are walked as bytes and only their values decoded.
-function paxPath(data: Uint8Array): string | null {
-  let path = null
-  let at = 0
-  while (at < data.length) {
-    const space = data.indexOf(0x20, at)
-    const length = Number.parseInt(Buffer.from(data.subarray(at, space)).toString('latin1'), 10)
-    if (space === -1 || !Number.isSafeInteger(length) || length <= 0) break
-    const record = Buffer.from(data.subarray(space + 1, at + length - 1)).toString('utf8')
-    if (record.startsWith('path=')) path = record.slice(5)
-    at += length
-  }
-  return path
-}
-
-// The regular files of a tar stream, by package path, a later entry
-// replacing an earlier one as extraction would. Directories, links and
-// devices hold no file content and are skipped.
-export function readNpmTar(tar: Uint8Array): NpmPackageFile[] {
   const files = new Map<string, Uint8Array>()
   let total = 0
-  let longName: string | null = null
-  let offset = 0
-  while (offset + 512 <= tar.length) {
-    const header = tar.subarray(offset, offset + 512)
-    if (header.every(byte => byte === 0)) break
-    const size = sizeOf(header, 124)
-    const type = String.fromCodePoint(header[156]!)
-    const start = offset + 512
-    if (!Number.isSafeInteger(size) || size < 0 || start + size > tar.length) throw new NpmPackageError(422, 'bad-tarball')
-    const data = tar.subarray(start, start + size)
-    offset = start + Math.ceil(size / 512) * 512
-    if (type === 'x' || type === 'L') { longName = type === 'x' ? paxPath(data) : textOf(data, 0, data.length); continue }
-    if (type === 'g' || type === 'K') continue
-    const prefix = textOf(header, 257, 6) === 'ustar' ? textOf(header, 345, 155) : ''
-    const name = longName ?? (prefix ? `${prefix}/${textOf(header, 0, 100)}` : textOf(header, 0, 100))
-    longName = null
-    if (!['0', '\0', '7'].includes(type)) continue
-    const path = packagePath(name)
-    if (path === null) continue
-    total += size - (files.get(path)?.length ?? 0)
+  for (const { name, type, data } of entries) {
+    const slash = name.indexOf('/')
+    if ((type !== 'file' && type !== 'contiguous-file') || slash === -1) continue
+    const path = name.slice(slash + 1)
+    total += data.length - (files.get(path)?.length ?? 0)
     files.set(path, data)
     if (files.size > MAX_NPM_PACKAGE_FILES || total > MAX_NPM_PACKAGE_BYTES) throw new NpmPackageError(413, 'package-too-large')
   }

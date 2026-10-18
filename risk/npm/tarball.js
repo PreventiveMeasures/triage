@@ -1,77 +1,43 @@
 // A package's files from its tarball, as it holds them, whatever installs it
-// (npm renames a .gitignore .npmignore, pnpm and yarn keep it): gunzipped,
-// read as a tar archive (ustar, pax and GNU long names), each file by its path
-// there, its first component dropped, none escaping the package; a text where
-// it is UTF-8 with no NUL, else null. Held to the npm viewer's bounds
+// (npm renames a .gitignore .npmignore, pnpm and yarn keep it): gunzipped and
+// read as a tar archive by @preventive/archive, which refuses one malformed, a
+// name or a symlink that would climb out of it, and a name repeated as another
+// entry; each file by its path there, its first component dropped; a text
+// where it is UTF-8 with no NUL, else null. Held to the npm viewer's bounds
 // (server-managed/npm-packages.ts readNpmTar).
 import { CompressionError, decompress } from '@preventive/archive/compression.js'
+import { ArchiveError, unpack } from '@preventive/archive/tar.js'
 
 const MAX_PACKAGE_FILES = 20_000
 export const MAX_PACKAGE_BYTES = 64 * 1024 * 1024
+// The entries its tar stream may hold, a directory's too, read before any is
+// counted as a file, as npm-packages.ts bounds them (MAX_NPM_TAR_ENTRIES).
+export const MAX_TAR_ENTRIES = 2 * MAX_PACKAGE_FILES
 // What its tar stream may unpack to, its headers and padding beside its
 // files, as npm-loads.ts bounds it (MAX_TAR_BYTES).
 export const MAX_TAR_BYTES = 96 * 1024 * 1024
 
-const latin1 = new TextDecoder('latin1')
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
-const utf8Lenient = bytes => new TextDecoder().decode(bytes)
-// A header's text field, to its first NUL.
-const textOf = (bytes, start, length) => {
-  const field = bytes.subarray(start, start + length)
-  const end = field.indexOf(0)
-  return utf8Lenient(end === -1 ? field : field.subarray(0, end))
-}
 
-// A header's size field: octal, or GNU base-256 past its 11 digits.
-function sizeOf(bytes, offset) {
-  if (bytes[offset] & 0x80) {
-    let size = bytes[offset] & 0x7f
-    for (let i = 1; i < 12; i++) size = size * 256 + bytes[offset + i]
-    return size
-  }
-  const text = textOf(bytes, offset, 12).trim()
-  return /^[0-7]+$/u.test(text) ? Number.parseInt(text, 8) : Number.NaN
-}
-
-// A pax header's path: records `<length> <key>=<value>\n`, their lengths in
-// bytes.
-function paxPath(data) {
-  let at = 0, path = null
-  while (at < data.length) {
-    const space = data.indexOf(0x20, at)
-    const length = Number.parseInt(latin1.decode(data.subarray(at, space)), 10)
-    if (space === -1 || !Number.isSafeInteger(length) || length <= 0) break
-    const record = utf8Lenient(data.subarray(space + 1, at + length - 1))
-    if (record.startsWith('path=')) path = record.slice(5)
-    at += length
-  }
-  return path
-}
-
-const packagePath = raw => {
-  const parts = raw.split('/').slice(1).filter(part => part !== '' && part !== '.')
-  return parts.length === 0 || parts.includes('..') ? null : parts.join('/')
-}
-
-// The files of a tar archive, by path: their bytes.
+// The files of a tar archive, by path: their bytes. A file at its top is not
+// extracted, and one under another top directory at the same path replaces
+// an earlier one, as extraction would. Past MAX_TAR_ENTRIES it is given up on
+// as `package-too-large`, before any more of it is read.
 function npmTarFiles(tar) {
+  let entries
+  try {
+    entries = unpack(tar, { maxEntries: MAX_TAR_ENTRIES })
+  } catch (error) {
+    if (error instanceof ArchiveError && error.limited) throw new Error('package-too-large', { cause: error })
+    throw error
+  }
   const files = new Map()
-  let longName = null, offset = 0, total = 0
-  while (offset + 512 <= tar.length) {
-    const header = tar.subarray(offset, offset + 512)
-    if (header.every(byte => byte === 0)) break
-    const size = sizeOf(header, 124), start = offset + 512, type = String.fromCodePoint(header[156])
-    if (!Number.isSafeInteger(size) || size < 0 || start + size > tar.length) throw new Error('bad-tarball')
-    const data = tar.subarray(start, start + size)
-    offset = start + Math.ceil(size / 512) * 512
-    if (type === 'x' || type === 'L') { longName = type === 'x' ? paxPath(data) : textOf(data, 0, data.length); continue }
-    if (type === 'g' || type === 'K') continue
-    const prefix = textOf(header, 257, 6) === 'ustar' ? textOf(header, 345, 155) : ''
-    const name = longName ?? (prefix ? `${prefix}/${textOf(header, 0, 100)}` : textOf(header, 0, 100))
-    longName = null
-    const path = ['0', '\0', '7'].includes(type) ? packagePath(name) : null
-    if (path === null) continue
-    total += size - (files.get(path)?.length ?? 0)
+  let total = 0
+  for (const { name, type, data } of entries) {
+    const slash = name.indexOf('/')
+    if ((type !== 'file' && type !== 'contiguous-file') || slash === -1) continue
+    const path = name.slice(slash + 1)
+    total += data.length - (files.get(path)?.length ?? 0)
     files.set(path, data)
     if (files.size > MAX_PACKAGE_FILES || total > MAX_PACKAGE_BYTES) throw new Error('package-too-large')
   }

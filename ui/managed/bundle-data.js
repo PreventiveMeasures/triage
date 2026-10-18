@@ -108,6 +108,7 @@ const REPOSITORY_CODE_ERRORS = {
   'no-repository': 'This repository is not available to you.',
   'no-directory': 'This directory is not at that commit, or not available to you.',
   'directory-too-large': 'This directory is too large to open here. Open one of its directories instead.',
+  'directory-unreadable': 'GitHub’s archive of this directory couldn’t be read here, as when a symlink in it points outside the repository.',
   'repository-busy': 'Too many directories and packages are loading. Try again shortly.',
   'repository-changed': 'The repository changed while it was read. Try again.',
   'github-rate-limited': 'GitHub’s API rate limit has been reached. Try again later.',

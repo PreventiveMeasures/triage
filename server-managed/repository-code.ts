@@ -26,7 +26,14 @@ export function repositoryCodeFits(files: { files: number; bytes: number } | nul
 // directory (`''` for the root) and its tree's id.
 export interface RepositoryCodeInput { repoId: number; repo: string; commit: string; path: string; tree: string }
 
-const tooLarge = (err: unknown) => err instanceof NpmPackageError && err.message === 'package-too-large' ? new NpmPackageError(413, 'directory-too-large') : err
+// A package's refusals, as a directory's: past the bounds, or an archive
+// @preventive/archive refuses, as it does one holding a symlink that climbs
+// past the repository's root, or an absolute one.
+const DIRECTORY_ERRORS: Record<string, [number, string]> = { 'package-too-large': [413, 'directory-too-large'], 'bad-tarball': [422, 'directory-unreadable'] }
+const directoryError = (err: unknown) => {
+  const as = err instanceof NpmPackageError ? DIRECTORY_ERRORS[err.message] : undefined
+  return as ? new NpmPackageError(...as) : err
+}
 
 // The directory as the viewer reads it, as brotli-encoded JSON: `{ repoId,
 // repo, commit, path, tree, files }`, its files as npmFileRows gives them,
@@ -35,8 +42,11 @@ export function loadRepositoryCodeBody(input: RepositoryCodeInput, tarball: () =
   const { repoId, repo, commit, path, tree } = input
   return sharedLoad(`repository ${repoId} ${repo} ${commit} ${path} ${tree}`, async () => {
     let files
-    try { files = npmFileRows(await readTarballFiles(await tarball())) }
-    catch (err) { throw tooLarge(err) }
+    // A symlink may reach the repository's root, as a monorepo package's
+    // LICENSE links the root's, and no further: the directory's depth, less
+    // the level the archive's root already stands above its top directory.
+    try { files = npmFileRows(await readTarballFiles(await tarball(), { symlinksAbove: path.split('/').length - 1 })) }
+    catch (err) { throw directoryError(err) }
     return encodeBrotli(Buffer.from(JSON.stringify({ repoId, repo, commit, path, tree, files })))
   }, 'repository-busy')
 }
