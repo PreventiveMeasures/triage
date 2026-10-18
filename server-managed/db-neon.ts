@@ -27,7 +27,8 @@ export interface PgConnection {
     rows: Record<string, unknown>[]; rowCount?: number | null
     fields?: { name: string; dataTypeID: number }[]
   }>
-  release(): Promise<void>
+  // After a failure the connection's state is unknown: discard it, never reuse it.
+  release(discard?: boolean): Promise<void>
 }
 export type PgConnect = () => Promise<PgConnection>
 // Content/access mutations cooperate on this transaction-scoped lock. Reads,
@@ -276,7 +277,7 @@ function requestConnections(connect: PgConnect) {
       const connection = await connect()
       let result: T
       try { result = await work(connection) }
-      catch (error) { await connection.release().catch(() => {}); throw error }
+      catch (error) { await connection.release(true).catch(() => {}); throw error }
       await connection.release()
       return result
     }
@@ -287,7 +288,7 @@ function requestConnections(connect: PgConnect) {
       try { return await work(connection) }
       catch (error) {
         delete request.connection
-        await connection.release().catch(() => {})
+        await connection.release(true).catch(() => {})
         throw error
       }
     })
@@ -303,7 +304,7 @@ function requestConnections(connect: PgConnect) {
     finally {
       request.ended = true
       await request.queue
-      if (failed) await request.connection?.release().catch(() => {})
+      if (failed) await request.connection?.release(true).catch(() => {})
       else await request.connection?.release()
     }
   }
@@ -313,7 +314,8 @@ function requestConnections(connect: PgConnect) {
 // Exposed for parity tests against real PostgreSQL semantics via PGlite.
 export async function openPostgresManagedDb(connect: PgConnect, options: ManagedDbOptions = {}, reuseConnections = false): Promise<ManagedDb> {
   const initial = await connect()
-  try { await initialize(initial) } finally { await initial.release() }
+  try { await initialize(initial) } catch (err) { await initial.release(true).catch(() => {}); throw err }
+  await initial.release()
   const { withConnection, withRequest } = requestConnections(connect)
   const context = new AsyncLocalStorage<PgConnection>()
   let closed = false
@@ -376,20 +378,52 @@ export async function openPostgresManagedDb(connect: PgConnect, options: Managed
   return methods
 }
 
-export async function openNeonManagedDb(url: string, options: ManagedDbOptions = {}): Promise<ManagedDb> {
-  // Reuse the e2e optional-driver boundary. Requests lease one connection and
-  // close it before returning; no socket must survive a frozen invocation.
-  const { Client, neonConfig } = await import('../server-e2e/neon-driver.ts') as unknown as {
-    Client: new (url: string) => { connect(): Promise<void>; end(): Promise<void>; query: PgConnection['query']; on?(event: 'error', listener: (error: Error) => void): void }
+// Idle connections stay open this long between leases, so a warm instance's
+// requests and feed polls (three seconds apart) skip the TLS, WebSocket and
+// Postgres handshake a new connection repeats.
+const NEON_POOL_IDLE_MS = 5_000
+
+type NeonPoolClient = {
+  query: PgConnection['query']
+  release(discard?: boolean): void
+  on(event: string, listener: (...args: unknown[]) => void): void
+}
+export type NeonPool = {
+  connect(): Promise<NeonPoolClient>
+  end(): Promise<void>
+  on(event: string, listener: (...args: unknown[]) => void): void
+}
+
+// `attachPool` is Vercel's attachDatabasePool on serverless instances: each
+// release keeps the invocation alive until idle connections have closed, so
+// no socket survives a frozen instance.
+export async function openNeonManagedDb(url: string, options: ManagedDbOptions = {}, attachPool?: (pool: NeonPool) => void): Promise<ManagedDb> {
+  // Reuse the e2e optional-driver boundary.
+  const { Pool, neonConfig } = await import('../server-e2e/neon-driver.ts') as unknown as {
+    Pool: new (config: { connectionString: string; max: number; idleTimeoutMillis: number }) => NeonPool
     neonConfig: { webSocketConstructor: typeof WebSocket }
   }
   neonConfig.webSocketConstructor = WebSocket
-  return openPostgresManagedDb(async () => {
-    const client = new Client(url)
-    // A remote disconnect between operations must reject the next query, not
-    // become an unhandled EventEmitter error while the request is reading Blob.
-    client.on?.('error', () => {})
-    try { await client.connect() } catch (err) { await client.end().catch(() => {}); throw err }
-    return { query: (sql, params) => client.query(sql, params), release: () => client.end() }
-  }, options, true)
+  // Leases stay unbounded, one per request or operation as before: a cap would
+  // stall a request that holds one while it awaits work needing another.
+  const pool = new Pool({ connectionString: url, max: Infinity, idleTimeoutMillis: NEON_POOL_IDLE_MS })
+  // The pool evicts an idle connection the server closed. Neither that nor a
+  // remote disconnect while leased may become an unhandled EventEmitter error;
+  // a leased one must instead reject its next query, and is then discarded.
+  pool.on('error', () => {})
+  attachPool?.(pool)
+  const failed = new WeakSet<NeonPoolClient>(), watched = new WeakSet<NeonPoolClient>()
+  let ending: Promise<void> | undefined
+  const end = () => ending ??= pool.end()
+  let db: ManagedDb
+  try {
+    db = await openPostgresManagedDb(async () => {
+      const client = await pool.connect()
+      if (!watched.has(client)) { watched.add(client); client.on('error', () => { failed.add(client) }) }
+      return { query: (sql, params) => client.query(sql, params),
+        release: discard => Promise.try(() => client.release(discard === true || failed.has(client))) }
+    }, options, true)
+  } catch (err) { await end().catch(() => {}); throw err }
+  const close = db.close
+  return { ...db, async close() { try { await close() } finally { await end() } } }
 }

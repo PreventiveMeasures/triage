@@ -28,9 +28,14 @@ timers exist only for the lifetime of their awaited request. Missing derivatives
 are built during authorized reads. Build deduplication and queues are local to each
 instance; caches are shared, and builders recheck database references after
 publishing to handle concurrent deletion. Access is checked again after cold
-builds. Finite HTTP requests reuse one Neon connection and close it before returning.
-Feeds reuse a connection within each polling iteration and release it before
-waiting for the next poll.
+builds. Finite HTTP requests lease one Neon connection and release it before returning.
+Feeds lease a connection within each polling iteration and release it before
+waiting for the next poll. Released connections stay pooled in the instance for
+five seconds, so later requests, polls and initialization skip the connection
+handshake. The pool is registered with
+[`attachDatabasePool`](https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package):
+each release keeps the invocation alive until idle connections have closed, so
+none survives a suspended instance. A failed lease is discarded, never reused.
 
 Ordinary managed requests start a due session/upload sweep alongside the normal
 response. The managed app registers maintenance with
@@ -165,8 +170,8 @@ annotations. Idle streams send 15-second heartbeats; stalled streams and
 transient failures retry with backoff. Navigation aborts the previous request.
 
 The function stays awaited until the stream closes. It polls shared database
-state every three seconds using short read-only transactions, releasing each
-Neon connection before waiting. Unchanged polls read only session/role and internal invalidation counters.
+state every three seconds using short read-only transactions, releasing its
+Neon connection to the pool before waiting. Unchanged polls read only session/role and internal invalidation counters.
 Catalog changes reload membership, scope and report/bundle metadata; annotation
 changes alone read the focused workspace revision without rebuilding its catalog. No background process, sticky routing, persistent
 database connection, or instance-local notification bus is required. Each
