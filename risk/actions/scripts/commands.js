@@ -1,6 +1,6 @@
 // What a `run:` script fetches and runs past what a lockfile or a digest pins,
 // command by command (shell.js), each with its line in the script from 0.
-import { NPM_INSTALLS, fetched, npmToolFinds, optionsOf, positional, projectOf, valuesOf } from './packages.js'
+import { NPM_INSTALLS, fetched, npmToolFinds, optionsOf, projectOf, valuesOf } from './packages.js'
 import { scriptCommands, scriptLines } from './shell.js'
 import { SHELLS as SHELL_NAMES } from '../../files/runs-code.js'
 import { readImage } from '../uses.js'
@@ -141,10 +141,11 @@ export function installsOf(script, production = false) {
   for (const { argv, env, order } of scriptCommands(script)) {
     const program = programOf(argv[0])
     if (program === 'export') for (const word of argv) if (word.startsWith('NODE_ENV=')) exported = word === 'NODE_ENV=production'
-    const command = positional(argv, 1)[0]
+    const options = optionsOf(argv, 1), [command] = options.operands
     if (argv.some(word => NOT_LOCAL.test(word)) || !(program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? ''))) continue
-    const prod = argv.some((word, at) => /^(?:--omit=dev|--production|--prod|--only=prod(?:uction)?)$/u.test(word) || (word === '--omit' && argv[at + 1] === 'dev'))
-      || ((env.NODE_ENV ?? (exported ? 'production' : '')) === 'production' && !argv.includes('--include=dev'))
+    // npm installs what `--include` names whatever leaves it out.
+    const prod = !valuesOf(options, '--include').includes('dev') && (valuesOf(options, '--omit').includes('dev') || /^prod(?:uction)?$/u.test(valuesOf(options, '--only')[0] ?? '')
+      || argv.some(word => /^--prod(?:uction)?$/u.test(word)) || (env.NODE_ENV ?? (exported ? 'production' : '')) === 'production')
     found.push({ order, into: projectOf(argv), prod })
   }
   return found

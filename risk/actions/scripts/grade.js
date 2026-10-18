@@ -22,6 +22,10 @@ const UNTRUSTED = new RegExp(String.raw`\bgithub\s*\.\s*(?:head_ref|event\s*\.\s
     String.raw`discussion\.(?:title|body)`].join('|')
   + String.raw`))(?![\w-])`, 'gu')
 
+// An expression with its index syntax's properties (`github['event']`) as
+// dereferences, as GitHub reads either.
+const dotted = text => text.replaceAll(/\[\s*'([\w-]+)'\s*\]/gu, '.$1')
+
 // Each expression anyone can write in a script's `text`, a finding with
 // the `index` its `${{` is at: red where the workflow runs with its secrets
 // for anyone (`triggers`), else orange.
@@ -29,7 +33,7 @@ export function scriptInjections(text, triggers) {
   if (typeof text !== 'string' || !text.includes('${{')) return []
   const severity = triggers.some(event => PRIVILEGED_TRIGGERS.has(event)) ? 'critical' : 'high'
   return [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/gu)].flatMap(({ 1: inner, index }) =>
-    [...inner.matchAll(UNTRUSTED)].map(({ 0: expression }) => ({ id: 'script-injection', severity, expression: expression.replaceAll(/\s+/gu, ''), index })))
+    [...dotted(inner).matchAll(UNTRUSTED)].map(({ 0: expression }) => ({ id: 'script-injection', severity, expression: expression.replaceAll(/\s+/gu, ''), index })))
 }
 
 // A ref or a repository naming a pull request's own code, as
@@ -38,7 +42,7 @@ export function scriptInjections(text, triggers) {
 // default branch it is then.
 const PULL_HEAD = new RegExp(String.raw`\bgithub\.(?:head_ref|event\.(?:number|pull_request\.(?:number|merge_commit_sha|head\.(?:sha|ref|repo\.(?:full_name|owner\.login)))|workflow_run\.(?:head_sha|head_branch|pull_requests\[[^\]]*\]\.head\.(?:sha|ref)|head_repository\.(?:full_name|owner\.login))))\b`
   .replaceAll('\\.', String.raw`\s*\.\s*`) + String.raw`|refs\/pull\/`, 'u')
-export const namesPullHead = text => typeof text === 'string' && PULL_HEAD.test(text)
+export const namesPullHead = text => typeof text === 'string' && PULL_HEAD.test(dotted(text))
 
 // Programs whose package is named otherwise: `npx tsc` runs typescript's.
 const KNOWN_BINS = new Map([['tsc', 'typescript'], ['tsserver', 'typescript'], ['ng', '@angular/cli'], ['nest', '@nestjs/cli'],

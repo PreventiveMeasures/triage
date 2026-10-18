@@ -31,7 +31,7 @@ function createPackage(text) {
 }
 
 // Options of npm's tools that take a value.
-const VALUED = /^(?:-[pcwC]|--(?:package|call|cache|userconfig|registry|workspace|prefix|filter|dir|global-dir|store-dir|loglevel|cwd|spec|location))$/u
+const VALUED = /^(?:-[pcwC]|--(?:package|call|cache|userconfig|registry|workspace|prefix|filter|dir|global-dir|store-dir|loglevel|cwd|spec|location|include|omit|only))$/u
 const GLOBAL = /^(?:-g|--global|--location=global)$/u
 
 // A command's words past `from`: those not options (`operands`), all past
@@ -47,7 +47,7 @@ export function optionsOf(argv, from, valued = VALUED) {
   }
   return { operands, values }
 }
-export const positional = (argv, from) => optionsOf(argv, from).operands
+const positional = (argv, from) => optionsOf(argv, from).operands
 // The values of `names`' options, in their order.
 export const valuesOf = ({ values }, ...names) => names.flatMap(name => values.get(name) ?? [])
 

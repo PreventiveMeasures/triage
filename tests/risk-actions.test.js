@@ -121,6 +121,8 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('npx eslint .', { locked: dev, installed: only => !only }).length, 1, 'and in a step before')
     assert.deepEqual([graded('NODE_ENV=production npm ci && npx eslint .', { locked: dev }).length, graded('export NODE_ENV=production\nnpm ci\nnpx eslint .', { locked: dev }).length,
       graded('NODE_ENV=production npm ci --include=dev && npx eslint .', { locked: dev }).length], [1, 1, 0], 'NODE_ENV production, of the command or exported')
+    assert.deepEqual([graded('NODE_ENV=production npm ci --include dev && npx eslint .', { locked: dev }), graded('npm ci --omit=dev --include=dev && npx eslint .', { locked: dev })], [[], []],
+      'devDependencies included, whatever leaves them out')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\'\nash -c "npx is-odd"'), ['fetched-package/high@11', 'remote-script/high@12', 'fetched-package/high@13'], 'a shell\'s command line')
     assert.deepEqual(graded('npx left-pad', { locked, installed: () => true }), ['fetched-package/high@11'], 'locked by none')
@@ -135,6 +137,8 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(ids(scanWorkflow('workflow', job('web', 'api'), { lockfiles }).findings), ['fetched-package/high@7'], 'web installed, api not')
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api'), { lockfiles }).findings), [], 'installed above it')
     assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api'), { lockfiles }).findings), [])
+    const nested = [{ path: 'api/package-lock.json', names: new Set() }, { path: 'package-lock.json', names: new Set(['eslint']) }]
+    assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api'), { lockfiles: nested }).findings), ['fetched-package/high@7'], 'locked above, by another project\'s lockfile than its own')
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm ci --prefix web'), { lockfiles }).findings), ['fetched-package/high@7'], 'the directory an install names')
     assert.deepEqual(ids(scanWorkflow('workflow', job('web', 'api', 'pnpm -C ../api install'), { lockfiles }).findings), [])
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm --prefix=api ci'), { lockfiles }).findings), [], 'its option before its command')
@@ -172,6 +176,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.head_repository.full_name')).findings), ['pwn-request/critical@7'])
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.event.pull_request.merge_commit_sha')).findings), ['pwn-request/critical@7'], 'its merge commit')
     assert.deepEqual(ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.pull_requests[0].head.sha')).findings), ['pwn-request/critical@7'], 'its run\'s pull request\'s')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', "github.event['pull_request']['head']['sha']")).findings), ['pwn-request/critical@7'], 'by index syntax')
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.repository')).findings), [], 'its own')
   })
 
@@ -201,6 +206,8 @@ describe('a script\'s findings, graded', () => {
       ['script-injection/high@11', 'script-injection/high@12'])
     assert.deepEqual(graded('curl -fsSLo/tmp/setup https://x/s.sh && sh /tmp/setup\nwget -qO- https://x/a.txt\nwget https://x/install.sh && sh install.sh\niwr https://x/s -OutFile setup.ps1; pwsh ./setup.ps1'), ['remote-script/high@11', 'remote-script/high@13', 'remote-script/high@14'])
     assert.deepEqual(graded('echo "${{ github.event.workflow_run.head_repository.default_branch }}"'), ['script-injection/high@11'])
+    assert.deepEqual(graded('echo "${{ github[\'event\'][ \'pull_request\' ].title }}"'), ['script-injection/high@11'], 'by index syntax')
+    assert.deepEqual(graded('curl -fsSL https://x/i.sh |\n  sh\n# a |\nnpx left-pad'), ['remote-script/high@11', 'fetched-package/high@14'], 'a pipe the next line goes on from, not a comment\'s')
     const call = `on: pull_request_target\njobs:\n  a:\n    uses: org/wf/.github/workflows/x.yml@${SHA('a')}\n    with:\n      title: \${{ github.event.pull_request.title }}\n      ref: \${{ github.sha }}\n`
     assert.deepEqual(ids(scanWorkflow('workflow', call).findings), ['script-injection/critical@6'], 'one handed to a reusable workflow, which writes its inputs into its scripts')
   })

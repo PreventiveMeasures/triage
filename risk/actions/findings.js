@@ -54,10 +54,14 @@ function directoryOf(workingDirectory, into = null) {
   return /\$|^\//u.test(path) ? path : resolved([], path)?.join('/') ?? path
 }
 
-// Whether a lockfile at or above `directory` locks what npx runs by `name`:
-// `dev` where only devDependencies need it in each that does.
+// Whether the nearest lockfiles at or above `directory`, its project's, lock
+// what npx runs by `name`: `dev` where only devDependencies need it in each
+// that does.
+const lockDir = path => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
 function lockedIn(lockfiles, directory) {
-  const applies = lockfiles.filter(({ path }) => within(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '', directory))
+  const above = lockfiles.filter(({ path }) => within(lockDir(path), directory))
+  const nearest = Math.max(...above.map(({ path }) => lockDir(path).length))
+  const applies = above.filter(({ path }) => lockDir(path).length === nearest)
   return name => {
     const locking = applies.filter(({ names }) => lockedName(names, name))
     return locking.length > 0 && (locking.every(({ dev }) => dev && lockedName(dev, name)) ? 'dev' : true)

@@ -6,15 +6,20 @@ import { SHELLS } from '../../files/runs-code.js'
 // A shell, by its program, wherever it is (risk's runs-code.js SHELLS).
 const SHELL = new RegExp(String.raw`^(?:.*\/)?${SHELLS}$`, 'u')
 
-// A line of a script, its continuations joined, and the line it starts on,
-// counting from 0.
+// A line of a script, its continuations joined (an escaped line's end, or a
+// pipe, `&&` or `||` the next line goes on from), and the line it starts
+// on, counting from 0.
 export function scriptLines(script) {
   const lines = script.split('\n')
   const joined = []
   for (let at = 0; at < lines.length; at++) {
     const start = at
     let text = lines[at].replace(/\r$/u, '')
-    while (/(?:^|[^\\])(?:\\\\)*[\\`^]$/u.test(text) && at + 1 < lines.length) text = `${text.slice(0, -1)} ${lines[++at].replace(/\r$/u, '')}`
+    for (;;) {
+      const escaped = /(?:^|[^\\])(?:\\\\)*[\\`^]$/u.test(text), piped = /(?:\||&&)\s*$/u.test(text) && !/(?:^|\s)#/u.test(text)
+      if (!(escaped || piped) || at + 1 === lines.length) break
+      text = `${escaped ? text.slice(0, -1) : text} ${lines[++at].replace(/\r$/u, '')}`
+    }
     joined.push({ text, line: start })
   }
   return joined
