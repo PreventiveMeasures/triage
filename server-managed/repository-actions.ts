@@ -7,9 +7,10 @@
 // (actions-scan resolveAction), what it names in turn too, MAX_DEPTH deep
 // and MAX_ACTIONS in all. A repository's files are kept by the commit they
 // were read at (repository-risk-read.ts), where none failed for a while
-// (lastingRead); a reference resolved, by its key and whose workflow named
-// it, in the instance's memory for RISK_KEPT_MS, and, of a public
-// repository alone, in the source's `actions`.
+// (lastingRead); a reference of a public repository resolved, by its key and
+// whose workflow named it, in the instance's memory for RISK_KEPT_MS and in
+// the source's `actions`: one of a private repository is resolved with the
+// admin's own access, and what it tells is for them alone.
 import { ActionsScanError, type ActionsSource, type ResolvedAction, type Uses, keptSource, readWorkflow, resolveAction, scanWorkflow, usesKey, usesOfKey,
   workflowUses } from '../actions-scan/index.js'
 import type { Lru } from './lru.ts'
@@ -137,8 +138,8 @@ export interface ActionsResolving {
   store?: KeptStore<ActionLine> | undefined
 }
 
-// A reference's line: kept, within RISK_KEPT_MS, else resolved and kept, of
-// a public repository in `store` too; why not, where it couldn't be.
+// A reference's line: kept, within RISK_KEPT_MS, else resolved, and kept
+// where it is a public repository's; why not, where it couldn't be.
 async function resolved(resolving: ActionsResolving, source: ActionsSource, ref: ActionRef): Promise<ActionLine | null> {
   const key = `${ref.owner ?? ''}\0${ref.key}`
   const stored = resolving.memory.get(key) ? null : await resolving.store?.read(key)
@@ -150,9 +151,11 @@ async function resolved(resolving: ActionsResolving, source: ActionsSource, ref:
   try { line = lineOf(ref, await resolveAction(uses, source, { owner: ref.owner })) } catch (error) {
     return resolving.signal.aborted ? null : { type: 'action', key: ref.key, owner: ref.owner, depth: ref.depth, ...failureOf(error) }
   }
-  const at = Date.now()
-  resolving.memory.set(key, { at, line })
-  if ('repository' in line && line.repository?.private === false) await resolving.store?.write(key, line, at)
+  if ('repository' in line && line.repository?.private === false) {
+    const at = Date.now()
+    resolving.memory.set(key, { at, line })
+    await resolving.store?.write(key, line, at)
+  }
   return line
 }
 

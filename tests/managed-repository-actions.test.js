@@ -118,15 +118,21 @@ test('a scan tells a repository\'s workflows and actions of its own, npx held to
   assert.ok(lines.indexOf(actions.at(-1)) < lines.length - 1)
 })
 
-test('what a scan resolved and read of a repository\'s Actions is kept: a scan again asks GitHub none of it', async () => {
+test('what a scan resolved and read of a repository\'s Actions is kept: a scan again asks GitHub none of it but a private repository\'s', async () => {
   const caches = riskCaches()
   const first = sourceOf()
   await scan(first, caches)
   const again = sourceOf()
   const lines = await scan(again, caches)
-  assert.deepEqual([again.listed, again.read.filter(path => path.startsWith('.github')), again.actions.asked], [[], [], []])
+  assert.deepEqual([again.listed, again.read.filter(path => path.startsWith('.github')), again.actions.asked], [[], [], ['nested/one']])
   assert.equal(ofType(lines, 'action').length, 4)
   assert.equal(ofType(lines, 'workflow').length, 2)
+  // An admin who can't read nested/one isn't told what another's access had.
+  const other = actionsSource()
+  other.repo = name => Promise.resolve(name === 'nested/one' ? null : first.actions.repo(name))
+  const theirs = await scan(sourceOf({ actions: other }), caches)
+  const nested = ofType(theirs, 'action').find(({ key }) => key === 'nested/one@main')
+  assert.deepEqual([nested.commit, nested.findings.map(({ id }) => id)], [null, ['repo-missing']])
 })
 
 test('a reference of a public repository is kept beyond the instance, a private one\'s not', async () => {
