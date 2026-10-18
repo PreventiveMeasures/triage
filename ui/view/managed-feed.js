@@ -101,7 +101,7 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   if (active?.key !== key || active.signal.aborted) {
     stopManagedTeamFeed()
     const controller = new AbortController()
-    const subscription = { key, controller, signal: controller.signal, teamId, reportId, version: 0, target: null }
+    const subscription = { key, controller, signal: controller.signal, teamId, reportId, version: 0, revision: null, target: null }
     subscription.current = (signal = subscription.signal) => !signal.aborted && !subscription.signal.aborted
       && active === subscription && isManagedUiMode()
       && state.managedSession?.id === session.id && state.managedSession?.role === session.role
@@ -122,14 +122,21 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   if (previous?.view === view && previous.reports === reports && !previous.signal.aborted) return previous.ready
   previous?.controller.abort()
   const controller = new AbortController(), signal = AbortSignal.any([controller.signal, subscription.signal, view])
-  const target = { controller, signal, view, reports, version: previous?.reports === reports ? previous.version : 0 }
+  const same = previous?.reports === reports
+  const target = { controller, signal, view, reports, version: same ? previous.version : 0, revision: same ? previous.revision : null }
   subscription.target = target
   target.current = () => subscription.current() && !signal.aborted && subscription.target === target
     && state.currentManagedTeam === teamId && store(state.reports) === reports
+  // The view hydrates with the shared annotation read made here, so that the
+  // revision it read at is known (readTargetUpdates).
   target.hydration = hydrate ? initialHydration(async hydrationSignal => {
     const version = subscription.version
-    const success = await hydrate(hydrationSignal)
-    if (success && target.current()) target.version = version
+    const readAnnotations = createManagedAnnotationRead(subscription.teamId, hydrationSignal)
+    const success = await hydrate(hydrationSignal, readAnnotations)
+    if (success && target.current()) {
+      target.version = version
+      target.revision = readAnnotations?.revision() ?? null
+    }
     return success
   }, signal, target.current) : null
   target.ready = target.hydration?.promise
@@ -158,8 +165,9 @@ function watchSubscription(subscription) {
       if (!isCurrent()) return false
       return await refreshTeams(isCurrent, requestSignal, revision) && isCurrent()
     },
-    onUpdate: requestSignal => {
+    onUpdate: (requestSignal, revision = null) => {
       if (!current(requestSignal)) return false
+      subscription.revision = revision
       subscription.version++
       return refreshTarget(subscription, subscription.target, requestSignal)
     },
@@ -206,6 +214,13 @@ async function readTargetUpdates(subscription, target, signal) {
   if (target.hydration && !(await waitForHydration(target.hydration.start(), signal))) return false
   while (target.current() && !signal.aborted && target.version < subscription.version) {
     const version = subscription.version
+    // The feed's latest event tells the revision this view last read at, as an
+    // HTTP hydration that won over a slow first event did: nothing changed
+    // since, nothing to read again. A write since tells another revision.
+    if (subscription.revision !== null && subscription.revision === target.revision) {
+      target.version = version
+      continue
+    }
     const readAnnotations = createManagedAnnotationRead(subscription.teamId, signal)
     // Capture each consumer's local-edit baseline before the shared read settles.
     const reports = state.managedReports.filter(report => target.reports.some(loaded => loaded._managedReportId === report.id))
@@ -216,6 +231,7 @@ async function readTargetUpdates(subscription, target, signal) {
     if (!results.every(Boolean)) return false
     if (!target.current() || signal.aborted) return false
     target.version = version
+    target.revision = readAnnotations?.revision() ?? null
   }
   return !signal.aborted && target.current()
 }

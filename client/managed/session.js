@@ -219,7 +219,10 @@ export async function fetchTeamAnnotations(teamId, { reportId: selectedReportId,
     commentIndices.set(findingId, indices)
   }
   const byFindings = new Map(), byReport = new Map()
-  return reportId => {
+  // What the team's feed tells of the annotations read here (`revision`), so
+  // that its event telling the same reads nothing again.
+  const revision = typeof body.revision === 'string' ? body.revision : null
+  return Object.assign(reportId => {
     if (!Object.hasOwn(reports, reportId)) return null
     if (byReport.has(reportId)) return byReport.get(reportId)
     // Repeated scans can have identical finding references. Share their arrays
@@ -238,7 +241,7 @@ export async function fetchTeamAnnotations(teamId, { reportId: selectedReportId,
     }
     byReport.set(reportId, projection)
     return projection
-  }
+  }, { revision })
 }
 
 // GET /api/reports/<id>/triage returns this report's visible annotations.

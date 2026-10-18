@@ -994,15 +994,18 @@ function prepareStatements(db: ManagedSql) {
     ),
     selectTriageFixesStmt: db.prepare(`SELECT DISTINCT fix FROM managed_finding_triage
       WHERE finding_id IN (SELECT value FROM json_each(?)) AND fix IS NOT NULL ORDER BY fix`),
-    annotationTriageRevisionStmt: db.prepare(`
-      SELECT t.finding_id AS id,
-        (SELECT e.batch_id FROM managed_finding_triage_event e
-          WHERE e.finding_id = t.finding_id ORDER BY e.seq DESC LIMIT 1) AS revision
-      FROM managed_finding_triage t WHERE t.finding_id IN (SELECT value FROM json_each(?))
-      ORDER BY t.finding_id`),
-    annotationCommentRevisionStmt: db.prepare(`
-      SELECT id, version FROM managed_finding_comment
-      WHERE finding_id IN (SELECT value FROM json_each(?)) ORDER BY id`),
+    // Each finding's latest triage batch, comment versions and linked issues,
+    // in one statement.
+    annotationRevisionStmt: db.prepare(
+      `WITH requested AS (SELECT value AS id FROM json_each(?))
+       SELECT (SELECT json_group_array(json_object('id', t.finding_id, 'revision', (SELECT e.batch_id FROM managed_finding_triage_event e
+                        WHERE e.finding_id = t.finding_id ORDER BY e.seq DESC LIMIT 1)) ORDER BY t.finding_id)
+                 FROM managed_finding_triage t WHERE t.finding_id IN (SELECT id FROM requested)) AS triage,
+              (SELECT json_group_array(json_object('id', c.id, 'version', c.version) ORDER BY c.id)
+                 FROM managed_finding_comment c WHERE c.finding_id IN (SELECT id FROM requested)) AS comments,
+              (SELECT json_group_array(json_object('findingId', i.finding_id, 'issueUrl', i.issue_url, 'autoFixUrl', i.auto_fix_url) ORDER BY i.finding_id)
+                 FROM managed_finding_issue i WHERE i.finding_id IN (SELECT id FROM requested) AND i.issue_url IS NOT NULL) AS issues`,
+    ),
     insertBundleStmt: db.prepare(
       `WITH candidate(id, slug) AS (VALUES (?, ?))
        INSERT INTO managed_bundle (id, slug, integrity, filename, kind, byte_size, uploaded_by, uploaded_by_login, repo_id, repo_directory, visible, uploaded_at, data_key, storage_encrypted, provenance, build_conditions)
@@ -1439,15 +1442,10 @@ function triageMethods(stmts: ReturnType<typeof prepareStatements>, historyLimit
   return {
     async getAnnotationRevision(findingIds: readonly string[]): Promise<string> {
       if (findingIds.length === 0) return '[]'
-      const ids = JSON.stringify(findingIds)
       // Batch UUIDs survive history trimming and distinguish same-timestamp
       // writes, even if SQLite reuses a sequence after an annotation purge.
-      return JSON.stringify([
-        await stmts.annotationTriageRevisionStmt.all(ids),
-        await stmts.annotationCommentRevisionStmt.all(ids),
-        await db.prepare(`SELECT finding_id, issue_url, auto_fix_url FROM managed_finding_issue
-          WHERE finding_id IN (SELECT value FROM json_each(?)) AND issue_url IS NOT NULL ORDER BY finding_id`).all(ids),
-      ])
+      const row = await stmts.annotationRevisionStmt.get(JSON.stringify(findingIds)) as { triage: unknown; comments: unknown; issues: unknown }
+      return JSON.stringify([jsonRows(row.triage), jsonRows(row.comments), jsonRows(row.issues)])
     },
     async deleteTriage(findingIds: readonly string[]): Promise<number> {
       if (findingIds.length === 0) return 0

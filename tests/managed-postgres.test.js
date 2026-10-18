@@ -462,7 +462,7 @@ test('Postgres public feed validates idle polls with one SQL statement', async t
   await serveTeamFeed(res, { db, reportStore: reports, isShuttingDown: () => perPoll.length === 3 }, snapshot,
     async () => assert.deepEqual(await db.getWorkspaceShare('share'), snapshot),
     { pollMs: 1, readState: () => db.getWorkspaceShareFeedState('share') })
-  assert.deepEqual(perPoll, [14, 1, 1])
+  assert.deepEqual(perPoll, [10, 1, 1])
   await db.updateWorkspaceShare(sessionId, Date.now(), 'team', 'share', { security: true, dependencies: false })
   assert.notEqual((await db.getWorkspaceShareFeedState('share')).grant, state.grant)
   await db.revokeWorkspaceShares(sessionId, Date.now(), 'team', 'share')
@@ -1403,7 +1403,7 @@ test('Postgres team annotation batches have a constant query budget across repor
   assert.equal(Object.keys(batch.reports).length, 10)
   assert.ok(Object.values(batch.reports).every(ids => ids.includes('shared-finding')))
   assert.deepEqual(batch.entries, { 'shared-finding': { color: 'red' } })
-  assert.equal(queries.length, 4, 'one presence update, two one-statement access snapshots including global links, and one annotation statement')
+  assert.equal(queries.length, 5, 'one presence update, two one-statement access snapshots including global links, and one statement each for the revision and the annotations')
   assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
 
   queries.length = 0
@@ -1415,9 +1415,11 @@ test('Postgres team annotation batches have a constant query budget across repor
   queries.length = 0
   const focused = await send(`/api/teams/team/annotations?reportId=${reportIds[0]}`, { session, method: 'GET' })
   assert.equal(focused.status, 200)
-  assert.deepEqual(JSON.parse(focused.body), { reports: { [reportIds[0]]: ['shared-finding'] },
+  const { revision, ...annotations } = JSON.parse(focused.body)
+  assert.match(revision, /^[\w-]{43}$/u)
+  assert.deepEqual(annotations, { reports: { [reportIds[0]]: ['shared-finding'] },
     entries: JSON.parse(triage.body).entries, comments: JSON.parse(comments.body).comments, issues: {} })
-  assert.equal(queries.length, 4, 'focused hydration and refresh share the same constant query budget')
+  assert.equal(queries.length, 5, 'focused hydration and refresh share the same constant query budget')
   assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
   assert.ok(queries.length < separateQueries)
   t.diagnostic(`Focused annotations: ${separateQueries} SQL statements in two requests -> ${queries.length} in one request`)

@@ -84,3 +84,26 @@ outcomes.forEach(outcome => {
     assert.equal(calls.length, outcome === 'included' ? 1 : 2, 'a failed refresh retains its TTL rather than looping')
   })
 })
+
+test('a team\'s first annotations load reuses the batch read for its issues; a finding\'s issue replaced discards it, one newly linked asks where it is missing', async t => {
+  assert.equal(managedFixes.read(issue), null, 'its Fix links read the batch as they render')
+  await flush(t)
+  assert.deepEqual(calls, ['team'])
+  state.managedIssues.set('finding', { url: issue, autoFix: null })
+  refreshManagedIssueMetadata('team', ['finding'], new Map())
+  await flush(t)
+  assert.deepEqual(calls, ['team'], 'issues first seen as annotations load are in the batch read')
+  const other = 'https://github.com/o/r/issues/4', previous = new Map(state.managedIssues)
+  state.managedIssues.set('finding', { url: other, autoFix: null })
+  response = () => [metadata(other)]
+  refreshManagedIssueMetadata('team', ['finding'], previous)
+  await flush(t)
+  assert.deepEqual(calls, ['team', 'team'], 'one linked in place of another discards the batch')
+  const before = new Map(state.managedIssues), linked = 'https://github.com/o/r/issues/5'
+  state.managedIssues.set('another', { url: linked, autoFix: null })
+  response = () => [metadata(other), metadata(linked)]
+  refreshManagedIssueMetadata('team', ['finding', 'another'], before)
+  await flush(t)
+  assert.deepEqual(calls, ['team', 'team', 'team'], 'one newly linked that the batch lacks is asked for')
+  assert.equal(managedFixes.read(linked).title, 'Fix')
+})

@@ -21,12 +21,12 @@ export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose
     if (event === 'close') { await onClose(); return false }
     if (event === 'triage' || event === 'teams') {
       // Refresh requests share this connection's watchdog, not just the view's
-      // lifetime, so a stalled read cannot prevent the reconnect loop.
+      // lifetime, so a stalled read cannot prevent the reconnect loop. Each
+      // event's opaque revision, where it tells one (a focused team's triage
+      // as its annotations answer it), lets the view skip a read it holds.
       let revision = null
-      if (event === 'teams') {
-        try { const parsed = JSON.parse(data); if (typeof parsed?.revision === 'string') revision = parsed.revision } catch {}
-      }
-      if (await (event === 'teams' ? onTeams?.(requestSignal, revision) : onUpdate(requestSignal)) === false) throw new Error('Team refresh failed')
+      try { const parsed = JSON.parse(data); if (typeof parsed?.revision === 'string') revision = parsed.revision } catch {}
+      if (await (event === 'teams' ? onTeams?.(requestSignal, revision) : onUpdate(requestSignal, revision)) === false) throw new Error('Team refresh failed')
       requestSignal.throwIfAborted()
       backoff = 1_000
     }

@@ -395,14 +395,19 @@ export function createManagedAnnotationRead(teamId, signal) {
   if (!teamId) return undefined
   const selectedReportId = state.currentManagedReport
   if (selectedReportId != null && (state.managedReports.length !== 1 || state.managedReports[0].id !== selectedReportId)) return undefined
-  let snapshotRead
-  return async reportId => {
+  let revision = null, snapshotRead
+  const read = async reportId => {
     snapshotRead ??= (async () => {
       flushPending()
       if (!(await waitForTriageFlush(signal)) || signal?.aborted) return null
-      return fetchTeamAnnotations(teamId, { signal, reportId: selectedReportId })
+      const answered = await fetchTeamAnnotations(teamId, { signal, reportId: selectedReportId })
+      revision = answered?.revision ?? null
+      return answered
     })()
     const readReport = await snapshotRead
     return readReport?.(reportId) ?? null
   }
+  // The revision the team's feed tells of what was read, once it is read
+  // (managed-feed.js): null where it told none.
+  return Object.assign(read, { revision: () => revision })
 }
