@@ -16,13 +16,15 @@ For deployment on Vercel, see [the deployment guide](VERCEL.md).
 For database selection, shared-storage boundaries and cleanup across both server modes, see [storage separation](../server-common/STORAGE.md).
 For optional encryption of payloads on disk and in Vercel Blob, see [managed storage encryption](STORAGE-ENCRYPTION.md).
 
-From a checkout, build the UI with `pnpm build` first, then start the server:
+From the published package:
 
 ```sh
-triage-server --mode managed   # or managed-e2e / e2e-managed, combined with the E2E server
+npx -p @preventive/triage triage-server --mode managed   # or managed-e2e / e2e-managed, combined with the E2E server
 ```
 
-`triage-server --help` lists the environment each mode reads.
+From a checkout, build the UI with `pnpm build` first, then start the server with `node cli.js --mode managed`.
+
+`--help` (`triage-server --help`, or `node cli.js --help` in a checkout) lists the environment each mode reads.
 In a combined mode, the first mode named is the client's default.
 The main settings are:
 
