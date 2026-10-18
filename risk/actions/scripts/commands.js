@@ -1,6 +1,6 @@
 // What a `run:` script fetches and runs past what a lockfile or a digest pins,
 // command by command (shell.js), each with its line in the script from 0.
-import { NPM_INSTALLS, fetched, npmToolFinds } from './packages.js'
+import { NPM_INSTALLS, fetched, npmToolFinds, positional, projectOf } from './packages.js'
 import { scriptCommands, scriptLines } from './shell.js'
 import { SHELLS as SHELL_NAMES } from '../../files/runs-code.js'
 import { readImage } from '../uses.js'
@@ -148,12 +148,13 @@ function commandFinds(command) {
 
 const INSTALLS = { npm: new RegExp(`^(?:ci|clean-install|ic|install-clean|${NPM_INSTALLS})$`, 'u'), pnpm: /^(?:i|install|add)$/u, bun: /^(?:i|install|add)$/u }
 
-// The line a script first installs a project's packages on, from 0; else null.
-export function installLine(script) {
+// A script's first install of a project's packages: its line, from 0, and the
+// directory it names (`into`, packages.js projectOf); else null.
+export function installOf(script) {
   for (const { argv, line } of scriptCommands(script)) {
     const program = programOf(argv[0])
-    const command = argv.slice(1).find(word => !word.startsWith('-'))
-    if (program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? '')) return line
+    const command = positional(argv, 1)[0]
+    if (program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? '')) return { line, into: projectOf(argv) }
   }
   return null
 }

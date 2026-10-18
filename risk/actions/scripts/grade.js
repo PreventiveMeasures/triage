@@ -1,7 +1,7 @@
 // What a `run:` script fetches and runs (commands.js), graded (README.md).
 import { HOST_TAGS, npmExfiltration, npmHostTags } from '../../files/hosts.js'
 import { lineOf } from '../../files/script.js'
-import { installLine, scriptFinds } from './commands.js'
+import { installOf, scriptFinds } from './commands.js'
 
 // What of a workflow's expressions anyone can write (a title, a body, a
 // branch's name, a commit's message), which a script runs as its own code, and the events a workflow runs on with
@@ -83,10 +83,10 @@ const fileLine = (run, line) => run.start === null ? run.line : run.start + line
 // whether a lockfile there locks it, `installed` whether an install ran before.
 export function scriptFindings(run, context) {
   const findings = []
-  // An install earlier in the script counts as one in a step before.
-  const installed = installLine(run.script)
+  // An install earlier in the script, in its own directory, counts as one in a step before.
+  const install = installOf(run.script)
   for (const found of scriptFinds(run.script)) {
-    const before = context.installed || (installed !== null && installed < found.line)
+    const before = context.installed || (install !== null && install.into === null && install.line < found.line)
     for (const finding of graded(found, { ...context, installed: before })) findings.push({ ...finding, line: fileLine(run, found.line) })
   }
   for (const [tag, services] of npmHostTags(npmExfiltration('run.sh', run.script, true))) {

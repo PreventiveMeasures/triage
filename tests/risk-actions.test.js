@@ -107,6 +107,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('npx eslint .', { locked }), ['fetched-package/high@11'], 'before any install')
     assert.deepEqual(graded('npx eslint .', { locked, installed: true }), [])
     assert.deepEqual(graded('npm ci\nnpx eslint .\nnpx tsc', { locked }), [], 'an install earlier in the script, tsc by typescript\'s')
+    assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
     assert.deepEqual(graded('npx eslint .\nnpm ci', { locked }), ['fetched-package/high@11'], 'an install after it')
     assert.deepEqual(graded('npx left-pad', { locked, installed: true }), ['fetched-package/high@11'], 'locked by none')
     assert.deepEqual(graded('npx left-pad@1.3.0', { installed: true }), ['fetched-package/moderate@11'], 'a version, not its integrity')
@@ -116,10 +117,13 @@ describe('a script\'s findings, graded', () => {
 
   it('an install in a step before counts where node finds what it installed: its directory or one below', () => {
     const lockfiles = [{ path: 'api/package-lock.json', names: new Set(['eslint']) }, { path: 'package-lock.json', names: new Set(['eslint']) }]
-    const job = (install, runs) => `on: push\njobs:\n  a:\n    steps:\n      - run: npm ci\n        working-directory: ${install}\n      - run: npx eslint .\n        working-directory: ${runs}\n`
+    const job = (install, runs, command = 'npm ci') => `on: push\njobs:\n  a:\n    steps:\n      - run: ${command}\n        working-directory: ${install}\n      - run: npx eslint .\n        working-directory: ${runs}\n`
     assert.deepEqual(ids(scanWorkflow('workflow', job('web', 'api'), { lockfiles }).findings), ['fetched-package/high@7'], 'web installed, api not')
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api'), { lockfiles }).findings), [], 'installed above it')
     assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api'), { lockfiles }).findings), [])
+    assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm ci --prefix web'), { lockfiles }).findings), ['fetched-package/high@7'], 'the directory an install names')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('web', 'api', 'pnpm -C ../api install'), { lockfiles }).findings), [])
+    assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm --prefix=api ci'), { lockfiles }).findings), [], 'its option before its command')
   })
 
   it('other tools by how they are pinned', () => {

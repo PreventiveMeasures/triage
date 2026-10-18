@@ -157,9 +157,15 @@ export class ActionsState {
     }
     for (const line of this.actions.values()) for (const { key } of line.uses ?? []) ref(key).usedIn.push({ via: line.key })
     for (const at of refs.values()) {
-      const seen = new Set()
+      // A finding named more than once (by each workflow naming the
+      // reference) once, at its most severe.
+      const seen = new Map()
       at.line = this.actions.get(at.key) ?? null
-      at.findings = [...at.local, ...at.line?.findings ?? []].filter(finding => { const key = `${finding.id}\0${finding.file ?? ''}\0${finding.file ? finding.line : ''}`; return !seen.has(key) && seen.add(key) })
+      for (const finding of [...at.local, ...at.line?.findings ?? []]) {
+        const key = `${finding.id}\0${finding.file ?? ''}\0${finding.file ? finding.line : ''}`
+        if (!seen.has(key) || severityRank(finding.severity) < severityRank(seen.get(key).severity)) seen.set(key, finding)
+      }
+      at.findings = [...seen.values()]
       at.severity = worst(at.findings)
     }
     const standing = row => row.findings.length > 0 ? 0 : row.line?.error ? 1 : row.line || row.kind === 'step' ? 3 : 2

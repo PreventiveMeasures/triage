@@ -1,6 +1,6 @@
 // What a workflow, or an action's metadata, calls for by its own text (README.md).
 import { readWorkflow } from './workflow.js'
-import { installLine } from './scripts/commands.js'
+import { installOf } from './scripts/commands.js'
 import { imageFinding, lockedName, namesPullHead, scriptFindings, scriptInjections } from './scripts/grade.js'
 import { ownerKind, usesKey } from './uses.js'
 
@@ -13,23 +13,29 @@ function usesFinding(uses, owner) {
   return uses.pin === 'short-sha' ? { id: 'short-sha', severity: 'high', ...at } : { id: 'unpinned', severity: ownerKind(uses.repo, owner) === 'third-party' ? 'high' : 'moderate', ...at, ref: uses.ref }
 }
 
-// Where a step installs a project's packages: a script's directory; anywhere
-// (null) for an action of its own or one named for installing; else undefined.
+// Where a step installs a project's packages: a script's directory, or the
+// one its install names; anywhere (null) for an action of its own or one
+// named for installing; else undefined.
 function installs(step) {
   if (step.uses?.kind === 'local' || (step.uses?.repo && /install/iu.test(step.uses.repo))) return null
   if (step.uses?.repo?.toLowerCase() === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return null
-  return step.run && installLine(step.run.script) !== null ? directoryOf(step.run.workingDirectory) : undefined
+  const install = step.run && installOf(step.run.script)
+  return install ? directoryOf(step.run.workingDirectory, install.into) : undefined
 }
 
 // Whether `dir` is `directory` or above it, as node finds a package there;
 // null, which an expression names, for any.
 const within = (dir, directory) => dir === null || directory === null || dir === '' || directory === dir || directory.startsWith(`${dir}/`)
 
-// A step's directory from the repository's root, '' for it; null for an expression.
-function directoryOf(workingDirectory) {
-  if (workingDirectory === null) return ''
-  if (workingDirectory.includes('${{')) return null
-  return workingDirectory.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '').replace(/^\.$/u, '')
+// A step's directory, and a path from it (`into`), from the repository's
+// root, '' for it; null for an expression, a variable or a path out of it.
+function directoryOf(workingDirectory, into = null) {
+  if (workingDirectory?.includes('${{') || /^\/|\$/u.test(into ?? '')) return null
+  const parts = []
+  for (const part of `${workingDirectory ?? ''}/${into ?? ''}`.split('/')) {
+    if (part === '..') { if (parts.pop() === undefined) return null } else if (part && part !== '.') parts.push(part)
+  }
+  return parts.join('/')
 }
 
 // Whether a lockfile at or above `directory` locks what npx runs by `name`.

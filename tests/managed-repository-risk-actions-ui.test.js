@@ -92,3 +92,14 @@ test('what a reference is pinned to and linked by', () => {
   assert.equal(referenceHref({ uses: { repo: 'o/r', path: '.github/workflows/x.yml', ref: 'v1', kind: 'workflow' }, line: { repository: { fullName: 'n/r' }, commit: SHA('a') } }),
     `https://github.com/n/r/blob/${SHA('a')}/.github/workflows/x.yml`, 'where it is now, at the commit resolved')
 })
+
+test('a reference named by workflows of more than one owner takes its finding at its most severe', () => {
+  const state = new ActionsState()
+  const workflow = 'on: push\njobs:\n  a:\n    steps:\n      - uses: org/act@v1\n'
+  state.apply({ type: 'workflow', repo: 1, path: 'a.yml', kind: 'workflow', ...scanWorkflow('workflow', workflow, { owner: 'org' }) })
+  state.apply({ type: 'workflow', repo: 2, path: 'a.yml', kind: 'workflow', ...scanWorkflow('workflow', workflow, { owner: 'other' }) })
+  const [row] = state.rows('actions')
+  assert.deepEqual(row.findings.map(({ id, severity }) => `${id}/${severity}`), ['unpinned/high'], 'another owner\'s use, not its own owner\'s')
+  assert.equal(row.severity, 'high')
+  assert.equal(row.usedIn.length, 2)
+})

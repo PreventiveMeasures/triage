@@ -35,7 +35,7 @@ const VALUED = /^(?:-[pcwC]|--(?:package|call|cache|userconfig|registry|workspac
 const GLOBAL = /^(?:-g|--global|--location=global)$/u
 
 // The words past `from` that aren't options or their values, and all past `--`.
-function positional(argv, from) {
+export function positional(argv, from) {
   const words = []
   for (let at = from; at < argv.length; at++) {
     const word = argv[at]
@@ -66,8 +66,18 @@ function execPackages(tool, argv, from, localFirst) {
   return (named.length > 0 ? named : positional(argv, from).slice(0, 1)).flatMap(text => fetched(tool, npmSpec(text), { localFirst }))
 }
 
+// The directory an install names for its project (`--prefix`, `-C`, `--dir`,
+// `--cwd`); null for the one it runs in.
+export function projectOf(argv) {
+  for (let at = 1; at < argv.length && argv[at] !== '--'; at++) {
+    const m = /^(?:-C|--prefix|--dir|--cwd)(?:=(.*))?$/u.exec(argv[at])
+    if (m) return m[1] ?? argv[at + 1] ?? null
+  }
+  return null
+}
+
 const installs = (tool, words) => words.flatMap(text => fetched(tool, npmSpec(text)))
-// npm's install command and its aliases (commands.js installLine).
+// npm's install command and its aliases (commands.js installOf).
 export const NPM_INSTALLS = 'i|in|ins|inst|insta|instal|install|isnt|isnta|isntal|isntall|add|it|install-test'
 const created = (tool, text) => text ? fetched(tool, createPackage(text)) : []
 const unlocked = tool => [{ kind: 'unlocked-install', tool }]
