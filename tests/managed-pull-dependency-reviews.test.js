@@ -17,6 +17,7 @@ import { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages 
 import { MAX_ADDED } from '../server-managed/pull-dependencies.ts'
 import { checkRepositoryDependencyReviews, context, people, publish } from './_managed-repository-dependency-reviews.js'
 import { readLines } from './_managed-lines.js'
+import { npmDeltaStore, npmVersionStore } from '../server-managed/npm-kept.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000 }
 const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
@@ -620,4 +621,14 @@ test('a team\'s Dependencies, its time up, tells the repositories left to ask fo
   })
   const gone = await read()
   assert.deepEqual([gone.lines, gone.ended], [[], false], 'cut short before a line')
+})
+
+test('a team\'s Dependencies tell with each line of dependencies the lines its versions wanting reviews change, those counted already, of public versions npm told within a day', async t => {
+  const { db, read } = await teamFixture(t)
+  const delta = { additions: 2, deletions: 0, typeless: null, binary: false }
+  await npmVersionStore(db).write('kept', '1.0.0', { name: 'kept', version: '1.0.0', dist: { integrity: 'sha512-kept' } })
+  await npmDeltaStore(db).write('(empty)\0sha512-kept', delta, Date.now())
+  const lines = (await read()).lines.filter(line => line.repoId === 1)
+  assert.deepEqual(lines.map(line => line.deltas ?? null), [[['kept', '1.0.0', '(empty)', delta]], [['kept', '1.0.0', '(empty)', delta]]],
+    'kept, wanting reviews on the default branch and locked before by the pull request')
 })
