@@ -182,7 +182,7 @@ import { WORKFLOWS_DIR } from './repository-actions.ts'
 import { githubActionsSource } from './github-actions.ts'
 import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, scopedDirectory } from './repository-browser.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, cacheAvatar, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
-import { clearCookie, endSession, readSession } from './session.ts'
+import { clearCookie, endSession, readSession, runRequestPresence } from './session.ts'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
@@ -4698,7 +4698,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     // Feeds lease a connection per poll, never across streaming sleeps. This
     // also covers capability-authenticated feeds handled by public-workspace.
     const feed = /^\/api\/teams(?:\/[^/?]+)?\/feed(?:\?|$)/u.test(req.url ?? '')
-    const serve = () => db.withRequest && !feed ? db.withRequest(() => route(req, res)) : route(req, res)
+    const serve = () => runRequestPresence(() => db.withRequest && !feed ? db.withRequest(() => route(req, res)) : route(req, res))
     const work = runViewing(viewToken(config, req.headers.cookie) != null, serve).catch((err) => {
       if ((err instanceof TeamReportsError || err instanceof IssueError || err instanceof OAuthError || err instanceof ManagedMutationError) && !res.headersSent) { sendJson(res, err.status, { error: err.message }); return }
       console.warn('managed: request handler error:', err)

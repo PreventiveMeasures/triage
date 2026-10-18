@@ -392,6 +392,10 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   // A view session opened by `viewerSessionId`, while that session is current
   // and its user is still an admin. Presence is the admin's, not the viewed user's.
   viewSessionWithUser(id: string, viewerSessionId: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
+  // The two above as they read, recording no presence: for a read again in a
+  // request whose first read recorded it.
+  getSessionWithUser(id: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
+  getViewSessionWithUser(id: string, viewerSessionId: string, now: number): Promise<{ session: ManagedSession; user: StoredUser } | null>
   // Store `candidate` unless the session already has an upload key; returns
   // the stored key, or null when the session no longer exists.
   ensureSessionUploadKey(id: string, candidate: string): Promise<string | null>
@@ -545,6 +549,15 @@ type SessionRow = {
   uid: string; login: string; name: string | null; avatar: string | null; role: Role
 }
 type ViewSessionRow = SessionRow & { viewerId: string; viewerLogin: string; viewerName: string | null }
+const ownSession = (row: SessionRow) => ({
+  session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey },
+  user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
+})
+const viewSession = (row: ViewSessionRow) => ({
+  session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey,
+    viewer: { id: row.viewerId, login: row.viewerLogin, name: row.viewerName } },
+  user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
+})
 
 type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number | null; lastActivity: number | null }
 
@@ -1664,10 +1677,11 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       const row = (await selectOwnSessionStmt.get(id, now)) as SessionRow | undefined
       if (row == null) return null
       await touchUserSeenStmt.run(now, row.uid, now)
-      return {
-        session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey },
-        user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
-      }
+      return ownSession(row)
+    },
+    async getSessionWithUser(id, now) {
+      const row = (await selectOwnSessionStmt.get(id, now)) as SessionRow | undefined
+      return row == null ? null : ownSession(row)
     },
     async createViewSession(view, now) {
       if (Number((await insertViewSessionStmt.run(view.id, view.csrfToken, now, view.userId, view.viewerSessionId, now)).changes) === 0) return false
@@ -1678,11 +1692,11 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       const row = (await selectViewSessionStmt.get(id, viewerSessionId, now, now)) as ViewSessionRow | undefined
       if (row == null) return null
       await touchUserSeenStmt.run(now, row.viewerId, now)
-      return {
-        session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey,
-          viewer: { id: row.viewerId, login: row.viewerLogin, name: row.viewerName } },
-        user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
-      }
+      return viewSession(row)
+    },
+    async getViewSessionWithUser(id, viewerSessionId, now) {
+      const row = (await selectViewSessionStmt.get(id, viewerSessionId, now, now)) as ViewSessionRow | undefined
+      return row == null ? null : viewSession(row)
     },
     async ensureSessionUploadKey(id, candidate) {
       const row = (await ensureUploadKeyStmt.get(candidate, id)) as { uploadKey: string } | undefined
