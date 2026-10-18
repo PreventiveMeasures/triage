@@ -529,3 +529,29 @@ test('pages kept at parents but none readable leave those at commits listed read
   assert.equal(commits.length, HISTORY_GLUED, 'no round spent on the unreadable alone')
   assert.ok(rounds <= 20, String(rounds))
 })
+
+test('a line whose parent has no page readable goes on by a page at a commit listed, though another line\'s parents keep giving pages', async () => {
+  // Two lines, a of 3000 commits and b of 300, merged at the top (`top`). A
+  // page is kept from every commit of each, but b's third's is unreadable (as
+  // a REST page is to a reader with GraphQL): b goes on past it only by the
+  // page at its second, listed, while a's parents keep answering, as far as
+  // gluing goes.
+  const id = (line, at) => (line * 1_000_000 + at).toString(16).padStart(40, '0')
+  const top = 'e'.repeat(40)
+  const end = line => line === 1 ? 3000 : 300
+  const node = (line, at) => ({ sha: id(line, at), parents: at < end(line) ? [id(line, at + 1)] : [], subject: '', authorName: null, authorLogin: null, committedAt: null })
+  const at = sha => ({ line: Math.floor(Number.parseInt(sha, 16) / 1_000_000), at: Number.parseInt(sha, 16) % 1_000_000 })
+  const pageAt = sha => sha === top ? [{ ...node(0, 0), sha: top, parents: [id(1, 1), id(2, 1)] }, node(1, 1), node(2, 1), node(2, 2)]
+    : Array.from({ length: Math.min(100, end(at(sha).line) + 1 - at(sha).at) }, (_, index) => node(at(sha).line, at(sha).at + index))
+  const readable = sha => sha !== id(2, 3)
+  const answer = tops => new Map(tops.filter(readable).map(sha => [sha, pageAt(sha)]))
+  const pages = {
+    read: tops => Promise.resolve(answer(tops)),
+    readFirst: (first, then) => Promise.resolve(first.length > 0 ? { first: true, pages: answer(first) } : { first: false, pages: answer(then) }),
+    write: () => Promise.resolve(),
+  }
+  const { commits } = await historyFrom('org/repo', 'token', [top], pages, () => assert.fail('nothing read of GitHub'))
+  const listed = new Set(commits.map(commit => commit.sha))
+  assert.equal(listed.size, HISTORY_GLUED)
+  assert.ok(Array.from({ length: 300 }, (_, index) => id(2, index + 1)).every(sha => listed.has(sha)), 'b whole, beside a as far as gluing goes')
+})

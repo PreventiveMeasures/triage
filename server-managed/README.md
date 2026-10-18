@@ -1805,8 +1805,9 @@ read again.
   the top of a page kept, that page joins those listed, and so on, till two
   thousand commits are listed. The pages at parents not listed are read
   first, each adding only commits not listed yet; those at commits listed,
-  which mostly list commits listed already, only where none of those is
-  kept, in the same read of the database. The pages from where it starts are listed
+  which mostly list commits listed already, only where any of those parents
+  has none kept and readable (in the same read of the database where none
+  of them has), so that a line with none at its parent still goes on. The pages from where it starts are listed
   whole all the same, All branches' 25 tips' as before, two thousand five
   hundred commits at most. A branch that moved on a few commits reads one page and
   shows all the history read of it before, the pages Older commits read
