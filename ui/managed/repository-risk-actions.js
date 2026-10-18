@@ -120,9 +120,10 @@ export class ActionsState {
     return [...this.files.get(repo)?.values() ?? []]
   }
 
-  // How much is told, for a scan's parts to tell whether one went further.
+  // How much is told, for a scan's parts to tell whether one went further:
+  // of references, those still named.
   told() {
-    return this.listed.size + this.actions.size + [...this.files.values()].reduce((sum, files) => sum + files.size, 0)
+    return this.listed.size + this.rows('actions').filter(row => row.line).length + [...this.files.values()].reduce((sum, files) => sum + files.size, 0)
   }
 
   // Workflows listed and read, and references named and resolved.
@@ -155,14 +156,23 @@ export class ActionsState {
         }
       }
     }
-    for (const line of this.actions.values()) for (const { key } of line.uses ?? []) ref(key).usedIn.push({ via: line.key })
+    // What those resolved name in turn, of those named still: one only a
+    // repository forgotten named is no row.
+    const named = [...refs.keys()]
+    for (let at = 0; at < named.length; at++) {
+      for (const { key } of this.actions.get(named[at])?.uses ?? []) {
+        if (!refs.has(key)) named.push(key)
+        ref(key).usedIn.push({ via: named[at] })
+      }
+    }
     for (const at of refs.values()) {
       // A finding named more than once (by each workflow naming the
-      // reference) once, at its most severe.
+      // reference) once, at its most severe; what it is about tells those
+      // of one line apart.
       const seen = new Map()
       at.line = this.actions.get(at.key) ?? null
       for (const finding of [...at.local, ...at.line?.findings ?? []]) {
-        const key = `${finding.id}\0${finding.file ?? ''}\0${finding.file ? finding.line : ''}`
+        const key = `${finding.id}\0${stepName(finding)}\0${finding.file ?? ''}\0${finding.file ? finding.line : ''}`
         if (!seen.has(key) || severityRank(finding.severity) < severityRank(seen.get(key).severity)) seen.set(key, finding)
       }
       at.findings = [...seen.values()]

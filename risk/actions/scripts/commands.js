@@ -150,14 +150,15 @@ const INSTALLS = { npm: new RegExp(`^(?:ci|clean-install|ic|install-clean|${NPM_
 // An install's options that leave the project's node_modules as they are.
 const NOT_LOCAL = /^(?:-g|--global|--location=global|--package-lock-only|--lockfile-only)$/u
 
-// A script's first install of a project's packages: its line, from 0, and the
-// directory it names (`into`, packages.js projectOf); else null.
+// A script's first install of a project's packages: its line, from 0, its
+// command's `order` (shell.js scriptCommands), and the directory it names
+// (`into`, packages.js projectOf); else null.
 export function installOf(script) {
-  for (const { argv, line } of scriptCommands(script)) {
+  for (const { argv, line, order } of scriptCommands(script)) {
     const program = programOf(argv[0])
     const command = positional(argv, 1)[0]
     if (argv.some(word => NOT_LOCAL.test(word))) continue
-    if (program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? '')) return { line, into: projectOf(argv) }
+    if (program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? '')) return { line, order, into: projectOf(argv) }
   }
   return null
 }
@@ -183,8 +184,8 @@ export function scriptFinds(script) {
       found.push({ kind: 'remote-script', line: command.line, command: excerpt(lines.get(at) ?? '') })
       saved.delete(name)
     }
-    for (const each of commandFinds(command)) found.push({ ...each, line: command.line })
+    for (const each of commandFinds(command)) found.push({ ...each, line: command.line, order: command.order })
   }
   const told = new Set()
-  return found.filter(each => { const key = JSON.stringify(each); return !told.has(key) && told.add(key) }).toSorted((a, b) => a.line - b.line)
+  return found.filter(({ order: _order, ...each }) => { const key = JSON.stringify(each); return !told.has(key) && told.add(key) }).toSorted((a, b) => a.line - b.line)
 }

@@ -776,7 +776,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _tabs() {
-    const actions = this._actions.actions.size
+    const actions = this._actions.rows('actions').length
     const tabs = [['packages', 'Packages'], ['advisories', html`Advisories${this._advisories.size > 0 ? html`<span class="n">${formatCount.format(this._advisories.size)}</span>` : nothing}`],
       ['actions', html`Actions${actions > 0 ? html`<span class="n">${formatCount.format(actions)}</span>` : nothing}`]]
     return html`<div class="risk-tabs" role="tablist" aria-label="Results">${tabs.map(([tab, label]) => html`<button type="button" role="tab"

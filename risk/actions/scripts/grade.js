@@ -86,7 +86,7 @@ export function scriptFindings(run, context) {
   // An install earlier in the script, in its own directory, counts as one in a step before.
   const install = installOf(run.script)
   for (const found of scriptFinds(run.script)) {
-    const before = context.installed || (install !== null && install.into === null && install.line < found.line)
+    const before = context.installed || (install !== null && install.into === null && install.order < found.order)
     for (const finding of graded(found, { ...context, installed: before })) findings.push({ ...finding, line: fileLine(run, found.line) })
   }
   for (const [tag, services] of npmHostTags(npmExfiltration('run.sh', run.script, true))) {

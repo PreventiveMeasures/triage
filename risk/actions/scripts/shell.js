@@ -117,8 +117,9 @@ function shellLine([program, ...words]) {
   return at === -1 ? null : words[at + 1] ?? null
 }
 
-// Each command of a script: `{ argv, piped, line, next }`, `line` the one it
-// is on, counting from 0, and `next` the command a pipe feeds it to, as a
+// Each command of a script: `{ argv, piped, line, order, next }`, `line` the
+// one it is on, counting from 0, `order` its place among them all, and
+// `next` the command a pipe feeds it to, as a
 // script fetched is fed to a shell; a command substitution's and a shell's
 // command line's after its line's.
 export function scriptCommands(script) {
@@ -127,7 +128,7 @@ export function scriptCommands(script) {
     const queue = [text]
     for (let read = 0; read < queue.length && read < 64; read++) {
       const { commands, nested } = commandsOf(queue[read])
-      commands.forEach((command, at) => { found.push({ ...command, line, next: commands[at + 1]?.piped ? commands[at + 1] : null }) })
+      commands.forEach((command, at) => { found.push({ ...command, line, order: found.length, next: commands[at + 1]?.piped ? commands[at + 1] : null }) })
       queue.push(...nested, ...commands.map(({ argv }) => shellLine(argv)).filter(Boolean))
     }
   }

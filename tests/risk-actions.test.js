@@ -108,6 +108,8 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('npx eslint .', { locked }), ['fetched-package/high@11'], 'before any install')
     assert.deepEqual(graded('npx eslint .', { locked, installed: true }), [])
     assert.deepEqual(graded('npm ci\nnpx eslint .\nnpx tsc', { locked }), [], 'an install earlier in the script, tsc by typescript\'s')
+    assert.deepEqual(graded('npm ci && npx eslint .', { locked }), [], 'an install earlier on its line')
+    assert.deepEqual(graded('npx eslint . && npm ci', { locked }).length, 1, 'and one after it')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\''), ['fetched-package/high@11', 'remote-script/high@12'], 'a shell\'s command line')
     assert.deepEqual(graded('npx eslint .\nnpm ci', { locked }), ['fetched-package/high@11'], 'an install after it')

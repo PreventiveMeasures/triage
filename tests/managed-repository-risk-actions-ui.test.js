@@ -78,6 +78,7 @@ test('a repository read again, or no longer listed, forgets what its Actions tol
   state.apply({ type: 'workflow', repo: 1, path: 'x.yml', kind: 'workflow', error: 'workflow-unreadable' })
   state.forget(1)
   assert.deepEqual([state.files.size, state.listed.size], [0, 0])
+  assert.deepEqual([state.rows('all'), state.told()], [[], 0], 'nor what its references resolved named')
   // A reference resolved isn't replaced by why one couldn't be later.
   state.apply({ type: 'action', key: 'a/b@v1', commit: SHA('1'), at: 'tag', tags: [], findings: [] })
   state.apply({ type: 'action', key: 'a/b@v1', error: 'github-unreachable' })
@@ -102,4 +103,12 @@ test('a reference named by workflows of more than one owner takes its finding at
   assert.deepEqual(row.findings.map(({ id, severity }) => `${id}/${severity}`), ['unpinned/high'], 'another owner\'s use, not its own owner\'s')
   assert.equal(row.severity, 'high')
   assert.equal(row.usedIn.length, 2)
+})
+
+test('a reference\'s own code\'s findings of one line, each of what it is about', () => {
+  const state = new ActionsState()
+  state.apply({ type: 'workflow', repo: 1, path: 'a.yml', kind: 'workflow', ...scanWorkflow('workflow', 'on: push\njobs:\n  a:\n    steps:\n      - uses: org/act@v1\n', { owner: 'org' }) })
+  const fetched = name => ({ id: 'fetched-package', severity: 'high', tool: 'npx', name, spec: null, file: 'action.yml', line: 9 })
+  state.apply({ type: 'action', key: 'org/act@v1', commit: SHA('1'), at: 'tag', tags: [], findings: [fetched('foo'), fetched('bar'), fetched('foo')], uses: [] })
+  assert.deepEqual(state.rows('actions')[0].findings.map(({ id, name }) => `${id}/${name ?? ''}`), ['unpinned/', 'fetched-package/foo', 'fetched-package/bar'])
 })
