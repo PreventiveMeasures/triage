@@ -1631,12 +1631,13 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
       return true
     }
     // Too large names the commit it was read at, for History to read.
-    if (!repositoryCodeFits(await repositoryTreeFiles(repo, reader.readToken(), tree))) {
+    const listed = await repositoryTreeFiles(repo, reader.readToken(), tree)
+    if (!repositoryCodeFits(listed)) {
       if (await fenced()) sendJson(res, 413, { error: 'directory-too-large', commit })
       return
     }
     if (res.destroyed) return
-    const load = loadRepositoryCodeBody({ repoId, repo, commit, path, tree }, () => upstreamGithub(() => client.getRepoTreeTarball({ repo, tree })))
+    const load = loadRepositoryCodeBody({ repoId, repo, commit, path, tree, listed }, () => upstreamGithub(() => client.getRepoTreeTarball({ repo, tree })))
     res.once('close', load.release)
     const bytes = await load.result
     if (!(await fenced()) || res.destroyed) return

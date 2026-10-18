@@ -5,7 +5,9 @@ import { brotliDecompressSync, gzipSync } from 'node:zlib'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { repositoryCodeFits } from '../server-managed/repository-code.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES } from '../server-managed/npm-packages.ts'
+import { MAX_REPOSITORY_CODE_BYTES, MAX_REPOSITORY_CODE_FILES, loadRepositoryCodeBody, repositoryCodeFits } from '../server-managed/repository-code.ts'
+import { tar } from './_managed-npm.js'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
@@ -213,10 +215,54 @@ test('a directory too large to hold, or listed short, is refused before its tarb
   const gone = await request({ repoId: '1', ref: commit })
   assert.equal(gone.status, 404)
   assert.equal(gone.body.commit, undefined)
-  assert.equal(repositoryCodeFits({ files: 20_000, bytes: 64 * 1024 * 1024 }), true)
-  assert.equal(repositoryCodeFits({ files: 20_001, bytes: 1 }), false)
-  assert.equal(repositoryCodeFits({ files: 1, bytes: 64 * 1024 * 1024 + 1 }), false)
+  assert.equal(repositoryCodeFits({ files: 80_000, bytes: 256 * 1024 * 1024 }), true)
+  assert.equal(repositoryCodeFits({ files: 80_001, bytes: 1 }), false)
+  assert.equal(repositoryCodeFits({ files: 1, bytes: 256 * 1024 * 1024 + 1 }), false)
   assert.equal(repositoryCodeFits(null), false)
+})
+
+test('a directory unpacks within its own bounds, past a package\'s, and no further', async () => {
+  const read = async (count, as) => {
+    const tgz = gzipSync(tar(Array.from({ length: count }, (_, i) => ({ name: `org-repo-aaaaaaa/f${i}`, data: 'x' }))))
+    const load = loadRepositoryCodeBody({ repoId: 1, repo: 'org/repo', commit, path: '', tree: as, listed: { files: count, bytes: count } }, () => Promise.resolve(tgz))
+    try { return JSON.parse(brotliDecompressSync(await load.result).toString()).files.length } finally { load.release() }
+  }
+  assert.equal(await read(MAX_NPM_PACKAGE_FILES + 1, 'b'.repeat(40)), MAX_NPM_PACKAGE_FILES + 1)
+  await assert.rejects(read(MAX_REPOSITORY_CODE_FILES + 1, 'c'.repeat(40)), err => err.status === 413 && err.message === 'directory-too-large')
+})
+
+test('a directory past a package\'s bounds takes as many places among the active loads as packages its files would fill', async () => {
+  const gate = Promise.withResolvers(), tgz = gzipSync(tar([{ name: 'org-repo-aaaaaaa/a', data: 'a' }]))
+  const load = (tree, count, bytes) => loadRepositoryCodeBody({ repoId: 1, repo: 'org/repo', commit, path: '', tree: tree.repeat(40), listed: { files: count, bytes } },
+    () => gate.promise.then(() => tgz))
+  const busy = /repository-busy/u
+  const held = [load('1', 1, 1), load('2', MAX_NPM_PACKAGE_FILES, MAX_NPM_PACKAGE_BYTES)]
+  await assert.rejects(load('3', 1, 2 * MAX_NPM_PACKAGE_BYTES + 1).result, busy, 'three packages\' bytes find two places')
+  held.push(load('4', MAX_NPM_PACKAGE_FILES + 1, 1))
+  await assert.rejects(load('5', 1, 1).result, busy, 'two packages\' files take the other two')
+  gate.resolve()
+  await Promise.all(held.map(each => each.result))
+  for (const each of held) each.release()
+  const largest = load('6', MAX_REPOSITORY_CODE_FILES, MAX_REPOSITORY_CODE_BYTES)
+  await assert.rejects(load('7', 1, 1).result, busy, 'the largest takes every place')
+  await largest.result
+  largest.release()
+  const after = load('7', 1, 1)
+  await after.result
+  after.release()
+})
+
+test('a directory\'s JSON is held to what its places hold, as its listing cannot tell how far escaping grows it', async () => {
+  const size = Math.floor(MAX_NPM_JSON_LENGTH / 6) + 1
+  const tgz = gzipSync(tar([{ name: 'org-repo-aaaaaaa/controls', data: Buffer.alloc(size, 1) }]))
+  const load = (tree, bytes) => loadRepositoryCodeBody({ repoId: 1, repo: 'org/repo', commit, path: '', tree: tree.repeat(40), listed: { files: 1, bytes } },
+    () => Promise.resolve(tgz))
+  const one = load('8', size)
+  await assert.rejects(one.result, err => err.status === 413 && err.message === 'directory-too-large', 'one place holds a package\'s JSON')
+  one.release()
+  const two = load('9', MAX_NPM_PACKAGE_BYTES + 1)
+  assert.ok((await two.result).byteLength > 0, 'two hold twice that')
+  two.release()
 })
 
 test('a directory the commit has none at is none to read; bad queries, other methods and signed-out readers are refused', async t => {

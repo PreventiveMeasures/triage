@@ -9,8 +9,8 @@ import { join, resolve } from 'node:path'
 import { CompressionError, decompress } from '@preventive/archive/compression.js'
 import { encodeBrotli } from './brotli.ts'
 import { keptBriefly } from './kept-briefly.ts'
-import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument, askUpstream,
-  npmFileRows, npmPublishTime, npmToken, readNpmTar } from './npm-packages.ts'
+import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument, type TarReading,
+  askUpstream, npmFileRows, npmPublishTime, npmToken, readNpmTar } from './npm-packages.ts'
 import { keepFile, readKeptFile, upstreamCachePath } from './upstream-cache.ts'
 
 // The tar stream a package's files may come in, headers and padding included.
@@ -39,9 +39,10 @@ interface Load { job: Promise<unknown>; readers: number; settled: boolean; slot:
 // keeps its place among the active ones until its work is done and each
 // reader has released it, as a reader does once its response is written or
 // abandoned, so what responses still hold counts too. Places by the slot
-// their loads share, with how many hold each.
+// their loads share, with how many hold each and how many places it takes.
 const loads = new Map<string, Load>()
-const slots = new Map<string, number>()
+const slots = new Map<string, { holding: number; places: number }>()
+const placesTaken = () => [...slots.values()].reduce((sum, slot) => sum + slot.places, 0)
 
 const refused = <T>(status: number, code: string): NpmLoad<T> => {
   const result = Promise.reject(new NpmPackageError(status, code))
@@ -57,22 +58,32 @@ function shared<T>(what: string, doc: NpmVersionDocument, work: () => Promise<T>
   const { unpackedSize, fileCount } = doc.dist
   if ((unpackedSize ?? 0) > MAX_NPM_PACKAGE_BYTES || (fileCount ?? 0) > MAX_NPM_PACKAGE_FILES) return refused(413, 'package-too-large')
   const slot = tarballKey(doc)
-  return sharedLoad(`${what} ${slot}`, work, 'npm-busy', slot)
+  return sharedLoad(`${what} ${slot}`, work, 'npm-busy', { slot })
+}
+
+// The places among the active ones a load takes whose files hold `files` and
+// `bytes`: as many as packages they would fill, up to every one, each place
+// holding what a package may.
+export function loadPlaces({ files, bytes }: { files: number; bytes: number }): number {
+  return Math.min(MAX_ACTIVE_LOADS, Math.max(1, Math.ceil(files / MAX_NPM_PACKAGE_FILES), Math.ceil(bytes / MAX_NPM_PACKAGE_BYTES)))
 }
 
 // A load among the active ones, by `key`, refused as `busy` past them: a
 // repository directory's (repository-code.ts) as a package's, each holding
 // alike a tarball, its tar, its files and their encoded JSON. Loads of one
-// `slot` take one place between them.
-export function sharedLoad<T>(key: string, work: () => Promise<T>, busy: string, slot = key): NpmLoad<T> {
+// `slot` take one place between them, or `places` (loadPlaces) where they
+// hold more.
+export function sharedLoad<T>(key: string, work: () => Promise<T>, busy: string,
+  { slot = key, places = 1 }: { slot?: string; places?: number } = {}): NpmLoad<T> {
   let load = loads.get(key)
   if (!load) {
-    if (!slots.has(slot) && slots.size >= MAX_ACTIVE_LOADS) return refused(429, busy)
+    if (!slots.has(slot) && placesTaken() + places > MAX_ACTIVE_LOADS) return refused(429, busy)
     const created: Load = { job: work(), readers: 0, settled: false, slot }
     const finish = () => { settle(key, created) }
     created.job.then(finish, finish)
     loads.set(key, created)
-    slots.set(slot, (slots.get(slot) ?? 0) + 1)
+    const taken = slots.get(slot)
+    slots.set(slot, { holding: (taken?.holding ?? 0) + 1, places: taken?.places ?? places })
     load = created
   }
   const held = load
@@ -99,9 +110,9 @@ function settle(key: string, load: Load) {
 function done(key: string, load: Load) {
   if (load.readers !== 0 || !load.settled || loads.get(key) !== load) return
   loads.delete(key)
-  const holding = slots.get(load.slot)! - 1
-  if (holding === 0) slots.delete(load.slot)
-  else slots.set(load.slot, holding)
+  const taken = slots.get(load.slot)!
+  if (taken.holding === 1) slots.delete(load.slot)
+  else taken.holding--
 }
 
 // The sha512 an integrity names, in base64, or null where it names none.
@@ -201,10 +212,11 @@ function unpackedOf(doc: NpmVersionDocument): Promise<Unpacked> {
 
 // A gzipped tarball's files, its top directory left out, as npm extracts
 // a package's: a repository tree's as GitHub archives it, too, its symlinks
-// let climb as readNpmTar's `symlinksAbove` says.
-export async function readTarballFiles(tarball: Uint8Array, options: { symlinksAbove?: number } = {}): Promise<NpmPackageFile[]> {
+// let climb as readNpmTar's `symlinksAbove` says, and its tar stream and
+// files bounded as `options` give, a package's bounds unless given.
+export async function readTarballFiles(tarball: Uint8Array, { maxTarBytes = MAX_TAR_BYTES, ...options }: TarReading & { maxTarBytes?: number } = {}): Promise<NpmPackageFile[]> {
   let tar: Uint8Array
-  try { tar = await decompress(tarball, 'gzip', { limit: MAX_TAR_BYTES }) }
+  try { tar = await decompress(tarball, 'gzip', { limit: maxTarBytes }) }
   catch (err) {
     const limited = err instanceof CompressionError && err.limited
     throw new NpmPackageError(limited ? 413 : 422, limited ? 'package-too-large' : 'bad-tarball')
