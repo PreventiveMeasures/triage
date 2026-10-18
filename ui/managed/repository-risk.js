@@ -895,13 +895,15 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return html`<span class="risk-pending">${this._state === 'running' ? running : otherwise}</span>`
   }
 
-  // What a repository's row says in place of its lockfiles, where it has none
-  // to list; null where it has.
-  _repoStatus(repo) {
+  // What a repository's row says in place of its lockfiles, or on their tab
+  // its `workflows`, where it has none to list; null where it has.
+  _repoStatus(repo, workflows = false) {
     if (repo.error) return failure(repo)
     if (repo.lockfiles === null) return this._pending('Waiting…', 'Not read')
-    const workflows = this._actions.listed.get(repo.id)?.error || this._actions.filesOf(repo.id).length > 0
-    return repo.lockfiles.size === 0 && !workflows ? html`<span class="risk-none">No npm lockfiles</span>` : null
+    if (!workflows) return repo.lockfiles.size === 0 ? html`<span class="risk-none">No npm lockfiles</span>` : null
+    const listed = this._actions.listed.get(repo.id)
+    if (!listed) return this._pending('Waiting…', 'Not read')
+    return listed.error || this._actions.filesOf(repo.id).length > 0 ? null : html`<span class="risk-none">No workflows</span>`
   }
 
   _lockfileStatus(lockfile) {
@@ -919,7 +921,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       ${this._actions.listed.size > 0 ? tabList('Files', [['lockfiles', 'Lockfiles'], ['workflows', 'Workflows']], this._files, files => { this._files = files }) : html`<h2>Lockfiles</h2>`}
       <ul class="risk-repos">${[...this._repos.values()].map(repo => html`<li>
         <span class="risk-repo-name" data-tooltip-truncated data-tooltip=${repo.fullName}>${repo.fullName}</span>
-        ${this._repoStatus(repo) ?? html`<ul class="risk-lockfiles">${workflows ? this._workflowItems(repo) : [...repo.lockfiles.values()].map(lockfile => html`<li>
+        ${this._repoStatus(repo, workflows) ?? html`<ul class="risk-lockfiles">${workflows ? this._workflowItems(repo) : [...repo.lockfiles.values()].map(lockfile => html`<li>
           <span class="mono">${lockfile.path}</span><span class="risk-lockfile-meta">${lockfile.format} · ${this._lockfileStatus(lockfile)}</span>
         </li>`)}</ul>`}
       </li>`)}</ul>

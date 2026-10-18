@@ -65,12 +65,12 @@ test('the Actions tab lists each reference, resolved, and what steps fetch, the 
   assert.deepEqual(page._actions.rows('all', 'party').map(row => row.key), ['third/party@v1'], 'searched by name')
 })
 
-test('a repository with neither npm lockfiles nor workflows says so, one with workflows alone lists them', () => {
+test('a repository with no npm lockfiles says so on their tab, one with no workflows on theirs', () => {
   const page = new (customElements.get('managed-admin-repo-risk'))()
   for (const line of [{ type: 'repos', repos: [{ id: 1, fullName: 'org/one' }, { id: 2, fullName: 'org/two' }] }, { type: 'repo', id: 1, commit: SHA('a'), lockfiles: [] },
     { type: 'repo', id: 2, commit: SHA('b'), lockfiles: [] }, ...LINES.slice(2, 4), { type: 'workflows', repo: 2, paths: [] }]) page._apply(line)
-  assert.equal(templateText(page._repoStatus(page._repos.get(2))).includes('No npm lockfiles'), true)
-  assert.equal(page._repoStatus(page._repos.get(1)), null)
+  assert.deepEqual([1, 2].map(id => templateText(page._repoStatus(page._repos.get(id)))), ['<span class="risk-none">No npm lockfiles</span>', '<span class="risk-none">No npm lockfiles</span>'])
+  assert.deepEqual([page._repoStatus(page._repos.get(1), true), templateText(page._repoStatus(page._repos.get(2), true))], [null, '<span class="risk-none">No workflows</span>'])
 })
 
 test('a repository read again, or no longer listed, forgets what its Actions told', () => {
