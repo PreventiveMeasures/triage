@@ -122,7 +122,7 @@ function commandFinds(command) {
   const { argv } = command
   const program = programOf(argv[0])
   if (/^(?:docker|podman)$/u.test(program) && /^(?:run|pull|create)$/u.test(argv[1] ?? '')) {
-    const image = argv.slice(2).find((word, at, words) => !word.startsWith('-') && !/^(?:-[evpwulhm]|--(?:env|volume|publish|workdir|user|label|hostname|memory|name|network|entrypoint|platform|mount|env-file|cpus|add-host|cap-add|device|dns|gpus|ipc|pid|restart|runtime|security-opt|shm-size|tmpfs|ulimit|volumes-from|log-driver))$/u.test(words[at - 1] ?? ''))
+    const image = argv.slice(2).find((word, at, words) => !word.startsWith('-') && !/^(?:-[evpwulhm]|--(?:env|volume|publish|workdir|user|label|hostname|memory|name|network|entrypoint|platform|mount|env-file|cpus|add-host|cap-add|device|dns|gpus|ipc|pid|restart|runtime|pull|security-opt|shm-size|tmpfs|ulimit|volumes-from|log-driver))$/u.test(words[at - 1] ?? ''))
     return image ? [{ kind: 'image', text: image, read: readImage(image) }] : []
   }
   if (program === 'git' && argv[1] === 'clone') return [{ kind: 'clone', url: argv.slice(2).find(word => /^(?:https?:|git@|git:|ssh:)/u.test(word)) ?? null }]

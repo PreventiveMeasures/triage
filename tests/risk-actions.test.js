@@ -151,6 +151,7 @@ describe('a script\'s findings, graded', () => {
     const own = [{ path: 'api/package-lock.json', names: new Set(['eslint']) }]
     assert.deepEqual([script(['cd api && npm ci && npx eslint .'], own), script(['cd api && npm ci && npx eslint .'], nested), script(['cd ./api', 'npm ci', 'cd ..', 'npx eslint .'], own)],
       [[], ['fetched-package/high@6'], ['fetched-package/high@9']], 'where a script\'s cd moves to, and back')
+    assert.deepEqual(script(['ROOT=$(cd api && pwd)', 'bash -c "cd api"', 'npm ci', 'npx eslint .'], own), ['fetched-package/high@9'], 'not where a substitution\'s or a shell\'s cd moves to')
     assert.deepEqual([ids(scanWorkflow('workflow', job('.', 'api', 'cd api && npm ci'), { lockfiles }).findings), ids(scanWorkflow('workflow', job('.', 'web', 'cd api && npm ci'), { lockfiles }).findings)],
       [[], ['fetched-package/high@7']], 'and an install there, in a step before')
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm ci --prefix web'), { lockfiles }).findings), ['fetched-package/high@7'], 'the directory an install names')
@@ -232,7 +233,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('cargo install --locked x@1.0.0\ncargo install x@1.0.0\ncargo install --locked x@1.0.0 y\ncargo install --locked --git https://x/y --rev deadbee z'),
       ['fetched-package/moderate@12', 'fetched-package/high@13', 'fetched-package/high@14'], 'each crate, a repository by its whole commit alone')
     assert.deepEqual(graded('npm install\nyarn\nbun install'), ['unlocked-install/moderate@11', 'unlocked-install/low@12', 'unlocked-install/low@13'])
-    assert.deepEqual(graded('docker run alpine\ndocker run node:20\ndocker pull node@sha256:' + 'c'.repeat(64)), ['unpinned-image/high@11', 'unpinned-image/moderate@12'])
+    assert.deepEqual(graded('docker run alpine\ndocker run node:20\ndocker pull node@sha256:' + 'c'.repeat(64) + '\ndocker run --pull always node@sha256:' + 'c'.repeat(64)), ['unpinned-image/high@11', 'unpinned-image/moderate@12'])
   })
 
   it('a fork\'s repository\'s description, which its owner writes, and a script saved by curl\'s -o joined to its file', () => {

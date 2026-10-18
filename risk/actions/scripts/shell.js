@@ -142,18 +142,20 @@ export const pathFrom = (dir, to) => /^[$~/-]/u.test(to) ? to : resolved(dir ? d
 export function scriptCommands(script) {
   const found = []
   let dir = '', read = 0
-  const readLine = (text, line) => {
+  // A substitution's or a shell's command line (`apart`) moves no `cd` of its caller's.
+  const readLine = (text, line, apart = false) => {
     if (read++ >= 64) return
-    const { commands, nested } = commandsOf(text)
+    const outer = dir, { commands, nested } = commandsOf(text)
     commands.forEach(({ nested: substituted, ...command }, at) => {
-      for (const each of substituted) readLine(each, line)
+      for (const each of substituted) readLine(each, line, true)
       const end = commands.findIndex((each, after) => after > at && !each.piped)
       found.push({ ...command, line, dir, order: found.length, pipedTo: commands.slice(at + 1, end === -1 ? undefined : end) })
       if (command.argv[0] === 'cd') dir = pathFrom(dir, command.argv.slice(1).find(word => !/^-[LPe@]+$/u.test(word)) ?? '~')
       const shell = shellLine(command.argv)
-      if (shell) readLine(shell, line)
+      if (shell) readLine(shell, line, true)
     })
-    for (const each of nested) readLine(each, line)
+    for (const each of nested) readLine(each, line, true)
+    if (apart) dir = outer
   }
   for (const { text, line } of scriptLines(script)) {
     read = 0
