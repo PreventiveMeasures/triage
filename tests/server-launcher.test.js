@@ -435,6 +435,44 @@ describe('server launcher', { concurrency: 4 }, () => {
     })
   }
 
+  for (const mode of modes) {
+    test(`init({ mode: '${mode}', ui: false }) serves only the API, never reading out/`, async () => {
+      assertScenario(await scenarioChild('no-ui', `
+        import assert from 'node:assert/strict'
+        import fs from 'node:fs'
+        import { once } from 'node:events'
+        import { syncBuiltinESMExports } from 'node:module'
+        import { init } from './server.ts'
+        // The static loader's named readdirSync import sees the spy once synced.
+        const readdir = fs.readdirSync, listed = []
+        fs.readdirSync = function (path, ...rest) { listed.push(String(path)); return readdir.call(this, path, ...rest) }
+        syncBuiltinESMExports()
+        const outListings = () => listed.filter(path => path.endsWith('/out') || path.endsWith('/out/')).length
+        for (const mode of ${JSON.stringify(modes)}) {
+          await scenario(mode, mode, async () => {
+            listed.length = 0
+            const server = await init({ mode, ui: false })
+            assert.equal(outListings(), 0, 'out/ is never read')
+            server.listen(0, '127.0.0.1')
+            await once(server, 'listening')
+            const url = 'http://127.0.0.1:' + server.address().port
+            assert.equal((await (await fetch(url + '/api/config')).json()).mode, mode.replace('-', '+'))
+            for (const path of ['/', '/index.html']) {
+              const response = await fetch(url + path)
+              assert.equal(response.status, 404, path)
+              assert.match(response.headers.get('content-type'), /json/u, path)
+              await response.text()
+            }
+            await server[Symbol.asyncDispose]()
+            const served = await init({ mode })
+            assert.ok(outListings() > 0, 'the UI stays on by default')
+            await served[Symbol.asyncDispose]()
+          })
+        }
+      `), mode)
+    })
+  }
+
   test('launcher validates arguments before opening stores; help needs no managed credentials', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'triage-launcher-cli-'))
     try {

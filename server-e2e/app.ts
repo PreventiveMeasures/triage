@@ -102,11 +102,12 @@ import { createBusReceiver } from './bus-receiver.ts'
 import { e2eStorageLines } from '../server-common/storage-log.ts'
 
 // Each embedding gets its own stores, transports, timers and shutdown state.
-export async function createE2eApp(config = loadConfig()) {
-  return await initializeApp(rollback => assembleE2eApp(config, rollback))
+// `ui: false` serves only the API (see ./http.ts).
+export async function createE2eApp(config = loadConfig(), { ui = true }: { ui?: boolean } = {}) {
+  return await initializeApp(rollback => assembleE2eApp(config, ui, rollback))
 }
 
-async function assembleE2eApp(config: Config, rollback: AsyncDisposableStack) {
+async function assembleE2eApp(config: Config, ui: boolean, rollback: AsyncDisposableStack) {
   // All external inputs (env vars + optional config.json) are parsed
   // and validated in ./config.ts; destructure into the uppercase names
   // the rest of this module uses.
@@ -388,7 +389,7 @@ async function assembleE2eApp(config: Config, rollback: AsyncDisposableStack) {
   // below.
   const httpServer = createHttpServer({
     wss, restDeps: objstoreRestDeps, sseServer, serverInfo: SERVER_INFO, isOriginAllowed,
-    isShuttingDown, track, handleSaveRest,
+    isShuttingDown, track, handleSaveRest, ui,
     restPutIdleTimeoutMs: REST_PUT_IDLE_TIMEOUT_MS, debug: DEBUG,
   })
   const requestHandler = httpServer.listeners('request')[0]!
