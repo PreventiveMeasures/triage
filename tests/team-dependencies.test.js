@@ -56,15 +56,14 @@ function teamLines(repoIds) {
   for (const repoId of repoIds ?? TEAM) {
     // Repository 11 read only in part, 9 reviewing none.
     if (repoId === 11 || branches[repoId]?.review === null) lines.push({ repoId, branch: null })
-    else if (!branches[repoId]) lines.push({ repoId, error: 'It isn’t there.', code: 'github-not-found' })
-    else {
+    else if (branches[repoId]) {
       lines.push({ repoId, branch: branches[repoId], pulls: pulls[repoId], ...repoId === 7 ? { deltas: [['old', '1.0.0', '(empty)', { additions: 3, deletions: 0, typeless: null }]] } : {} })
       if (timeUp.has(repoId)) { unread.push(repoId); continue }
       const numbers = pulls[repoId].items.filter(item => item.touchesLockfile !== false).map(item => item.number)
       for (let at = 0; at < numbers.length; at += 2) {
         lines.push({ repoId, dependencies: new Map(numbers.slice(at, at + 2).map(number => [number, { number, ...dependencies[`${repoId}#${number}`] }])) })
       }
-    }
+    } else lines.push({ repoId, error: 'It isn’t there.', code: 'github-not-found' })
   }
   timeUp = new Set()
   return [...lines, unread.length > 0 ? { done: false, unread } : { done: true }]
