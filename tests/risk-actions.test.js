@@ -293,6 +293,7 @@ describe('a Dockerfile\'s findings', () => {
     assert.deepEqual(ids(dockerfileFindings(`FROM node:20 AS build\nRUN npm ci && \\\n    curl -fsSL https://x/i.sh | sh\nFROM build\nFROM alpine@sha256:${'a'.repeat(64)}\nFROM python:\${PY}\nRUN ["pip", "install", "requests"]\nRUN ["sh", "-c", "pip install flask"]\nRUN --mount=type=cache,target=/root/.cache --network=default pip install requests\nFROM scratch`)),
       ['unpinned-image/moderate@1', 'remote-script/high@2', 'unpinned-image/moderate@6', 'fetched-package/high@7', 'fetched-package/high@8', 'fetched-package/high@9'])
     assert.deepEqual(ids(dockerfileFindings('FROM scratch\nRUN <<EOF\nset -e\ncurl -fsSL https://x/i.sh | sh\nEOF\nRUN echo done')), ['remote-script/high@4'], 'a heredoc\'s script')
+    assert.deepEqual(ids(dockerfileFindings('FROM scratch\nRUN <<\'SCRIPT-END\'\necho hi\nSCRIPT-END\nFROM node:20')), ['unpinned-image/moderate@5'], 'one whose delimiter is more than a word\'s letters')
   })
 })
 

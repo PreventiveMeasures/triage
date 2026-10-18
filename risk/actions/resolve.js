@@ -47,9 +47,9 @@ function instructions(text) {
   for (let at = 0; at < lines.length; at++) {
     const start = at
     while (lines[at].endsWith('\\') && at + 1 < lines.length) at++
-    for (const { 1: delimiter } of lines.slice(start, at + 1).join('\n').matchAll(/(?<!<)<<-?\s*["']?(\w+)["']?/gu)) {
+    for (const { 2: quoted, 3: bare } of lines.slice(start, at + 1).join('\n').matchAll(/(?<!<)<<-?\s*(?:(["'])(.+?)\1|([^\s"'<>|&;()]+))/gu)) {
       do at++
-      while (at < lines.length - 1 && lines[at].trim() !== delimiter)
+      while (at < lines.length - 1 && lines[at].trim() !== (quoted ?? bare))
     }
     found.push({ start, lines: lines.slice(start, Math.min(at, lines.length - 1) + 1) })
     at = Math.min(at, lines.length - 1)
