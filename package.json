@@ -343,6 +343,7 @@
     "client/finding-link.js",
     "client/linked-findings.d.ts",
     "client/linked-findings.js",
+    "out/activity.js",
     "out/brotli-fallback.js",
     "out/chunk-*.js",
     "out/client-managed.js",

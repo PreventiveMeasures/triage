@@ -20,6 +20,10 @@ function loads(entry) {
 }
 const managed = loads('out/client-managed.js'), view = loads('out/view.js')
 const compare = loads('out/compare.js'), dialogs = loads('out/dialogs.js'), scan = loads('out/scan.js')
+const activity = loads('out/activity.js')
+// The code viewer's Activity views, and what only they use.
+const ACTIVITY = ['repository-history', 'repository-agents', 'repository-pulse', 'repository-replay', 'repository-issues', 'replay-model', 'history-graph']
+  .map(name => `ui/view/${name}.js`)
 const isDialog = path => path.startsWith('ui/view/dialogs/')
 // A few dialogs are held up front (view/lazy-dialogs.js says why), with what they import.
 const upFront = new Set(['passkey-unlock', 'proxy-auth', 'sync-auth', 'triage-conflict'].map(name => `ui/view/dialogs/${name}-dialog.js`))
@@ -31,6 +35,14 @@ test('view.js loads no Scans, Compare or dialog but those held up front', () => 
   }
   assert.deepEqual([...view].filter(isDialog).toSorted(), [...upFront].toSorted())
   assert.ok(view.has('ui/view/lazy-dialogs.js') && view.has('ui/view/scan-load.js') && view.has('ui/view/compare-load.js'))
+})
+
+test('view.js loads no Activity view, which its own bundle holds', () => {
+  for (const path of ACTIVITY) {
+    assert.ok(!view.has(path), path)
+    assert.ok(activity.has(path), path)
+  }
+  assert.ok(view.has('ui/view/activity-load.js') && view.has('ui/view/repository-activity.js'), 'its loader and its tab strip up front')
 })
 
 test('client-managed.js loads no Scans page or dialog', () => {
