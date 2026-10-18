@@ -188,9 +188,9 @@ export function repositoryCodePending(entry) {
 }
 
 // Failures a directory's own entries get past: one too large to read whole,
-// one whose archive is refused, as for a symlink out of it, which its other
-// directories need not hold, or none to read, as an ancestor of a manager's
-// grants is, which lists those alone.
+// one whose archive is refused, as for a symlink out of the repository,
+// which its other directories need not hold, or none to read, as an
+// ancestor of a manager's grants is, which lists those alone.
 const LISTED_FAILURES = new Set(['directory-too-large', 'directory-unreadable', 'no-directory'])
 
 // A directory that failed to open lists its directories to open instead,

@@ -1646,9 +1646,11 @@ under it with it, says first whether it holds at most 20,000 files and
 64 MiB, as a package may (`repository-code.ts`), else `413
 directory-too-large`, before its tarball is asked for: the tree's, verified
 against the tree's id as bundle builds verify theirs, and kept in upstream's
-disk cache with them. It is read as a package's is, so one that
-`@preventive/archive` refuses is `422 directory-unreadable`: one holding an
-absolute symlink, or one climbing out of the directory past its parent.
+disk cache with them. It is read as a package's is, but for its symlinks,
+which may climb as far as the repository's root, as a monorepo package's
+LICENSE links the root's; one that `@preventive/archive` refuses is `422
+directory-unreadable`: one holding an absolute symlink, or one climbing past
+the repository's root.
 Readers asking for the same directory meanwhile share one load, among the npm
 viewer's (`429 repository-busy` past them), and access
 is checked again once it is read, before any of it is sent.
@@ -3257,23 +3259,24 @@ could read it. Access is checked again after the registry answers, and a
 reader who lost private access meanwhile gets 404. A version npm doesn't have,
 and a private one the reader cannot open, are both 404 `package-not-found`.
 
-Packages unpack in memory, bounded at 64 MiB of files, 20,000 files and a 96
-MiB tar stream, and their files at 96 Mi characters of JSON, counted before it
-is written, as escaping can grow a text sixfold; larger ones return 413
-`package-too-large`, before download when the registry's `dist.unpackedSize`
-or `dist.fileCount` says so. A tarball is read by `@preventive/archive`, which
-refuses one malformed, one with a path or a symlink that would leave it, and
-one naming a path twice as different entries (422 `bad-tarball`); directories
-and links are not extracted. At most four loads run at once per process (429
-`npm-busy`), each until its response is encoded and every response holding it
-is written or abandoned, a response left unread for a minute being dropped;
-concurrent reads of one version share its download and its encoded response. A
-download is the tarball as the registry has it, not unpacked, and a tarball is
-refused once past 96 MiB as it arrives, whatever sizes its document declares.
-Registry documents being read at once are held to 256 MiB, each counted at its
-limit until it is parsed (8 MiB for a version, 64 MiB for a version list); a
-read past that is 429 `npm-busy` too. Public workspace links cannot reach
-these endpoints.
+Packages unpack in memory, bounded at 64 MiB of files, 20,000 files, and a 96
+MiB tar stream of at most 40,000 entries, directories among them, given up on
+as the one past that is reached, and their files at 96 Mi characters of JSON,
+counted before it is written, as escaping can grow a text sixfold; larger ones
+return 413 `package-too-large`, before download when the registry's
+`dist.unpackedSize` or `dist.fileCount` says so. A tarball is read by
+`@preventive/archive`, which refuses one malformed, one with a path or a
+symlink that would leave it, and one naming a path twice as different entries
+(422 `bad-tarball`); directories and links are not extracted. At most four
+loads run at once per process (429 `npm-busy`), each until its response is
+encoded and every response holding it is written or abandoned, a response left
+unread for a minute being dropped; concurrent reads of one version share its
+download and its encoded response. A download is the tarball as the registry
+has it, not unpacked, and a tarball is refused once past 96 MiB as it arrives,
+whatever sizes its document declares. Registry documents being read at once
+are held to 256 MiB, each counted at its limit until it is parsed (8 MiB for a
+version, 64 MiB for a version list); a read past that is 429 `npm-busy` too.
+Public workspace links cannot reach these endpoints.
 
 # Report access and blocked accounts
 

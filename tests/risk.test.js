@@ -10,7 +10,7 @@ import knownScopes from '@preventive/publishers/npm-scopes.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, NpmRiskError, assessNpm, npmFileRisk, npmMalwareAdvisory } from '../risk/index.js'
 import { linesNote } from '../ui/view/file-runs-code.js'
 import { npmVersionManifest } from '../risk/npm/manifest.js'
-import { MAX_TAR_BYTES, npmTarballVersion } from '../risk/npm/tarball.js'
+import { MAX_TAR_BYTES, MAX_TAR_ENTRIES, npmTarballVersion } from '../risk/npm/tarball.js'
 import { npmFilesDiff } from '../risk/npm/diff.js'
 import { npmLoadedScripts } from '../risk/npm/files.js'
 import { npmCompareFindings } from '../risk/npm/compare.js'
@@ -947,6 +947,8 @@ test('a tarball unpacking past risk\'s bounds is given up on as it unpacks', asy
   bomb.tgz = gzipSync(Buffer.alloc(MAX_TAR_BYTES + 1))
   bomb.doc.dist.integrity = `sha512-${createHash('sha512').update(bomb.tgz).digest('base64')}`
   await assert.rejects(npmTarballVersion(bomb.tgz), /package-too-large/u)
+  const dirs = gzipSync(tar(Array.from({ length: MAX_TAR_ENTRIES + 1 }, (_, i) => ({ name: `package/d${i}/`, type: '5' }))))
+  await assert.rejects(npmTarballVersion(dirs), /package-too-large/u, 'directories count as entries, though none is a file')
   npm(t, [{ name: 'bomb', versions: [bomb] }])
   await assert.rejects(assessNpm('bomb', '1.0.0', { now: NOW, downloads: false }), error => error instanceof NpmRiskError && error.code === 'package-too-large')
 })

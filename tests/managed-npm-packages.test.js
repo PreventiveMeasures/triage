@@ -10,7 +10,7 @@ import { getTarball, setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion, readNpmVersions,
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_TAR_ENTRIES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion, readNpmVersions,
   setNpmDocumentCache } from '../server-managed/npm-packages.ts'
 import { npmVersionFields } from '../server-managed/npm-manifest.ts'
 import { npmVersionStore, riskLineStore } from '../server-managed/npm-kept.ts'
@@ -135,6 +135,13 @@ test('tarballs unpack to package paths, as extraction leaves them', () => {
     [[{ name: 'package/link', type: '2', linkname: '/etc/passwd' }], 'an absolute symlink'],
   ]) assert.throws(() => readNpmTar(tar(entries)), refused, why)
   assert.throws(() => readNpmTar(tar([{ name: 'package/a', data: Buffer.alloc(MAX_NPM_PACKAGE_BYTES + 1) }])), /package-too-large/u)
+  // Directories count as entries, though none is a file: given up on at the one past the bound.
+  const dirs = Array.from({ length: MAX_NPM_TAR_ENTRIES + 1 }, (_, i) => ({ name: `package/d${i}/`, type: '5' }))
+  assert.throws(() => readNpmTar(tar(dirs)), (err) => err instanceof NpmPackageError && err.status === 413 && err.message === 'package-too-large')
+  // A symlink climbs above the archive only where the caller lets it.
+  const above = tar([{ name: 'package/LICENSE', type: '2', linkname: '../../LICENSE' }])
+  assert.throws(() => readNpmTar(above), refused)
+  assert.deepEqual(readNpmTar(above, { symlinksAbove: 1 }), [])
 })
 
 test('the viewer reads an exact public version\'s document from the database once npm answered it; a dist-tag from npm each time', async t => {

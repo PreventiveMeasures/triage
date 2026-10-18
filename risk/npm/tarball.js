@@ -6,10 +6,13 @@
 // where it is UTF-8 with no NUL, else null. Held to the npm viewer's bounds
 // (server-managed/npm-packages.ts readNpmTar).
 import { CompressionError, decompress } from '@preventive/archive/compression.js'
-import { unpack } from '@preventive/archive/tar.js'
+import { ArchiveError, unpack } from '@preventive/archive/tar.js'
 
 const MAX_PACKAGE_FILES = 20_000
 export const MAX_PACKAGE_BYTES = 64 * 1024 * 1024
+// The entries its tar stream may hold, a directory's too, read before any is
+// counted as a file, as npm-packages.ts bounds them (MAX_NPM_TAR_ENTRIES).
+export const MAX_TAR_ENTRIES = 2 * MAX_PACKAGE_FILES
 // What its tar stream may unpack to, its headers and padding beside its
 // files, as npm-loads.ts bounds it (MAX_TAR_BYTES).
 export const MAX_TAR_BYTES = 96 * 1024 * 1024
@@ -18,11 +21,19 @@ const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 // The files of a tar archive, by path: their bytes. A file at its top is not
 // extracted, and one under another top directory at the same path replaces
-// an earlier one, as extraction would.
+// an earlier one, as extraction would. Past MAX_TAR_ENTRIES it is given up on
+// as `package-too-large`, before any more of it is read.
 function npmTarFiles(tar) {
+  let entries
+  try {
+    entries = unpack(tar, { maxEntries: MAX_TAR_ENTRIES })
+  } catch (error) {
+    if (error instanceof ArchiveError && error.limited) throw new Error('package-too-large', { cause: error })
+    throw error
+  }
   const files = new Map()
   let total = 0
-  for (const { name, type, data } of unpack(tar)) {
+  for (const { name, type, data } of entries) {
     const slash = name.indexOf('/')
     if ((type !== 'file' && type !== 'contiguous-file') || slash === -1) continue
     const path = name.slice(slash + 1)

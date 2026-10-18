@@ -17,11 +17,13 @@ const files = {
   'src/allowed/index.js': 'export const a = 1\n',
   'src/allowed/lib/util.js': 'export const b = 2\n',
   'src/allowed/logo.png': '\0PNG',
+  'src/linked/index.js': 'export const d = 4\n',
   'src/other/secret.js': 'export const c = 3\n',
 }
 // Symlinks by path, to their targets: a package's license linked to the
-// workspace root's, as a monorepo links one.
+// workspace root's, as a monorepo links one, and one past the root.
 const links = {
+  'escape/link': '../../outside',
   'src/linked/LICENSE': '../../README.md',
 }
 const blobOf = path => Buffer.from(files[path] ?? links[path])
@@ -53,7 +55,7 @@ function treeId(dir) {
 
 // Every tree of the fixture by its id: its directory, `''` the root.
 const trees = new Map()
-for (const prefix of ['', 'src/', 'src/allowed/', 'src/allowed/lib/', 'src/linked/', 'src/other/']) trees.set(treeId(treeOf(prefix)).toString('hex'), prefix.replace(/\/$/u, ''))
+for (const prefix of ['', 'escape/', 'src/', 'src/allowed/', 'src/allowed/lib/', 'src/linked/', 'src/other/']) trees.set(treeId(treeOf(prefix)).toString('hex'), prefix.replace(/\/$/u, ''))
 const treeAt = path => [...trees].find(([, dir]) => dir === path)[0]
 
 // GitHub's listing of a tree, as git/trees answers it: its own entries, or
@@ -185,13 +187,18 @@ test('an admin reads the whole repository; a manager, or any team member, only t
   assert.equal((await (await fixture(t, { role: 'none' }))({ repoId: '1', ref: commit, path: 'src/allowed/lib' })).status, 403)
 })
 
-test('a directory holding a symlink out of it past its parent is unreadable, as @preventive/archive refuses its tarball; its parent reads', async t => {
+test('a directory\'s symlinks may reach the repository\'s root, as a monorepo package\'s LICENSE does, and no further', async t => {
   const request = await fixture(t, { role: 'admin' })
   github(t)
-  assert.deepEqual(await request({ repoId: '1', ref: commit, path: 'src/linked' }),
-    { status: 422, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: { error: 'directory-unreadable' } })
-  assert.deepEqual((await request({ repoId: '1', ref: commit, path: 'src' })).body.files.map(([path]) => path), ['allowed/index.js', 'allowed/lib/util.js', 'allowed/logo.png', 'other/secret.js'],
-    'from src, the link climbs to the archive\'s root alone, and is no file to read')
+  for (const path of ['src/linked', 'src', '']) {
+    const { status, body } = await request({ repoId: '1', ref: commit, path })
+    assert.equal(status, 200, path)
+    assert.ok(!body.files.some(([file]) => file.endsWith('LICENSE')), `${path}: a link is no file to read`)
+  }
+  assert.deepEqual((await request({ repoId: '1', ref: commit, path: 'src/linked' })).body.files.map(([path]) => path), ['index.js'])
+  assert.deepEqual(await request({ repoId: '1', ref: commit, path: 'escape' }),
+    { status: 422, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: { error: 'directory-unreadable' } },
+    'a link past the root, as @preventive/archive refuses its tarball')
 })
 
 test('a directory too large to hold, or listed short, is refused before its tarball is asked for', async t => {

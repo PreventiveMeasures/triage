@@ -130,15 +130,16 @@ async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
 }
 
 // A gzipped tarball's files, its top directory left out, as npm extracts
-// a package's: a repository tree's as GitHub archives it, too.
-export async function readTarballFiles(tarball: Uint8Array): Promise<NpmPackageFile[]> {
+// a package's: a repository tree's as GitHub archives it, too, its symlinks
+// let climb as readNpmTar's `symlinksAbove` says.
+export async function readTarballFiles(tarball: Uint8Array, options: { symlinksAbove?: number } = {}): Promise<NpmPackageFile[]> {
   let tar: Uint8Array
   try { tar = await decompress(tarball, 'gzip', { limit: MAX_TAR_BYTES }) }
   catch (err) {
     const limited = err instanceof CompressionError && err.limited
     throw new NpmPackageError(limited ? 413 : 422, limited ? 'package-too-large' : 'bad-tarball')
   }
-  return readNpmTar(tar)
+  return readNpmTar(tar, options)
 }
 
 // The version's tarball, for download.

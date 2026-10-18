@@ -34,6 +34,9 @@ const MAX_DOCUMENT_BYTES = 4 * PACKUMENT_BYTES
 // stream holding them is bounded in npm-loads.ts.
 export const MAX_NPM_PACKAGE_BYTES = 64 * 1024 * 1024
 export const MAX_NPM_PACKAGE_FILES = 20_000
+// The entries its tar stream may hold, read before any is counted as a file:
+// a directory's too, as a GitHub tree's tarball has one for each, npm's none.
+export const MAX_NPM_TAR_ENTRIES = 2 * MAX_NPM_PACKAGE_FILES
 // What the files may take as the viewer's JSON. Escaping grows a text up to
 // six times (a control character becomes `\u0001`), so it is counted before
 // anything is serialized.
@@ -281,15 +284,17 @@ export interface NpmPackageFile { path: string; bytes: Uint8Array }
 // The regular files of a tar stream, by package path: npm drops the first
 // component (`package/`, or whatever the archive used), and a file at the top
 // is not extracted. The stream is read by @preventive/archive, which refuses
-// one malformed, a name or a symlink that would climb out of it, and a name
-// repeated as another entry; a file under another top directory at the same
-// path replaces an earlier one, as extraction would. Directories, links and
-// devices hold no file content and are skipped.
-export function readNpmTar(tar: Uint8Array): NpmPackageFile[] {
+// one malformed, a name or a symlink that would climb out of it -- a symlink
+// past `symlinksAbove` levels above it, none unless given -- and a name
+// repeated as another entry, and gives up past MAX_NPM_TAR_ENTRIES before
+// reading on; a file under another top directory at the same path replaces
+// an earlier one, as extraction would. Directories, links and devices hold no
+// file content and are skipped.
+export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0 }: { symlinksAbove?: number } = {}): NpmPackageFile[] {
   let entries: Entry[]
-  try { entries = unpack(tar) }
+  try { entries = unpack(tar, { maxEntries: MAX_NPM_TAR_ENTRIES, symlinksAbove }) }
   catch (err) {
-    if (err instanceof ArchiveError) throw new NpmPackageError(422, 'bad-tarball')
+    if (err instanceof ArchiveError) throw err.limited ? new NpmPackageError(413, 'package-too-large') : new NpmPackageError(422, 'bad-tarball')
     throw err
   }
   const files = new Map<string, Uint8Array>()
