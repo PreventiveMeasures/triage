@@ -153,15 +153,21 @@ const NOT_LOCAL = /^(?:-g|--global|--location=global|--package-lock-only|--lockf
 // A script's installs of a project's packages, in its order: each one's
 // command's `order` (shell.js scriptCommands), the directory it names
 // (`into`, packages.js projectOf), and whether it leaves devDependencies
-// out (`prod`: `--omit=dev`, `--production`, `--prod`).
-export function installsOf(script) {
-  return scriptCommands(script).flatMap(({ argv, order }) => {
+// out (`prod`: `--omit=dev`, `--production`, `--prod`, or NODE_ENV set to
+// production, by the step (`production`), `export` or the command's own).
+export function installsOf(script, production = false) {
+  const found = []
+  let exported = production
+  for (const { argv, env, order } of scriptCommands(script)) {
     const program = programOf(argv[0])
+    if (program === 'export') for (const word of argv) if (word.startsWith('NODE_ENV=')) exported = word === 'NODE_ENV=production'
     const command = positional(argv, 1)[0]
-    if (argv.some(word => NOT_LOCAL.test(word))) return []
+    if (argv.some(word => NOT_LOCAL.test(word)) || !(program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? ''))) continue
     const prod = argv.some((word, at) => /^(?:--omit=dev|--production|--prod|--only=prod(?:uction)?)$/u.test(word) || (word === '--omit' && argv[at + 1] === 'dev'))
-    return (program === 'yarn' ? command === undefined || command === 'install' : INSTALLS[program]?.test(command ?? '')) ? [{ order, into: projectOf(argv), prod }] : []
-  })
+      || ((env.NODE_ENV ?? (exported ? 'production' : '')) === 'production' && !argv.includes('--include=dev'))
+    found.push({ order, into: projectOf(argv), prod })
+  }
+  return found
 }
 
 // A script's line, as a finding names what it runs, cut short.

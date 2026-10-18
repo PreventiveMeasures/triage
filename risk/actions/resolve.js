@@ -39,14 +39,20 @@ export function newestOfLines(tags) {
   return versionsOf(tags).filter(({ version }) => isRelease(version) && !seen.has(version[0]) && seen.add(version[0]))
 }
 
-// An instruction's lines, its continuations (`\` at a line's end) joined.
+// An instruction's lines, its continuations (`\` at a line's end) joined,
+// and each heredoc's (`<<EOF`) through its delimiter, as BuildKit reads one.
 function instructions(text) {
   const lines = text.split('\n').map(line => line.replace(/\r$/u, ''))
   const found = []
   for (let at = 0; at < lines.length; at++) {
     const start = at
     while (lines[at].endsWith('\\') && at + 1 < lines.length) at++
-    found.push({ start, lines: lines.slice(start, at + 1) })
+    for (const { 1: delimiter } of lines.slice(start, at + 1).join('\n').matchAll(/(?<!<)<<-?\s*["']?(\w+)["']?/gu)) {
+      do at++
+      while (at < lines.length - 1 && lines[at].trim() !== delimiter)
+    }
+    found.push({ start, lines: lines.slice(start, Math.min(at, lines.length - 1) + 1) })
+    at = Math.min(at, lines.length - 1)
   }
   return found
 }

@@ -67,7 +67,7 @@ function ownFiles(path: string, kind: 'workflow' | 'action', text: string): { ac
   try {
     const read = readWorkflow(kind, text)
     const dockerfile = read.dockerfile && [actionDir(path), read.dockerfile.path.replace(/^\.\//u, '')].filter(Boolean).join('/')
-    return { actions: workflowUses(read).flatMap(uses => uses.kind === 'local' && !/\.ya?ml$/iu.test(uses.path) && inRepository(uses.path) ? [uses.path] : []),
+    return { actions: workflowUses(read).flatMap(uses => uses.kind === 'local' && !uses.job && inRepository(uses.path) ? [uses.path] : []),
       dockerfile: dockerfile && inRepository(dockerfile) ? dockerfile : null }
   } catch (error) {
     if (error instanceof YamlError) return { actions: [], dockerfile: null }
@@ -120,14 +120,15 @@ export function actionsLines(repo: number, owner: string, read: WorkflowsRead, l
   const lines: (WorkflowsLine | WorkflowLine)[] = [{ type: 'workflows', repo, paths: read.files.filter(file => file.kind === 'workflow').map(file => file.path) }]
   const refs = new Map<string, ActionRef>()
   // Where its own actions install its packages, by their directories: by
-  // their steps, and the actions of its own those use in turn.
+  // their steps, and the actions of its own those use in turn, each install
+  // once, worked out again until none install more.
   const actions = read.files.flatMap(file => file.kind === 'action' && 'text' in file ? [{ dir: actionDir(file.path), text: file.text }] : [])
   const installers: NonNullable<ScanOptions['installers']> & Map<string, ReturnType<typeof actionInstalls>> = new Map()
   for (let grew = true; grew;) {
     grew = false
     for (const { dir, text } of actions) {
-      const at = installers.has(dir) ? [] : actionInstalls(text, installers)
-      if (at.length > 0) grew = Boolean(installers.set(dir, at))
+      const at = [...new Map(actionInstalls(text, installers).map(each => [`${each.at}\0${each.prod}`, each])).values()]
+      if (at.length > (installers.get(dir)?.length ?? 0)) grew = Boolean(installers.set(dir, at))
     }
   }
   for (const file of read.files) {

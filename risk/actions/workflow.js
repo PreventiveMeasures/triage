@@ -30,22 +30,26 @@ function triggersOf(on) {
 const LITERAL_HEADER = /:[ \t]+(?:&\S+[ \t]+)?\|[1-9+-]{0,2}[ \t]*(?:#.*)?$/u
 const literalStart = (file, line) => line !== null && LITERAL_HEADER.test(file.lines[line - 1] ?? '') ? line + 1 : null
 
-// A `run:` step's script, and its directory, else `directory` (defaults.run).
-function runOf(file, step, directory) {
+// A `run:` step's script, and its directory, else `directory` (defaults.run);
+// `production` where its `env`, else the job's or the workflow's (`env`),
+// sets NODE_ENV so, as an install then leaves devDependencies out.
+const envOf = (owner, outer = {}) => ({ ...outer, ...isMap(owner?.env) ? owner.env : {} })
+function runOf(file, step, directory, env) {
   const script = stringOf(step.run)
   if (script === null) return null
   const line = lineOf(file, step, 'run', null)
-  return { script, line, start: literalStart(file, line), workingDirectory: stringOf(step['working-directory']) ?? directory }
+  return { script, line, start: literalStart(file, line), workingDirectory: stringOf(step['working-directory']) ?? directory,
+    production: envOf(step, env).NODE_ENV === 'production' }
 }
 
-function stepsOf(file, steps, directory) {
+function stepsOf(file, steps, directory, env = {}) {
   if (!Array.isArray(steps)) return []
   return steps.flatMap((step, index) => {
     if (!isMap(step)) return []
     const line = lineOf(file, steps, index, null)
     const inputs = isMap(step.with) ? step.with : null
     const withLines = inputs ? Object.fromEntries(Object.keys(inputs).map(key => [key, lineOf(file, inputs, key, line)])) : {}
-    return [{ line, uses: usesOf(file, step, line), run: runOf(file, step, directory), with: inputs, withLines }]
+    return [{ line, uses: usesOf(file, step, line), run: runOf(file, step, directory, env), with: inputs, withLines }]
   })
 }
 
@@ -69,7 +73,7 @@ function jobsOf(file, doc) {
   if (!isMap(doc.jobs)) throw new YamlError('a workflow has no jobs')
   const directory = directoryOf(doc, null)
   return Object.values(doc.jobs).filter(isMap).map(job => ({ uses: usesOf(file, job, null, true), secrets: job.secrets ?? null,
-    steps: stepsOf(file, job.steps, directoryOf(job, directory)), images: imagesOf(file, job) }))
+    steps: stepsOf(file, job.steps, directoryOf(job, directory), envOf(job, envOf(doc))), images: imagesOf(file, job) }))
 }
 
 // An action's `runs`: its runtime, a composite one's steps as a job, and a

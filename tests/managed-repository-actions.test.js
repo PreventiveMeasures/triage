@@ -131,6 +131,11 @@ test('an action of the repository\'s own counts as an install before a step only
     return findingIds(ofType(await scan(sourceOf({ files })), 'workflow')[0].findings)
   }
   assert.deepEqual([await wrapped('npm ci'), await wrapped('npm run lint'), await wrapped('npm ci --prefix web')], [[], ['fetched-package/high@6'], ['fetched-package/high@6']])
+  // One that installs itself and uses another that does: both's.
+  const files = { ...FILES, '.github/workflows/ci.yml': ci.replace('npx eslint .', 'npx eslint .\n        working-directory: api'),
+    '.github/actions/setup/action.yaml': 'runs:\n  using: composite\n  steps:\n    - run: npm ci --prefix web\n      shell: bash\n    - uses: ./deps\n',
+    'deps/action.yml': 'runs:\n  using: composite\n  steps:\n    - run: npm ci --prefix api\n      shell: bash\n', 'api/package-lock.json': lockfile }
+  assert.deepEqual(findingIds(ofType(await scan(sourceOf({ files })), 'workflow')[0].findings), [])
 })
 
 test('a lockfile\'s names, and those only devDependencies need', () => {
@@ -146,6 +151,13 @@ test('a repository\'s Actions are read 200 files at most, however many actions o
     file: path => { asked.push(path); return Promise.resolve(path.endsWith('ci.yml') ? `on: push\njobs:\n  a:\n    steps:\n${steps}` : 'runs:\n  using: node20\n  main: x.js\n') },
   })
   assert.deepEqual([read.files.length, asked.length], [200, 200])
+})
+
+test('an action of the repository\'s own in a directory named like YAML is read', async () => {
+  const asked = []
+  await readActions({ workflows: () => Promise.resolve(['.github/workflows/ci.yml']),
+    file: path => { asked.push(path); return Promise.resolve(path.endsWith('ci.yml') ? 'on: push\njobs:\n  a:\n    steps:\n      - uses: ./tools/build.yaml\n' : 'runs:\n  using: node20\n  main: x.js\n') } })
+  assert.deepEqual(asked, ['.github/workflows/ci.yml', 'tools/build.yaml/action.yml'])
 })
 
 test('a Docker action of the repository\'s own has its Dockerfile read', async () => {

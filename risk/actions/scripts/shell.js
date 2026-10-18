@@ -24,14 +24,15 @@ const WRAPPERS = new Set(['sudo', 'env', 'time', 'nohup', 'exec', 'command', 'ni
 // A wrapper's options taking a value, as `sudo -u user`, `timeout 10m` do.
 const WRAPPER_VALUES = new Map([['sudo', /^-[ugCDhpRrTU]$/u], ['env', /^-[uSC]$/u], ['nice', /^-n$/u], ['timeout', /^-[sk]$/u]])
 
-// What a command runs: its words past settings and wrappers, a wrapper's
-// options and their values, and `timeout`'s duration.
+// What a command runs (`argv`): its words past settings, kept (`env`), and
+// wrappers, a wrapper's options and their values, and `timeout`'s duration.
 function argvOf(words) {
+  const env = {}
   let at = 0
   for (;;) {
-    while (at < words.length && /^[A-Za-z_]\w*=/u.test(words[at])) at++
+    for (; at < words.length && /^[A-Za-z_]\w*=/u.test(words[at]); at++) env[words[at].slice(0, words[at].indexOf('='))] = words[at].slice(words[at].indexOf('=') + 1)
     const wrapper = words[at]
-    if (!WRAPPERS.has(wrapper)) return words.slice(at)
+    if (!WRAPPERS.has(wrapper)) return { argv: words.slice(at), env }
     at++
     while (at < words.length && words[at].startsWith('-')) at += WRAPPER_VALUES.get(wrapper)?.test(words[at]) ? 2 : 1
     if (wrapper === 'timeout' && /^\d/u.test(words[at] ?? '')) at++
@@ -79,8 +80,8 @@ function closing(text, from) {
   return text.length
 }
 
-// A line's commands, each `{ argv, piped, out, nested }`, `piped` where a
-// pipe feeds it, `out` the file it writes its output to and `nested` its
+// A line's commands, each `{ argv, env, piped, out, nested }`, `env` the
+// settings it runs with, `piped` where a pipe feeds it, `out` the file it writes its output to and `nested` its
 // command substitutions' text, to read as lines of their own; and those of
 // none of them (`nested`).
 function commandsOf(text) {
@@ -88,8 +89,8 @@ function commandsOf(text) {
   let nested = [], piped = false, quote = null, start = 0
   const end = (at, next) => {
     const { words, out } = wordsOf(text.slice(start, at))
-    const argv = argvOf(words)
-    if (argv.length > 0) { commands.push({ argv, piped, out, nested }); nested = [] }
+    const { argv, env } = argvOf(words)
+    if (argv.length > 0) { commands.push({ argv, env, piped, out, nested }); nested = [] }
     piped = next
   }
   for (let at = 0; at < text.length; at++) {

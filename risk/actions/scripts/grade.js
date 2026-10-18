@@ -89,7 +89,7 @@ const fileLine = (run, line) => run.start === null ? run.line : run.start + line
 export function scriptFindings(run, context) {
   const findings = []
   // An install earlier in the script, in its own directory, counts as one in a step before.
-  const installs = installsOf(run.script).filter(({ into }) => into === null)
+  const installs = installsOf(run.script, run.production).filter(({ into }) => into === null)
   for (const found of scriptFinds(run.script)) {
     const dev = found.kind === 'package' && context.locked(found.name) === 'dev'
     const before = context.installed(dev) || installs.some(({ order, prod }) => order < found.order && !(prod && dev))

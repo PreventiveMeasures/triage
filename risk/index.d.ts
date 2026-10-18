@@ -192,7 +192,7 @@ export interface ActionsFinding extends Finding {
 // What a `uses:` names: an action's or a reusable workflow's, by its `key`,
 // or the repository's own.
 export type ActionUses = { kind: 'action' | 'workflow'; uses: string; repo: string; path: string; ref: string; pin: 'sha' | 'short-sha' | 'ref' | 'expression'; comment: string | null; key?: string; line?: number | null }
-export type Uses = ActionUses | { kind: 'local'; uses: string; path: string; self?: true; line?: number | null }
+export type Uses = ActionUses | { kind: 'local'; uses: string; path: string; self?: true; job?: true; line?: number | null }
 
 export interface ScanOptions {
   // Whose repository it is, as an unpinned `uses:` of its owner's is yellow.

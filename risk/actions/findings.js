@@ -31,7 +31,7 @@ function installs(step, installers) {
   const repo = step.uses?.repo?.toLowerCase()
   if (repo && (INSTALLER.test(repo) || (repo === 'cypress-io/github-action' && String(step.with?.install) !== 'false'))) return ANYWHERE
   if (repo === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return ANYWHERE
-  return step.run ? installsOf(step.run.script).map(({ into, prod }) => ({ at: directoryOf(step.run.workingDirectory, into), prod })) : []
+  return step.run ? installsOf(step.run.script, step.run.production).map(({ into, prod }) => ({ at: directoryOf(step.run.workingDirectory, into), prod })) : []
 }
 
 // Whether `dir` is `directory` or above it, as node finds a package there;

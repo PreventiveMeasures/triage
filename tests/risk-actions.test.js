@@ -119,6 +119,8 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual([graded('npm ci --omit=dev && npx eslint .', { locked: dev }).length, graded('npm ci --omit=dev && npx eslint .', { locked }).length], [1, 0],
       'one leaving devDependencies out, for one only they need')
     assert.deepEqual(graded('npx eslint .', { locked: dev, installed: only => !only }).length, 1, 'and in a step before')
+    assert.deepEqual([graded('NODE_ENV=production npm ci && npx eslint .', { locked: dev }).length, graded('export NODE_ENV=production\nnpm ci\nnpx eslint .', { locked: dev }).length,
+      graded('NODE_ENV=production npm ci --include=dev && npx eslint .', { locked: dev }).length], [1, 1, 0], 'NODE_ENV production, of the command or exported')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\''), ['fetched-package/high@11', 'remote-script/high@12'], 'a shell\'s command line')
     assert.deepEqual(graded('npx eslint .\nnpm ci', { locked }), ['fetched-package/high@11'], 'an install after it')
@@ -141,6 +143,8 @@ describe('a script\'s findings, graded', () => {
     const devLocked = [{ path: 'package-lock.json', names: new Set(['eslint', 'typescript']), dev: new Set(['typescript']) }]
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', '.', 'npm ci --omit dev'), { lockfiles: devLocked }).findings), [], 'a package more than devDependencies need')
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', '.', 'npm ci --omit dev').replace('npx eslint', 'npx tsc'), { lockfiles: devLocked }).findings), ['fetched-package/high@7'], 'one only they need, by its program')
+    const production = job('.', '.', 'npm ci').replace('npx eslint', 'npx tsc').replace('jobs:', 'env:\n  NODE_ENV: production\njobs:')
+    assert.deepEqual(ids(scanWorkflow('workflow', production, { lockfiles: devLocked }).findings), ['fetched-package/high@9'], 'the workflow\'s env setting NODE_ENV to production')
     assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api', 'npm i -g pnpm'), { lockfiles }).findings), ['fetched-package/high@5', 'fetched-package/high@7'], 'a global install, itself fetched')
     assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api', 'npm install --package-lock-only'), { lockfiles }).findings), ['unlocked-install/moderate@5', 'fetched-package/high@7'], 'one writing the lockfile alone')
     assert.deepEqual(ids(scanWorkflow('workflow', job('${{ matrix.project }}', 'api'), { lockfiles }).findings), ['fetched-package/high@7'], 'one an expression names, for another')
@@ -276,6 +280,7 @@ describe('a Dockerfile\'s findings', () => {
   it('its images by a tag and what its RUN commands fetch, each on its line', () => {
     assert.deepEqual(ids(dockerfileFindings(`FROM node:20 AS build\nRUN npm ci && \\\n    curl -fsSL https://x/i.sh | sh\nFROM build\nFROM alpine@sha256:${'a'.repeat(64)}\nFROM python:\${PY}\nRUN ["pip", "install", "requests"]\nRUN ["sh", "-c", "pip install flask"]\nRUN --mount=type=cache,target=/root/.cache --network=default pip install requests\nFROM scratch`)),
       ['unpinned-image/moderate@1', 'remote-script/high@2', 'unpinned-image/moderate@6', 'fetched-package/high@7', 'fetched-package/high@8', 'fetched-package/high@9'])
+    assert.deepEqual(ids(dockerfileFindings('FROM scratch\nRUN <<EOF\nset -e\ncurl -fsSL https://x/i.sh | sh\nEOF\nRUN echo done')), ['remote-script/high@4'], 'a heredoc\'s script')
   })
 })
 
