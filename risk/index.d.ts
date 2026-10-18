@@ -200,8 +200,11 @@ export interface ScanOptions {
   // Its lockfiles' paths, the packages each locks, as npx runs those, by
   // name and by `name@version`, and those only devDependencies need.
   lockfiles?: { path: string; names: ReadonlySet<string>; dev?: ReadonlySet<string> }[]
-  // Its own actions' metadata by their directories, for where they install
-  // its packages; else each counts as installing them anywhere.
+  // Its own actions' metadata by their directories, and its workflows by
+  // their paths: for where its actions install its packages, else each
+  // counts as installing them anywhere; and for the inputs its actions and
+  // reusable workflows write into their scripts, else each of a reusable
+  // workflow's counts as one.
   actions?: ReadonlyMap<string, string> | null
 }
 

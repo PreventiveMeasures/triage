@@ -64,16 +64,21 @@ function lockedIn(lockfiles, directory, name) {
 // The inputs a text names (`${{ inputs.title }}`).
 const inputsIn = text => typeof text === 'string' ? [...dotted(text).matchAll(/\$\{\{[^}]*?\binputs\s*\.\s*([\w-]+)/gu)].map(match => match[1]) : []
 
-// The inputs a step's action writes into a script: github-script's
-// `script`, and those an action of the repository's own (ScanOptions
-// `actions`) names in its `run:`s or hands to such an input of a step's.
+// The inputs a step's action, or a job's reusable workflow, writes into a
+// script: github-script's `script`; those one of the repository's own
+// (ScanOptions `actions`) names in its `run:`s or its jobs' images, or hands
+// to such an input of a step's or a job's; and each of another reusable
+// workflow's, or one whose text isn't told, as it may.
 function scriptInputs(step, actions, seen = new Set()) {
   if (step.uses?.repo?.toLowerCase() === 'actions/github-script') return ['script']
-  const dir = step.uses?.kind === 'local' && actions?.has(step.uses.path) && !seen.has(step.uses.path) ? step.uses.path : null
-  const read = dir === null ? null : readWorkflow('action', actions.get(dir))
+  if (step.uses?.kind === 'workflow' || (step.uses?.job && !actions?.has(step.uses.path))) return Object.keys(step.with ?? {})
+  const path = step.uses?.kind === 'local' && actions?.has(step.uses.path) && !seen.has(step.uses.path) ? step.uses.path : null
+  const read = path === null ? null : readWorkflow(step.uses.job ? 'workflow' : 'action', actions.get(path))
   if (!read || read instanceof YamlError) return []
-  return [...new Set(read.jobs.flatMap(job => job.steps.flatMap(each => [...inputsIn(each.run?.script),
-    ...scriptInputs(each, actions, new Set(seen).add(dir)).flatMap(input => inputsIn(each.with?.[input]))])))]
+  const inner = new Set(seen).add(path)
+  const handed = each => scriptInputs(each, actions, inner).flatMap(input => inputsIn(each.with?.[input]))
+  return [...new Set(read.jobs.flatMap(job => [...job.uses ? handed(job) : [], ...job.images.flatMap(image => inputsIn(image.text)),
+    ...job.steps.flatMap(each => [...inputsIn(each.run?.script), ...handed(each)])]))]
 }
 
 // Injections through the inputs an action writes into its scripts, and a
@@ -98,8 +103,8 @@ function jobFindings(job, triggers, { owner, lockfiles, external, actions }) {
     const finding = usesFinding(job.uses, owner)
     if (finding) found.push({ ...finding, line: job.uses.line })
     if (job.secrets === 'inherit' && job.uses.repo && ownerKind(job.uses.repo, owner) === 'third-party') found.push({ id: 'secrets-inherited', severity: 'high', uses: job.uses.uses, key: usesKey(job.uses), line: job.uses.line })
-    // An input of a reusable workflow, which one writes into its scripts.
-    for (const [input, value] of Object.entries(job.with ?? {})) for (const { index: _index, ...injected } of scriptInjections(value, triggers)) found.push({ ...injected, line: job.withLines[input] })
+    // An input a reusable workflow writes into its scripts.
+    for (const input of scriptInputs(job, actions)) for (const { index: _index, ...injected } of scriptInjections(job.with?.[input], triggers)) found.push({ ...injected, line: job.withLines[input] })
   }
   for (const image of job.images) {
     if (!image.read?.digest && !image.text.includes('${{')) found.push({ ...imageFinding(image.text, image.read), line: image.line })

@@ -92,7 +92,8 @@ export function actionsLines(repo: number, owner: string, read: WorkflowsRead, l
   if ('error' in read) return { lines: [{ type: 'workflows', repo, ...read } as WorkflowsLine], refs: [] as ActionRef[] }
   const lines: (WorkflowsLine | WorkflowLine)[] = [{ type: 'workflows', repo, paths: read.files.filter(file => file.kind === 'workflow').map(file => file.path) }]
   const refs = new Map<string, ActionRef>()
-  const actions = new Map(read.files.flatMap(file => file.kind === 'action' && 'text' in file ? [[actionDir(file.path), file.text] as const] : []))
+  // Its own actions by their directories and workflows by their paths, as a step or a job uses one.
+  const actions = new Map(read.files.flatMap(file => file.kind !== 'dockerfile' && 'text' in file ? [[file.kind === 'action' ? actionDir(file.path) : file.path, file.text] as const] : []))
   for (const file of read.files) {
     const scan = 'error' in file ? file : file.kind === 'dockerfile' ? { uses: [], findings: dockerfileFindings(file.text) } : scanWorkflow(file.kind, file.text, { owner, lockfiles, actions })
     lines.push({ type: 'workflow', repo, path: file.path, kind: file.kind, ...scan })

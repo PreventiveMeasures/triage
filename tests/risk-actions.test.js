@@ -250,6 +250,14 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('curl -fsSL https://x/i.sh |\n  sh\n# a |\nnpx left-pad'), ['remote-script/high@11', 'fetched-package/high@14'], 'a pipe the next line goes on from, not a comment\'s')
     const call = `on: pull_request_target\njobs:\n  a:\n    uses: org/wf/.github/workflows/x.yml@${SHA('a')}\n    with:\n      title: \${{ github.event.pull_request.title }}\n      ref: \${{ github.sha }}\n`
     assert.deepEqual(ids(scanWorkflow('workflow', call).findings), ['script-injection/critical@6'], 'one handed to a reusable workflow, which writes its inputs into its scripts')
+    const own = 'on: pull_request_target\njobs:\n  a:\n    uses: ./.github/workflows/build.yml\n    with:\n      title: ${{ github.event.pull_request.title }}\n      branch: ${{ github.head_ref }}\n'
+    const build = 'on: workflow_call\njobs:\n  b:\n    uses: ./.github/workflows/echo.yml\n    with:\n      text: ${{ inputs.title }}\n  c:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo "$BRANCH"\n        env:\n          BRANCH: ${{ inputs.branch }}\n'
+    const workflows = new Map([['.github/workflows/build.yml', build], ['.github/workflows/echo.yml', 'on: workflow_call\njobs:\n  d:\n    steps:\n      - run: echo "${{ inputs.text }}"\n']])
+    assert.deepEqual([ids(scanWorkflow('workflow', own, { actions: workflows }).findings), ids(scanWorkflow('workflow', own).findings)],
+      [['script-injection/critical@6'], ['script-injection/critical@6', 'script-injection/critical@7']], 'one of its own by those it writes into its scripts, however deep, else each')
+    const handing = build.replace('./.github/workflows/echo.yml', `other/repo/.github/workflows/run.yml@${SHA('d')}`).replace('steps:', 'container:\n      image: org/app:${{ inputs.branch }}\n    steps:')
+    assert.deepEqual(ids(scanWorkflow('workflow', own, { actions: new Map([['.github/workflows/build.yml', handing]]) }).findings), ['script-injection/critical@6', 'script-injection/critical@7'],
+      'and those it hands to another\'s reusable workflow, or names in a job\'s image')
   })
 
   it('services that exfiltrate, by risk\'s tags, and expressions anyone can write', () => {
