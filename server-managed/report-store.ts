@@ -32,9 +32,7 @@ export function createReportStore(legacy: BlobStore, compressed: BlobStore,
     if (compressedOnly.size >= COMPRESSED_ONLY_MAX) compressedOnly.delete(compressedOnly.values().next().value!)
     compressedOnly.add(id)
   }
-  async function openCompressed(id: string): Promise<OpenedBlob | null> {
-    const stored = await compressed.open(id)
-    if (!stored) return null
+  function decoded(stored: OpenedBlob): OpenedBlob {
     const stream = createBrotliDecompress()
     // pipeline carries storage/authentication errors into the decoded stream
     // and closes the stored source when a reader leaves before EOF.
@@ -43,22 +41,29 @@ export function createReportStore(legacy: BlobStore, compressed: BlobStore,
   }
   async function open(id: string): Promise<OpenedBlob | null> {
     if (compressedOnly.has(id)) {
-      const stored = await openCompressed(id)
-      if (stored) return stored
+      const stored = await compressed.open(id)
+      if (stored) return decoded(stored)
       compressedOnly.delete(id)
     }
     // Keep the original available until conversion succeeds. Concurrent reads
     // can finish using an already-open stream while another reader converts it.
-    const original = await legacy.open(id)
-    if (original) {
-      const bytes = await readBytes(original)
+    // Both copies are asked for at once, the original answering where it is
+    // still there: one round trip of storage for a report not known yet, as
+    // a cold instance knows none.
+    const [original, stored] = await Promise.allSettled([legacy.open(id), compressed.open(id)])
+    const unused = (copy: PromiseSettledResult<OpenedBlob | null>) => { if (copy.status === 'fulfilled') copy.value?.stream.destroy() }
+    if (original.status === 'rejected') { unused(stored); throw original.reason }
+    if (original.value) {
+      unused(stored)
+      const bytes = await readBytes(original.value)
       await replaceLegacy(id, await encodeBrotli(bytes, 9))
       remember(id)
       return { size: bytes.length, stream: Readable.from([bytes]) }
     }
-    const stored = await openCompressed(id)
-    if (stored) remember(id)
-    return stored
+    if (stored.status === 'rejected') throw stored.reason
+    if (!stored.value) return null
+    remember(id)
+    return decoded(stored.value)
   }
   return {
     async put(id, bytes) {

@@ -21,6 +21,11 @@ const VISIBILITY_CACHE_MAX_SNAPSHOTS = 32
 const caches = new WeakMap<ManagedDb, Map<string, Visibility>>()
 const REPORT_CACHE_BYTES = 16 * 1024 * 1024
 const reportCaches = new WeakMap<ManagedDb, Map<string, Buffer>>()
+// A workspace's report reads at once. Its reports' sizes are bounded together
+// before any is read, and each is held parsed till the build ends, so more at
+// once costs only the raw bytes in flight: a cold build of a team's reports
+// is so many storage round trips one after another.
+const WORKSPACE_READS_AT_ONCE = 16
 function retainReports(db: ManagedDb, key: string, bytes: Buffer) {
   if (bytes.length > REPORT_CACHE_BYTES) return
   let cache = reportCaches.get(db)
@@ -93,7 +98,7 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   let inputBytes = 0, next = 0
   // Bound both remote reads and raw buffers, retaining stable report order for
   // the cross-report classification that follows. Finish workers on failure.
-  const results = await Promise.allSettled(Array.from({ length: Math.min(4, snapshot.reports.length) }, async () => {
+  const results = await Promise.allSettled(Array.from({ length: Math.min(WORKSPACE_READS_AT_ONCE, snapshot.reports.length) }, async () => {
     while (next < snapshot.reports.length) {
       const index = next++
       const access = snapshot.reports[index]!
