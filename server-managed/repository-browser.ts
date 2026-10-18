@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
 import { GithubApiError, type GithubIdentity, READ_PERMISSIONS, githubJson, githubRepoPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
@@ -40,8 +41,45 @@ function credentialFailure(err: unknown): err is GithubApiError {
   return err instanceof GithubApiError && ([401, 404].includes(err.status) || err.message === 'github-status-403')
 }
 
-// Create once per HTTP request. Coalesce concurrent credential lookups without
-// caching repository visibility or permissions, or sharing credentials across users.
+// GitHub's answer on a user's access to a repository, as checkAccess reads it:
+// the repository's metadata, which credential reads it (the user's token, the
+// App installation's, or none, as for a public repository read anonymously)
+// and the permission level GitHub told, where it was asked. Kept per user, by
+// their GitHub id and token, and per repository, by its id, name and
+// installation, for config.repositoryAccessCacheMs; only access granted is kept.
+type RepoMetadata = { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown; default_branch?: unknown }
+type AccessVerdict = { until: number; data: RepoMetadata; credential: 'user' | 'app' | 'none'; level: string | null }
+type VerdictCache = { get(): AccessVerdict | undefined; set(verdict: Omit<AccessVerdict, 'until'>): void }
+const MAX_ACCESS_VERDICTS = 1000
+// By the fetch reading GitHub, as installation tokens are: a test's own.
+const accessVerdicts = new WeakMap<typeof fetch, Map<string, AccessVerdict>>()
+
+function verdictCache(config: ManagedConfig, user: RepositoryBrowserUser, repo: SelectedRepo, fetchImpl: typeof fetch): VerdictCache | null {
+  const keepMs = config.repositoryAccessCacheMs
+  if (!(keepMs > 0)) return null
+  let verdicts = accessVerdicts.get(fetchImpl)
+  if (!verdicts) { verdicts = new Map(); accessVerdicts.set(fetchImpl, verdicts) }
+  const kept = verdicts
+  // The token hashed with the rest, never kept as it is.
+  const key = createHash('sha256').update(JSON.stringify([user.githubUserId, user.token, repo.repoId, repo.fullName.toLowerCase(), repo.installationId, config.githubAppId])).digest('hex')
+  return {
+    get() {
+      const verdict = kept.get(key)
+      if (verdict && verdict.until > Date.now()) return verdict
+      kept.delete(key)
+      return undefined
+    },
+    set(verdict) {
+      kept.delete(key)
+      kept.set(key, { ...verdict, until: Date.now() + keepMs })
+      while (kept.size > MAX_ACCESS_VERDICTS) kept.delete(kept.keys().next().value!)
+    },
+  }
+}
+
+// Create once per HTTP request. Coalesce concurrent credential lookups, and
+// keep GitHub's answer on each user's access to each repository a while
+// (verdictCache), never sharing credentials or answers across users.
 export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryBrowserUser, fetchImpl: typeof fetch = globalThis.fetch) {
   const tokens = new Map<number, Promise<string | null>>()
   let identity: Promise<GithubIdentity> | undefined
@@ -72,7 +110,7 @@ export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryB
       // Its Dependabot alerts, with the token of the installation GitHub tells
       // covers it, where the user's own access lets them see them
       // (dependabot-access.ts).
-      return repositoryReader(repo, user.token, installationToken, getIdentity, fetchImpl).then(reader => ({ ...reader,
+      return repositoryReader(repo, user.token, installationToken, getIdentity, fetchImpl, verdictCache(config, user, repo, fetchImpl)).then(reader => ({ ...reader,
         dependabotAlerts: () => appDependabotAlerts(config, repo, { identity: getIdentity, permission: reader.permission }, fetchImpl) }))
     },
   }
@@ -97,43 +135,79 @@ export async function repositoryTreeFiles(fullName: string, token: string | null
   return { files, bytes }
 }
 
-async function repositoryReader(repo: SelectedRepo, userToken: string | null, installationToken: () => Promise<string | null>, getIdentity: (fresh?: boolean) => Promise<GithubIdentity>, fetchImpl: typeof fetch) {
+type Access = { data: RepoMetadata; token: string | null; level: string | null }
+
+// GitHub asked whether the user may read `repo`: its metadata, read with
+// `token` (the reader's credential so far), else the installation's, else
+// none; and of one not public, the user's permission, read with the
+// installation's. What it told, the token reading it, and the level asked.
+async function askAccess(repo: SelectedRepo, start: string | null, userToken: string | null, installationToken: () => Promise<string | null>,
+  getIdentity: () => Promise<GithubIdentity>, fetchImpl: typeof fetch): Promise<Access> {
+  const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
+  let token = start
+  const metadata = async () => {
+    try { return await githubJson(base, token, fetchImpl) }
+    catch (err) {
+      if (!token || !credentialFailure(err)) throw err
+      const fallback = await installationToken()
+      if (fallback && fallback !== token) {
+        token = fallback
+        try { return await githubJson(base, token, fetchImpl) } catch (fallbackError) { if (!credentialFailure(fallbackError)) throw fallbackError }
+      }
+      // Anonymous fallback is only for unavailable credentials, never rate
+      // limits, network errors, or GitHub outages.
+      token = null
+      return githubJson(base, token, fetchImpl)
+    }
+  }
+  // A repository last known private asks who the user is as it asks for its
+  // metadata, not after: its permission is asked of them.
+  if (repo.private && userToken) getIdentity().catch(() => {})
+  // Stored visibility can be stale (or internal with private=false). Require
+  // current, explicit public visibility or the caller's effective permission.
+  const data = await metadata() as RepoMetadata
+  if (data?.id !== repo.repoId || typeof data.full_name !== 'string' || data.full_name.toLowerCase() !== repo.fullName.toLowerCase()) {
+    throw new GithubApiError(404, 'no-repository')
+  }
+  if (data.private === false && data.visibility === 'public') return { data, token, level: null }
+  if (!token) throw new GithubApiError(404, 'no-repository')
+  const appToken = await installationToken()
+  if (!appToken) throw new GithubApiError(404, 'no-repository')
+  const level = await githubRepoPermission(repo.fullName, appToken, await getIdentity(), fetchImpl)
+  if (!READ_PERMISSIONS.has(level)) throw new GithubApiError(404, 'no-repository')
+  return { data, token: appToken, level }
+}
+
+// GitHub's answer as kept (verdictCache), with the credential it chose,
+// where that credential is still had; else asked (`ask`), and kept where it
+// grants access.
+async function keptAccess(verdicts: VerdictCache | null, userToken: string | null, installationToken: () => Promise<string | null>,
+  ask: () => Promise<Access>): Promise<Access> {
+  const kept = verdicts?.get()
+  if (kept) {
+    const credential = kept.credential === 'user' ? userToken : kept.credential === 'app' ? await installationToken() : null
+    if (kept.credential === 'none' || credential) return { data: kept.data, token: credential, level: kept.level }
+  }
+  const asked = await ask()
+  const { id, full_name, private: hidden, visibility, default_branch } = asked.data
+  const data = { id, full_name, private: hidden, visibility, default_branch }
+  verdicts?.set({ data, credential: asked.token === null ? 'none' : asked.token === userToken ? 'user' : 'app', level: asked.level })
+  return { ...asked, data }
+}
+
+async function repositoryReader(repo: SelectedRepo, userToken: string | null, installationToken: () => Promise<string | null>, getIdentity: (fresh?: boolean) => Promise<GithubIdentity>, fetchImpl: typeof fetch,
+  verdicts: VerdictCache | null) {
   const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
   // Public reads can use the signed-in user's quota without repository grants.
   // Nonpublic reads still require the repository App and the effective-user gate,
   // whose permission level is kept (`level`).
   let level: string | null = null, token = userToken ?? await installationToken()
   const read = (suffix: string) => githubJson(base + suffix, token, fetchImpl)
-  const metadata = async () => {
-    try { return await read('') }
-    catch (err) {
-      if (!token || !credentialFailure(err)) throw err
-      const fallback = await installationToken()
-      if (fallback && fallback !== token) {
-        token = fallback
-        try { return await read('') } catch (fallbackError) { if (!credentialFailure(fallbackError)) throw fallbackError }
-      }
-      // Anonymous fallback is only for unavailable credentials, never rate
-      // limits, network errors, or GitHub outages.
-      token = null
-      return read('')
-    }
-  }
-  const checkAccess = async () => {
-    // Stored visibility can be stale (or internal with private=false). Require
-    // current, explicit public visibility or the caller's effective permission.
-    const data = await metadata() as { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown; default_branch?: unknown }
-    if (data?.id !== repo.repoId || typeof data.full_name !== 'string' || data.full_name.toLowerCase() !== repo.fullName.toLowerCase()) {
-      throw new GithubApiError(404, 'no-repository')
-    }
-    if (data.private === false && data.visibility === 'public') return data
-    if (!token) throw new GithubApiError(404, 'no-repository')
-    const appToken = await installationToken()
-    if (!appToken) throw new GithubApiError(404, 'no-repository')
-    level = await githubRepoPermission(repo.fullName, appToken, await getIdentity(), fetchImpl)
-    if (!READ_PERMISSIONS.has(level)) throw new GithubApiError(404, 'no-repository')
-    token = appToken
-    return data
+  const checkAccess = async (): Promise<RepoMetadata> => {
+    const access = await keptAccess(verdicts, userToken, installationToken, () => askAccess(repo, token, userToken, installationToken, getIdentity, fetchImpl))
+    token = access.token
+    level = access.level
+    return access.data
   }
   const current = await checkAccess()
   const defaultBranch = typeof current.default_branch === 'string' ? current.default_branch : ''

@@ -60,7 +60,7 @@ async function assembleManagedApp(config: ManagedConfig, options: ManagedAppOpti
   })
   const routeRequest = createManagedRequestHandler({
     ...options, config, db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, prettyCache, npmCacheStorage, originGate, serveStatic,
-    ...(storage.uploadStore ? { uploadStore: storage.uploadStore } : {}),
+    ...(storage.uploadStore ? { uploadStore: storage.uploadStore } : {}), ...(waitUntil ? { waitUntil } : {}),
     isShuttingDown, track,
   })
 

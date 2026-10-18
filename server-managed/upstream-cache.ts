@@ -26,6 +26,9 @@ export interface UpstreamCacheStore {
   getUpstreamCacheEntry(key: string): Promise<string | null>
   // Key → value for those of `keys` that are kept.
   getUpstreamCacheEntries(keys: string[]): Promise<Map<string, string>>
+  // Those of `first` that are kept; where none is, those of `then`, in the
+  // same statement (`first` whether they are `first`'s).
+  getFirstUpstreamCacheEntries(first: string[], then: string[]): Promise<{ first: boolean; entries: Map<string, string> }>
   setUpstreamCacheEntry(key: string, value: string, cachedAt: number): Promise<void>
   // Each of `entries` (key, value), as setUpstreamCacheEntry keeps one, in one
   // statement: the last of a key given twice.
@@ -38,6 +41,10 @@ export interface UpstreamCacheStore {
 export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
   const get = db.prepare('SELECT value FROM managed_upstream_cache WHERE cache_key = ?')
   const getMany = db.prepare('SELECT cache_key, value FROM managed_upstream_cache WHERE cache_key IN (SELECT value FROM json_each(?))')
+  const getFirst = db.prepare(`WITH found AS (SELECT cache_key, value FROM managed_upstream_cache WHERE cache_key IN (SELECT value FROM json_each(?)))
+    SELECT cache_key, value, 1 AS in_first FROM found
+    UNION ALL SELECT cache_key, value, 0 AS in_first FROM managed_upstream_cache
+      WHERE cache_key IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM found)`)
   // A slower concurrent audit cannot replace a newer listing with an older one.
   const set = db.prepare(`INSERT INTO managed_upstream_cache (cache_key, value, cached_at) VALUES (?, ?, ?)
     ON CONFLICT (cache_key) DO UPDATE SET value = excluded.value, cached_at = excluded.cached_at
@@ -54,6 +61,11 @@ export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
       if (keys.length === 0) return new Map()
       const rows = await getMany.all(JSON.stringify(keys)) as { cache_key: string; value: string }[]
       return new Map(rows.map(row => [row.cache_key, row.value]))
+    },
+    async getFirstUpstreamCacheEntries(first, then) {
+      if (first.length === 0 && then.length === 0) return { first: false, entries: new Map() }
+      const rows = await getFirst.all(JSON.stringify(first), JSON.stringify(then)) as { cache_key: string; value: string; in_first: number }[]
+      return { first: rows.some(row => Number(row.in_first) === 1), entries: new Map(rows.map(row => [row.cache_key, row.value])) }
     },
     async setUpstreamCacheEntry(key, value, cachedAt) {
       await set.run(key, value, cachedAt)

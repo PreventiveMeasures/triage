@@ -898,12 +898,13 @@ for (const failure of [
 
 test('GitHub outages do not cause anonymous fallback or token minting', async t => {
   const { request } = await fixture(t, { selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
-  let calls = 0
-  t.mock.method(globalThis, 'fetch', () => { calls++; return Promise.resolve(Response.json({}, { status: 503 })) })
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, options) => { calls.push([new URL(url).pathname, options.headers.authorization]); return Promise.resolve(Response.json({}, { status: 503 })) })
   const response = await request({ repoId: '1' }, { route: 'refs' })
   assert.equal(response.status, 502)
   assert.equal(response.body.error, 'github-status-503')
-  assert.equal(calls, 1)
+  // Who the user is asked beside the metadata, as for a repository last known private.
+  assert.deepEqual(calls.toSorted(), [['/repos/org/repo', 'Bearer login-token'], ['/user', 'Bearer login-token']])
 })
 
 test('private refs fall back from the login token to installation reads and effective permission checks', async t => {
@@ -941,4 +942,72 @@ test('rate limiting during installation-token minting is not retried anonymously
   assert.equal(response.status, 429)
   assert.equal(response.headers['retry-after'], '120')
   assert.deepEqual(calls, ['/app/installations/7/access_tokens'])
+})
+
+// A private repository GitHub tells `permission` of for the user each token is
+// (`alice`'s, else `bob`'s), with an installation token; `calls` the paths asked.
+const alicePermitted = { alice: 'read', bob: 'none' }
+function privateGithub(permissions = alicePermitted) {
+  const calls = []
+  const fetch = (url, options) => {
+    const path = new URL(url).pathname
+    calls.push(path)
+    if (path.endsWith('/access_tokens')) return Promise.resolve(Response.json({ token: 'installation', expires_at: new Date(Date.now() + 60 * 60_000).toISOString() }))
+    if (path === '/repos/org/repo') return Promise.resolve(Response.json({ ...publicMetadata, private: true, visibility: 'private' }))
+    const login = options.headers.authorization.startsWith('Bearer alice') ? 'alice' : 'bob'
+    if (path === '/user') return Promise.resolve(Response.json({ id: login === 'alice' ? 1 : 2, login }))
+    const asked = path.split('/').at(-2)
+    return Promise.resolve(Response.json({ user: { id: asked === 'alice' ? 1 : 2 }, permission: permissions[asked] }))
+  }
+  return { fetch, calls, asked: () => calls.filter(path => !path.endsWith('/access_tokens')) }
+}
+const keptConfig = { ...appConfig, repositoryAccessCacheMs: 300_000 }
+const alice = { githubUserId: 1, token: 'alice' }
+
+test('GitHub\'s answer on a user\'s access to a repository is kept for them: rechecks and their next request answered as kept, asked again past it', async t => {
+  const { fetch, asked } = privateGithub()
+  const reader = await createRepositoryBrowser(keptConfig, alice, fetch).reader(privateRepo)
+  assert.deepEqual(asked().toSorted(), ['/repos/org/repo', '/repos/org/repo/collaborators/alice/permission', '/user'])
+  assert.deepEqual([reader.readToken(), reader.permission()], ['installation', 'read'])
+  await reader.recheckAccess()
+  const next = await createRepositoryBrowser(keptConfig, alice, fetch).reader(privateRepo)
+  await next.recheckAccess()
+  assert.equal(asked().length, 3, 'rechecked and asked again, as kept')
+  assert.deepEqual([next.readToken(), next.permission()], ['installation', 'read'], 'with the credential and permission GitHub told')
+  await createRepositoryBrowser(keptConfig, { githubUserId: 1, token: 'alice-refreshed' }, fetch).reader(privateRepo)
+  assert.equal(asked().length, 6, 'another token of theirs asks for itself')
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 300_001 })
+  await createRepositoryBrowser(keptConfig, alice, fetch).reader(privateRepo)
+  assert.equal(asked().length, 9, 'asked again once it is older than kept')
+})
+
+test('access GitHub refuses is never kept, nor one user\'s kept access answered for another', async () => {
+  const permissions = { alice: 'none', bob: 'none' }
+  const { fetch, asked } = privateGithub(permissions)
+  await assert.rejects(createRepositoryBrowser(keptConfig, alice, fetch).reader(privateRepo), /no-repository/u)
+  permissions.alice = 'read'
+  const reader = await createRepositoryBrowser(keptConfig, alice, fetch).reader(privateRepo)
+  assert.equal(reader.permission(), 'read', 'granted since, asked again')
+  await assert.rejects(createRepositoryBrowser(keptConfig, { githubUserId: 2, token: 'bob' }, fetch).reader(privateRepo), /no-repository/u)
+  assert.ok(asked().includes('/repos/org/repo/collaborators/bob/permission'), 'another user asked of themselves')
+})
+
+test('a repository last known private asks who the user is as it asks for its metadata', { timeout: 5000 }, async () => {
+  const { fetch: github } = privateGithub()
+  const identity = Promise.withResolvers()
+  // Its metadata answered only once who the user is was asked: none would be, asked after.
+  const fetch = (url, options) => {
+    const path = new URL(url).pathname
+    if (path === '/user') identity.resolve()
+    return path === '/repos/org/repo' ? identity.promise.then(() => github(url, options)) : github(url, options)
+  }
+  const reader = await createRepositoryBrowser(appConfig, alice, fetch).reader(privateRepo)
+  assert.equal(reader.permission(), 'read')
+})
+
+test('a public repository read anonymously is kept so too, with no credential', async () => {
+  const calls = []
+  const fetch = url => { calls.push(new URL(url).pathname); return Promise.resolve(Response.json(publicMetadata)) }
+  for (let i = 0; i < 3; i++) assert.equal((await createRepositoryBrowser(keptConfig, anonymous, fetch).reader(repo)).readToken(), null)
+  assert.deepEqual(calls, ['/repos/org/repo'])
 })

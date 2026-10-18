@@ -36,6 +36,19 @@ test('public workspace sharing requires exactly DEEPVIEW_ALLOW_SHARE=1', t => {
   }
 })
 
+test('GitHub\'s answer on repository access is kept five minutes by default, MANAGED_REPOSITORY_ACCESS_CACHE_MS milliseconds where set, 0 never', t => {
+  useEnv(t, {})
+  assert.equal(loadManagedConfig().repositoryAccessCacheMs, 300_000)
+  for (const [value, ms] of [['0', 0], ['60000', 60_000], ['3600000', 3_600_000]]) {
+    process.env.MANAGED_REPOSITORY_ACCESS_CACHE_MS = value
+    assert.equal(loadManagedConfig().repositoryAccessCacheMs, ms)
+  }
+  for (const value of ['-1', '1.5', 'five', '3600001']) {
+    process.env.MANAGED_REPOSITORY_ACCESS_CACHE_MS = value
+    assert.throws(() => loadManagedConfig(), /MANAGED_REPOSITORY_ACCESS_CACHE_MS/u)
+  }
+})
+
 test('the session cookie cannot take the name of another managed cookie', t => {
   useEnv(t, {})
   for (const name of ['dvstate', 'dvissuestate', 'dvview', '__Host-dvstate', '__Host-dvissuestate', '__Host-dvview']) {

@@ -33,6 +33,7 @@ import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { STATE_ICONS, icon, issueState, plainClick } from './repository-tiles.js'
 import { activityPicker } from './repository-activity.js'
 import { appUser, commitAgent, commitAuthor, commitAuthorName, githubUser } from './github-users.js'
+import { heldRead } from './held-read.js'
 
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
@@ -155,30 +156,20 @@ const waitFor = answer => progress(answer) === null ? answer.pending ? [PENDING_
 
 // The pulse of repository `repoId` over `weeks` weeks, as held, else read:
 // `{ status }` 'loading', then 'ready' with its `answer`, or 'error' with its
-// `error`; read again once old, or an error's retry is due. One whose year
-// is not read whole yet, or whose statistics GitHub is still computing, is
-// asked again (askAgain).
+// `error`; read again once old, or an error's retry is due, shown meanwhile
+// (held-read.js). One whose year is not read whole yet, or whose statistics
+// GitHub is still computing, is asked again (askAgain).
 function pulseRead(repoId, weeks) {
-  const data = sessionReads()
   const key = `${repoId}\0${weeks}`
-  const held = data.get(key)
-  if (held && Date.now() < held.until) return held
-  const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
-  data.set(key, loading)
-  fetchRepositoryPulse(repoId, weeks).then(checked).then(answer => {
-    if (data.get(key) !== loading) return null
-    const entry = { status: 'ready', until: Date.now() + KEEP_MS, answer, tries: 0, asking: false }
-    data.set(key, entry)
-    keep(repoId, entry)
-    if (waitFor(answer)) askAgain(key, entry, repoId, weeks, waitFor(answer)[0])
-    return null
-  }, err => {
-    if (data.get(key) !== loading) return null
-    if (err?.name === 'AbortError') data.delete(key)
-    else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The repository’s pulse could not be read.' })
-    return null
-  }).finally(repaint)
-  return loading
+  return heldRead(sessionReads(), key, () => fetchRepositoryPulse(repoId, weeks).then(checked), {
+    ready: answer => ({ status: 'ready', until: Date.now() + KEEP_MS, answer, tries: 0, asking: false }),
+    settled: entry => {
+      keep(repoId, entry)
+      if (waitFor(entry.answer)) askAgain(key, entry, repoId, weeks, waitFor(entry.answer)[0])
+    },
+    failed: err => err?.name === 'AbortError' ? null : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The repository’s pulse could not be read.' },
+    retryMs: RETRY_MS, repaint,
+  })
 }
 
 // The year, or GitHub's statistics, asked for again `wait` later, again and
@@ -209,23 +200,15 @@ function askAgain(key, entry, repoId, weeks, wait) {
 // `from` to `to`, YYYY-MM-DD, none, on, and any of its `authors`' GitHub
 // logins), as held, else read: `{ status }` 'loading', then 'ready' with its
 // `answer`, each kind as toldOf tells it, or 'error' with its `error`; read
-// again once old, or an error's retry is due.
+// again once old, or an error's retry is due, shown meanwhile (held-read.js).
 function narrowedRead(repoId, weeks, narrowing) {
   sessionReads()
   const key = [repoId, weeks, narrowing.from, narrowing.to ?? '', narrowing.authors.join(',')].join('\0')
-  const held = narrowedReads.get(key)
-  if (held && Date.now() < held.until) return held
-  const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
-  narrowedReads.set(key, loading)
-  fetchRepositoryPulseItems(repoId, weeks, narrowing).then(answer => {
-    if (narrowedReads.get(key) !== loading) return null
-    narrowedReads.set(key, { status: 'ready', until: Date.now() + KEEP_MS, answer: Object.fromEntries(LIST_KINDS.map(kind => [kind, toldOf(answer, kind)])) })
-    return null
-  }, err => {
-    if (narrowedReads.get(key) === loading) narrowedReads.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'These couldn’t be read.' })
-    return null
-  }).finally(repaint)
-  return loading
+  return heldRead(narrowedReads, key, () => fetchRepositoryPulseItems(repoId, weeks, narrowing), {
+    ready: answer => ({ status: 'ready', until: Date.now() + KEEP_MS, answer: Object.fromEntries(LIST_KINDS.map(kind => [kind, toldOf(answer, kind)])) }),
+    failed: err => ({ status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'These couldn’t be read.' }),
+    retryMs: RETRY_MS, repaint,
+  })
 }
 
 // Whether a year's commits with agents are counted and any of them made with

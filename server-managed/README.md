@@ -988,9 +988,18 @@ access alone is never a user grant. Existing upload/link pickers retain their
 managed-data permissions; they do not grant live source browsing.
 The picker shares installation tokens and the GitHub identity lookup within one
 request, but checks every repository's current visibility and permission. A
-request asks GitHub who its user is once, its recheck after source reads asking
+request asks GitHub who its user is once, as it asks for the metadata of a
+repository last known private, its recheck after source reads asking
 the repository's visibility and their permission again, not who they are; an
-identity changed since fails the next request. Stale
+identity changed since fails the next request. GitHub's answer granting a
+user access to a repository (its visibility, their permission, and which
+credential reads it) is kept for that user, by their GitHub ID and token, and
+that repository, by its ID, name and installation, for five minutes
+(`MANAGED_REPOSITORY_ACCESS_CACHE_MS`, in milliseconds, up to an hour; `0`
+asks on every request): checks and rechecks within it, theirs alone, answered
+as kept, in the instance that asked. Access GitHub refuses is never kept.
+Managed access (roles, teams, grants) is checked on every request all the
+same. Stale
 installation access falls back to anonymous source reads only after GitHub confirms
 that the repository is public; private and internal repositories remain gated.
 The GitHub Contents API limits directory listings to
@@ -1699,7 +1708,10 @@ Commits until one is (`ui/view/repository-activity.js`). Each view's bar
 starts with their picker, an icon each (a commit on its line, an issue's
 ring, a pull request's branches, a robot's head, a pulse's beat, and a play
 button's triangle), as the graph's layouts are picked, which switches the
-view as a tab does, Back returning to the one before.
+view as a tab does, Back returning to the one before. What a view read,
+held in the page past its while, stays shown as it is read again, never
+blanked: replaced only by what that read answers, and kept where it fails,
+read again a while after (`ui/view/held-read.js`).
 
 ## Commits
 
@@ -1787,7 +1799,10 @@ read again.
   its author's own time too, which Pulse counts (and the tab is not sent).
 - Pages glue on: where a commit listed, or a parent of one not listed, is
   the top of a page kept, that page joins those listed, and so on, till two
-  thousand commits are listed. The pages from where it starts are listed
+  thousand commits are listed. The pages at parents not listed are read
+  first, each adding only commits not listed yet; those at commits listed,
+  which mostly list commits listed already, only where none of those is
+  kept, in the same read of the database. The pages from where it starts are listed
   whole all the same, All branches' 25 tips' as before, two thousand five
   hundred commits at most. A branch that moved on a few commits reads one page and
   shows all the history read of it before, the pages Older commits read
@@ -1966,8 +1981,8 @@ What a page or item read is kept in the database (`managed_upstream_cache`,
 under `repository/reads`, a day), for every reader, their access checked as
 each asks: for two minutes it is answered as kept, unread again; then, while
 kept, it is answered at once and read again behind the answer for the next
-to ask, once at a time. Serverless, where nothing outlives an answer, a
-read older than two minutes is read again before it is answered. One GitHub
+to ask, once at a time, serverless too, its function kept running till that
+read ends (Vercel's `waitUntil`). One GitHub
 refuses to read again (the GitHub App's permission for it withdrawn, the
 repository or item gone) is no longer kept, the next to ask refused as
 GitHub refused it. The

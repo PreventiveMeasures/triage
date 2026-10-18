@@ -102,6 +102,7 @@ Set these variables for each deployment environment:
 | `MANAGED_INITIAL_ADMIN_GITHUB_ID` | Optional numeric GitHub ID promoted on login only when that account has No access and is the sole user |
 | `OAUTH_CALLBACK_URL` | HTTPS callback registered with the login app, ending in `/api/oauth/github/callback` |
 | `CRON_SECRET` | Cleanup authorization secret; the endpoint requires `Authorization: Bearer <secret>` |
+| `MANAGED_REPOSITORY_ACCESS_CACHE_MS` | Optional; how long GitHub's answer on a user's access to a repository is kept for them, per function instance; default `300000` (five minutes), `0` asks GitHub on every request |
 
 The supplied configuration sets `NODEJS_HELPERS=0` to preserve raw request
 bodies, runs `pnpm build`, and uses `out` as its output directory. Keep helpers

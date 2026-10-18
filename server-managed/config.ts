@@ -42,6 +42,11 @@ export interface ManagedConfig {
   cookieSecure: boolean
   sessionCookieName: string
   sessionTtlMs: number
+  // How long GitHub's answer on a user's access to a repository (its
+  // visibility, their permission) is kept for that user and repository
+  // (repository-browser.ts), asked again past it; 0 asks on every request
+  // (MANAGED_REPOSITORY_ACCESS_CACHE_MS, five minutes by default).
+  repositoryAccessCacheMs: number
   // Optional installation credentials for the same GitHub App as login.
   // Repository permissions are approved when connecting repositories.
   githubAppId: string | null
@@ -140,6 +145,7 @@ export function loadManagedConfig({ combined = false } = {}): ManagedConfig {
     cookieSecure,
     sessionCookieName,
     sessionTtlMs: intEnv('SESSION_TTL_MS', 1_209_600_000, 60_000, 7_776_000_000),
+    repositoryAccessCacheMs: intEnv('MANAGED_REPOSITORY_ACCESS_CACHE_MS', 300_000, 0, 3_600_000),
     githubAppId: env['GITHUB_APP_ID'] ?? null,
     githubAppPrivateKey: normalizePem(env['GITHUB_APP_PRIVATE_KEY']),
     githubAppSlug: env['GITHUB_APP_SLUG'] ?? null,

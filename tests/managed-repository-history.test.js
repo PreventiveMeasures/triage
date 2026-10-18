@@ -410,6 +410,38 @@ test('gluing stops at as many commits as it goes to, looking up fifty tops at a 
   assert.ok(lookups.slice(1).every(count => count <= 50), JSON.stringify(lookups))
 })
 
+test('gluing reads the pages at parents not listed first, those at commits listed only where none of those is kept, each in one read', async () => {
+  // A linear history of 3000 commits, a page kept from every one of them but
+  // the 149th, 249th, …: the parent the first page from the 49th leaves
+  // unlisted has none, a commit listed's going on past it instead.
+  const commit = at => ({ sha: chain(at), parents: at < 2999 ? [chain(at + 1)] : [], subject: '', authorName: null, authorLogin: null, committedAt: null })
+  const pageAt = top => Array.from({ length: Math.min(100, 3000 - Number.parseInt(top, 16)) }, (_, index) => commit(Number.parseInt(top, 16) + index))
+  const kept = top => Number.parseInt(top, 16) === 49 || Number.parseInt(top, 16) % 100 !== 49
+  const firsts = [], reads = [], started = []
+  const pages = {
+    // Where it starts alone, all of them at once.
+    read: tops => { started.push(tops); return Promise.resolve(new Map(tops.filter(kept).map(top => [top, pageAt(top)]))) },
+    readFirst: (first, then) => {
+      const hit = first.some(kept)
+      const answered = (hit ? first : then).filter(kept)
+      reads.push(answered.length)
+      firsts.push(hit)
+      return Promise.resolve({ first: hit, pages: new Map(answered.map(top => [top, pageAt(top)])) })
+    },
+    write: () => Promise.resolve(),
+  }
+  const { commits } = await historyFrom('org/repo', 'token', [chain(49)], pages, () => assert.fail('nothing read of GitHub'))
+  assert.deepEqual(started, [[chain(49)]])
+  assert.equal(commits.length, HISTORY_GLUED)
+  assert.deepEqual(commits.map(listed => Number.parseInt(listed.sha, 16)), Array.from({ length: HISTORY_GLUED }, (_, at) => at + 49), 'each once, in the history\'s order')
+  assert.ok(reads.length <= 21, JSON.stringify(reads))
+  assert.equal(firsts[0], false, 'its parent has no page: those at commits listed read')
+  assert.ok(firsts.slice(1).every(Boolean), 'then the parents\' alone')
+  // Fifty pages at commits listed once, a page at a parent a read after: not
+  // a page at every commit listed, as many as are kept.
+  assert.ok(reads.reduce((sum, count) => sum + count, 0) < 100, `pages read: ${JSON.stringify(reads)}`)
+})
+
 test('a commit\'s co-authors: its trailers\' (GitHub\'s GraphQL API\'s by the accounts it knows them by), then the agents its message marks, each once, the author none', async () => {
   const pages = { read: () => Promise.resolve(new Map()), write: () => Promise.resolve() }
   // GitHub's REST API: its trailers' names and no-reply addresses; Claude once, by its trailer and its line.
