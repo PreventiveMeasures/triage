@@ -193,7 +193,7 @@ export function pinnedTo(line) {
 // it found, and where in a resolved reference's own code.
 export function findingsCell(findings) {
   return html`<ul class="risk-findings">${findings.map(finding => html`<li class=${`risk-${finding.severity}`}
-    data-tooltip=${findingDetail(finding) || nothing}>${findingLabel(finding)}${finding.file ? html`<span class="risk-in-code"> in code</span>` : nothing}</li>`)}</ul>`
+    data-tooltip=${findingDetail(finding) || nothing}>${findingLabel(finding)}${finding.file ? html`<span class="risk-in-code">in code</span>` : nothing}</li>`)}</ul>`
 }
 
 // A reference's link on GitHub at the ref it names, its path in it.

@@ -180,24 +180,24 @@ test('the progress counts packages only devDependencies need apart from the rest
   page._apply(lockfile('package-lock.json', [{ name: 'left-pad', version: '1.3.0', source: 'registry' }, { name: 'is-number', version: '7.0.0', source: 'registry' },
     { name: 'mine', version: '1.0.0', source: 'git', dev: true }]))
   page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: 'moderate', score: 5, findings: [{ id: 'deprecated', severity: 'moderate' }] })
-  assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], null], ['Lockfiles', '1/3', [['read', 1]], null],
-    ['Packages assessed', '1/2', [['prod', 1], ['dev', 0]], [['prod', 1, 2]]], ['Flagged', '1', [['prod', 1], ['dev', 0]], [['prod', 1]]]],
+  assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], [['lockfiles', 1, 3]]],
+    ['Packages', '1/2', [['prod', 1], ['dev', 0]], [['prod', 1, 2]]], ['Flagged', '1', [['prod', 1], ['dev', 0]], [['prod', 1]]]],
     'none of devDependencies alone: none said')
   page._apply(lockfile('web/package-lock.json', [{ name: 'mocha', version: '10.0.0', source: 'registry', dev: true }, { name: 'eslint', version: '9.0.0', source: 'registry', dev: true }]))
   page._apply({ type: 'risk', name: 'eslint', version: '9.0.0', published: null, severity: 'high', score: 60, findings: [{ id: 'too-new', severity: 'high' }], stale: { assessedAt: 1 } })
-  assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], null], ['Lockfiles', '2/3', [['read', 2]], null],
-    ['Packages assessed', '2/4', [['prod', 1], ['dev', 1]], [['prod', 1, 2], ['dev', 1, 2]]], ['Flagged', '2', [['prod', 1], ['dev', 1]], [['prod', 1], ['dev', 1]]],
+  assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], [['lockfiles', 2, 3]]],
+    ['Packages', '2/4', [['prod', 1], ['dev', 1]], [['prod', 1, 2], ['dev', 1, 2]]], ['Flagged', '2', [['prod', 1], ['dev', 1]], [['prod', 1], ['dev', 1]]],
     ['Stale', '1', [['prod', 0], ['dev', 0]], [['dev', 1]]]])
   // docs needs eslint otherwise: it is among the rest from now on.
   page._apply(lockfile('docs/package-lock.json', [{ name: 'eslint', version: '9.0.0', source: 'registry' }]))
-  assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], null], ['Lockfiles', '3/3', [['read', 3]], null],
-    ['Packages assessed', '2/4', [['prod', 2], ['dev', 0]], [['prod', 2, 3], ['dev', 0, 1]]], ['Flagged', '2', [['prod', 2], ['dev', 0]], [['prod', 2]]],
+  assert.deepEqual(metrics(), [['Repositories', '1/1', [['read', 1]], [['lockfiles', 3, 3]]],
+    ['Packages', '2/4', [['prod', 2], ['dev', 0]], [['prod', 2, 3], ['dev', 0, 1]]], ['Flagged', '2', [['prod', 2], ['dev', 0]], [['prod', 2]]],
     ['Stale', '1', [['prod', 0], ['dev', 0]], [['prod', 1]]]])
   // Drawn: each metric, its label and count, the slash a little apart, its split said to a screen reader, and its bar a segment each of those
-  // there are; its tooltip a line each part, the count aligned, and its notes; then the state, at the end.
+  // there are; its tooltip a line each part, the count aligned, and its notes.
   const text = templateText(page.render())
-  assert.match(text, /<\/span>\s*<\/span><span class="risk-state" data-state=running>Scanning<\/span><\/div>/u)
-  assert.match(text, /Lockfiles<\/span>\s*<span class="risk-metric-value">3<span class="risk-metric-of"><span class="risk-metric-slash">\/<\/span>3<\/span><\/span>\s*<span class="risk-bar" aria-hidden="true"><span class=risk-bar-read/u)
+  assert.match(text, /<span class="risk-state" role="status" data-state=running>Scanning<\/span><button type="button" class="btn"/u, 'the state beside what stops the scan')
+  assert.match(text, /data-tooltip=3\/3 lockfiles\. [^]*?Repositories<\/span>\s*<span class="risk-metric-value">1<span class="risk-metric-of"><span class="risk-metric-slash">\/<\/span>1<\/span><span class="sr-only"> 3\/3 lockfiles\.<\/span><\/span>\s*<span class="risk-bar" aria-hidden="true"><span class=risk-bar-read/u, 'the lockfiles read told with the repositories')
   assert.match(text, /data-tooltip=2\/3 prod, 0\/1 dev\. \.tooltipContent=<div class="tooltip-counts"><span class="tooltip-count">2<span class="tooltip-count-of"><span class="tooltip-slash">\/<\/span>3<\/span><\/span><span>prod<\/span><span class="tooltip-count">0<span class="tooltip-count-of"><span class="tooltip-slash">\/<\/span>1<\/span><\/span><span>dev<\/span><\/div>>/u)
   assert.match(text, /<span class="risk-metric-label">Flagged<\/span>\s*<span class="risk-metric-value">2<span class="sr-only"> 2 prod\.<\/span><\/span>\s*<span class="risk-bar" aria-hidden="true"><span class=risk-bar-prod[^<]*<\/span><\/span>/u)
   assert.match(text, /<span class="tooltip-count">1<\/span><span>prod<\/span><\/div><div class="tooltip-counts-note">Assessed over an hour ago; to be assessed again once the rest are\.<\/div><div class="tooltip-counts-note">0 of 1 assessed again\.<\/div>>/u)
@@ -496,7 +496,7 @@ test('the packages\' filter is a toggle of those it has any of, but All and the 
   page._filter = 'failed'
   page._apply({ type: 'risk', name: 'left-pad', version: '1.3.0', published: null, severity: null, score: 0, findings: [] })
   assert.deepEqual(filters(), ['All 2', 'Flagged 1', '*Failed 0'], 'the one chosen kept, of none')
-  assert.match(templateText(page.render()), /role="tablist" aria-label="Results">[^]*?>Packages<\/button>/u)
+  assert.match(templateText(page.render()), /role="tablist" aria-label=Results>[^]*?>Packages<\/button>/u)
 })
 
 test('the packages\' Source column is left out where every one is from npm\'s registry', () => {
