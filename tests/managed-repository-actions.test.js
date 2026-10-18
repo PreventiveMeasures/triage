@@ -6,6 +6,7 @@ import { repositoryRiskLines, riskCaches } from '../server-managed/repository-ri
 import { lastingRead, lockedNames, readActions, resolvingActions } from '../server-managed/repository-actions.ts'
 import { githubActionsSource } from '../server-managed/github-actions.ts'
 import { GithubApiError } from '../server-managed/github-errors.ts'
+import { actionsSourceOf } from './_actions-source.js'
 
 const sri = text => `sha512-${createHash('sha512').update(text).digest('base64')}`
 const SHA = char => char.repeat(40)
@@ -68,31 +69,21 @@ function sourceOf({ files = FILES, workflows = ['.github/workflows/ci.yml'], act
 
 // GitHub as the scan resolves references with: actions/checkout and
 // third/party, public, v1 of third/party's at B, its v1.0.0 too, its
-// action.yml naming `nested/one@main`, and nested/one a private
-// repository; what was asked of each repository noted.
+// action.yml naming `nested/one@main`, and nested/one a private repository.
 function actionsSource({ fail = null } = {}) {
-  const asked = []
-  const repos = {
-    'actions/checkout': { fullName: 'actions/checkout', defaultBranch: 'main', private: false, tags: [{ tag: 'v4', oid: SHA('c') }, { tag: 'v4.2.0', oid: SHA('c') }] },
-    'third/party': { fullName: 'third/party', defaultBranch: 'main', private: false, tags: [{ tag: 'v1', oid: SHA('b') }, { tag: 'v1.0.0', oid: SHA('b') }] },
-    'nested/one': { fullName: 'nested/one', defaultBranch: 'main', private: true, tags: [], branches: { main: SHA('d') } },
-  }
-  const files = { [`third/party:action.yml@${SHA('b')}`]: 'runs:\n  using: composite\n  steps:\n    - uses: nested/one@main\n', [`nested/one:action.yml@${SHA('d')}`]: 'runs:\n  using: node24\n  main: index.js\n' }
-  return {
-    asked,
-    repo(name) {
-      asked.push(name)
-      if (fail?.(name)) return Promise.reject(new GithubApiError(429, 'github-rate-limited', 60))
-      return Promise.resolve(repos[name] ?? null)
-    },
-    tags: name => Promise.resolve(repos[name]?.tags ?? []),
-    tag: (name, tag) => Promise.resolve(repos[name]?.tags.find(each => each.tag === tag)?.oid ?? null),
-    branch: (name, branch) => Promise.resolve(repos[name]?.branches?.[branch] ?? null),
-    branches: () => Promise.resolve({ branches: [], complete: true }),
-    contains: () => Promise.resolve(true),
-    file: (name, path, commit) => Promise.resolve(files[`${name}:${path}@${commit}`] ?? null),
-  }
+  const info = (fullName, isPrivate = false) => ({ fullName, defaultBranch: 'main', private: isPrivate })
+  const source = actionsSourceOf({
+    'actions/checkout': { info: info('actions/checkout'), tags: [{ tag: 'v4', oid: SHA('c') }, { tag: 'v4.2.0', oid: SHA('c') }] },
+    'third/party': { info: info('third/party'), tags: [{ tag: 'v1', oid: SHA('b') }, { tag: 'v1.0.0', oid: SHA('b') }],
+      files: { [`action.yml@${SHA('b')}`]: 'runs:\n  using: composite\n  steps:\n    - uses: nested/one@main\n' } },
+    'nested/one': { info: info('nested/one', true), tags: [], branches: [{ branch: 'main', oid: SHA('d') }], files: { [`action.yml@${SHA('d')}`]: 'runs:\n  using: node24\n  main: index.js\n' } },
+  })
+  const { repo } = source
+  source.repo = name => fail?.(name) ? Promise.reject(new GithubApiError(429, 'github-rate-limited', 60)) : repo(name)
+  return source
 }
+// The repositories `source` was asked of.
+const reposAsked = source => source.asked.flatMap(([method, name]) => method === 'repo' ? [name] : [])
 
 const scan = (source, caches = riskCaches(), options) => Array.fromAsync(repositoryRiskLines(source, new AbortController().signal, caches, options))
 const ofType = (lines, type) => lines.filter(line => line.type === type)
@@ -170,7 +161,7 @@ test('what a scan resolved and read of a repository\'s Actions is kept: a scan a
   await scan(first, caches)
   const again = sourceOf()
   const lines = await scan(again, caches)
-  assert.deepEqual([again.listed, again.read.filter(path => path.startsWith('.github')), again.actions.asked], [[], [], ['nested/one']])
+  assert.deepEqual([again.listed, again.read.filter(path => path.startsWith('.github')), reposAsked(again.actions)], [[], [], ['nested/one']])
   assert.equal(ofType(lines, 'action').length, 4)
   assert.equal(ofType(lines, 'workflow').length, 2)
   // An admin who can't read nested/one isn't told what another's access had.
@@ -185,15 +176,11 @@ test('what GitHub answers of a public repository is kept for every scan, whichev
   const caches = riskCaches()
   // What a scan resolving `keys` asks GitHub, by what and of which repository.
   const asked = async keys => {
-    const calls = [], source = actionsSource()
-    for (const method of ['repo', 'tags', 'tag', 'branch', 'branches', 'contains', 'file']) {
-      const ask = source[method]
-      source[method] = (...args) => { calls.push(`${method} ${args[0]}`); return ask(...args) }
-    }
+    const source = actionsSource()
     const resolving = resolvingActions({ source, signal: new AbortController().signal, tell: () => {}, memory: caches.actions, answers: caches.actionAnswers })
     resolving.add(keys.map(key => ({ key, owner: 'org', depth: 0 })))
     await resolving.close()
-    return calls
+    return source.asked.map(([method, name]) => `${method} ${name}`)
   }
   assert.ok((await asked(['third/party@v1'])).includes('file third/party'))
   // Other references of third/party, at the same commit, and nested/one, private, again.
@@ -210,7 +197,7 @@ test('a reference of a public repository is kept beyond the instance, a private 
   // Another instance reads them there.
   const again = sourceOf()
   await scan(Object.assign(again, { actionLines }))
-  assert.deepEqual(again.actions.asked, ['nested/one'])
+  assert.deepEqual(reposAsked(again.actions), ['nested/one'])
 })
 
 test('why a reference couldn\'t be resolved, or a repository\'s workflows listed, is told, and the scan goes on', async () => {

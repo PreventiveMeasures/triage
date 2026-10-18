@@ -34,34 +34,28 @@ function createPackage(text) {
 const VALUED = /^(?:-[pcwC]|--(?:package|call|cache|userconfig|registry|workspace|prefix|filter|dir|global-dir|store-dir|loglevel|cwd|spec|location))$/u
 const GLOBAL = /^(?:-g|--global|--location=global)$/u
 
-// The words past `from` that aren't options or their values, and all past `--`.
-export function positional(argv, from) {
-  const words = []
+// A command's words past `from`: those not options (`operands`), all past
+// `--` too, and each option's values (`values`), of `--x=v`, and `--x v` for
+// one `valued` names.
+export function optionsOf(argv, from, valued = VALUED) {
+  const operands = [], values = new Map()
   for (let at = from; at < argv.length; at++) {
-    const word = argv[at]
-    if (word === '--') return [...words, ...argv.slice(at + 1)]
-    if (VALUED.test(word)) at++
-    else if (!word.startsWith('-')) words.push(word)
+    const [, name, joined] = /^(--[\w-]+)=(.*)$/u.exec(argv[at]) ?? [], word = argv[at]
+    if (word === '--') return { operands: [...operands, ...argv.slice(at + 1)], values }
+    if (name || valued.test(word)) values.set(name ?? word, [...values.get(name ?? word) ?? [], joined ?? argv[++at] ?? ''])
+    else if (!word.startsWith('-')) operands.push(word)
   }
-  return words
+  return { operands, values }
 }
-
-// The packages `--package`/`-p` names (npx, `npm exec`, `pnpm dlx`).
-function packageOptions(argv) {
-  const named = []
-  for (let at = 1; at < argv.length && argv[at] !== '--'; at++) {
-    const m = /^--package=(.+)$/u.exec(argv[at])
-    if (m) named.push(m[1])
-    else if (argv[at] === '-p' || argv[at] === '--package') named.push(argv[++at] ?? '')
-  }
-  return named.filter(Boolean)
-}
+export const positional = (argv, from) => optionsOf(argv, from).operands
+// The values of `names`' options, in their order.
+export const valuesOf = ({ values }, ...names) => names.flatMap(name => values.get(name) ?? [])
 
 // What an exec (npx, `npm exec`, bunx, dlx) fetches: its `--package`s, else
 // its command's; none with `--no`, `--offline`, or a command line (`-c`).
 function execPackages(tool, argv, from, localFirst) {
   if (argv.some(word => /^(?:--no|--no-install|--offline)$/u.test(word))) return []
-  const named = packageOptions(argv)
+  const named = valuesOf(optionsOf(argv, 1), '-p', '--package').filter(Boolean)
   if (named.length === 0 && argv.some(word => word === '-c' || word === '--call')) return []
   return (named.length > 0 ? named : positional(argv, from).slice(0, 1)).flatMap(text => fetched(tool, npmSpec(text), { localFirst }))
 }
@@ -69,12 +63,8 @@ function execPackages(tool, argv, from, localFirst) {
 // The directory an install names for its project (`--prefix`, `-C`, `--dir`,
 // `--cwd`); null for the one it runs in, `.` too.
 export function projectOf(argv) {
-  for (let at = 1; at < argv.length && argv[at] !== '--'; at++) {
-    const m = /^(?:-C|--prefix|--dir|--cwd)(?:=(.*))?$/u.exec(argv[at])
-    const dir = m ? m[1] ?? argv[at + 1] ?? null : undefined
-    if (dir !== undefined) return dir === null || /^\.\/?$/u.test(dir) ? null : dir
-  }
-  return null
+  const [dir = null] = valuesOf(optionsOf(argv, 1), '-C', '--prefix', '--dir', '--cwd')
+  return dir === null || /^\.\/?$/u.test(dir) ? null : dir
 }
 
 const installs = (tool, words) => words.flatMap(text => fetched(tool, npmSpec(text)))
@@ -85,10 +75,8 @@ const unlocked = tool => [{ kind: 'unlocked-install', tool }]
 const isInstalled = word => /^(?:\.{1,2}(?:\/|$)|file:|link:|workspace:)/u.test(word)
 
 function npm(argv) {
-  const words = positional(argv, 1)
-  const [command = '', ...rest] = words
-  const at = argv.indexOf(command)
-  if (command === 'exec' || command === 'x') return execPackages(`npm ${command}`, argv, at + 1, true)
+  const [command = '', ...rest] = positional(argv, 1)
+  if (command === 'exec' || command === 'x') return execPackages(`npm ${command}`, argv, argv.indexOf(command) + 1, true)
   if (/^(?:create|init|innit)$/u.test(command)) return created(`npm ${command}`, rest[0])
   if (new RegExp(`^(?:${NPM_INSTALLS})$`, 'u').test(command)) {
     const named = rest.filter(word => !isInstalled(word))

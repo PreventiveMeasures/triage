@@ -1,6 +1,6 @@
 // What a `run:` script fetches and runs past what a lockfile or a digest pins,
 // command by command (shell.js), each with its line in the script from 0.
-import { NPM_INSTALLS, fetched, npmToolFinds, positional, projectOf } from './packages.js'
+import { NPM_INSTALLS, fetched, npmToolFinds, optionsOf, positional, projectOf, valuesOf } from './packages.js'
 import { scriptCommands, scriptLines } from './shell.js'
 import { SHELLS as SHELL_NAMES } from '../../files/runs-code.js'
 import { readImage } from '../uses.js'
@@ -48,16 +48,9 @@ const pythonPackage = text => {
 }
 
 // The packages pip installs by name, not a requirements file's or a path.
-function pip(tool, argv, from) {
-  const named = []
-  for (let at = from; at < argv.length; at++) {
-    if (/^(?:-r|--requirement|-c|--constraint|-e|--editable|-i|--index-url|--extra-index-url|-t|--target|--prefix|--root|-f|--find-links)$/u.test(argv[at])) at++
-    else if (!argv[at].startsWith('-') && !/^\.{1,2}(?:\/|$)/u.test(argv[at])) named.push(argv[at])
-  }
-  return named.flatMap(text => fetched(tool, pythonPackage(text), { ecosystem: 'pypi' }))
-}
-
-const firstArg = (argv, from) => argv.slice(from).find(word => !word.startsWith('-')) ?? null
+const PIP_VALUED = /^(?:-r|--requirement|-c|--constraint|-e|--editable|-i|--index-url|--extra-index-url|-t|--target|--prefix|--root|-f|--find-links)$/u
+const pip = (tool, argv, from) => optionsOf(argv, from, PIP_VALUED).operands.filter(word => !/^\.{1,2}(?:\/|$)/u.test(word))
+  .flatMap(text => fetched(tool, pythonPackage(text), { ecosystem: 'pypi' }))
 // A package named `name@version`, as Go's, crates' and Deno's are.
 const atVersion = (text, exact) => {
   const at = text.lastIndexOf('@')
@@ -70,35 +63,22 @@ function python(program, argv) {
   if (/^python[\d.]*$/u.test(program) && argv[1] === '-m' && /^pip\d?$/u.test(argv[2] ?? '') && argv[3] === 'install') return pip(`${program} -m pip`, argv, 4)
   if (program === 'uv' && argv[1] === 'pip' && argv[2] === 'install') return pip('uv pip', argv, 3)
   if (program === 'uvx' || (program === 'uv' && argv[1] === 'tool' && /^(?:run|install)$/u.test(argv[2] ?? ''))) {
-    const from = program === 'uvx' ? 1 : 3
-    const spec = argv.includes('--from') ? argv[argv.indexOf('--from') + 1] : firstArg(argv, from)
+    const options = optionsOf(argv, program === 'uvx' ? 1 : 3, /^--(?:from|python|with)$/u), [spec] = [...valuesOf(options, '--from'), ...options.operands]
     return fetched(program === 'uvx' ? 'uvx' : `uv tool ${argv[2]}`, spec && pythonPackage(spec), { ecosystem: 'pypi' })
   }
   if (program === 'pipx' && /^(?:run|install)$/u.test(argv[1] ?? '')) {
-    const spec = argv.includes('--spec') ? argv[argv.indexOf('--spec') + 1] : firstArg(argv, 2)
+    const options = optionsOf(argv, 2, /^--(?:spec|python)$/u), [spec] = [...valuesOf(options, '--spec'), ...options.operands]
     return fetched(`pipx ${argv[1]}`, spec && pythonPackage(spec), { ecosystem: 'pypi' })
   }
   return []
 }
 
-// An option's value (`--version 1.2.3`, `--version=1.2.3`), or null.
-function valueOf(argv, names) {
-  for (let at = 1; at < argv.length; at++) {
-    if (names.test(argv[at])) return argv[at + 1] ?? null
-    const joined = /^(--[\w-]+)=(.*)$/u.exec(argv[at])
-    if (joined && names.test(joined[1])) return joined[2]
-  }
-  return null
-}
-
-// The words past `from` that aren't options or `valued`'s values.
-const operands = (argv, from, valued) => argv.slice(from).filter((word, at, words) => !word.startsWith('-') && !valued.test(words[at - 1] ?? ''))
 
 const EXACT_SEMVER = text => /^=?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test(text)
 
 // `go install|run x@v`, a version held to Go's checksum database.
 function go(argv) {
-  const target = operands(argv, 2, /^-(?:o|modfile|tags|ldflags|gcflags|C)$/u)[0]
+  const [target] = optionsOf(argv, 2, /^-(?:o|modfile|tags|ldflags|gcflags|C)$/u).operands
   return target?.includes('@') ? fetched(`go ${argv[1]}`, atVersion(target, spec => /^v\d+\.\d+\.\d+/u.test(spec)), { ecosystem: 'go' }) : []
 }
 
@@ -106,20 +86,18 @@ function go(argv) {
 // `locked` with `--locked`.
 function cargo(argv) {
   if (argv.includes('--path')) return []
-  const git = valueOf(argv, /^--git$/u)
-  const crate = operands(argv, 2, /^--(?:version|git|branch|rev|tag|root|features|registry|index|bin|example|target|profile|jobs)$|^-[jF]$/u)[0]
+  const options = optionsOf(argv, 2, /^--(?:version|git|branch|rev|tag|root|features|registry|index|bin|example|target|profile|jobs)$|^-[jF]$/u)
+  const [git = null] = valuesOf(options, '--git'), [crate] = options.operands, [version = null] = valuesOf(options, '--version')
   if (!crate && !git) return []
-  const version = valueOf(argv, /^--version$/u)
-  const spec = git ? { name: git, spec: valueOf(argv, /^--(?:rev|tag|branch)$/u), exact: valueOf(argv, /^--rev$/u) !== null, registry: false }
-    : atVersion(crate, EXACT_SEMVER)
+  const [ref = null] = valuesOf(options, '--rev', '--tag', '--branch')
+  const spec = git ? { name: git, spec: ref, exact: valuesOf(options, '--rev').length > 0, registry: false } : atVersion(crate, EXACT_SEMVER)
   return fetched(`cargo ${argv[1]}`, { ...spec, spec: spec.spec ?? version, exact: spec.exact || (!git && EXACT_SEMVER(version ?? '')), locked: argv.includes('--locked') }, { ecosystem: 'crates' })
 }
 
 // `gem install x [-v 1.2.3]`.
 function gem(argv) {
-  const version = valueOf(argv, /^(?:-v|--version)$/u)
-  return operands(argv, 2, /^(?:-v|--version|-i|--install-dir|-s|--source|-n|--bindir)$/u)
-    .flatMap(name => fetched('gem install', { name, spec: version, exact: /^=?\s*\d+(?:\.\d+)+$/u.test(version ?? ''), registry: true }, { ecosystem: 'rubygems' }))
+  const options = optionsOf(argv, 2, /^(?:-v|--version|-i|--install-dir|-s|--source|-n|--bindir)$/u), [version = null] = valuesOf(options, '-v', '--version')
+  return options.operands.flatMap(name => fetched('gem install', { name, spec: version, exact: /^=?\s*\d+(?:\.\d+)+$/u.test(version ?? ''), registry: true }, { ecosystem: 'rubygems' }))
 }
 
 // `deno run|install|x` of a URL or a registry's package.

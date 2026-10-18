@@ -5,6 +5,7 @@ import { readUses, usesKey } from '../risk/actions/uses.js'
 import { dockerfileFindings, latestOf, newestOfLines, tagVersion } from '../risk/actions/resolve.js'
 import { scriptFinds } from '../risk/actions/scripts/commands.js'
 import { lockedName, scriptFindings } from '../risk/actions/scripts/grade.js'
+import { actionsSourceOf } from './_actions-source.js'
 
 const SHA = char => char.repeat(40)
 const ids = findings => findings.map(({ id, severity, line }) => `${id}/${severity}${line === undefined ? '' : `@${line}`}`)
@@ -286,27 +287,6 @@ describe('a Dockerfile\'s findings', () => {
   })
 })
 
-// GitHub as a source answers it, of `repos`, each `{ info, tags, branches,
-// history, files }`: `history` by a commit or a branch, the commits in it;
-// what was asked noted.
-function sourceOf(repos) {
-  const asked = []
-  const repo = name => repos[name.toLowerCase()]
-  return {
-    asked,
-    repo: name => { asked.push(['repo', name]); return Promise.resolve(repo(name)?.info ?? null) },
-    tags: name => { asked.push(['tags', name]); return Promise.resolve(repo(name)?.tags ?? []) },
-    tag: (name, tag) => Promise.resolve(repo(name)?.tags?.find(each => each.tag === tag)?.oid ?? null),
-    branch: (name, branch) => Promise.resolve(repo(name)?.branches?.find(each => each.branch === branch)?.oid ?? null),
-    branches: name => Promise.resolve({ branches: repo(name)?.branches ?? [], complete: repo(name)?.complete ?? true }),
-    contains(name, base, sha) {
-      asked.push(['contains', base, sha])
-      const { history = {}, missing = [] } = repo(name) ?? {}
-      return Promise.resolve(missing.includes(sha) ? null : (history[base] ?? [base]).includes(sha))
-    },
-    file: (name, path, commit) => Promise.resolve(repo(name)?.files?.[`${path}@${commit}`] ?? null),
-  }
-}
 
 // An action's repository: main at A, its history A > B > C; v1.0.0 at C,
 // v1.1.0 and the v1 that moves with it at B, v2.0.0 at A, and v2 moved to D,
@@ -327,7 +307,7 @@ const ACT = {
 
 describe('a reference resolved on GitHub', () => {
   const resolve = async (text, comment = null, repos = null, owner = 'me') => {
-    const source = sourceOf(repos ?? { 'org/act': ACT })
+    const source = actionsSourceOf(repos ?? { 'org/act': ACT })
     const resolved = await resolveAction(readUses(text, { comment }), source, { owner })
     return { ...resolved, asked: source.asked, found: ids(resolved.findings) }
   }
@@ -358,7 +338,7 @@ describe('a reference resolved on GitHub', () => {
     assert.deepEqual((await resolve(`org/act@${SHA('c')}`)).found, [], 'action.yaml, where no action.yml is')
     const imposter = await resolve(`org/act@${SHA('f')}`)
     assert.deepEqual(imposter.found, ['imposter-commit/critical', 'action-missing/moderate'])
-    assert.deepEqual(imposter.asked.filter(([what]) => what === 'contains').map(([, base]) => base), [SHA('a'), SHA('b'), SHA('9')],
+    assert.deepEqual(imposter.asked.filter(([what]) => what === 'contains').map(([, , base]) => base), [SHA('a'), SHA('b'), SHA('9')],
       'its default branch\'s head, each line\'s latest release, its other branches, each commit once')
     const branches = Array.from({ length: 30 }, (_, at) => ({ branch: `b${at}`, oid: at.toString(16).padStart(40, '7') }))
     assert.deepEqual((await resolve(`org/act@${SHA('f')}`, null, { 'org/act': { ...ACT, branches: [...ACT.branches, ...branches] } })).found.slice(0, 1), ['imposter-commit/critical'], 'every branch listed')
@@ -370,7 +350,7 @@ describe('a reference resolved on GitHub', () => {
 
   it('a reusable workflow\'s `./` call of another, at its own commit', async () => {
     const files = { [`.github/workflows/ci.yml@${SHA('b')}`]: 'on: workflow_call\njobs:\n  a:\n    uses: ./.github/workflows/child.yml\n' }
-    const resolved = await resolveAction(readUses(`org/act/.github/workflows/ci.yml@${SHA('b')}`, { job: true }), sourceOf({ 'org/act': { ...ACT, files } }))
+    const resolved = await resolveAction(readUses(`org/act/.github/workflows/ci.yml@${SHA('b')}`, { job: true }), actionsSourceOf({ 'org/act': { ...ACT, files } }))
     assert.deepEqual(resolved.uses, [`org/act/.github/workflows/child.yml@${SHA('b')}`])
   })
 
@@ -384,7 +364,7 @@ describe('a reference resolved on GitHub', () => {
 
   it('kept for a scan, each answer by what was asked, a failure asked again', async () => {
     let asked = 0
-    const source = keptSource({ ...sourceOf({ 'org/act': ACT }), tags: () => { asked++; return asked === 1 ? Promise.reject(new Error('busy')) : Promise.resolve(ACT.tags) } })
+    const source = keptSource({ ...actionsSourceOf({ 'org/act': ACT }), tags: () => { asked++; return asked === 1 ? Promise.reject(new Error('busy')) : Promise.resolve(ACT.tags) } })
     await assert.rejects(resolveAction(readUses('org/act@v1'), source), /busy/u)
     await resolveAction(readUses('org/act@v1'), source)
     await resolveAction(readUses('org/act@v2'), source)
