@@ -2,16 +2,14 @@
 // (repository-risk.ts): opened at its default branch's head, its lockfiles
 // of npm's ecosystem listed (findRepoLockfiles), those of its `paths` alone,
 // each read for its packages (@preventive/lockfile), and access to it checked
-// again before they are told (`recheck`); its Dependabot alerts, open or dismissed, of
+// again before they are told (`recheck`); and its Dependabot alerts, open or dismissed, of
 // npm's, where the source asks them (dependabot-alerts.ts), asked meanwhile
-// and never kept, a failure to have them its own; and its workflows and the
-// actions of its own they use, where it lists them (repository-actions.ts),
-// read meanwhile too. A listing is kept by the commit it was listed at, its
-// Actions' files too, and a lockfile's packages by its blob, none of which
-// changes: in the instance's memory, and the source's `listings`,
-// `actionFiles` and `lockfiles` for SCAN_READ_KEPT_MS, so that only opening
-// a repository and checking access to it again ask GitHub where all else is
-// kept.
+// and never kept, a failure to have them its own, and its GitHub Actions
+// (repository-actions.ts). A listing is kept by the commit it was listed at,
+// its Actions' files too, and a lockfile's packages by its blob: in the
+// instance's memory, and the source's `listings`, `actionFiles` and
+// `lockfiles` for SCAN_READ_KEPT_MS, so that only opening a repository and
+// checking access to it again ask GitHub where all else is kept.
 import type { LockfileFormat, RepoLockfile } from '@preventive/upstream/github.js'
 import type { AlertsRead } from './dependabot-access.ts'
 import type { DependabotAlert } from './dependabot-alerts.ts'
@@ -51,8 +49,7 @@ export interface OpenedRepository {
   file(path: string): Promise<string>
   recheck(): Promise<void>
   dependabot?(): Promise<AlertsRead>
-  // Its workflows' paths (.github/workflows/*.yml and .yaml), none where it
-  // has none.
+  // Its workflows' paths, none where it has none.
   workflows?(): Promise<string[]>
 }
 
@@ -152,11 +149,9 @@ export async function readRepository<R extends RepositoryRiskRepo>(reading: Repo
   const listed = await listLockfiles(reading, repo)
   if (!listed || 'type' in listed) return listed
   const alerting = readDependabot(listed.opened, repo.paths)
-  // Its Actions' files, kept by the commit where none failed for a while.
   const { opened } = listed, { workflows } = opened
   const acting = workflows ? keptRead(reading.caches.actionFiles, reading.source.actionFiles, `${repo.repoId}@${opened.commit}`,
     () => readActions({ workflows, file: path => opened.file(path) }), lastingRead) : Promise.resolve(null)
-  // Read on, as alerting is, while the lockfiles are.
   acting.catch(() => {})
   const lockfiles: RepositoryRead['lockfiles'] = []
   for (const lockfile of listed.lockfiles) {

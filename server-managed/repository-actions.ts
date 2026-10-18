@@ -1,13 +1,10 @@
-// A repository's GitHub Actions in a repository risk scan (repository-risk.ts):
-// its workflows and the actions of its own they use, each scanned (risk
-// scanWorkflow), and the references they make resolved (risk resolveAction),
-// MAX_DEPTH deep and MAX_ACTIONS in all. Of a public repository, a reference
-// resolved is kept for RISK_KEPT_MS by its key, and what GitHub answers is
-// kept for every scan (sharedSource), as many repositories use the same few
-// actions; a private one's is the admin's own access's alone.
-import { YamlError } from '@preventive/lockfile/yaml.js'
-import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, actionInstalls, dockerfileFindings, keptSource, readWorkflow,
-  resolveAction, scanWorkflow, usesOfKey, workflowUses } from '../risk/index.js'
+// A repository's GitHub Actions in a risk scan (repository-risk.ts): its
+// workflows and its own actions scanned (risk scanWorkflow), and the
+// references they make resolved (risk resolveAction). Of a public
+// repository, a reference resolved and what GitHub answers are kept for
+// every scan, as many repositories use the same few actions.
+import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, dockerfileFindings, keptSource, ownFilesOf, resolveAction,
+  scanWorkflow, usesOfKey } from '../risk/index.js'
 import type { OpenedRepository } from './repository-risk-read.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
@@ -24,20 +21,17 @@ const MAX_ACTIONS = 1000
 const MAX_DEPTH = 4
 const RESOLVERS = 4
 
-// A file of a repository's Actions read: a workflow, an action of its own,
-// or such an action's Dockerfile, its text or why it couldn't be had.
+// A file of a repository's Actions: its text, or why it couldn't be had.
 export type ActionsFile = { path: string; kind: 'workflow' | 'action' | 'dockerfile' } & ({ text: string } | RiskFailure)
 export type WorkflowsRead = { files: ActionsFile[] } | RiskFailure
 
-// What a scan tells of them: a repository's workflows' paths, each file's
-// findings and references, or why not, and each reference resolved, or why
-// not, by its key and the owner of the workflow that named it first.
+// What a scan tells of them: the workflows' paths, each file's scan, and
+// each reference resolved, or why not.
 export type WorkflowsLine = { type: 'workflows'; repo: number } & ({ paths: string[] } | RiskFailure)
 export type WorkflowLine = { type: 'workflow'; repo: number; path: string; kind: ActionsFile['kind'] } & (WorkflowScan | RiskFailure)
 export type ActionLine = { type: 'action' } & (ResolvedAction | { key: string } & RiskFailure)
 
-// A reference to resolve: its key, the owner of the workflow naming it, and
-// how deep it is named.
+// A reference to resolve, by the owner of the workflow naming it.
 export interface ActionRef { key: string; owner: string | null; depth: number }
 
 // What reading a repository's Actions asks of it.
@@ -58,55 +52,33 @@ export const lastingRead = (read: WorkflowsRead) => !('error' in read) && read.f
 // An action's directory, by its metadata's path.
 const actionDir = (path: string) => path.replace(/\/?action\.ya?ml$/u, '')
 const inRepository = (path: string) => !path.split('/').includes('..')
+const notFound = (read: { text: string } | RiskFailure) => 'error' in read && read.error === 'github-not-found'
 
-// The actions of the repository's own a workflow or an action uses, by the
-// directory each is in: `./path` as the workspace has it, which is the
-// repository where it was checked out first, and `$/path`; and a Docker
-// action's Dockerfile, by its path.
-function ownFiles(path: string, kind: 'workflow' | 'action', text: string): { actions: string[]; dockerfile: string | null } {
-  try {
-    const read = readWorkflow(kind, text)
-    const dockerfile = read.dockerfile && [actionDir(path), read.dockerfile.path.replace(/^\.\//u, '')].filter(Boolean).join('/')
-    return { actions: workflowUses(read).flatMap(uses => uses.kind === 'local' && !uses.job && inRepository(uses.path) ? [uses.path] : []),
-      dockerfile: dockerfile && inRepository(dockerfile) ? dockerfile : null }
-  } catch (error) {
-    if (error instanceof YamlError) return { actions: [], dockerfile: null }
-    throw error
-  }
-}
-
-// A repository's workflows and the actions of its own they use, in turn,
-// and those's Dockerfiles, MAX_FILES at most; why not, where they couldn't
-// be listed.
+// A repository's workflows, the actions of its own they use in turn (`./`
+// as the workspace has it, the repository checked out first) and those's
+// Dockerfiles, MAX_FILES at most; why not, where they couldn't be listed.
 export async function readActions(reading: ActionsReading): Promise<WorkflowsRead> {
   let listed
   try { listed = await reading.workflows() } catch (error) { return failureOf(error, 'listing its workflows') }
-  const files: ActionsFile[] = []
-  for (const path of listed.slice(0, MAX_FILES)) files.push({ path, kind: 'workflow', ...await readFile(reading, path) })
-  const dirs = new Set<string>()
-  for (let at = 0; at < files.length && files.length < MAX_FILES; at++) {
+  const files: ActionsFile[] = await Promise.all(listed.slice(0, MAX_FILES).map(async path => ({ path, kind: 'workflow' as const, ...await readFile(reading, path) })))
+  const seen = new Set<string>()
+  for (let at = 0; at < files.length; at++) {
     const file = files[at]!
     if (!('text' in file) || file.kind === 'dockerfile') continue
-    const { actions, dockerfile } = ownFiles(file.path, file.kind, file.text)
-    if (dockerfile && files.length < MAX_FILES) files.push({ path: dockerfile, kind: 'dockerfile', ...await readFile(reading, dockerfile) })
+    const { actions, dockerfile } = ownFilesOf(file.kind, file.text)
+    const path = dockerfile && [actionDir(file.path), dockerfile].filter(Boolean).join('/')
+    if (path && inRepository(path) && files.length < MAX_FILES) files.push({ path, kind: 'dockerfile', ...await readFile(reading, path) })
     for (const dir of actions) {
-      if (files.length >= MAX_FILES) break
-      if (dirs.has(dir)) continue
-      dirs.add(dir)
-      const named = dir === '' ? 'action' : `${dir}/action`
-      let path = `${named}.yml`, read = await readFile(reading, path)
-      if ('error' in read && read.error === 'github-not-found') {
-        const yaml = await readFile(reading, `${named}.yaml`)
-        if (!('error' in yaml && yaml.error === 'github-not-found')) { path = `${named}.yaml`; read = yaml }
-      }
-      files.push({ path, kind: 'action', ...read })
+      if (files.length >= MAX_FILES || seen.has(dir) || !inRepository(dir) || !seen.add(dir)) continue
+      const named = dir === '' ? 'action' : `${dir}/action`, yml = await readFile(reading, `${named}.yml`)
+      const yaml = notFound(yml) ? await readFile(reading, `${named}.yaml`) : null
+      files.push(yaml && !notFound(yaml) ? { path: `${named}.yaml`, kind: 'action', ...yaml } : { path: `${named}.yml`, kind: 'action', ...yml })
     }
   }
   return { files }
 }
 
-// A lockfile's packages' names, as npx is held to them, and those only
-// devDependencies need, which an install leaving them out doesn't install.
+// A lockfile's packages' names, and those only devDependencies need.
 export function lockedNames(path: string, packages: readonly { name: string; dev?: true }[]) {
   const dev = new Map<string, boolean>()
   for (const { name, dev: only } of packages) dev.set(name, (dev.get(name) ?? true) && only === true)
@@ -119,34 +91,15 @@ export function actionsLines(repo: number, owner: string, read: WorkflowsRead, l
   if ('error' in read) return { lines: [{ type: 'workflows', repo, ...read } as WorkflowsLine], refs: [] as ActionRef[] }
   const lines: (WorkflowsLine | WorkflowLine)[] = [{ type: 'workflows', repo, paths: read.files.filter(file => file.kind === 'workflow').map(file => file.path) }]
   const refs = new Map<string, ActionRef>()
-  // Where its own actions install its packages, by their directories: by
-  // their steps, and the actions of its own those use in turn, each install
-  // once, worked out again until none install more.
-  const actions = read.files.flatMap(file => file.kind === 'action' && 'text' in file ? [{ dir: actionDir(file.path), text: file.text }] : [])
-  const installers: NonNullable<ScanOptions['installers']> & Map<string, ReturnType<typeof actionInstalls>> = new Map()
-  for (let grew = true; grew;) {
-    grew = false
-    for (const { dir, text } of actions) {
-      const at = [...new Map(actionInstalls(text, installers).map(each => [`${each.at}\0${each.prod}`, each])).values()]
-      if (at.length > (installers.get(dir)?.length ?? 0)) grew = Boolean(installers.set(dir, at))
-    }
-  }
+  const actions = new Map(read.files.flatMap(file => file.kind === 'action' && 'text' in file ? [[actionDir(file.path), file.text] as const] : []))
   for (const file of read.files) {
-    if (!('text' in file)) { lines.push({ type: 'workflow', repo, ...file }); continue }
-    const at = { type: 'workflow', repo, path: file.path, kind: file.kind } as const
-    try {
-      const scan = file.kind === 'dockerfile' ? { uses: [], findings: dockerfileFindings(file.text) } : scanWorkflow(file.kind, file.text, { owner, lockfiles, installers })
-      lines.push({ ...at, ...scan })
-      for (const uses of scan.uses) if (uses.kind === 'action' || uses.kind === 'workflow') refs.set(uses.key!, { key: uses.key!, owner, depth: 0 })
-    } catch (error) {
-      if (!(error instanceof YamlError)) throw error
-      lines.push({ ...at, error: 'workflow-unreadable', detail: error.message.slice(0, 500) })
-    }
+    const scan = 'error' in file ? file : file.kind === 'dockerfile' ? { uses: [], findings: dockerfileFindings(file.text) } : scanWorkflow(file.kind, file.text, { owner, lockfiles, actions })
+    lines.push({ type: 'workflow', repo, path: file.path, kind: file.kind, ...scan })
+    if ('uses' in scan) for (const uses of scan.uses) if (uses.kind === 'action' || uses.kind === 'workflow') refs.set(uses.key!, { key: uses.key!, owner, depth: 0 })
   }
   return { lines, refs: [...refs.values()] }
 }
 
-// What GitHub answered of public repositories, as sharedSource keeps it.
 export type ActionAnswers = Lru<{ at: number; answer: unknown }>
 // An answer's weight: an entry of a list, a kilobyte of a file.
 export const answerWeight = ({ answer }: { at: number; answer: unknown }) => Array.isArray(answer) ? answer.length + 1
@@ -154,19 +107,15 @@ export const answerWeight = ({ answer }: { at: number; answer: unknown }) => Arr
 
 const isCommit = (text: string) => /^[\da-f]{40}$/u.test(text)
 
-// `source`, what it answers of a public repository kept in `answers` for
-// every scan, as it is the same whoever asks: the repository, its tags and
-// branches for RISK_KEPT_MS, as they move, and of a commit (one in another's
-// history, a file at it) while kept, but none, as a commit can be pushed
-// later. Of a private repository, or one GitHub has none of, which may only
-// be one the asker can't read, none.
+// `source`, what it answers of a public repository kept for every scan, the
+// same whoever asks: of a commit while kept (but none, as one can be pushed
+// later), the rest for RISK_KEPT_MS. A private one's, or one missing, never.
 export function sharedSource(source: ActionsSource, answers: ActionAnswers): ActionsSource {
   const keyOf = (what: string, name: string, ...more: string[]) => [what, name.toLowerCase(), ...more].join('\0')
   const kept = (key: string, lasting = false) => {
     const at = answers.get(key)
     return at && ((lasting && at.answer !== null) || Date.now() - at.at < RISK_KEPT_MS) ? at : undefined
   }
-  // A public repository's, kept once its own answer is.
   async function shared<T>(name: string, key: string, lasting: boolean, ask: () => Promise<T>): Promise<T> {
     if (!kept(keyOf('repo', name))) return ask()
     const at = kept(key, lasting)
@@ -201,9 +150,8 @@ export interface ActionsResolving {
   store?: KeptStore<ActionLine> | undefined
 }
 
-// A reference's line: kept, within RISK_KEPT_MS, else resolved, and kept
-// where it is a public repository's, as it is then the same whoever named
-// it; why not, where it couldn't be.
+// A reference's line: kept, else resolved, and kept where it is a public
+// repository's; why not, where it couldn't be.
 async function resolved(resolving: ActionsResolving, source: ActionsSource, { key, owner }: ActionRef): Promise<ActionLine | null> {
   const kept = resolving.memory.get(key) ?? await resolving.store?.read(key).then(row => row && { at: row.at, line: row.value })
   if (kept && Date.now() - kept.at < RISK_KEPT_MS) { resolving.memory.set(key, kept); return kept.line }
@@ -223,12 +171,10 @@ async function resolved(resolving: ActionsResolving, source: ActionsSource, { ke
 // Whether a reference is named by a workflow of its repository's owner.
 const ownOwners = ({ key, owner }: ActionRef) => key.split('/')[0] === owner?.toLowerCase()
 
-// Resolves the references added (`add`), each once a scan, RESOLVERS at once,
-// each told as it is, and those it names in turn, `source`'s answers kept
-// for the scan, and a public repository's for every scan (sharedSource);
-// once more where another owner's workflow names one its own owner's did,
-// as a repository missing is red then (risk resolve.js), its line the one
-// told. `close` settles once all are told, or the scan stops.
+// Resolves the references added, and those they name in turn, each once a
+// scan, RESOLVERS at once, each told as it is; once more where another
+// owner's workflow names one its own owner's did, as a repository missing is
+// red then. `close` settles once all are told, or the scan stops.
 export function resolvingActions(resolving: ActionsResolving) {
   const source = keptSource(sharedSource(resolving.source, resolving.answers))
   const pending: Queue<ActionRef> = queue(resolving.signal)
@@ -251,7 +197,7 @@ export function resolvingActions(resolving: ActionsResolving) {
         if (line && latest.get(ref.key) === ref) {
           resolving.tell(line)
           const owner = 'repository' in line ? (line.repository?.fullName ?? line.repo).split('/')[0]! : ref.owner
-          if ('uses' in line) add(line.uses.map(({ key }) => ({ key, owner, depth: ref.depth + 1 })))
+          if ('uses' in line) add(line.uses.map(key => ({ key, owner, depth: ref.depth + 1 })))
         }
       } finally { waiting--; settle() }
     }

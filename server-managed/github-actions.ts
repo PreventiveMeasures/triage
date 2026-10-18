@@ -1,12 +1,6 @@
-// What a repository risk scan resolves actions with (actions-scan
-// ActionsSource): GitHub, read with a token, an admin's own as browsing a
-// repository is, or none for public repositories alone. @preventive/upstream's
-// client asks for a repository, followed where it was renamed or transferred,
-// its tags, a tag's commit, a branch's head and a file at a commit, each
-// held to what was asked; GitHub's compare API tells whether a commit is in a
-// branch's or a commit's history, and its branches' first page is listed.
-// What GitHub has none of reads as none; anything else is thrown as a
-// GithubApiError.
+// GitHub as a risk scan resolves actions with (risk ActionsSource), read with
+// an admin's own token, or none for public repositories alone: what GitHub
+// has none of reads as none, anything else is thrown as a GithubApiError.
 import { createClient } from '@preventive/upstream/github.js'
 import type { ActionsSource } from '../risk/index.js'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'

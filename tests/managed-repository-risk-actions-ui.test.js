@@ -32,7 +32,7 @@ const LINES = [
   { type: 'action', key: 'third/party@v1', kind: 'action', repo: 'third/party', path: '', ref: 'v1', pin: 'ref',
     repository: { fullName: 'third/party', fork: null, archived: false, private: false }, commit: SHA('b'), at: 'tag', tags: ['v1'], latest: 'v1.0.0', using: 'composite',
     file: 'action.yml', findings: [{ id: 'tag-off-release', severity: 'high', release: 'v1.0.0' }, { id: 'remote-script', severity: 'high', command: 'curl x | sh', file: 'action.yml', line: 7 }],
-    uses: [{ key: 'deep/dep@main', line: 4, file: 'action.yml' }] },
+    uses: ['deep/dep@main'] },
   { type: 'action', key: 'deep/dep@main', error: 'github-rate-limited' },
 ]
 

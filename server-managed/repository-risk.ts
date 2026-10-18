@@ -23,12 +23,9 @@
 // vulnerabilities, told beside. A repository's Dependabot alerts of npm's, open or dismissed,
 // are told once its lockfiles' advisories are, each with the versions its
 // lockfile locks that it covers, for the page to blend them into npm's; one
-// whose alerts couldn't be had tells why, and the scan goes on. Where the
-// source lists a repository's workflows, they and the actions of its own
-// they use are told once its lockfiles are, each read for what it calls for
-// (repository-actions.ts), and the actions and reusable workflows of others
-// they name resolved on GitHub as the scan goes on (`actions`), each once,
-// before it is done.
+// whose alerts couldn't be had tells why, and the scan goes on. Its GitHub
+// Actions are told once its lockfiles are, the references they make
+// resolved as the scan goes on (repository-actions.ts).
 import type { LockfileFormat } from '@preventive/upstream/github.js'
 import { type Severity, npmMalwareAdvisory } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
@@ -86,11 +83,9 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends Audi
   // Readies npm's downloads of packages before they are assessed
   // (scan-downloads.ts); without it, each assessment asks its own.
   downloads?: DownloadsSource
-  // Resolves the actions and reusable workflows of others that repositories'
-  // workflows name, on GitHub; without it, none is resolved.
+  // GitHub as references are resolved with; none without it.
   actions?: ActionsSource
-  // Where a repository's Actions' files as read at a commit, and a reference
-  // resolved, are kept beyond this instance.
+  // Where Actions' files read and references resolved are kept.
   actionFiles?: KeptStore<WorkflowsRead>
   actionLines?: KeptStore<ActionLine>
 }
@@ -184,8 +179,6 @@ interface Scan {
   stale: AssessedPackage[]
   // The repositories told whole, this part or one before (ScanProgress).
   told: Map<number, ToldRepository>
-  // Resolves the references repositories' Actions make, where the source
-  // does.
   actions: ReturnType<typeof resolvingActions> | null
 }
 
@@ -357,8 +350,7 @@ async function tellRepository(scan: Scan, repo: RepositoryRiskRepo, read: Reposi
     lockfiles: lockfiles.flatMap(({ sha, line }) => 'packages' in line ? [`${line.format}\0${sha}`] : []), ...refs.length > 0 ? { actions: refs } : {} })
 }
 
-// A repository's Actions told, npx held to its lockfiles' packages, and the
-// references they make given to resolve: those references.
+// A repository's Actions told, and the references they make to resolve.
 function tellActions(scan: Scan, repo: RepositoryRiskRepo, read: WorkflowsRead, lockfiles: RepositoryRead['lockfiles']) {
   const locked = lockfiles.flatMap(({ line }) => 'packages' in line ? [lockedNames(line.path, line.packages)] : [])
   const { lines, refs } = actionsLines(repo.repoId, repo.fullName.split('/')[0]!, read, locked)
@@ -444,8 +436,6 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
   // none waited for: the work under way, such as a request to GitHub, which
   // isn't given up on at once, outlasting it.
   const lines = queue<RepositoryRiskLine>(AbortSignal.any([signal, part.signal]), { drain: true })
-  // What repositories' Actions name is resolved alongside the assessments,
-  // and waited on before the scan is done.
   const actions = source.actions ? resolvingActions({ source: source.actions, signal: running, tell: line => { lines.add(line) }, memory: caches.actions,
     answers: caches.actionAnswers, store: source.actionLines }) : null
   const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [], told: new Map(), actions }

@@ -113,29 +113,17 @@ test('a scan tells a repository\'s workflows and actions of its own, npx held to
     'each once, and what one names in turn')
   assert.deepEqual(actions.find(({ key }) => key === 'nested/one@main').findings.map(({ id }) => id), ['branch-ref'])
   assert.deepEqual(lines.at(-1), { type: 'done' })
-  assert.ok(lines.indexOf(actions.at(-1)) < lines.length - 1)
 })
 
 test('an action of the repository\'s own counts as an install before a step only where it installs', async () => {
-  const ci = 'on: push\njobs:\n  a:\n    steps:\n      - uses: ./.github/actions/setup\n      - run: npx eslint .\n'
-  const found = async script => {
-    const files = { ...FILES, '.github/workflows/ci.yml': ci, '.github/actions/setup/action.yaml': `runs:\n  using: composite\n  steps:\n    - run: ${script}\n      shell: bash\n` }
-    return findingIds(ofType(await scan(sourceOf({ files })), 'workflow')[0].findings)
-  }
-  assert.deepEqual(await found('npm ci'), [])
-  assert.deepEqual(await found('npm run lint'), ['fetched-package/high@6'])
-  // One using another of its own: as that one does.
-  const wrapped = async script => {
-    const files = { ...FILES, '.github/workflows/ci.yml': ci, '.github/actions/setup/action.yaml': 'runs:\n  using: composite\n  steps:\n    - uses: ./deps\n',
-      'deps/action.yml': `runs:\n  using: composite\n  steps:\n    - run: ${script}\n      shell: bash\n` }
-    return findingIds(ofType(await scan(sourceOf({ files })), 'workflow')[0].findings)
-  }
-  assert.deepEqual([await wrapped('npm ci'), await wrapped('npm run lint'), await wrapped('npm ci --prefix web')], [[], ['fetched-package/high@6'], ['fetched-package/high@6']])
-  // One that installs itself and uses another that does: both's.
-  const files = { ...FILES, '.github/workflows/ci.yml': ci.replace('npx eslint .', 'npx eslint .\n        working-directory: api'),
-    '.github/actions/setup/action.yaml': 'runs:\n  using: composite\n  steps:\n    - run: npm ci --prefix web\n      shell: bash\n    - uses: ./deps\n',
-    'deps/action.yml': 'runs:\n  using: composite\n  steps:\n    - run: npm ci --prefix api\n      shell: bash\n', 'api/package-lock.json': lockfile }
-  assert.deepEqual(findingIds(ofType(await scan(sourceOf({ files })), 'workflow')[0].findings), [])
+  const ci = 'on: push\njobs:\n  a:\n    steps:\n      - uses: ./.github/actions/setup\n      - run: npx eslint .\n        working-directory: api\n'
+  const steps = (...lines) => `runs:\n  using: composite\n  steps:\n${lines.map(line => `    - ${line}\n${line.startsWith('run') ? '      shell: bash\n' : ''}`).join('')}`
+  const found = async (own, deps = '') => findingIds(ofType(await scan(sourceOf({ files: { ...FILES, '.github/workflows/ci.yml': ci,
+    '.github/actions/setup/action.yaml': own, 'deps/action.yml': deps } })), 'workflow')[0].findings)
+  assert.deepEqual([await found(steps('run: npm ci')), await found(steps('run: npm run lint'))], [[], ['fetched-package/high@6']])
+  // One using another of its own: as that one does, both's where it installs too.
+  assert.deepEqual([await found(steps('uses: ./deps'), steps('run: npm ci')), await found(steps('uses: ./deps'), steps('run: npm ci --prefix web')),
+    await found(steps('run: npm ci --prefix web', 'uses: ./deps'), steps('run: npm ci --prefix api'))], [[], ['fetched-package/high@6'], []])
 })
 
 test('a lockfile\'s names, and those only devDependencies need', () => {
@@ -143,21 +131,15 @@ test('a lockfile\'s names, and those only devDependencies need', () => {
   assert.deepEqual([[...names], [...dev]], [['a', 'b', 'c'], ['b']])
 })
 
-test('a repository\'s Actions are read 200 files at most, however many actions one workflow uses', async () => {
-  const steps = Array.from({ length: 250 }, (_, at) => `      - uses: ./a${at}\n`).join('')
-  const asked = []
-  const read = await readActions({
-    workflows: () => Promise.resolve(['.github/workflows/ci.yml']),
-    file: path => { asked.push(path); return Promise.resolve(path.endsWith('ci.yml') ? `on: push\njobs:\n  a:\n    steps:\n${steps}` : 'runs:\n  using: node20\n  main: x.js\n') },
-  })
-  assert.deepEqual([read.files.length, asked.length], [200, 200])
-})
-
-test('an action of the repository\'s own in a directory named like YAML is read', async () => {
-  const asked = []
-  await readActions({ workflows: () => Promise.resolve(['.github/workflows/ci.yml']),
-    file: path => { asked.push(path); return Promise.resolve(path.endsWith('ci.yml') ? 'on: push\njobs:\n  a:\n    steps:\n      - uses: ./tools/build.yaml\n' : 'runs:\n  using: node20\n  main: x.js\n') } })
-  assert.deepEqual(asked, ['.github/workflows/ci.yml', 'tools/build.yaml/action.yml'])
+test('a repository\'s Actions are read 200 files at most, however many actions one workflow uses, one in a directory named like YAML among them', async () => {
+  const read = async (...uses) => {
+    const asked = [], ci = `on: push\njobs:\n  a:\n    steps:\n${uses.map(each => `      - uses: ${each}\n`).join('')}`
+    const { files } = await readActions({ workflows: () => Promise.resolve(['.github/workflows/ci.yml']),
+      file: path => { asked.push(path); return Promise.resolve(path.endsWith('ci.yml') ? ci : 'runs:\n  using: node20\n  main: x.js\n') } })
+    return [files.length, asked]
+  }
+  assert.deepEqual((await read(...Array.from({ length: 250 }, (_, at) => `./a${at}`))).map(each => each.length ?? each), [200, 200])
+  assert.deepEqual(await read('./tools/build.yaml'), [2, ['.github/workflows/ci.yml', 'tools/build.yaml/action.yml']])
 })
 
 test('a Docker action of the repository\'s own has its Dockerfile read', async () => {

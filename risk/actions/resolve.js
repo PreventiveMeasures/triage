@@ -103,11 +103,9 @@ async function repositoryOf(uses, source, owner) {
   return { info, findings }
 }
 
-// Where `sha` is in the repository's history: on its default branch
-// (`default`), in a release's (`release`), on another branch (`branch`); in
-// none (`none`), or none of those looked at where more are (`unknown`); or
-// `missing`, a commit GitHub hasn't. Each looked in once, from its commit,
-// as what GitHub answers of two commits holds for good.
+// Where `sha` is in the history (`default`, `release`, `branch`), `none`,
+// `unknown` where not all could be looked in, or `missing`: each branch and
+// release looked in once, from its commit.
 async function reachable(source, info, sha, tags) {
   const name = info.fullName, releases = newestOfLines(tags ?? []).slice(0, MAX_LINES)
   if (releases.some(({ oid }) => oid === sha)) return 'release'
@@ -177,7 +175,7 @@ async function pinnedOf(uses, info, source, tags) {
 const selfRef = (uses, info, commit) => readUses(`${info.fullName}/${uses.path}@${commit}`, { job: isWorkflowPath(uses.path) })
 
 // What a reference runs at `commit` (action.yml, a reusable workflow, a
-// Dockerfile): its findings and references, each with its file.
+// Dockerfile): its findings, each with its file, and the references it makes.
 async function codeOf(uses, info, commit, source) {
   const dir = uses.path ? `${uses.path}/` : '', name = info.fullName
   const candidates = uses.kind === 'workflow' ? [uses.path] : [`${dir}action.yml`, `${dir}action.yaml`]
@@ -187,20 +185,14 @@ async function codeOf(uses, info, commit, source) {
     if (text !== null) { file = path; break }
   }
   if (text === null) return { findings: [{ id: 'action-missing', severity: 'moderate' }], uses: [] }
-  let read
-  try { read = readWorkflow(uses.kind === 'workflow' ? 'workflow' : 'action', text) } catch (error) {
-    if (!(error instanceof YamlError)) throw error
-    return { findings: [{ id: 'unreadable', severity: 'moderate', file, detail: error.message }], uses: [] }
-  }
+  const read = readWorkflow(uses.kind === 'workflow' ? 'workflow' : 'action', text)
+  if (read instanceof YamlError) return { findings: [{ id: 'unreadable', severity: 'moderate', file, detail: read.message }], uses: [] }
   const findings = workflowFindings(read, { owner: name.split('/')[0], external: true }).map(finding => ({ ...finding, file }))
-  const dockerfile = read.dockerfile && `${dir}${read.dockerfile.path.replace(/^\.\//u, '')}`
+  const dockerfile = read.dockerfile && `${dir}${read.dockerfile.path}`
   const docker = dockerfile && !dockerfile.split('/').includes('..') ? await source.file(name, dockerfile, commit) : null
   if (docker !== null) findings.push(...dockerfileFindings(docker).map(finding => ({ ...finding, file: dockerfile })))
-  const nested = workflowUses(read).flatMap(each => {
-    if (each.kind !== 'local') return [each]
-    return each.self || each.job ? [{ ...selfRef(each, info, commit), line: each.line }] : []
-  })
-  return { findings, uses: nested.filter(each => each.kind === 'action' || each.kind === 'workflow').map(each => ({ key: usesKey(each), line: each.line, file })) }
+  const nested = workflowUses(read).map(each => each.kind === 'local' ? (each.self || each.job) && selfRef(each, info, commit) : each)
+  return { findings, uses: nested.filter(each => each?.kind === 'action' || each?.kind === 'workflow').map(usesKey) }
 }
 
 // A reference resolved (index.d.ts ResolvedAction); `owner`, whose workflow names it.

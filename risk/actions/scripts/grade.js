@@ -3,12 +3,12 @@ import { HOST_TAGS, npmExfiltration, npmHostTags } from '../../files/hosts.js'
 import { lineOf } from '../../files/script.js'
 import { installsOf, scriptFinds } from './commands.js'
 
-// What of a workflow's expressions anyone can write (a title, a body, a
-// branch's name, a commit's message), which a script runs as its own code, and the events a workflow runs on with
-// its secrets for a fork's or anyone's.
+// The events a workflow runs on with its secrets for anyone's pull request.
 const PRIVILEGED_TRIGGERS = new Set(['pull_request_target', 'workflow_run', 'issue_comment', 'issues', 'discussion', 'discussion_comment',
   'pull_request_review', 'pull_request_review_comment', 'fork', 'watch'])
 
+// The expressions anyone can write: a title, a body, a branch's name, a
+// commit's message, a fork's description.
 const INDEX = String.raw`(?:\s*\[[^\]]*\]|\.\*)`
 const AUTHOR = String.raw`(?:author|committer)\.(?:email|name)`
 const UNTRUSTED = new RegExp(String.raw`\bgithub\s*\.\s*(?:head_ref|event\s*\.\s*(?:`
@@ -61,14 +61,12 @@ function packageSeverity(found, { locked, installed, external }) {
   return found.exact || found.spec?.includes('$') ? 'moderate' : 'high'
 }
 
-const packageOf = ({ tool, name, spec, localFirst }) => ({ tool, name, spec, ...localFirst ? { localFirst } : {} })
-
-// The findings of one find of a script.
-function graded(found, context) {
+// The findings of one find of a script, `locked` what a lockfile says of it.
+function graded(found, context, locked) {
   if (found.kind === 'package') {
-    const locked = found.ecosystem === 'npm' && found.localFirst ? Boolean(context.locked(found.name)) : false
-    const severity = packageSeverity(found, { locked, installed: context.installed, external: context.external })
-    return severity ? [{ id: 'fetched-package', severity, ...packageOf(found), ...found.localFirst ? { locked, installed: context.installed } : {} }] : []
+    const { tool, name, spec, localFirst } = found, installed = context.installed
+    const severity = packageSeverity(found, { locked, installed, external: context.external })
+    return severity ? [{ id: 'fetched-package', severity, tool, name, spec, ...localFirst ? { localFirst, locked, installed } : {} }] : []
   }
   if (found.kind === 'unlocked-install') return [{ id: 'unlocked-install', severity: /^(?:yarn|bun)\b/u.test(found.tool) ? 'low' : 'moderate', tool: found.tool }]
   if (found.kind === 'remote-script') return [{ id: 'remote-script', severity: 'high', command: found.command }]
@@ -91,9 +89,9 @@ export function scriptFindings(run, context) {
   // An install earlier in the script, in its own directory, counts as one in a step before.
   const installs = installsOf(run.script, run.production).filter(({ into }) => into === null)
   for (const found of scriptFinds(run.script)) {
-    const dev = found.kind === 'package' && context.locked(found.name) === 'dev'
-    const before = context.installed(dev) || installs.some(({ order, prod }) => order < found.order && !(prod && dev))
-    for (const finding of graded(found, { ...context, installed: before })) findings.push({ ...finding, line: fileLine(run, found.line) })
+    const locked = found.kind === 'package' && found.ecosystem === 'npm' && found.localFirst && context.locked(found.name)
+    const before = context.installed(locked === 'dev') || installs.some(({ order, prod }) => order < found.order && !(prod && locked === 'dev'))
+    for (const finding of graded(found, { ...context, installed: before }, Boolean(locked))) findings.push({ ...finding, line: fileLine(run, found.line) })
   }
   for (const [tag, services] of npmHostTags(npmExfiltration('run.sh', run.script, true))) {
     findings.push({ id: 'hosts', severity: HOST_TAGS.get(tag), tag, services: [...services.keys()], line: fileLine(run, Math.min(...[...services.values()].flat()) - 1) })

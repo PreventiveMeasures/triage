@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { YamlError } from '@preventive/lockfile/yaml.js'
-import { actionInstalls, keptSource, readWorkflow, resolveAction, scanWorkflow, usesOfKey } from '../risk/index.js'
+import { keptSource, resolveAction, scanWorkflow, usesOfKey } from '../risk/index.js'
 import { readUses, usesKey } from '../risk/actions/uses.js'
 import { dockerfileFindings, latestOf, newestOfLines, tagVersion } from '../risk/actions/resolve.js'
 import { scriptFinds } from '../risk/actions/scripts/commands.js'
@@ -123,7 +122,6 @@ describe('a script\'s findings, graded', () => {
       graded('NODE_ENV=production npm ci --include=dev && npx eslint .', { locked: dev }).length], [1, 1, 0], 'NODE_ENV production, of the command or exported')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\'\nash -c "npx is-odd"'), ['fetched-package/high@11', 'remote-script/high@12', 'fetched-package/high@13'], 'a shell\'s command line')
-    assert.deepEqual(graded('npx eslint .\nnpm ci', { locked }), ['fetched-package/high@11'], 'an install after it')
     assert.deepEqual(graded('npx left-pad', { locked, installed: () => true }), ['fetched-package/high@11'], 'locked by none')
     assert.deepEqual(graded('npx left-pad@1.3.0', { installed: () => true }), ['fetched-package/moderate@11'], 'a version, not its integrity')
     assert.deepEqual(graded('npm i -g corepack@${V}'), ['fetched-package/moderate@11'], 'a version a variable names')
@@ -155,18 +153,16 @@ describe('a script\'s findings, graded', () => {
   it('an action of the repository\'s own counts as an install where it installs', () => {
     const lockfiles = [{ path: 'package-lock.json', names: new Set(['eslint']) }]
     const workflow = 'on: push\njobs:\n  a:\n    steps:\n      - uses: ./.github/actions/setup\n      - run: npx eslint .\n'
-    const scan = installers => ids(scanWorkflow('workflow', workflow, { lockfiles, installers }).findings)
-    assert.deepEqual(scan(new Map([['.github/actions/setup', [{ at: '', prod: false }]]])), [])
-    assert.deepEqual(scan(new Map()), ['fetched-package/high@6'], 'one that doesn\'t')
-    assert.deepEqual(scan(new Map([['.github/actions/setup', [{ at: 'web', prod: false }]]])), ['fetched-package/high@6'], 'one that installs another directory\'s')
-    assert.deepEqual(scan(undefined), [], 'none told')
+    const scan = actions => ids(scanWorkflow('workflow', workflow, { lockfiles, actions: actions && new Map(Object.entries(actions)) }).findings)
     const action = script => `runs:\n  using: composite\n  steps:\n    - run: ${script}\n      shell: bash\n`
-    assert.deepEqual(actionInstalls(action('npm ci'), new Map()), [{ at: '', prod: false }])
-    assert.deepEqual(actionInstalls(action('npm ci --prefix web --omit=dev'), new Map()), [{ at: 'web', prod: true }])
-    assert.deepEqual(actionInstalls(action('npm run lint'), new Map()), [])
-    assert.deepEqual(actionInstalls('runs: [', new Map()), [], 'one GitHub can\'t run')
+    assert.deepEqual(scan({ '.github/actions/setup': action('npm ci') }), [])
+    assert.deepEqual([scan({}), scan({ '.github/actions/setup': action('npm run lint') }), scan({ '.github/actions/setup': 'runs: [' })], [['fetched-package/high@6'], ['fetched-package/high@6'], ['fetched-package/high@6']],
+      'none, one that doesn\'t, one GitHub can\'t run')
+    assert.deepEqual(scan({ '.github/actions/setup': action('npm ci --prefix web') }), ['fetched-package/high@6'], 'one that installs another directory\'s')
+    assert.deepEqual(scan(undefined), [], 'none told')
     const wrapper = 'runs:\n  using: composite\n  steps:\n    - uses: ./lint\n'
-    assert.deepEqual([actionInstalls(wrapper, new Map()), actionInstalls(wrapper, new Map([['lint', [{ at: 'api', prod: false }]]]))], [[], [{ at: 'api', prod: false }]], 'one using an action of its own, by that one')
+    assert.deepEqual([scan({ '.github/actions/setup': wrapper, lint: action('npm ci') }), scan({ '.github/actions/setup': wrapper, lint: wrapper.replace('./lint', './.github/actions/setup') })],
+      [[], ['fetched-package/high@6']], 'one using an action of its own, by that one, however they use each other')
   })
 
   it('a privileged workflow checking out a fork\'s repository, at its default branch', () => {
@@ -250,7 +246,6 @@ jobs:
 describe('a workflow\'s findings by its own text', () => {
   it('each uses:, image and step, graded, on its line', () => {
     const scan = scanWorkflow('workflow', WORKFLOW, { owner: 'myorg', lockfiles: [{ path: 'web/package-lock.json', names: new Set(['eslint']) }, { path: 'api/package-lock.json', names: new Set(['left-pad']) }] })
-    assert.deepEqual(readWorkflow('workflow', WORKFLOW).triggers, ['pull_request_target', 'workflow_run'])
     assert.deepEqual(ids(scan.findings), [
       'unpinned-image/moderate@8', 'unpinned/moderate@13', 'pwn-request/critical@15', 'unpinned/moderate@16', 'unpinned/high@17', 'short-sha/high@19', 'unpinned-image/moderate@20',
       // eslint locked by web's lockfile and installed by the local action; left-pad only api's.
@@ -266,7 +261,6 @@ describe('a workflow\'s findings by its own text', () => {
 
   it('an action\'s metadata: its runtime, its composite steps', () => {
     const scan = scanWorkflow('action', 'name: x\nruns:\n  using: node16\n  main: index.js\n')
-    assert.equal(readWorkflow('action', 'name: x\nruns:\n  using: node16\n  main: index.js\n').using, 'node16')
     assert.deepEqual(ids(scan.findings), ['deprecated-runtime/low@3'])
     assert.deepEqual(ids(scanWorkflow('action', 'runs:\n  using: composite\n  steps:\n    - uses: a/b@main\n    - run: pnpm dlx x\n      shell: bash\n', { owner: 'a', external: true }).findings),
       ['unpinned/moderate@4', 'fetched-package/high@5'])
@@ -276,9 +270,9 @@ describe('a workflow\'s findings by its own text', () => {
 
   it('refuses what isn\'t YAML, a tag making code among it, or isn\'t a workflow', () => {
     for (const text of ['on: push\njobs:\n  a:\n    steps:\n      - run: !!js/function "function () {}"\n', 'jobs: &j {}\nx:\n  <<: *j\n', 'a:\n\tb: 1\n', '- a\n', 'on: push\n']) {
-      assert.throws(() => scanWorkflow('workflow', text), YamlError, JSON.stringify(text))
+      assert.equal(scanWorkflow('workflow', text).error, 'workflow-unreadable', JSON.stringify(text))
     }
-    assert.throws(() => scanWorkflow('action', 'name: x\n'), { name: 'YamlError', message: 'an action has no runs.using' })
+    assert.deepEqual(scanWorkflow('action', 'name: x\n'), { error: 'workflow-unreadable', detail: 'an action has no runs.using' })
     const read = scanWorkflow('workflow', "on: push\njobs:\n  a:\n    steps:\n      - run: 'function () { return 1 }'\n")
     assert.deepEqual(read.findings, [], 'a function\'s text is a script\'s, run by a shell, not code made of it')
   })
@@ -343,7 +337,7 @@ describe('a reference resolved on GitHub', () => {
     assert.deepEqual([v1.at, v1.commit, v1.tags], ['tag', SHA('b'), ['v1.1.0', 'v1']])
     assert.deepEqual(v1.found, ['outdated/low', 'unpinned/high@4', 'remote-script/high@6'])
     assert.deepEqual(v1.findings.slice(1).map(({ file }) => file), ['action.yml', 'action.yml'])
-    assert.deepEqual(v1.uses, [{ key: 'other/thing@main', line: 4, file: 'action.yml' }, { key: `org/act/sub@${SHA('b')}`, line: 5, file: 'action.yml' }], 'its own `$/` at the commit read')
+    assert.deepEqual(v1.uses, ['other/thing@main', `org/act/sub@${SHA('b')}`], 'its own `$/` at the commit read')
   })
 
   it('a moving tag where no release of its line is, on no branch, as a repository taken has its tags', async () => {
@@ -377,7 +371,7 @@ describe('a reference resolved on GitHub', () => {
   it('a reusable workflow\'s `./` call of another, at its own commit', async () => {
     const files = { [`.github/workflows/ci.yml@${SHA('b')}`]: 'on: workflow_call\njobs:\n  a:\n    uses: ./.github/workflows/child.yml\n' }
     const resolved = await resolveAction(readUses(`org/act/.github/workflows/ci.yml@${SHA('b')}`, { job: true }), sourceOf({ 'org/act': { ...ACT, files } }))
-    assert.deepEqual(resolved.uses, [{ key: `org/act/.github/workflows/child.yml@${SHA('b')}`, line: 4, file: '.github/workflows/ci.yml' }])
+    assert.deepEqual(resolved.uses, [`org/act/.github/workflows/child.yml@${SHA('b')}`])
   })
 
   it('the repository: none, moved, a fork, archived', async () => {

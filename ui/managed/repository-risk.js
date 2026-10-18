@@ -31,8 +31,7 @@ import { adminNavigation } from './navigation.js'
 import { request, responseLines } from './bundle-data.js'
 import { fetchTeams } from './admin-api.js'
 import { BUNDLE_ICON_SVG, DEPENDABOT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from '../view/icons.js'
-import { ACTION_KINDS, ActionsState, findingsCell, pinnedTo, referenceHref, severityRank } from './repository-risk-actions.js'
-import { encodePath } from '../view/bundle-origin-links.js'
+import { ACTION_KINDS, ActionsState, findingsCell, githubHref, pinnedTo, referenceHref, severityRank } from './repository-risk-actions.js'
 import '../view/repository-selector.js'
 import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
@@ -273,9 +272,6 @@ function usedInCell(lockfiles, links, alerts, noun = 'lockfiles') {
   return html`<details class="risk-used-all"><summary>${formatCount.format(used.length)} ${noun}${dismissed > 0 ? `, ${formatCount.format(dismissed)} dismissed` : ''}</summary>
     <ul>${used.map(each => html`<li>${lockfileLink(each, links, alerts)}</li>`)}</ul></details>`
 }
-
-// A file on GitHub at a commit.
-const blobHref = (repo, commit, path) => `https://github.com/${repo}/blob/${commit}/${encodePath(path)}`
 
 // Whether an id is a GHSA, as an advisory and a Dependabot alert share it.
 const isGhsa = id => typeof id === 'string' && /^GHSA(?:-[\da-z]{4}){3}$/iu.test(id)
@@ -753,7 +749,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const links = new Map()
     for (const repo of this._repos.values()) {
       for (const path of repo.commit ? repo.lockfiles?.keys() ?? [] : []) {
-        links.set(`${repo.fullName}/${path}`, blobHref(repo.fullName, repo.commit, path))
+        links.set(`${repo.fullName}/${path}`, githubHref(repo.fullName, repo.commit, path))
       }
     }
     return links
@@ -1006,11 +1002,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       ${this._resultsHead(html`${this._kindToggle('Which advisories', KINDS, { production: kinds.production.length, development: kinds.development.length }, this._kind, kind => { this._kind = kind })}${this._search(rows.length, kinds[this._kind].length, 'advisories')}`)}
       ${this._dependabotStatus()}
       ${failed.length > 0 ? html`<p class="msg error">npm’s advisories couldn’t be had for <span data-tooltip=${failed.join('\n')}>${failed.length === 1 ? failed[0] : `${formatCount.format(failed.length)} lockfiles`}</span>.</p>` : nothing}
-      ${rows.length === 0 ? html`<p class="msg">${this._state === 'running' ? 'None yet.' : none}</p>` : html`<div class="link-table"><table>
-        <thead><tr><th>Package</th><th>Versions</th><th>Severity</th><th>Advisory</th><th>Title</th><th>Affected</th><th>Used in</th></tr></thead>
-        <tbody>${repeat(rows.slice(0, MAX_ROWS), row => `${row.id}\0${row.name}`, row => this._advisoryRow(row, links))}</tbody>
-      </table></div>`}
-      ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search to see others.</p>` : nothing}
+      ${this._table(rows, this._state === 'running' ? 'None yet.' : none, html`<th>Package</th><th>Versions</th><th>Severity</th><th>Advisory</th><th>Title</th><th>Affected</th><th>Used in</th>`,
+        row => `${row.id}\0${row.name}`, row => this._advisoryRow(row, links))}
     </section>`
   }
 
@@ -1021,12 +1014,15 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return html`<section class="risk-section" aria-label="Actions">
       ${this._resultsHead(html`${this._kindToggle('Which', ACTION_KINDS, counts, this._actionKind, kind => { this._actionKind = kind })}
         ${this._search(rows.length, counts[this._actionKind], 'rows', 'name')}`)}
-      ${rows.length === 0 ? html`<p class="msg">${empty}</p>` : html`<div class="link-table"><table>
-        <thead><tr><th>Uses</th><th>Pinned to</th><th>Findings</th><th class="risk-used-column">Used in</th></tr></thead>
-        <tbody>${repeat(rows.slice(0, MAX_ROWS), row => row.key, row => this._actionRow(row))}</tbody>
-      </table></div>`}
-      ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search to see others.</p>` : nothing}
+      ${this._table(rows, empty, html`<th>Uses</th><th>Pinned to</th><th>Findings</th><th class="risk-used-column">Used in</th>`, row => row.key, row => this._actionRow(row))}
     </section>`
+  }
+
+  // A table of `rows` under `head`, MAX_ROWS at most; `empty` where none are.
+  _table(rows, empty, head, key, row) {
+    return html`${rows.length === 0 ? html`<p class="msg">${empty}</p>` : html`<div class="link-table"><table>
+        <thead><tr>${head}</tr></thead><tbody>${repeat(rows.slice(0, MAX_ROWS), key, row)}</tbody></table></div>`}
+      ${rows.length > MAX_ROWS ? html`<p class="msg">Showing the first ${formatCount.format(MAX_ROWS)}. Search to see others.</p>` : nothing}`
   }
 
   // A row: a reference by its key, linked to it on GitHub, and what it is
@@ -1054,7 +1050,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
       if (via) return `via ${via}`
       const { fullName = String(repo), commit } = this._repos.get(repo) ?? {}
       const text = `${fullName}/${path}:${line}`
-      if (commit) links.set(text, `${blobHref(fullName, commit, path)}${line ? `#L${line}` : ''}`)
+      if (commit) links.set(text, `${githubHref(fullName, commit, path)}${line ? `#L${line}` : ''}`)
       return text
     })
     return usedInCell(used, links, undefined, 'places')

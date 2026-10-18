@@ -88,7 +88,7 @@ const EXTENSION = /[^/.][^/]*\.[^/]*$/u
 
 // A path's parts, `spec`'s from `parts`, each `..` a directory up; null for
 // one leading past the top.
-function resolved(parts, spec) {
+export function resolved(parts, spec) {
   const all = [...parts]
   for (const part of spec.split('/')) {
     if (part === '..' && all.pop() === undefined) return null

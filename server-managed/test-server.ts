@@ -1093,8 +1093,8 @@ function serveReportLocation(url: URL, res: ServerResponse): boolean {
 
 type RiskFixtureLine = { type: string; id?: number; repo?: number; name?: string; packages?: ({ name: string } & Record<string, unknown>)[] } & Record<string, unknown>
 
-// A workflow and an action of the first repository's own, as a scan reads
-// them (repository-actions.ts), each line's findings worked out of its text.
+// A workflow of the first repository's, as a scan reads it
+// (repository-actions.ts), its findings worked out of its text.
 const FIXTURE_WORKFLOW = `name: CI
 on:
   pull_request_target:
@@ -1103,6 +1103,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    container: node:20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.1
         with:
@@ -1116,19 +1117,6 @@ jobs:
           npx left-pad --help
           echo "\${{ github.event.pull_request.title }}"
       - run: curl -fsSL https://get.example.com/install.sh | bash
-  image:
-    runs-on: ubuntu-latest
-    container: node:20
-    steps:
-      - uses: ./.github/actions/setup
-`
-const FIXTURE_ACTION = `name: Set up
-runs:
-  using: composite
-  steps:
-    - uses: pnpm/action-setup@main
-    - run: pnpm dlx create-thing
-      shell: bash
 `
 
 // The references those name, resolved, as GitHub would have them.
@@ -1142,21 +1130,19 @@ function fixtureActions(): RiskFixtureLine[] {
   return [
     action('actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.1', { commit: 'de0fac2e4500dabe0009e67214ff5f5447ce83dd', at: 'sha', tags: ['v6.0.1', 'v6'] }),
     action('actions/setup-node@v4', { commit: commit('4'), at: 'tag', tags: ['v4.4.0', 'v4'], findings: [{ id: 'outdated', severity: 'low', latest: 'v6.0.0' }] }),
-    action('tj-actions/changed-files@v45', { commit: commit('0'), at: 'tag', tags: ['v45'], uses: [{ key: 'tj-actions/glob@main', line: 12, file: 'action.yml' }],
+    action('tj-actions/changed-files@v45', { commit: commit('0'), at: 'tag', tags: ['v45'],
       findings: [{ id: 'tag-off-release', severity: 'high', release: 'v45.0.7' }, { id: 'tag-off-branch', severity: 'low' },
         { id: 'remote-script', severity: 'high', file: 'action.yml', line: 20 }, { id: 'hosts', severity: 'critical', tag: 'Exfiltration', services: ['webhook-site'], file: 'action.yml', line: 21 }] }),
     action('someone/deploy-action@0123456789abcdef0123456789abcdef01234567 # v2.1.0', { commit: '0123456789abcdef0123456789abcdef01234567', at: 'sha', tags: [],
       findings: [{ id: 'imposter-commit', severity: 'critical' }, { id: 'comment-mismatch', severity: 'high', comment: 'v2.1.0', tags: [] }] }),
-    action('pnpm/action-setup@main', { commit: commit('9'), at: 'branch', tags: [], findings: [{ id: 'branch-ref', severity: 'high' }] }),
-    action('tj-actions/glob@main', { commit: commit('8'), at: 'branch', tags: [], findings: [{ id: 'branch-ref', severity: 'high' }, { id: 'repo-moved', severity: 'high', to: 'tj-actions/glob-v2' }] }),
   ]
 }
 
 // The first repository's Actions' lines, as a scan tells them, npx held to
 // its npm lockfile's packages.
 function fixtureWorkflows(repo: number, owner: string, locked: string[]): RiskFixtureLine[] {
-  const files = [{ path: '.github/workflows/ci.yml', kind: 'workflow', text: FIXTURE_WORKFLOW }, { path: '.github/actions/setup/action.yml', kind: 'action', text: FIXTURE_ACTION }] as const
-  return actionsLines(repo, owner, { files: [...files] }, [{ path: 'package-lock.json', names: new Set(locked) }]).lines as unknown as RiskFixtureLine[]
+  return actionsLines(repo, owner, { files: [{ path: '.github/workflows/ci.yml', kind: 'workflow', text: FIXTURE_WORKFLOW }] },
+    [{ path: 'package-lock.json', names: new Set(locked) }]).lines as unknown as RiskFixtureLine[]
 }
 
 // A scan of the connected repositories' npm lockfiles (repository-risk.ts),

@@ -87,15 +87,20 @@ function runsOf(file, doc) {
   const imageLine = lineOf(file, runs, 'image', usingLine)
   const docker = image?.startsWith('docker://') ? { text: image.slice('docker://'.length), line: imageLine, read: readImage(image.slice('docker://'.length)) } : null
   const steps = using === 'composite' ? stepsOf(file, runs.steps, null) : []
-  return { using, usingLine, dockerfile: image && !docker ? { path: image, line: imageLine } : null, jobs: [{ uses: null, steps, images: docker ? [docker] : [] }] }
+  return { using, usingLine, dockerfile: image && !docker ? { path: image.replace(/^\.\//u, ''), line: imageLine } : null, jobs: [{ uses: null, steps, images: docker ? [docker] : [] }] }
 }
 
-// A workflow (`kind` 'workflow') or an action's metadata ('action') read; a
-// YamlError for one GitHub can't run.
+// A workflow (`kind` 'workflow') or an action's metadata ('action') read, or
+// the YamlError of one GitHub can't run.
 export function readWorkflow(kind, text) {
-  const file = { lines: text.split('\n'), positions: new WeakMap() }
-  const doc = parseYaml(text, { workflow: true, lines: file.positions })
-  if (!isMap(doc)) throw new YamlError(`${kind === 'action' ? 'an action' : 'a workflow'} is not a mapping`)
-  if (kind === 'action') return { triggers: [], ...runsOf(file, doc) }
-  return { triggers: triggersOf(doc.on), using: null, usingLine: null, dockerfile: null, jobs: jobsOf(file, doc) }
+  try {
+    const file = { lines: text.split('\n'), positions: new WeakMap() }
+    const doc = parseYaml(text, { workflow: true, lines: file.positions })
+    if (!isMap(doc)) throw new YamlError(`${kind === 'action' ? 'an action' : 'a workflow'} is not a mapping`)
+    if (kind === 'action') return { triggers: [], ...runsOf(file, doc) }
+    return { triggers: triggersOf(doc.on), using: null, usingLine: null, dockerfile: null, jobs: jobsOf(file, doc) }
+  } catch (error) {
+    if (error instanceof YamlError) return error
+    throw error
+  }
 }

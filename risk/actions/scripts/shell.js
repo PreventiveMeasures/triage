@@ -1,10 +1,6 @@
 // A `run:` script read into the commands it runs, as a shell would split
-// them, for commands.js: its lines continued joined, comments set aside,
-// each line split at `&&`, `||`, `;`, `&` and `|`, each command's words
-// unquoted, past settings and wrappers (`NAME=value`, `sudo -E`, `env`), a
-// command substitution and a shell's command line (`sh -c '…'`) read as a
-// line of its own. A quick read, not a shell's parse: a command built as the
-// script runs goes unseen.
+// them, for commands.js. A quick read, not a shell's parse: a command built
+// as the script runs goes unseen.
 import { SHELLS } from '../../files/runs-code.js'
 
 // A shell, by its program, wherever it is (risk's runs-code.js SHELLS).
@@ -123,12 +119,9 @@ function shellLine([program, ...words]) {
   return at === -1 ? null : words[at + 1] ?? null
 }
 
-// Each command of a script: `{ argv, piped, line, order, next }`, `line` the
-// one it is on, counting from 0, `order` its place among them all, as they
-// run, and `next` the command a pipe feeds it to, as a script fetched is fed
-// to a shell; a command substitution's before the command it is of, as it
-// is expanded first, and a shell's command line's after the shell. 64 lines
-// read of each.
+// Each command of a script, in the order they run (`order`): its `line` from
+// 0, and `next`, the command a pipe feeds it to; a command substitution's
+// before its command's, a shell's command line's (`sh -c`) after it.
 export function scriptCommands(script) {
   const found = []
   let read = 0

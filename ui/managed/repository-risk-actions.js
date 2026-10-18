@@ -1,11 +1,6 @@
-// The Actions tab of Manage → Repositories → Risk (repository-risk.js): what
-// each repository's workflows pull in, as the scan tells it
-// (server-managed/repository-actions.ts): each action and reusable workflow
-// of another repository, by its key, resolved on GitHub, what it is pinned
-// to and what it calls for, its own code's findings among them; and each
-// thing a workflow's steps fetch or run past a pin, by what it is, wherever
-// it is. Each row is used in the workflows that name it, each linked to its
-// line on GitHub at the commit read, or in the actions that name it in turn.
+// The Actions tab of Manage → Repositories → Risk (repository-risk.js): a row
+// of each reference repositories' workflows make, resolved on GitHub, and of
+// each thing their steps fetch or run past a pin, each where it is used.
 import { html, nothing } from 'lit'
 import { SEVERITIES } from '../../risk/files/stamps.js'
 import { encodePath } from '../view/bundle-origin-links.js'
@@ -45,8 +40,6 @@ const ACTION_FINDINGS = {
   'action-missing': ['No action.yml', 'No action.yml where it names, at the commit.'],
   'unreadable': ['Unreadable', 'Its file couldn’t be read as GitHub reads it.'],
 }
-const HOST_LABELS = { 'Exfiltration': 'Exfiltration host', 'Remote': 'Remote host', 'IP lookup': 'IP lookup' }
-
 export const ACTION_KINDS = {
   all: ['All'],
   actions: ['Actions', 'Actions and reusable workflows of other repositories, resolved on GitHub.'],
@@ -55,7 +48,7 @@ export const ACTION_KINDS = {
 
 export const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const worst = findings => findings.reduce((best, { severity }) => severityRank(severity) < severityRank(best) ? severity : best, null)
-const findingLabel = finding => finding.id === 'hosts' ? HOST_LABELS[finding.tag] ?? 'Host' : ACTION_FINDINGS[finding.id]?.[0] ?? finding.id
+const findingLabel = finding => finding.id === 'hosts' ? (finding.tag === 'IP lookup' ? finding.tag : `${finding.tag ?? ''} host`.trimStart()) : ACTION_FINDINGS[finding.id]?.[0] ?? finding.id
 
 // What a finding found, as its tooltip tells it beside what it says.
 function findingDetail(finding) {
@@ -134,12 +127,8 @@ export class ActionsState {
       actions: named.length, resolved: named.filter(row => row.line).length }
   }
 
-  // A row of each reference, resolved or not yet, and of each thing steps
-  // fetch or run past a pin, or else call for, by what it is: where it is
-  // used (`usedIn`, a file's line or a reference naming it), its findings and
-  // the worst. The most severe first, then, of none, those that couldn't be
-  // resolved, those still to be, and those found nothing of; then those of
-  // more findings, then by name.
+  // The rows, each with where it is used (`usedIn`), its findings and the
+  // worst: the most severe first, then those failed, pending, clean.
   #build() {
     const refs = new Map(), steps = new Map()
     const ref = key => refs.get(key) ?? refs.set(key, { key, kind: 'action', usedIn: [], local: [] }).get(key)
@@ -160,7 +149,7 @@ export class ActionsState {
     // repository forgotten named is no row.
     const named = [...refs.keys()]
     for (let at = 0; at < named.length; at++) {
-      for (const { key } of this.actions.get(named[at])?.uses ?? []) {
+      for (const key of this.actions.get(named[at])?.uses ?? []) {
         if (!refs.has(key)) named.push(key)
         ref(key).usedIn.push({ via: named[at] })
       }
@@ -197,8 +186,7 @@ export function pinnedTo(line) {
   if (!line || line.error || !line.commit) return null
   const short = line.commit.slice(0, 7)
   const tags = line.tags?.length ? ` (${line.tags.join(', ')})` : ''
-  if (line.at === 'sha') return `${short}${tags}`
-  return `${line.at === 'branch' ? 'branch' : 'tag'} → ${short}${tags}`
+  return line.at === 'sha' ? `${short}${tags}` : `${line.at} → ${short}${tags}`
 }
 
 // The findings' cell of a row: each by its severity, its tooltip saying what
@@ -210,9 +198,9 @@ export function findingsCell(findings) {
 
 // A reference's link on GitHub at the ref it names, its path in it.
 export function referenceHref({ uses, line }) {
-  const repo = line?.repository?.fullName ?? uses?.repo ?? line?.repo
-  const ref = line?.commit ?? uses?.ref ?? line?.ref
-  if (!repo || !ref) return null
-  const path = uses?.path ?? line?.path ?? ''
-  return `https://github.com/${repo}/${line?.kind === 'workflow' || uses?.kind === 'workflow' ? 'blob' : 'tree'}/${encodeURIComponent(ref)}${path ? `/${encodePath(path)}` : ''}`
+  const ref = line?.commit ?? uses?.ref ?? line?.ref, repo = line?.repository?.fullName ?? uses?.repo ?? line?.repo
+  return repo && ref ? githubHref(repo, ref, uses?.path ?? line?.path, line?.kind === 'workflow' || uses?.kind === 'workflow' ? 'blob' : 'tree') : null
 }
+
+// A file (`blob`) or a directory (`tree`) on GitHub at a ref.
+export const githubHref = (repo, ref, path, view = 'blob') => `https://github.com/${repo}/${view}/${encodeURIComponent(ref)}${path ? `/${encodePath(path)}` : ''}`

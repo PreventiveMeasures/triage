@@ -153,11 +153,9 @@ const INSTALLS = { npm: new RegExp(`^(?:ci|clean-install|ic|install-clean|${NPM_
 // An install's options that leave the project's node_modules as they are.
 const NOT_LOCAL = /^(?:-g|--global|--location=global|--package-lock-only|--lockfile-only)$/u
 
-// A script's installs of a project's packages, in its order: each one's
-// command's `order` (shell.js scriptCommands), the directory it names
-// (`into`, packages.js projectOf), and whether it leaves devDependencies
-// out (`prod`: `--omit=dev`, `--production`, `--prod`, or NODE_ENV set to
-// production, by the step (`production`), `export` or the command's own).
+// A script's installs of a project's packages: each one's `order`, the
+// directory it names (`into`), and whether it leaves devDependencies out
+// (`prod`), by an option or NODE_ENV production (the step's `production`).
 export function installsOf(script, production = false) {
   const found = []
   let exported = production

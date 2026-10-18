@@ -4,6 +4,7 @@ import { readWorkflow } from './workflow.js'
 import { installsOf } from './scripts/commands.js'
 import { imageFinding, lockedName, namesPullHead, scriptFindings, scriptInjections } from './scripts/grade.js'
 import { ownerKind, usesKey } from './uses.js'
+import { resolved } from '../npm/files.js'
 
 // What a `uses:` calls for by its pin, a reference's with its `key`.
 function usesFinding(uses, owner) {
@@ -21,17 +22,24 @@ const INSTALLER = /(?:npm|yarn|pnpm|bun|node[-_]?modules)[-_]?(?:ci|install)|ins
 
 // Where a step installs a project's packages, each `{ at, prod }`: a
 // script's install's directory or the one it names, and whether it leaves
-// devDependencies out (`--omit=dev`); where an action of its own does, by
-// `installers` (ScanOptions), anywhere (null) where none are told; and
-// anywhere for an action that installs them (cypress-io/github-action's
-// unless `install: false`, pnpm/action-setup's with `run_install`).
+// devDependencies out; an action of its own's, by its metadata (ScanOptions
+// `actions`), anywhere (null) where none is told; and anywhere for an action
+// that installs them (cypress-io/github-action's unless `install: false`,
+// pnpm/action-setup's with `run_install`).
 const ANYWHERE = [{ at: null, prod: false }]
-function installs(step, installers) {
-  if (step.uses?.kind === 'local') return installers ? installers.get(step.uses.path) ?? [] : ANYWHERE
+function installs(step, actions, seen = new Set()) {
+  if (step.uses?.kind === 'local') return actions ? ownInstalls(actions, step.uses.path, seen) : ANYWHERE
   const repo = step.uses?.repo?.toLowerCase()
   if (repo && (INSTALLER.test(repo) || (repo === 'cypress-io/github-action' && String(step.with?.install) !== 'false'))) return ANYWHERE
   if (repo === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return ANYWHERE
   return step.run ? installsOf(step.run.script, step.run.production).map(({ into, prod }) => ({ at: directoryOf(step.run.workingDirectory, into), prod })) : []
+}
+
+// Where the repository's own action at `dir` installs, by its steps, each
+// action of its own once.
+function ownInstalls(actions, dir, seen) {
+  const read = actions.has(dir) && !seen.has(dir) && seen.add(dir) ? readWorkflow('action', actions.get(dir)) : null
+  return read && !(read instanceof YamlError) ? read.jobs.flatMap(job => job.steps.flatMap(step => installs(step, actions, seen))) : []
 }
 
 // Whether `dir` is `directory` or above it, as node finds a package there;
@@ -43,12 +51,7 @@ const within = (dir, directory) => dir === null || dir === '' || directory === d
 // it is out of the repository, so that it is within the same alone.
 function directoryOf(workingDirectory, into = null) {
   const path = into?.startsWith('/') ? into : [workingDirectory, into].filter(Boolean).join('/')
-  if (/\$|^\//u.test(path)) return path
-  const parts = []
-  for (const part of path.split('/')) {
-    if (part === '..') { if (parts.pop() === undefined) return path } else if (part && part !== '.') parts.push(part)
-  }
-  return parts.join('/')
+  return /\$|^\//u.test(path) ? path : resolved([], path)?.join('/') ?? path
 }
 
 // Whether a lockfile at or above `directory` locks what npx runs by `name`:
@@ -77,7 +80,7 @@ function stepFindings(step, triggers) {
 }
 
 // A job's findings, each script graded by the installs before it and its lockfiles.
-function jobFindings(job, triggers, { owner, lockfiles, external, installers }) {
+function jobFindings(job, triggers, { owner, lockfiles, external, actions }) {
   const found = []
   if (job.uses) {
     const finding = usesFinding(job.uses, owner)
@@ -96,15 +99,15 @@ function jobFindings(job, triggers, { owner, lockfiles, external, installers }) 
       found.push(...scriptFindings(step.run, { locked, installed: before, external, triggers }))
     }
     found.push(...stepFindings(step, triggers))
-    installed.push(...installs(step, installers))
+    installed.push(...installs(step, actions))
   }
   return found
 }
 
 // Every finding of a workflow read (readWorkflow), in its lines' order, by
 // index.d.ts ScanOptions.
-export function workflowFindings(read, { owner = null, lockfiles = [], external = false, installers = null } = {}) {
-  const found = read.jobs.flatMap(job => jobFindings(job, read.triggers, { owner, lockfiles, external, installers }))
+export function workflowFindings(read, { owner = null, lockfiles = [], external = false, actions = null } = {}) {
+  const found = read.jobs.flatMap(job => jobFindings(job, read.triggers, { owner, lockfiles, external, actions }))
   if (/^node(?:12|16)$/u.test(read.using ?? '')) found.push({ id: 'deprecated-runtime', severity: 'low', using: read.using, line: read.usingLine })
   return found.toSorted((a, b) => (a.line ?? 0) - (b.line ?? 0))
 }
@@ -118,21 +121,19 @@ export function workflowUses(read) {
   })
 }
 
-// Where an action's metadata installs a project's packages, as a step using
-// it does, by `installers` (ScanOptions) where it uses an action of its own:
-// each install's `{ at, prod }` (installs); none for one GitHub can't run.
-export function actionInstalls(text, installers) {
-  try {
-    return readWorkflow('action', text).jobs.flatMap(job => job.steps.flatMap(step => installs(step, installers)))
-  } catch (error) {
-    if (error instanceof YamlError) return []
-    throw error
-  }
+// The actions of the repository's own a workflow or an action uses, by
+// their directories, and a Docker action's Dockerfile; none for one GitHub
+// can't run.
+export function ownFilesOf(kind, text) {
+  const read = readWorkflow(kind, text)
+  if (read instanceof YamlError) return { actions: [], dockerfile: null }
+  return { actions: workflowUses(read).flatMap(uses => uses.kind === 'local' && !uses.job ? [uses.path] : []), dockerfile: read.dockerfile?.path ?? null }
 }
 
 // A workflow's or an action's metadata's (`kind`) references and findings;
-// a YamlError for one GitHub can't run.
+// why not (`workflow-unreadable`) for one GitHub can't run.
 export function scanWorkflow(kind, text, options = {}) {
   const read = readWorkflow(kind, text)
+  if (read instanceof YamlError) return { error: 'workflow-unreadable', detail: read.message.slice(0, 500) }
   return { uses: workflowUses(read), findings: workflowFindings(read, options) }
 }

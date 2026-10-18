@@ -197,30 +197,22 @@ export type Uses = ActionUses | { kind: 'local'; uses: string; path: string; sel
 export interface ScanOptions {
   // Whose repository it is, as an unpinned `uses:` of its owner's is yellow.
   owner?: string | null
-  // Its lockfiles' paths and the packages each locks, as npx runs those.
+  // Its lockfiles' paths, the packages each locks, as npx runs those, and
+  // those only devDependencies need.
   lockfiles?: { path: string; names: ReadonlySet<string>; dev?: ReadonlySet<string> }[]
-  // Another repository's action, run in a workspace it can't tell.
-  external?: boolean
-  // Where the repository's own actions install its packages, by their
-  // directories (actionInstalls): each install's directory, null for
-  // anywhere, and whether it leaves devDependencies out; else each counts
-  // as one that installs them all anywhere.
-  installers?: ReadonlyMap<string, readonly { at: string | null; prod: boolean }[]> | null
+  // Its own actions' metadata by their directories, for where they install
+  // its packages; else each counts as installing them anywhere.
+  actions?: ReadonlyMap<string, string> | null
 }
 
-export interface WorkflowScan {
-  uses: Uses[]
-  findings: ActionsFinding[]
-}
+export type WorkflowScan = { uses: Uses[]; findings: ActionsFinding[] } | { error: 'workflow-unreadable'; detail: string }
 
 export function scanWorkflow(kind: 'workflow' | 'action', text: string, options?: ScanOptions): WorkflowScan
-// A workflow or an action's metadata read, a Docker action's Dockerfile's
-// path from its directory among it.
-export function readWorkflow(kind: 'workflow' | 'action', text: string): { dockerfile: { path: string } | null }
-export function actionInstalls(text: string, installers: NonNullable<ScanOptions['installers']>): { at: string | null; prod: boolean }[]
+// The actions of the repository's own a workflow or an action uses, by
+// their directories, and a Docker action's Dockerfile, from its own.
+export function ownFilesOf(kind: 'workflow' | 'action', text: string): { actions: string[]; dockerfile: string | null }
 // A Dockerfile's findings, each on its line.
 export function dockerfileFindings(text: string): ActionsFinding[]
-export function workflowUses(read: unknown): Uses[]
 // A reference by its key, as a scan names it; null for none.
 export function usesOfKey(key: string): ActionUses | null
 
@@ -241,8 +233,8 @@ export interface ActionsSource {
 }
 
 // A reference resolved: its repository as GitHub has it now, its ref's
-// commit, what the ref is, the tags on the commit, and the references it
-// makes in turn; null for none.
+// commit, what the ref is, the tags on the commit, and the keys of the
+// references its code makes; null for none.
 export interface ResolvedAction extends Pick<ActionUses, 'kind' | 'repo' | 'path' | 'ref'> {
   key: string
   repository: { fullName: string; private: boolean } | null
@@ -250,7 +242,7 @@ export interface ResolvedAction extends Pick<ActionUses, 'kind' | 'repo' | 'path
   at: 'sha' | 'tag' | 'branch' | null
   tags: string[]
   findings: ActionsFinding[]
-  uses: { key: string; line: number | null; file: string | null }[]
+  uses: string[]
 }
 
 export function resolveAction(uses: ActionUses, source: ActionsSource, options?: { owner?: string | null }): Promise<ResolvedAction>
