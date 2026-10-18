@@ -27,7 +27,7 @@ export function scriptLines(script) {
   return joined
 }
 
-const WRAPPERS = new Set(['sudo', 'env', 'time', 'nohup', 'exec', 'command', 'nice', 'stdbuf', 'xvfb-run', 'timeout'])
+const WRAPPERS = new Set(['sudo', 'env', 'time', 'nohup', 'exec', 'command', 'nice', 'stdbuf', 'xvfb-run', 'timeout', 'corepack'])
 // A wrapper's options taking a value, as `sudo -u user`, `timeout 10m` do.
 const WRAPPER_VALUES = new Map([['sudo', /^-[ugCDhpRrTU]$/u], ['env', /^-[uSC]$/u], ['nice', /^-n$/u], ['timeout', /^-[sk]$/u]])
 
