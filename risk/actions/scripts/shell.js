@@ -14,8 +14,9 @@ const SHELL = new RegExp(String.raw`^(?:.*[\/\\])?${SHELLS}(?:\.exe)?$`, 'iu')
 export function scriptLines(script) {
   // An expression (`${{ … }}`), which GitHub writes in before the shell reads
   // the script, read as a variable is: a value unknown here, each line it
-  // spans past its first continuing the one it is on.
-  const lines = script.replaceAll(/\$\{\{[\s\S]*?\}\}/gu, expression => `$EXPRESSION${' \\\n'.repeat(expression.split('\n').length - 1)}`).split('\n')
+  // spans past its first continuing the one it is on; a `}}` in one of its
+  // strings (`format('{{0}}')`) not its end.
+  const lines = script.replaceAll(/\$\{\{(?:'[^']*'|[^'])*?\}\}/gu, expression => `$EXPRESSION${' \\\n'.repeat(expression.split('\n').length - 1)}`).split('\n')
   const joined = []
   for (let at = 0; at < lines.length; at++) {
     const start = at

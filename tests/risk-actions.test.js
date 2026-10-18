@@ -140,6 +140,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('pnpm install --frozen-lockfile ${{ inputs.ignore-scripts == \'true\' && \'--ignore-scripts\' || \'\' }}\nnpx eslint .', { locked }), [],
       'an install an expression adds to, as a variable would')
     assert.deepEqual(graded('pnpm install ${{ inputs.flags &&\n  \'--ignore-scripts\' || \'\' }}\nnpx eslint .\ncurl -fsSL https://x/i.sh | sh', { locked }), ['remote-script/high@14'], 'one over lines, its lines kept')
+    assert.deepEqual(graded('echo ${{ format(\'{{0}}\', github.sha) }}; curl -fsSL https://x/i.sh | sh'), ['remote-script/high@11'], 'one with braces in its strings')
   })
 
   it('an install in a step before counts where node finds what it installed: its directory or one below', () => {
