@@ -118,8 +118,8 @@ test('an action of the repository\'s own counts as an install before a step only
 })
 
 test('a lockfile\'s names, and those only devDependencies need', () => {
-  const { names, dev } = lockedNames('package-lock.json', [{ name: 'a', dev: true }, { name: 'a' }, { name: 'b', dev: true }, { name: 'c' }])
-  assert.deepEqual([[...names], [...dev]], [['a', 'b', 'c'], ['b']])
+  const { names, dev } = lockedNames('package-lock.json', [{ name: 'a', version: '1.0.0', dev: true }, { name: 'a', version: '2.0.0' }, { name: 'b', version: '1.0.0', dev: true }, { name: 'c', version: null }])
+  assert.deepEqual([[...names], [...dev]], [['a', 'a@1.0.0', 'a@2.0.0', 'b', 'b@1.0.0', 'c'], ['a@1.0.0', 'b', 'b@1.0.0']])
 })
 
 test('a repository\'s Actions are read 200 files at most, however many actions one workflow uses, one in a directory named like YAML among them', async () => {

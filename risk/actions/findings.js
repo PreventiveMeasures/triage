@@ -61,11 +61,21 @@ function lockedIn(lockfiles, directory, name) {
   return locking.length > 0 && (locking.every(({ dev }) => dev && lockedName(dev, name)) ? 'dev' : true)
 }
 
-// github-script's injections, and a fork's code or artifacts taken where the
-// workflow runs with its secrets.
-function stepFindings(step, triggers) {
+// The inputs a step's action writes into a script: github-script's
+// `script`, and those an action of the repository's own (ScanOptions
+// `actions`) names in its `run:`s.
+function scriptInputs(step, actions) {
+  if (step.uses?.repo?.toLowerCase() === 'actions/github-script') return ['script']
+  const read = step.uses?.kind === 'local' && actions?.has(step.uses.path) ? readWorkflow('action', actions.get(step.uses.path)) : null
+  if (!read || read instanceof YamlError) return []
+  return [...new Set(read.jobs.flatMap(job => job.steps.flatMap(each => [...(each.run?.script ?? '').matchAll(/\$\{\{[^}]*?\binputs\s*\.\s*([\w-]+)/gu)].map(match => match[1]))))]
+}
+
+// Injections through the inputs an action writes into its scripts, and a
+// fork's code or artifacts taken where the workflow runs with its secrets.
+function stepFindings(step, triggers, actions) {
   const repo = step.uses?.repo?.toLowerCase()
-  const found = repo === 'actions/github-script' ? scriptInjections(step.with?.script, triggers).map(({ index: _index, ...finding }) => ({ ...finding, line: step.withLines.script })) : []
+  const found = scriptInputs(step, actions).flatMap(input => scriptInjections(step.with?.[input], triggers).map(({ index: _index, ...finding }) => ({ ...finding, line: step.withLines[input] })))
   const forks = triggers.includes('pull_request_target') || triggers.includes('workflow_run')
   if (forks && repo === 'actions/checkout' && (namesPullHead(step.with?.ref) || namesPullHead(step.with?.repository))) {
     found.push({ id: 'pwn-request', severity: 'critical', ref: String(step.with.ref ?? step.with.repository), line: step.withLines.ref ?? step.withLines.repository ?? step.line })
@@ -97,7 +107,7 @@ function jobFindings(job, triggers, { owner, lockfiles, external, actions }) {
       const before = (dev, dir) => installed.some(({ at, prod }) => within(at, directory(dir)) && !(prod && dev))
       found.push(...scriptFindings(step.run, { locked, installed: before, external, triggers }))
     }
-    found.push(...stepFindings(step, triggers))
+    found.push(...stepFindings(step, triggers, actions))
     installed.push(...installs(step, actions))
   }
   return found

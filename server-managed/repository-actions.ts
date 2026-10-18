@@ -78,10 +78,11 @@ export async function readActions(reading: ActionsReading): Promise<WorkflowsRea
   return { files }
 }
 
-// A lockfile's packages' names, and those only devDependencies need.
-export function lockedNames(path: string, packages: readonly { name: string; dev?: true }[]) {
+// A lockfile's packages, by name and by `name@version`, and those only
+// devDependencies need.
+export function lockedNames(path: string, packages: readonly { name: string; version: string | null; dev?: true }[]) {
   const dev = new Map<string, boolean>()
-  for (const { name, dev: only } of packages) dev.set(name, (dev.get(name) ?? true) && only === true)
+  for (const { name, version, dev: only } of packages) for (const key of version ? [name, `${name}@${version}`] : [name]) dev.set(key, (dev.get(key) ?? true) && only === true)
   return { path, names: new Set(dev.keys()), dev: new Set([...dev].flatMap(([name, only]) => only ? [name] : [])) }
 }
 

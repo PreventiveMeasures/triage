@@ -125,8 +125,12 @@ describe('a script\'s findings, graded', () => {
       'devDependencies included, whatever leaves them out')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
     assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\'\nash -c "npx is-odd"'), ['fetched-package/high@11', 'remote-script/high@12', 'fetched-package/high@13'], 'a shell\'s command line')
+    assert.deepEqual(graded('pwsh -NoProfile -ExecutionPolicy Bypass -Command \'iwr https://x/s -OutFile s.ps1; ./s.ps1\'\npowershell -noninteractive -c \'iwr https://x/t -OutFile t.ps1; ./t.ps1\''),
+      ['remote-script/high@11', 'remote-script/high@12'], 'PowerShell\'s, by -Command in any case')
     assert.deepEqual(graded('npx left-pad', { locked, installed: () => true }), ['fetched-package/high@11'], 'locked by none')
     assert.deepEqual(graded('npx left-pad@1.3.0', { installed: () => true }), ['fetched-package/moderate@11'], 'a version, not its integrity')
+    const versions = name => lockedName(new Set(['eslint', 'eslint@8.57.0']), name)
+    assert.deepEqual(graded('npm ci\nnpx eslint@8.57.0 .\nnpx eslint@v9.0.0 .', { locked: versions }), ['fetched-package/moderate@13'], 'a version, the project\'s own where a lockfile locks that one')
     assert.deepEqual(graded('npm i -g corepack@${V}'), ['fetched-package/moderate@11'], 'a version a variable names')
     assert.deepEqual(graded('npx eslint', { external: true, installed: () => true }), [], 'another\'s action, in a workspace that installed')
   })
@@ -184,6 +188,13 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(ids(scanWorkflow('workflow', job('workflow_run', 'github.event.workflow_run.pull_requests[0].head.sha')).findings), ['pwn-request/critical@7'], 'its run\'s pull request\'s')
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', "github.event['pull_request']['head']['sha']")).findings), ['pwn-request/critical@7'], 'by index syntax')
     assert.deepEqual(ids(scanWorkflow('workflow', job('pull_request_target', 'github.repository')).findings), [], 'its own')
+  })
+
+  it('an input an action of its own writes into a script, from an expression anyone can write', () => {
+    const workflow = `on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: ./.github/actions/greet\n        with:\n          title: \${{ github.event.pull_request.title }}\n          body: \${{ github.event.pull_request.body }}\n`
+    const action = 'runs:\n  using: composite\n  steps:\n    - run: echo "${{ inputs.title }}"\n      shell: bash\n    - run: echo "$BODY"\n      env:\n        BODY: ${{ inputs.body }}\n      shell: bash\n'
+    const scan = actions => ids(scanWorkflow('workflow', workflow, { actions }).findings)
+    assert.deepEqual([scan(new Map([['.github/actions/greet', action]])), scan(null)], [['script-injection/critical@7'], []])
   })
 
   it('a workflow_run\'s artifacts taken by the GitHub CLI', () => {

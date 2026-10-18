@@ -118,10 +118,12 @@ function commandsOf(text) {
   return { commands, nested }
 }
 
-// The command line a shell is given to run (`bash -euc '…'`), else null.
+// The command line a shell is given to run (`bash -euc '…'`, `pwsh
+// -Command '…'`), else null.
 function shellLine([program, ...words]) {
   if (!SHELL.test(program)) return null
-  const at = words.findIndex(word => /^-[a-z]*c[a-z]*$/u.test(word))
+  const option = /(?:pwsh|powershell)(?:\.exe)?$/iu.test(program) ? /^-(?:c|command)$/iu : /^-[a-z]*c[a-z]*$/u
+  const at = words.findIndex(word => option.test(word))
   return at === -1 ? null : words[at + 1] ?? null
 }
 

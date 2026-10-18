@@ -197,8 +197,8 @@ export type Uses = ActionUses | { kind: 'local'; uses: string; path: string; sel
 export interface ScanOptions {
   // Whose repository it is, as an unpinned `uses:` of its owner's is yellow.
   owner?: string | null
-  // Its lockfiles' paths, the packages each locks, as npx runs those, and
-  // those only devDependencies need.
+  // Its lockfiles' paths, the packages each locks, as npx runs those, by
+  // name and by `name@version`, and those only devDependencies need.
   lockfiles?: { path: string; names: ReadonlySet<string>; dev?: ReadonlySet<string> }[]
   // Its own actions' metadata by their directories, for where they install
   // its packages; else each counts as installing them anywhere.

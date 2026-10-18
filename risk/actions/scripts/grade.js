@@ -100,7 +100,7 @@ export function scriptFindings(run, context) {
   const installs = installsOf(run.script, run.production)
   for (const found of scriptFinds(run.script)) {
     const dir = found.dir ?? ''
-    const locked = found.kind === 'package' && found.ecosystem === 'npm' && found.localFirst && context.locked(found.name, dir)
+    const locked = found.kind === 'package' && found.ecosystem === 'npm' && found.localFirst && context.locked(found.exact ? `${found.name}@${found.spec.replace(/^[v=]/u, '')}` : found.name, dir)
     const before = context.installed(locked === 'dev', dir) || installs.some(({ order, into, prod }) => order < found.order && within(into, dir) && !(prod && locked === 'dev'))
     for (const finding of graded(found, { ...context, installed: before }, Boolean(locked))) findings.push({ ...finding, line: fileLine(run, found.line) })
   }
