@@ -151,7 +151,7 @@ import { contentAccess } from './content-access.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
-import type { AvatarStore } from './avatar-store.ts'
+import type { AvatarStore, CachedAvatar } from './avatar-store.ts'
 import type { BlobStore, OpenedBlob } from './blob-store.ts'
 import { bundleFilePrefix, bundleIntegrity, bundleKind, bundleRepo, reportBundleHashes } from './bundle.ts'
 import { resolveRepositoryImportLocation } from './repository-aliases.ts'
@@ -469,7 +469,10 @@ function firstHeader(v: string | string[] | undefined): string | null {
 
 // `key` is the image chosen for `id`; one not cached falls back to `id`'s own.
 async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: string, key = id): Promise<void> {
-  const avatar = await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id))
+  sendAvatar(res, await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id)))
+}
+
+function sendAvatar(res: ServerResponse, avatar: CachedAvatar | null): void {
   if (avatar == null) { sendJson(res, 404, { error: 'no-avatar' }); return }
   res.writeHead(200, {
     'content-type': avatar.contentType,
@@ -493,10 +496,11 @@ const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
 async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {
   const [, kind, id] = AGENT_AVATAR.exec(avatar)!
   const key = `00000000-0000-0000-000${kind === 'app' ? 0 : 1}-${id!.padStart(12, '0')}`
-  if (await avatarStore.get(key) == null) {
-    await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/${kind === 'app' ? 'in' : 'u'}/${id}`, globalThis.fetch)
-      .catch((err) => { console.warn('managed: agent avatar caching failed:', err) })
-  }
+  // Read once where it is kept; read again only past fetching it.
+  const kept = await avatarStore.get(key)
+  if (kept != null) { sendAvatar(res, kept); return }
+  await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/${kind === 'app' ? 'in' : 'u'}/${id}`, globalThis.fetch)
+    .catch((err) => { console.warn('managed: agent avatar caching failed:', err) })
   await serveAvatar(res, avatarStore, key)
 }
 
@@ -640,7 +644,7 @@ async function handleViewAs(req: IncomingMessage, res: ServerResponse, deps: Man
   const userId = (body as { userId?: unknown } | null)?.userId
   if (typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (userId === s.user.id) { sendJson(res, 400, { error: 'cannot-view-as-self' }); return }
-  const target = (await deps.db.listUsers()).find(user => user.id === userId)
+  const target = await deps.db.getUser(userId)
   if (!target) { sendJson(res, 404, { error: 'not-found' }); return }
   // The insert itself rechecks the admin session and role.
   const setCookie = await startViewSession(deps.config, deps.db, s.session, userId, Date.now())
@@ -723,7 +727,7 @@ async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: Ma
   const role = (body as { role?: unknown } | null)?.role
   if (typeof userId !== 'string' || !isRole(role)) { sendJson(res, 400, { error: 'bad-request' }); return }
   if (userId === s.user.id) { sendJson(res, 403, { error: 'cannot-change-own-role' }); return }
-  const target = (await deps.db.listUsers()).find(user => user.id === userId)
+  const target = await deps.db.getUser(userId)
   // A caller can hold the body open while their admin access is revoked.
   if (await readAdminSession(res, deps, cookie) == null) return
   const ok = await deps.db.setUserRole(userId, role)
@@ -1461,8 +1465,10 @@ async function repositoryBrowserUser(deps: ManagedHttpDeps, userId: string) {
 // user's repository access, for the next catalog to send.
 async function backfillCatalogCommits(deps: ManagedHttpDeps, userId: string, missing: readonly CatalogCommit[]): Promise<void> {
   let browser: ReturnType<typeof createRepositoryBrowser> | undefined
+  let repos: ReturnType<ManagedDb['listAllRepos']> | undefined
   await backfillBundleCommits(deps.db, userId, missing, async repoId => {
-    const repo = (await deps.db.listAllRepos()).find(item => item.repoId === repoId)
+    // Read once for the repositories the backfill reaches, not once each.
+    const repo = (await (repos ??= deps.db.listAllRepos())).find(item => item.repoId === repoId)
     if (!repo) return null
     browser ??= createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, userId))
     return browser.reader(repo)

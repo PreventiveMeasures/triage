@@ -402,6 +402,9 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   deleteSession(id: string): Promise<void>
   deleteExpiredSessions(now: number): Promise<number>
   listUsers(): Promise<AdminUser[]>
+  // One user by id, as their sessions read them, or null; for an action naming
+  // one, where listUsers would work out every user's latest activity.
+  getUser(id: string): Promise<StoredUser | null>
   // Set a user's role; resolves true iff a matching user row was updated.
   setUserRole(id: string, role: Role): Promise<boolean>
   // Persist / read a user's GitHub token (for on-demand repo listing).
@@ -651,6 +654,7 @@ function prepareStatements(db: ManagedSql) {
               ) AS events) AS lastActivity
          FROM managed_user u ORDER BY u.created_at ASC, u.login ASC`,
     ),
+    selectUserStmt: db.prepare(`SELECT id, login, name, avatar_url AS avatarUrl, role FROM managed_user WHERE id = ?`),
     touchUserSeenStmt: db.prepare(
       `UPDATE managed_user SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at < ?)`,
     ),
@@ -1641,7 +1645,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
   const triage = triageMethods(stmts, options.triageHistoryLimit ?? 0, db)
   const {
     upsertUserStmt, selectLinkedStmt, selectUserIdStmt, promoteInitialAdminStmt, selectGithubIdStmt, insertSessionStmt, selectOwnSessionStmt, selectUsersStmt,
-    touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, ensureUploadKeyStmt, deleteSessionStmt, deleteExpiredStmt,
+    selectUserStmt, touchUserSeenStmt, updateRoleStmt, updateTokensStmt, selectTokensStmt, ensureUploadKeyStmt, deleteSessionStmt, deleteExpiredStmt,
     selectViewSessionStmt, deleteOtherViewsStmt, insertViewSessionStmt, deleteDemotedViewsStmt,
   } = stmts
 
@@ -1719,6 +1723,10 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     async listUsers() {
       const rows = (await selectUsersStmt.all()) as UserRow[]
       return rows.map((r) => ({ id: r.id, login: r.login, name: r.name, role: r.role, createdAt: r.created, lastSeenAt: r.lastSeen, lastActivityAt: r.lastActivity }))
+    },
+    async getUser(id) {
+      const row = (await selectUserStmt.get(id)) as StoredUser | undefined
+      return row == null ? null : { id: row.id, login: row.login, name: row.name, avatarUrl: row.avatarUrl, role: row.role }
     },
     async setUserRole(id, role) {
       if (role !== 'admin') await deleteDemotedViewsStmt.run(id)
