@@ -156,6 +156,7 @@
     "server-managed/npm-risk.ts",
     "server-managed/npm-provenance.ts",
     "server-managed/kept.ts",
+    "server-managed/kept-briefly.ts",
     "server-managed/npm-kept.ts",
     "server-managed/npm-loads.ts",
     "server-managed/npm-delta.ts",
