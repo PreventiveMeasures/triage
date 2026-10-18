@@ -1800,8 +1800,8 @@ Cursor by its agents' trailer
 an app agent by its fingerprint (as the Agents tab tells them, below). An
 agent shows by its mark, a solid avatar as its app's icon is (Claude's
 white on its orange, OpenAI's black on white for Codex, Copilot's white on
-GitHub's dark, as Replay draws them), or its avatar (Dependabot's, an app
-agent's), Cursor, whose mark the app has none of, by its letter; the author
+GitHub's dark, as Replay draws them), or its avatar (Dependabot's,
+Neo's), Cursor, whose mark the app has none of, by its letter; the author
 none of them (`server-managed/commit-coauthors.ts`).
 The server reads each commit's message for them, keeping and answering
 those alone, never the message; a page kept before they were read, or
@@ -2367,7 +2367,9 @@ pull request merged. It is told by the links and marks the agents leave:
   (`Co-Authored-By: Claude`, `Generated with [Claude Code]`, a commit Claude
   authored), a pull request or commit its own session;
 - an agent known by its GitHub App or account (`APP_AGENTS` in
-  `repository-agents.ts`, each its id, name, avatar, branches' prefix, and
+  `app-agents.ts`: those of `GITHUB_AGENTS`, in
+  `common/managed/github-agents.ts`, with a branches' prefix, each told
+  there by its id, name, avatar, branches' prefix, and
   its fingerprint or the account its work is authored by: now Neo, by
   `🤖 Generated with [Neo](`, its account, 274065190, by its ID alone, and
   `neo/…`; Copilot, by its account, 198982749,

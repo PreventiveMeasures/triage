@@ -239,10 +239,10 @@ test('who made a commit: its author and co-authors once each, a user of the app 
   knowGithubUsers({ users: { mona: { id: 'mona-id', login: 'mona', name: 'Mona Lisa' }, 'mona-work': { id: 'mona-id', login: 'mona', name: 'Mona Lisa' },
     claude: { agent: 'claude' }, 'dependabot[bot]': { agent: 'dependabot' } } })
   assert.deepEqual(makersOf({ authorLogin: 'mona-work', authorName: 'M', coauthors: [{ login: 'mona', name: 'Mona' }, { login: null, name: 'Claude', agent: 'claude' },
-    { login: null, name: 'Neo', avatar: 'app-123' }, { login: 'claude', name: 'Claude' }] }), [
+    { login: null, name: 'Grace' }, { login: 'claude', name: 'Claude' }] }), [
     { key: 'user:mona-id', label: 'Mona Lisa', letter: 'M', agent: null, mark: null, image: '/api/avatar/mona-id' },
     { key: 'agent:claude', label: 'Claude', letter: 'C', agent: 'claude', mark: 'anthropic', image: null },
-    { key: 'name:neo', label: 'Neo', letter: 'N', agent: null, mark: null, image: '/api/avatar/app-123' },
+    { key: 'name:grace', label: 'Grace', letter: 'G', agent: null, mark: null, image: null },
   ])
   assert.deepEqual(makersOf({ authorLogin: 'dependabot[bot]', authorName: 'dependabot[bot]', coauthors: [{ login: null, name: 'Codex', agent: 'codex' },
     { login: null, name: 'Copilot', agent: 'copilot' }, { login: null, name: 'Cursor Agent', agent: 'cursor' }] }).map(({ agent, mark, image, letter }) => [agent, mark, image, letter]), [
@@ -256,7 +256,7 @@ test('Neo is one, by its name and its GitHub App\'s avatar, whether its account 
   const neo = { key: 'agent:neo', label: 'Neo', letter: 'N', agent: 'neo', mark: null, image: '/api/avatar/app-3115942' }
   assert.deepEqual(makersOf({ authorLogin: 'any-login[bot]', authorName: 'any-login[bot]', coauthors: [{ login: null, name: 'Neo', agent: 'neo' }] }), [neo],
     'its account and its fingerprint, once')
-  assert.deepEqual([makersOf({ authorLogin: null, authorName: 'Ada', coauthors: [{ login: null, name: 'Neo', agent: 'neo', avatar: 'app-3115942' }] })[1],
+  assert.deepEqual([makersOf({ authorLogin: null, authorName: 'Ada', coauthors: [{ login: null, name: 'Neo', agent: 'neo' }] })[1],
     makersOf({ authorLogin: 'mona', authorName: 'Mona', coauthors: [{ login: 'any-login[bot]', name: 'any-login[bot]', id: 274065190, agent: 'neo' }] })[1]], [neo, neo],
-  'by its fingerprint, as kept before it was an agent of its account, or by its co-author trailer')
+  'by its fingerprint, or by its co-author trailer')
 })
