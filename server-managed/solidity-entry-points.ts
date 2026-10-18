@@ -49,10 +49,12 @@ export async function readSolidityEntryPoints(directory: string, listing: unknow
   for (const entry of entries) {
     if (entry.type === 'file' && sourcePath(entry.path) && addSoliditySuggestion(paths, entry.path)) limited = true
   }
-  for (const root of roots) {
-    if (!sourcePath(`${root.path}/Contract.sol`)) continue
+  // Both roots' listings asked together, then read in order.
+  const listings = roots.map(root => Promise.resolve().then(() => (sourcePath(`${root.path}/Contract.sol`) ? read(`/git/trees/${root.sha}?recursive=1`) : null)))
+  for (const listed of listings) listed.catch(() => {})
+  for (const [i, root] of roots.entries()) {
     try {
-      const data = await read(`/git/trees/${root.sha}?recursive=1`) as { tree?: unknown; truncated?: unknown }
+      const data = await listings[i] as { tree?: unknown; truncated?: unknown } | null
       if (!Array.isArray(data?.tree)) continue
       limited ||= data.truncated === true
       for (const entry of data.tree) {

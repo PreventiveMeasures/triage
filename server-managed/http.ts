@@ -181,6 +181,7 @@ import { RISK_KEPT_MS, SCAN_READ_KEPT_MS, type ScanProgress, repositoryRiskLines
 import { WORKFLOWS_DIR } from './repository-actions.ts'
 import { githubActionsSource } from './github-actions.ts'
 import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, scopedDirectory } from './repository-browser.ts'
+import { type Lru, lru } from './lru.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, cacheAvatar, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
 import { clearCookie, endSession, readSession, runRequestPresence } from './session.ts'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
@@ -1608,6 +1609,22 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
 // read, before any of it is sent. The load stays held until this response is
 // written or abandoned, and a reader who stops reading it gives it up after
 // a while.
+// What GitHub answered of a repository's trees for the code viewer, which a
+// commit or tree it names never changes: the tree at a directory of a commit
+// (getRepoTreeId reads the commit, then a listing a level down to it), and
+// how many files a tree holds under it and their bytes (repositoryTreeFiles),
+// by the repository's id, for the next to open it. Asked of them only once
+// the reader's own access has named the commit, as GitHub would have
+// answered them; by the database, as each instance has one.
+const REPOSITORY_TREES_KEPT = 4096
+type TreeFiles = Awaited<ReturnType<typeof repositoryTreeFiles>>
+const repositoryTrees = new WeakMap<ManagedDb, { ids: Lru<string>; files: Lru<TreeFiles> }>()
+function repositoryTreesOf(db: ManagedDb) {
+  let kept = repositoryTrees.get(db)
+  if (!kept) repositoryTrees.set(db, kept = { ids: lru(REPOSITORY_TREES_KEPT), files: lru(REPOSITORY_TREES_KEPT) })
+  return kept
+}
+
 async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const asked = repositoryQuery(res, query)
   if (!asked) return
@@ -1624,10 +1641,12 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
     const commit = await reader.commit(ref)
     const repo = access.repo.fullName
     const client = createClient({ token: reader.readToken() })
+    const treeKey = `${access.repo.repoId}\0${commit}\0${path}`, trees = repositoryTreesOf(deps.db)
     // A directory the commit has none at is none to read, as browsing it says.
-    const tree = await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
+    const tree = trees.ids.get(treeKey) ?? await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
       throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(' has no directory at ') ? new GithubApiError(404, 'no-directory') : err
     }))
+    trees.ids.set(treeKey, tree)
     // Access still held, and the same repository, before anything read is sent.
     const fenced = async () => {
       await reader.recheckAccess()
@@ -1637,7 +1656,9 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
       return true
     }
     // Too large names the commit it was read at, for History to read.
-    const listed = await repositoryTreeFiles(repo, reader.readToken(), tree)
+    const filesKey = `${access.repo.repoId}\0${tree}`
+    let listed = trees.files.get(filesKey)
+    if (listed === undefined) trees.files.set(filesKey, listed = await repositoryTreeFiles(repo, reader.readToken(), tree))
     if (!repositoryCodeFits(listed)) {
       if (await fenced()) sendJson(res, 413, { error: 'directory-too-large', commit })
       return

@@ -34,6 +34,20 @@ test('Foundry and Hardhat markers enable src discovery without evaluating config
   }
 })
 
+test('both source roots\' listings are asked together, their suggestions taken in order', async () => {
+  const asked = []
+  let answer
+  const answered = new Promise(resolve => { answer = resolve })
+  const reading = readSolidityEntryPoints('', [file('foundry.toml'), { ...dir('contracts'), sha: 'c'.repeat(40) }, dir('src')], suffix => {
+    asked.push(suffix)
+    return answered.then(() => ({ tree: [blob(suffix.includes('c'.repeat(40)) ? 'A.sol' : 'B.sol')] }))
+  })
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.equal(asked.length, 2, 'the second asked before the first answers')
+  answer()
+  assert.deepEqual((await reading).paths, ['contracts/A.sol', 'src/B.sol'])
+})
+
 test('ordinary projects and unsupported source roots trigger no extra GitHub reads', async () => {
   const neverRead = () => { assert.fail('must not fetch this tree') }
   for (const entries of [

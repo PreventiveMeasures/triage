@@ -272,8 +272,10 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
       const manifestPath = path ? `${path}/package.json` : 'package.json'
       const manifest = data.find(item => item?.path === manifestPath && item.name === 'package.json' && item.type === 'file' && !item.submodule_git_url
         && typeof item.size === 'number' && item.size >= 0 && item.size <= MAX_PACKAGE_BYTES && typeof item.sha === 'string' && /^[a-f\d]{40}$/iu.test(item.sha))
-      const packageEntryPoints = manifest ? await readPackageEntryPoints(manifest.sha, path, read) : undefined
-      const solidity = await readSolidityEntryPoints(path, data, read)
+      // Both optional suggestions, read together: neither fails, each
+      // answering none where its reads do.
+      const [packageEntryPoints, solidity] = await Promise.all([manifest ? readPackageEntryPoints(manifest.sha, path, read) : undefined,
+        readSolidityEntryPoints(path, data, read)])
       return { entries, limited: data.length >= 1000, ...(packageEntryPoints ? { packageEntryPoints } : {}),
         ...(solidity.paths.length > 0 || solidity.limited ? { solidityEntryPoints: solidity.paths, soliditySuggestionsLimited: solidity.limited } : {}),
       }
