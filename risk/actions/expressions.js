@@ -9,7 +9,7 @@
 // The events a workflow runs on with the base repository's secrets and a
 // token that can write, for a pull request from a fork, an issue or a
 // comment anyone can open.
-export const PRIVILEGED_TRIGGERS = new Set(['pull_request_target', 'workflow_run', 'issue_comment', 'issues', 'discussion', 'discussion_comment',
+const PRIVILEGED_TRIGGERS = new Set(['pull_request_target', 'workflow_run', 'issue_comment', 'issues', 'discussion', 'discussion_comment',
   'pull_request_review', 'pull_request_review_comment', 'fork', 'watch'])
 
 // An index, as an expression names one of a list: `[0]`, `[*]`, `.*`.
@@ -26,15 +26,14 @@ const UNTRUSTED = new RegExp(String.raw`\bgithub\s*\.\s*(?:head_ref|event\s*\.\s
     String.raw`discussion\.(?:title|body)`].join('|')
   + String.raw`))(?![\w-])`, 'gu')
 
-// The expressions anyone can write in `text`, each `{ expression, index }`:
-// its context's path as written, and where in `text` its `${{` is.
-export function untrustedExpressions(text) {
+// Each expression anyone can write in a script's `text`, a finding with
+// the `index` its `${{` is at: red where the workflow runs with its secrets
+// for anyone (`triggers`), else orange.
+export function scriptInjections(text, triggers) {
   if (typeof text !== 'string' || !text.includes('${{')) return []
-  const found = []
-  for (const { 0: whole, 1: inner, index } of text.matchAll(/\$\{\{([\s\S]*?)\}\}/gu)) {
-    for (const { 0: expression } of inner.matchAll(UNTRUSTED)) found.push({ expression: expression.replaceAll(/\s+/gu, ''), index, length: whole.length })
-  }
-  return found
+  const severity = triggers.some(event => PRIVILEGED_TRIGGERS.has(event)) ? 'critical' : 'high'
+  return [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/gu)].flatMap(({ 1: inner, index }) =>
+    [...inner.matchAll(UNTRUSTED)].map(({ 0: expression }) => ({ id: 'script-injection', severity, expression: expression.replaceAll(/\s+/gu, ''), index })))
 }
 
 // A ref naming a pull request's own code, as `actions/checkout`'s `ref:`

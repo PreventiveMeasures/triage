@@ -1,13 +1,9 @@
 // A `run:` script read into the commands it runs, as a shell would split
-// them, for commands.js to tell what each fetches: its lines continued
-// joined (a line ending `\`, PowerShell's `` ` `` or cmd's `^`), comments
-// set aside, each line split at `&&`, `||`, `;`, `&` and `|` into commands
-// each fed by a pipe or not, each command its words with their quotes taken
-// off, a redirection's dropped, and the settings and wrappers before what it
-// runs (`NAME=value`, `sudo -E`, `env`, `time`) left out. What a command
-// substitution runs (`$(npx semver …)`) is read as a line of its own. A
-// quick read, not a shell's parse: a command built as the script runs (`$x
-// install`, `eval "$cmd"`) goes unseen, as does one in a function called.
+// them, for commands.js: its lines continued joined, comments set aside,
+// each line split at `&&`, `||`, `;`, `&` and `|`, each command's words
+// unquoted, past settings and wrappers (`NAME=value`, `sudo -E`, `env`), a
+// command substitution read as a line of its own. A quick read, not a
+// shell's parse: a command built as the script runs goes unseen.
 
 // A line of a script, its continuations joined, and the line it starts on,
 // counting from 0.
@@ -83,10 +79,9 @@ function closing(text, from) {
 }
 
 // A line's commands, each `{ argv, piped, out }`, `piped` where a pipe feeds
-// it and `out` the file it writes its output to,
-// and each command substitution's text (`nested`), to read as lines of
-// their own.
-export function commandsOf(text) {
+// it and `out` the file it writes its output to, and each command
+// substitution's text (`nested`), to read as lines of their own.
+function commandsOf(text) {
   const commands = [], nested = []
   let piped = false, quote = null, start = 0
   const end = (at, next) => {
@@ -124,7 +119,7 @@ export function scriptCommands(script) {
     const queue = [text]
     for (let read = 0; read < queue.length && read < 64; read++) {
       const { commands, nested } = commandsOf(queue[read])
-      commands.forEach((command, at) => { found.push({ ...command, line, next: commands[at + 1]?.piped ? commands[at + 1] : null, text: queue[read] }) })
+      commands.forEach((command, at) => { found.push({ ...command, line, next: commands[at + 1]?.piped ? commands[at + 1] : null }) })
       queue.push(...nested)
     }
   }

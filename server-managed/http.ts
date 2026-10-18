@@ -2421,13 +2421,12 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
         workflows: () => upstreamGithub(() => client.listRepoDir({ repo: repo.fullName, sha: commit, directory: WORKFLOWS_DIR })
           .catch((error: unknown) => { if (error instanceof Error && /has no directory at/u.test(error.message)) return []; throw error }))
           .then(entries => entries.filter(entry => entry.type === 'blob' && entry.mode !== '120000' && /\.ya?ml$/iu.test(entry.path))
-            .map(entry => ({ path: `${WORKFLOWS_DIR}/${entry.path}`, sha: entry.sha }))),
+            .map(entry => `${WORKFLOWS_DIR}/${entry.path}`)),
       }
     },
     actions: githubActionsSource(user.token),
     actionFiles: scanReadStore(deps.db, 'action-files', SCAN_READ_KEPT_MS, deps.config.debug),
-    // As risk lines are, kept for good, each told again past RISK_KEPT_MS.
-    actionLines: scanReadStore(deps.db, 'actions', Infinity, deps.config.debug),
+    actionLines: scanReadStore(deps.db, 'actions', RISK_KEPT_MS, deps.config.debug),
     teamScoped,
     // Each package's downloads readied before it is assessed
     // (scan-downloads.ts), so that none waits on npm's downloads API; a

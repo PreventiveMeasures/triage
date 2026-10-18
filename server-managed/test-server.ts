@@ -28,7 +28,8 @@ import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
 import { type Maker, coauthorsOf } from './commit-coauthors.ts'
 import { APP_AGENTS } from './repository-agents.ts'
-import { scanWorkflow } from '../actions-scan/index.js'
+import { usesOfKey } from '../risk/index.js'
+import { actionsLines } from './repository-actions.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
@@ -1135,32 +1136,28 @@ function fixtureActions(): RiskFixtureLine[] {
   const commit = (char: string) => char.repeat(40)
   // Its `repo` the repository's name, as a reference names it, not an id.
   const action = (key: string, more: Record<string, unknown>) => {
-    const [, repo = '', path = '', ref = ''] = /^([^/]+\/[^/@]+)(?:\/([^@]*))?@(\S+)/u.exec(key) ?? []
-    return { type: 'action', key, owner: 'example', depth: 0, kind: 'action', repo, path, ref, pin: /^[\da-f]{40}$/u.test(ref) ? 'sha' : 'ref', ownerKind: 'third-party',
-      repository: { fullName: repo, fork: null, archived: false, private: false }, latest: null, using: 'node24', file: `${path ? `${path}/` : ''}action.yml`, uses: [], findings: [], ...more } as unknown as RiskFixtureLine
+    const { kind, repo, path, ref, pin } = usesOfKey(key)!
+    return { type: 'action', key, kind, repo, path, ref, pin, repository: { fullName: repo, fork: null, archived: false, private: false }, latest: null, using: 'node24',
+      file: `${path ? `${path}/` : ''}action.yml`, uses: [], findings: [], ...more } as unknown as RiskFixtureLine
   }
   return [
-    action('actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.1', { ownerKind: 'github', commit: 'de0fac2e4500dabe0009e67214ff5f5447ce83dd', at: 'sha', tags: ['v6.0.1', 'v6'], latest: 'v6.0.1' }),
-    action('actions/setup-node@v4', { ownerKind: 'github', commit: commit('4'), at: 'tag', tags: ['v4.4.0', 'v4'], latest: 'v6.0.0', findings: [{ id: 'outdated', severity: 'low', latest: 'v6.0.0' }] }),
+    action('actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.1', { commit: 'de0fac2e4500dabe0009e67214ff5f5447ce83dd', at: 'sha', tags: ['v6.0.1', 'v6'], latest: 'v6.0.1' }),
+    action('actions/setup-node@v4', { commit: commit('4'), at: 'tag', tags: ['v4.4.0', 'v4'], latest: 'v6.0.0', findings: [{ id: 'outdated', severity: 'low', latest: 'v6.0.0' }] }),
     action('tj-actions/changed-files@v45', { commit: commit('0'), at: 'tag', tags: ['v45'], latest: 'v45.0.7', using: 'composite', uses: [{ key: 'tj-actions/glob@main', line: 12, file: 'action.yml' }],
       findings: [{ id: 'tag-off-release', severity: 'high', release: 'v45.0.7' }, { id: 'tag-off-branch', severity: 'low' },
         { id: 'remote-script', severity: 'high', file: 'action.yml', line: 20 }, { id: 'hosts', severity: 'critical', tag: 'Exfiltration', services: ['webhook-site'], file: 'action.yml', line: 21 }] }),
     action('someone/deploy-action@0123456789abcdef0123456789abcdef01234567 # v2.1.0', { commit: '0123456789abcdef0123456789abcdef01234567', at: 'sha', tags: [], latest: 'v2.1.0',
       findings: [{ id: 'imposter-commit', severity: 'critical' }, { id: 'comment-mismatch', severity: 'high', comment: 'v2.1.0', tags: [] }] }),
     action('pnpm/action-setup@main', { commit: commit('9'), at: 'branch', tags: [], latest: 'v4.2.0', findings: [{ id: 'branch-ref', severity: 'high' }] }),
-    action('tj-actions/glob@main', { owner: 'tj-actions', depth: 1, commit: commit('8'), at: 'branch', tags: [], findings: [{ id: 'branch-ref', severity: 'high' }, { id: 'repo-moved', severity: 'high', to: 'tj-actions/glob-v2' }] }),
+    action('tj-actions/glob@main', { commit: commit('8'), at: 'branch', tags: [], findings: [{ id: 'branch-ref', severity: 'high' }, { id: 'repo-moved', severity: 'high', to: 'tj-actions/glob-v2' }] }),
   ]
 }
 
-// The first repository's Actions' lines: its workflows, each file's
-// findings, npx held to its npm lockfile's packages.
+// The first repository's Actions' lines, as a scan tells them, npx held to
+// its npm lockfile's packages.
 function fixtureWorkflows(repo: number, owner: string, locked: string[]): RiskFixtureLine[] {
-  const lockfiles = [{ path: 'package-lock.json', names: new Set(locked) }]
-  return [
-    { type: 'workflows', repo, paths: ['.github/workflows/ci.yml'] },
-    { type: 'workflow', repo, path: '.github/workflows/ci.yml', kind: 'workflow', ...scanWorkflow('workflow', FIXTURE_WORKFLOW, { owner, lockfiles }) },
-    { type: 'workflow', repo, path: '.github/actions/setup/action.yml', kind: 'action', ...scanWorkflow('action', FIXTURE_ACTION, { owner, lockfiles }) },
-  ]
+  const files = [{ path: '.github/workflows/ci.yml', kind: 'workflow', text: FIXTURE_WORKFLOW }, { path: '.github/actions/setup/action.yml', kind: 'action', text: FIXTURE_ACTION }] as const
+  return actionsLines(repo, owner, { files: [...files] }, [{ path: 'package-lock.json', names: new Set(locked) }]).lines as unknown as RiskFixtureLine[]
 }
 
 // A scan of the connected repositories' npm lockfiles (repository-risk.ts),

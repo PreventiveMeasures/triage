@@ -11,10 +11,10 @@ export function tagVersion(tag) {
 }
 
 // A release's, of all three parts.
-export const isRelease = version => version !== null && version[2] !== null
+const isRelease = version => version !== null && version[2] !== null
 
 // The higher first, a part a tag hasn't below any it has.
-export const byVersion = (a, b) => (b[0] - a[0]) || ((b[1] ?? -1) - (a[1] ?? -1)) || ((b[2] ?? -1) - (a[2] ?? -1))
+const byVersion = (a, b) => (b[0] - a[0]) || ((b[1] ?? -1) - (a[1] ?? -1)) || ((b[2] ?? -1) - (a[2] ?? -1))
 
 // Whether a release (`other`) is of the line a major or minor tag
 // (`version`) names: `v4` of every `4.x.y`, `v4.2` of `4.2.y`.

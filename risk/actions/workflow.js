@@ -1,10 +1,9 @@
 // A workflow, or an action's metadata (action.yml), read for what it runs:
 // the events it runs on, and each job's steps in order, each step's `uses`
-// (uses.js) or `run` script, with the shell and the directory it runs in,
-// and the images its jobs run in (`container:`, `services:`); an action's
-// `runs`: a composite one's steps, a Docker one's image, a JavaScript one's
-// runtime. Each with the line it is on, counting from 1, a script's own
-// lines each the file's where it is a `|` block scalar.
+// (uses.js) or `run` script, with the directory it runs in, and the images
+// its jobs run in; an action's `runs`: a composite one's steps, a Docker
+// one's image, a JavaScript one's runtime. Each with the line it is on,
+// counting from 1, a `|` block scalar's script's lines each the file's.
 import { YamlError, parseYaml } from '@preventive/lockfile/yaml.js'
 import { readImage, readUses } from './uses.js'
 
@@ -29,10 +28,12 @@ function lineOf(file, container, key, fallback) {
   return line === undefined ? fallback : line + 1
 }
 
-// The comment a line ends with, as a `uses:` line's names a version.
-function commentOn(line) {
-  const m = /(?:^|[ \t])(#.*)$/u.exec(line ?? '')
-  return m ? m[1] : null
+// A step's or a job's (`owner`) `uses`, with its line, the comment its line
+// ends with naming a version.
+function usesOf(file, owner, fallback, job = false) {
+  if (typeof owner.uses !== 'string') return null
+  const line = lineOf(file, owner, 'uses', fallback)
+  return { ...readUses(owner.uses, { job, comment: /(?:^|[ \t])(#.*)$/u.exec(file.lines[line - 1] ?? '')?.[1] ?? null }), line }
 }
 
 // The events `on` names: a string, a list, or a mapping's keys.
@@ -47,34 +48,29 @@ function triggersOf(on) {
 const LITERAL_HEADER = /:[ \t]+(?:&\S+[ \t]+)?\|[1-9+-]{0,2}[ \t]*(?:#.*)?$/u
 const literalStart = (file, line) => line !== null && LITERAL_HEADER.test(file.lines[line - 1] ?? '') ? line + 1 : null
 
-// A `run:` step's script and where it runs: its shell and directory as the
-// step says, else as its job's `defaults.run` or the workflow's say.
-function runOf(file, step, defaults) {
+// A `run:` step's script and the directory it runs in, as the step says,
+// else as its job's `defaults.run` or the workflow's say (`directory`).
+function runOf(file, step, directory) {
   const script = stringOf(step.run)
   if (script === null) return null
   const line = lineOf(file, step, 'run', null)
-  return { script, line, start: literalStart(file, line), shell: stringOf(step.shell) ?? defaults.shell,
-    workingDirectory: stringOf(step['working-directory']) ?? defaults.workingDirectory }
+  return { script, line, start: literalStart(file, line), workingDirectory: stringOf(step['working-directory']) ?? directory }
 }
 
-function stepsOf(file, steps, defaults) {
+function stepsOf(file, steps, directory) {
   if (!Array.isArray(steps)) return []
   return steps.flatMap((step, index) => {
     if (!isMap(step)) return []
     const line = lineOf(file, steps, index, null)
-    const usesLine = lineOf(file, step, 'uses', line)
-    const uses = typeof step.uses === 'string' ? { ...readUses(step.uses, { comment: commentOn(file.lines[usesLine - 1]) }), line: usesLine } : null
     const inputs = isMap(step.with) ? step.with : null
     const withLines = inputs ? Object.fromEntries(Object.keys(inputs).map(key => [key, lineOf(file, inputs, key, line)])) : {}
-    return [{ line, uses, run: runOf(file, step, defaults), with: inputs, withLines, id: stringOf(step.id) }]
+    return [{ line, uses: usesOf(file, step, line), run: runOf(file, step, directory), with: inputs, withLines }]
   })
 }
 
-// `defaults.run` of a workflow or a job, over `outer`'s.
-function defaultsOf(owner, outer) {
-  const run = isMap(owner?.defaults) && isMap(owner.defaults.run) ? owner.defaults.run : {}
-  return { shell: stringOf(run.shell) ?? outer.shell, workingDirectory: stringOf(run['working-directory']) ?? outer.workingDirectory }
-}
+// The directory `defaults.run` of a workflow or a job (`owner`) names, else
+// `outer`.
+const directoryOf = (owner, outer) => stringOf(isMap(owner?.defaults) && isMap(owner.defaults.run) ? owner.defaults.run['working-directory'] : null) ?? outer
 
 // The images a job runs in, each as written (`text`), read (readImage) and
 // where: its container, and each of its services'.
@@ -83,8 +79,8 @@ function imagesOf(file, job) {
   const container = isMap(job.container) ? job.container.image : job.container
   if (typeof container === 'string') images.push({ via: 'container', text: container, line: lineOf(file, isMap(job.container) ? job.container : job, isMap(job.container) ? 'image' : 'container', null) })
   if (isMap(job.services)) {
-    for (const [name, service] of Object.entries(job.services)) {
-      if (isMap(service) && typeof service.image === 'string') images.push({ via: 'services', service: name, text: service.image, line: lineOf(file, service, 'image', null) })
+    for (const service of Object.values(job.services)) {
+      if (isMap(service) && typeof service.image === 'string') images.push({ via: 'services', text: service.image, line: lineOf(file, service, 'image', null) })
     }
   }
   return images.map(image => ({ ...image, read: readImage(image.text) }))
@@ -92,13 +88,9 @@ function imagesOf(file, job) {
 
 function jobsOf(file, doc) {
   if (!isMap(doc.jobs)) throw new ActionsScanError('workflow-unreadable', 'a workflow has no jobs')
-  const defaults = defaultsOf(doc, { shell: null, workingDirectory: null })
-  return Object.entries(doc.jobs).filter(([, job]) => isMap(job)).map(([id, job]) => {
-    const usesLine = lineOf(file, job, 'uses', null)
-    const uses = typeof job.uses === 'string' ? { ...readUses(job.uses, { job: true, comment: commentOn(file.lines[usesLine - 1]) }), line: usesLine } : null
-    return { id, line: lineOf(file, doc.jobs, id, null), uses, with: isMap(job.with) ? job.with : null, secrets: job.secrets ?? null,
-      steps: stepsOf(file, job.steps, defaultsOf(job, defaults)), images: imagesOf(file, job) }
-  })
+  const directory = directoryOf(doc, null)
+  return Object.values(doc.jobs).filter(isMap).map(job => ({ uses: usesOf(file, job, null, true), secrets: job.secrets ?? null,
+    steps: stepsOf(file, job.steps, directoryOf(job, directory)), images: imagesOf(file, job) }))
 }
 
 // An action's `runs`: its runtime (`using`), a composite one's steps as a
@@ -112,9 +104,8 @@ function runsOf(file, doc) {
   const image = using === 'docker' ? stringOf(runs.image) : null
   const imageLine = lineOf(file, runs, 'image', usingLine)
   const docker = image?.startsWith('docker://') ? { via: 'runs', text: image.slice('docker://'.length), line: imageLine, read: readImage(image.slice('docker://'.length)) } : null
-  const steps = using === 'composite' ? stepsOf(file, runs.steps, { shell: null, workingDirectory: null }) : []
-  return { using, usingLine, dockerfile: image && !docker ? { path: image, line: imageLine } : null,
-    jobs: [{ id: null, line: usingLine, uses: null, steps, images: docker ? [docker] : [] }] }
+  const steps = using === 'composite' ? stepsOf(file, runs.steps, null) : []
+  return { using, usingLine, dockerfile: image && !docker ? { path: image, line: imageLine } : null, jobs: [{ uses: null, steps, images: docker ? [docker] : [] }] }
 }
 
 // A workflow (`kind` 'workflow') or an action's metadata ('action') read
@@ -129,6 +120,6 @@ export function readWorkflow(kind, text) {
     throw error
   }
   if (!isMap(doc)) throw new ActionsScanError('workflow-unreadable', `${kind === 'action' ? 'an action' : 'a workflow'} is not a mapping`)
-  if (kind === 'action') return { kind, triggers: [], ...runsOf(file, doc) }
-  return { kind, triggers: triggersOf(doc.on), using: null, usingLine: null, dockerfile: null, jobs: jobsOf(file, doc) }
+  if (kind === 'action') return { triggers: [], ...runsOf(file, doc) }
+  return { triggers: triggersOf(doc.on), using: null, usingLine: null, dockerfile: null, jobs: jobsOf(file, doc) }
 }

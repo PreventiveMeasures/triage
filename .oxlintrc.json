@@ -125,7 +125,8 @@
     },
     {
       "files": [
-        "client/sync/sse-transport.ts"
+        "client/sync/sse-transport.ts",
+        "risk/index.d.ts"
       ],
       "rules": {
         "max-classes-per-file": "off"

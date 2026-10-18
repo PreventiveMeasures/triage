@@ -8,7 +8,7 @@
 // What GitHub has none of reads as none; anything else is thrown as a
 // GithubApiError.
 import { createClient } from '@preventive/upstream/github.js'
-import type { ActionsSource } from '../actions-scan/index.js'
+import type { ActionsSource } from '../risk/index.js'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
 import { githubJson } from './github-app.ts'
 

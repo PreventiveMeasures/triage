@@ -8,7 +8,7 @@
 // GitHub reads as one too where one is named so.
 
 // GitHub's own, whose actions a workflow's runner ships with too.
-export const GITHUB_OWNERS = new Set(['actions', 'github'])
+const GITHUB_OWNERS = new Set(['actions', 'github'])
 
 const OWNER = /^[\da-z](?:[\da-z]|-(?=[\da-z])){0,38}$/iu
 const NAME = /^(?!\.{1,2}$)[\w.-]{1,100}$/u
@@ -19,12 +19,10 @@ const SHORT_SHA = /^[\da-f]{7,39}$/u
 // `# ratchet:actions/checkout@v4`.
 const VERSION_COMMENT = /^#\s*(?:tag\s*[=:]\s*|pin@|ratchet:[^\s@]+@)?(v?\d+(?:\.\d+){0,3}(?:[-+][\w.-]+)?)(?![\w.])/iu
 
-export const isSha = ref => SHA.test(ref)
-
 // How a ref pins what it names: `sha`, `short-sha` or `ref` (a tag or a
 // branch), and `expression` for one an expression names, which GitHub
 // refuses.
-export function pinOf(ref) {
+function pinOf(ref) {
   if (/\$\{\{/u.test(ref)) return 'expression'
   if (SHA.test(ref)) return 'sha'
   return SHORT_SHA.test(ref) ? 'short-sha' : 'ref'
@@ -45,9 +43,10 @@ export function readImage(text) {
 }
 
 // The version a comment beside a `uses:` names, or null.
-export function commentVersion(comment) {
-  return typeof comment === 'string' ? VERSION_COMMENT.exec(comment.trim())?.[1] ?? null : null
-}
+const commentVersion = comment => typeof comment === 'string' ? VERSION_COMMENT.exec(comment.trim())?.[1] ?? null : null
+
+// Whether a path in a repository is a workflow's, as a reusable one is named.
+export const isWorkflowPath = path => /^\.github\/workflows\/[^/]+\.ya?ml$/u.test(path)
 
 // What `uses` names (`text`): `{ kind, uses, … }`, its kind `action`, or
 // `workflow` at a job's level (`job`), with its `repo`, `path` in it ('' for
@@ -66,7 +65,7 @@ export function readUses(text, { job = false, comment = null } = {}) {
   const at = uses.indexOf('@')
   const [owner = '', name = '', ...path] = (at === -1 ? uses : uses.slice(0, at)).split('/')
   const ref = at === -1 ? '' : uses.slice(at + 1)
-  if (!OWNER.test(owner) || !NAME.test(name) || ref === '' || path.some(part => !NAME.test(part)) || (job && !/^\.github\/workflows\/[^/]+\.ya?ml$/u.test(path.join('/')))) {
+  if (!OWNER.test(owner) || !NAME.test(name) || ref === '' || path.some(part => !NAME.test(part)) || (job && !isWorkflowPath(path.join('/')))) {
     return { kind: 'invalid', uses }
   }
   return { kind: job ? 'workflow' : 'action', uses, repo: `${owner}/${name}`, path: path.join('/'), ref, pin: pinOf(ref), comment: commentVersion(comment) }

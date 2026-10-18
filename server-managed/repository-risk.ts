@@ -44,7 +44,7 @@ import { type AdvisoryRow, type Audit, type AuditSource, auditLockfile } from '.
 import { type DependabotRead, type ListedLockfile, type LockfileRead, type OpenedRepository, type RepositoryFailure, type RepositoryRead, SCAN_READ_KEPT_MS,
   readRepository } from './repository-risk-read.ts'
 import { type DependabotAlert, alertVersions } from './dependabot-alerts.ts'
-import type { ActionsSource } from '../actions-scan/index.js'
+import type { ActionsSource } from '../risk/index.js'
 import { type ActionLine, type ActionRef, type ActionsResolver, type WorkflowLine, type WorkflowsLine, type WorkflowsRead, actionsLines,
   resolvingActions } from './repository-actions.ts'
 

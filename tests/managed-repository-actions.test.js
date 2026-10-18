@@ -55,7 +55,7 @@ function sourceOf({ files = FILES, workflows = ['.github/workflows/ci.yml'], act
         },
         workflows() {
           listed.push(1)
-          return workflows instanceof Error ? Promise.reject(workflows) : Promise.resolve(workflows.map(path => ({ path, sha: `1:${path}` })))
+          return workflows instanceof Error ? Promise.reject(workflows) : Promise.resolve(workflows)
         } }
     },
     teamScoped: () => Promise.resolve(false),
@@ -109,11 +109,9 @@ test('a scan tells a repository\'s workflows and actions of its own, npx held to
   assert.deepEqual(findingIds(own.findings), ['unpinned/high@4', 'remote-script/high@5'])
   assert.deepEqual(source.read.filter(path => path.startsWith('.github')), ['.github/workflows/ci.yml', '.github/actions/setup/action.yml', '.github/actions/setup/action.yaml'])
   const actions = ofType(lines, 'action')
-  assert.deepEqual(actions.map(({ key, depth }) => [key, depth]).toSorted(), [
-    ['actions/checkout@v4', 0], ['nested/one@main', 1], [`third/party@${SHA('b')} # v1.0.0`, 0], ['third/party@v1', 0],
-  ], 'each once, and what one names in turn')
+  assert.deepEqual(actions.map(({ key }) => key).toSorted(), ['actions/checkout@v4', 'nested/one@main', `third/party@${SHA('b')} # v1.0.0`, 'third/party@v1'],
+    'each once, and what one names in turn')
   assert.deepEqual(actions.find(({ key }) => key === 'nested/one@main').findings.map(({ id }) => id), ['branch-ref'])
-  assert.equal(actions.find(({ key }) => key === 'nested/one@main').owner, 'third', 'named by third/party')
   assert.deepEqual(lines.at(-1), { type: 'done' })
   assert.ok(lines.indexOf(actions.at(-1)) < lines.length - 1)
 })
@@ -149,7 +147,7 @@ test('a reference of a public repository is kept beyond the instance, a private 
 
 test('why a reference couldn\'t be resolved, or a repository\'s workflows listed, is told, and the scan goes on', async () => {
   const lines = await scan(sourceOf({ actions: actionsSource({ fail: name => name === 'actions/checkout' }) }))
-  assert.deepEqual(ofType(lines, 'action').find(({ key }) => key === 'actions/checkout@v4'), { type: 'action', key: 'actions/checkout@v4', owner: 'org', depth: 0, error: 'github-rate-limited' })
+  assert.deepEqual(ofType(lines, 'action').find(({ key }) => key === 'actions/checkout@v4'), { type: 'action', key: 'actions/checkout@v4', error: 'github-rate-limited' })
   assert.deepEqual(lines.at(-1), { type: 'done' })
   const unlisted = await scan(sourceOf({ workflows: new GithubApiError(502, 'github-unreachable', null, 'TimeoutError') }))
   assert.deepEqual(ofType(unlisted, 'workflows'), [{ type: 'workflows', repo: 1, error: 'github-unreachable', detail: 'listing its workflows: TimeoutError' }])
@@ -188,7 +186,7 @@ test('a scan in parts resolves in the next what a part before named but didn\'t 
 })
 
 test('a repository\'s Actions are kept by the commit read, but where a file failed for a while', async () => {
-  const read = await readActions({ workflows: () => Promise.resolve([{ path: 'a.yml', sha: 'x' }]), file: () => Promise.reject(new GithubApiError(429, 'github-rate-limited')) })
+  const read = await readActions({ workflows: () => Promise.resolve(['a.yml']), file: () => Promise.reject(new GithubApiError(429, 'github-rate-limited')) })
   assert.deepEqual(read, { files: [{ path: 'a.yml', kind: 'workflow', error: 'github-rate-limited' }] })
   assert.equal(lastingRead(read), false)
   assert.equal(lastingRead({ files: [{ path: 'a.yml', kind: 'workflow', text: 'x' }, { path: 'b/action.yml', kind: 'action', error: 'github-not-found' }] }), true)

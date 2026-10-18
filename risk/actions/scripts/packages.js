@@ -1,11 +1,6 @@
-// What a command of npm's tools fetches from a registry and runs, past what
-// a lockfile locks (commands.js): npx, `npm exec`, bunx and `bun x`, which
-// run a package of the project's where it has one installed and fetch it
-// otherwise (`localFirst`); `pnpm dlx`, pnpx, `yarn dlx`, `npm create` and
-// its kin, which fetch it whatever is installed; a package installed
-// globally, or added to the project by its name, resolved anew; and an
-// install that resolves anew where the lockfile and package.json disagree
-// (`unlocked`), as `npm install` does where `npm ci` refuses to.
+// What a command of npm's tools fetches and runs past what a lockfile locks
+// (commands.js), npx's and its kin's the project's own where installed
+// (`localFirst`), and an install that resolves anew (`unlocked`).
 import { isExactVersion } from '@preventive/upstream/semver.js'
 
 // A package spec (`name`, `name@spec`, `@scope/name@spec`) by its name and
@@ -21,6 +16,10 @@ export function npmSpec(text) {
   if (!/^(?:@[\w.-]+\/)?[\w.-]+$/u.test(name)) return null
   return { name, spec, exact: spec !== null && isExactVersion(spec.replace(/^[v=]/u, '')), registry: true }
 }
+
+// A package a tool fetches (`spec`), as a find of a script is told
+// (commands.js); none for none.
+export const fetched = (tool, spec, { ecosystem = 'npm', localFirst = false, ...more } = {}) => spec ? [{ kind: 'package', tool, ecosystem, localFirst, ...more, ...spec }] : []
 
 // The package `npm create x` and `npm init x` run: `create-x`, `@s/create`
 // for `@s`, `@s/create-x` for `@s/x`, its spec kept.
@@ -71,14 +70,11 @@ function execPackages(tool, argv, from, localFirst) {
   if (argv.some(word => /^(?:--no|--no-install|--offline)$/u.test(word))) return []
   const named = packageOptions(argv)
   if (named.length === 0 && argv.some(word => word === '-c' || word === '--call')) return []
-  const specs = named.length > 0 ? named : positional(argv, from).slice(0, 1)
-  return specs.flatMap(text => { const spec = npmSpec(text); return spec ? [{ kind: 'package', tool, ecosystem: 'npm', localFirst, ...spec }] : [] })
+  return (named.length > 0 ? named : positional(argv, from).slice(0, 1)).flatMap(text => fetched(tool, npmSpec(text), { localFirst }))
 }
 
-const installs = (tool, words, global) => words.flatMap(text => {
-  const spec = npmSpec(text)
-  return spec ? [{ kind: 'package', tool, ecosystem: 'npm', localFirst: false, global, ...spec }] : []
-})
+const installs = (tool, words, global) => words.flatMap(text => fetched(tool, npmSpec(text), { global }))
+const created = (tool, text) => text ? fetched(tool, createPackage(text)) : []
 const unlocked = tool => [{ kind: 'unlocked-install', tool }]
 const isInstalled = word => /^(?:\.{1,2}(?:\/|$)|file:|link:|workspace:)/u.test(word)
 
@@ -87,7 +83,7 @@ function npm(argv) {
   const [command = '', ...rest] = words
   const at = argv.indexOf(command)
   if (command === 'exec' || command === 'x') return execPackages(`npm ${command}`, argv, at + 1, true)
-  if (/^(?:create|init|innit)$/u.test(command) && rest[0]) { const spec = createPackage(rest[0]); return spec ? [{ kind: 'package', tool: `npm ${command}`, ecosystem: 'npm', localFirst: false, ...spec }] : [] }
+  if (/^(?:create|init|innit)$/u.test(command)) return created(`npm ${command}`, rest[0])
   if (/^(?:i|in|ins|inst|insta|instal|install|isnt|isnta|isntal|isntall|add|it|install-test)$/u.test(command)) {
     const named = rest.filter(word => !isInstalled(word))
     if (argv.some(word => GLOBAL.test(word))) return installs(`npm ${command} -g`, named, true)
@@ -99,7 +95,7 @@ function npm(argv) {
 function pnpm(argv) {
   const [command = '', ...rest] = positional(argv, 1)
   if (command === 'dlx') return execPackages('pnpm dlx', argv, argv.indexOf('dlx') + 1, false)
-  if (command === 'create' && rest[0]) { const spec = createPackage(rest[0]); return spec ? [{ kind: 'package', tool: 'pnpm create', ecosystem: 'npm', localFirst: false, ...spec }] : [] }
+  if (command === 'create') return created('pnpm create', rest[0])
   const global = argv.some(word => GLOBAL.test(word))
   if (command === 'add' || ((command === 'install' || command === 'i') && rest.length > 0)) return installs(`pnpm ${command}${global ? ' -g' : ''}`, rest.filter(word => !isInstalled(word)), global)
   if ((command === 'install' || command === 'i') && argv.includes('--no-frozen-lockfile')) return unlocked(`pnpm ${command} --no-frozen-lockfile`)
@@ -109,7 +105,7 @@ function pnpm(argv) {
 function yarn(argv) {
   const [command = '', ...rest] = positional(argv, 1)
   if (command === 'dlx') return execPackages('yarn dlx', argv, argv.indexOf('dlx') + 1, false)
-  if (command === 'create' && rest[0]) { const spec = createPackage(rest[0]); return spec ? [{ kind: 'package', tool: 'yarn create', ecosystem: 'npm', localFirst: false, ...spec }] : [] }
+  if (command === 'create') return created('yarn create', rest[0])
   if (command === 'global' && rest[0] === 'add') return installs('yarn global add', rest.slice(1), true)
   if (command === 'add') return installs('yarn add', rest.filter(word => !isInstalled(word)), false)
   const frozen = argv.some(word => /^--(?:frozen-lockfile|immutable)$/u.test(word))
@@ -120,23 +116,22 @@ function yarn(argv) {
 function bun(argv) {
   const [command = '', ...rest] = positional(argv, 1)
   if (command === 'x') return execPackages('bun x', argv, argv.indexOf('x') + 1, true)
-  if (command === 'create' && rest[0]) { const spec = createPackage(rest[0]); return spec ? [{ kind: 'package', tool: 'bun create', ecosystem: 'npm', localFirst: false, ...spec }] : [] }
+  if (command === 'create') return created('bun create', rest[0])
   const global = argv.some(word => GLOBAL.test(word))
   if (command === 'add' || ((command === 'install' || command === 'i') && rest.length > 0)) return installs(`bun ${command}${global ? ' -g' : ''}`, rest.filter(word => !isInstalled(word)), global)
   if ((command === 'install' || command === 'i') && !argv.some(word => word === '--frozen-lockfile' || word === '--ci')) return unlocked(`bun ${command}`)
   return command === 'update' ? unlocked('bun update') : []
 }
 
+// The tools that run a package (whether one installed first), and the rest.
+const EXECS = new Map([['npx', true], ['bunx', true], ['pnpx', false]])
+const TOOLS = new Map([['npm', npm], ['pnpm', pnpm], ['yarn', yarn], ['bun', bun]])
+
 // What a command of npm's tools fetches, by the program it runs (`program`,
 // its name without a path or `.cmd`): `{ kind: 'package', tool, ecosystem,
 // name, spec, exact, registry, localFirst, global? }` each, and `{ kind:
 // 'unlocked-install', tool }`; none for any other.
 export function npmToolFinds(program, argv) {
-  if (program === 'npx') return execPackages('npx', argv, 1, true)
-  if (program === 'bunx') return execPackages('bunx', argv, 1, true)
-  if (program === 'pnpx') return execPackages('pnpx', argv, 1, false)
-  if (program === 'npm') return npm(argv)
-  if (program === 'pnpm') return pnpm(argv)
-  if (program === 'yarn') return yarn(argv)
-  return program === 'bun' ? bun(argv) : []
+  if (EXECS.has(program)) return execPackages(program, argv, 1, EXECS.get(program))
+  return TOOLS.get(program)?.(argv) ?? []
 }

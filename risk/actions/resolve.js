@@ -1,39 +1,13 @@
 // A reference to an action or a reusable workflow on GitHub (uses.js),
 // resolved: the repository it names as GitHub has it now, the commit its ref
 // is, and its own code at that commit, read as a workflow's is
-// (findings.js), each `{ id, severity, … }`:
-//
-// - The repository: `repo-missing`, none GitHub has, red, as anyone who
-//   takes its owner's name can publish one, yellow for the same owner's,
-//   which may only be one this access can't read; `repo-moved`, renamed or
-//   transferred, orange, as GitHub redirects the old name until someone
-//   takes it; `repo-fork`, a fork, and `repo-archived`, low.
-// - A ref not a commit: `branch-ref`, a branch, which moves with every
-//   push, orange; `ambiguous-ref`, a tag and a branch of one name, orange;
-//   `ref-missing`, neither, yellow, as GitHub runs whichever is pushed
-//   first; `not-version`, a tag that is no version (`latest`), yellow;
-//   `tag-off-release`, a major or minor tag (`v4`) on a commit no release of
-//   its line is on, orange, as a tag moved by whoever took the repository
-//   is; `tag-off-branch`, a tag's commit on none of its branches, low, as a
-//   release's built files may be; `outdated`, a major line older than the
-//   latest, low.
-// - A commit: `imposter-commit`, in the history of none of the repository's
-//   branches and releases, red: GitHub serves a fork's commit under the
-//   name of the repository it forked; `unverified-commit`, where more
-//   branches are than were looked at, orange; `commit-missing`, none GitHub
-//   has, orange; `untagged-commit`, one no tag names, no release, yellow;
-//   `comment-mismatch`, a version the comment beside it names (`# v4.1.1`)
-//   that isn't the commit's, orange.
-// - Its code: `action-missing`, no action.yml where it names, yellow; and
-//   each finding of its action.yml, its Dockerfile, or the reusable
-//   workflow, with the `file` it is in.
-//
+// (findings.js), each `{ id, severity, … }`, as README.md tells them.
 // `source` reads GitHub (index.d.ts ActionsSource). What it throws is thrown
 // as it is.
 import { ActionsScanError, readWorkflow } from './workflow.js'
 import { workflowFindings, workflowUses } from './findings.js'
 import { dockerfileFindings } from './dockerfile.js'
-import { ownerKind, readUses, usesKey } from './uses.js'
+import { isWorkflowPath, ownerKind, readUses, usesKey } from './uses.js'
 import { latestOf, newestOfLines, ofLine, tagVersion, versionsOf } from './versions.js'
 
 // How many of a repository's other branches, and releases' major lines, a
@@ -56,11 +30,12 @@ async function repositoryOf(uses, source, owner) {
 // none (`none`), or none of those looked at where more are (`unknown`); or
 // `missing`, a commit GitHub hasn't.
 async function reachable(source, info, sha, tags) {
-  const name = info.fullName
+  const name = info.fullName, releases = newestOfLines(tags ?? []).slice(0, MAX_LINES)
+  if (releases.some(({ oid }) => oid === sha)) return 'release'
   const onDefault = await source.contains(name, info.defaultBranch, sha)
   if (onDefault === null) return 'missing'
   if (onDefault) return 'default'
-  for (const { oid } of newestOfLines(tags ?? []).slice(0, MAX_LINES)) if (oid === sha || await source.contains(name, oid, sha)) return 'release'
+  for (const { oid } of releases) if (await source.contains(name, oid, sha)) return 'release'
   const { branches, complete } = await source.branches(name)
   const others = branches.filter(({ branch }) => branch !== info.defaultBranch)
   for (const { oid } of others.slice(0, MAX_BRANCHES)) if (oid === sha || await source.contains(name, oid, sha)) return 'branch'
@@ -125,7 +100,7 @@ async function pinnedOf(uses, info, source, tags) {
 
 // A reference's own `$/path` (the repository's own, at the commit running)
 // as one to its repository at the commit read.
-const selfRef = (uses, info, commit) => readUses(`${info.fullName}/${uses.path}@${commit}`, { job: /^\.github\/workflows\/[^/]+\.ya?ml$/u.test(uses.path) })
+const selfRef = (uses, info, commit) => readUses(`${info.fullName}/${uses.path}@${commit}`, { job: isWorkflowPath(uses.path) })
 
 // The file a reference runs, at `commit`: an action's action.yml or
 // action.yaml, a reusable workflow's own, and a Docker action's
@@ -157,16 +132,10 @@ async function codeOf(uses, info, commit, source) {
 }
 
 // A reference resolved (`uses`, uses.js readUses's, an action's or a
-// reusable workflow's): `{ key, kind, repo, path, ref, pin, owner,
-// repository, commit, at, tags, latest, using, file, findings, uses }`,
-// `repository` as GitHub has it now (null for none), `commit` its ref's,
-// `at` what its ref is (`sha`, `tag`, `branch`, null for none), `tags` those
-// on the commit, `latest` the repository's latest release, `using` an
-// action's runtime, `file` the one read, and `uses` the references it makes
-// in turn, by key, each with its `file` and `line`. `owner`, whose
-// repository the workflow making it is.
+// reusable workflow's), as index.d.ts ResolvedAction tells it. `owner`,
+// whose repository the workflow making it is.
 export async function resolveAction(uses, source, { owner = null } = {}) {
-  const at = { key: usesKey(uses), kind: uses.kind, repo: uses.repo, path: uses.path, ref: uses.ref, pin: uses.pin, owner: ownerKind(uses.repo, owner) }
+  const at = { key: usesKey(uses), kind: uses.kind, repo: uses.repo, path: uses.path, ref: uses.ref, pin: uses.pin }
   const { info, findings } = await repositoryOf(uses, source, owner)
   if (!info) return { ...at, repository: null, commit: null, at: null, tags: [], latest: null, using: null, file: null, findings, uses: [] }
   const tags = await source.tags(info.fullName)

@@ -1,39 +1,20 @@
 // What a workflow, or an action's metadata, calls for a look at by its own
 // text (workflow.js), before any reference is resolved on GitHub
-// (resolve.js), each `{ id, severity, line, … }`, in the file's order:
-//
-// - `unpinned`: a `uses:` by a tag or a branch, which its repository's owner
-//   can point anywhere, not a full commit sha: orange, yellow for GitHub's
-//   own (`actions/…`, `github/…`) and the same owner's; `short-sha`, one by a
-//   short sha, orange, as GitHub reads a branch or tag named so too.
-// - `unpinned-image`: an image by a tag (`docker://`, `container:`,
-//   `services:`, a Docker action's), not a digest (scripts/grade.js).
-// - what a script runs past a pin, the services it names and the
-//   expressions anyone can write in it (scripts/grade.js); and
-//   github-script's `script:` holding one (`script-injection`).
-// - `pwn-request`: a workflow that runs with the base repository's secrets
-//   for a fork's pull request (`pull_request_target`, `workflow_run`)
-//   checking out the pull request's own code, red, as building it runs it.
-// - `untrusted-artifact`: such a workflow taking another run's artifacts,
-//   which a fork's pull request writes, orange.
-// - `secrets-inherited`: another owner's reusable workflow handed every
-//   secret (`secrets: inherit`), orange.
-// - `invalid-uses`: a `uses:` GitHub can't read, low.
-// - `deprecated-runtime`: an action on a Node.js GitHub no longer runs it
-//   on, low.
-import { PRIVILEGED_TRIGGERS, namesPullHead, untrustedExpressions } from './expressions.js'
+// (resolve.js), each `{ id, severity, line, … }`, as README.md tells them.
+import { namesPullHead, scriptInjections } from './expressions.js'
+import { readWorkflow } from './workflow.js'
 import { installLine } from './scripts/commands.js'
 import { imageFinding, lockedName, scriptFindings } from './scripts/grade.js'
-import { ownerKind } from './uses.js'
+import { ownerKind, usesKey } from './uses.js'
 
-// What a `uses:` calls for, by how it pins what it names.
+// What a `uses:` calls for, by how it pins what it names; of a reference,
+// with its `key`.
 function usesFinding(uses, owner) {
   if (uses.kind === 'invalid') return { id: 'invalid-uses', severity: 'low', uses: uses.uses }
   if (uses.kind === 'docker') return uses.digest ? null : imageFinding(uses.uses, uses, 'uses')
-  if (uses.kind !== 'action' && uses.kind !== 'workflow') return null
-  if (uses.pin === 'short-sha') return { id: 'short-sha', severity: 'high', uses: uses.uses }
-  if (uses.pin === 'sha') return null
-  return { id: 'unpinned', severity: ownerKind(uses.repo, owner) === 'third-party' ? 'high' : 'moderate', uses: uses.uses, ref: uses.ref }
+  if ((uses.kind !== 'action' && uses.kind !== 'workflow') || uses.pin === 'sha') return null
+  const at = { uses: uses.uses, key: usesKey(uses) }
+  return uses.pin === 'short-sha' ? { id: 'short-sha', severity: 'high', ...at } : { id: 'unpinned', severity: ownerKind(uses.repo, owner) === 'third-party' ? 'high' : 'moderate', ...at, ref: uses.ref }
 }
 
 // Whether a step installs a project's packages: a script that runs an
@@ -67,12 +48,8 @@ function lockedIn(lockfiles, directory) {
 // a pull request's code checked out, or artifacts taken from another run,
 // where the workflow runs with its secrets for anyone.
 function stepFindings(step, triggers) {
-  const found = []
   const repo = step.uses?.repo?.toLowerCase()
-  const privileged = triggers.some(event => PRIVILEGED_TRIGGERS.has(event))
-  if (repo === 'actions/github-script' && typeof step.with?.script === 'string') {
-    for (const { expression } of untrustedExpressions(step.with.script)) found.push({ id: 'script-injection', severity: privileged ? 'critical' : 'high', expression, line: step.withLines.script })
-  }
+  const found = repo === 'actions/github-script' ? scriptInjections(step.with?.script, triggers).map(({ index: _index, ...finding }) => ({ ...finding, line: step.withLines.script })) : []
   const forks = triggers.includes('pull_request_target') || triggers.includes('workflow_run')
   if (forks && repo === 'actions/checkout' && (namesPullHead(step.with?.ref) || namesPullHead(step.with?.repository))) {
     found.push({ id: 'pwn-request', severity: 'critical', ref: String(step.with.ref ?? step.with.repository), line: step.withLines.ref ?? step.withLines.repository ?? step.line })
@@ -85,12 +62,12 @@ function stepFindings(step, triggers) {
 
 // A job's findings: its reusable workflow's and its steps', each script's
 // graded with what was installed before it and the lockfiles that apply.
-function jobFindings(job, read, { owner, lockfiles, external }) {
+function jobFindings(job, triggers, { owner, lockfiles, external }) {
   const found = []
   if (job.uses) {
     const finding = usesFinding(job.uses, owner)
     if (finding) found.push({ ...finding, line: job.uses.line })
-    if (job.secrets === 'inherit' && job.uses.repo && ownerKind(job.uses.repo, owner) === 'third-party') found.push({ id: 'secrets-inherited', severity: 'high', uses: job.uses.uses, line: job.uses.line })
+    if (job.secrets === 'inherit' && job.uses.repo && ownerKind(job.uses.repo, owner) === 'third-party') found.push({ id: 'secrets-inherited', severity: 'high', uses: job.uses.uses, key: usesKey(job.uses), line: job.uses.line })
   }
   for (const image of job.images) if (!image.read?.digest && !image.text.includes('${{')) found.push({ ...imageFinding(image.text, image.read, image.via), line: image.line })
   let installed = false
@@ -99,9 +76,9 @@ function jobFindings(job, read, { owner, lockfiles, external }) {
     if (finding) found.push({ ...finding, line: step.uses.line })
     if (step.run) {
       const locked = external ? () => false : lockedIn(lockfiles, directoryOf(step.run.workingDirectory))
-      found.push(...scriptFindings(step.run, { locked, installed, external, triggers: read.triggers }))
+      found.push(...scriptFindings(step.run, { locked, installed, external, triggers }))
     }
-    found.push(...stepFindings(step, read.triggers))
+    found.push(...stepFindings(step, triggers))
     installed ||= installs(step)
   }
   return found
@@ -114,15 +91,26 @@ function jobFindings(job, read, { owner, lockfiles, external }) {
 // or above where it runs; `external`, another repository's action, run in
 // a workspace it can't tell.
 export function workflowFindings(read, { owner = null, lockfiles = [], external = false } = {}) {
-  const found = read.jobs.flatMap(job => jobFindings(job, read, { owner, lockfiles, external }))
+  const found = read.jobs.flatMap(job => jobFindings(job, read.triggers, { owner, lockfiles, external }))
   if (/^node(?:12|16)$/u.test(read.using ?? '')) found.push({ id: 'deprecated-runtime', severity: 'low', using: read.using, line: read.usingLine })
   return found.toSorted((a, b) => (a.line ?? 0) - (b.line ?? 0))
 }
 
-// What a workflow or an action's metadata names to resolve, each once, in
-// the file's order: its actions and reusable workflows on GitHub (`action`,
-// `workflow`) and the repository's own (`local`), each with its line.
+// What a workflow or an action's metadata names to resolve, in the file's
+// order: its actions and reusable workflows on GitHub (`action`, `workflow`),
+// each with its `key`, and the repository's own (`local`), each with its line.
 export function workflowUses(read) {
-  return read.jobs.flatMap(job => [job.uses, ...job.steps.map(step => step.uses)])
-    .filter(uses => uses && (uses.kind === 'action' || uses.kind === 'workflow' || uses.kind === 'local'))
+  return read.jobs.flatMap(job => [job.uses, ...job.steps.map(step => step.uses)]).flatMap(uses => {
+    if (uses?.kind === 'local') return [uses]
+    return uses?.kind === 'action' || uses?.kind === 'workflow' ? [{ ...uses, key: usesKey(uses) }] : []
+  })
+}
+
+// A workflow's (`kind` 'workflow') or an action's metadata's ('action') text
+// read for what it calls for by itself, and what it names to resolve, each
+// with its line. Throws an ActionsScanError (`workflow-unreadable`) for one
+// that isn't YAML, or isn't shaped as GitHub runs one.
+export function scanWorkflow(kind, text, options = {}) {
+  const read = readWorkflow(kind, text)
+  return { triggers: read.triggers, using: read.using, uses: workflowUses(read), findings: workflowFindings(read, options) }
 }

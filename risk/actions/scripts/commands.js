@@ -1,22 +1,18 @@
-// What a `run:` script fetches and runs, past what a lockfile or a digest
-// pins, command by command (shell.js): a package of npm's (packages.js),
-// PyPI's (pip, pipx, uv), Go's, crates.io's, RubyGems' or Deno's,
-// fetched and run as it resolves now, each `{ kind: 'package', tool,
-// ecosystem, name, spec, exact, … }`, `exact` where a version names it; an
-// install resolving anew (`unlocked-install`); a script fetched and run as it
-// is fetched (`remote-script`: `curl … | sh`, `bash <(curl …)`, `iex (irm
-// …)`, one saved and then run); an image run by a tag (`image`); and a
-// repository cloned at whatever its branch has (`clone`). Each with the line
-// it is on in the script, counting from 0.
-import { readImage } from '../uses.js'
-import { npmToolFinds } from './packages.js'
+// What a `run:` script fetches and runs past what a lockfile or a digest
+// pins, command by command (shell.js): a package (`package`, of npm's tools
+// in packages.js), an install resolving anew (`unlocked-install`), a script
+// fetched and run (`remote-script`), an image by a tag (`image`) and a
+// repository cloned (`clone`), each with its line in the script from 0.
+import { fetched, npmToolFinds } from './packages.js'
 import { scriptCommands, scriptLines } from './shell.js'
+import { SHELLS as SHELL_NAMES } from '../../files/runs-code.js'
+import { readImage } from '../uses.js'
 
 // A program as a command names it: its file's name, lowercase, past its
 // directory and an extension Windows runs it by.
 const programOf = word => (word ?? '').split(/[/\\]/u).at(-1).toLowerCase().replace(/\.(?:cmd|exe|bat|ps1)$/u, '')
 
-const SHELLS = /^(?:(?:ba|z|da|k|mk|c|tc|fi|a)?sh|pwsh|powershell|python[\d.]*|node|perl|ruby|php|iex|invoke-expression)$/u
+const SHELLS = new RegExp(String.raw`^(?:${SHELL_NAMES}|python[\d.]*|node|perl|ruby|php|iex|invoke-expression)$`, 'u')
 const FETCHERS = /^(?:curl|wget|irm|iwr|invoke-restmethod|invoke-webrequest)$/u
 // A script fetched and run on one line, as a shell's process substitution or
 // `-c "$(…)"`, PowerShell's `iex` of what it fetches, or `source <(…)`.
@@ -64,10 +60,9 @@ function pip(tool, argv, from) {
     if (/^(?:-r|--requirement|-c|--constraint|-e|--editable|-i|--index-url|--extra-index-url|-t|--target|--prefix|--root|-f|--find-links)$/u.test(argv[at])) at++
     else if (!argv[at].startsWith('-') && !/^\.{1,2}(?:\/|$)/u.test(argv[at])) named.push(argv[at])
   }
-  return named.flatMap(text => { const spec = pythonPackage(text); return spec ? [{ kind: 'package', tool, ecosystem: 'pypi', localFirst: false, ...spec }] : [] })
+  return named.flatMap(text => fetched(tool, pythonPackage(text), { ecosystem: 'pypi' }))
 }
 
-const one = (tool, ecosystem, spec) => spec ? [{ kind: 'package', tool, ecosystem, localFirst: false, ...spec }] : []
 const firstArg = (argv, from) => argv.slice(from).find(word => !word.startsWith('-')) ?? null
 // A package named `name@version`, as Go's, crates' and Deno's are.
 const atVersion = (text, exact) => {
@@ -83,11 +78,11 @@ function python(program, argv) {
   if (program === 'uvx' || (program === 'uv' && argv[1] === 'tool' && /^(?:run|install)$/u.test(argv[2] ?? ''))) {
     const from = program === 'uvx' ? 1 : 3
     const spec = argv.includes('--from') ? argv[argv.indexOf('--from') + 1] : firstArg(argv, from)
-    return spec ? one(program === 'uvx' ? 'uvx' : `uv tool ${argv[2]}`, 'pypi', pythonPackage(spec)) : []
+    return fetched(program === 'uvx' ? 'uvx' : `uv tool ${argv[2]}`, spec && pythonPackage(spec), { ecosystem: 'pypi' })
   }
   if (program === 'pipx' && /^(?:run|install)$/u.test(argv[1] ?? '')) {
     const spec = argv.includes('--spec') ? argv[argv.indexOf('--spec') + 1] : firstArg(argv, 2)
-    return spec ? one(`pipx ${argv[1]}`, 'pypi', pythonPackage(spec)) : []
+    return fetched(`pipx ${argv[1]}`, spec && pythonPackage(spec), { ecosystem: 'pypi' })
   }
   return []
 }
@@ -112,7 +107,7 @@ const EXACT_SEMVER = text => /^=?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test(text)
 // another (`@latest`, a branch) is told unpinned.
 function go(argv) {
   const target = operands(argv, 2, /^-(?:o|modfile|tags|ldflags|gcflags|C)$/u)[0]
-  return target?.includes('@') ? one(`go ${argv[1]}`, 'go', atVersion(target, spec => /^v\d+\.\d+\.\d+/u.test(spec))) : []
+  return target?.includes('@') ? fetched(`go ${argv[1]}`, atVersion(target, spec => /^v\d+\.\d+\.\d+/u.test(spec)), { ecosystem: 'go' }) : []
 }
 
 // `cargo install`: a crate by its version (`x@1.2.3`, `--version`), or a
@@ -126,22 +121,22 @@ function cargo(argv) {
   const version = valueOf(argv, /^--version$/u)
   const spec = git ? { name: git, spec: valueOf(argv, /^--(?:rev|tag|branch)$/u), exact: valueOf(argv, /^--rev$/u) !== null, registry: false }
     : atVersion(crate, EXACT_SEMVER)
-  return one(`cargo ${argv[1]}`, 'crates', { ...spec, spec: spec.spec ?? version, exact: spec.exact || (!git && EXACT_SEMVER(version ?? '')), locked: argv.includes('--locked') })
+  return fetched(`cargo ${argv[1]}`, { ...spec, spec: spec.spec ?? version, exact: spec.exact || (!git && EXACT_SEMVER(version ?? '')), locked: argv.includes('--locked') }, { ecosystem: 'crates' })
 }
 
 // `gem install x [-v 1.2.3]`.
 function gem(argv) {
   const version = valueOf(argv, /^(?:-v|--version)$/u)
   return operands(argv, 2, /^(?:-v|--version|-i|--install-dir|-s|--source|-n|--bindir)$/u)
-    .map(name => ({ kind: 'package', tool: 'gem install', ecosystem: 'rubygems', localFirst: false, name, spec: version, exact: /^=?\s*\d+(?:\.\d+)+$/u.test(version ?? ''), registry: true }))
+    .flatMap(name => fetched('gem install', { name, spec: version, exact: /^=?\s*\d+(?:\.\d+)+$/u.test(version ?? ''), registry: true }, { ecosystem: 'rubygems' }))
 }
 
 // `deno run|install|x` of a URL or a registry's package.
 function deno(argv) {
   const target = argv.slice(2).find(word => /^(?:https?:\/\/|npm:|jsr:)/u.test(word))
   if (!target) return []
-  return one(`deno ${argv[1]}`, 'deno', /^(?:npm|jsr):/u.test(target) ? atVersion(target.replace(/^(?:npm|jsr):/u, ''), EXACT_SEMVER)
-    : { name: target, spec: null, exact: /@v?\d+\.\d+\.\d+/u.test(target), registry: false })
+  return fetched(`deno ${argv[1]}`, /^(?:npm|jsr):/u.test(target) ? atVersion(target.replace(/^(?:npm|jsr):/u, ''), EXACT_SEMVER)
+    : { name: target, spec: null, exact: /@v?\d+\.\d+\.\d+/u.test(target), registry: false }, { ecosystem: 'deno' })
 }
 
 // What other ecosystems' tools fetch.

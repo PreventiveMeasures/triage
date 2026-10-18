@@ -24,7 +24,6 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from '../view/style-map.js'
 import { appMarkup } from '../view/markup.js'
 import { isHttpUrl } from '@preventive/report'
-import { SEVERITIES } from '../../risk/files/stamps.js'
 import { npmRiskLevel } from '../../risk/npm/score.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { ManagedPage } from './page.js'
@@ -32,7 +31,8 @@ import { adminNavigation } from './navigation.js'
 import { request, responseLines } from './bundle-data.js'
 import { fetchTeams } from './admin-api.js'
 import { BUNDLE_ICON_SVG, DEPENDABOT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from '../view/icons.js'
-import { ACTION_KINDS, ActionsState, findingsCell, pinnedTo, referenceHref } from './repository-risk-actions.js'
+import { ACTION_KINDS, ActionsState, findingsCell, pinnedTo, referenceHref, severityRank } from './repository-risk-actions.js'
+import { encodePath } from '../view/bundle-origin-links.js'
 import '../view/repository-selector.js'
 import commonStyles from './styles/common.css'
 import linksStyles from './styles/links.css'
@@ -141,7 +141,6 @@ const regardless = row => differs(row) || hasMalware(row)
 // only devDependencies need it, production's where more do, or its lockfiles
 // don't say; one told regardless of both.
 export const ofKind = (row, kind) => kind === 'all' || regardless(row) || Boolean(row.dev) === (kind === 'development')
-const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
 // Which package rows are shown, by the filter's value: its label, and which
@@ -264,14 +263,17 @@ function lockfileLink(used, links, alerts) {
 }
 
 // Where a package or an advisory is locked: its lockfile, or how many,
-// opening into each one's.
-function usedInCell(lockfiles, links, alerts) {
+// opening into each one's; or where else a row is used, by its `noun`.
+function usedInCell(lockfiles, links, alerts, noun = 'lockfiles') {
   const used = [...lockfiles]
   if (used.length === 1) return lockfileLink(used[0], links, alerts)
   const dismissed = used.filter(each => alerts?.get(each)?.dismissed).length
-  return html`<details class="risk-used-all"><summary>${formatCount.format(used.length)} lockfiles${dismissed > 0 ? `, ${formatCount.format(dismissed)} dismissed` : ''}</summary>
+  return html`<details class="risk-used-all"><summary>${formatCount.format(used.length)} ${noun}${dismissed > 0 ? `, ${formatCount.format(dismissed)} dismissed` : ''}</summary>
     <ul>${used.map(each => html`<li>${lockfileLink(each, links, alerts)}</li>`)}</ul></details>`
 }
+
+// A file on GitHub at a commit.
+const blobHref = (repo, commit, path) => `https://github.com/${repo}/blob/${commit}/${encodePath(path)}`
 
 // Whether an id is a GHSA, as an advisory and a Dependabot alert share it.
 const isGhsa = id => typeof id === 'string' && /^GHSA(?:-[\da-z]{4}){3}$/iu.test(id)
@@ -749,7 +751,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const links = new Map()
     for (const repo of this._repos.values()) {
       for (const path of repo.commit ? repo.lockfiles?.keys() ?? [] : []) {
-        links.set(`${repo.fullName}/${path}`, `https://github.com/${repo.fullName}/blob/${repo.commit}/${path.split('/').map(encodeURIComponent).join('/')}`)
+        links.set(`${repo.fullName}/${path}`, blobHref(repo.fullName, repo.commit, path))
       }
     }
     return links
@@ -851,7 +853,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _actionsMetrics() {
     if (this._actions.listed.size === 0) return []
     const { workflows, workflowsRead, actions, resolved } = this._actions.counts()
-    const flagged = this._actions.rows('all', '', {}).filter(row => row.severity && row.severity !== 'notice' && row.severity !== 'low').length
+    const flagged = this._actions.rows('all').filter(row => row.severity && row.severity !== 'notice' && row.severity !== 'low').length
     return [{ label: 'Workflows', value: workflowsRead, of: workflows, bar: [['read', workflowsRead]] },
       ...actions > 0 ? [{ label: 'Actions resolved', value: resolved, of: actions, bar: [['read', resolved]] }] : [],
       { label: 'Actions flagged', value: flagged, bar: [], tone: flagged > 0 ? 'high' : null }]
@@ -889,7 +891,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   _repoStatus(repo) {
     if (repo.error) return html`<span class="risk-error" data-tooltip=${repo.detail ?? nothing}>${errorText(repo.error)}</span>`
     if (repo.lockfiles === null) return this._pending('Waiting…', 'Not read')
-    return repo.lockfiles.size === 0 && !this._actions.listed.has(repo.id) ? html`<span class="risk-none">No npm lockfiles</span>` : null
+    const workflows = this._actions.listed.get(repo.id)?.error || this._actions.filesOf(repo.id).length > 0
+    return repo.lockfiles.size === 0 && !workflows ? html`<span class="risk-none">No npm lockfiles</span>` : null
   }
 
   _lockfileStatus(lockfile) {
@@ -1009,22 +1012,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </section>`
   }
 
-  // Where an Actions row is linked: a repository's name by its id, and a
-  // file's line on GitHub at the commit read.
-  _actionLinks() {
-    return {
-      repo: id => this._repos.get(id)?.fullName ?? String(id),
-      line: (id, path, line) => {
-        const repo = this._repos.get(id)
-        return repo?.commit ? `https://github.com/${repo.fullName}/blob/${repo.commit}/${path.split('/').map(encodeURIComponent).join('/')}${line ? `#L${line}` : ''}` : null
-      },
-    }
-  }
-
   _actionsTable() {
-    const links = this._actionLinks()
-    const counts = Object.fromEntries(Object.keys(ACTION_KINDS).map(kind => [kind, this._actions.rows(kind, '', links).length]))
-    const rows = this._actions.rows(this._actionKind, this._query, links)
+    const counts = Object.fromEntries(Object.keys(ACTION_KINDS).map(kind => [kind, this._actions.rows(kind).length]))
+    const rows = this._actions.rows(this._actionKind, this._query)
     const empty = this._state === 'running' ? 'None yet.' : this._actions.listed.size === 0 ? 'No workflows were read.' : 'Nothing found.'
     return html`<section class="risk-section" aria-label="Actions">
       ${this._resultsHead(html`${this._kindToggle('Which', ACTION_KINDS, counts, this._actionKind, kind => { this._actionKind = kind })}
@@ -1055,13 +1045,18 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     </tr>`
   }
 
-  // Where a row is used: a workflow's line, linked, or an action naming it,
-  // or how many, opening into each.
+  // Where a row is used: a file's line, linked on GitHub at the commit read,
+  // or a reference naming it, or how many, opening into each.
   _actionUsedIn(usedIn) {
-    const item = ({ text, href }) => href ? html`<a class="risk-name risk-used" href=${href} target="_blank" rel="noopener noreferrer">${icon(GITHUB_ICON_SVG)}<span
-      class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${text}>${text}</span></a>` : html`<span class="risk-clip risk-used-in" data-tooltip-truncated data-tooltip=${text}>${text}</span>`
-    if (usedIn.length === 1) return item(usedIn[0])
-    return html`<details class="risk-used-all"><summary>${formatCount.format(usedIn.length)} places</summary><ul>${usedIn.map(each => html`<li>${item(each)}</li>`)}</ul></details>`
+    const links = new Map()
+    const used = usedIn.map(({ repo, path, line, via }) => {
+      if (via) return `via ${via}`
+      const { fullName = String(repo), commit } = this._repos.get(repo) ?? {}
+      const text = `${fullName}/${path}:${line}`
+      if (commit) links.set(text, `${blobHref(fullName, commit, path)}${line ? `#L${line}` : ''}`)
+      return text
+    })
+    return usedInCell(used, links, undefined, 'places')
   }
 
   _advisoryRow(row, links) {

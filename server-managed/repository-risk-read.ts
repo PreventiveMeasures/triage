@@ -18,7 +18,7 @@ import type { DependabotAlert } from './dependabot-alerts.ts'
 import { type LockedPackage, isTestFixture, lockedPackages } from './locked-packages.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
-import { type ListedWorkflow, type WorkflowsRead, lastingRead, readActions } from './repository-actions.ts'
+import { type WorkflowsRead, lastingRead, readActions } from './repository-actions.ts'
 import { type RiskFailure, failureOf } from './repository-risk-assess.ts'
 import type { RepositoryRiskLine, RepositoryRiskRepo } from './repository-risk.ts'
 
@@ -51,9 +51,9 @@ export interface OpenedRepository {
   file(path: string): Promise<string>
   recheck(): Promise<void>
   dependabot?(): Promise<AlertsRead>
-  // Its workflows (.github/workflows/*.yml and .yaml), each by its path and
-  // blob, none where it has none.
-  workflows?(): Promise<ListedWorkflow[]>
+  // Its workflows' paths (.github/workflows/*.yml and .yaml), none where it
+  // has none.
+  workflows?(): Promise<string[]>
 }
 
 // What a repository is read with: the scan's source and caches, and its
@@ -84,13 +84,14 @@ function lockfileOf(path: string, paths: readonly string[] | undefined) {
 }
 
 // What is kept by `key`: in this instance's memory, else in `store` within
-// SCAN_READ_KEPT_MS, else `read` and kept in both.
-async function keptRead<T>(memory: Lru<T>, store: KeptStore<T> | undefined, key: string, read: () => Promise<T>) {
+// SCAN_READ_KEPT_MS, else `read` and kept in both, where it is to be.
+async function keptRead<T>(memory: Lru<T>, store: KeptStore<T> | undefined, key: string, read: () => Promise<T>, keep = (_value: T) => true) {
   const known = memory.get(key)
   if (known !== undefined) return known
   const kept = await store?.read(key)
   if (kept && Date.now() - kept.at < SCAN_READ_KEPT_MS) { memory.set(key, kept.value); return kept.value }
   const value = await read()
+  if (!keep(value)) return value
   memory.set(key, value)
   await store?.write(key, value, Date.now())
   return value
@@ -142,24 +143,6 @@ async function readDependabot(opened: OpenedRepository, paths: readonly string[]
   }
 }
 
-// A repository's Actions' files, as kept for the commit, else read and kept
-// where none failed for a while; null where it lists no workflows.
-async function readActionsKept<R extends RepositoryRiskRepo>({ source, caches }: RepositoryReading<R>, repo: R, opened: OpenedRepository) {
-  const { workflows } = opened
-  if (!workflows) return null
-  const key = `${repo.repoId}@${opened.commit}`
-  const known = caches.actionFiles.get(key)
-  if (known) return known
-  const kept = await source.actionFiles?.read(key)
-  if (kept && Date.now() - kept.at < SCAN_READ_KEPT_MS) { caches.actionFiles.set(key, kept.value); return kept.value }
-  const read = await readActions({ workflows: () => workflows(), file: path => opened.file(path) })
-  if (lastingRead(read)) {
-    caches.actionFiles.set(key, read)
-    await source.actionFiles?.write(key, read, Date.now())
-  }
-  return read
-}
-
 // A repository read: its lockfiles listed and read, its Dependabot alerts
 // asked and its Actions read meanwhile; its line telling why where listing
 // failed; null where the scan stopped. A test's
@@ -169,7 +152,10 @@ export async function readRepository<R extends RepositoryRiskRepo>(reading: Repo
   const listed = await listLockfiles(reading, repo)
   if (!listed || 'type' in listed) return listed
   const alerting = readDependabot(listed.opened, repo.paths)
-  const acting = readActionsKept(reading, repo, listed.opened)
+  // Its Actions' files, kept by the commit where none failed for a while.
+  const { opened } = listed, { workflows } = opened
+  const acting = workflows ? keptRead(reading.caches.actionFiles, reading.source.actionFiles, `${repo.repoId}@${opened.commit}`,
+    () => readActions({ workflows, file: path => opened.file(path) }), lastingRead) : Promise.resolve(null)
   // Read on, as alerting is, while the lockfiles are.
   acting.catch(() => {})
   const lockfiles: RepositoryRead['lockfiles'] = []

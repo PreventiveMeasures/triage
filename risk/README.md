@@ -1,6 +1,6 @@
 # risk
 
-What calls for a look at an npm package version, for a reviewer: every heuristic the npm viewer flags a version or a file by, apart from any view of them. Plain JavaScript, no DOM, no UI.
+What calls for a look at an npm package version, for a reviewer: every heuristic the npm viewer flags a version or a file by, apart from any view of them; and at a repository's GitHub Actions (`actions/`, below). Plain JavaScript, no DOM, no UI.
 
 Risk is told on the managed server alone (`GET /api/npm/risk`, server-managed/npm-risk.ts), never in the e2e and local modes. The npm viewer reads what it tells of a version, and of a pair, from there (ui/view/npm-risk.js, file-risk.js): its chips, its files' tags and its dependencies' flags, tiers and ages, computing none of them. What the viewer still reads of files itself:
 
@@ -121,6 +121,35 @@ A caller holding its reads of npm to bounds of its own asks for documents and ta
 
 Severities, the most first: `critical` (red), `high` (orange), `moderate` (yellow), `low`, `notice`.
 
+## GitHub Actions
+
+What calls for a look at a repository's GitHub Actions (`actions/`): its workflows, the actions of its own they use, and every action and reusable workflow of another repository they name, read from their code and resolved on GitHub. It is told on the managed server alone, in a repository risk scan (server-managed/repository-actions.ts), and shown on Manage → Repositories → Risk's Actions tab (ui/managed/repository-risk-actions.js).
+
+```js
+import { keptSource, resolveAction, scanWorkflow, usesOfKey } from './risk/index.js'
+
+// A workflow's own findings, and the references it makes, each with its line.
+const { triggers, uses, findings } = scanWorkflow('workflow', text, {
+  owner: 'org', // whose repository it is: an unpinned `uses:` of the same owner's, as of GitHub's own, is yellow, another's orange
+  lockfiles: [{ path: 'web/package-lock.json', names: new Set(['eslint']) }], // what npx runs of the project's own, by where its step runs
+})
+
+// A reference resolved on GitHub, its own code read in turn.
+const resolved = await resolveAction(usesOfKey('actions/checkout@v4'), keptSource(source), { owner: 'org' })
+```
+
+`scanWorkflow('action', text)` reads an action's metadata (action.yml) alike. `source` is GitHub as the asker reads it (index.d.ts `ActionsSource`, the managed server's server-managed/github-actions.ts), and `keptSource` keeps what it answers for as long as it is held, a scan's. YAML is read as GitHub reads it, by @preventive/lockfile's `parseYaml` with `workflow`: a tag (`!!js/function` and all), a merge key and a tab indenting are refused (`workflow-unreadable`), and what it reads is plain data alone.
+
+Each finding is `{ id, severity, line, … }`, `line` the file's from 1; one of a resolved reference's own code has the `file` it is in.
+
+- Where an action comes from (`resolve.js`): `repo-missing`, a repository GitHub has none of, red, as anyone who takes its owner's name can publish one, yellow for the same owner's, which may only be one the asker can't read; `repo-moved`, renamed or transferred, orange, as GitHub redirects the old name until someone takes it; `repo-fork` and `repo-archived`, low.
+- A ref not a commit (`findings.js`, `resolve.js`): `unpinned`, by a tag or a branch, orange, yellow for GitHub's own and the same owner's; `short-sha`, which GitHub reads a branch or tag named so as too, orange; `branch-ref`, orange; `ambiguous-ref`, a tag and a branch of one name, orange; `ref-missing`, yellow, as GitHub runs whichever is pushed first; `not-version` (`latest`), yellow; `tag-off-release`, a major or minor tag (`v4`) on a commit no release of its line is on, orange, as a tag moved by whoever took the repository is; `tag-off-branch`, a tag's commit on none of its branches, low; `outdated`, an older major line than the latest release, low.
+- A commit: `imposter-commit`, in the history of none of the repository's branches and releases, red, as GitHub serves a fork's commit under the name of the repository it forked, looked for in its default branch, each major line's latest release and 10 other branches, and `unverified-commit` where it has more, orange; `commit-missing`, orange; `untagged-commit`, no release, yellow; `comment-mismatch`, the version a comment beside it names (`# v4.1.1`) not one of its tags nor their line, orange. A commit's key holds its comment (`owner/repo@sha # v4.1.1`).
+- What a step runs past a pin (`scripts/`), a workflow's and each action's alike: `fetched-package`, a package fetched as it resolves now, orange, yellow where a version or a variable names it, a notice for pip, setuptools and wheel; npx, `npm exec`, bunx and `bun x` none where a lockfile at or above its step's directory locks the package (by its name, or the one giving the program, `tsc` typescript's) and an install ran before, and in another repository's action where an install ran before; a Go module by its version, and a crate by its version built `--locked`, none. `unlocked-install`, an install resolving anew (`npm install`, `pnpm install --no-frozen-lockfile`), yellow, low for Yarn's and Bun's; `remote-script`, a script fetched and run (`curl … | sh`, `bash <(curl …)`, `iex (irm …)`, or saved and then run), orange; `unpinned-image`, an image by a tag (`docker://`, `container:`, `services:`, `docker run`, a Dockerfile's `FROM`), yellow, orange with none or `latest`; `clone`, low.
+- And what else runs code no one expected: `script-injection`, an expression anyone can write (a title, a body, a branch's name, a commit's message) in a script, orange, red where the workflow runs with its secrets for anyone (`pull_request_target`, `workflow_run`, `issue_comment`, …); `pwn-request`, such a workflow checking out the pull request's code, red; `untrusted-artifact`, one on `workflow_run` taking its artifacts, orange; `secrets-inherited`, another owner's reusable workflow handed every secret, orange; `hosts`, the services a script names, by `files/hosts.js`'s tags; `deprecated-runtime`, `invalid-uses`, low; `action-missing`, no action.yml where a reference names, yellow.
+
+A reference's own code is what it runs: a composite action's steps, a reusable workflow's jobs and a Docker action's Dockerfile, each read as a workflow is, each reference it makes resolved in turn, up to 4 deep and 1,000 a scan; a JavaScript action's runtime alone. A quick read, not a shell's parse: a command built as a script runs (`$x install`, `eval "$cmd"`), or a package an action's JavaScript fetches, goes unseen.
+
 ## Inside
 
 - `files/`: one file's readers.
@@ -140,5 +169,10 @@ Severities, the most first: `critical` (red), `high` (orange), `moderate` (yello
   - `malware.js`: what tells of malware, npm's takedown and its advisories.
   - `score.js`: the risk score, from the findings and the version's exposure.
   - `manifest.js`, `tarball.js`, `registry.js`, `assess.js`
+- `actions/`: a repository's GitHub Actions.
+  - `uses.js`: what a `uses:` names, its pin and its key; `versions.js`, tags as versions.
+  - `workflow.js`: a workflow or an action's metadata read; `findings.js`, its findings; `dockerfile.js`, a Dockerfile's.
+  - `scripts/`: a script's commands (`shell.js`), what each fetches (`commands.js`, `packages.js`), graded (`grade.js`); `expressions.js`, what anyone can write of an expression.
+  - `resolve.js`: a reference resolved on GitHub.
 
 Each pure function takes a version as the viewer holds one (`{ kind: 'sourcemap', npm, json }`), but `held.js` `npmVersionFindings`, which takes what npm says of it now: its deprecation, when it was published, and its package's downloads.

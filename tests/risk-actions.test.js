@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { ActionsScanError, dockerfileFindings, keptSource, readUses, resolveAction, scanWorkflow, usesKey, usesOfKey } from '../actions-scan/index.js'
-import { scriptFinds } from '../actions-scan/scripts/commands.js'
-import { lockedName, scriptFindings } from '../actions-scan/scripts/grade.js'
-import { latestOf, newestOfLines, tagVersion } from '../actions-scan/versions.js'
+import { ActionsScanError, keptSource, resolveAction, scanWorkflow, usesOfKey } from '../risk/index.js'
+import { readUses, usesKey } from '../risk/actions/uses.js'
+import { dockerfileFindings } from '../risk/actions/dockerfile.js'
+import { scriptFinds } from '../risk/actions/scripts/commands.js'
+import { lockedName, scriptFindings } from '../risk/actions/scripts/grade.js'
+import { latestOf, newestOfLines, tagVersion } from '../risk/actions/versions.js'
 
 const SHA = char => char.repeat(40)
 const ids = findings => findings.map(({ id, severity, line }) => `${id}/${severity}${line === undefined ? '' : `@${line}`}`)
