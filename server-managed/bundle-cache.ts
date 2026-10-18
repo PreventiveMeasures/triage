@@ -111,16 +111,22 @@ async function build(record: BundleCacheRecord, storage: BundleCacheStorage, db:
   const metadata = { ...await createBundleMetadata(details), id: record.id, filename: record.filename }
   const body = await encodeBrotli(Buffer.from(JSON.stringify(metadata)))
   if (!(await db.getBundle(record.id))) throw new Error('Bundle deleted')
-  await storage.put(record.id, filename, body)
-  if (record.kind === 'stasis') await storage.put(record.id, packagesFilename, encodePackageInventory(details))
   const summary = bundleSummary(details, metadata)
-  await storage.put(record.id, SUMMARY_FILENAME, Buffer.from(JSON.stringify(summary)))
+  // Written together, each settled before the row is looked at again: one
+  // failing leaves the others, which a later open builds over.
+  const written = await Promise.allSettled([
+    storage.put(record.id, filename, body),
+    ...record.kind === 'stasis' ? [storage.put(record.id, packagesFilename, encodePackageInventory(details))] : [],
+    storage.put(record.id, SUMMARY_FILENAME, Buffer.from(JSON.stringify(summary))),
+  ])
   // A different instance may have deleted the row while these writes ran.
   // Reconcile after publishing so its cleanup cannot be undone by us.
   if (!(await db.getBundle(record.id))) {
     await storage.delete(record.id)
     throw new Error('Bundle deleted')
   }
+  const failed = written.find(result => result.status === 'rejected')
+  if (failed) throw failed.reason
   return summary
 }
 
