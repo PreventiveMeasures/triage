@@ -2292,6 +2292,7 @@ type TeamDependencyLine = Record<string, unknown> & { repoId?: number }
 type TeamPull = { number: number; touchesLockfile?: boolean | null }
 async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, s: { session: ManagedSession; user: StoredUser },
   teamId: string, query: URLSearchParams): Promise<void> {
+  const deadline = Date.now() + TEAM_DEPENDENCIES_MS
   const named = query.get('repoIds')
   const only = named === null ? null : new Set(named.split(',').map(Number))
   if (only && (only.size === 0 || only.size > 1000 || [...only].some(id => !Number.isSafeInteger(id) || id <= 0))) { sendJson(res, 400, { error: 'bad-request' }); return }
@@ -2299,7 +2300,6 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
   const repoIds = [...new Set(snapshot.repositories.map(repo => repo.repoId))].filter(id => !only || only.has(id))
   const grants = await repositoryGrants(deps, s.user)
   const settings = await deps.db.getRepoDependencyReviews(repoIds)
-  const deadline = Date.now() + TEAM_DEPENDENCIES_MS
   const out = openLines(res)
   let stopped = false
   // Lines written once the reader's session is still theirs; none, and the

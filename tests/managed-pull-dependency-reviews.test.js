@@ -16,6 +16,7 @@ import { lockedPackages } from '../server-managed/locked-packages.ts'
 import { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages } from '../server-managed/pull-dependency-reviews.ts'
 import { MAX_ADDED } from '../server-managed/pull-dependencies.ts'
 import { checkRepositoryDependencyReviews, context, people, publish } from './_managed-repository-dependency-reviews.js'
+import { readLines } from './_managed-lines.js'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000 }
 const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
@@ -556,4 +557,67 @@ test('the default branch\'s dependencies, with their review, tell what its lockf
   assert.deepEqual([listing.head, listing.lockfiles.toSorted((a, b) => a.path < b.path ? -1 : 1)],
     [head, [{ path: 'berry/yarn.lock', format: 'yarn' }, { path: 'bun.lock', format: 'bun' }, { path: 'package-lock.json', format: 'npm' }]])
   assert.equal((await send('/api/admin/repositories/lockfiles?repoId=0')).status, 400)
+})
+
+// A team's Dependencies in one request (GET /api/teams/:id/dependencies):
+// alice's team `one` has org/repo, which reviews its dependencies, org/other,
+// which reviews none, and src of org/part, which she may read only some of.
+async function teamFixture(t) {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  for (const [repoId, fullName, path] of [[2, 'org/other', null], [3, 'org/part', 'src']]) {
+    await db.selectRepo({ repoId, fullName, private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, Date.now())
+    await db.setTeamRepo('one', repoId, path)
+  }
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, since })
+  await db.setRepoDependencyReview(3, { enabled: true, required: 1, since })
+  await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
+  const node = { number: 5, title: 'Bump ms', state: 'OPEN', createdAt: null, updatedAt: null, closedAt: null, author: null, comments: { totalCount: 0 },
+    labels: { totalCount: 0, nodes: [] }, files: { totalCount: 1, nodes: [{ path: 'package-lock.json' }] } }
+  const asked = github(t, { ...PULL, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } }
+    : body.query.includes('page: pullRequests') ? { repository: { open: { totalCount: 1 }, closed: { totalCount: 0 }, page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node] } } }
+      : {} })
+  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
+  const read = (path = '/api/teams/one/dependencies', who = 'alice') => readLines(t, handler, path, users[who].setCookie.split(';')[0])
+  return { db, users, asked, read, send: api(db, users) }
+}
+const without = ({ users: _users, ...body }) => body
+
+test('a team\'s Dependencies in one request: each repository as its own endpoints answer it, as lines as each is read; one reviewing none, or read only in part, answered at once', async t => {
+  const { asked, read, send } = await teamFixture(t)
+  const ask = path => send(path, { who: 'alice' })
+  const branch = without((await ask('/api/admin/repositories/branch-dependencies?repoId=1')).body)
+  const pulls = (await ask('/api/admin/repositories/issues?repoId=1&kind=pulls&state=open')).body.items
+  const dependencies = (await ask('/api/admin/repositories/pull-dependencies?repoId=1&numbers=5&review=1')).body.pulls
+  assert.ok(branch.review && pulls.length === 1 && dependencies[0].review, 'the endpoints each answer')
+  const answer = await read()
+  assert.equal(answer.status, 200)
+  assert.equal(answer.headers['content-type'], 'application/x-ndjson')
+  assert.deepEqual(answer.lines, [{ repoId: 2, branch: null }, { repoId: 3, branch: null }, { repoId: 1, branch, pulls: { items: pulls, more: false } },
+    { repoId: 1, dependencies }, { done: true }], 'the two read of no GitHub first, then org/repo\'s, its pull requests\' dependencies after')
+  assert.ok(answer.ended)
+  assert.ok(!asked.some(path => /org\/(?:other|part)/u.test(path)), 'GitHub asked nothing of those reviewing none, or read only in part')
+  assert.match(answer.headers['server-timing'], /db;dur=[\d.]+;desc="\d+ statements"/u, 'its time told, the database\'s')
+  assert.match(answer.headers['server-timing'], /app;dur=[\d.]+/u)
+  assert.deepEqual((await read('/api/teams/one/dependencies?repoIds=3,1')).lines.map(line => line.repoId ?? 'done'), [3, 1, 1, 'done'], 'those named alone')
+  assert.equal((await read('/api/teams/one/dependencies?repoIds=x')).status, 400)
+  assert.equal((await read('/api/teams/two/dependencies')).status, 404, 'a team not hers')
+})
+
+test('a team\'s Dependencies, its time up, tells the repositories left to ask for again; a reader whose session is gone is told nothing more', async t => {
+  const { db, users, read } = await teamFixture(t)
+  const settings = db.getRepoDependencyReviews.bind(db)
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  t.mock.method(db, 'getRepoDependencyReviews', ids => {
+    t.mock.timers.tick(241_000)
+    return settings(ids)
+  })
+  assert.deepEqual((await read()).lines, [{ repoId: 2, branch: null }, { repoId: 3, branch: null }, { done: false, unread: [1] }])
+  t.mock.method(db, 'getRepoDependencyReviews', async ids => {
+    await db.deleteSession(users.alice.sid)
+    return settings(ids)
+  })
+  const gone = await read()
+  assert.deepEqual([gone.lines, gone.ended], [[], false], 'cut short before a line')
 })
