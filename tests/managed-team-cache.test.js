@@ -5,8 +5,8 @@ import { loadTeamReports, loadTeamReportsResponse, teamFindingIds, teamSourcePat
 function fixture(pathCount, description = '') {
   const content = Buffer.from(JSON.stringify({ findings: [{ id: 'finding', description, evidence: Array.from({ length: pathCount }, (_, i) => ({ file: `src/${i}.js` })) }] }))
   const snapshots = new Map()
-  let reads = 0
-  const db = { getTeamReportAccessSnapshot: (_session, _now, team) => Promise.resolve(snapshots.get(team)) }
+  let reads = 0, snapshotReads = 0
+  const db = { getTeamReportAccessSnapshot: (_session, _now, team) => { snapshotReads++; return Promise.resolve(snapshots.get(team)) } }
   const store = { get: () => { reads++; return Promise.resolve(content) } }
   function snapshot(team) {
     if (!snapshots.has(team)) {
@@ -19,6 +19,7 @@ function fixture(pathCount, description = '') {
   }
   return {
     get reads() { return reads },
+    get snapshotReads() { return snapshotReads },
     load: team => loadTeamReports(db, store, snapshot(team)),
     response: team => loadTeamReportsResponse(db, store, snapshot(team)),
     ids: team => teamFindingIds(db, store, 'session', team, 'report'),
@@ -34,11 +35,28 @@ test('warm team responses reuse encoded JSON without parsing or serializing repo
   const stringify = JSON.stringify
   t.mock.method(JSON, 'parse', () => assert.fail('warm HTTP responses must not parse reports'))
   t.mock.method(JSON, 'stringify', (value, ...args) => {
-    assert.ok(Array.isArray(value) && value[0] === 'user', 'only the access snapshot key needs serialization')
+    assert.ok(Array.isArray(value) && value[0] === 'team', 'only the workspace key needs serialization')
     return stringify(value, ...args)
   })
   assert.equal(await h.response('team'), body)
   assert.equal(h.reads, 1)
+})
+
+test('members whose snapshots agree share one workspace build, and other grants build their own', async () => {
+  const content = Buffer.from(JSON.stringify({ findings: [{ id: 'own', file: 'src/a.js' }, { id: 'dependency', file: 'node_modules/dep/index.js' }] }))
+  let reads = 0
+  const db = {}, store = { get: () => { reads++; return Promise.resolve(content) } }
+  const snapshot = (id, role, dependencies) => ({
+    user: { id, role, login: id, name: null, avatarUrl: null }, teamId: 'team', repositories: [],
+    reports: [{ id: 'report', filename: 'report.json', byteSize: content.length, sha256: 'immutable', repo: { github: null, directory: '' }, permissions: { dependencies, security: true } }],
+  })
+  const body = await loadTeamReportsResponse(db, store, snapshot('first', 'view', true))
+  assert.equal(await loadTeamReportsResponse(db, store, snapshot('second', 'triage', true)), body)
+  assert.equal(reads, 1)
+  const narrower = await loadTeamReportsResponse(db, store, snapshot('third', 'view', false))
+  assert.equal(reads, 2)
+  assert.deepEqual(JSON.parse(narrower.toString()).reports[0].data.findings.map(f => f.id), ['own'])
+  assert.deepEqual(JSON.parse(body.toString()).reports[0].data.findings.map(f => f.id), ['own', 'dependency'])
 })
 
 test('object readers cannot mutate concurrent or cached team response bodies', async () => {
@@ -87,6 +105,20 @@ test('visibility eviction includes the incoming snapshot and permits exactly the
   assert.equal(h.reads, full, 'retain the two newest snapshots that fit')
   assert.deepEqual([...await h.ids('first')], ['finding'])
   assert.equal(h.reads, full + 1, 'evict before inserting an entry that would exceed the limit')
+})
+
+test('kept visibility answers ids and paths with one access read, and a build for the answer reads access again after it', async () => {
+  const h = fixture(1)
+  await h.load('team')
+  const kept = h.snapshotReads
+  await h.ids('team')
+  await h.paths('team')
+  assert.equal(h.snapshotReads, kept + 2)
+  const large = fixture(250_000)
+  await large.load('large')
+  const built = large.snapshotReads
+  await large.ids('large')
+  assert.equal(large.snapshotReads, built + 2)
 })
 
 test('oversized visibility stays usable for annotation and source authorization without being retained', async () => {

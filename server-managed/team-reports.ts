@@ -59,6 +59,13 @@ export class TeamReportsError extends Error {
 export function teamSnapshotKey(snapshot: TeamReportAccessSnapshot): string {
   return JSON.stringify([snapshot.user.id, snapshot.user.role, snapshot.teamId, snapshot.hiddenReportId ?? null, snapshot.reports, snapshot.repositories, snapshot.linkRevision])
 }
+// What a built workspace is kept by: everything its build reads, and nothing
+// of who asked. A user's role and grants decide which reports (and which
+// hidden preview) their snapshot holds and each one's permissions, all of it
+// in the key, so members whose snapshots agree share one build.
+function workspaceKey(snapshot: TeamReportAccessSnapshot): string {
+  return JSON.stringify([snapshot.teamId, snapshot.hiddenReportId ?? null, snapshot.reports, snapshot.repositories, snapshot.linkRevision])
+}
 export async function teamSnapshot(db: ManagedDb, sessionId: string, teamId: string, reportId: string | null = null): Promise<TeamReportAccessSnapshot> {
   const snapshot = await db.getTeamReportAccessSnapshot(sessionId, Date.now(), teamId, reportId)
   if (!snapshot) throw new TeamReportsError(401, 'unauthenticated')
@@ -145,15 +152,15 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   if (outputBytes + suffix.length > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   parts.push(suffix)
   const body = Buffer.concat(parts)
-  retainVisibility(db, teamSnapshotKey(snapshot), visible)
-  retainReports(db, teamSnapshotKey(snapshot), body)
+  retainVisibility(db, workspaceKey(snapshot), visible)
+  retainReports(db, workspaceKey(snapshot), body)
   return { body, visible }
 }
 const pendingWorkspaces = new WeakMap<ManagedDb, Map<string, ReturnType<typeof buildTeamWorkspace>>>()
 async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot) {
   let pending = pendingWorkspaces.get(db)
   if (!pending) { pending = new Map(); pendingWorkspaces.set(db, pending) }
-  const key = teamSnapshotKey(snapshot)
+  const key = workspaceKey(snapshot)
   const existing = pending.get(key)
   if (existing) return existing
   const job = buildTeamWorkspace(db, store, snapshot)
@@ -163,7 +170,7 @@ async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Team
 // Treat the encoded body as immutable and recheck access before sending it.
 // Warm HTTP reads need neither a parsed copy nor another serialization pass.
 export async function loadTeamReportsResponse(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Buffer> {
-  const cached = reportCaches.get(db)?.get(teamSnapshotKey(snapshot))
+  const cached = reportCaches.get(db)?.get(workspaceKey(snapshot))
   return cached ?? (await loadTeamWorkspace(db, store, snapshot)).body
 }
 export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
@@ -172,8 +179,7 @@ export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot:
   return (JSON.parse(body.toString('utf8')) as { reports: TeamReport[] }).reports
 }
 async function teamVisibility(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Visibility> {
-  const key = teamSnapshotKey(snapshot)
-  let visible = caches.get(db)?.get(key)
+  let visible = caches.get(db)?.get(workspaceKey(snapshot))
   if (!visible) {
     // A large snapshot may deliberately remain uncached, or be evicted by
     // another request. Authorization uses this load's result in either case.
@@ -191,17 +197,23 @@ export async function teamReportVisibility(db: ManagedDb, store: BlobStore, snap
   const visible = await teamVisibility(db, store, snapshot)
   return visible.get(reportId)!
 }
-export async function teamFindingIds(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
+// A report's visibility for the session's current snapshot. A workspace built
+// (or waited for) here outlives that snapshot's read, so the team's access is
+// read again after it; one kept is answered with no read in between, which
+// leaves nothing for another snapshot read to guard.
+async function sessionReportVisibility(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<ReportVisibility> {
   const snapshot = await teamSnapshot(db, sessionId, teamId, reportId)
+  const kept = caches.get(db)?.get(workspaceKey(snapshot))?.get(reportId)
+  if (kept) return kept
   const visible = await teamReportVisibility(db, store, snapshot, reportId)
   await recheckTeam(db, sessionId, snapshot)
-  return visible.ids
+  return visible
+}
+export async function teamFindingIds(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
+  return (await sessionReportVisibility(db, store, sessionId, teamId, reportId)).ids
 }
 export async function teamSourcePaths(db: ManagedDb, store: BlobStore, sessionId: string, teamId: string, reportId: string): Promise<Set<string>> {
-  const snapshot = await teamSnapshot(db, sessionId, teamId, reportId)
-  const visible = await teamReportVisibility(db, store, snapshot, reportId)
-  await recheckTeam(db, sessionId, snapshot)
-  return visible.sourcePaths
+  return (await sessionReportVisibility(db, store, sessionId, teamId, reportId)).sourcePaths
 }
 
 // Serialize shared annotation bodies once. Reports carry only the annotated

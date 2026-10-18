@@ -412,7 +412,8 @@ for (const limit of ['count', 'bytes']) {
       const focused = await h.request('/api/teams/broad/reports?reportId=draft', role)
       assert.equal(focused.status, 200, 'individual hidden content has independent capacity')
       assert.deepEqual(focused.body.reports.map(r => r.id), ['draft'])
-      assert.deepEqual(h.reads, ['draft'], 'preview does not download published reports')
+      // A manager's snapshot of the preview matches the admin's: one build serves both.
+      assert.deepEqual(h.reads, role === 'admin' ? ['draft'] : [], 'preview does not download published reports')
     }
     await h.seed('oversized-draft', { findings: [] }, { visible: false, byteSize: MAX_REPORT_QUERY_BYTES + 1 })
     assert.equal((await h.request('/api/teams/broad/reports?reportId=oversized-draft', 'manage')).status, 413, 'the individual response is still bounded')
