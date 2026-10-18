@@ -2,7 +2,7 @@
 import { YamlError } from '@preventive/lockfile/yaml.js'
 import { readWorkflow } from './workflow.js'
 import { installsOf } from './scripts/commands.js'
-import { imageFinding, lockedName, namesPullHead, scriptFindings, scriptInjections } from './scripts/grade.js'
+import { imageFinding, lockedName, namesPullHead, scriptFindings, scriptInjections, within } from './scripts/grade.js'
 import { ownerKind, usesKey } from './uses.js'
 import { resolved } from '../npm/files.js'
 
@@ -42,10 +42,6 @@ function ownInstalls(actions, dir, seen) {
   return read && !(read instanceof YamlError) ? read.jobs.flatMap(job => job.steps.flatMap(step => installs(step, actions, seen))) : []
 }
 
-// Whether `dir` is `directory` or above it, as node finds a package there;
-// null for anywhere.
-const within = (dir, directory) => dir === null || dir === '' || directory === dir || directory.startsWith(`${dir}/`)
-
 // A step's directory, and a path from it (`into`), from the repository's
 // root, '' for it; as written where an expression or a variable names it, or
 // it is out of the repository, so that it is within the same alone.
@@ -58,14 +54,11 @@ function directoryOf(workingDirectory, into = null) {
 // what npx runs by `name`: `dev` where only devDependencies need it in each
 // that does.
 const lockDir = path => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
-function lockedIn(lockfiles, directory) {
+function lockedIn(lockfiles, directory, name) {
   const above = lockfiles.filter(({ path }) => within(lockDir(path), directory))
   const nearest = Math.max(...above.map(({ path }) => lockDir(path).length))
-  const applies = above.filter(({ path }) => lockDir(path).length === nearest)
-  return name => {
-    const locking = applies.filter(({ names }) => lockedName(names, name))
-    return locking.length > 0 && (locking.every(({ dev }) => dev && lockedName(dev, name)) ? 'dev' : true)
-  }
+  const locking = above.filter(({ path, names }) => lockDir(path).length === nearest && lockedName(names, name))
+  return locking.length > 0 && (locking.every(({ dev }) => dev && lockedName(dev, name)) ? 'dev' : true)
 }
 
 // github-script's injections, and a fork's code or artifacts taken where the
@@ -99,9 +92,9 @@ function jobFindings(job, triggers, { owner, lockfiles, external, actions }) {
     const finding = step.uses && usesFinding(step.uses, owner)
     if (finding) found.push({ ...finding, line: step.uses.line })
     if (step.run) {
-      const directory = directoryOf(step.run.workingDirectory)
-      const locked = external ? () => false : lockedIn(lockfiles, directory)
-      const before = dev => installed.some(({ at, prod }) => within(at, directory) && !(prod && dev))
+      const directory = dir => directoryOf(step.run.workingDirectory, dir)
+      const locked = (name, dir) => !external && lockedIn(lockfiles, directory(dir), name)
+      const before = (dev, dir) => installed.some(({ at, prod }) => within(at, directory(dir)) && !(prod && dev))
       found.push(...scriptFindings(step.run, { locked, installed: before, external, triggers }))
     }
     found.push(...stepFindings(step, triggers))

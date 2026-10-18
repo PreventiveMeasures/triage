@@ -1,7 +1,7 @@
 // What a `run:` script fetches and runs past what a lockfile or a digest pins,
 // command by command (shell.js), each with its line in the script from 0.
 import { NPM_INSTALLS, fetched, npmToolFinds, optionsOf, projectOf, valuesOf } from './packages.js'
-import { scriptCommands, scriptLines } from './shell.js'
+import { pathFrom, scriptCommands, scriptLines } from './shell.js'
 import { SHELLS as SHELL_NAMES } from '../../files/runs-code.js'
 import { readImage } from '../uses.js'
 
@@ -133,12 +133,13 @@ const INSTALLS = { npm: new RegExp(`^(?:ci|clean-install|ic|install-clean|${NPM_
 const NOT_LOCAL = /^(?:-g|--global|--location=global|--package-lock-only|--lockfile-only)$/u
 
 // A script's installs of a project's packages: each one's `order`, the
-// directory it names (`into`), and whether it leaves devDependencies out
+// directory it installs into, by its `cd`s and the one it names (`into`, a
+// path from the step's, '' for it), and whether it leaves devDependencies out
 // (`prod`), by an option or NODE_ENV production (the step's `production`).
 export function installsOf(script, production = false) {
   const found = []
   let exported = production
-  for (const { argv, env, order } of scriptCommands(script)) {
+  for (const { argv, dir, env, order } of scriptCommands(script)) {
     const program = programOf(argv[0])
     if (program === 'export') for (const word of argv) if (word.startsWith('NODE_ENV=')) exported = word === 'NODE_ENV=production'
     const options = optionsOf(argv, 1), [command] = options.operands
@@ -146,7 +147,8 @@ export function installsOf(script, production = false) {
     // npm installs what `--include` names whatever leaves it out.
     const prod = !valuesOf(options, '--include').includes('dev') && (valuesOf(options, '--omit').includes('dev') || /^prod(?:uction)?$/u.test(valuesOf(options, '--only')[0] ?? '')
       || argv.some(word => /^--prod(?:uction)?$/u.test(word)) || (env.NODE_ENV ?? (exported ? 'production' : '')) === 'production')
-    found.push({ order, into: projectOf(argv), prod })
+    const project = projectOf(argv)
+    found.push({ order, into: project === null ? dir : pathFrom(dir, project), prod })
   }
   return found
 }
@@ -172,7 +174,7 @@ export function scriptFinds(script) {
       found.push({ kind: 'remote-script', line: command.line, command: excerpt(lines.get(at) ?? '') })
       saved.delete(name)
     }
-    for (const each of commandFinds(command)) found.push({ ...each, line: command.line, order: command.order })
+    for (const each of commandFinds(command)) found.push({ ...each, line: command.line, order: command.order, dir: command.dir })
   }
   const told = new Set()
   return found.filter(({ order: _order, ...each }) => { const key = JSON.stringify(each); return !told.has(key) && told.add(key) }).toSorted((a, b) => a.line - b.line)

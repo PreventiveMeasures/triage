@@ -2,6 +2,7 @@
 // them, for commands.js. A quick read, not a shell's parse: a command built
 // as the script runs goes unseen.
 import { SHELLS } from '../../files/runs-code.js'
+import { resolved } from '../../npm/files.js'
 
 // A shell, by its program, wherever it is (risk's runs-code.js SHELLS).
 const SHELL = new RegExp(String.raw`^(?:.*\/)?${SHELLS}$`, 'u')
@@ -124,18 +125,24 @@ function shellLine([program, ...words]) {
   return at === -1 ? null : words[at + 1] ?? null
 }
 
+// A path `to` from `dir`, both from the step's directory ('' for it); as
+// written where a variable, `~`, `-` or an absolute path names it.
+export const pathFrom = (dir, to) => /^[$~/-]/u.test(to) ? to : resolved(dir ? dir.split('/') : [], to)?.join('/') ?? [dir, to].filter(Boolean).join('/')
+
 // Each command of a script, in the order they run (`order`): its `line` from
-// 0, and `next`, the command a pipe feeds it to; a command substitution's
-// before its command's, a shell's command line's (`sh -c`) after it.
+// 0, the directory the `cd`s before it moved to (`dir`, by pathFrom), and
+// `next`, the command a pipe feeds it to; a command substitution's before
+// its command's, a shell's command line's (`sh -c`) after it.
 export function scriptCommands(script) {
   const found = []
-  let read = 0
+  let dir = '', read = 0
   const readLine = (text, line) => {
     if (read++ >= 64) return
     const { commands, nested } = commandsOf(text)
     commands.forEach(({ nested: substituted, ...command }, at) => {
       for (const each of substituted) readLine(each, line)
-      found.push({ ...command, line, order: found.length, next: commands[at + 1]?.piped ? commands[at + 1] : null })
+      found.push({ ...command, line, dir, order: found.length, next: commands[at + 1]?.piped ? commands[at + 1] : null })
+      if (command.argv[0] === 'cd') dir = pathFrom(dir, command.argv.slice(1).find(word => !/^-[LPe@]+$/u.test(word)) ?? '~')
       const shell = shellLine(command.argv)
       if (shell) readLine(shell, line)
     })

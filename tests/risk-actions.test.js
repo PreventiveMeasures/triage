@@ -139,6 +139,12 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api'), { lockfiles }).findings), [])
     const nested = [{ path: 'api/package-lock.json', names: new Set() }, { path: 'package-lock.json', names: new Set(['eslint']) }]
     assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api'), { lockfiles: nested }).findings), ['fetched-package/high@7'], 'locked above, by another project\'s lockfile than its own')
+    const script = (lines, locks) => ids(scanWorkflow('workflow', `on: push\njobs:\n  a:\n    steps:\n      - run: |\n${lines.map(line => `          ${line}\n`).join('')}`, { lockfiles: locks }).findings)
+    const own = [{ path: 'api/package-lock.json', names: new Set(['eslint']) }]
+    assert.deepEqual([script(['cd api && npm ci && npx eslint .'], own), script(['cd api && npm ci && npx eslint .'], nested), script(['cd ./api', 'npm ci', 'cd ..', 'npx eslint .'], own)],
+      [[], ['fetched-package/high@6'], ['fetched-package/high@9']], 'where a script\'s cd moves to, and back')
+    assert.deepEqual([ids(scanWorkflow('workflow', job('.', 'api', 'cd api && npm ci'), { lockfiles }).findings), ids(scanWorkflow('workflow', job('.', 'web', 'cd api && npm ci'), { lockfiles }).findings)],
+      [[], ['fetched-package/high@7']], 'and an install there, in a step before')
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm ci --prefix web'), { lockfiles }).findings), ['fetched-package/high@7'], 'the directory an install names')
     assert.deepEqual(ids(scanWorkflow('workflow', job('web', 'api', 'pnpm -C ../api install'), { lockfiles }).findings), [])
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm --prefix=api ci'), { lockfiles }).findings), [], 'its option before its command')

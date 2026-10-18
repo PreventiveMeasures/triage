@@ -85,17 +85,23 @@ export const imageFinding = (text, read) => ({ id: 'unpinned-image', severity: !
 // The file's line a script's line is on: a `|` block scalar's own, else `run:`'s.
 const fileLine = (run, line) => run.start === null ? run.line : run.start + line
 
-// Every finding of a `run` script (workflow.js runOf); `context`'s `locked(name)`
-// whether a lockfile there locks it (`dev` where devDependencies alone
-// need it), `installed(dev)` whether an install ran before that installs
-// such a package.
+// Whether `dir` is `directory` or above it, as node finds a package there;
+// null for anywhere.
+export const within = (dir, directory) => dir === null || dir === '' || directory === dir || directory.startsWith(`${dir}/`)
+
+// Every finding of a `run` script (workflow.js runOf); `context`'s
+// `locked(name, dir)` whether a lockfile there locks it (`dev` where
+// devDependencies alone need it), `installed(dev, dir)` whether an install
+// ran before that installs such a package there, `dir` a path from the
+// step's directory, as a `cd` moves to.
 export function scriptFindings(run, context) {
   const findings = []
-  // An install earlier in the script, in its own directory, counts as one in a step before.
-  const installs = installsOf(run.script, run.production).filter(({ into }) => into === null)
+  // An install earlier in the script counts as one in a step before.
+  const installs = installsOf(run.script, run.production)
   for (const found of scriptFinds(run.script)) {
-    const locked = found.kind === 'package' && found.ecosystem === 'npm' && found.localFirst && context.locked(found.name)
-    const before = context.installed(locked === 'dev') || installs.some(({ order, prod }) => order < found.order && !(prod && locked === 'dev'))
+    const dir = found.dir ?? ''
+    const locked = found.kind === 'package' && found.ecosystem === 'npm' && found.localFirst && context.locked(found.name, dir)
+    const before = context.installed(locked === 'dev', dir) || installs.some(({ order, into, prod }) => order < found.order && within(into, dir) && !(prod && locked === 'dev'))
     for (const finding of graded(found, { ...context, installed: before }, Boolean(locked))) findings.push({ ...finding, line: fileLine(run, found.line) })
   }
   for (const [tag, services] of npmHostTags(npmExfiltration('run.sh', run.script, true))) {
