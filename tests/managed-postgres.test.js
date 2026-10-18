@@ -5,7 +5,9 @@ import { checkHiddenTeams } from './_managed-hidden-teams.js'
 import { checkViewSessions } from './_managed-view-sessions.js'
 import { checkTeamNpmScopes } from './_managed-team-npm-scopes.js'
 import { checkGithubLinks, checkUsersByAccount } from './_managed-github-links.js'
-import { checkRepositoryDependencyReviews, reviewedRepo } from './_managed-repository-dependency-reviews.js'
+import { checkRepositoryDependencyReviews, context, people, publish, reviewedRepo } from './_managed-repository-dependency-reviews.js'
+import { packageOf, registry } from './_managed-npm.js'
+import { npmVersionStore } from '../server-managed/npm-kept.ts'
 import { checkBundleBuildConditions, checkBundleProvenance } from './_managed-bundle-provenance.js'
 import { checkFoldedReads } from './_managed-folded-reads.js'
 import assert from 'node:assert/strict'
@@ -300,6 +302,37 @@ test('Postgres adds linked GitHub accounts to existing installations, keeping na
 test('Postgres repository dependency reviews share their SQLite semantics', async t => {
   const { db } = await database(t)
   await checkRepositoryDependencyReviews(db)
+})
+
+// A team's reviews as its Dependencies tab lists them: the session seen, the
+// page with its entries and teams, its versions' documents kept, and the
+// reader's session, npm scopes and access to the team asked again, each one
+// statement however many reviews.
+test('Postgres lists a team\'s dependency reviews in a few statements, however many', async t => {
+  const { db, queries } = await database(t)
+  const users = await people(db)
+  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
+  const pkgs = Array.from({ length: 5 }, (_, at) => packageOf(`lib-${at}`, '1.0.0', { 'index.js': `${at}` }))
+  registry(t, pkgs)
+  for (const { doc } of pkgs) {
+    await npmVersionStore(db).write(doc.name, doc.version, doc)
+    await publish(db, users.alice, context(doc.name, doc.version), ['one'])
+  }
+  const list = async () => {
+    // ServerResponse exposes Node's EventEmitter contract.
+    // eslint-disable-next-line unicorn/prefer-event-target
+    const res = Object.assign(new EventEmitter(), { status: 0, body: '', writeHead(status) { this.status = status }, end(value) { this.body = value ?? ''; this.writableEnded = true } })
+    await handler({ url: '/api/npm/reviews/team?teamId=one', method: 'GET', headers: { cookie: users.bob.setCookie.split(';')[0] } }, res)
+    return res
+  }
+  assert.equal((await list()).status, 200)
+  queries.length = 0
+  const listed = await list()
+  assert.equal(listed.status, 200)
+  assert.equal(JSON.parse(listed.body).reviews.length, 5)
+  assert.equal(queries.length, 5, queries.join('\n'))
+  assert.equal(queries.filter(sql => /^(?:BEGIN|COMMIT)/u.test(sql)).length, 0)
+  t.diagnostic(`reviews/team: ${queries.length} SQL statements for ${pkgs.length} reviews`)
 })
 
 test('Postgres adds dependency review to existing repositories, off', async t => {
@@ -1528,6 +1561,12 @@ test('dependency reviews publish, revoke and continue as frozen sets (Postgres)'
   const { db } = await database(t)
   const { checkDependencyReviews } = await import('./_managed-dependency-reviews.js')
   await checkDependencyReviews(db)
+})
+
+test('a team\'s reviews in one statement, each as it is read alone, and their reader asked again in one (Postgres)', async t => {
+  const { db } = await database(t)
+  const { checkTeamReviewList } = await import('./_managed-dependency-reviews.js')
+  await checkTeamReviewList(db)
 })
 
 

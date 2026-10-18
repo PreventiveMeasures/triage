@@ -183,7 +183,7 @@ import { githubActionsSource } from './github-actions.ts'
 import { type RepositoryEntry, createRepositoryBrowser, repositoryTreeFiles, scopedDirectory } from './repository-browser.ts'
 import { type Lru, lru } from './lru.ts'
 import { CALLBACK_PATH, LOGIN_PATH, OAuthError, buildLoginRedirect, cacheAvatar, ensureUserAccessToken, handleCallback } from './github-oauth.ts'
-import { clearCookie, endSession, readSession, runRequestPresence } from './session.ts'
+import { clearCookie, endSession, readSession, runRequestPresence, sessionIds } from './session.ts'
 import { runTimed } from './request-timing.ts'
 import { isExactVersion } from '@preventive/upstream/semver.js'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
@@ -3972,6 +3972,14 @@ async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined, name
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
   return s == null ? null : npmReaderOf(deps, s.user, names)
 }
+// The reader of the session `cookie` names now, as npmReader reads them,
+// their npm scopes whatever the packages, and whether they read team
+// `teamId`'s reviews: one statement.
+async function npmReviewReader(deps: ManagedHttpDeps, cookie: string | undefined, teamId: string): Promise<(NpmReader & { readsTeam: boolean }) | null> {
+  const ids = sessionIds(deps.config, cookie)
+  const reader = ids && await deps.db.getNpmReviewReader(ids.id, ids.viewer, Date.now(), teamId)
+  return reader && roleAtLeast(reader.role, 'view') ? { role: reader.role, scopes: new Set(reader.scopes), userId: reader.id, readsTeam: reader.readsTeam } : null
+}
 // The same of `user`, as a session the request read just now tells them.
 async function npmReaderOf(deps: ManagedHttpDeps, user: { id: string; role: NpmReader['role'] }, names: readonly string[]): Promise<NpmReader | null> {
   if (!roleAtLeast(user.role, 'view')) return null
@@ -3992,9 +4000,11 @@ const REVIEW_READS_AT_ONCE = 8
 
 // Lists must enforce the same target and base access as the review itself,
 // including permission changes while the registry requests are in flight;
-// first as `session`, the one the request read just now, where given.
+// first as `session`, the one the request read just now, where given. A
+// team's (`teamId`) only to one who still reads its reviews there, asked
+// again with the rest (npmReviewReader).
 async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, user: string, reviews: T[],
-  session?: { id: string; role: NpmReader['role'] }): Promise<T[] | null> {
+  session?: { id: string; role: NpmReader['role'] }, teamId?: string): Promise<T[] | null> {
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
@@ -4013,8 +4023,10 @@ async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, 
     const read = await eachOf([...asked], REVIEW_READS_AT_ONCE, ([, [name, version]]) => readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal, kept))
     const documents = new Map([...asked.keys()].map((key, at) => [key, read[at] ?? null]))
     const packages = reviews.map(review => versionsOf(review).map(([name, version]) => documents.get(`${name}\0${version}`) ?? null))
-    const current = await npmReader(deps, cookie, packages.flat().flatMap(doc => doc?.private ? [doc.name] : []))
+    const current = teamId === undefined ? await npmReader(deps, cookie, packages.flat().flatMap(doc => doc?.private ? [doc.name] : []))
+      : await npmReviewReader(deps, cookie, teamId)
     if (!current || current.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    if ('readsTeam' in current && !current.readsTeam) { sendJson(res, 404, { error: 'no-team' }); return null }
     return reviews.filter((_, index) => packages[index]!.every(doc => doc && (!doc.private || canReadPrivateNpm(current, doc.name))))
   } catch (error) {
     if (controller.signal.aborted) return null
@@ -5001,11 +5013,9 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       }
       const page = await deps.db.listTeamDependencyReviews(teamId, s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
       if (!page) { sendJson(res, 404, { error: 'no-team' }); return }
-      const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews, s.user)
-      if (!reviews) return
       // Its access asked again, as it may have been taken while npm was read.
-      if (!await deps.db.readsTeamDependencyReviews(teamId, s.user.id)) { sendJson(res, 404, { error: 'no-team' }); return }
-      sendJson(res, 200, { ...page, reviews })
+      const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews, s.user, teamId)
+      if (reviews) sendJson(res, 200, { ...page, reviews })
       return
     }
     if (path === '/api/npm/reviews') {

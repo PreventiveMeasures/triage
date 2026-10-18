@@ -148,8 +148,8 @@ export async function checkDependencyReviews(db) {
   for (const who of ['bob', 'carol', 'viewer', 'outsider']) assert.equal(await db.listTeamDependencyReviews('one', users[who].userId, null), null, `${who} reads none there`)
   assert.deepEqual((await db.listTeamDependencyReviews('disabled', users.alice.userId, null)).reviews, [], 'none published there')
   assert.equal(await db.listTeamDependencyReviews('hidden', users.alice.userId, null), null, 'a hidden team’s none')
-  assert.deepEqual(await Promise.all([['one', 'alice'], ['one', 'admin'], ['one', 'bob'], ['hidden', 'alice']].map(([teamId, who]) => db.readsTeamDependencyReviews(teamId, users[who].userId))),
-    [true, true, false, false], 'who reads them, as asked again')
+  assert.deepEqual(await Promise.all([['one', 'alice'], ['one', 'admin'], ['one', 'bob'], ['hidden', 'alice']]
+    .map(async ([teamId, who]) => (await db.getNpmReviewReader(users[who].sid, null, Date.now(), teamId)).readsTeam)), [true, true, false, false], 'who reads them, as asked again')
   assert.equal((await db.getLatestOwnDependencyReview(users.alice.userId, reviewContext)).id, review.id)
   assert.equal(await db.getLatestOwnDependencyReview(users.bob.userId, reviewContext), null)
   await assert.rejects(change(save(continued, 'index.js', 'accept')), /review-conflict/u, 'an autosave cannot resurrect a discarded review')
@@ -207,4 +207,89 @@ async function checkCoverage(db, session) {
   assert.deepEqual(review.files, files.toSorted())
   assert.equal(partial.coverage, 'partial')
   assert.equal(partial.comment, 'Three files checked; one remains.')
+}
+
+// SQLite rows have no prototype; rows read out of JSON have the plain one.
+const plain = value => structuredClone(value)
+
+// A team's reviews read in one statement (listTeamDependencyReviews), each
+// as the reads that statement folds read it (listDependencyReviews, of any
+// base): its entries, and the teams its reader reads it in, all of theirs
+// for its author; those published there alone, the latest first, a page on
+// from where one ended; none for one who doesn't read them there. And who
+// reads them, asked again in one statement (getNpmReviewReader), as their
+// session, their npm scopes and the team's list tell it, a view of another's
+// as an admin's.
+export async function checkTeamReviewList(db) {
+  const users = {}
+  for (const [i, [login, role]] of [['admin', 'admin'], ['alice', 'triage'], ['bob', 'triage'], ['outsider', 'manage']].entries()) {
+    const session = await createSession(config, db, { githubUserId: i + 200, login, name: null, avatarUrl: null }, Date.now())
+    await db.setUserRole(session.userId, role)
+    users[login] = { ...session, sid: hashToken(session.setCookie.split(';')[0].slice(4)) }
+  }
+  const dependencies = { dependencies: true, security: false }
+  for (const id of ['team-a', 'team-b', 'team-c']) {
+    await db.createTeam(id, id, Date.now())
+    await db.setTeamDependencyReview(users.admin.sid, id, true)
+    await db.setTeamMember(id, users.alice.userId, dependencies)
+  }
+  await db.setTeamMember('team-a', users.bob.userId, dependencies)
+  await db.setTeamNpmScopes(users.admin.sid, 'team-a', ['@corp', '@acme'])
+  await db.setTeamNpmScopes(users.admin.sid, 'team-c', ['@hidden'])
+  const publish = async (who, version, teams, now) => {
+    const context = { ...reviewContext, version, integrity: `sha512-${version}` }
+    let review = await db.changeDependencyReview(context, users[who].sid, { action: 'start', reviewId: null, revision: null }, now)
+    for (const [at, file] of ['package.json', 'index.js', 'lib/a.js'].entries()) {
+      review = await db.changeDependencyReview(context, users[who].sid, { action: 'save', reviewId: review.id, revision: review.revision, entryId: null,
+        entry: { file, status: at === 1 ? 'accept-with-nits' : 'accept', comment: `${file} by ${who}` } }, now + at)
+    }
+    return db.changeDependencyReview(context, users[who].sid, { action: 'publish', reviewId: review.id, revision: review.revision, teamIds: teams,
+      files: ['package.json', 'index.js', 'lib/a.js'], nonTextFiles: [], final: { status: 'accept-with-nits', comment: 'fine' } }, now + 10)
+  }
+  const reviews = [await publish('alice', '3.0.0', ['team-a'], 100), await publish('alice', '3.0.1', ['team-a', 'team-b'], 200),
+    await publish('alice', '3.0.2', ['team-a', 'team-b', 'team-c'], 300), await publish('bob', '3.0.3', ['team-a'], 300)]
+  await db.changeDependencyReview({ ...reviewContext, version: '3.0.1', integrity: 'sha512-3.0.1' }, users.alice.sid,
+    { action: 'revoke', reviewId: reviews[1].id, revision: reviews[1].revision }, 400)
+  await db.setTeamHidden('team-c', true, Date.now())
+  // Each as listDependencyReviews reads it for `who`.
+  const asRead = (list, who) => Promise.all(list.map(async review => (await db.listDependencyReviews(review, users[who].userId, true)).find(one => one.id === review.id)))
+  for (const [team, who, ids] of [['team-a', 'alice', [3, 2, 1, 0]], ['team-a', 'bob', [3, 2, 1, 0]], ['team-a', 'admin', [3, 2, 1, 0]], ['team-b', 'alice', [2, 1]],
+    ['team-b', 'admin', [2, 1]], ['team-b', 'bob', null], ['team-a', 'outsider', null], ['team-c', 'alice', null], ['team-c', 'admin', null], ['missing', 'admin', null]]) {
+    const listed = await db.listTeamDependencyReviews(team, users[who].userId, null)
+    const sorted = ids && [...ids].toSorted((a, b) => reviews[b].publishedAt - reviews[a].publishedAt || (reviews[b].id < reviews[a].id ? -1 : 1))
+    assert.deepEqual(listed && listed.reviews.map(review => reviews.findIndex(one => one.id === review.id)), sorted, `${team} for ${who}`)
+    if (!listed) continue
+    assert.deepEqual(plain(listed), plain({ reviews: await asRead(listed.reviews, who), next: null }), `${team} for ${who}, as each is read`)
+    const [, second] = listed.reviews
+    if (second) {
+      assert.deepEqual(plain(await db.listTeamDependencyReviews(team, users[who].userId, { time: second.publishedAt, id: second.id })),
+        plain({ reviews: listed.reviews.slice(2), next: null }), `${team} for ${who}, on from the second`)
+    }
+  }
+  const third = (await db.listTeamDependencyReviews('team-a', users.bob.userId, null)).reviews.find(review => review.id === reviews[2].id)
+  assert.deepEqual([third.teams.map(team => team.id), third.entries.length, third.revokedAt], [['team-a'], 3, null], 'a team bob reads none of told him')
+  assert.deepEqual((await db.listTeamDependencyReviews('team-a', users.alice.userId, null)).reviews.find(review => review.id === reviews[2].id).teams.map(team => team.id),
+    ['team-a', 'team-b', 'team-c'], 'its author told all of theirs')
+
+  // Its reader asked again, as the session, the npm scopes and the team's list tell it.
+  const now = Date.now()
+  for (const who of ['alice', 'bob', 'admin', 'outsider']) {
+    for (const team of ['team-a', 'team-b', 'team-c']) {
+      const { user } = await db.getSessionWithUser(users[who].sid, now)
+      assert.deepEqual(plain(await db.getNpmReviewReader(users[who].sid, null, now, team)), { id: user.id, role: user.role, scopes: await db.listUserNpmScopes(user.id),
+        readsTeam: await db.listTeamDependencyReviews(team, user.id, null) !== null }, `${who} in ${team}`)
+    }
+  }
+  assert.deepEqual((await db.getNpmReviewReader(users.alice.sid, null, now, 'team-a')).scopes, ['@acme', '@corp'], 'those of hidden teams none')
+  assert.equal(await db.getNpmReviewReader('nobody', null, now, 'team-a'), null)
+  assert.equal(await db.getNpmReviewReader(users.alice.sid, null, now + 3_600_001, 'team-a'), null, 'an expired session none')
+  assert.equal(await db.createViewSession({ id: 'view-alice', viewerSessionId: users.admin.sid, userId: users.alice.userId, csrfToken: 'view-csrf' }, now), true)
+  assert.deepEqual(plain(await db.getNpmReviewReader('view-alice', users.admin.sid, now, 'team-b')), { id: users.alice.userId, role: 'triage',
+    scopes: ['@acme', '@corp'], readsTeam: true }, 'an admin viewing as alice reads as alice')
+  assert.equal((await db.getViewSessionWithUser('view-alice', users.admin.sid, now)).user.id, users.alice.userId)
+  assert.equal(await db.getNpmReviewReader('view-alice', null, now, 'team-b'), null, 'a view none but of the session it is a view of')
+  assert.equal(await db.getNpmReviewReader('view-alice', users.bob.sid, now, 'team-b'), null)
+  await db.setUserRole(users.admin.userId, 'manage')
+  assert.equal(await db.getNpmReviewReader('view-alice', users.admin.sid, now, 'team-b'), null, 'nor of one no longer an admin')
+  assert.equal(await db.getViewSessionWithUser('view-alice', users.admin.sid, now), null)
 }

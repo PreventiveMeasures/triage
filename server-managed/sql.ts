@@ -23,7 +23,7 @@ export interface ManagedSqlDriver extends ManagedSql {
 const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'getStorageEncryption', 'getTeam', 'getComment',
   'userCanReadReport', 'userCanReadRepo', 'userCanReadRepoPath', 'userCanReadBundle', 'reportPermissionsFor', 'listComments', 'listManagedIssues',
   'listTriageHistory', 'listUsers', 'listUserOptions', 'listActivityReports', 'getRepoFullName', 'getUser', 'getSessionWithUser', 'getViewSessionWithUser',
-  'listTriageFixes', 'getRepoDependencyReviews',
+  'listTriageFixes', 'getRepoDependencyReviews', 'listTeamDependencyReviews', 'getNpmReviewReader',
   'sessionWithUser', 'getTeamReportAccessSnapshot', 'getReportAccessSnapshot', 'getReportView', 'getUserGithubId', 'getUserTeamFeedSnapshot', 'getAnnotations', 'getAnnotationRevision', 'getUserTokens',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',

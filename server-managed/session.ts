@@ -90,16 +90,25 @@ export function runRequestPresence<T>(work: () => T): T {
 export async function readSession(
   config: ManagedConfig, db: ManagedDb, cookieHeader: string | undefined, now: number, { own = false } = {},
 ): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  const ids = sessionIds(config, cookieHeader, { own })
+  if (!ids) return null
+  const request = requests.getStore(), seen = request?.seen === true
+  const s = ids.viewer === null
+    ? await (seen ? db.getSessionWithUser : db.sessionWithUser)(ids.id, now)
+    : await (seen ? db.getViewSessionWithUser : db.viewSessionWithUser)(ids.id, ids.viewer, now)
+  if (s && request) request.seen = true
+  return s
+}
+
+// The sessions the request's cookies name, as readSession reads them: the
+// one acting (`id`), a view where an admin views as another user, with the
+// admin's own it is a view of (`viewer`); none signed out.
+export function sessionIds(config: ManagedConfig, cookieHeader: string | undefined, { own = false } = {}): { id: string; viewer: string | null } | null {
   const cookies = parseCookies(cookieHeader)
   const token = cookies.get(config.sessionCookieName)
   if (token == null || token === '') return null
   const view = own ? undefined : cookies.get(cookieName(config, VIEW_COOKIE))
-  const request = requests.getStore(), seen = request?.seen === true
-  const s = view != null && view !== ''
-    ? await (seen ? db.getViewSessionWithUser : db.viewSessionWithUser)(hashToken(view), hashToken(token), now)
-    : await (seen ? db.getSessionWithUser : db.sessionWithUser)(hashToken(token), now)
-  if (s && request) request.seen = true
-  return s
+  return view != null && view !== '' ? { id: hashToken(view), viewer: hashToken(token) } : { id: hashToken(token), viewer: null }
 }
 
 // Drop the session named by the request's cookie (logout). The caller also

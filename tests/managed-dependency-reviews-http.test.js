@@ -408,6 +408,19 @@ test('review lists recheck target access and session after registry reads, prese
   const listed = await h.send('/api/npm/reviews/team?' + new URLSearchParams({ teamId: 'team', beforeTime: '5', beforeId: 'r' }))
   assert.deepEqual([listed.status, listed.body], [200, { reviews: [], next: null }], 'the private package no longer readable, none of its reviews')
   assert.deepEqual(teams, [['team', h.sessions.triage.userId, { time: 5, id: 'r' }]])
+  // Its scopes taken while npm is read: asked again after, with the team's
+  // access, in one statement, none of it told.
+  await h.db.setTeamNpmScopes(admin, 'team', ['@secret'])
+  const fetched = globalThis.fetch
+  const fetching = t.mock.method(globalThis, 'fetch', async (...args) => {
+    await h.db.setTeamNpmScopes(admin, 'team', [])
+    return fetched(...args)
+  })
+  const rechecks = t.mock.method(h.db, 'getNpmReviewReader')
+  const taken = await h.send('/api/npm/reviews/team?teamId=team')
+  assert.deepEqual([taken.status, taken.body.reviews, rechecks.mock.callCount()], [200, [], 1])
+  assert.ok(fetching.mock.callCount() > 0, 'npm read meanwhile')
+  fetching.mock.restore()
   assert.equal((await h.send('/api/npm/reviews/team?teamId=elsewhere')).status, 404)
   for (const bad of ['', '?teamId=team&beforeTime=x&beforeId=r', '?teamId=team&beforeId=r']) assert.equal((await h.send(`/api/npm/reviews/team${bad}`)).status, 400, bad)
   const latest = '/api/npm/reviews/latest?' + new URLSearchParams({ package: context.package, version: context.version, integrity: context.integrity })
