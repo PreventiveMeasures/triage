@@ -987,7 +987,10 @@ Private repositories use the configured repository App, but its installation
 access alone is never a user grant. Existing upload/link pickers retain their
 managed-data permissions; they do not grant live source browsing.
 The picker shares installation tokens and the GitHub identity lookup within one
-request, but checks every repository's current visibility and permission. Stale
+request, but checks every repository's current visibility and permission. A
+request asks GitHub who its user is once, its recheck after source reads asking
+the repository's visibility and their permission again, not who they are; an
+identity changed since fails the next request. Stale
 installation access falls back to anonymous source reads only after GitHub confirms
 that the repository is public; private and internal repositories remain gated.
 The GitHub Contents API limits directory listings to
@@ -2119,7 +2122,8 @@ added, each wanting reviews among `unreviewed`, and each lockfile its reader
 refuses, or past the hundred, a directory of its own failing the review
 (`lockfile-unreadable`, or `lockfile-unsupported`, Bun's), told by the
 lockfiles its review held to as they were read, though they change
-meanwhile; `{ head, review: null }` where none is in effect
+meanwhile, sent without asking its access again where its head was kept and
+its lockfiles and baseline held, GitHub asked for none of them; `{ head, review: null }` where none is in effect
 for the reader, `head` none where the branch has no commit; and `{ review:
 null }` where the repository reviews none, once the reader's access in the
 app is checked, GitHub never asked, as a team's Dependencies tab asks of

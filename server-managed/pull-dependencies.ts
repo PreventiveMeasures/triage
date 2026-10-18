@@ -171,6 +171,11 @@ function lockfilesChanged(files: ChangedFile[]) {
     omitted: all.slice(MAX_DIRECTORIES).flatMap(([, directory]) => [...directory.paths]).toSorted() }
 }
 
+// Whether `lockfile` at `ref` is held in this instance, read without asking
+// GitHub: Bun's, never read, too.
+export const lockfileHeld = (fullName: string, ref: string, { path, format }: { path: string; format: Format }) =>
+  format === 'bun' || lockfileReads.get(`${fullName}\0${ref}\0${path}`) !== undefined
+
 // A lockfile's packages at `ref`, as read in this instance, else shared with
 // a read of it with the same token still under way, else of GitHub; a
 // lockfile its reader refuses, why. Any failure to read it of GitHub but its

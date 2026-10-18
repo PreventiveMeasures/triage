@@ -215,7 +215,7 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
 import { AGENTS_READ_VERSION, APP_AGENTS, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
-import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
+import { type GithubAsked, lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, SINCE_COMMIT } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, heldTo, scopeOf } from './lockfile-scope.ts'
 import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
@@ -2090,28 +2090,33 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
 // its pulse reads it, kept a while; every lockfile there its review holds to
 // (lockfile-scope.ts, commit-lockfiles.ts) as one directory, its versions as
 // a pull request's others are (pull-dependency-reviews.ts), each left unread
-// a directory of its own failing the review, as a pull request's are.
+// a directory of its own failing the review, as a pull request's are. Kept,
+// its access not asked again, where its head was kept and its lockfiles and
+// baseline held, GitHub asked for none of them.
 async function handleRepositoryBranchDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
-    const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
+    const headRead = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
+    const head = headRead.value.sha
     if (!head) return { value: { head: null, review: null }, kept: false }
+    const asked: GithubAsked = { github: !headRead.kept }
     // Those its review holds to alone read, as many as are read of them.
     const setting = await deps.db.repoDependencyReview(repoId)
     if (!setting?.enabled) return { value: { head, review: null }, kept: false }
-    const read = await lockedAt(fullName, token, head, path => heldTo(setting.lockfiles, path))
+    const read = await lockedAt(fullName, token, head, path => heldTo(setting.lockfiles, path), asked)
     const { packages, paths } = lockedIn(read)
     const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
       ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
     const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
-    if (!now) return { value: { head, review: null }, kept: false }
+    if (!now) return { value: { head, review: null }, kept: !asked.github }
     // Told by the lockfiles it held to as they were read, though they have
     // changed since.
     const state = { ...now, lockfiles: setting.lockfiles }
     const reviewed = deps.reviewedDependencies ?? null
-    const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null } : await baselineFor(fullName, token, repoId, state, baselineKept(deps))
-    return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: false }
+    const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null }
+      : await baselineFor(fullName, token, repoId, state, baselineKept(deps), asked)
+    return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: !asked.github }
   }, async () => (await deps.db.repoDependencyReview(repoId))?.enabled ? null : { review: null })
 }
 

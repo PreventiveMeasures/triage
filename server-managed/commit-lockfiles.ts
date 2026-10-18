@@ -14,31 +14,37 @@ import { upstreamGithub } from './github-errors.ts'
 import { GithubApiError } from './github-app.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
-import { eachOf, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
+import { eachOf, lockedWith, lockfileFormat, lockfileHeld, readLockfile } from './pull-dependencies.ts'
 
 export const MAX_LOCKFILES = 100
 const READ_AT_ONCE = 4
 
 export interface CommitLockfiles { lockfiles: { path: string; packages: LockedPackage[] }[]; unread: string[] }
+// Set where GitHub was asked for what a read reads (`github`), not all of it
+// held in this instance.
+export interface GithubAsked { github: boolean }
 
 // The lockfiles at commit `sha` its review reads, by their paths, each with
-// its format (pull-dependencies.ts lockfileFormat), kept by the commit.
+// its format (pull-dependencies.ts lockfileFormat), kept by the commit;
+// `asked` told where GitHub was.
 const listings: Lru<{ path: string; format: NonNullable<ReturnType<typeof lockfileFormat>> }[]> = lru(20_000, listed => listed.length + 1)
-export async function lockfilesAt(fullName: string, token: string, sha: string) {
+export async function lockfilesAt(fullName: string, token: string, sha: string, asked?: GithubAsked) {
   const key = `${fullName}\0${sha}`
   const known = listings.get(key)
   if (known) return known
+  if (asked) asked.github = true
   const { lockfiles } = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).findRepoLockfiles({ repo: fullName, sha }))
   const listed = lockfiles.flatMap(({ path }) => { const format = lockfileFormat(path); return format ? [{ path, format }] : [] })
   listings.set(key, listed)
   return listed
 }
 
-export async function lockedAt(fullName: string, token: string, sha: string, held: (path: string) => boolean = () => true): Promise<CommitLockfiles> {
-  const listed = (await lockfilesAt(fullName, token, sha)).filter(({ path }) => held(path))
+export async function lockedAt(fullName: string, token: string, sha: string, held: (path: string) => boolean = () => true, asked?: GithubAsked): Promise<CommitLockfiles> {
+  const listed = (await lockfilesAt(fullName, token, sha, asked)).filter(({ path }) => held(path))
   const unread = listed.slice(MAX_LOCKFILES).map(({ path }) => path)
   const lockfiles: CommitLockfiles['lockfiles'] = []
   const reading = listed.slice(0, MAX_LOCKFILES)
+  if (asked && reading.some(lockfile => !lockfileHeld(fullName, sha, lockfile))) asked.github = true
   const reads = await eachOf(reading, READ_AT_ONCE, lockfile => readLockfile(fullName, token, sha, lockfile))
   for (const [at, lockfile] of reading.entries()) {
     const read = reads[at]!

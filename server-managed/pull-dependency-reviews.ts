@@ -24,7 +24,7 @@
 // changes: it is read once, every lockfile there of those read here
 // (pull-dependencies.ts), and kept by the commit (`baselines` in this
 // instance, `kept` beyond it), never stored as reviews.
-import { lockedAt, lockedIn } from './commit-lockfiles.ts'
+import { type GithubAsked, lockedAt, lockedIn } from './commit-lockfiles.ts'
 import { GithubApiError } from './github-app.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { EVERY_LOCKFILE, type LockfileScope, heldTo, isEvery, reviewedIn } from './lockfile-scope.ts'
@@ -68,13 +68,13 @@ const baselineKeys = (pkg: LockedPackage) => hashesOf(pkg).map(hash => `${pkg.na
 // and kept; with the lockfiles there its reader refuses, isn't one of, or
 // past those read (`unread`). GitHub having none of a lockfile it lists
 // there is a failure of the whole, as of any file, never kept.
-export async function reviewBaseline(fullName: string, token: string, repoId: number, since: string, kept: ReviewBaselineStore): Promise<Baseline> {
+export async function reviewBaseline(fullName: string, token: string, repoId: number, since: string, kept: ReviewBaselineStore, asked?: GithubAsked): Promise<Baseline> {
   const key = `${repoId}\0${since}`
   const known = baselines.get(key)
   if (known) return known
   const stored = await kept.read(key)
   if (stored) { const baseline = { versions: new Set(stored.versions), unread: stored.unread }; baselines.set(key, baseline); return baseline }
-  const read = await lockedAt(fullName, token, since)
+  const read = await lockedAt(fullName, token, since, () => true, asked)
   const { packages } = lockedIn(read), { unread } = read
   const versions = new Set<string>()
   for (const pkg of packages) if (reviewedAs(pkg) === 'version') for (const held of baselineKeys(pkg)) versions.add(held)
@@ -306,10 +306,10 @@ export const reviewedPackages = (told: PullDependencies) => told.lockfiles
 // A repository's baseline as read for a pull request: its versions and the
 // lockfiles there left unread; none where it reviews since no commit; and
 // where GitHub doesn't read it, none and why.
-export async function baselineFor(fullName: string, token: string, repoId: number, state: RepoReviewState, kept: ReviewBaselineStore) {
+export async function baselineFor(fullName: string, token: string, repoId: number, state: RepoReviewState, kept: ReviewBaselineStore, asked?: GithubAsked) {
   if (!state.since) return { baseline: null, unread: [], error: null }
   try {
-    const { versions, unread } = await reviewBaseline(fullName, token, repoId, state.since, kept)
+    const { versions, unread } = await reviewBaseline(fullName, token, repoId, state.since, kept, asked)
     return { baseline: versions, unread, error: null }
   } catch (err) {
     if (err instanceof GithubApiError && err.status !== 429 && err.status !== 401) return { baseline: null, unread: [], error: err.message }
