@@ -117,6 +117,13 @@ test('an action of the repository\'s own counts as an install before a step only
     await found(steps('run: npm ci --prefix web', 'uses: ./deps'), steps('run: npm ci --prefix api'))], [[], ['fetched-package/high@6'], []])
 })
 
+test('an input handed to a reusable workflow of the repository\'s own is an injection only where it writes it into a script', async () => {
+  const ci = 'on: pull_request_target\njobs:\n  a:\n    uses: ./.github/workflows/build.yml\n    with:\n      branch: ${{ github.head_ref }}\n'
+  const found = async run => findingIds(ofType(await scan(sourceOf({ files: { ...FILES, '.github/workflows/ci.yml': ci, '.github/workflows/build.yml': `on: workflow_call\njobs:\n  b:\n    steps:\n      - run: ${run}\n` },
+    workflows: ['.github/workflows/ci.yml', '.github/workflows/build.yml'] })), 'workflow')[0].findings)
+  assert.deepEqual([await found('git switch "$BRANCH"'), await found('git switch ${{ inputs.branch }}')], [[], ['script-injection/critical@6']])
+})
+
 test('a lockfile\'s names, and those only devDependencies need', () => {
   const { names, dev } = lockedNames('package-lock.json', [{ name: 'a', version: '1.0.0', dev: true }, { name: 'a', version: '2.0.0' }, { name: 'b', version: '1.0.0', dev: true }, { name: 'c', version: null }])
   assert.deepEqual([[...names], [...dev]], [['a', 'a@1.0.0', 'a@2.0.0', 'b', 'b@1.0.0', 'c'], ['a@1.0.0', 'b', 'b@1.0.0']])
