@@ -113,11 +113,11 @@ export async function fetchPullDependenciesOf(repoId, numbers, options) {
   return (await loadManagedBundle()).fetchPullDependenciesOf(repoId, numbers, options)
 }
 
-export async function fetchBranchDependencies(repoId, options) {
-  return (await loadManagedBundle()).fetchBranchDependencies(repoId, options)
+export async function fetchTeamDependencies(teamId, onLine, options) {
+  return (await loadManagedBundle()).fetchTeamDependencies(teamId, onLine, options)
 }
-export async function fetchNpmDelta(name, version, otherVersion, options) {
-  return (await loadManagedBundle()).fetchNpmDelta(name, version, otherVersion, options)
+export async function fetchNpmDeltas(versions, onLine, options) {
+  return (await loadManagedBundle()).fetchNpmDeltas(versions, onLine, options)
 }
 
 export function fetchRepositoryPulse(repoId, weeks, options) {

@@ -2274,9 +2274,10 @@ async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpD
 // effect for the reader, else `{ repoId, branch: null }`, as for one they
 // may read only some of, or `{ repoId, error, status }`; then its pull
 // requests' dependencies, of those changing a lockfile or that may,
-// TEAM_PULLS_TOGETHER at a time (`{ repoId, dependencies }`); and the lines
-// of their versions wanting reviews, where they are counted already
-// (`{ repoId, deltas }`, npm-delta.ts keptNpmDeltas). Last, `{ done: true
+// TEAM_PULLS_TOGETHER at a time (`{ repoId, dependencies }`); each line of
+// dependencies with the lines their versions wanting reviews change, where
+// they are counted already (`deltas`, npm-delta.ts keptNpmDeltas), told
+// before the rows asking for them are drawn. Last, `{ done: true
 // }`, or, its time up, `{ done: false, unread }`, the repositories left for
 // the reader to ask for again. The team's repositories, the reader's grants
 // and the repositories' reviews read once, those reviewing none answered at
@@ -2340,9 +2341,8 @@ async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAc
     return { value: { branch: branch.value, pulls: { items: pulls.items, more: pulls.more } }, kept: branch.kept && pulls.kept }
   }, reauthorize)
   if ('error' in read) return send({ repoId, ...PARTIAL_ACCESS.has(read.error) ? { branch: null } : { error: read.error, status: read.status } })
-  if (!await send({ repoId, ...read.value })) return false
-  if (!read.value.branch) return true
-  const told: object[] = [read.value.branch]
+  if (!read.value.branch) return send({ repoId, branch: null })
+  if (!await send({ repoId, ...read.value, ...await withDeltas(deps, [read.value.branch]) })) return false
   const numbers = read.value.pulls!.items.filter(item => item.touchesLockfile === true || item.touchesLockfile === null).map(item => item.number)
   for (let at = 0; at < numbers.length; at += TEAM_PULLS_TOGETHER) {
     if (Date.now() > deadline) return false
@@ -2356,11 +2356,13 @@ async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAc
       return { value: answers.map(({ value }) => value), kept: answers.every(({ kept }) => kept) }
     }, reauthorize)
     const dependencies = 'error' in pulled ? batch.map(number => ({ number, error: pulled.error })) : pulled.value
-    told.push(...dependencies)
-    if (!await send({ repoId, dependencies })) return false
+    if (!await send({ repoId, dependencies, ...await withDeltas(deps, dependencies) })) return false
   }
-  const deltas = await teamDeltas(deps, told)
-  return deltas.length === 0 || send({ repoId, deltas })
+  return true
+}
+const withDeltas = async (deps: ManagedHttpDeps, answers: object[]) => {
+  const deltas = await teamDeltas(deps, answers)
+  return deltas.length > 0 ? { deltas } : {}
 }
 
 // A repository's open pull requests, as many pages of them as

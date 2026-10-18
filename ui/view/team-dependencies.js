@@ -10,125 +10,179 @@
 // whichever adds it; every version they add wanting one, each once, by the
 // pull requests adding it; what each repository's default branch locks that
 // wants one, where any does; and the reviews published to the team
-// (dependency-review-list.js). A repository's are held for the session a
-// while (KEEP_MS), its pull requests' as their tiles hold them, read after
-// those a tile or a popup asks for, each shown as it was while read again;
-// and read anew once a repository's or a team's review is set anew. As many repositories
-// are read at once as READ_AT_ONCE. A pull request is named without its
-// repository's owner where every repository reviewed has the same one.
+// (dependency-review-list.js). Its repositories not held read in one request
+// of the team's (GET /api/teams/:id/dependencies), each as its lines come:
+// its default branch and open pull requests, then their dependencies, held
+// as pull-dependencies.js holds those a tile or a popup asks for
+// (seedPullDependencies), and the lines their versions change where they
+// are counted already (npm-delta.js seedNpmDeltas). A repository's are held
+// for the session a while (KEEP_MS), each shown as it was while read again;
+// those the server's time left asked for again; and read anew once a
+// repository's or a team's review is set anew. A pull request is named
+// without its repository's owner where every repository reviewed has the
+// same one.
 import { html, nothing, svg } from 'lit'
 import { StateElement } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
-import { fetchBranchDependencies, fetchRepositoryIssues } from './client-managed.js'
-import { addedVersions, checked, pullDependencies, readsDependencies, reviewFailures, reviewOf, subscribePullDependencies, unreviewedVersions } from './pull-dependencies.js'
+import { fetchTeamDependencies } from './client-managed.js'
+import { addedVersions, checked, heldPullDependencies, readsDependencies, reviewFailures, reviewOf, seedPullDependencies, subscribePullDependencies,
+  unreviewedVersions } from './pull-dependencies.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { PACKAGE_ICON, icon } from './repository-tiles.js'
 import { dialogTabs } from './header-tabs.js'
 import { withCompare } from './compare-load.js'
-import { deltaBase } from './npm-delta.js'
+import { deltaBase, seedNpmDeltas } from './npm-delta.js'
 import './dependency-review-copy.js'
 import { managedHistory } from './managed-history.js'
 import { managedRouteForIds, managedRoutePath } from '../../common/managed/routes.js'
 
 const KEEP_MS = 2 * 60_000
 const RETRY_MS = 30_000
-// Pages of a repository's open pull requests read, fifty each, a thousand
-// at most, its list cheap, those touching no lockfile read no further; and
-// the versions shown of a list, under a pull request or a default branch,
-// the rest shown once asked for.
-const PULL_PAGES = 20
+// How many times a read the server's time cut short goes on, the
+// repositories it left asked for again; and the versions shown of a list,
+// under a pull request or a default branch, the rest shown once asked for.
+const RESUMES = 3
 const SHOWN_VERSIONS = 12
 const SHOWN_LISTED = 48
-const READ_AT_ONCE = 3
 // Its sub-tabs, each at an address of its own, the one last picked
 // opened again by the team's Dependencies tab (ingest.js
 // switchToWorkspaceContent).
 const TABS = [['pulls', 'Pull requests'], ['versions', 'Versions'], ['branch', 'Default branch'], ['reviews', 'Reviews']]
+// A pull request whose dependencies are still to be told.
+const TELLING = { status: 'loading', until: Number.POSITIVE_INFINITY }
 
 const held = new Map()
 const listeners = new Set()
-const waiting = []
+// The reads in flight, stopped once what they read is forgotten.
+const inFlight = new Set()
 let heldFor = null
-let inFlight = 0
 const changed = () => { for (const notify of listeners) notify() }
-globalThis.addEventListener?.('dependency-review-changed', () => {
+function forget() {
   held.clear()
-  waiting.length = 0
+  for (const read of inFlight) read.abort()
+  inFlight.clear()
+}
+globalThis.addEventListener?.('dependency-review-changed', () => {
+  forget()
   changed()
 })
 
 function sessionHeld() {
   const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
   if (session !== heldFor) {
-    held.clear()
-    waiting.length = 0
+    forget()
     heldFor = session
   }
   return held
 }
 
-// The next asked read as one is, as many at once as READ_AT_ONCE.
-function readNext() {
-  while (inFlight < READ_AT_ONCE && waiting.length > 0) {
-    inFlight++
-    waiting.shift()().finally(readDone)
-  }
-}
-function readDone() {
-  inFlight--
-  changed()
-  readNext()
-}
-
-// A repository's open pull requests, as many pages as PULL_PAGES, and
-// whether it has more.
-async function openPulls(repoId) {
-  const items = []
-  let after = null
-  for (let page = 0; page < PULL_PAGES; page++) {
-    const answer = await fetchRepositoryIssues(repoId, 'pulls', { state: 'open', ...after ? { after } : {} })
-    items.push(...(Array.isArray(answer?.items) ? answer.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0))
-    if (answer?.more !== true || typeof answer.after !== 'string') return { items, more: false }
-    after = answer.after
-  }
-  return { items, more: true }
-}
-
-// Repository `repoId`'s, as held, else asked: its default branch's
-// dependencies (`branch`, none where no review is in effect, nor where its
-// reader may read only some of it), and, where they are, its open pull
-// requests (`pulls`).
-const PARTIAL = new Set(['no-directory', 'no-repository'])
-async function readRepository(repoId) {
-  try {
-    const branch = await fetchBranchDependencies(repoId)
-    return branch?.review ? { branch: checked(branch), pulls: await openPulls(repoId) } : { branch: null }
-  } catch (err) {
-    if (PARTIAL.has(err?.code)) return { branch: null }
-    throw err
-  }
-}
-// As held, one grown old shown while it is read again (`refreshing`), lest
-// its pull requests leave the tab meanwhile.
-function repositoryRead(repoId) {
+// Repositories `repoIds` of team `team`, each as held, else asked for, all
+// those not held, or grown old, in one read (readTeam): `{ status }`,
+// 'loading', then 'ready' with its default branch's dependencies (`branch`,
+// none where no review is in effect, nor where its reader may read only
+// some of it) and, where they are, its open pull requests (`pulls`), those
+// whose dependencies are still to be told by their numbers (`telling`), or
+// 'error' with its `error`; one grown old shown as it was while it is read
+// again (`refreshing`), lest its pull requests leave the tab meanwhile.
+function teamRepositories(team, repoIds) {
   const data = sessionHeld()
-  const entry = data.get(repoId)
-  if (entry && Date.now() < entry.until) return entry
-  const loading = entry?.status === 'ready' ? { ...entry, until: Number.POSITIVE_INFINITY, refreshing: true } : { status: 'loading', until: Number.POSITIVE_INFINITY }
-  data.set(repoId, loading)
-  waiting.push(() => readRepository(repoId).then(read => {
-    if (data.get(repoId) === loading) data.set(repoId, { status: 'ready', until: Date.now() + KEEP_MS, ...read })
+  const asked = []
+  const entries = repoIds.map(repoId => {
+    const entry = data.get(repoId)
+    if (entry && Date.now() < entry.until) return entry
+    const loading = entry?.status === 'ready' ? { ...entry, until: Number.POSITIVE_INFINITY, telling: null, refreshing: true }
+      : { status: 'loading', until: Number.POSITIVE_INFINITY }
+    data.set(repoId, loading)
+    asked.push(repoId)
+    return loading
+  })
+  if (asked.length > 0) readTeam(team, asked, asked.length === repoIds.length ? null : asked, RESUMES)
+  return entries
+}
+
+// Repositories `asked` of team `team` read in one request, those
+// `repoIds` names alone where it names some, each held as its lines tell
+// it; those the server's time left asked for again, as many times as
+// `resumes`.
+function readTeam(team, asked, repoIds, resumes) {
+  const data = held
+  // Each one's entry as this read last held it, those it told all of left out.
+  const current = new Map(asked.map(repoId => [repoId, data.get(repoId)]))
+  const set = (repoId, entry) => {
+    if (data.get(repoId) === current.get(repoId)) data.set(repoId, entry)
+    if (data.get(repoId) === entry && entry.telling) current.set(repoId, entry)
+    else current.delete(repoId)
+  }
+  const controller = new AbortController()
+  inFlight.add(controller)
+  let unread = null
+  fetchTeamDependencies(team, line => {
+    if (controller.signal.aborted) return
+    if (typeof line.done === 'boolean') unread = line.done ? [] : (Array.isArray(line.unread) ? line.unread : [])
+    else if (current.has(line.repoId)) {
+      toldLine(line, current.get(line.repoId), entry => set(line.repoId, entry))
+      changed()
+    }
+  }, { repoIds, signal: controller.signal }).then(() => {
+    const again = (unread ?? []).filter(repoId => current.has(repoId)), resuming = again.length > 0 && resumes > 0
+    for (const [repoId, entry] of [...current]) {
+      if (resuming && again.includes(repoId)) continue
+      set(repoId, untold(repoId, entry, unread === null ? 'The server’s answer ended short.' : again.includes(repoId) ? 'Reading its pull requests took too long.' : null))
+    }
+    if (resuming) readTeam(team, again, again, resumes - 1)
     return null
   }, err => {
-    if (data.get(repoId) !== loading) return null
-    if (err?.name === 'AbortError') {
-      if (entry?.status === 'ready') data.set(repoId, entry)
-      else data.delete(repoId)
-    } else data.set(repoId, { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'It couldn’t be read.' })
-    return null
-  }))
-  readNext()
-  return loading
+    for (const [repoId, entry] of [...current]) {
+      if (err?.name !== 'AbortError') set(repoId, untold(repoId, entry, err?.message || 'It couldn’t be read.'))
+      // One aborted read again once drawn, shown as it was meanwhile.
+      else if (data.get(repoId) === entry) {
+        if (entry.status === 'ready') data.set(repoId, { ...entry, until: 0, telling: null })
+        else data.delete(repoId)
+      }
+    }
+  }).finally(() => {
+    inFlight.delete(controller)
+    changed()
+  })
+}
+
+// What repository line `line` tells of one held as `entry`, given to `hold`:
+// that no review is in effect for its reader, or why it couldn't be read;
+// its default branch's dependencies and its open pull requests; or some of
+// their dependencies, seeded (seedPullDependencies), those to be told
+// fewer. Each with the lines its versions change, seeded first
+// (seedNpmDeltas), lest their rows ask for them.
+function toldLine(line, entry, hold) {
+  if (Array.isArray(line.deltas)) seedNpmDeltas(line.deltas)
+  if (typeof line.error === 'string') hold({ status: 'error', until: Date.now() + RETRY_MS, error: line.error })
+  else if (line.branch === null) hold({ status: 'ready', until: Date.now() + KEEP_MS, branch: null })
+  else if (line.branch) {
+    let branch
+    try { branch = checked(line.branch) } catch (err) {
+      hold({ status: 'error', until: Date.now() + RETRY_MS, error: err.message })
+      return
+    }
+    const items = (Array.isArray(line.pulls?.items) ? line.pulls.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0)
+    hold(telling({ status: 'ready', branch, pulls: { items, more: line.pulls?.more === true } }, new Set(items.filter(readsDependencies).map(item => item.number))))
+  } else if (line.dependencies instanceof Map && entry.telling) {
+    seedPullDependencies(line.repoId, line.dependencies, true)
+    hold(telling(entry, new Set([...entry.telling].filter(number => !line.dependencies.has(number)))))
+  }
+}
+// One held with the pull requests still to be told, till none are.
+const telling = (entry, numbers) => numbers.size > 0 ? { ...entry, until: Number.POSITIVE_INFINITY, telling: numbers }
+  : { ...entry, until: Date.now() + KEEP_MS, telling: null }
+
+// One a read told no more of, as held: one it told nothing of, as none of
+// its team's, so reviewing none for its reader (`failure` none); else
+// failed, till it is read again, one whose default branch was told kept,
+// its pull requests still to be told failed.
+function untold(repoId, entry, failure) {
+  if (entry.telling) {
+    seedPullDependencies(repoId, new Map([...entry.telling].map(number => [number, new Error(failure ?? 'The server’s answer ended short.')])), true)
+    return { ...entry, until: Date.now() + RETRY_MS, telling: null }
+  }
+  return failure ? { status: 'error', until: Date.now() + RETRY_MS, error: failure } : { status: 'ready', until: Date.now() + KEEP_MS, branch: null }
 }
 
 const plural = (count, noun) => `${count.toLocaleString('en-US')} ${noun}${count === 1 ? '' : 's'}`
@@ -255,10 +309,12 @@ class TeamDependencies extends StateElement {
 
   render() {
     const repos = [...new Map((this.repositories ?? []).map(repo => [repo.repoId, repo])).values()]
-    const reads = repos.map(repo => ({ repo, read: repositoryRead(repo.repoId) }))
+    const entries = teamRepositories(this.team, repos.map(repo => repo.repoId))
+    const reads = repos.map((repo, at) => ({ repo, read: entries[at] }))
     const reviewed = reads.filter(({ read }) => read.status === 'ready' && read.branch)
+    // Each pull request's as the team's read told it, or as it was while it is read again.
     const pulls = reviewed.flatMap(({ repo, read }) => read.pulls.items.filter(readsDependencies)
-      .map(item => ({ repo, item, entry: pullDependencies(repo.repoId, item.number, true, { background: true }) })))
+      .map(item => ({ repo, item, entry: heldPullDependencies(repo.repoId, item.number, true) ?? TELLING })))
     // Each pull request's versions wanting reviews, as many as its answer
     // tells, and how many in all, those past them too (`toReview`), by which
     // it is kept and ordered; and the other versions its lockfiles lock that

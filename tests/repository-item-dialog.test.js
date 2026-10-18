@@ -18,7 +18,7 @@ let dependencies = () => new Promise(() => {})
 // The lines a version changes, as the server counts them, those asked noted.
 const deltasAsked = []
 let deltas = (...args) => { deltasAsked.push(args); return new Promise(() => {}) }
-mock.module('../ui/view/client-managed.js', { namedExports: { fetchNpmDelta: (...args) => deltas(...args), fetchRepositoryItem(repoId, number) { asked.push([repoId, number]); return answer(number) },
+mock.module('../ui/view/client-managed.js', { namedExports: { fetchNpmDeltas: (...args) => deltas(...args), fetchRepositoryItem(repoId, number) { asked.push([repoId, number]); return answer(number) },
   fetchPullDependencies(repoId, number, options) { dependencyAsked.push([repoId, number]); dependencyOptions.push([number, options]); return dependencies(number) },
   fetchPullDependenciesOf() { throw new Error('a popup reads its own alone') } } })
 mock.module('../ui/view/render-finding.js', { namedExports: { renderHighlighted: text => text } })

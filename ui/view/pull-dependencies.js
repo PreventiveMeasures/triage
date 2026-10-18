@@ -8,9 +8,11 @@
 // read first, as a page of tiles asks of each in turn, those a page asks of
 // in the background (a team's Dependencies tab) after the rest, as many of a
 // repository's as READ_TOGETHER asked together, one asked of meanwhile moved
-// before them; and kept for the session that read them a
-// while, as the tiles are, one grown old shown while it is read again. Each
-// answer's versions are worked out once (`once`). An open one's are asked
+// before them; and kept for the session that read them a while, as the
+// tiles are, one grown old shown while it is read again, as are those a
+// team's Dependencies tab reads together (seedPullDependencies,
+// team-dependencies.js). Each answer's versions are worked out once
+// (`once`). An open one's are asked
 // with their review, where the repository reviews dependencies
 // (server-managed/pull-dependency-reviews.ts): each version's, the other
 // versions its lockfiles lock that want reviews, and what fails it.
@@ -173,20 +175,52 @@ export function pullDependencies(repoId, number, review = false, { background = 
   // Its answer, else why it failed, held as it is.
   const settle = told => {
     if (data.get(key) !== loading) return
-    let failure = told instanceof Error ? told : null
-    if (!failure) {
-      try { data.set(key, { status: 'ready', until: Date.now() + KEEP_MS, ...checked(told) }); return } catch (err) { failure = err }
-    }
-    if (failure?.name === 'AbortError') {
-      if (entry?.status === 'ready') data.set(key, entry)
-      else data.delete(key)
-    } else data.set(key, { status: 'error', until: Date.now() + RETRY_MS, error: failure?.message || 'Its lockfiles could not be read.' })
+    const next = answered(told, entry)
+    if (next) data.set(key, next)
+    else data.delete(key)
   }
   const job = { key, background, review, pull: { repoId, number }, settle }
   queued.set(key, job)
   ;(background ? behind : waiting).push(job)
   readNext()
   return loading
+}
+
+// What `told` is held as: an answer ready, else why it failed; none where
+// it was aborted, or as `entry` was, read before.
+function answered(told, entry) {
+  let failure = told instanceof Error ? told : null
+  if (!failure) {
+    try { return { status: 'ready', until: Date.now() + KEEP_MS, ...checked(told) } } catch (err) { failure = err }
+  }
+  if (failure?.name === 'AbortError') return entry?.status === 'ready' ? entry : null
+  return { status: 'error', until: Date.now() + RETRY_MS, error: failure?.message || 'Its lockfiles could not be read.' }
+}
+
+// Repository `repoId`'s pull requests' answers told together, by number,
+// each its answer or an error of why it failed (`answers`, as
+// fetchPullDependenciesOf tells them), held as those asked of it are, with
+// their `review` or not; one waiting its turn asked no more.
+export function seedPullDependencies(repoId, answers, review = false) {
+  const data = sessionHeld()
+  for (const [number, told] of answers) {
+    const key = `${repoId}\0${number}\0${review}`
+    const job = queued.get(key)
+    if (job) {
+      const list = job.background ? behind : waiting
+      list.splice(list.indexOf(job), 1)
+      queued.delete(key)
+    }
+    const next = answered(told, null)
+    if (next) data.set(key, next)
+    changed({ repoId, number })
+  }
+}
+
+// What pull request `number` of repository `repoId` adds as held, however
+// old, nothing asked: null where nothing is.
+export function heldPullDependencies(repoId, number, review = false) {
+  return sessionHeld().get(`${repoId}\0${number}\0${review}`) ?? null
 }
 
 // `work` of an answer's lockfiles and review, worked out once each, as
