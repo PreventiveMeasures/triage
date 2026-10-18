@@ -5,7 +5,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: .5rem 1.5rem;
+  gap: .5rem 1.25rem;
   margin: 0 0 1rem;
   color: var(--muted);
   font-size: .8rem;
@@ -65,6 +65,7 @@
 .risk-section { margin-top: 1rem; }
 .risk-section:first-child { margin-top: 0; }
 .risk-section h2 { margin: 0 0 .5rem; font-size: 1rem; font-weight: 600; }
+.risk-section > .risk-tabs { width: max-content; margin-bottom: .5rem; }
 /* The results' tabs and controls stay at the top of the scroll pane
    (common.css .manage-list) as the rows scroll under them. */
 .risk-results-head {
@@ -261,4 +262,4 @@ td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
 .risk-scope-bar select { min-width: 14rem; }
 .risk-scope-bar repository-selector { flex: 0 1 20rem; min-width: 14rem; }
 .risk-tabs { width: fit-content; margin-bottom: .5rem; }
-.risk-in-code { color: var(--muted); font-size: .9em; }
+.risk-in-code { margin-left: .3em; color: var(--muted); font-size: .9em; }

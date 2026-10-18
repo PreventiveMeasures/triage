@@ -301,9 +301,13 @@ function rank(row) {
   return row.risk ? 2 : 1
 }
 
+// A row of tabs, each `[tab, label]`, `current` the one chosen.
+const tabList = (name, tabs, current, choose) => html`<div class="risk-tabs" role="tablist" aria-label=${name}>${tabs.map(([tab, label]) => html`<button type="button" role="tab"
+  aria-selected=${current === tab} @click=${() => choose(tab)}>${label}</button>`)}</div>`
+
 class ManagedAdminRepositoryRisk extends ManagedPage {
   static properties = { _state: { state: true }, _error: { state: true }, _filter: { state: true }, _kind: { state: true }, _packageKind: { state: true },
-    _query: { state: true }, _tab: { state: true }, _actionKind: { state: true },
+    _query: { state: true }, _tab: { state: true }, _actionKind: { state: true }, _files: { state: true },
     _scope: { state: true }, _target: { state: true }, _choices: { state: true } }
   static styles = [unsafeCSS(commonStyles), unsafeCSS(linksStyles), unsafeCSS(riskStyles)]
 
@@ -321,6 +325,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     this._query = ''
     // packages, advisories or actions.
     this._tab = 'packages'
+    // The repositories' files listed: lockfiles or workflows.
+    this._files = 'lockfiles'
     this._scan = null
     this._drawTimer = null
     // The parts a scan has been asked in so far (MAX_PARTS).
@@ -759,7 +765,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
       <h1 class="sr-only">Repository risk</h1>
       <div class="page-intro"><p class="intro">Each connected repository’s npm lockfiles and GitHub Actions at its default branch: what risk finds in each package they lock, and what each workflow pulls in.</p>
-        ${this._state === 'running' ? html`<button type="button" class="btn" @click=${() => this.stop()}>Stop</button>`
+        ${this._stateBadge()}${this._state === 'running' ? html`<button type="button" class="btn" @click=${() => this.stop()}>Stop</button>`
           : html`<button type="button" class="btn primary" ?disabled=${this._scope !== 'all' && !this._target} @click=${() => { void this.start() }}>${this._state === 'idle' ? 'Start scan' : 'Scan again'}</button>`}
       </div>
       ${this._scopeBar()}
@@ -775,8 +781,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const actions = this._actions.rows('actions').length
     const tabs = [['packages', 'Packages'], ['advisories', html`Advisories${this._advisories.size > 0 ? html`<span class="n">${formatCount.format(this._advisories.size)}</span>` : nothing}`],
       ['actions', html`Actions${actions > 0 ? html`<span class="n">${formatCount.format(actions)}</span>` : nothing}`]]
-    return html`<div class="risk-tabs" role="tablist" aria-label="Results">${tabs.map(([tab, label]) => html`<button type="button" role="tab"
-      aria-selected=${this._tab === tab} @click=${() => { this._tab = tab }}>${label}</button>`)}</div>`
+    return tabList('Results', tabs, this._tab, tab => { this._tab = tab })
   }
 
   _search(count, total, what, by = 'package') {
@@ -829,10 +834,12 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // segments, and its split, those of none left out.
     const apart = parts => ({ bar: parts.map(([kind, value]) => [kind, value]), split: parts.filter(([, value, total = value]) => total > 0) })
     const flagged = needed.flagged + dev.flagged, stale = needed.stale + dev.stale, wasStale = needed.wasStale + dev.wasStale
+    const { workflows, workflowsRead } = this._actions.counts()
     return [
-      { label: 'Repositories', value: counts.reposRead, of: counts.repos, bar: [['read', counts.reposRead]] },
-      { label: 'Lockfiles', value: counts.lockfilesRead, of: counts.lockfiles, bar: [['read', counts.lockfilesRead]] },
-      { label: 'Packages assessed', value: needed.told + dev.told, of: needed.total + dev.total,
+      // Its lockfiles and workflows read told apart.
+      { label: 'Repositories', value: counts.reposRead, of: counts.repos, bar: [['read', counts.reposRead]],
+        split: [['lockfiles', counts.lockfilesRead, counts.lockfiles], ['workflows', workflowsRead, workflows]].filter(([, , total]) => total > 0) },
+      { label: 'Packages', value: needed.told + dev.told, of: needed.total + dev.total,
         ...apart([['prod', needed.told, needed.total], ['dev', dev.told, dev.total]]) },
       { label: 'Flagged', value: flagged, ...apart([['prod', needed.flagged], ['dev', dev.flagged]]), tone: flagged > 0 ? 'high' : null },
       // Those still stale, its bar those assessed again of all told stale.
@@ -846,24 +853,28 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     ]
   }
 
-  // Workflows read of those listed, and the references they make resolved,
-  // where any repository's Actions were told.
+  // The references the workflows make resolved, where any repository's
+  // Actions were told.
   _actionsMetrics() {
     if (this._actions.listed.size === 0) return []
-    const { workflows, workflowsRead, actions, resolved } = this._actions.counts()
+    const { actions, resolved } = this._actions.counts()
     const flagged = this._actions.rows('all').filter(row => row.severity && row.severity !== 'notice' && row.severity !== 'low').length
-    return [{ label: 'Workflows', value: workflowsRead, of: workflows, bar: [['read', workflowsRead]] },
-      ...actions > 0 ? [{ label: 'Actions resolved', value: resolved, of: actions, bar: [['read', resolved]] }] : [],
+    return [{ label: 'Actions', value: resolved, of: actions, bar: [['read', resolved]] },
       { label: 'Actions flagged', value: flagged, bar: [], tone: flagged > 0 ? 'high' : null }]
+  }
+
+  // The scan's state, beside what starts or stops it; none before one.
+  _stateBadge() {
+    if (this._state === 'idle') return nothing
+    const state = this._state === 'running' && this._parts > 1 ? `Scanning · part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
+    return html`<span class="risk-state" role="status" data-state=${this._state}>${state}</span>`
   }
 
   // The scan's metrics (_metrics), each read with a bar and its tooltip a
   // line each part, its count aligned, said to a screen reader too, as the
-  // bar is hidden from one and the tooltip shows on hover alone; then its
-  // state, at the end, so that the metrics stay put as it changes.
+  // bar is hidden from one and the tooltip shows on hover alone.
   _progress() {
     if (this._state === 'idle') return html`<div class="risk-progress" role="status"><p class="risk-progress-idle">Not scanned yet. A scan reads each repository from GitHub and assesses each npm package it locks, which can take a while; a scan again within the hour is quicker.</p></div>`
-    const state = this._state === 'running' && this._parts > 1 ? `Scanning · part ${formatCount.format(this._parts)}` : { running: 'Scanning', stopped: 'Stopped', done: 'Done' }[this._state]
     const count = value => formatCount.format(value)
     const said = ({ split = [], note = [] }) => [split.length > 0 ? `${split.map(([kind, value, total]) => `${count(value)}${total === undefined ? '' : `/${count(total)}`} ${kind}`).join(', ')}.` : '', ...note].filter(Boolean).join(' ')
     const tip = ({ split = [], note = [] }) => html`${split.length > 0 ? html`<div class="tooltip-counts">${split.map(([kind, value, total]) => html`<span class="tooltip-count">${count(value)}${
@@ -877,7 +888,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
         <span class="risk-bar" aria-hidden="true">${bar.filter(([, some]) => some > 0).map(([kind, some]) => html`<span class=${`risk-bar-${kind}`}
           style=${styleMap({ width: `${some / scale * 100}%` })}></span>`)}</span>
       </span>`
-    })}<span class="risk-state" data-state=${this._state}>${state}</span></div>`
+    })}</div>`
   }
 
   _pending(running, otherwise) {
@@ -898,17 +909,19 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     return lockfile.packages === null ? this._pending('Reading…', 'Not read') : `${formatCount.format(lockfile.packages)} packages`
   }
 
-  // A line a repository: its name, and its lockfiles beside it, each with its
-  // format and how many packages it locks, or why there are none; then its
-  // workflows and actions of its own, each with how many findings it has.
+  // A line a repository: its name, and beside it its lockfiles, each with its
+  // format and how many packages it locks, or why there are none; or, on
+  // their tab, its workflows and actions of its own, each with how many
+  // findings it has.
   _lockfiles() {
+    const workflows = this._actions.listed.size > 0 && this._files === 'workflows'
     return html`<section class="risk-section" aria-label="Lockfiles and workflows">
-      <h2>${this._actions.listed.size > 0 ? 'Lockfiles and workflows' : 'Lockfiles'}</h2>
+      ${this._actions.listed.size > 0 ? tabList('Files', [['lockfiles', 'Lockfiles'], ['workflows', 'Workflows']], this._files, files => { this._files = files }) : html`<h2>Lockfiles</h2>`}
       <ul class="risk-repos">${[...this._repos.values()].map(repo => html`<li>
         <span class="risk-repo-name" data-tooltip-truncated data-tooltip=${repo.fullName}>${repo.fullName}</span>
-        ${this._repoStatus(repo) ?? html`<ul class="risk-lockfiles">${[...repo.lockfiles.values()].map(lockfile => html`<li>
+        ${this._repoStatus(repo) ?? html`<ul class="risk-lockfiles">${workflows ? this._workflowItems(repo) : [...repo.lockfiles.values()].map(lockfile => html`<li>
           <span class="mono">${lockfile.path}</span><span class="risk-lockfile-meta">${lockfile.format} · ${this._lockfileStatus(lockfile)}</span>
-        </li>`)}${this._workflowItems(repo)}</ul>`}
+        </li>`)}</ul>`}
       </li>`)}</ul>
     </section>`
   }

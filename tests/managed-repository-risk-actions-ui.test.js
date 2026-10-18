@@ -43,6 +43,8 @@ test('the Actions tab lists each reference, resolved, and what steps fetch, the 
   page._tab = 'actions'
   const text = templateText(page.render())
   assert.match(text, /Actions<span class="n">3<\/span>/u, 'its count on its tab')
+  assert.deepEqual(page._metrics().filter(({ label }) => label === 'Repositories' || label.startsWith('Actions')).map(({ label, value, of, split }) => [label, value, of, split]),
+    [['Repositories', 1, 1, [['workflows', 1, 1]]], ['Actions', 3, 3, undefined], ['Actions flagged', 3, undefined, undefined]], 'the workflows read told with the repositories')
   assert.match(text, /<th>Uses<\/th><th>Pinned to<\/th><th>Findings<\/th>/u)
   const rows = page._actions.rows('all')
   assert.deepEqual(rows.map(row => row.name ?? row.key), ['third/party@v1', 'curl -fsSL https://x/i.sh | bash', 'npx left-pad', 'deep/dep@main', `actions/checkout@${SHA('c')} # v4.2.0`])
@@ -54,8 +56,10 @@ test('the Actions tab lists each reference, resolved, and what steps fetch, the 
   assert.match(text, /data-tooltip=github-rate-limited|GitHub rate limit reached/u, 'one that couldn\'t be resolved says why')
   assert.match(text, /@c{7} # v4\.2\.0<\/span>/u, 'a commit cut short')
   assert.match(text, /tag → b{7} \(v1\)/u)
-  assert.match(text, /Remote script<span class="risk-in-code"> in code<\/span>/u, 'a finding of its own code told so')
-  assert.match(text, /\.github\/workflows\/ci\.yml<\/span><span class="risk-lockfile-meta">workflow · 3 findings/u, 'the workflow beside the repository\'s lockfiles')
+  assert.match(text, /Remote script<span class="risk-in-code">in code<\/span>/u, 'a finding of its own code told so')
+  assert.doesNotMatch(text, /workflow · 3 findings/u, 'the repositories\' lockfiles listed at first')
+  page._files = 'workflows'
+  assert.match(templateText(page.render()), /\.github\/workflows\/ci\.yml<\/span><span class="risk-lockfile-meta">workflow · 3 findings/u, 'their workflows on their own tab')
   page._actionKind = 'steps'
   assert.deepEqual(page._actions.rows('steps').map(row => row.name), ['curl -fsSL https://x/i.sh | bash', 'npx left-pad'])
   assert.deepEqual(page._actions.rows('all', 'party').map(row => row.key), ['third/party@v1'], 'searched by name')
