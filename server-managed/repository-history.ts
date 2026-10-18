@@ -269,7 +269,10 @@ export async function historyFrom(fullName: string, token: string | null, starts
     if (parents.length === 0 && within.length === 0) break
     // Without readFirst, GLUE_LOOKUP of both at once, the parents first.
     const asked = pages.readFirst ? null : [...parents, ...within].slice(0, GLUE_LOOKUP)
-    const { first, pages: glued } = asked ? { first: false, pages: await pages.read(asked) } : await pages.readFirst!(parents, within)
+    let { first, pages: glued } = asked ? { first: false, pages: await pages.read(asked) } : await pages.readFirst!(parents, within)
+    // Kept at parents, but none of them readable (pages GitHub's REST API
+    // listed, read with GraphQL): those at commits listed, read apart.
+    if (first && glued.size === 0 && within.length > 0) ({ first, pages: glued } = { first: false, pages: await pages.read(within) })
     // Those at commits listed, unread where a parent's answered, are looked up again.
     for (const sha of asked ?? (first ? parents : [...parents, ...within])) looked.add(sha)
     for (const commit of [...glued.values()].flat()) {

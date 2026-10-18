@@ -509,3 +509,23 @@ test('with a token, pages kept as GitHub\'s REST API listed them, which tell no 
   await request({ repoId: '1', ref: 'heads/main' })
   assert.equal(historyQueries(asked).filter(entry => !entry.body.query.includes('refs/heads/')).length, 1, 'read again once, then kept')
 })
+
+test('pages kept at parents but none readable leave those at commits listed read in the same round, gluing as far all the same', async () => {
+  // A linear history of 3000 commits, a page kept from every one of them, those at
+  // the parents a page leaves unlisted unreadable (as REST-listed pages are to
+  // a reader with GraphQL): kept, so the parents' are answered, but none told.
+  const commit = at => ({ sha: chain(at), parents: at < 2999 ? [chain(at + 1)] : [], subject: '', authorName: null, authorLogin: null, committedAt: null })
+  const pageAt = top => Array.from({ length: Math.min(100, 3000 - Number.parseInt(top, 16)) }, (_, index) => commit(Number.parseInt(top, 16) + index))
+  let rounds = 0
+  const pages = {
+    read: tops => Promise.resolve(new Map(tops.map(top => [top, pageAt(top)]))),
+    readFirst: (first, then) => {
+      rounds++
+      return Promise.resolve(first.length > 0 ? { first: true, pages: new Map() } : { first: false, pages: new Map(then.map(top => [top, pageAt(top)])) })
+    },
+    write: () => Promise.resolve(),
+  }
+  const { commits } = await historyFrom('org/repo', 'token', [chain(0)], pages, () => assert.fail('nothing read of GitHub'))
+  assert.equal(commits.length, HISTORY_GLUED, 'no round spent on the unreadable alone')
+  assert.ok(rounds <= 20, String(rounds))
+})
