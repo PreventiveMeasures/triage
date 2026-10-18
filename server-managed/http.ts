@@ -205,7 +205,7 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, type NpmVersionDocument, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
@@ -3667,8 +3667,12 @@ async function handleSetTeamNpmScopes(req: IncomingMessage, res: ServerResponse,
 // Null for none.
 async function npmReader(deps: ManagedHttpDeps, cookie: string | undefined, names: readonly string[]): Promise<NpmReader | null> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now())
-  if (s == null || !roleAtLeast(s.user.role, 'view')) return null
-  return { role: s.user.role, scopes: new Set(npmScopesCount(s.user.role, names) ? await deps.db.listUserNpmScopes(s.user.id) : []), userId: s.user.id }
+  return s == null ? null : npmReaderOf(deps, s.user, names)
+}
+// The same of `user`, as a session the request read just now tells them.
+async function npmReaderOf(deps: ManagedHttpDeps, user: { id: string; role: NpmReader['role'] }, names: readonly string[]): Promise<NpmReader | null> {
+  if (!roleAtLeast(user.role, 'view')) return null
+  return { role: user.role, scopes: new Set(npmScopesCount(user.role, names) ? await deps.db.listUserNpmScopes(user.id) : []), userId: user.id }
 }
 
 // What a registry read found, or a 404 for the package (handleNpm's catch
@@ -3684,20 +3688,25 @@ function found<T>(value: T | null | undefined): T {
 const REVIEW_READS_AT_ONCE = 8
 
 // Lists must enforce the same target and base access as the review itself,
-// including permission changes while the registry requests are in flight.
-async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, user: string, reviews: T[]): Promise<T[] | null> {
+// including permission changes while the registry requests are in flight;
+// first as `session`, the one the request read just now, where given.
+async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, user: string, reviews: T[],
+  session?: { id: string; role: NpmReader['role'] }): Promise<T[] | null> {
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
   try {
-    const reader = await npmReader(deps, cookie, reviews.flatMap(review => [review.package, ...review.basePackage ? [review.basePackage] : []]))
+    const names = reviews.flatMap(review => [review.package, ...review.basePackage ? [review.basePackage] : []])
+    const reader = session ? await npmReaderOf(deps, session, names) : await npmReader(deps, cookie, names)
     if (!reader || reader.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     // Public versions' documents as the viewer keeps them (npm-kept.ts), a
-    // day: a list asks npm for none it read within it. Each version once, as
-    // many at once as REVIEW_READS_AT_ONCE.
-    const kept = npmVersionStore(deps.db, deps.config.debug)
+    // day, all read of the database at once: a list asks npm for none it read
+    // within it. Each version once, as many at once as REVIEW_READS_AT_ONCE.
     const versionsOf = (review: T) => [[review.package, review.version], ...review.basePackage ? [[review.basePackage, review.baseVersion!]] : []] as [string, string][]
     const asked = new Map(reviews.flatMap(versionsOf).map(([name, version]) => [`${name}\0${version}`, [name, version] as const]))
+    const store = npmVersionStore(deps.db, deps.config.debug)
+    const held = await store.readMany?.([...asked.values()].map(([name, version]) => ({ name, version }))) ?? new Map()
+    const kept: NpmVersionStore = { read: (name, version) => Promise.resolve(held.get(`${name}@${version}`) ?? null), write: store.write }
     const read = await eachOf([...asked], REVIEW_READS_AT_ONCE, ([, [name, version]]) => readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal, kept))
     const documents = new Map([...asked.keys()].map((key, at) => [key, read[at] ?? null]))
     const packages = reviews.map(review => versionsOf(review).map(([name, version]) => documents.get(`${name}\0${version}`) ?? null))
@@ -3848,7 +3857,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     if (!change) {
       const allBases = params.get('allBases') === 'true'
       const rows = await deps.db.listDependencyReviews(context, current.userId, allBases)
-      const reviews = allBases ? await readableNpmReviews(res, deps, cookie, current.userId, rows) : rows
+      const reviews = allBases ? await readableNpmReviews(res, deps, cookie, current.userId, rows, { id: current.userId, role: current.role }) : rows
       if (reviews) sendJson(res, 200, { reviews: await withFormatted(deps.reviewedDependencies ?? null, current.userId, reviews), teams: await deps.db.listDependencyReviewTeams(current.userId) })
       return
     }
@@ -4566,7 +4575,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
         sendJson(res, 400, { error: 'bad-review-context' }); return
       }
       const review = await deps.db.getLatestOwnDependencyReview(s.user.id, { ecosystem: 'npm', package: name, version, integrity })
-      const visible = await readableNpmReviews(res, deps, cookie, s.user.id, review ? [review] : [])
+      const visible = await readableNpmReviews(res, deps, cookie, s.user.id, review ? [review] : [], s.user)
       if (visible) sendJson(res, 200, { review: (await withFormatted(deps.reviewedDependencies ?? null, s.user.id, visible))[0] ?? null })
       return
     }
@@ -4596,7 +4605,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
         sendJson(res, 400, { error: 'bad-review-cursor' }); return
       }
       const page = await deps.db.listOwnDependencyReviews(s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
-      const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews)
+      const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews, s.user)
       if (reviews) sendJson(res, 200, { ...page, reviews: await withFormatted(deps.reviewedDependencies ?? null, s.user.id, reviews) })
       return
     }
@@ -4613,7 +4622,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       }
       const page = await deps.db.listTeamDependencyReviews(teamId, s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
       if (!page) { sendJson(res, 404, { error: 'no-team' }); return }
-      const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews)
+      const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews, s.user)
       if (!reviews) return
       // Its access asked again, as it may have been taken while npm was read.
       if (!await deps.db.readsTeamDependencyReviews(teamId, s.user.id)) { sendJson(res, 404, { error: 'no-team' }); return }

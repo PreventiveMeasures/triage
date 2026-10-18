@@ -203,6 +203,8 @@ function versionDocument(name: string, json: Record<string, unknown>, isPrivate:
 // (npm-manifest.ts npmVersionFields), as the database keeps them (npm-kept.ts).
 export interface NpmVersionStore {
   read(name: string, version: string): Promise<{ at: number; json: Record<string, unknown> } | null>
+  // Those of `versions` kept, by `name@version`, in one read.
+  readMany?(versions: { name: string; version: string }[]): Promise<Map<string, { at: number; json: Record<string, unknown> }>>
   write(name: string, version: string, json: Record<string, unknown>): Promise<void>
 }
 
