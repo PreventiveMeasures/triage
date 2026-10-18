@@ -39,9 +39,6 @@ const RETRY_MS = 30_000
 const PULL_PAGES = 20
 const SHOWN_VERSIONS = 12
 const SHOWN_LISTED = 48
-// A pull request's card by how many versions it lists: a column's, two
-// columns', else every column's.
-const CARD_SPANS = ['', '', ' is-span-2']
 const READ_AT_ONCE = 3
 // Its sub-tabs, each at an address of its own, the one last picked
 // opened again by the team's Dependencies tab (ingest.js
@@ -344,9 +341,8 @@ class TeamDependencies extends StateElement {
   // other pull requests review in their comments told so (`elsewhere`); and
   // the reader's reviews of its versions to copy, where the server's host
   // formats them (dependency-review-copy.js); one wanting none is not
-  // listed, its copy in its popup. Each named as `naming` names it, a card
-  // as wide as its versions want (CARD_SPANS): one column of them for one,
-  // two for two, else, or a list of it opened, every column.
+  // listed, its copy in its popup. Each named as `naming` names it, every
+  // card a column wide, however many versions it lists or opens.
   renderPulls(wanting, adding, reading, unchecked, { elsewhere, named }) {
     if (wanting.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
@@ -361,8 +357,7 @@ class TeamDependencies extends StateElement {
       const key = pullName(pull)
       const others = unreviewedVersions(pull.entry)
       const href = `https://github.com/${pull.repo.name}/pull/${pull.item.number}`
-      const opened = ['own', 'above', 'others'].some(list => this._open.has(`${key}:${list}`))
-      return html`<li class=${`team-deps-pull${opened ? ' is-wide' : CARD_SPANS[own.length] ?? ' is-wide'}`}>
+      return html`<li class="team-deps-pull">
         <div class="team-deps-pull-top"><a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
           <span class="team-deps-pull-name">${named(pull)}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
           <span class=${`team-deps-count${pull.failed ? ' is-failed' : ''}`}>${pull.failed ? 'review fails' : pull.size > 0 ? `${plural(pull.toReview, 'version')} to review`
