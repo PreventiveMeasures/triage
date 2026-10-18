@@ -386,9 +386,8 @@ function activity(deps: ManagedHttpDeps, user: StoredUser, kind: ActivityInput['
   return deps.db.recordActivity({ kind, actor: user.login, actorId: user.id, action, ...context }, Date.now())
 }
 
-async function repositoryName(deps: ManagedHttpDeps, repoId: number | null | undefined): Promise<string | null> {
-  if (repoId == null) return null
-  return (await deps.db.listAllRepos()).find(repo => repo.repoId === repoId)?.fullName ?? null
+function repositoryName(deps: ManagedHttpDeps, repoId: number | null | undefined): Promise<string | null> {
+  return repoId == null ? Promise.resolve(null) : deps.db.getRepoFullName(repoId)
 }
 
 // Workspace history is authorized BEFORE filtering, counting, or paging.
@@ -412,8 +411,14 @@ async function handleHistory(res: ServerResponse, deps: ManagedHttpDeps, cookie:
   if (s.user.role !== 'admin') {
     const findings = new Map<string, ActivityContext>()
     const reports = kind === 'all' || kind === 'triage' ? await deps.db.listActivityReports(s.user.id) : []
+    // Every report's record in one read, as visibleFindingIds reads each one's.
+    const snapshot = reports.length > 0 ? await deps.db.getReportAccessSnapshot(s.session.id, Date.now(), reports.map(report => report.reportId)) : { reports: [] }
+    if (snapshot == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
+    const records = new Map(snapshot.reports.map(record => [record.id, record]))
     for (const report of reports) {
-      for (const finding of await visibleFindingIds(deps, s.user, report.reportId, s.session.id, null)) {
+      const record = records.get(report.reportId)
+      if (record == null) continue
+      for (const finding of await reportFindingIds(deps, record, record.repo.github)) {
         if (!findings.has(finding)) findings.set(finding, { finding, ...report })
       }
     }
@@ -3276,24 +3281,23 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
   }
   const rec = await deps.db.getReport(reportId)
   if (rec == null) return new Set()
-  const repo = { github: await repositoryName(deps, rec.repoId) }
-  const key = JSON.stringify([reportId, rec.sha256, rec.filename, repo])
+  return reportFindingIds(deps, rec, await repositoryName(deps, rec.repoId))
+}
+// A whole report's finding ids, kept by its content, name and repository,
+// the one read least recently dropped first.
+async function reportFindingIds(deps: ManagedHttpDeps, rec: { id: string; sha256: string; filename: string }, github: string | null): Promise<Set<string>> {
+  const key = JSON.stringify([rec.id, rec.sha256, rec.filename, { github }])
   let cache = visibleIdsCaches.get(deps)
   if (cache == null) { cache = new Map(); visibleIdsCaches.set(deps, cache) }
   const hit = cache.get(key)
-  if (hit != null) return hit
-  const ids = new Set<string>()
-  const bytes = await deps.reportStore.get(reportId)
-  if (bytes == null) return ids
-  const text = bytes.toString('utf8')
-  const { data } = readManagedReport(text, rec.filename)
-  if (data == null) return ids
-  const report = await loadManagedFindings(JSON.stringify(data), rec.filename)
-  if (report == null) return ids
-  for (const f of report.findings) {
-    const id = (f as { id?: unknown }).id
-    if (typeof id === 'string' && id !== '') ids.add(id)
-  }
+  if (hit != null) { cache.delete(key); cache.set(key, hit); return hit }
+  const bytes = await deps.reportStore.get(rec.id)
+  if (bytes == null) return new Set()
+  const { data } = readManagedReport(bytes.toString('utf8'), rec.filename)
+  if (data == null) return new Set()
+  // The ids the team workspace derives (teamFindingIds), from the one parse.
+  const ids = await reportIds(data)
+  ids.delete('')
   while (cache.size >= VISIBLE_IDS_CACHE_MAX) {
     const oldest = cache.keys().next().value
     if (oldest === undefined) break

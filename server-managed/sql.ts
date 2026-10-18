@@ -21,7 +21,7 @@ export interface ManagedSqlDriver extends ManagedSql {
 // Lease and cache writes coordinate through their conditional UPSERT/UPDATE alone.
 const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'getStorageEncryption', 'getTeam', 'getComment',
   'userCanReadReport', 'userCanReadRepo', 'userCanReadRepoPath', 'userCanReadBundle', 'reportPermissionsFor', 'listComments', 'listManagedIssues',
-  'listTriageHistory', 'listUsers', 'listUserOptions', 'listActivityReports',
+  'listTriageHistory', 'listUsers', 'listUserOptions', 'listActivityReports', 'getRepoFullName',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
   'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'setUpstreamCacheEntry', 'setUpstreamCacheEntries', 'ensureSessionUploadKey',

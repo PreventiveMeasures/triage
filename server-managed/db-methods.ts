@@ -413,6 +413,8 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   deselectRepo(repoId: number): Promise<boolean>
   listSelectedRepos(): Promise<SelectedRepo[]>
   listAllRepos(): Promise<ManagedRepo[]>
+  // A selected repository's full name, active or not; null for none.
+  getRepoFullName(repoId: number): Promise<string | null>
   deactivateRepo(repoId: number): Promise<boolean>
   reactivateRepo(repoId: number): Promise<boolean>
   deleteRepo(repoId: number): Promise<boolean>
@@ -690,6 +692,7 @@ function prepareStatements(db: ManagedSql) {
               added_by AS addedBy, added_at AS addedAt, active AS active
          FROM managed_selected_repo WHERE active = 1 ORDER BY full_name ASC`,
     ),
+    selectRepoFullNameStmt: db.prepare(`SELECT full_name AS fullName FROM managed_selected_repo WHERE repo_id = ?`),
     selectAllReposStmt: db.prepare(
       `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
               installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
@@ -1064,6 +1067,9 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
     async listAllRepos(): Promise<ManagedRepo[]> {
       const rows = (await selectAllReposStmt.all()) as RepoRow[]
       return rows.map(readManagedRepo)
+    },
+    async getRepoFullName(repoId: number): Promise<string | null> {
+      return ((await stmts.selectRepoFullNameStmt.get(repoId)) as { fullName: string } | undefined)?.fullName ?? null
     },
     async deactivateRepo(repoId: number): Promise<boolean> {
       return Number((await deactivateRepoStmt.run(repoId)).changes) > 0

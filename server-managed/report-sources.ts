@@ -146,7 +146,7 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
   }
   return {
     async open(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, sourcePaths?: Set<string>) {
-      const repo = { github: (await db.listAllRepos()).find(entry => entry.repoId === report.repoId)?.fullName ?? null }
+      const repo = { github: report.repoId == null ? null : await db.getRepoFullName(report.repoId) }
       const target = sourceCacheFilename(report, bundle, permissions, repo, sourcePaths)
       try { return { ...await storage.open(target), repo } }
       catch (error) { if (!(error instanceof CacheMissError)) throw error }
