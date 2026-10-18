@@ -77,8 +77,8 @@ CREATE TABLE IF NOT EXISTS managed_github_repository_visibility (
 `
 // Bundles show their commit's details and tags from these tables. Readers rely
 // on bundle access alone; only a GitHub read made with access fills them.
-// Commits are retained without eviction. Create a bundle refreshes a
-// repository's tags, which go with the repository.
+// Commits are retained without eviction. Every refs read of a repository
+// (Create a bundle's, the code viewer's) refreshes its tags, which go with it.
 export const GITHUB_COMMIT_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_github_commit (
   cache_key TEXT PRIMARY KEY,

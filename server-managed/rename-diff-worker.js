@@ -1,6 +1,6 @@
 // Compare's diff with renamed names hidden (rename-diff.ts), worked out off the
 // server's event loop by @preventive/compare's renamedDiffs: the old side given
-// the new side's names, formatted again where that changes its layout alone,
+// the new side's names, not formatted again (each line where the old side's was),
 // diffed with whitespace changes shown and hidden, and the blocks checked to
 // take it to the new side. `{ before, blocks, reason, reads, marks,
 // ignoringWhitespace }`: the old side as diffed, the change blocks, why the

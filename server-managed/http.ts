@@ -1588,8 +1588,9 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     const revisions = refs ? await readRepositoryRefs(deps.db, reader, access.repo, withDefault, access.virtualEntries) : null
     const contents = refs ? null : await readRepositoryContents(reader, ref, path, access.virtualEntries)
     const { tagCommits, tagsComplete, ...listed } = revisions ?? { tagCommits: [], tagsComplete: false }
-    // Create a bundle refreshes the tags bundle catalogs show, and keeps a tag
-    // its revision input resolves even when the listed page leaves it out.
+    // Every refs read (Create a bundle's, and the code viewer's) refreshes the
+    // tags bundle catalogs show, and a tag read keeps the one its revision
+    // input resolves even when the listed page leaves it out.
     // Like other GitHub caches, written before the access fence below.
     const tags = refs ? tagCommits : ref.length > 5 && ref.startsWith('tags/') && contents ? [{ name: ref.slice(5), sha: contents.commit }] : []
     if (refs || tags.length > 0) {
