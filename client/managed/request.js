@@ -101,21 +101,36 @@ async function uploadFile(url, options, send) {
   return await uploadInParts(url, sealed, send, chunkBytes)
 }
 
+// Parts sent at once: each is its own request, its part's place in the
+// upload named by its index.
+const PARTS_AT_ONCE = 3
+
 async function uploadInParts(url, options, send, chunkBytes) {
   const file = options.body, id = crypto.randomUUID()
   const kind = url.endsWith('/reports') ? 'reports' : 'bundles'
   const count = Math.ceil(file.size / chunkBytes)
   const partHeaders = new Headers(options.headers)
   partHeaders.set('content-type', 'application/octet-stream')
+  // Parts are taken in order, so the cleanup's count covers every one sent.
   let attempted = 0, completed = false
   try {
-    for (let index = 0; index < count; index++) {
-      attempted = index + 1
-      const response = await send(`/api/admin/uploads/${kind}/${id}/${index}`, {
-        ...options, headers: partHeaders, body: file.slice(index * chunkBytes, (index + 1) * chunkBytes),
-      })
-      if (!response.ok) return response
+    let refused = null, stopped = false
+    const sendParts = async () => {
+      while (!stopped && attempted < count) {
+        const index = attempted++
+        try {
+          const response = await send(`/api/admin/uploads/${kind}/${id}/${index}`, {
+            ...options, headers: partHeaders, body: file.slice(index * chunkBytes, (index + 1) * chunkBytes),
+          })
+          if (!response.ok) { refused ??= response; stopped = true }
+        } catch (error) { stopped = true; throw error }
+      }
     }
+    // Every part sent settles before the upload is finished or cleaned up.
+    const results = await Promise.allSettled(Array.from({ length: Math.min(PARTS_AT_ONCE, count) }, sendParts))
+    const failed = results.find(result => result.status === 'rejected')
+    if (failed) throw failed.reason
+    if (refused) return refused
     const headers = new Headers(options.headers)
     headers.set('x-upload-id', id)
     headers.set('x-upload-parts', String(count))

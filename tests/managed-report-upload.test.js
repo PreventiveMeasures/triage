@@ -166,7 +166,8 @@ test('browser uploads cross the wire sealed, in one request or in parts, and sto
   const row = await db.getBundle(bundle.id)
   assert.deepEqual(await stores.bundleStore.get(bundle.id, row.kind), binary)
   const uploads = seen.filter(request => request.body.length > 0)
-  assert.deepEqual(uploads.map(request => request.url.replace(/[a-f\d-]{36}/u, 'id')),
+  // A bundle's parts are sent together, arriving in no set order.
+  assert.deepEqual(uploads.map(request => request.url.replace(/[a-f\d-]{36}/u, 'id')).toSorted(),
     ['/api/admin/reports', '/api/admin/uploads/bundles/id/0', '/api/admin/uploads/bundles/id/1'])
   for (const request of uploads) {
     assert.equal(request.body.includes('secret'), false, `${request.url} carries no plaintext`)

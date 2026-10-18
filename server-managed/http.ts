@@ -523,14 +523,17 @@ async function readBodyBytes(req: IncomingMessage, maxBytes: number): Promise<Bu
 }
 
 // A file upload's content, opening a body the browser sealed to this session
-// (common/managed/upload-seal.ts). Link reports are never sent in parts.
+// (common/managed/upload-seal.ts). Link reports are never sent in parts; the
+// parts of one sent in them are deleted behind its answer.
 async function readUploadBody(req: IncomingMessage, deps: ManagedHttpDeps, session: ManagedSession, kind: UploadKind | 'links'): Promise<Buffer> {
   const maxBytes = kind === 'bundles' ? deps.config.maxBundleBytes : deps.config.maxReportBytes
   const sealed = req.headers[UPLOAD_SEAL_HEADER] !== undefined
   const limit = sealed ? maxSealedBytes(maxBytes) : maxBytes
   let bytes
   if (kind === 'links' || req.headers['x-upload-id'] == null) bytes = await readBodyBytes(req, limit)
-  else if (deps.uploadStore) bytes = await readUpload(deps.uploadStore, req, session.id, kind, limit)
+  else if (deps.uploadStore) {
+    bytes = await readUpload(deps.uploadStore, req, session.id, kind, limit, cleanup => { deps.track(cleanup); deps.waitUntil?.(cleanup) })
+  }
   else throw new Error('bad-upload')
   return sealed ? await openSessionUpload(session.uploadKey, bytes, maxBytes) : bytes
 }
