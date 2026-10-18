@@ -18,7 +18,7 @@ const UNTRUSTED = new RegExp(String.raw`\bgithub\s*\.\s*(?:head_ref|event\s*\.\s
     String.raw`pages${INDEX}\.page_name`,
     String.raw`commits${INDEX}\.(?:message|${AUTHOR})`,
     String.raw`head_commit\.(?:message|${AUTHOR})`,
-    String.raw`workflow_run\.(?:head_branch|display_title|head_commit\.(?:message|${AUTHOR})|head_repository\.(?:description|homepage)|pull_requests${INDEX}\.head\.ref)`,
+    String.raw`workflow_run\.(?:head_branch|display_title|head_commit\.(?:message|${AUTHOR})|head_repository\.(?:description|homepage|default_branch)|pull_requests${INDEX}\.head\.ref)`,
     String.raw`discussion\.(?:title|body)`].join('|')
   + String.raw`))(?![\w-])`, 'gu')
 

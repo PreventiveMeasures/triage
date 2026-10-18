@@ -17,8 +17,8 @@ const FETCHED_AND_RUN = [
   /\b(?:iex|invoke-expression)\b[^|;]*\b(?:irm|iwr|invoke-restmethod|invoke-webrequest|downloadstring)\b/iu,
 ]
 
-// The file curl or wget saves to (`-o f`, `-of`, `--output f`, curl's `-O`),
-// or null.
+// The file curl or wget saves to (`-o f`, `-of`, `--output f`, curl's `-O`,
+// wget's by its URL), or null.
 function savedTo(program, argv) {
   for (let at = 1; at < argv.length; at++) {
     const word = argv[at]
@@ -29,7 +29,7 @@ function savedTo(program, argv) {
     const joined = /^(?:--output|--output-document)=(.+)$/u.exec(word)
     if (joined) return joined[1]
   }
-  const url = program === 'curl' && argv.some(word => /^-[a-zA-Z]*O[a-zA-Z]*$/u.test(word) || word === '--remote-name') ? argv.find(word => /^https?:\/\//u.test(word)) : null
+  const url = program === 'wget' || argv.some(word => /^-[a-zA-Z]*O[a-zA-Z]*$/u.test(word) || word === '--remote-name') ? argv.find(word => /^https?:\/\//u.test(word)) : null
   return url ? URL.parse(url)?.pathname.split('/').at(-1) || null : null
 }
 

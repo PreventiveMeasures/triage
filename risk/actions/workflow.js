@@ -42,14 +42,18 @@ function runOf(file, step, directory, env) {
     production: envOf(step, env).NODE_ENV === 'production' }
 }
 
+// A step's or a job's `with`, and the line each input is on.
+function inputsOf(file, owner, line) {
+  const inputs = isMap(owner.with) ? owner.with : null
+  return { with: inputs, withLines: inputs ? Object.fromEntries(Object.keys(inputs).map(key => [key, lineOf(file, inputs, key, line)])) : {} }
+}
+
 function stepsOf(file, steps, directory, env = {}) {
   if (!Array.isArray(steps)) return []
   return steps.flatMap((step, index) => {
     if (!isMap(step)) return []
     const line = lineOf(file, steps, index, null)
-    const inputs = isMap(step.with) ? step.with : null
-    const withLines = inputs ? Object.fromEntries(Object.keys(inputs).map(key => [key, lineOf(file, inputs, key, line)])) : {}
-    return [{ line, uses: usesOf(file, step, line), run: runOf(file, step, directory, env), with: inputs, withLines }]
+    return [{ line, uses: usesOf(file, step, line), run: runOf(file, step, directory, env), ...inputsOf(file, step, line) }]
   })
 }
 
@@ -72,7 +76,7 @@ function imagesOf(file, job) {
 function jobsOf(file, doc) {
   if (!isMap(doc.jobs)) throw new YamlError('a workflow has no jobs')
   const directory = directoryOf(doc, null)
-  return Object.values(doc.jobs).filter(isMap).map(job => ({ uses: usesOf(file, job, null, true), secrets: job.secrets ?? null,
+  return Object.values(doc.jobs).filter(isMap).map(job => ({ uses: usesOf(file, job, null, true), secrets: job.secrets ?? null, ...inputsOf(file, job, null),
     steps: stepsOf(file, job.steps, directoryOf(job, directory), envOf(job, envOf(doc))), images: imagesOf(file, job) }))
 }
 

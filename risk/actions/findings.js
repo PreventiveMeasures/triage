@@ -86,6 +86,8 @@ function jobFindings(job, triggers, { owner, lockfiles, external, actions }) {
     const finding = usesFinding(job.uses, owner)
     if (finding) found.push({ ...finding, line: job.uses.line })
     if (job.secrets === 'inherit' && job.uses.repo && ownerKind(job.uses.repo, owner) === 'third-party') found.push({ id: 'secrets-inherited', severity: 'high', uses: job.uses.uses, key: usesKey(job.uses), line: job.uses.line })
+    // An input of a reusable workflow, which one writes into its scripts.
+    for (const [input, value] of Object.entries(job.with ?? {})) for (const { index: _index, ...injected } of scriptInjections(value, triggers)) found.push({ ...injected, line: job.withLines[input] })
   }
   for (const image of job.images) if (!image.read?.digest && !image.text.includes('${{')) found.push({ ...imageFinding(image.text, image.read), line: image.line })
   const installed = []
