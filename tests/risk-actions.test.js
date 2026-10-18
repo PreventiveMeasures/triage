@@ -114,6 +114,14 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('npx eslint', { external: true, installed: true }), [], 'another\'s action, in a workspace that installed')
   })
 
+  it('an install in a step before counts where node finds what it installed: its directory or one below', () => {
+    const lockfiles = [{ path: 'api/package-lock.json', names: new Set(['eslint']) }, { path: 'package-lock.json', names: new Set(['eslint']) }]
+    const job = (install, run) => `on: push\njobs:\n  a:\n    steps:\n      - run: npm ci\n        working-directory: ${install}\n      - run: npx eslint .\n        working-directory: ${run}\n`
+    assert.deepEqual(ids(scanWorkflow('workflow', job('web', 'api'), { lockfiles }).findings), ['fetched-package/high@7'], 'web installed, api not')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api'), { lockfiles }).findings), [], 'installed above it')
+    assert.deepEqual(ids(scanWorkflow('workflow', job('api', 'api'), { lockfiles }).findings), [])
+  })
+
   it('other tools by how they are pinned', () => {
     assert.deepEqual(graded('pip install --upgrade pip setuptools\npip install flask==3.0.0\npip install flask'), ['fetched-package/notice@11', 'fetched-package/notice@11', 'fetched-package/moderate@12', 'fetched-package/high@13'])
     assert.deepEqual(graded('go install x.dev/y@v1.2.3\ngo install x.dev/y@latest'), ['fetched-package/high@12'], 'a Go version held to its checksum database')

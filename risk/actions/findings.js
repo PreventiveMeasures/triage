@@ -17,14 +17,20 @@ function usesFinding(uses, owner) {
   return uses.pin === 'short-sha' ? { id: 'short-sha', severity: 'high', ...at } : { id: 'unpinned', severity: ownerKind(uses.repo, owner) === 'third-party' ? 'high' : 'moderate', ...at, ref: uses.ref }
 }
 
-// Whether a step installs a project's packages: a script that runs an
-// install, or an action of the repository's own or named for installing,
-// as a setup action of a project's own is.
+// Where a step installs a project's packages: a script that runs an install,
+// in the directory it runs in; an action of the repository's own or named
+// for installing, as a setup action of a project's own is, anywhere (null);
+// undefined where it doesn't.
 function installs(step) {
-  if (step.uses?.kind === 'local' || (step.uses?.repo && /install/iu.test(step.uses.repo))) return true
-  if (step.uses?.repo?.toLowerCase() === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return true
-  return Boolean(step.run) && installLine(step.run.script) !== null
+  if (step.uses?.kind === 'local' || (step.uses?.repo && /install/iu.test(step.uses.repo))) return null
+  if (step.uses?.repo?.toLowerCase() === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return null
+  return step.run && installLine(step.run.script) !== null ? directoryOf(step.run.workingDirectory) : undefined
 }
+
+// Whether an install in `at` (null for anywhere) is one a step in
+// `directory` runs the packages of, as node finds them in its directory or
+// one above.
+const installedFor = (at, directory) => at === null || directory === null || at === '' || directory === at || directory.startsWith(`${at}/`)
 
 // The directory a step runs in, from the repository's root: '' for its
 // root, null where an expression names it.
@@ -70,16 +76,18 @@ function jobFindings(job, triggers, { owner, lockfiles, external }) {
     if (job.secrets === 'inherit' && job.uses.repo && ownerKind(job.uses.repo, owner) === 'third-party') found.push({ id: 'secrets-inherited', severity: 'high', uses: job.uses.uses, key: usesKey(job.uses), line: job.uses.line })
   }
   for (const image of job.images) if (!image.read?.digest && !image.text.includes('${{')) found.push({ ...imageFinding(image.text, image.read, image.via), line: image.line })
-  let installed = false
+  const installed = []
   for (const step of job.steps) {
     const finding = step.uses && usesFinding(step.uses, owner)
     if (finding) found.push({ ...finding, line: step.uses.line })
     if (step.run) {
-      const locked = external ? () => false : lockedIn(lockfiles, directoryOf(step.run.workingDirectory))
-      found.push(...scriptFindings(step.run, { locked, installed, external, triggers }))
+      const directory = directoryOf(step.run.workingDirectory)
+      const locked = external ? () => false : lockedIn(lockfiles, directory)
+      found.push(...scriptFindings(step.run, { locked, installed: installed.some(at => installedFor(at, directory)), external, triggers }))
     }
     found.push(...stepFindings(step, triggers))
-    installed ||= installs(step)
+    const at = installs(step)
+    if (at !== undefined) installed.push(at)
   }
   return found
 }
