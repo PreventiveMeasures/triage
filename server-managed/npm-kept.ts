@@ -4,7 +4,8 @@
 // instance: public versions' documents, of the fields read of them
 // (npm-manifest.ts npmVersionFields), for a day (readNpmVersion asks npm again
 // then, as a version can be deprecated, its package made private, or itself
-// removed); and, for scans, each package's risk line, for as long as a scan
+// removed), and when each was published, for a month (npmPublishTimeStore);
+// and, for scans, each package's risk line, for as long as a scan
 // keeps it, and what a scan read of GitHub, for a day, and of npm's
 // advisories, for an hour (repository-risk.ts); and what the code viewer read
 // of a repository's GitHub, its issues, pull requests and agents' work, for a
@@ -18,7 +19,7 @@
 // nothing.
 import { createHash } from 'node:crypto'
 import { plainObject } from './npm-manifest.ts'
-import { type NpmVersionStore, VERSION_KEPT_MS } from './npm-packages.ts'
+import { type NpmPublishTimeStore, type NpmVersionStore, VERSION_KEPT_MS } from './npm-packages.ts'
 import type { UpstreamCacheStore } from './upstream-cache.ts'
 
 // A value kept by key, as JSON, `at` when it was.
@@ -98,6 +99,21 @@ export function npmVersionStore(db: UpstreamCacheStore, debug = false): NpmVersi
       return new Map([...hits].flatMap(([key, hit]) => plainObject(hit.value) ? [[key, { at: hit.at, json: hit.value }] as const] : []))
     },
     write: (name, version, json) => kept.write(`${name}@${version}`, json, Date.now()),
+  }
+}
+
+// When public versions were published (npm-packages.ts npmPublishTime), which
+// never changes once they are: kept a month, and kept again by the next view
+// of the version past it.
+const PUBLISH_TIME_KEPT_MS = 30 * 24 * 60 * 60_000
+export function npmPublishTimeStore(db: UpstreamCacheStore, debug = false): NpmPublishTimeStore {
+  const kept = keptStore<string>(db, 'npm/publish-times', PUBLISH_TIME_KEPT_MS, debug)
+  return {
+    async read(name, version) {
+      const hit = await kept.read(`${name}@${version}`)
+      return typeof hit?.value === 'string' ? hit.value : null
+    },
+    write: (name, version, at) => kept.write(`${name}@${version}`, at, Date.now()),
   }
 }
 
