@@ -779,6 +779,22 @@ test('two bundles\' files are paired by the server, as the viewer paired them, f
   assert.equal((await h.send(bundleComparison(base, randomUUID()), null, { headers })).status, 404)
 })
 
+test('a comparison\'s requests decode each bundle once, asked at once or one after another, its details kept a little while', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const h = await setup(t)
+  const [base, other] = [await h.seed(typedBuilds[0]), await h.seed(typedBuilds[1])]
+  const reads = t.mock.method(h.stores.bundleStore, 'get')
+  const asked = await Promise.all([h.send(bundleComparison(base, other)), h.send(bundleChanges(base, other)), h.send(bundleTypeOnly(base, other))])
+  assert.deepEqual(asked.map(res => res.status), [200, 200, 200])
+  assert.equal(reads.mock.callCount(), 2, 'each bundle decoded once for them all')
+  assert.equal((await h.send(bundleRenameDiffs(base, other))).status, 200)
+  assert.equal(reads.mock.callCount(), 2, 'and kept for the next to ask')
+  assert.equal((await h.send(bundleComparison(base, other), 'outsider')).status, 404, 'each reader\'s access checked as ever')
+  t.mock.timers.tick(60_000)
+  assert.equal((await h.send(bundleComparison(base, other))).status, 200)
+  assert.equal(reads.mock.callCount(), 4, 'and no longer')
+})
+
 test('a comparison sends where the two sides\' roots differ how each base file reads, and is of the files within its scope', async t => {
   const h = await setup(t)
   // The other build's files under `src/`: the base's read there.

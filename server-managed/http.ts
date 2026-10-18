@@ -206,7 +206,7 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
@@ -3859,7 +3859,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   try {
     const reader = await npmReader(deps, cookie, [context.package, ...context.basePackage ? [context.basePackage] : []])
     if (!reader || reader.userId !== session.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-    const kept = npmVersionStore(deps.db, deps.config.debug)
+    const kept = readTogether(npmVersionStore(deps.db, deps.config.debug), [{ name, version }, ...context.basePackage ? [{ name: context.basePackage, version: context.baseVersion! }] : []])
     const read = (pkg: string, spec: string) => readNpmVersion(pkg, spec, canReadPrivateNpm(reader, pkg), controller.signal, kept)
     const [doc, base] = await Promise.all([read(name, version), context.basePackage ? read(context.basePackage, context.baseVersion!) : null])
     if (!doc || (context.basePackage && !base)) { sendJson(res, 404, { error: 'package-not-found' }); return }
@@ -3999,7 +3999,17 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       await reply(doc.private, { name, downloads, github })
       return
     }
-    const doc = found(await readNpmVersion(name, spec, privileged, controller.signal, keptVersions))
+    // The version it is compared with, where its route names one, read
+    // beside it, the two read of those kept at once.
+    const against: [string, string, boolean] | null = (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)') || (path === NPM_DELTA_PATH && otherSpec !== '(empty)')
+      || ((path === NPM_TYPE_ONLY_PATH || path === NPM_RENAME_DIFF_PATH || (path === NPM_PRETTY_PATH && !params.has('path'))) && otherSpec !== '')
+      ? [name, otherSpec, privileged]
+      : path === NPM_COMPARISON_PATH && otherSpec !== '(empty)' ? [otherName, otherSpec, canReadPrivateNpm(reader, otherName)] : null
+    const keptTogether = against ? readTogether(keptVersions, [{ name, version: spec }, { name: against[0], version: against[1] }]) : keptVersions
+    const otherAsked = against && readNpmVersion(against[0], against[1], against[2], controller.signal, keptTogether)
+    otherAsked?.catch(() => {})
+    const otherDoc = async () => found(await otherAsked!)
+    const doc = found(await readNpmVersion(name, spec, privileged, controller.signal, keptTogether))
     if (spec === 'latest') latest = Promise.resolve(doc)
     const repo = githubRepoOf(doc), sha = bundleCommitHash(doc.manifest['gitHead'])
     // What the viewer asks about a version beside its files, by its route,
@@ -4022,7 +4032,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // new and however few download it where a team lists its scope, its own
     // packages, as a new dependency on a package of such a scope is.
     if (path === NPM_RISK_PATH) {
-      const old = otherSpec === '' || otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
+      const old = otherSpec === '' || otherSpec === '(empty)' ? null : await otherDoc()
       const scope = npmPackageScope(name)
       const teamScoped = scope !== null && await deps.db.hasTeamNpmScope(scope)
       const assessment = await npmRisk(doc, otherSpec === '' ? 'pick' : old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, fromEmpty: otherSpec === '(empty)',
@@ -4037,7 +4047,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // package's, and those but for declaration files changed in types alone
     // (npm-delta.ts), as a list of versions wanting reviews tells them.
     if (path === NPM_DELTA_PATH) {
-      const old = otherSpec === '(empty)' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
+      const old = otherSpec === '(empty)' ? null : await otherDoc()
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       const side = (version: NpmVersionDocument) => ({ integrity: version.dist.integrity, files: async () => {
         const load = loadNpmFiles(version)
@@ -4053,7 +4063,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // the one compared with, or `(empty)`, none, as Review reads a first
     // version. Read of both, each package's access checked again once worked out.
     if (path === NPM_COMPARISON_PATH) {
-      const old = otherSpec === '(empty)' ? null : found(await readNpmVersion(otherName, otherSpec, canReadPrivateNpm(reader, otherName), controller.signal, keptVersions))
+      const old = otherSpec === '(empty)' ? null : await otherDoc()
       res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
       const loads = [doc, ...old ? [old] : []].map(loadNpmFiles)
       let body
@@ -4091,7 +4101,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // and those that changed in types alone (type-only.ts).
     if (path === NPM_PRETTY_PATH || path === NPM_TYPE_ONLY_PATH || (path === NPM_RENAME_DIFF_PATH && !diffed)) {
       if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const other = otherSpec === '' ? null : found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
+      const other = otherSpec === '' ? null : await otherDoc()
       const sides = other && await deps.prettyCache.npmSides(doc, other)
       const lines = path === NPM_RENAME_DIFF_PATH ? renamedPairs(sides!, !doc.private && !other!.private)
         : path === NPM_TYPE_ONLY_PATH ? typeOnlyFiles(sides!) : sides ? compared(sides) : await deps.prettyCache.npmAll(doc)
@@ -4109,7 +4119,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     if (diffed) {
       const { prettyCache } = deps
       if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const other = found(await readNpmVersion(name, otherSpec, privileged, controller.signal, keptVersions))
+      const other = await otherDoc()
       const diff = await renameDiffOf(diffed, async () => [await prettyText(await prettyCache.npm(doc, diffed.base)),
         await prettyText(await prettyCache.npm(other, diffed.other))], !doc.private && !other.private)
       if (!(await recheck(doc.private || other.private))) { diff.stream.destroy(); return }

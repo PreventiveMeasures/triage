@@ -5,6 +5,7 @@ export const FILE_HASH: RegExp
 export interface BundleIdentity { integrity: string; kind: string | null; size: number }
 export interface BundleDetails extends BundleIdentity { bundle?: unknown; json?: unknown; map?: SourceMap; edges?: readonly SourcemapEdge[] }
 export function parseBundleContents(text: string, identity: BundleIdentity): BundleDetails
+export function computeBundleFileHashes(details: BundleDetails): Promise<Map<string, string>>
 export interface BundleMetadata extends Record<string, unknown> {
   files: [string, number | null, string | null, number | null][]
   codeStats: { files: number; lines: number; bytes: number }

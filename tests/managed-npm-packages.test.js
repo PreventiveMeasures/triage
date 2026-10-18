@@ -11,10 +11,10 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_TAR_ENTRIES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion, readNpmVersions,
-  setNpmDocumentCache } from '../server-managed/npm-packages.ts'
+  readTogether, setNpmDocumentCache } from '../server-managed/npm-packages.ts'
 import { npmVersionFields } from '../server-managed/npm-manifest.ts'
 import { npmVersionStore, riskLineStore } from '../server-managed/npm-kept.ts'
-import { MAX_TAR_BYTES, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
+import { MAX_TAR_BYTES, loadNpmFiles, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
 import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
@@ -612,6 +612,7 @@ test('oversized, malformed and unreachable packages are refused without their fi
 })
 
 test('reads of a version share its load and its encoded body; four load at once, each held until its readers are done', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const pkgs = ['a', 'b', 'c', 'd', 'e'].map(name => packageOf(`shared-${name}`, '1.0.0', { 'index.js': `module.exports = '${name}'\n` }))
   registry(t, pkgs)
   // Tarballs answer once released, holding their loads in flight meanwhile.
@@ -626,7 +627,13 @@ test('reads of a version share its load and its encoded body; four load at once,
   const others = pkgs.slice(1, 4).map(pkg => loadNpmPackageBody(version(pkg)))
   await assert.rejects(loadNpmPackageBody(version(pkgs[4])).result, /npm-busy/u)
   await assert.rejects(loadNpmTarball(version(pkgs[4])).result, /npm-busy/u, 'downloads count among them')
+  // A version's tarball and files, beside its body, take its place, and read its tarball with it.
+  const files = loadNpmFiles(version(pkgs[0])), tarball = loadNpmTarball(version(pkgs[0]))
   gate.resolve()
+  assert.deepEqual(Buffer.from(await tarball.result), pkgs[0].tgz)
+  assert.deepEqual((await files.result).map(file => file.path), ['index.js'])
+  tarball.release()
+  files.release()
   const bodies = await Promise.all(reads.map(read => read.result))
   assert.ok(bodies.every(body => body === bodies[0]), 'one encoded body for every reader')
   assert.equal(downloadsOf(pkgs[0]), 1)
@@ -652,7 +659,12 @@ test('reads of a version share its load and its encoded body; four load at once,
   const fresh = loadNpmPackageBody(version(pkgs[0]))
   await fresh.result
   fresh.release()
-  assert.equal(downloadsOf(pkgs[0]), 2, 'and nothing is kept after')
+  assert.equal(downloadsOf(pkgs[0]), 1, 'its files kept a little while after')
+  t.mock.timers.tick(60_000)
+  const later = loadNpmPackageBody(version(pkgs[0]))
+  await later.result
+  later.release()
+  assert.equal(downloadsOf(pkgs[0]), 2, 'and no longer')
 })
 
 test('a load its readers abandon keeps its place until its work is done', async t => {
@@ -748,6 +760,28 @@ test('tarballs are kept where bundle builds keep theirs, and served from there o
   assert.equal(downloads(), 0, 'neither was downloaded')
 })
 
+test('a package\'s whole document asked for at once is asked of npm once, each reader giving up on it alone', async t => {
+  const pkg = packageOf('whole-shared', '1.0.0', { 'index.js': '' })
+  const calls = registry(t, [pkg])
+  const { signal } = new AbortController()
+  const asked = () => calls.filter(call => call.url === `${REGISTRY}/whole-shared`).length
+  const [versions, packument] = await Promise.all([readNpmVersions('whole-shared', false, signal, { times: true }), readNpmPackument('whole-shared', false, signal)])
+  assert.deepEqual([versions.versions, packument.name], [['1.0.0'], 'whole-shared'])
+  assert.equal(asked(), 1)
+  const gone = new AbortController()
+  const left = readNpmPackument('whole-shared', false, gone.signal), stays = readNpmPackument('whole-shared', false, signal)
+  gone.abort()
+  await assert.rejects(left, { name: 'AbortError' })
+  assert.equal((await stays).name, 'whole-shared', 'the other answered')
+  assert.equal(asked(), 2)
+  const alone = new AbortController()
+  const abandoned = readNpmPackument('whole-shared', false, alone.signal)
+  alone.abort()
+  await assert.rejects(abandoned, { name: 'AbortError' })
+  assert.equal((await readNpmPackument('whole-shared', false, signal)).name, 'whole-shared', 'one all its readers gave up on is asked afresh')
+  assert.equal(asked(), 4)
+})
+
 test('registry documents read at once are held to a budget: four version lists, or their bytes in versions', async t => {
   const pkgs = ['a', 'b', 'c', 'd', 'e'].map(name => packageOf(`listed-${name}`, '1.0.0', { 'index.js': '' }))
   registry(t, pkgs)
@@ -766,6 +800,24 @@ test('registry documents read at once are held to a budget: four version lists, 
   gate.resolve()
   assert.deepEqual((await Promise.all(lists)).map(list => list.versions), [['1.0.0'], ['1.0.0'], ['1.0.0'], ['1.0.0']])
   assert.equal((await readNpmVersion('listed-e', '1.0.0', false, signal)).version, '1.0.0', 'a read frees its bytes once done')
+})
+
+test('versions read together are read of those kept at once, others alone', async t => {
+  const pkgs = ['1.0.0', '2.0.0', '3.0.0'].map(version => packageOf('together', version, { 'index.js': version }))
+  const calls = registry(t, pkgs.slice(2))
+  const { signal } = new AbortController()
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const store = npmVersionStore(db)
+  for (const { doc } of pkgs.slice(0, 2)) await store.write('together', doc.version, npmVersionFields(doc))
+  const many = t.mock.method(db, 'getUpstreamCacheEntries'), one = t.mock.method(db, 'getUpstreamCacheEntry')
+  const both = readTogether(store, [{ name: 'together', version: '1.0.0' }, { name: 'together', version: '2.0.0' }])
+  const docs = await Promise.all(['1.0.0', '2.0.0'].map(version => readNpmVersion('together', version, false, signal, both)))
+  assert.deepEqual(docs.map(doc => doc.dist.integrity), pkgs.slice(0, 2).map(({ doc }) => doc.dist.integrity))
+  assert.deepEqual([many.mock.callCount(), one.mock.callCount(), calls.length], [1, 0, 0], 'one read of the database, none of npm')
+  assert.equal((await readNpmVersion('together', '3.0.0', false, signal, both)).version, '3.0.0')
+  assert.deepEqual([many.mock.callCount(), one.mock.callCount()], [1, 1], 'another read alone')
+  assert.equal(readTogether(store, [{ name: 'together', version: '1.0.0' }, { name: 'together', version: 'latest' }]), store, 'a tag is no version kept')
 })
 
 // A disk cache for whole documents, set as the server sets it off Vercel.

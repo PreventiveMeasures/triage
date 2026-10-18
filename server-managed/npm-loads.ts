@@ -1,12 +1,14 @@
 // Loading a published version for the npm package viewer (npm-packages.ts):
 // its tarball, kept on disk as bundle builds keep theirs, else read from the
-// registry, and the viewer's response built from it, each shared by the
-// readers asking for it meanwhile and held to a few at once per process.
+// registry, its files unpacked from it, and the viewer's response built from
+// them, each shared by the readers asking for it meanwhile and held to a few
+// versions at once per process; its files kept a little while after.
 import { Buffer } from 'node:buffer'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CompressionError, decompress } from '@preventive/archive/compression.js'
 import { encodeBrotli } from './brotli.ts'
+import { keptBriefly } from './kept-briefly.ts'
 import { MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES, NPM_REGISTRY, NpmPackageError, type NpmPackageFile, type NpmVersionDocument, askUpstream,
   npmFileRows, npmPublishTime, npmToken, readNpmTar } from './npm-packages.ts'
 import { keepFile, readKeptFile, upstreamCachePath } from './upstream-cache.ts'
@@ -16,20 +18,30 @@ import { keepFile, readKeptFile, upstreamCachePath } from './upstream-cache.ts'
 // arrives.
 export const MAX_TAR_BYTES = 96 * 1024 * 1024
 const TARBALL_TIMEOUT_MS = 120_000
-// Loads in flight per process; each can hold a tarball, its tar, its files
-// and their encoded JSON.
+// Loads in flight per process, those of one version (its tarball, its files,
+// its response) as one, as they read its tarball and unpack it once between
+// them; each can hold a tarball, its tar, its files and their encoded JSON.
 const MAX_ACTIVE_LOADS = 4
+// How long a public version's files are kept once unpacked, and what they
+// may take between them, the least lately read going first past it:
+// Compare's requests for a pair of versions, and the Code tab's, come one
+// after another, each loading the same files. A private version's are never
+// kept, as nothing else of it is past its readers.
+const UNPACKED_KEPT_MS = 60_000
+const MAX_UNPACKED_BYTES = 128 * 1024 * 1024
 
 // A load's result, shared by its readers, and a reader's release of it.
 export interface NpmLoad<T> { result: Promise<T>; release: () => void }
 
-interface Load { job: Promise<unknown>; readers: number; settled: boolean }
+interface Load { job: Promise<unknown>; readers: number; settled: boolean; slot: string }
 
 // Loads by what they read; readers asking for the same share one. A load
 // keeps its place among the active ones until its work is done and each
 // reader has released it, as a reader does once its response is written or
-// abandoned, so what responses still hold counts too.
+// abandoned, so what responses still hold counts too. Places by the slot
+// their loads share, with how many hold each.
 const loads = new Map<string, Load>()
+const slots = new Map<string, number>()
 
 const refused = <T>(status: number, code: string): NpmLoad<T> => {
   const result = Promise.reject(new NpmPackageError(status, code))
@@ -37,26 +49,30 @@ const refused = <T>(status: number, code: string): NpmLoad<T> => {
   return { result, release() {} }
 }
 
-function shared<T>(key: string, doc: NpmVersionDocument, work: () => Promise<T>): NpmLoad<T> {
+// What names a version's tarball, and so its files: its integrity and URL,
+// and whether it is read with the token.
+const tarballKey = (doc: NpmVersionDocument) => `${doc.dist.integrity} ${doc.dist.tarball} ${doc.private}`
+
+function shared<T>(what: string, doc: NpmVersionDocument, work: () => Promise<T>): NpmLoad<T> {
   const { unpackedSize, fileCount } = doc.dist
   if ((unpackedSize ?? 0) > MAX_NPM_PACKAGE_BYTES || (fileCount ?? 0) > MAX_NPM_PACKAGE_FILES) return refused(413, 'package-too-large')
-  return sharedLoad(key, work, 'npm-busy')
+  const slot = tarballKey(doc)
+  return sharedLoad(`${what} ${slot}`, work, 'npm-busy', slot)
 }
 
 // A load among the active ones, by `key`, refused as `busy` past them: a
 // repository directory's (repository-code.ts) as a package's, each holding
-// alike a tarball, its tar, its files and their encoded JSON.
-export function sharedLoad<T>(key: string, work: () => Promise<T>, busy: string): NpmLoad<T> {
+// alike a tarball, its tar, its files and their encoded JSON. Loads of one
+// `slot` take one place between them.
+export function sharedLoad<T>(key: string, work: () => Promise<T>, busy: string, slot = key): NpmLoad<T> {
   let load = loads.get(key)
   if (!load) {
-    if (loads.size >= MAX_ACTIVE_LOADS) return refused(429, busy)
-    const created: Load = { job: work(), readers: 0, settled: false }
-    const settle = () => {
-      created.settled = true
-      if (created.readers === 0 && loads.get(key) === created) loads.delete(key)
-    }
-    created.job.then(settle, settle)
+    if (!slots.has(slot) && slots.size >= MAX_ACTIVE_LOADS) return refused(429, busy)
+    const created: Load = { job: work(), readers: 0, settled: false, slot }
+    const finish = () => { settle(key, created) }
+    created.job.then(finish, finish)
     loads.set(key, created)
+    slots.set(slot, (slots.get(slot) ?? 0) + 1)
     load = created
   }
   const held = load
@@ -67,9 +83,25 @@ export function sharedLoad<T>(key: string, work: () => Promise<T>, busy: string)
     release() {
       if (released) return
       released = true
-      if (--held.readers === 0 && held.settled && loads.get(key) === held) loads.delete(key)
+      held.readers--
+      done(key, held)
     },
   }
+}
+
+function settle(key: string, load: Load) {
+  load.settled = true
+  done(key, load)
+}
+
+// A load gone from the active ones, and its place with it, once its work is
+// done and its readers have released it.
+function done(key: string, load: Load) {
+  if (load.readers !== 0 || !load.settled || loads.get(key) !== load) return
+  loads.delete(key)
+  const holding = slots.get(load.slot)! - 1
+  if (holding === 0) slots.delete(load.slot)
+  else slots.set(load.slot, holding)
 }
 
 // The sha512 an integrity names, in base64, or null where it names none.
@@ -129,6 +161,44 @@ async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
   return bytes
 }
 
+// Tarballs being read, and versions' files being unpacked, by what names
+// them (tarballKey): readers asking for one meanwhile share it, its bytes
+// those each one's own document names.
+const reading = new Map<string, Promise<Uint8Array>>()
+const unpacking = new Map<string, Promise<Unpacked>>()
+
+function sharedRead<T>(pending: Map<string, Promise<T>>, key: string, read: () => Promise<T>): Promise<T> {
+  let job = pending.get(key)
+  if (!job) {
+    const started = read().finally(() => { if (pending.get(key) === started) pending.delete(key) })
+    pending.set(key, job = started)
+  }
+  return job
+}
+
+const sharedTarball = (doc: NpmVersionDocument) => sharedRead(reading, tarballKey(doc), () => readTarball(doc))
+
+// A version's files, and the size of the tarball they came in.
+interface Unpacked { files: NpmPackageFile[]; tarballSize: number }
+
+// Public versions' files lately unpacked, by tarballKey.
+const unpacked = keptBriefly<Unpacked>({ keptMs: UNPACKED_KEPT_MS, maxBytes: MAX_UNPACKED_BYTES })
+
+// The version's files, kept from a load of them a little while since, else
+// unpacked from its tarball (and kept, a public version's): bytes its
+// reader's own document names, as its tarball's are.
+function unpackedOf(doc: NpmVersionDocument): Promise<Unpacked> {
+  const key = tarballKey(doc)
+  const kept = unpacked.get(key)
+  if (kept) return Promise.resolve(kept)
+  return sharedRead(unpacking, key, async () => {
+    const tarball = await sharedTarball(doc)
+    const value = { files: await readTarballFiles(tarball), tarballSize: tarball.byteLength }
+    if (!doc.private) unpacked.keep(key, value, value.files.reduce((sum, file) => sum + file.path.length + file.bytes.byteLength, 0))
+    return value
+  })
+}
+
 // A gzipped tarball's files, its top directory left out, as npm extracts
 // a package's: a repository tree's as GitHub archives it, too, its symlinks
 // let climb as readNpmTar's `symlinksAbove` says.
@@ -144,12 +214,12 @@ export async function readTarballFiles(tarball: Uint8Array, options: { symlinksA
 
 // The version's tarball, for download.
 export function loadNpmTarball(doc: NpmVersionDocument): NpmLoad<Uint8Array> {
-  return shared(`tarball ${doc.dist.integrity} ${doc.dist.tarball}`, doc, () => readTarball(doc))
+  return shared('tarball', doc, () => sharedTarball(doc))
 }
 
 // The version's files, for one of them to be pretty-printed (pretty-print.ts).
 export function loadNpmFiles(doc: NpmVersionDocument): NpmLoad<NpmPackageFile[]> {
-  return shared(`files ${doc.dist.integrity} ${doc.dist.tarball}`, doc, async () => readTarballFiles(await readTarball(doc)))
+  return shared('files', doc, async () => (await unpackedOf(doc)).files)
 }
 
 // The version as the viewer reads it, as brotli-encoded JSON: `{ name,
@@ -160,14 +230,13 @@ export function loadNpmFiles(doc: NpmVersionDocument): NpmLoad<NpmPackageFile[]>
 // (npm-insights.ts npmKnown), which the viewer need not then ask for. Encoding
 // is where a load holds the most, so it takes its place among the active
 // loads until its body is done, and readers asking meanwhile share that body,
-// the first one's manifest and `known` in it; nothing is kept once its readers
-// are done.
+// the first one's manifest and `known` in it; the body is not kept once its
+// readers are done, its files a little while (unpackedOf).
 export function loadNpmPackageBody(doc: NpmVersionDocument, known: () => object = () => ({})): NpmLoad<Buffer> {
-  return shared(`package ${doc.dist.integrity} ${doc.dist.tarball} ${doc.private}`, doc, async () => {
-    const tarball = await readTarball(doc)
-    const files = await readTarballFiles(tarball)
+  return shared('package', doc, async () => {
+    const { files, tarballSize } = await unpackedOf(doc)
     return encodeBrotli(Buffer.from(JSON.stringify({
-      name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize: tarball.byteLength,
+      name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, tarballSize,
       published: npmPublishTime(doc.name, doc.version), manifest: doc.manifest, files: npmFileRows(files), known: known(),
     })))
   })
