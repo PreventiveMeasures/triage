@@ -757,7 +757,7 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   render() {
     return html`<div class="wrap">${adminNavigation('manage-repos', this._role, this.allowShare)}
       <h1 class="sr-only">Repository risk</h1>
-      <div class="page-intro"><p class="intro">Each connected repository’s npm lockfiles and GitHub Actions at its default branch: what risk finds in each package they lock, and what each workflow pulls in.</p>
+      <div class="page-intro"><p class="intro">Risks in each repository’s npm dependencies and GitHub Actions.</p>
         ${this._stateBadge()}${this._state === 'running' ? html`<button type="button" class="btn" @click=${() => this.stop()}>Stop</button>`
           : html`<button type="button" class="btn primary" ?disabled=${this._scope !== 'all' && !this._target} @click=${() => { void this.start() }}>${this._state === 'idle' ? 'Start scan' : 'Scan again'}</button>`}
       </div>
