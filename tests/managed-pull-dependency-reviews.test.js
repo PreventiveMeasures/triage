@@ -492,7 +492,7 @@ test('where the host formats dependency reviews, a pull request tells the reader
   assert.equal(Object.hasOwn((await ask('carol')).body, 'formatted'), false, 'one with no review of its versions told none')
 })
 
-test('the default branch\'s dependencies, with their review, tell what its lockfiles lock that wants reviews and what fails it; where none is in effect, none', async t => {
+test('the default branch\'s dependencies, with their review, tell what its lockfiles lock that wants reviews and what fails it; where none is in effect, none, GitHub not asked where it reviews none', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const users = await people(db)
@@ -500,7 +500,8 @@ test('the default branch\'s dependencies, with their review, tell what its lockf
   const files = { ...PULL.files, [head]: { ...PULL.files[head], 'berry/yarn.lock': BASELINE['berry/yarn.lock'], 'bun.lock': BASELINE['bun.lock'] } }
   github(t, { files, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {} })
   const ask = (repoId = '1') => send(`/api/admin/repositories/branch-dependencies?${new URLSearchParams({ repoId })}`)
-  assert.deepEqual((await ask()).body, { head, review: null, users: {} }, 'not enabled')
+  assert.deepEqual((await ask()).body, { review: null, users: {} }, 'not enabled')
+  assert.equal(globalThis.fetch.mock.callCount(), 0, 'GitHub not asked where it reviews none')
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, since })
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
   const answer = await ask()

@@ -53,7 +53,7 @@
 //        Yarn 1 lockfiles lock that they didn't at its merge base, an update's with those it was, by directory; with review=1, each's
 //        review, where its repository reviews dependencies | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/branch-dependencies?repoId= → the versions the default branch's lockfiles lock that want review, where
-//        its review is in effect for the reader | 400/401/403/404/409/429/502
+//        its review is in effect for the reader, GitHub not asked where it reviews none | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/lockfiles?repoId= → the lockfiles of the default branch its dependency review reads, by their
 //        paths, for its settings to name | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week and a day over
@@ -1955,9 +1955,11 @@ async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, c
 // What `answer` gives of the whole of repository `repoId` (with its name and
 // a token), as readWholeRepository reads it: sent at once where it was kept,
 // else once access is checked again, with the app's users it names
-// (github-users.ts), never kept with it.
+// (github-users.ts), never kept with it; or what `unread` tells of it, the
+// app's alone, once the app's access is checked, GitHub then never asked.
 async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
-  answer: (fullName: string, token: string, user: StoredUser) => Promise<{ value: object; kept: boolean }>): Promise<void> {
+  answer: (fullName: string, token: string, user: StoredUser) => Promise<{ value: object; kept: boolean }>,
+  unread: () => Promise<object | null> = () => Promise.resolve(null)): Promise<void> {
   const authorize = async () => {
     const access = await authorizeRepository(res, deps, cookie, repoId, '')
     if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
@@ -1965,6 +1967,8 @@ async function answerWholeRepository(res: ServerResponse, deps: ManagedHttpDeps,
   }
   const access = await authorize()
   if (!access) return
+  const told = await unread()
+  if (told) { sendJson(res, 200, await withAppUsers(deps.db, told)); return }
   try {
     const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
     const token = reader.readToken()
@@ -2071,12 +2075,12 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
 
 // GET /api/admin/repositories/branch-dependencies: what the lockfiles of the
 // repository's default branch lock that wants review, where its review is in
-// effect for the reader (`review`, else none), as a team's Dependencies tab
-// shows it: its head, as its pulse reads it, kept a while; every lockfile
-// there its review holds to (lockfile-scope.ts, commit-lockfiles.ts) as one
-// directory, its versions as a pull request's others are
-// (pull-dependency-reviews.ts), each left unread a directory of its own
-// failing the review, as a pull request's are.
+// effect for the reader (`review`, else none, told without asking GitHub
+// where it reviews none), as a team's Dependencies tab shows it: its head, as
+// its pulse reads it, kept a while; every lockfile there its review holds to
+// (lockfile-scope.ts, commit-lockfiles.ts) as one directory, its versions as
+// a pull request's others are (pull-dependency-reviews.ts), each left unread
+// a directory of its own failing the review, as a pull request's are.
 async function handleRepositoryBranchDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
@@ -2098,7 +2102,7 @@ async function handleRepositoryBranchDependencies(res: ServerResponse, deps: Man
     const reviewed = deps.reviewedDependencies ?? null
     const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null } : await baselineFor(fullName, token, repoId, state, baselineKept(deps))
     return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: false }
-  })
+  }, async () => (await deps.db.listRepoDependencyReviews()).get(repoId)?.enabled ? null : { review: null })
 }
 
 // GET /api/admin/repositories/lockfiles: the lockfiles of the repository's

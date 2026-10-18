@@ -2118,7 +2118,10 @@ refuses, or past the hundred, a directory of its own failing the review
 (`lockfile-unreadable`, or `lockfile-unsupported`, Bun's), told by the
 lockfiles its review held to as they were read, though they change
 meanwhile; `{ head, review: null }` where none is in effect
-for the reader, `head` none where the branch has no commit.
+for the reader, `head` none where the branch has no commit; and `{ review:
+null }` where the repository reviews none, once the reader's access in the
+app is checked, GitHub never asked, as a team's Dependencies tab asks of
+each of its repositories.
 
 The lockfiles a review holds to (`lockfiles`, `lockfile-scope.ts`) are every
 one by default (`{ mode: 'exclude', paths: [] }`), every one but those named
