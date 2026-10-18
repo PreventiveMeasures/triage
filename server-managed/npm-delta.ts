@@ -161,8 +161,11 @@ async function worked(key: string, base: Side | null, other: Side, kept: KeptSto
   await turn(Date.now() + DELTA_TIMEOUT_MS)
   let binary, told
   try {
-    const [baseFiles, otherFiles] = await Promise.all([base ? base.files() : null, other.files()])
-    const [olds, news] = [texts(baseFiles), texts(otherFiles)]
+    // Its turn held till both sides are read, or have failed.
+    const [baseRead, otherRead] = await Promise.allSettled([base ? base.files() : Promise.resolve(null), other.files()])
+    if (baseRead.status === 'rejected') throw baseRead.reason
+    if (otherRead.status === 'rejected') throw otherRead.reason
+    const [olds, news] = [texts(baseRead.value), texts(otherRead.value)]
     if (olds.length + news.length > MAX_TEXT_LENGTH) throw new NpmPackageError(413, 'package-too-large')
     binary = binaryChanged(olds.binaries, news.binaries)
     told = await counted(olds.read, news.read, Date.now() + DELTA_TIMEOUT_MS)
