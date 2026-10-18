@@ -175,7 +175,7 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
 // What its answers are kept by, with their cursors (http.ts
 // handleRepositoryAgents): bumped as what a page reads, or how it tells an
 // agent, changes, so that no answer an older server kept is sent for a day.
-export const AGENTS_READ_VERSION = 5
+export const AGENTS_READ_VERSION = 6
 
 // A cursor of the default branch's commits: GitHub names one by a commit
 // and how many on from it, `<oid> <offset>`, a space between.
