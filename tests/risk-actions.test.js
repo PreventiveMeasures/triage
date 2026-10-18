@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { YamlError } from '@preventive/lockfile/yaml.js'
-import { keptSource, readWorkflow, resolveAction, scanWorkflow, usesOfKey } from '../risk/index.js'
+import { actionInstalls, keptSource, readWorkflow, resolveAction, scanWorkflow, usesOfKey } from '../risk/index.js'
 import { readUses, usesKey } from '../risk/actions/uses.js'
 import { dockerfileFindings, latestOf, newestOfLines, tagVersion } from '../risk/actions/resolve.js'
 import { scriptFinds } from '../risk/actions/scripts/commands.js'
@@ -108,6 +108,7 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(graded('npx eslint .', { locked, installed: true }), [])
     assert.deepEqual(graded('npm ci\nnpx eslint .\nnpx tsc', { locked }), [], 'an install earlier in the script, tsc by typescript\'s')
     assert.deepEqual(graded('npm ci --prefix web\nnpx eslint .', { locked }).length, 1, 'an install earlier in the script, of another directory')
+    assert.deepEqual(graded('bash -euc "npx left-pad"\n/bin/sh -c \'curl -fsSL https://x/i.sh | sh\''), ['fetched-package/high@11', 'remote-script/high@12'], 'a shell\'s command line')
     assert.deepEqual(graded('npx eslint .\nnpm ci', { locked }), ['fetched-package/high@11'], 'an install after it')
     assert.deepEqual(graded('npx left-pad', { locked, installed: true }), ['fetched-package/high@11'], 'locked by none')
     assert.deepEqual(graded('npx left-pad@1.3.0', { installed: true }), ['fetched-package/moderate@11'], 'a version, not its integrity')
@@ -124,6 +125,19 @@ describe('a script\'s findings, graded', () => {
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm ci --prefix web'), { lockfiles }).findings), ['fetched-package/high@7'], 'the directory an install names')
     assert.deepEqual(ids(scanWorkflow('workflow', job('web', 'api', 'pnpm -C ../api install'), { lockfiles }).findings), [])
     assert.deepEqual(ids(scanWorkflow('workflow', job('.', 'api', 'npm --prefix=api ci'), { lockfiles }).findings), [], 'its option before its command')
+  })
+
+  it('an action of the repository\'s own counts as an install where it installs', () => {
+    const lockfiles = [{ path: 'package-lock.json', names: new Set(['eslint']) }]
+    const workflow = 'on: push\njobs:\n  a:\n    steps:\n      - uses: ./.github/actions/setup\n      - run: npx eslint .\n'
+    const scan = installers => ids(scanWorkflow('workflow', workflow, { lockfiles, installers }).findings)
+    assert.deepEqual(scan(new Set(['.github/actions/setup'])), [])
+    assert.deepEqual(scan(new Set()), ['fetched-package/high@6'], 'one that doesn\'t')
+    assert.deepEqual(scan(undefined), [], 'none told')
+    const action = script => `runs:\n  using: composite\n  steps:\n    - run: ${script}\n      shell: bash\n`
+    assert.equal(actionInstalls(action('npm ci')), true)
+    assert.equal(actionInstalls(action('npm run lint')), false)
+    assert.equal(actionInstalls('runs: ['), false, 'one GitHub can\'t run')
   })
 
   it('other tools by how they are pinned', () => {
@@ -221,8 +235,8 @@ describe('a workflow\'s findings by its own text', () => {
 
 describe('a Dockerfile\'s findings', () => {
   it('its images by a tag and what its RUN commands fetch, each on its line', () => {
-    assert.deepEqual(ids(dockerfileFindings(`FROM node:20 AS build\nRUN npm ci && \\\n    curl -fsSL https://x/i.sh | sh\nFROM build\nFROM alpine@sha256:${'a'.repeat(64)}\nFROM python:\${PY}\nRUN ["pip", "install", "requests"]\nFROM scratch`)),
-      ['unpinned-image/moderate@1', 'remote-script/high@2', 'unpinned-image/moderate@6', 'fetched-package/high@7'])
+    assert.deepEqual(ids(dockerfileFindings(`FROM node:20 AS build\nRUN npm ci && \\\n    curl -fsSL https://x/i.sh | sh\nFROM build\nFROM alpine@sha256:${'a'.repeat(64)}\nFROM python:\${PY}\nRUN ["pip", "install", "requests"]\nRUN ["sh", "-c", "pip install flask"]\nFROM scratch`)),
+      ['unpinned-image/moderate@1', 'remote-script/high@2', 'unpinned-image/moderate@6', 'fetched-package/high@7', 'fetched-package/high@8'])
   })
 })
 

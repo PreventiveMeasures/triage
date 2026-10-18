@@ -201,6 +201,9 @@ export interface ScanOptions {
   lockfiles?: { path: string; names: ReadonlySet<string> }[]
   // Another repository's action, run in a workspace it can't tell.
   external?: boolean
+  // The directories of the repository's own actions that install its
+  // packages (actionInstalls); else each counts as one that does.
+  installers?: ReadonlySet<string> | null
 }
 
 export interface WorkflowScan {
@@ -210,6 +213,7 @@ export interface WorkflowScan {
 
 export function scanWorkflow(kind: 'workflow' | 'action', text: string, options?: ScanOptions): WorkflowScan
 export function readWorkflow(kind: 'workflow' | 'action', text: string): unknown
+export function actionInstalls(text: string): boolean
 export function workflowUses(read: unknown): Uses[]
 // A reference by its key, as a scan names it; null for none.
 export function usesOfKey(key: string): ActionUses | null

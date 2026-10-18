@@ -1,4 +1,5 @@
 // What a workflow, or an action's metadata, calls for by its own text (README.md).
+import { YamlError } from '@preventive/lockfile/yaml.js'
 import { readWorkflow } from './workflow.js'
 import { installOf } from './scripts/commands.js'
 import { imageFinding, lockedName, namesPullHead, scriptFindings, scriptInjections } from './scripts/grade.js'
@@ -14,10 +15,12 @@ function usesFinding(uses, owner) {
 }
 
 // Where a step installs a project's packages: a script's directory, or the
-// one its install names; anywhere (null) for an action of its own or one
-// named for installing; else undefined.
-function installs(step) {
-  if (step.uses?.kind === 'local' || (step.uses?.repo && /install/iu.test(step.uses.repo))) return null
+// one its install names; anywhere (null) for one named for installing, and
+// an action of its own of `installers` (ScanOptions), or any where none are
+// told; else undefined.
+function installs(step, installers) {
+  if (step.uses?.kind === 'local') return !installers || installers.has(step.uses.path) ? null : undefined
+  if (step.uses?.repo && /install/iu.test(step.uses.repo)) return null
   if (step.uses?.repo?.toLowerCase() === 'pnpm/action-setup' && /^(?:true|\[|\{|-)/u.test(String(step.with?.run_install ?? '').trim())) return null
   const install = step.run && installOf(step.run.script)
   return install ? directoryOf(step.run.workingDirectory, install.into) : undefined
@@ -60,7 +63,7 @@ function stepFindings(step, triggers) {
 }
 
 // A job's findings, each script graded by the installs before it and its lockfiles.
-function jobFindings(job, triggers, { owner, lockfiles, external }) {
+function jobFindings(job, triggers, { owner, lockfiles, external, installers }) {
   const found = []
   if (job.uses) {
     const finding = usesFinding(job.uses, owner)
@@ -78,7 +81,7 @@ function jobFindings(job, triggers, { owner, lockfiles, external }) {
       found.push(...scriptFindings(step.run, { locked, installed: installed.some(at => within(at, directory)), external, triggers }))
     }
     found.push(...stepFindings(step, triggers))
-    const at = installs(step)
+    const at = installs(step, installers)
     if (at !== undefined) installed.push(at)
   }
   return found
@@ -86,8 +89,8 @@ function jobFindings(job, triggers, { owner, lockfiles, external }) {
 
 // Every finding of a workflow read (readWorkflow), in its lines' order, by
 // index.d.ts ScanOptions.
-export function workflowFindings(read, { owner = null, lockfiles = [], external = false } = {}) {
-  const found = read.jobs.flatMap(job => jobFindings(job, read.triggers, { owner, lockfiles, external }))
+export function workflowFindings(read, { owner = null, lockfiles = [], external = false, installers = null } = {}) {
+  const found = read.jobs.flatMap(job => jobFindings(job, read.triggers, { owner, lockfiles, external, installers }))
   if (/^node(?:12|16)$/u.test(read.using ?? '')) found.push({ id: 'deprecated-runtime', severity: 'low', using: read.using, line: read.usingLine })
   return found.toSorted((a, b) => (a.line ?? 0) - (b.line ?? 0))
 }
@@ -99,6 +102,17 @@ export function workflowUses(read) {
     if (uses?.kind === 'local') return [uses]
     return uses?.kind === 'action' || uses?.kind === 'workflow' ? [{ ...uses, key: usesKey(uses) }] : []
   })
+}
+
+// Whether an action's metadata installs a project's packages, as a step
+// using it does: false for one GitHub can't run.
+export function actionInstalls(text) {
+  try {
+    return readWorkflow('action', text).jobs.some(job => job.steps.some(step => installs(step, null) !== undefined))
+  } catch (error) {
+    if (error instanceof YamlError) return false
+    throw error
+  }
 }
 
 // A workflow's or an action's metadata's (`kind`) references and findings;

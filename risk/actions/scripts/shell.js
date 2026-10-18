@@ -2,7 +2,8 @@
 // them, for commands.js: its lines continued joined, comments set aside,
 // each line split at `&&`, `||`, `;`, `&` and `|`, each command's words
 // unquoted, past settings and wrappers (`NAME=value`, `sudo -E`, `env`), a
-// command substitution read as a line of its own. A quick read, not a
+// command substitution and a shell's command line (`sh -c '…'`) read as a
+// line of its own. A quick read, not a
 // shell's parse: a command built as the script runs goes unseen.
 
 // A line of a script, its continuations joined, and the line it starts on,
@@ -109,10 +110,17 @@ function commandsOf(text) {
   return { commands, nested }
 }
 
+// The command line a shell is given to run (`bash -euc '…'`), else null.
+function shellLine([program, ...words]) {
+  if (!/^(?:\/(?:usr\/)?bin\/)?(?:ba|z|da|k)?sh$/u.test(program)) return null
+  const at = words.findIndex(word => /^-[a-z]*c[a-z]*$/u.test(word))
+  return at === -1 ? null : words[at + 1] ?? null
+}
+
 // Each command of a script: `{ argv, piped, line, next }`, `line` the one it
 // is on, counting from 0, and `next` the command a pipe feeds it to, as a
-// script fetched is fed to a shell; a command substitution's after its
-// line's.
+// script fetched is fed to a shell; a command substitution's and a shell's
+// command line's after its line's.
 export function scriptCommands(script) {
   const found = []
   for (const { text, line } of scriptLines(script)) {
@@ -120,7 +128,7 @@ export function scriptCommands(script) {
     for (let read = 0; read < queue.length && read < 64; read++) {
       const { commands, nested } = commandsOf(queue[read])
       commands.forEach((command, at) => { found.push({ ...command, line, next: commands[at + 1]?.piped ? commands[at + 1] : null }) })
-      queue.push(...nested)
+      queue.push(...nested, ...commands.map(({ argv }) => shellLine(argv)).filter(Boolean))
     }
   }
   return found

@@ -4,8 +4,8 @@
 // MAX_DEPTH deep and MAX_ACTIONS in all, a public repository's kept for
 // RISK_KEPT_MS by its key: a private one's is the admin's own access's alone.
 import { YamlError } from '@preventive/lockfile/yaml.js'
-import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, keptSource, readWorkflow, resolveAction, scanWorkflow,
-  usesOfKey, workflowUses } from '../risk/index.js'
+import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, actionInstalls, keptSource, readWorkflow, resolveAction,
+  scanWorkflow, usesOfKey, workflowUses } from '../risk/index.js'
 import type { OpenedRepository } from './repository-risk-read.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
@@ -96,11 +96,13 @@ export function actionsLines(repo: number, owner: string, read: WorkflowsRead, l
   if ('error' in read) return { lines: [{ type: 'workflows', repo, ...read } as WorkflowsLine], refs: [] as ActionRef[] }
   const lines: (WorkflowsLine | WorkflowLine)[] = [{ type: 'workflows', repo, paths: read.files.filter(file => file.kind === 'workflow').map(file => file.path) }]
   const refs = new Map<string, ActionRef>()
+  // The directories of its own actions that install its packages.
+  const installers = new Set(read.files.flatMap(file => file.kind === 'action' && 'text' in file && actionInstalls(file.text) ? [file.path.replace(/\/?action\.ya?ml$/u, '')] : []))
   for (const file of read.files) {
     if (!('text' in file)) { lines.push({ type: 'workflow', repo, ...file }); continue }
     const at = { type: 'workflow', repo, path: file.path, kind: file.kind } as const
     try {
-      const scan = scanWorkflow(file.kind, file.text, { owner, lockfiles })
+      const scan = scanWorkflow(file.kind, file.text, { owner, lockfiles, installers })
       lines.push({ ...at, ...scan })
       for (const uses of scan.uses) if (uses.kind === 'action' || uses.kind === 'workflow') refs.set(uses.key!, { key: uses.key!, owner, depth: 0 })
     } catch (error) {

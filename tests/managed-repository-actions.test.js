@@ -116,6 +116,16 @@ test('a scan tells a repository\'s workflows and actions of its own, npx held to
   assert.ok(lines.indexOf(actions.at(-1)) < lines.length - 1)
 })
 
+test('an action of the repository\'s own counts as an install before a step only where it installs', async () => {
+  const ci = 'on: push\njobs:\n  a:\n    steps:\n      - uses: ./.github/actions/setup\n      - run: npx eslint .\n'
+  const found = async script => {
+    const files = { ...FILES, '.github/workflows/ci.yml': ci, '.github/actions/setup/action.yaml': `runs:\n  using: composite\n  steps:\n    - run: ${script}\n      shell: bash\n` }
+    return findingIds(ofType(await scan(sourceOf({ files })), 'workflow')[0].findings)
+  }
+  assert.deepEqual(await found('npm ci'), [])
+  assert.deepEqual(await found('npm run lint'), ['fetched-package/high@6'])
+})
+
 test('what a scan resolved and read of a repository\'s Actions is kept: a scan again asks GitHub none of it but a private repository\'s', async () => {
   const caches = riskCaches()
   const first = sourceOf()
