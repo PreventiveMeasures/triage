@@ -135,7 +135,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmDeltaStore, npmVersionStore, pullDependencyStore,
+import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmDeltaStore, npmPublishTimeStore, npmVersionStore, pullDependencyStore,
   repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { type NpmDelta, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
@@ -206,7 +206,8 @@ import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
-import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, canReadPrivateNpm, npmFileRows, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
+import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, canReadPrivateNpm, npmFileRows, npmPublishTime, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions,
+  readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
@@ -4160,18 +4161,20 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // viewer's own request to meet. Its whole document, read for its
     // advisories' version list and the time each version was published
     // (npmPublishTime), is read only where registry reads leave room for
-    // readers'.
-    if (!download) {
+    // readers'; a public version's time is then kept in the database
+    // (npm-kept.ts), to come with the version on any instance.
+    const published = download ? undefined : npmPublishTime(doc, npmPublishTimeStore(deps.db, deps.config.debug))
+    if (published) {
       const quiet = (asked: Promise<unknown>) => { asked.catch(() => {}) }
       quiet(npmDownloads(name))
       quiet(latestDoc().then(newest => newest && githubFigures(newest)))
       quiet(readNpmVersions(name, privileged, controller.signal, { times: true, spare: true })
-        .then(versions => versions && npmAdvisories(name, versions.versions, advisoryOptions)))
+        .then(versions => versions && Promise.all([published.keep(), npmAdvisories(name, versions.versions, advisoryOptions)])))
       quiet(tagsOf())
       quiet(socketOf())
       quiet(provenanceOf())
     }
-    const load = download ? loadNpmTarball(doc) : loadNpmPackageBody(doc, () => npmKnown(name, doc.version, doc.private, repo, sha))
+    const load = published ? loadNpmPackageBody(doc, () => npmKnown(name, doc.version, doc.private, repo, sha), published.read) : loadNpmTarball(doc)
     res.once('close', load.release)
     const bytes = await load.result
     if (!(await recheck(doc.private))) return

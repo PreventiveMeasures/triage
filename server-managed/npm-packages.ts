@@ -339,7 +339,31 @@ const isPublishTime = (value: string | undefined) => typeof value === 'string' &
 const PUBLISH_TIMES = 100_000
 const publishTimes = new Map<string, string>()
 
-export const npmPublishTime = (name: string, version: string): string | null => publishTimes.get(`${name}@${version}`) ?? null
+// Where public versions' publish times are kept beyond the instance, as the
+// database keeps them (npm-kept.ts npmPublishTimeStore).
+export interface NpmPublishTimeStore {
+  read(name: string, version: string): Promise<string | null>
+  write(name: string, version: string, at: string): Promise<void>
+}
+
+// When `doc` was published: as noted here, else as `store` keeps a public
+// version's, so that another instance, or this one restarted, has it before
+// it reads the whole document again. The store is read once, at once, beside
+// whatever its caller reads meanwhile, a failure read as none; `read` looks
+// here again as it is asked, as the whole document read meanwhile may have
+// noted it by then, and `keep` keeps there the time noted here where it read
+// none.
+export function npmPublishTime(doc: Pick<NpmVersionDocument, 'name' | 'version' | 'private'>, store?: NpmPublishTimeStore) {
+  const noted = () => publishTimes.get(`${doc.name}@${doc.version}`) ?? null
+  const kept = store && !doc.private ? store.read(doc.name, doc.version).catch(() => null) : Promise.resolve(null)
+  return {
+    read: async (): Promise<string | null> => noted() ?? await kept ?? noted(),
+    async keep() {
+      const at = noted()
+      if (at !== null && store && !doc.private && await kept === null) await store.write(doc.name, doc.version, at)
+    },
+  }
+}
 
 export interface NpmPackageFile { path: string; bytes: Uint8Array }
 

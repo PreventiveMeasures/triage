@@ -10,10 +10,10 @@ import { getTarball, setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_TAR_ENTRIES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion, readNpmVersions,
-  readTogether, setNpmDocumentCache } from '../server-managed/npm-packages.ts'
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_TAR_ENTRIES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmPublishTime, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion,
+  readNpmVersions, readTogether, setNpmDocumentCache } from '../server-managed/npm-packages.ts'
 import { npmVersionFields } from '../server-managed/npm-manifest.ts'
-import { npmVersionStore, riskLineStore } from '../server-managed/npm-kept.ts'
+import { npmPublishTimeStore, npmVersionStore, riskLineStore } from '../server-managed/npm-kept.ts'
 import { MAX_TAR_BYTES, loadNpmFiles, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'
 import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskCache, npmRiskRemoved } from '../server-managed/npm-risk.ts'
@@ -77,6 +77,11 @@ async function setup(t) {
 }
 
 const packagePath = (name, version) => `/api/npm/package?${new URLSearchParams({ name, ...(version ? { version } : {}) })}`
+// Until `check` holds, as work the server leaves running behind a response.
+async function until(check) {
+  for (let n = 0; n < 200; n++) { if (await check()) return; await new Promise(resolve => { setTimeout(resolve, 5) }) }
+  assert.fail('timed out')
+}
 
 test('names, specs and scopes follow npm', () => {
   for (const name of ['lodash', '@babel/core', 'JSONStream', 'a.b-c_d', '@scope/name.js']) assert.equal(isNpmPackageName(name), true, name)
@@ -188,6 +193,7 @@ test('anyone with workspace access opens a public version, asked of the registry
   assert.deepEqual(versions.json(), { name: '@pub/pkg', private: false, distTags: { latest: '1.2.3' }, versions: ['1.2.3'], times: { '1.2.3': '2025-01-01T00:00:00.000Z' },
     created: '2020-01-01T00:00:00.000Z', teamScoped: false }, 'tags of unlisted versions are left out; when each was published, and its first was, from the whole document')
   assert.equal((await h.send(packagePath('@pub/pkg', '1.2.3'))).json().published, '2025-01-01T00:00:00.000Z', 'kept, once a whole document said it, for the version to carry')
+  await until(async () => await npmPublishTimeStore(h.db).read('@pub/pkg', '1.2.3') === '2025-01-01T00:00:00.000Z')
   const download = await h.send('/api/npm/download?name=%40pub%2Fpkg&version=1.2.3')
   assert.equal(download.status, 200)
   assert.equal(download.headers['content-type'], 'application/gzip')
@@ -979,6 +985,66 @@ test('a package\'s first version was published when the earliest time its whole 
   assert.equal(list.created, '2026-03-30T05:57:32.867Z')
   assert.deepEqual(list.times, { '0.0.1-security': '2026-03-31T03:25:11.636Z' }, 'times only for the versions it lists')
   assert.equal((await readNpmVersions('taken-down', false, new AbortController().signal)).created, undefined, 'none from the abbreviated document')
+})
+
+test('a public version\'s publish time is kept in the database once its whole document says it, read of the database once', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const calls = [], kept = npmPublishTimeStore(db)
+  const store = { read: (...args) => { calls.push('read'); return kept.read(...args) }, write: (...args) => { calls.push('write'); return kept.write(...args) } }
+  registry(t, [packageOf('timed', '1.0.0', { 'index.js': '' })])
+  const doc = { name: 'timed', version: '1.0.0', private: false }
+  assert.equal(await npmPublishTime(doc, store).read(), null, 'none before its whole document is read')
+  await npmPublishTime(doc, store).keep()
+  assert.deepEqual(calls, ['read', 'read'], 'read at once, nothing kept where nothing is noted')
+  calls.length = 0
+  const late = npmPublishTime(doc, store)
+  await readNpmVersions('timed', false, new AbortController().signal, { times: true })
+  assert.equal(await late.read(), '2025-01-01T00:00:00.000Z', 'noted here once the database had none, by a whole document read meanwhile')
+  await late.keep()
+  assert.deepEqual(calls, ['read', 'write'], 'the database read once, and kept where it had none')
+  assert.equal(await kept.read('timed', '1.0.0'), '2025-01-01T00:00:00.000Z')
+  calls.length = 0
+  const again = npmPublishTime(doc, store)
+  await again.keep()
+  await again.read()
+  assert.deepEqual(calls, ['read'], 'read once, nothing written where it is kept')
+  await kept.write('elsewhere', '2.0.0', '2024-06-01T00:00:00.000Z')
+  assert.equal(await npmPublishTime({ name: 'elsewhere', version: '2.0.0', private: false }, store).read(), '2024-06-01T00:00:00.000Z', 'as another instance kept it')
+  calls.length = 0
+  assert.equal(await npmPublishTime({ name: 'elsewhere', version: '2.0.0', private: true }, store).read(), null, 'a private version\'s never read of the database')
+  const secret = npmPublishTime({ ...doc, private: true }, store)
+  assert.equal(await secret.read(), '2025-01-01T00:00:00.000Z', 'but as noted here')
+  await secret.keep()
+  assert.deepEqual(calls, [], 'nor kept there')
+})
+
+test('a public version opened on an instance that never read its time carries the one the database keeps', async t => {
+  const h = await setup(t)
+  withToken(t)
+  // Their whole documents list no time for the version.
+  registry(t, [{ ...packageOf('kept-when', '1.0.0', { 'index.js': '' }), time: { '1.0.0': 'unknown' } },
+    { ...packageOf('@team/kept-when', '1.0.0', { 'index.js': '' }), private: true, time: { '1.0.0': 'unknown' } }])
+  const store = npmPublishTimeStore(h.db)
+  await store.write('kept-when', '1.0.0', '2024-06-01T00:00:00.000Z')
+  await store.write('@team/kept-when', '1.0.0', '2024-06-01T00:00:00.000Z')
+  assert.equal((await h.send(packagePath('kept-when', '1.0.0'))).json().published, '2024-06-01T00:00:00.000Z')
+  const secret = (await h.send(packagePath('@team/kept-when', '1.0.0'), 'admin')).json()
+  assert.deepEqual([secret.private, secret.published], [true, null], 'a private version\'s never read of it')
+})
+
+test('a version\'s time its whole document notes while its tarball is read comes with it, the database having none', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('noted-late', '1.0.0', { 'index.js': '' })
+  registry(t, [pkg])
+  const answer = globalThis.fetch
+  // Its tarball answered once the whole document read beside it has noted
+  // the time, the database long since read.
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    if (String(input) === pkg.doc.dist.tarball) await until(async () => await npmPublishTime({ name: 'noted-late', version: '1.0.0', private: false }).read() !== null)
+    return answer(input, init)
+  })
+  assert.equal((await h.send(packagePath('noted-late', '1.0.0'))).json().published, '2025-01-01T00:00:00.000Z')
 })
 
 test('a read no reader waits on leaves room for two version lists of readers\' own', async t => {
