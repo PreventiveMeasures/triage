@@ -6,11 +6,11 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { createSession } from '../server-managed/session.ts'
 
-test('the app agents are those of GITHUB_AGENTS with branches of their own, each told by its first account, its prefix and its fingerprint', () => {
+test('the app agents are those of GITHUB_AGENTS with branches of their own, each told by its prefix and its fingerprint', () => {
   assert.deepEqual(APP_AGENTS, [
-    { id: 'neo', name: 'Neo', avatar: 'app-3115942', account: { id: 274065190, logins: [] }, prefix: 'neo/', fingerprint: '🤖 Generated with [Neo](' },
-    { id: 'copilot', name: 'Copilot', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
-    { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110', account: { id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }, prefix: 'dependabot/' },
+    { id: 'neo', name: 'Neo', avatar: 'app-3115942', prefix: 'neo/', fingerprint: '🤖 Generated with [Neo](' },
+    { id: 'copilot', name: 'Copilot', prefix: 'copilot/' },
+    { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110', prefix: 'dependabot/' },
   ])
   assert.deepEqual(AGENT_BRANCH_PREFIXES, ['claude/', 'codex/', 'neo/', 'copilot/', 'dependabot/'])
 })
@@ -157,7 +157,8 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
     ['9'.repeat(40), 'Fix the build (#7)', { sessions: [], tasks: [], claude: false, codex: false, agents: ['copilot'] }]],
   'those no agent marked, or a pull request merged, are not; those the app agents authored however far back, each once')
   assert.deepEqual(asked.find(query => query.query.includes('author: { emails: $emails }')).variables.emails, ['198982749+Copilot@users.noreply.github.com',
-    '198982749+copilot-swe-agent@users.noreply.github.com', '49699333+dependabot@users.noreply.github.com', '49699333+dependabot[bot]@users.noreply.github.com'])
+    '198982749+copilot-swe-agent@users.noreply.github.com', '175728472+Copilot@users.noreply.github.com', '175728472+copilot-pull-request-reviewer@users.noreply.github.com',
+    '175728472+copilot-pull-request-reviewer[bot]@users.noreply.github.com', '49699333+dependabot@users.noreply.github.com', '49699333+dependabot[bot]@users.noreply.github.com'])
   const moved = body.commits.find(commit => commit.oid === 'f'.repeat(40))
   assert.deepEqual([moved.author, moved.authorId], ['Copilot', 198982749], 'each by its author\'s login and account id')
   assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', authorId: 7, createdAt: null, updatedAt: null },

@@ -7,7 +7,7 @@
 // its author, an account agents work as (github-agents.ts AGENT_OPERATED).
 import { labelAgents } from '../common/managed/agent-tasks.ts'
 import { GITHUB_AGENTS, agentOperated } from '../common/managed/github-agents.ts'
-import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
+import { AGENT_BRANCH_PREFIXES } from './app-agents.ts'
 import { type HistoryCommit, githubGraphql } from './repository-history.ts'
 
 // The merged pull requests read an answer, a page a query, as many queries
@@ -22,7 +22,7 @@ const MERGED_LABELS = 100
 // How long before or after a pull request rebased onto the branch was merged
 // its copies are committed.
 const REBASE_SKEW_MS = 10 * 60_000
-const LABEL_AGENTS = [...new Set([...Object.keys(GITHUB_AGENTS), ...APP_AGENTS.map(agent => agent.id)])]
+const LABEL_AGENTS = Object.keys(GITHUB_AGENTS)
 const SHA = /^[a-f\d]{40}$/u
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0

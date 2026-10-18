@@ -4,9 +4,8 @@ import { agentBranch, agentSessions, agentSignals, labelAgents } from '../common
 
 const none = { sessions: [], tasks: [], claude: false, codex: false, agents: [] }
 const session = id => ({ sessions: [id], tasks: [], claude: true, codex: false, agents: [] })
-// An agent the server knows by its app, as it tells one, and its marks.
-const apps = [{ id: 'neo', account: { id: 274065190, logins: [] }, fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', account: { id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] }, prefix: 'copilot/' },
-  { id: 'dependabot', account: { id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }, prefix: 'dependabot/' }]
+// An agent the server knows by its app, as it tells one, and its marks; its accounts GITHUB_AGENTS'.
+const apps = [{ id: 'neo', fingerprint: '🤖 Generated with [Neo](', prefix: 'neo/' }, { id: 'copilot', prefix: 'copilot/' }, { id: 'dependabot', prefix: 'dependabot/' }]
 const neo = { ...none, agents: ['neo'] }
 const pull = (number, head, signals = none, more = {}) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: 'ada', createdAt: number * 10,
   updatedAt: number * 10 + 5, head, fork: null, additions: 10, deletions: 2, commits: 1, closes: [], signals, ...more })

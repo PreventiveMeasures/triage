@@ -27,7 +27,7 @@ import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
 import { type Maker, coauthorsOf } from './commit-coauthors.ts'
-import { APP_AGENTS } from './repository-agents.ts'
+import { APP_AGENTS } from './app-agents.ts'
 import { usesOfKey } from '../risk/index.js'
 import { actionsLines } from './repository-actions.ts'
 

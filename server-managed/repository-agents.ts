@@ -11,12 +11,11 @@
 // an agent, and those alone are answered, never the texts. GraphQL alone
 // gives them, so it needs a token.
 import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AppAgent, agentSignals } from '../common/managed/agent-tasks.ts'
+import { GITHUB_AGENTS, type GithubAgentAccount, type GithubAgentId } from '../common/managed/github-agents.ts'
 import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
 import { GithubApiError } from './github-app.ts'
 import { ACTOR, type NamedAccount, actorOf, commitAccount, githubGraphql } from './repository-history.ts'
 import { ISSUES_CURSOR } from './repository-issues.ts'
-
-export { APP_AGENTS }
 
 export const AGENT_PULLS_PAGE = 50
 export const AGENT_COMMITS_PAGE = 100
@@ -35,7 +34,8 @@ const SHA = /^[a-f\d]{40}$/u
 const CLAUDE_EMAIL = 'noreply@anthropic.com'
 
 // The app agents' accounts' no-reply addresses, by each login of theirs.
-const AGENT_EMAILS = APP_AGENTS.flatMap(({ account }) => account?.logins.map(login => `${account.id}+${login}@users.noreply.github.com`) ?? [])
+const AGENT_EMAILS = APP_AGENTS.flatMap(({ id }) => GITHUB_AGENTS[id as GithubAgentId].accounts
+  .flatMap(({ id: account, logins }: GithubAgentAccount) => account === undefined ? [] : logins.map(login => `${account}+${login}@users.noreply.github.com`)))
 
 // An agent's branches, a page at a time, as GitHub lists them, by name;
 // each its tip commit's time, message and author.
