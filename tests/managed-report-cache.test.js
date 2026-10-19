@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { beforeEach, test } from 'node:test'
-import { fetchReport, fetchReports, fetchTeamReports } from '../ui/managed/report-data.js'
+import { fetchReport, fetchReports, fetchTeamReports, fetchTeamTrees } from '../ui/managed/report-data.js'
 import { managedAppState, resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from '../ui/managed/state.js'
 
 const content = id => ({ data: { findings: [{ id }] }, repo: { github: 'org/repo', directory: '' } })
@@ -213,4 +213,25 @@ test('hidden individual responses never populate team aggregates and publication
   assert.notStrictEqual(await fetchTeamReports('team'), aggregate)
   assert.notStrictEqual(await fetchTeamReports('team', { reportId: 'hidden' }), focused)
   assert.equal(calls.mock.callCount(), 4)
+})
+
+test('a team\'s trees are kept with its reports: a catalog refresh leaving the team as it was keeps them, even loading; one changing it drops them', async t => {
+  const teamCatalog = cacheKey => [{ id: 'team', reports: [{ id: 'report', cacheKey }] }]
+  setManagedReportCatalog(teamCatalog('v1'))
+  const pending = Promise.withResolvers()
+  const calls = t.mock.method(globalThis, 'fetch', url => {
+    assert.equal(url, '/api/teams/team/trees')
+    return pending.promise
+  })
+  const loading = fetchTeamTrees('team')
+  setManagedReportCatalog(teamCatalog('v1'))
+  pending.resolve(Response.json({ trees: { report: { 'src/a.js': {} } } }))
+  const trees = await loading
+  assert.deepEqual([...trees.keys()], ['report'], 'an unchanged catalog does not cancel the load')
+  assert.strictEqual(await fetchTeamTrees('team'), trees)
+  assert.equal(calls.mock.callCount(), 1)
+  setManagedReportCatalog(teamCatalog('v2'))
+  calls.mock.mockImplementation(() => Promise.resolve(Response.json({ trees: {} })))
+  assert.notStrictEqual(await fetchTeamTrees('team'), trees)
+  assert.equal(calls.mock.callCount(), 2)
 })
