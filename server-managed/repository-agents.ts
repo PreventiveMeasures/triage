@@ -1,8 +1,10 @@
 // What the code viewer's Agents tab reconstructs agents' sessions
 // from (GET /api/admin/repositories/agents, common/managed/agent-tasks.ts):
 // a page of the repository's pull requests, the most recently updated first,
-// and of its default branch's commits, the newest first, those no pull
-// request merged, read from its history as the Commits tab keeps it, the
+// as kept for the Pulse too (repository-pulls.ts readPulls), those past
+// them searched for, and of its default branch's commits, the newest first,
+// those no pull request merged, read from its history as the Commits tab
+// keeps it, the
 // marks an agent left kept with each (repository-history.ts commitMarks),
 // whether a pull request brought one looked up for those marked alone, and
 // kept by the commit; on the first page, its latest issues and the newest of
@@ -20,7 +22,7 @@ import { GithubApiError } from './github-app.ts'
 import type { GraphqlError } from './github-graphql.ts'
 import { ACTOR, ALL_BRANCHES, type HistoryCommit, type HistoryPages, type NamedAccount, actorOf, commitAccount, commitMarks, githubGraphql, historyFrom, historyMarks,
   inBatches, linkNoreplyUsers, messageMarks, variablesOf } from './repository-history.ts'
-import { ISSUES_CURSOR } from './repository-issues.ts'
+import type { PullList } from './repository-pulls.ts'
 
 export const AGENT_PULLS_PAGE = 50
 export const AGENT_COMMITS_PAGE = 100
@@ -65,29 +67,32 @@ const AUTHORED_QUERY = `query($owner: String!, $name: String!, $emails: [String!
     defaultBranchRef { target { ... on Commit { history(first: ${AGENT_COMMITS_PAGE}, author: { emails: $emails }) { nodes { ${COMMIT_FIELDS} } } } } }
   }
 }`
-// A page of pull requests, and on the first, the default branch's head and
-// the latest issues.
-const PAGE_QUERY = `query($owner: String!, $name: String!, $pulls: String, $first: Boolean!) {
+// What a pull request is read by, for its row (pull): its texts for the
+// marks an agent leaves in them (its body, its last commit's message, its
+// merge commit's), never answered; its commits counted beside (`commits {
+// totalCount }`, as the reads of it ask theirs).
+export const AGENT_PULL_FIELDS = `number title state isDraft createdAt updatedAt author { __typename ${ACTOR} } body headRefName isCrossRepository
+  headRepositoryOwner { login } additions deletions last: commits(last: 1) { nodes { commit { message } } } mergeCommit { message }
+  closingIssuesReferences(first: ${CLOSES}) { nodes { number } } labels(first: ${LABELS}) { nodes { name } }`
+// On the first page, the default branch's head and the latest issues.
+const PAGE_QUERY = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
-    pullRequests(first: ${AGENT_PULLS_PAGE}, after: $pulls, orderBy: { field: UPDATED_AT, direction: DESC }) {
-      pageInfo { hasNextPage endCursor }
-      nodes { number title state isDraft createdAt updatedAt author { ${ACTOR} } body headRefName isCrossRepository headRepositoryOwner { login } additions deletions
-        commits(last: 1) { totalCount nodes { commit { message } } }
-        mergeCommit { message }
-        closingIssuesReferences(first: ${CLOSES}) { nodes { number } }
-        labels(first: ${LABELS}) { nodes { name } } }
-    }
-    defaultBranchRef @include(if: $first) { target { oid } }
-    issues(first: ${AGENT_ISSUES}, orderBy: { field: UPDATED_AT, direction: DESC }) @include(if: $first) {
+    defaultBranchRef { target { oid } }
+    issues(first: ${AGENT_ISSUES}, orderBy: { field: UPDATED_AT, direction: DESC }) {
       nodes { number title state createdAt updatedAt author { ${ACTOR} } }
     }
   }
 }`
+// A page of the pull requests a search finds, as GitHub sorts them.
+const SEARCH_QUERY = `query($query: String!) {
+  search(type: ISSUE, query: $query, first: ${AGENT_PULLS_PAGE}) { nodes { ... on PullRequest { ${AGENT_PULL_FIELDS} commits { totalCount } } } }
+}`
 
 type Login = { login?: unknown; databaseId?: unknown } | null | undefined
-type PullNode = { number?: unknown; title?: unknown; state?: unknown; isDraft?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown
-  headRefName?: unknown; isCrossRepository?: unknown; headRepositoryOwner?: Login; additions?: unknown; deletions?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: { message?: unknown } | null } | null)[] }
-  mergeCommit?: { message?: unknown } | null; closingIssuesReferences?: { nodes?: ({ number?: unknown } | null)[] }; labels?: { nodes?: ({ name?: unknown } | null)[] } }
+export type PullNode = { number?: unknown; title?: unknown; state?: unknown; isDraft?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login; body?: unknown
+  headRefName?: unknown; isCrossRepository?: unknown; headRepositoryOwner?: Login; additions?: unknown; deletions?: unknown; commits?: { totalCount?: unknown } | null
+  last?: { nodes?: ({ commit?: { message?: unknown } | null } | null)[] } | null; mergeCommit?: { message?: unknown } | null
+  closingIssuesReferences?: { nodes?: ({ number?: unknown } | null)[] }; labels?: { nodes?: ({ name?: unknown } | null)[] } }
 type GitActor = { email?: unknown; user?: Login }
 type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
   author?: GitActor | null; associatedPullRequests?: { totalCount?: unknown } }
@@ -101,8 +106,9 @@ const pulledQuery = (count: number) => `query($owner: String!, $name: String!, $
   }
 }`
 type Pulled = { repository?: Record<string, { associatedPullRequests?: { totalCount?: unknown } } | null> | null }
-type Page = { repository?: { pullRequests?: Connection<PullNode>; defaultBranchRef?: { target?: { oid?: unknown; history?: Connection<CommitNode> } | null } | null
+type Page = { repository?: { defaultBranchRef?: { target?: { oid?: unknown; history?: Connection<CommitNode> } | null } | null
   issues?: Connection<IssueNode> } | null }
+type Found = { search?: { nodes?: (PullNode | null)[] } | null } | null
 type RefsPage = { repository?: { refs?: Connection<RefNode> } | null }
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
@@ -115,7 +121,8 @@ const nameOf = (value: unknown, max = MAX_NAME) => typeof value === 'string' && 
 const loginOf = (author: Login) => typeof author?.login === 'string' && LOGIN.test(author.login) ? author.login : null
 const PULL_STATES: Record<string, AgentPull['state']> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
 
-function pull(node: PullNode | null): AgentPull | null {
+// A pull request's row: what it is, and the marks an agent left on it.
+export function pull(node: PullNode | null): AgentPull | null {
   const at = number(node?.number)
   if (!node || !at) return null
   const author = accountOf(node.author)
@@ -125,7 +132,7 @@ function pull(node: PullNode | null): AgentPull | null {
     fork: node.isCrossRepository === true ? loginOf(node.headRepositoryOwner) ?? `pull-${at}` : null,
     additions: count(node.additions), deletions: count(node.deletions), commits: count(node.commits?.totalCount),
     closes: (node.closingIssuesReferences?.nodes ?? []).flatMap(closed => number(closed?.number) ?? []),
-    signals: agentSignals([node.body, node.commits?.nodes?.[0]?.commit?.message, node.mergeCommit?.message], APP_AGENTS, nameOf(node.headRefName),
+    signals: agentSignals([node.body, node.last?.nodes?.[0]?.commit?.message, node.mergeCommit?.message], APP_AGENTS, nameOf(node.headRefName),
       author, (node.labels?.nodes ?? []).map(label => label?.name)) }
 }
 
@@ -237,7 +244,7 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
 // handleRepositoryAgents): bumped as what a page reads, or how it tells an
 // agent, changes (with AGENT_MARKS_READ, app-agents.ts, where commits' marks
 // do), so that no answer an older server kept is sent for a day.
-export const AGENTS_READ_VERSION = 8
+export const AGENTS_READ_VERSION = 9
 
 // A cursor of the default branch's commits: those the pages before stopped
 // at (frontier), as many as MAX_FRONTIER, commas between, the first
@@ -247,27 +254,69 @@ const MAX_FRONTIER = 4 * ALL_BRANCHES
 export const COMMITS_CURSOR = new RegExp(`^(?:[\\da-f]{40}(?:,[\\da-f]{40}){0,${MAX_FRONTIER - 1}}|[\\da-f]{40} \\d{1,9})$`, 'u')
 const startsOf = (cursor: string) => cursor.split(/[ ,]/u).filter(part => SHA.test(part))
 
-const nextCursor = (connection: Connection<unknown> | undefined, cursor = ISSUES_CURSOR) => {
-  const info = connection?.pageInfo
-  return info?.hasNextPage === true && typeof info.endCursor === 'string' && cursor.test(info.endCursor) ? info.endCursor : null
+// A cursor of the pull requests: the last listed, by when it was updated and
+// its number (`<ms>.<number>`), those below it read next; any other, as an
+// older server gave (GitHub's), read from the newest again.
+const POSITION = /^(\d{1,15})\.(\d{1,10})$/u
+const positionOf = (item: AgentPull) => `${item.updatedAt ?? 0}.${item.number}`
+// Those updated by a time, as GitHub's search takes it, to the second; any
+// where it names none.
+const updatedBy = (at: number) => Number.isFinite(at) ? ` updated:<=${new Date(at).toISOString().replace(/\.\d{3}Z$/u, '+00:00')}` : ''
+
+// The repository's pull requests as kept (repository-pulls.ts PullList),
+// read as far back as their first page where none are, and those updated
+// since read as they are (http.ts keptPulls).
+export type KeptPulls = () => Promise<PullList>
+
+// A page of the repository's pull requests, the most recently updated
+// first, below the one `cursor` names (none: from the newest): of those kept
+// (`kept`), as far back as every one is read; past them, as GitHub's search
+// finds those updated before, a page a query. With where it reads on from,
+// null where none are left: past every one kept where all are.
+async function agentPulls(fullName: string, token: string, cursor: string | null, kept: KeptPulls, fetchImpl: typeof fetch) {
+  const at = cursor === null ? null : POSITION.exec(cursor)
+  const [time, past] = at ? [Number(at[1]), Number(at[2])] : [Number.POSITIVE_INFINITY, 0]
+  const below = (item: AgentPull) => (item.updatedAt ?? 0) < time || ((item.updatedAt ?? 0) === time && item.number < past)
+  const list = await kept()
+  // Since when every one updated is read (as repository-pulls.ts pullsReadTo
+  // tells, which reads its pages by these fields): all since the year's
+  // start, -∞.
+  const read = list.next ? list.next.to ?? Number.POSITIVE_INFINITY : list.reach ?? Number.NEGATIVE_INFINITY
+  // As far back as every one is read: the year's start, where all since are.
+  const bottom = Math.max(read, list.since)
+  const listed = list.pulls.filter(item => below(item) && (item.updatedAt ?? 0) >= bottom)
+  const whole = list.all === true && read === Number.NEGATIVE_INFINITY
+  if (listed.length > 0) {
+    const page = listed.slice(0, AGENT_PULLS_PAGE)
+    return { pulls: page, after: listed.length > page.length || !whole ? positionOf(page.at(-1)!) : null }
+  }
+  if (whole) return { pulls: [], after: null }
+  const found = await githubGraphql(SEARCH_QUERY, { query: `repo:${fullName} is:pr sort:updated-desc${updatedBy(Math.min(time, bottom))}` }, token, fetchImpl) as Found
+  const nodes = found?.search?.nodes ?? []
+  const rows = nodes.flatMap(node => pull(node) ?? [])
+  const last = rows.at(-1)
+  const after = nodes.length >= AGENT_PULLS_PAGE && last ? positionOf(last) : null
+  return { pulls: rows.filter(below), after: after === cursor ? null : after }
 }
 
-// A page of what the repository's agents left: its pull requests on from
-// the cursor `pulls` ends at, its default branch's commits on from those
-// `commits` names, as its history is kept (`pages`, historyFrom: the first
-// page from its head), whether a pull request brought those marked kept
-// (`pulled`) (the first page where neither is named, with its issues, its
+// A page of what the repository's agents left: its pull requests below the
+// one the cursor `pulls` names, as kept (`kept`, agentPulls), its default
+// branch's commits on from those `commits` names, as its history is kept
+// (`pages`, historyFrom: the first page from its head), whether a pull
+// request brought those marked kept (`pulled`) (the first page where
+// neither is named, with its issues, its
 // agents' branches and the commits the app agents' accounts authored, and
 // the app agents it may name), and the cursors reading on from each, null
 // where either is read whole.
 export async function repositoryAgents(fullName: string, token: string, cursors: { pulls: string | null; commits: string | null }, pages: HistoryPages,
-  pulled: CommitPulls, fetchImpl: typeof fetch = globalThis.fetch) {
+  pulled: CommitPulls, kept: KeptPulls, fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
   const first = cursors.pulls === null && cursors.commits === null
-  const [data, branches, authored] = await Promise.all([
-    first || cursors.pulls !== null ? githubGraphql(PAGE_QUERY, { owner, name, pulls: cursors.pulls, first }, token, fetchImpl) as Promise<Page> : null,
+  const [data, branches, authored, pulls] = await Promise.all([
+    first ? githubGraphql(PAGE_QUERY, { owner, name }, token, fetchImpl) as Promise<Page> : null,
     first ? Promise.all(AGENT_BRANCH_PREFIXES.map(prefix => agentBranches(owner, name, prefix, token, fetchImpl))) : [],
     first ? githubGraphql(AUTHORED_QUERY, { owner, name, emails: AGENT_EMAILS }, token, fetchImpl) as Promise<Page> : null,
+    first || cursors.pulls !== null ? agentPulls(fullName, token, cursors.pulls, kept, fetchImpl) : { pulls: [], after: null },
   ])
   const repository = data?.repository
   if (data !== null && !repository) throw new GithubApiError(404, 'github-not-found')
@@ -280,9 +329,9 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
   const [brought] = await Promise.all([pulledCommits(fullName, token, marked.map(({ commit }) => commit.sha), pulled, fetchImpl),
     linkNoreplyUsers(nodes.map(node => node?.author), token, fetchImpl)])
   const commits = [...marked.flatMap(({ commit, signals }) => brought.has(commit.sha) ? [] : [keptCommit(commit, signals)]), ...nodes.flatMap(node => directCommit(node) ?? [])]
-  const after = { pulls: nextCursor(repository?.pullRequests), commits: frontier(history, named.slice(ALL_BRANCHES)) }
+  const after = { pulls: pulls.after, commits: frontier(history, named.slice(ALL_BRANCHES)) }
   return {
-    pulls: (repository?.pullRequests?.nodes ?? []).flatMap(node => pull(node) ?? []),
+    pulls: pulls.pulls.map(({ merged: _merged, ...row }: AgentPull & { merged?: unknown }) => row),
     commits: commits.filter((commit, index) => commits.findIndex(other => other.oid === commit.oid) === index),
     ...first ? {
       issues: (repository?.issues?.nodes ?? []).flatMap(node => issue(node) ?? []),

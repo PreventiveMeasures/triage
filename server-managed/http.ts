@@ -137,7 +137,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import { type KeptStore, REPOSITORY_READ_KEPT_MS, codeHeadStore, codeTreeStore, commitPullStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
   lockfileReadStore,
-  npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+  npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { type NpmDelta, keptNpmDeltas, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
@@ -233,6 +233,7 @@ import { commentReviews } from './pull-comment-reviews.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { type AgentMerges, agentCommits, agentMerges, directCommits, sameMerges } from './agent-merges.ts'
+import { PULLS_READ_VERSION, type PullList, pullsReadTo, readPulls } from './repository-pulls.ts'
 import { AGENT_MARKS_READ } from './app-agents.ts'
 import { releaseCommits } from './release-commits.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
@@ -2116,8 +2117,40 @@ function commitPulls(deps: ManagedHttpDeps, repoId: number): CommitPulls {
   }
 }
 
+// How long repository `repoId`'s pull requests kept (keptPulls) are taken as
+// they are before those updated since are read: less than its readers keep
+// their answers (keptAnswer), that one read of them serves both.
+const PULLS_FRESH_MS = 30_000
+// Each repository's reads of its pull requests, by its id: one at a time,
+// each after those asked before it.
+const pullsReads = new Map<number, Promise<unknown>>()
+
+// Repository `repoId`'s pull requests, as kept (repository-pulls.ts
+// readPulls), read on where they were read PULLS_FRESH_MS ago or longer, or
+// not as far back as `need`: as far back as it, for the Pulse; for the
+// Agents tab (null), as far back as they were read, those updated since read
+// (a read not finished, on), else their first page. One read of a
+// repository's at a time, the rest after it, from what it kept.
+function keptPulls(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, need: number | null): Promise<PullList> {
+  const store = pullListStore<PullList>(deps.db, deps.config.debug)
+  const key = `${repoId}\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`
+  const reading = (pullsReads.get(repoId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    const kept = await store.read(key)
+    const list = kept?.value ?? null
+    if (list && Date.now() - kept!.at < PULLS_FRESH_MS && (need === null || pullsReadTo(list) <= need)) return list
+    const since = pulseSince(52, Date.now())
+    const read = await readPulls(fullName, token, since, list, globalThis.fetch,
+      need ?? (list ? list.next ? since : list.reach ?? since : Date.now()))
+    await store.write(key, read, Date.now())
+    return read
+  })
+  pullsReads.set(repoId, reading)
+  void reading.catch(() => {}).finally(() => { if (pullsReads.get(repoId) === reading) pullsReads.delete(repoId) })
+  return reading
+}
+
 // What the Pulse keeps of repository `repoId`'s pull requests merged, as
-// it reads them for whose its year's commits are (pulseCommits, agentMerges).
+// it tells by them whose its year's commits are (pulseCommits, agentMerges).
 const pulseMergesKey = (repoId: number) => `${repoId}\0pulse-merges\0${PULSE_YEAR_VERSION}`
 
 // The pull requests merged as the Pulse last read them through (a read not
@@ -2253,9 +2286,10 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
 
 // GET /api/admin/repositories/agents: what the code viewer's Agents tab
 // reconstructs agents' sessions from (repository-agents.ts): a page
-// of pull requests on from the cursor `pulls` names, and of the default
-// branch's commits on from `commits`, the first page, naming neither, with
-// issues and branches. They are the whole repository's (readWholeRepository).
+// of pull requests below the one the cursor `pulls` names, of those kept for
+// the Pulse too (keptPulls), and of the default branch's commits on from
+// `commits`, the first page, naming neither, with issues and branches. They
+// are the whole repository's (readWholeRepository).
 async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   const cursors = { pulls: query.get('pulls'), commits: query.get('commits') }
@@ -2264,7 +2298,7 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
     sendJson(res, 400, { error: 'bad-request' }); return
   }
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors, historyPages(deps, repoId, true, true),
-    commitPulls(deps, repoId)),
+    commitPulls(deps, repoId), () => keptPulls(deps, repoId, fullName, token, null)),
     `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
 }
 
@@ -2697,9 +2731,10 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
 // its commits as the Commits tab keeps them, with their lines
 // (yearCommits): kept by the head it was read from (repositoryReadStore),
 // that head kept as an issue's page is; its commits merged from an agent's
-// pull request told by those merged (agentMerges), kept as read, the rest
-// read on by the next answer as the year's commits are, and read again as
-// an answer kept is, a label changing whose a pull request is without
+// pull request told by those merged (agentMerges), of the pull requests
+// kept for the Agents tab too (keptPulls), what they tell kept as read, the
+// rest read on by the next answer as the year's commits are, and read again
+// as an answer kept is, a label changing whose a pull request is without
 // moving the head, the year counted again where what they bring changed.
 // Read no further back than the period asked (`weeks`) needs, its weeks and
 // as many before them, the rest read only as a longer one asks, its count
@@ -2766,18 +2801,19 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   }
   const sha = head.value.sha
   // What tells whose the year's commits are, kept as read: the agents' pull
-  // requests merged (agentMerges), and the commits that release the
+  // requests merged (agentMerges), as the pull requests kept tell, read as
+  // far back as `whole` (keptPulls), and the commits that release the
   // repository (`releases`, release-commits.ts releaseCommits).
   type Attribution = AgentMerges & { releases?: string[] }
   const keptAttribution = async () => ((await store.read(mergesKey))?.value as Attribution | undefined) ?? null
-  const attribution = async (kept: Attribution | null, whole: number): Promise<Attribution> => {
-    const [merges, releases] = await Promise.all([agentMerges(fullName, token, first, kept, globalThis.fetch, whole),
+  const attribution = async (whole: number): Promise<Attribution> => {
+    const [pulls, releases] = await Promise.all([keptPulls(deps, repoId, fullName, token, whole),
       releaseCommits(fullName, token, first, historyChanges(deps, repoId))])
-    return { ...merges, releases }
+    return { ...agentMerges(pulls, first), releases }
   }
-  // Since when every pull request merged is read (agentMerges `reach`, or
-  // a read not finished's `to`): all of them, -∞; none yet, ∞.
-  const readTo = (read: Attribution) => read.next ? read.next.to ?? Number.POSITIVE_INFINITY : read.reach ?? Number.NEGATIVE_INFINITY
+  // Since when every pull request merged is read (repository-pulls.ts
+  // pullsReadTo): all of them, -∞; none yet, ∞.
+  const readTo = (read: Attribution) => pullsReadTo(read)
   // The year counted from its `commits` as `read` tells whose they are and
   // which were pushed directly, the branch followed through those it was
   // read on past (`passed`, yearCommits) too, whole from when both the
@@ -2802,7 +2838,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
     const whole = stats.from ?? first
     await keptAnswer(deps, mergesKey, async () => {
       const kept = await keptAttribution()
-      const read = await attribution(kept, whole)
+      const read = await attribution(whole)
       const same = kept && sameMerges(read, kept) && read.releases!.join() === (kept.releases ?? []).join() && readTo(kept) <= readTo(read)
       if (readTo(read) >= whole || same) return read
       const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true), globalThis.fetch, whole)
@@ -2820,7 +2856,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   }
   if (!held || !('tooMany' in held)) {
     const [year, read] = await Promise.all([yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true), globalThis.fetch, need),
-      keptAttribution().then(kept => attribution(kept, need))])
+      attribution(need)])
     await store.write(mergesKey, read, Date.now())
     if (year.complete) {
       if (readTo(read) >= need) return { stats: await last(), reading: null, pulls: read.next?.read ?? 0, pending: false, kept: false }
