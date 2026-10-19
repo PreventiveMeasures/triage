@@ -13,8 +13,10 @@ const sri = text => `sha512-${createHash('sha512').update(text).digest('base64')
 const PATCH = 'ab'.repeat(32)
 const at = (name, version, more = {}) => ({ name, version, source: 'registry', integrity: sri(`${name}@${version}`), lockfile: 'npm', ...more })
 const review = (pkg, reviewer, more = {}) => ({ package: pkg.name, version: pkg.version, integrity: pkg.integrity, basePackage: null, baseVersion: null,
-  reviewer, status: 'accept', full: true, time: 1, ...pkg.patchHash ? { patchHash: pkg.patchHash } : {}, ...more })
+  reviewer, login: reviewer, status: 'accept', full: true, time: 1, ...pkg.patchHash ? { patchHash: pkg.patchHash } : {}, ...more })
 const strip = ({ integrity: _integrity, lockfile: _lockfile, patchHash, ...pkg }) => ({ ...pkg, ...patchHash ? { patched: true } : {} })
+// A reviewer as a version's review tells them: passing it, in its comments alone where `comment`.
+const passes = (login, comment = false) => ({ login, status: 'accept', passes: true, ...comment ? { comment: true } : {} })
 
 test('the reviews its comments make count beside its teams\', each reviewer once, a reject holding a version; the reviewed dependencies passing any first', async () => {
   const ms = at('ms', '2.1.3', { was: ['2.1.2'] })
@@ -29,14 +31,16 @@ test('the reviews its comments make count beside its teams\', each reviewer once
   const lookup = dependency => { asked.push(dependency.name); return Promise.resolve(dependency.name === 'other') }
   let wanting = null
   const comments = list => { wanting = list.map(dependency => dependency.name).toSorted(); return Promise.resolve({ failed: false, reviews: [
-    review(ms, 'u1', { time: 5 }), review(ms, 'u2', { time: 5 }), review(ms, 'u5', { time: 5 }), review(patched, 'u2', { time: 5 }), review(patched, 'u3', { time: 5 }),
+    review(ms, 'u1', { status: 'accept-with-nits', time: 5 }), review(ms, 'u2', { time: 5 }), review(ms, 'u5', { time: 5 }), review(patched, 'u2', { time: 5 }), review(patched, 'u3', { time: 5 }),
     review(other, 'u3', { status: 'reject', time: 5 }), review(held, 'u3', { status: 'reject', time: 5 }),
   ] }) }
   const answer = await reviewedDependencies(told, state, { reviewed: { lookup }, commentReviews: comments })
   assert.deepEqual(wanting, ['ms', 'patched'], 'its comments read for those still wanting one, the reviewed dependencies asked first')
-  assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(ms), reviews: 3, commented: 2 }, { ...strip(patched), reviews: 2, commented: 2 }],
-    'u1 once, for their review here and in its comments; u2 in its comments alone, and u5, whose review here is partial; a patched one passed by reviews of its patch')
-  assert.deepEqual(answer.lockfiles[0].unreviewed, [{ ...strip(held), reviews: 2, rejected: true, commented: 1 }], 'a reject in its comments holds one its teams passed')
+  assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(ms), reviews: 3, commented: 2, reviewers: [{ ...passes('u1', true), status: 'accept-with-nits' }, passes('u5', true), passes('u2', true)] },
+    { ...strip(patched), reviews: 2, commented: 2, reviewers: [passes('u2', true), passes('u3', true)] }],
+    'u1 once, for their review here and in its comments, their latest verdict, in its comments, told so; u2 in its comments alone, and u5, whose review here is partial; a patched one passed by reviews of its patch')
+  assert.deepEqual(answer.lockfiles[0].unreviewed, [{ ...strip(held), reviews: 2, rejected: true, commented: 1,
+    reviewers: [passes('u1'), passes('u4'), { login: 'u3', status: 'reject', comment: true }] }], 'a reject in its comments holds one its teams passed')
   assert.deepEqual(asked.toSorted(), ['held', 'ms', 'other', 'patched'], 'one held asked of the reviewed dependencies too, which pass `other` whatever rejects it')
   assert.deepEqual([answer.review.commentReviews, answer.review.toReview, answer.review.unreviewed], [4, 0, 1])
 
@@ -111,10 +115,11 @@ test('a pull request\'s comments, reviews\' own and on its diff too, are read fo
   assert.equal(read.failed, false)
   const bobAt = Date.parse('2026-10-05T00:00:00Z')
   assert.deepEqual(read.reviews, [
-    { package: 'ms', version: '2.1.3', integrity: 'sha512-a', basePackage: null, baseVersion: null, reviewer: 'u-bob', status: 'accept', full: true, time: bobAt },
-    { package: 'ms', version: '2.1.3', integrity: 'sha1-b', basePackage: null, baseVersion: null, reviewer: 'u-bob', status: 'accept', full: true, time: bobAt },
-    { package: 'tool', version: '1.0.0', integrity: 'sha512-c', patchHash: PATCH, basePackage: null, baseVersion: null, reviewer: 'u-bob', status: 'reject', full: true, time: bobAt },
-  ], 'bob\'s, by the app\'s user, as of his latest comment, edited after his review, each hash apart; neither mallory\'s, who reviews for it in no team, nor one by none of its authors, nor one malformed')
+    { package: 'ms', version: '2.1.3', integrity: 'sha512-a', basePackage: null, baseVersion: null, reviewer: 'u-bob', login: 'Bob', status: 'accept', full: true, time: bobAt },
+    { package: 'ms', version: '2.1.3', integrity: 'sha1-b', basePackage: null, baseVersion: null, reviewer: 'u-bob', login: 'Bob', status: 'accept', full: true, time: bobAt },
+    { package: 'tool', version: '1.0.0', integrity: 'sha512-c', patchHash: PATCH, basePackage: null, baseVersion: null, reviewer: 'u-bob', login: 'Bob', status: 'reject', full: true,
+      time: bobAt },
+  ], 'bob\'s, by the app\'s user, his login as he wrote it, as of his latest comment, edited after his review, each hash apart; neither mallory\'s, who reviews for it in no team, nor one by none of its authors, nor one malformed')
   assert.deepEqual(accounts.toSorted((a, b) => a.login < b.login ? -1 : 1), [{ login: 'bob', githubId: 3 }, { login: 'carol', githubId: 4 }, { login: 'mallory', githubId: 99 }])
   assert.equal(inputs[0].comments[0].editedAt, '2026-10-05T00:00:00Z', 'when one was edited told')
   assert.deepEqual(inputs[0].comments.map(comment => [comment.kind, comment.author, comment.state ?? null]),
