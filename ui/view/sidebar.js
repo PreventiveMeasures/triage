@@ -1422,7 +1422,7 @@ document.addEventListener('managed-profile-change', (event) => {
 // Avatar disc: the cached avatar (served same-origin from /api/avatar/<id>) over
 // a fallback initial that shows when there's no avatar (the img 404s). The id in
 // the path keys the browser cache per user — a fixed URL would serve the
-// previous user's cached avatar (cache-control: private, max-age) after a switch.
+// previous user's cached avatar (the browser keeps one a while) after a switch.
 function avatarTemplate(initial, userId, large = false) {
   const src = `/api/avatar/${encodeURIComponent(userId)}${avatarRevision ? `?v=${avatarRevision}` : ''}`
   return html`<span class=${large ? 'user-avatar user-avatar-lg' : 'user-avatar'}>

@@ -69,6 +69,15 @@ export async function knowingGithubUsers(read) {
 // address changes with it, as the page would show its image as first loaded.
 const avatarRevisions = new Map()
 
+// A user's avatar asked for again under its own address, the browser keeping
+// the image it answers in place of the one it kept (the server lets it keep
+// one a while, server-managed/http.ts USER_AVATAR_CACHE): the next page
+// drawn shows the one chosen too. A failure leaves the one kept, shown till
+// the browser asks again by itself.
+function refreshAvatar(userId) {
+  globalThis.fetch(`/api/avatar/${encodeURIComponent(userId)}`, { cache: 'reload', credentials: 'same-origin' }).catch(() => {})
+}
+
 // The signed-in user's latest profile change in this page, and how many;
 // the accounts they unlinked in it, by login, lowercased, and GitHub id.
 let latestProfile = null
@@ -84,7 +93,10 @@ const unlinkedIds = new Set()
 // login and GitHub id) is no longer theirs, by any login this session's
 // answers named it by.
 export function knowProfile(userId, profile, avatarChanged = false, unlinkedAccount = null) {
-  if (avatarChanged) avatarRevisions.set(userId, (avatarRevisions.get(userId) ?? 0) + 1)
+  if (avatarChanged) {
+    avatarRevisions.set(userId, (avatarRevisions.get(userId) ?? 0) + 1)
+    refreshAvatar(userId)
+  }
   if (unlinkedAccount) unlinked.add(unlinkedAccount.login.toLowerCase())
   if (Number.isSafeInteger(unlinkedAccount?.githubId)) unlinkedIds.add(unlinkedAccount.githubId)
   latestProfile = { userId, profile }

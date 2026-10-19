@@ -114,8 +114,10 @@ test('an answer naming a login the server resolves to no one forgets what was ke
   assert.deepEqual(['alice', 'bob', 'carol-work'].map(appUser), [null, null, null])
 })
 
-test('the signed-in user\'s own profile change shows in what was kept of them: their name, a fresh avatar, an account unlinked theirs no more', () => {
+test('the signed-in user\'s own profile change shows in what was kept of them: their name, a fresh avatar, an account unlinked theirs no more', t => {
   forgetGithubUsers()
+  const asked = []
+  t.mock.method(globalThis, 'fetch', (url, options) => { asked.push([url, options]); return Promise.resolve(new Response(null)) })
   // `zoe-old`, the login Zoe signed in with before renaming on GitHub, theirs by their account's id.
   knowGithubUsers({ commits: [{ authorLogin: 'zoe' }, { authorLogin: 'zoe-work' }, { authorLogin: 'zoe-old', authorId: 1 }, { authorLogin: 'yan' }], users: {
     zoe: { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, 'zoe-work': { id: 'zoe-id', login: 'zoe', name: 'Zoe' }, 'zoe-old': { id: 'zoe-id', login: 'zoe', name: 'Zoe' },
@@ -125,6 +127,7 @@ test('the signed-in user\'s own profile change shows in what was kept of them: t
   assert.deepEqual(['zoe', 'zoe-work', 'zoe-old', 'yan'].map(githubUserName), ['Zoe at Work', 'Zoe at Work', 'Zoe at Work', 'Yan'],
     'under every login of theirs, one before renaming too; another user\'s as it was')
   assert.match(templateText(githubUser('zoe-work')), /src=\/api\/avatar\/zoe-id\?v=1/u, 'their avatar asked for again')
+  assert.deepEqual(asked, [['/api/avatar/zoe-id', { cache: 'reload', credentials: 'same-origin' }]], 'and the one the browser keeps under its own address replaced')
   assert.doesNotMatch(templateText(githubUser('yan')), /\?v=/u)
   // `zoe-job`, the login Zoe's work account had before it was renamed, theirs by its id.
   knowGithubUsers({ commits: [{ authorLogin: 'zoe-job', authorId: 2 }], users: { 'zoe-job': { id: 'zoe-id', login: 'zoe', name: 'Zoe at Work' } } })

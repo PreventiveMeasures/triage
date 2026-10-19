@@ -201,7 +201,7 @@ Privacy and spoofing rules:
 - Only an item's own texts are read: a pull request's body and its head and merge commit messages, a commit's message, and a branch's tip commit.
 - Comments and issue bodies are never read, since anyone can name a session in a comment.
 - Only what the texts tell (sessions, marks, fingerprints) is answered, never the texts.
-- The server serves avatars only for the known agents' own GitHub Apps and accounts, and the browser never keeps a user's avatar.
+- The server serves avatars only for the known agents' own GitHub Apps and accounts, which the browser keeps a day.
 
 Loading stops after a page that adds no session; **More** then reads on.
 
