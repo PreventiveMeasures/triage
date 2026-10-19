@@ -849,7 +849,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   resetGraph2()
   for (const entry of findings) {
     await ingestReport(entry.filename, entry.data, gen, {
-      renderView: false, managedReportId: entry.id, managedRepo: entry.repo, folded: workspace.folded === true,
+      renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepLens: workspace.folded === true,
     })
     if (isStaleLoad(gen)) return false
   }
@@ -910,9 +910,9 @@ const OPENING_FIELDS = ['showRevalidation', 'upstreamOnly', 'revalidationDetaile
 
 // The whole reports in place of a team board's copy of them, which left out
 // rows App mode does not show (common/managed/finding-detail.js `fold`):
-// ingested again as they are, the reader's filters left as they set them, or,
-// while they have left the `opening` ones alone, those the whole reports open
-// on. The findings the board's copy held keep the annotations kept for them
+// ingested again as they are, the lens configured once they are all in, the
+// reader's filters left as they set them, or, while they leave the `opening`
+// ones alone throughout, those the whole reports open on. The findings the board's copy held keep the annotations kept for them
 // since, a reader's edits among them; those it left out are hydrated from the
 // annotations read as the team opened, any told since caught up with
 // (managed-feed.js). The board is held as it was meanwhile (render.js), and
@@ -922,20 +922,23 @@ async function replaceManagedReports(workspace, findings, { gen, hydrate, annota
   const whole = new Map(workspace.map(entry => [entry.id, entry]))
   const entries = findings.map(entry => whole.get(entry.id))
   if (isStaleLoad(gen) || entries.some(entry => !entry)) return false
-  const untouched = OPENING_FIELDS.every((key, index) => state[key] === opening[index])
   const held = new Set(state.reports.flatMap(loaded => loaded.groups.flat().map(finding => finding.id)))
   const board = document.querySelector('#findings-body-slot')
+  let settled = null, untouched = false
   board?.setAttribute('inert', '')
   try {
     state.reports = []
     clearMergedGroups()
     for (const entry of entries) {
       const ingested = await ingestReport(entry.filename, entry.data, gen, {
-        renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepFilters: true,
+        renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepFilters: true, keepLens: true,
       })
       if (isStaleLoad(gen)) return false
       if (!ingested) { await failManagedTeamLoad('Could not load all team reports. Please try again.'); return false }
     }
+    untouched = OPENING_FIELDS.every((key, index) => state[key] === opening[index])
+    configureReportRevalidation()
+    settled = OPENING_FIELDS.map(key => state[key])
     if (!await startManagedTeamFeed({ hydrate: (signal, readAnnotations) => hydrate(signal, readAnnotations, held), annotations }) || isStaleLoad(gen)) {
       if (!isStaleLoad(gen)) await failManagedTeamLoad('Could not load report annotations. Open the team or report again to retry.')
       return false
@@ -943,7 +946,8 @@ async function replaceManagedReports(workspace, findings, { gen, hydrate, annota
   } finally {
     board?.removeAttribute('inert')
   }
-  if (untouched) applyOpeningFilters(getShownGroups())
+  // Left alone throughout, but for what the lens took of the whole reports.
+  if (untouched && OPENING_FIELDS.every((key, index) => state[key] === settled[index])) applyOpeningFilters(getShownGroups())
   return true
 }
 
@@ -1453,7 +1457,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // push. The headless `window.__loadFile` path passes nothing, staying
 // unguarded so it keeps accumulating across calls (the print pipeline
 // relies on that).
-async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null, managedRepo = null, keepFilters = false, folded = false } = {}) {
+async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null, managedRepo = null, keepFilters = false, keepLens = false } = {}) {
   const stale = () => gen !== null && isStaleLoad(gen)
   try {
     // Finish both hints before rendering the Link button. Copy remains
@@ -1630,9 +1634,11 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     if (stampUpstreamFindings(state.reports)) clearMergedGroups()
     state.revalidateConflicts = getRevalidationConflicts()
     // Restore/disable the lens before deriving opening filters, including when
-    // leaving a conflicted workspace for one of its individual reports; a
-    // team board's copy `folded` leaves it as it is (render.js).
-    configureReportRevalidation({ held: folded })
+    // leaving a conflicted workspace for one of its individual reports. One
+    // to `keepLens` leaves it as it is: a team board's folded copy, whose rows
+    // left out might tell otherwise (render.js), and its whole reports
+    // ingested in its place, the lens configured once they are all in.
+    configureReportRevalidation({ held: keepLens })
     // A view's reports ingested again, whole, keep the filters its reader set.
     if (isFirst && !keepFilters) {
       resetFilters()
