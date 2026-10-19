@@ -5,8 +5,9 @@ import { COAUTHORS_READ, coauthorsOf } from '../server-managed/commit-coauthors.
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { GithubApiError } from '../server-managed/github-errors.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { historyPageStore } from '../server-managed/npm-kept.ts'
+import { historyPageStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { HISTORY_GLUED, historyFrom, inBatches, repositoryHistory } from '../server-managed/repository-history.ts'
+import { PULSE_YEAR_VERSION } from '../server-managed/repository-pulse.ts'
 import { squashedPulls } from '../server-managed/repository-squashes.ts'
 import { createSession } from '../server-managed/session.ts'
 
@@ -371,6 +372,49 @@ test('a rebase whose commits go on past those listed is told, and kept, once the
   assert.equal(lookups(), looked + 1, 'kept once told')
 })
 
+test('the history tells the pull requests squashed into it by those the Pulse last read merged, those committed while it read every one looked up no further', async t => {
+  const [squash, direct, p1] = ['5', '7', '8'].map(char => char.repeat(40))
+  // A day ago, within the year the Pulse reads.
+  const at = new Date(Date.now() - 86_400_000).toISOString()
+  const node = (oid, parents, message) => ({ oid, message, committedDate: at, author: null, parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  const graphql = ({ query }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: squash, committedDate: at } }, branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+      tags: { nodes: [] } }
+    : query.includes('pullRequest(number') ? { p0: { headRefOid: p1, commits: { totalCount: 1, nodes: [{ commit: node(p1, [d], 'Start') }] } } }
+    : query.includes('pullRequests(states') ? { pullRequests: { nodes: [] } }
+    : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [node(squash, [direct], 'Feature (#2)'), node(direct, [d], 'Direct'), node(d, [], 'Root')] } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  // As the Pulse read them since: #2 squashed into main.
+  await repositoryReadStore(request.db).write(`1\0pulse-merges\0${PULSE_YEAR_VERSION}`, { merges: [], rebases: [], through: Date.now(), next: null,
+    pulls: [[squash, Date.parse(at), 2]], pullRebases: [] }, Date.now())
+  const { body } = await request({ repoId: '1', all: 'true' })
+  assert.deepEqual(body.pulls.map(pull => [pull.merge, pull.number, pull.head]), [[squash, 2, p1]])
+  assert.equal(asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('associatedPullRequests')).length, 0, 'no commit looked up')
+})
+
+test('what the Pulse read merged, where it can\'t be told, tells none: the pull requests squashed looked up as ever', async t => {
+  const [squash, direct, p1] = ['5', '7', '8'].map(char => char.repeat(40))
+  const at = new Date(Date.now() - 86_400_000).toISOString()
+  const node = (oid, parents, message) => ({ oid, message, committedDate: at, author: null, parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  const graphql = ({ query }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: squash, committedDate: at } }, branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+      tags: { nodes: [] } }
+    : query.includes('associatedPullRequests') ? { c0: { associatedPullRequests: { nodes: [{ number: 2, mergeCommit: { oid: squash } }] } },
+      c1: { associatedPullRequests: { nodes: [] } } }
+    : query.includes('pullRequest(number') ? { p0: { headRefOid: p1, commits: { totalCount: 1, nodes: [{ commit: node(p1, [d], 'Start') }] } } }
+    : query.includes('pullRequests(states') ? { pullRequests: { nodes: [] } }
+    : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [node(squash, [direct], 'Feature (#2)'), node(direct, [d], 'Direct'), node(d, [], 'Root')] } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  // Kept as no server writes it: its merges none to read.
+  await repositoryReadStore(request.db).write(`1\0pulse-merges\0${PULSE_YEAR_VERSION}`, { merges: [], rebases: [], through: Date.now(), next: null, pulls: [null],
+    pullRebases: [] }, Date.now())
+  const { body } = await request({ repoId: '1', all: 'true' })
+  assert.deepEqual(body.pulls.map(pull => [pull.merge, pull.number, pull.head]), [[squash, 2, p1]])
+  assert.equal(asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('associatedPullRequests')).length, 1)
+})
+
 test('a history is sent all the same where the pull requests squashed into it can\'t be read', async t => {
   const graphql = ({ query }) => query.includes('associatedPullRequests') || query.includes('pullRequests(') ? { errors: [{ type: 'FORBIDDEN' }] }
     : { data: { repository: query.includes('refs/heads/')
@@ -483,6 +527,35 @@ test('squashed pull requests asked for while another lookup of the repository ru
   assert.deepEqual(asked, [[first], [second]], 'its own looked up once that one ended')
   assert.equal(kept.get(second), null)
   await page
+})
+
+test('the pull requests merged as the Pulse last read them tell which commits were squashed: none looked up of those committed while it read every one', async () => {
+  const [squash, direct, unnumbered, older, p1, root] = ['5', '7', '9', '3', '8', '1'].map(char => char.repeat(40))
+  const [at, DAY] = [Date.UTC(2026, 9, 10), 86_400_000]
+  const kept = new Map()
+  const squashes = { read: shas => Promise.resolve(new Map(shas.flatMap(sha => kept.has(sha) ? [[sha, kept.get(sha)]] : []))),
+    write: (sha, pull) => { kept.set(sha, pull); return Promise.resolve() } }
+  const asked = []
+  const fetchImpl = (url, options) => {
+    const { query, variables } = JSON.parse(options.body)
+    if (query.includes('pullRequest(number')) {
+      asked.push(Object.entries(variables).flatMap(([key, number]) => /^n\d+$/u.test(key) ? [number] : []))
+      return Promise.resolve(Response.json({ data: { repository: { p0: { headRefOid: p1, commits: { totalCount: 1, nodes: [{ commit: { oid: p1, message: 'Start',
+        committedDate: '2026-10-09T00:00:00Z', author: null, parents: { nodes: [{ oid: root }] } } }] } } } } }))
+    }
+    const shas = Object.entries(variables).flatMap(([key, sha]) => /^o\d+$/u.test(key) ? [sha] : [])
+    asked.push(shas)
+    return Promise.resolve(Response.json({ data: { repository: Object.fromEntries(shas.map((sha, index) => [`c${index}`, { associatedPullRequests: { nodes: [] } }])) } }))
+  }
+  const commit = (sha, committedAt = at) => ({ sha, parents: [root], subject: 'Work', authorName: null, authorLogin: null, committedAt })
+  // #2 squashed, its number told; one merged by a pull request whose number
+  // wasn't; one pushed; and one committed before the read reaches.
+  const known = { numbers: new Map([[squash, 2], [unnumbered, null]]), from: at - 7 * DAY, to: at + 7 * DAY }
+  const { pulls } = await squashedPulls('org/hinted', 'token', [commit(squash), commit(direct), commit(unnumbered), commit(older, at - 30 * DAY)], squashes,
+    Number.POSITIVE_INFINITY, fetchImpl, known)
+  assert.deepEqual(asked, [[unnumbered, older], [2]], 'looked up, of those committed while it read every one, the one it named no number of alone')
+  assert.deepEqual(pulls.map(pull => [pull.merge, pull.number, pull.head]), [[squash, 2, p1]])
+  assert.deepEqual([kept.get(direct), kept.get(older)], [null, null], 'the one pushed none\'s, kept, not looked up')
 })
 
 test('all branches names the branches it didn\'t read, newest first, and reads on from the commits a later page names, each commit once', async t => {
