@@ -77,16 +77,23 @@ const UNSUPPORTED = new Set(['git', 'tarball', 'integrity'])
 // whether it is patched, and its review, where it tells one: why it can't be
 // reviewed (`unsupported`), needing none (`baseline`), passed by the
 // server's reviewed dependencies (`reviewed`), or how many pass it
-// (`reviews`), whether a reviewer rejects it (`rejected`), and how many
+// (`reviews`), whether a reviewer rejects it (`rejected`), how many
 // review it in its pull request's comments alone, which count for it alone
-// (`commented`).
+// (`commented`), and its reviewers (`reviewers`, checkedReviewers).
 function checkedVersion(pkg) {
   if (typeof pkg?.name !== 'string') return []
-  const { was, reviews, rejected, commented, baseline, reviewed, unsupported, patched, ...version } = pkg
+  const { was, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patched, ...version } = pkg
+  const by = checkedReviewers(reviewers)
   return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {}, ...patched === true ? { patched } : {},
     ...UNSUPPORTED.has(unsupported) ? { unsupported } : baseline === true ? { baseline } : reviewed === true ? { reviewed }
-      : count(reviews) === null ? {} : { reviews, ...rejected === true ? { rejected } : {}, ...count(commented) > 0 ? { commented } : {} } }]
+      : count(reviews) === null ? {} : { reviews, ...rejected === true ? { rejected } : {}, ...count(commented) > 0 ? { commented } : {}, ...by.length > 0 ? { reviewers: by } : {} } }]
 }
+// Each reviewer of a version as an answer names them: their login, their
+// latest verdict, whether they pass it (`passes`), and whether in its pull
+// request's comments alone (`comment`).
+const VERDICTS = new Set(['accept', 'accept-with-nits', 'request-changes', 'reject'])
+const checkedReviewers = list => Array.isArray(list) ? list.flatMap(one => typeof one?.login === 'string' && VERDICTS.has(one.status)
+  ? [{ login: one.login, status: one.status, ...one.passes === true ? { passes: true } : {}, ...one.comment === true ? { comment: true } : {} }] : []) : []
 const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : []
 
 // A server's answer, its directories those it names by their lockfiles'
@@ -253,7 +260,7 @@ function added({ lockfiles, review }) {
     const key = `${pkg.name}@${pkg.version ?? ''}`
     const had = all.get(key)
     if (!had) { all.set(key, pkg); continue }
-    const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, patched: _patched, ...version } = had
+    const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, patched: _patched, reviewers: _reviewers, ...version } = had
     all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...bothReviewed(had, pkg, review) })
   }
   const versions = [...all.values()]
@@ -264,15 +271,15 @@ function added({ lockfiles, review }) {
 
 // The review of a version two directories lock, the less passing of theirs
 // (reviewOf, one that can't be reviewed the least), of the fewer reviews
-// where both want them; patched where either is.
+// where both want them, with its reviewers; patched where either is.
 const PASSING = { unsupported: 0, wanted: 1, passed: 2, baseline: 3 }
 function bothReviewed(had, pkg, review) {
   const passing = one => PASSING[reviewOf(one, review)] ?? 4
   const less = passing(pkg) < passing(had) || (passing(pkg) === passing(had) && (pkg.reviews ?? Infinity) < (had.reviews ?? Infinity)) ? pkg : had
-  const { unsupported, baseline, reviewed, reviews, rejected } = less
+  const { unsupported, baseline, reviewed, reviews, rejected, reviewers } = less
   const commented = Math.max(had.commented ?? 0, pkg.commented ?? 0)
   return { ...had.patched || pkg.patched ? { patched: true } : {}, ...unsupported ? { unsupported } : baseline ? { baseline } : reviewed ? { reviewed }
-    : reviews == null ? {} : { reviews, ...rejected ? { rejected } : {}, ...commented > 0 ? { commented } : {} } }
+    : reviews == null ? {} : { reviews, ...rejected ? { rejected } : {}, ...commented > 0 ? { commented } : {}, ...reviewers ? { reviewers } : {} } }
 }
 
 // A version's review, where its pull request's is in effect (`review`):

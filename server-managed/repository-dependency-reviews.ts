@@ -25,13 +25,14 @@ export interface RepoDependencyReview { enabled: boolean; required: number; sinc
 // A review published of the version it is of: its package, version and
 // npm's integrity of it, the patch it is of (none here, the app reviewing no
 // patch yet), the version it was compared with (none for a whole package's),
-// who wrote it (`reviewer`, their id, else their login then), its verdict,
-// whether it checked every file (`full`), and when it was published.
+// who wrote it (`reviewer`, their id, else their login then), their login
+// as it was then (`login`), its verdict, whether it checked every file
+// (`full`), and when it was published.
 // One made in a pull request's comments (`comment`) counts for it alone;
 // one published here has its `id`.
 export interface PublishedReview {
   id?: string; package: string; version: string; integrity: string; patchHash?: string; basePackage: string | null; baseVersion: string | null
-  reviewer: string; status: ReviewVerdict; full: boolean; time: number; comment?: true
+  reviewer: string; login: string; status: ReviewVerdict; full: boolean; time: number; comment?: true
 }
 // A repository's review in effect for a reader: its settings, whether they
 // publish reviews to one of the teams that count (`canReview`), and the
@@ -105,7 +106,7 @@ async function publishedReviews(db: ManagedSql, repoId: number, versions: Review
       const nonText = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
       const full = summarizeReview(entries.get(row.id) ?? [], files, nonText).coverage === 'full'
       found.push({ id: row.id, package: row.package, version: row.version, integrity: row.integrity, basePackage: row.basePackage, baseVersion: row.baseVersion,
-        reviewer: row.userId ?? `login:${row.userLogin.toLowerCase()}`, status: row.status, full, time: Number(row.publishedAt) })
+        reviewer: row.userId ?? `login:${row.userLogin.toLowerCase()}`, login: row.userLogin, status: row.status, full, time: Number(row.publishedAt) })
     }
   }
   return found

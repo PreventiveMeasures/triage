@@ -132,7 +132,7 @@ function counted(answer: CommentReview[], read: Authored[], reviewers: Map<strin
       const { name, version, integrity, patchHash, status } = dependency ?? {}
       if (typeof name !== 'string' || typeof version !== 'string' || typeof integrity !== 'string' || !VERDICTS.has(status)) return []
       return integrity.split(/\s+/u).filter(Boolean).map(hash => ({ package: name, version, integrity: hash, ...typeof patchHash === 'string' && patchHash ? { patchHash } : {},
-        basePackage: null, baseVersion: null, reviewer, status: status as ReviewVerdict, full: true, time }))
+        basePackage: null, baseVersion: null, reviewer, login: review.user as string, status: status as ReviewVerdict, full: true, time }))
     })
   })
 }

@@ -102,12 +102,15 @@ test('read for its reviews, a version keeps its integrity, Yarn\'s sha1, pnpm\'s
 
 // A version as a lockfile locks it, of npm's registry with its integrity.
 const at = (name, version, more = {}) => ({ name, version, source: 'registry', integrity: sri(`${name}@${version}`), ...more })
-// A passing review of `pkg` by `reviewer`, compared with `base` of its own
-// package where it is given.
+// A passing review of `pkg` by `reviewer`, their login their id, compared
+// with `base` of its own package where it is given.
 const passing = (pkg, reviewer, base = null, more = {}) => ({ package: pkg.name, version: pkg.version, integrity: pkg.integrity,
-  basePackage: base ? pkg.name : null, baseVersion: base, reviewer, status: 'accept', full: true, time: 1, ...more })
+  basePackage: base ? pkg.name : null, baseVersion: base, reviewer, login: reviewer, status: 'accept', full: true, time: 1, ...more })
 const strip = ({ integrity: _integrity, ...pkg }) => pkg
 const bare = ({ was: _was, ...pkg }) => pkg
+// A reviewer as a version's review tells them: their latest verdict,
+// passing it where it is an accepting one that does.
+const by = (login, status = 'accept', passes = status === 'accept') => ({ login, status, ...passes ? { passes: true } : {} })
 
 test('each version a pull request adds is told its review: how many pass it, of its integrity and compared with a version it was; that it needs none; or why it can\'t be reviewed, a file not reviewed', async () => {
   const [ms, tool, kept] = [at('ms', '2.1.3', { was: ['2.1.2'] }), at('tool', '1.0.0', { dev: true }), at('kept', '1.0.0')]
@@ -132,11 +135,11 @@ test('each version a pull request adds is told its review: how many pass it, of 
   const answer = await reviewedDependencies(told, state, { baseline: new Set([`kept@1.0.0\0${sri('kept@1.0.0')}\0`]) })
   assert.deepEqual(answer.review, { required: 2, since, canReview: true, toReview: 2, unreviewed: 1, unsupported: 3 })
   assert.deepEqual(answer.lockfiles[0], { paths: ['package-lock.json'], more: 0, moreLocked: 0,
-    added: [{ ...strip(ms), reviews: 0 }, { ...strip(tool), reviews: 1 }, { ...strip(kept), baseline: true }, { ...mine, unsupported: 'git' }, local],
-    unreviewed: [{ ...strip(other), reviews: 0 }], moreUnreviewed: 0,
+    added: [{ ...strip(ms), reviews: 0 }, { ...strip(tool), reviews: 1, reviewers: [by('u1')] }, { ...strip(kept), baseline: true }, { ...mine, unsupported: 'git' }, local],
+    unreviewed: [{ ...strip(other), reviews: 0, reviewers: [by('u1', 'accept', false)] }], moreUnreviewed: 0,
     unsupported: [{ ...mine, unsupported: 'git' }, { ...strip(mirrored), unsupported: 'tarball' }, { ...loose, unsupported: 'integrity' }], moreUnsupported: 0 },
   'ms passed by u1 whole and u2 against the version it was, not u3 against another, but locked with another integrity too, which none passes, told by it; ' +
-  'tool by u1 once, another integrity\'s not; kept locked at the commit reviews are counted since; git, a mirror\'s tarball and one with no integrity can\'t be reviewed')
+  'tool by u1 once, another integrity\'s not, other reviewed by u1 against another package, passing none; kept locked at the commit reviews are counted since; git, a mirror\'s tarball and one with no integrity can\'t be reviewed')
   assert.deepEqual(answer.lockfiles[1], told.lockfiles[1])
   assert.doesNotMatch(JSON.stringify(answer), /"integrity":|"locked":/u, 'neither integrities nor every version locked told')
   assert.deepEqual(reviewedPackages(told).map(({ name, version }) => `${name}@${version}`).toSorted(), ['kept@1.0.0', 'ms@2.1.3', 'ms@2.1.3', 'other@1.0.0', 'reviewed@2.0.0', 'tool@1.0.0'],
@@ -165,11 +168,12 @@ test('a reviewer\'s latest review tells where they stand: one rejecting a versio
   const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: [pkg], locked: [pkg] }] }
   const judged = async (reviews, more = {}) => (await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews }, more)).lockfiles[0].added[0]
   const rejects = passing(pkg, 'u2', '0.9.0', { status: 'reject', full: false, time: 2 })
-  assert.deepEqual(await judged([passing(pkg, 'u1'), rejects]), { ...strip(pkg), reviews: 1, rejected: true }, 'a partial reject against any version it was holds it')
-  assert.deepEqual(await judged([passing(pkg, 'u1'), rejects, passing(pkg, 'u2', null, { full: false, time: 3 })]), { ...strip(pkg), reviews: 1 },
-    'its reviewer accepting it since, even in part, lets the others pass it')
-  assert.deepEqual(await judged([passing(pkg, 'u1'), passing(pkg, 'u1', null, { status: 'request-changes', time: 2 })]), { ...strip(pkg), reviews: 0 },
-    'one asking for changes since passes it no more')
+  assert.deepEqual(await judged([passing(pkg, 'u1'), rejects]), { ...strip(pkg), reviews: 1, rejected: true, reviewers: [by('u1'), by('u2', 'reject')] },
+    'a partial reject against any version it was holds it')
+  assert.deepEqual(await judged([passing(pkg, 'u1'), rejects, passing(pkg, 'u2', null, { full: false, time: 3 })]),
+    { ...strip(pkg), reviews: 1, reviewers: [by('u1'), by('u2', 'accept', false)] }, 'its reviewer accepting it since, even in part, lets the others pass it, passing none')
+  assert.deepEqual(await judged([passing(pkg, 'u1'), passing(pkg, 'u1', null, { status: 'request-changes', time: 2 })]),
+    { ...strip(pkg), reviews: 0, reviewers: [by('u1', 'request-changes')] }, 'one asking for changes since passes it no more')
   assert.deepEqual(await judged([rejects], { baseline: new Set([`pkg@1.0.0\0${sri('pkg@1.0.0')}\0`]) }), { ...strip(pkg), baseline: true }, 'locked at the commit reviewed since, it needs none')
   assert.deepEqual(await judged([rejects], { reviewed: { lookup: () => Promise.resolve(true) } }), { ...strip(pkg), reviewed: true }, 'nor where the reviewed dependencies pass it')
 })
@@ -180,10 +184,10 @@ test('a version added locked with another integrity too is judged, by each, agai
   const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json', 'yarn.lock'], more: 0, moreLocked: 0, added: [ms], locked: [bare(ms), variant] }] }
   const reviews = [passing(ms, 'u1'), passing(variant, 'u1', '2.0.0')]
   const answer = await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews })
-  assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(ms), reviews: 0 }], 'a review against 2.0.0, which it never was, passes none of it')
+  assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(ms), reviews: 0, reviewers: [by('u1', 'accept', false)] }], 'a review against 2.0.0, which it never was, passes none of it')
   assert.deepEqual([answer.lockfiles[0].unreviewed, answer.review.toReview], [[], 1])
   const whole = await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews: [passing(ms, 'u1'), passing(variant, 'u2', '2.1.2')] })
-  assert.deepEqual([whole.lockfiles[0].added, whole.review.toReview], [[{ ...strip(ms), reviews: 1 }], 0], 'each passed, it does')
+  assert.deepEqual([whole.lockfiles[0].added, whole.review.toReview], [[{ ...strip(ms), reviews: 1, reviewers: [by('u1')] }], 0], 'each passed, it does')
 })
 
 test('a version added past those told is judged as one added, against the versions it was, and counted as wanting a review', async () => {
@@ -209,7 +213,7 @@ test('a patched version passes by no review here, only locked so at the commit r
   const shownAs = ({ integrity: _integrity, lockfile: _lockfile, shasum: _shasum, patchHash, ...pkg }) => ({ ...pkg, ...patchHash ? { patched: true } : {} })
   const unpatchedBaseline = new Set([`patched@1.0.0\0${sri('patched@1.0.0')}\0`])
   const alone = await reviewedDependencies(told, state, { baseline: unpatchedBaseline })
-  assert.deepEqual(alone.lockfiles[0].added, [{ ...shownAs(plain), reviews: 1 }, { ...shownAs(patched), reviews: 0 }, { ...shownAs(vouched), reviews: 0 }],
+  assert.deepEqual(alone.lockfiles[0].added, [{ ...shownAs(plain), reviews: 1, reviewers: [by('u1')] }, { ...shownAs(patched), reviews: 0 }, { ...shownAs(vouched), reviews: 0 }],
     'two reviewers\' reviews pass no patch; the version locked unpatched at that commit, nor')
   const patchedBaseline = new Set([`patched@1.0.0\0${sri('patched@1.0.0')}\0${PATCH}`])
   assert.deepEqual((await reviewedDependencies(told, state, { baseline: patchedBaseline })).lockfiles[0].added[1], { ...shownAs(patched), baseline: true }, 'locked so, its patch too')
@@ -465,7 +469,8 @@ test('an open pull request\'s dependencies, asked with their review, tell each v
   assert.equal(answer.status, 200)
   assert.deepEqual(answer.body.review, { required: 1, since, canReview: true, toReview: 0, unreviewed: 1, unsupported: 1, baselineUnread: ['berry/yarn.lock', 'bun.lock'] })
   assert.deepEqual(answer.body.lockfiles, [{ paths: ['package-lock.json'], more: 0, moreLocked: 0,
-    added: [{ name: 'left-pad', version: '1.3.0', source: 'registry', baseline: true }, { name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 1 }],
+    added: [{ name: 'left-pad', version: '1.3.0', source: 'registry', baseline: true }, { name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 1,
+      reviewers: [by('alice')] }],
     unreviewed: [{ name: 'kept', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 0,
     unsupported: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }], moreUnsupported: 0 }],
   'ms passed against the version it was, left-pad locked at the commit reviewed since; kept, locked before, unreviewed; mine, from git there too, fails it')
