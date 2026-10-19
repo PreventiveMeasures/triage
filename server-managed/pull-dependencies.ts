@@ -30,7 +30,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import { GithubApiError, githubJson } from './github-app.ts'
 import { upstreamGithub } from './github-errors.ts'
 import { compareVersions, isExactVersion } from '@preventive/upstream/semver.js'
-import { type LockedPackage, isTestFixture, lockedPackages } from './locked-packages.ts'
+import { type LockedPackage, isTestFixture, lockedPackages, patchedIn } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
 import { type ChangedFile, commitChanges } from './repository-changes.ts'
 
@@ -50,8 +50,9 @@ export const MAX_LOCKED = 20_000
 const READ_PARALLEL = 4
 // The rules what is told was told by, kept with it (http.ts
 // pullDependencyKept), and the lockfiles read for it (lockfileKept): one
-// told or read by others is told or read again.
-export const PULL_DEPENDENCIES_READ = 3
+// told or read by others is told or read again, as those read before pnpm's
+// patches' files were.
+export const PULL_DEPENDENCIES_READ = 4
 const SHA = /^[a-f\d]{40}$/u
 
 type Format = 'npm' | 'pnpm' | 'yarn' | 'bun'
@@ -277,8 +278,9 @@ export const lockedWith = (pkg: LockedPackage) => `${lockedAs(pkg)}\0${pkg.integ
 // package versions after none before has, each once, by name and version,
 // each with the versions of its name before, those past MAX_ADDED counted
 // (`more`), not told but reviewed as they are; and every one after, each
-// integrity it is locked with (`locked`), as many as MAX_LOCKED; or the first
-// failure among them.
+// integrity it is locked with (`locked`), as many as MAX_LOCKED, each patch's
+// file from the repository's root (patchedIn); or the first failure among
+// them.
 function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[]): DirectoryDependencies {
   const failed = [...before, ...after].find(read => 'error' in read)
   if (failed && 'error' in failed) return { paths, error: failed.error, ...failed.detail ? { detail: failed.detail } : {} }
@@ -292,7 +294,8 @@ function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[])
   const added = new Map<string, AddedPackage>()
   const locked = new Map<string, LockedPackage>()
   for (const read of after) {
-    for (const pkg of 'packages' in read ? read.packages : []) {
+    for (const found of 'packages' in read ? read.packages : []) {
+      const pkg = patchedIn(paths[0]!, found)
       const key = lockedAs(pkg)
       const held = locked.get(lockedWith(pkg))
       if (!held) locked.set(lockedWith(pkg), { ...pkg })

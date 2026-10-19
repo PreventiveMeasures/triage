@@ -166,6 +166,7 @@
     "server-managed/lockfile-scope.ts",
     "server-managed/npm-manifest.ts",
     "server-managed/npm-packages.ts",
+    "server-managed/npm-patch.ts",
     "server-managed/package-entry-points.ts",
     "server-managed/pretty-print.ts",
     "server-managed/pull-reviews.ts",

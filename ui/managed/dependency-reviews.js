@@ -1,7 +1,9 @@
 import { managedFetch } from '../../client/managed/request.js'
+import { PATCH_ERRORS } from './bundle-data.js'
 import { managedAppState } from './state.js'
 
 const ERRORS = {
+  ...PATCH_ERRORS,
   'review-content-changed': 'The package bytes changed. Reload the package before reviewing.',
   'review-conflict': 'This review changed or was published in another tab. Reload the page before editing it again.',
   'package-not-found': 'One of these package versions is no longer available to you.',
@@ -42,7 +44,7 @@ export function discardDependencyReview(reviewId, revision, csrfToken, signal) {
   return requestReview('/discard', signal, 'discard review', { reviewId, revision }, csrfToken)
 }
 export async function latestDependencyReview(target, signal) {
-  const query = new URLSearchParams({ package: target.package, version: target.version, integrity: target.integrity })
+  const query = new URLSearchParams({ package: target.package, version: target.version, integrity: target.integrity, ...target.patchHash ? { patchHash: target.patchHash } : {} })
   return (await requestReview(`/latest?${query}`, signal, 'load your latest review')).review
 }
 export function dependencyReviews(context, change, csrfToken, signal) {

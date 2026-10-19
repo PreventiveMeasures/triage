@@ -45,15 +45,18 @@ function tell(comparison) {
 let local = null
 
 // Whether the server pairs a comparison: of two managed bundles, or of a
-// package version against another, of the same package or not, or against none.
-const served = (base, other) => !!(base.managedId && other.managedId) || !!(other.npm && (base.npm || empty(base)))
+// package version, or one as a pnpm patch changes it (`npmPatch`,
+// npm-package.js loadPatchedNpmVersion), against another, of the same
+// package or not, or against none.
+const served = (base, other) => !!(base.managedId && other.managedId) || !!((other.npm || other.npmPatch) && (base.npm || empty(base)))
 
 // The comparison as it is had: asked of the server where it pairs it, else
 // worked out here, its chunk loaded first.
 function pair(base, other, scope) {
   if (base.managedId && other.managedId) return fetchBundleComparison(base.managedId, other.managedId, { scope })
   if (served(base, other)) {
-    return fetchNpmComparison(other.npm.name, other.npm.version, base.npm?.version ?? '(empty)', { otherName: base.npm?.name ?? other.npm.name })
+    const { name, version, patch } = other.npm ?? other.npmPatch
+    return fetchNpmComparison(name, version, base.npm?.version ?? '(empty)', { otherName: base.npm?.name ?? name, ...patch ? { patch } : {} })
   }
   return import('./bundle-comparison-local.js').then(module => {
     local = module

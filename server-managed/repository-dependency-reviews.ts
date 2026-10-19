@@ -23,8 +23,8 @@ export const SINCE_COMMIT = /^[a-f\d]{40}$/u
 
 export interface RepoDependencyReview { enabled: boolean; required: number; since: string | null; lockfiles: LockfileScope }
 // A review published of the version it is of: its package, version and
-// npm's integrity of it, the patch it is of (none here, the app reviewing no
-// patch yet), the version it was compared with (none for a whole package's),
+// npm's integrity of it, the patch it is of as patched (its hash, as a
+// lockfile names it), the version it was compared with (none for a whole package's),
 // who wrote it (`reviewer`, their id, else their login then), their login
 // as it was then (`login`), its verdict, whether it checked every file
 // (`full`), and when it was published.
@@ -81,14 +81,14 @@ async function publishedReviews(db: ManagedSql, repoId: number, versions: Review
     const asked = versions.slice(at, at + VERSIONS_AT_ONCE)
     const keys = new Set(asked.map(({ name, version }) => `${name}@${version}`))
     const [names, numbers] = [[...new Set(asked.map(({ name }) => name))], [...new Set(asked.map(({ version }) => version))]]
-    const rows = (await db.prepare(`SELECT r.id, r.user_id AS userId, r.user_login AS userLogin, r.package, r.version, r.integrity,
+    const rows = (await db.prepare(`SELECT r.id, r.user_id AS userId, r.user_login AS userLogin, r.package, r.version, r.integrity, r.patch_hash AS patchHash,
         NULLIF(r.base_package, '') AS basePackage, NULLIF(r.base_version, '') AS baseVersion, r.files, r.status, r.published_at AS publishedAt
       FROM managed_dependency_review r
       WHERE r.ecosystem = 'npm' AND r.published_at IS NOT NULL AND r.revoked_at IS NULL AND r.status IS NOT NULL
         AND r.package IN (${names.map(() => '?').join(',')}) AND r.version IN (${numbers.map(() => '?').join(',')})
         AND EXISTS (SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id
           WHERE rt.review_id = r.id AND ${COUNTING_TEAM})`).all(...names, ...numbers, repoId) as
-      { id: string; userId: string | null; userLogin: string; package: string; version: string; integrity: string
+      { id: string; userId: string | null; userLogin: string; package: string; version: string; integrity: string; patchHash: string
         basePackage: string | null; baseVersion: string | null; files: string | null; status: ReviewVerdict; publishedAt: number }[])
       .filter(row => keys.has(`${row.package}@${row.version}`))
     if (rows.length === 0) continue
@@ -105,7 +105,8 @@ async function publishedReviews(db: ManagedSql, repoId: number, versions: Review
       const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
       const nonText = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
       const full = summarizeReview(entries.get(row.id) ?? [], files, nonText).coverage === 'full'
-      found.push({ id: row.id, package: row.package, version: row.version, integrity: row.integrity, basePackage: row.basePackage, baseVersion: row.baseVersion,
+      found.push({ id: row.id, package: row.package, version: row.version, integrity: row.integrity, ...row.patchHash ? { patchHash: row.patchHash } : {},
+        basePackage: row.basePackage, baseVersion: row.baseVersion,
         reviewer: row.userId ?? `login:${row.userLogin.toLowerCase()}`, login: row.userLogin, status: row.status, full, time: Number(row.publishedAt) })
     }
   }

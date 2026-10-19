@@ -34,7 +34,7 @@ export function reviewNote(comment) {
 // A list row opens that exact snapshot, even when a newer private set exists.
 // Keep this handoff inside review components, without changing app routing.
 let selection = null
-export const sameReviewContext = (a, b) => ['ecosystem', 'package', 'version', 'integrity', 'basePackage', 'baseVersion', 'baseIntegrity'].every(key => a[key] === b[key])
+export const sameReviewContext = (a, b) => ['ecosystem', 'package', 'version', 'integrity', 'patchHash', 'basePackage', 'baseVersion', 'baseIntegrity'].every(key => (a[key] ?? null) === (b[key] ?? null))
 export function selectReviewOnOpen(review, continueReview = false) { selection = { review, continueReview } }
 export function takeReviewSelection(context) {
   if (!selection || !sameReviewContext(selection.review, context)) return null
@@ -44,10 +44,13 @@ export function takeReviewSelection(context) {
 }
 
 
+// A review's title: its version, patched where it is a patched one's,
+// against its base where it has one.
 export function reviewTitle(context) {
-  const target = `${context.package} ${context.version}`
+  const patched = context.patchHash ? ' (patched)' : ''
+  const target = `${context.package} ${context.version}${patched}`
   if (!context.basePackage) return target
   return context.basePackage === context.package
-    ? `${context.package} ${context.baseVersion} -> ${context.version}`
+    ? `${context.package} ${context.baseVersion} -> ${context.version}${patched}`
     : `${context.basePackage} ${context.baseVersion} -> ${target}`
 }

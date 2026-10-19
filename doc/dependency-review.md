@@ -15,7 +15,7 @@ The lockfiles read are `package-lock.json` and `npm-shrinkwrap.json` with `lockf
 Bun's lockfiles (`bun.lock`, `bun.lockb`) are recognized but not read, and their directory says so.
 Lockfiles under `node_modules` or in test fixtures are ignored, as no install uses them.
 
-An open pull request's tile ([code-viewer.md](./code-viewer.md)) names its added versions, and the popup of any pull request lists them by directory under **New dependency versions**, marking new packages, the versions an update replaced, sources other than npm's registry, and versions only devDependencies need.
+An open pull request's tile ([code-viewer.md](./code-viewer.md)) names its added versions, and the popup of any pull request lists them by directory under **New dependency versions**, marking new packages, the versions an update replaced, sources other than npm's registry, versions only devDependencies need, and [patched](#patched-versions) ones.
 Each npm version opens in the npm viewer, an update compared with the highest version it replaced.
 
 ## When a pull request passes
@@ -24,6 +24,7 @@ Review is in effect for a repository once it is [turned on](#repository-settings
 Each version the pull request adds then needs the required number of counting reviews, of it whole or compared with a version it replaced.
 Every other version its lockfiles lock needs them too, of it whole or compared with any version of its package, unless the [baseline commit](#repository-settings) or the [host](#host-reviewed-dependencies) passes it.
 A version is reviewed as npm's registry has it, by name, version and integrity, so a version locked with several integrities needs reviews of each.
+A patched version is reviewed as its patch changes it, by its patch too (see [Patched versions](#patched-versions)).
 
 A review counts where it is:
 
@@ -45,8 +46,26 @@ These versions fail the pull request's review even where its lockfiles locked th
 The review also fails for a changed lockfile that couldn't be read, a Bun lockfile, lockfiles left unread because the pull request changes too many files or directories, or a directory that locks more versions than are checked (see [Limits](#limits)).
 A file of the project's own is not reviewed.
 
-The app does not review pnpm patches yet, so team reviews never pass a patched version, and it never links to a review page.
-It passes only by the host's `lookup`, by reviews of its patch in the open pull request's comments through `parseComments`, or, where the host registers no hook, by being locked the same way, patch included, at the baseline commit.
+## Patched versions
+
+A version pnpm patches as it installs it (pnpm's `patchedDependencies`) is reviewed as patched: its files as its patch changes them, whole or compared with a version it replaced.
+Where its lockfiles locked the version it patches before, unpatched or patched otherwise, a review compared with that version is of the patch alone.
+Its reviews are held to its patch's hash, as its lockfile names it, so they are apart from those of the version unpatched or patched otherwise, and a version patched alike in several pull requests is reviewed once.
+Locked the same way at the baseline commit, patch included, it needs none.
+
+Its review page reads the patch of the repository at the commit the pull request's lockfiles were read at, from the file the lockfile names, as pnpm 9 and 10 write it.
+pnpm 11 names a patch by its hash alone, so a version it patches has no review page here: it passes by the host's `lookup`, by reviews of its patch in the open pull request's comments through `parseComments`, or by the baseline commit.
+The patch is read only where:
+
+- the reader may read all of that repository, with their own GitHub access, which is checked again after GitHub answers;
+- the file hashes to the lockfile's hash of it, as pnpm hashes it (a sha256 in hex, or pnpm 9's md5 in base32), its CRLFs read as LFs;
+- it is as git writes a diff, of no file's bytes (a binary patch) and of no file outside the package.
+
+It is applied as pnpm applies it (the patch-package code pnpm 9, 10 and 11 bundle): each file it deletes, creates, renames or changes, each hunk found in the file as it was, where its header says, else as many as 20 lines either side, its lines matched but for the whitespace they end in, the lines it keeps left as the file has them, and the lines it adds as the patch has them, CRs and all. The review page says why where it doesn't apply.
+What it changes of a file's mode isn't shown.
+
+The Dependencies tab and a pull request's popup link a patched version to its review where its lockfile names its patch's file, against the version it patches where that was one, and mark it **patched**; they count no lines it changes, as those would be npm's.
+A review keeps where its patch was read, its page reading it there again, so one listed under **My reviews** or a team's **Reviews** opens as patched for a reader who may still read that repository.
 
 ## Repository settings
 
@@ -85,6 +104,8 @@ They publish only to enabled, visible teams they review in (any such team, for a
 
 A package version's **Review** tab opens `/npm/<package>@<version>/review`, and with no base every file is reviewed as an addition.
 Append `/<basePackage>@<baseVersion>` to review an update, or a bare version for the same package; tags resolve to exact versions.
+A [patched version](#patched-versions)'s names its patch after them, by its hash and where it is read: `?patch=<hash>&repo=<repository id>&commit=<commit>&path=<path>`.
+Picking another version to review leaves the patch out.
 
 Changed files under 50,000 lines and 2 MiB across both versions show as one diff, and larger reviews use the per-file Code view.
 Both take one verdict and one note per file, and notes on the whole diff.
@@ -116,7 +137,7 @@ Its sub-tabs are:
 - **Reviews**: the reviews published to the team, revoked ones too, latest first, with their authors.
   Each author shows with their avatar and their name in the app, with their GitHub login in its tooltip.
 
-A version is listed under the first pull request that adds it, as one review passes it everywhere, and later pull requests that add it say so.
+A version is listed under the first pull request that adds it, as one review passes it everywhere, and later pull requests that add it say so; a patched one by its patch, as each patch of it is reviewed apart.
 
 The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
 A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.
@@ -171,7 +192,7 @@ Each comment has `kind`, `id`, `author` (a GitHub login), `body`, `createdAt`, `
 
 A version that `lookup` passes is never given.
 It returns the reviews the comments make, `[{ user, time?, dependencies: [{ name, version, integrity, patchHash?, status }] }]`.
-`status` is `accept`, `accept-with-nits`, `request-changes` or `reject`, each review is taken as full, and a patched version's review is of its patch.
+`status` is `accept`, `accept-with-nits`, `request-changes` or `reject`, each review is taken as full, and a patched version's review is of it as its patch changes it, as one here is.
 
 A returned review counts only where its `user` wrote one of the comments, and the app's user for that GitHub account (by id, else login, linked accounts included) publishes reviews to a team counting for the repository.
 It counts as that user's review as of its `time`, else as of their latest comment as last written or edited, and their latest review decides where they stand.
@@ -187,7 +208,7 @@ It receives `reviews`, each entry with:
 | Field | Value |
 | --- | --- |
 | `ecosystem` | `npm` |
-| `new` | The version reviewed, `{ name, version, integrity, shasum?, patchHash? }`: the integrity and shasum the review keeps of the tarball it read (`shasum` where it keeps one), and `patchHash` where a pull request's lockfile has it |
+| `new` | The version reviewed, `{ name, version, integrity, shasum?, patchHash? }`: the integrity and shasum the review keeps of the tarball it read (`shasum` where it keeps one), and `patchHash` where the review is of it [patched](#patched-versions) |
 | `old` | The version it was compared with, `{ name, version, integrity, shasum? }` as the review keeps them, or null where the package was read whole |
 | `status` | `accept`, `accept-with-nits`, `request-changes` or `reject` |
 | `coverage` | `full` or `partial` |
@@ -210,6 +231,7 @@ It is given only the asker's own published, unrevoked reviews, however it is ask
 | Over 1,000 open pull requests in a repository | The Dependencies tab reads the 1,000 updated latest, and says so |
 | The Dependencies tab's request runs over 4 minutes | The repositories left are read again, up to 3 times; any still left show as failed until the tab is drawn again 30 seconds or more later |
 | A note over 20,000 characters | Refused |
+| A patch over 8 MiB | It isn't read, and the version can't be reviewed as patched |
 | A review changed elsewhere meanwhile, or a version or integrity that no longer matches | `409`, and the change is not saved |
 | GitHub refuses the repository's contents or the pull request | The popup says so (`502 github-status-403`) |
 
@@ -221,5 +243,6 @@ It is given only the asker's own published, unrevoked reviews, however it is ask
 - While the tab's request runs, the reader's session is checked before each repository's answer.
 - Before each answer showing a repository's dependencies, the request also checks that the team is still the reader's and still holds the repository, and that the reader may still read all of it; where not, the answer stops there.
 - The review page and its list check private npm access for both versions of a comparison (see [npm-viewer.md](./npm-viewer.md) for who reads private packages).
+- A patched version's files, its comparison, and each change to its review but a revocation read its patch, which only a reader who may read all of its repository is given (`404 no-repository` or `no-directory`); its reviews are listed whoever reads its version.
 - A team's published reviews list only for one who reads reviews in that team, access is asked again once npm is read (`404 no-team`), and each review is held to the reader's npm access.
 - Every change to a review needs a session, a CSRF token and the triage role, and all but publishing (held to its teams) and revoking also need reviewing in some team (`403 review-access-required`).

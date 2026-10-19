@@ -23,7 +23,7 @@ mock.module('../server-managed/lru.ts', { exports: { lru: (...args) => {
 const coldInstance = () => { for (const forget of memories) forget() }
 const { openSqliteManagedDb } = await import('../server-managed/db.ts')
 const { createManagedRequestHandler } = await import('../server-managed/http.ts')
-const { lockedAt } = await import('../server-managed/commit-lockfiles.ts')
+const { lockedAt, lockedIn } = await import('../server-managed/commit-lockfiles.ts')
 const { lockedPackages } = await import('../server-managed/locked-packages.ts')
 const { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages } = await import('../server-managed/pull-dependency-reviews.ts')
 const { MAX_ADDED } = await import('../server-managed/pull-dependencies.ts')
@@ -84,7 +84,7 @@ const memory = () => {
   return { kept, read: key => Promise.resolve(kept.get(key) ?? null), write: (key, value) => { kept.set(key, value); return Promise.resolve() } }
 }
 
-test('read for its reviews, a version keeps its integrity, Yarn\'s sha1, pnpm\'s patch and its lockfile\'s format; a link to its tarball with a query is another host\'s', () => {
+test('read for its reviews, a version keeps its integrity, Yarn\'s sha1, pnpm\'s patch and its file and its lockfile\'s format; a link to its tarball with a query is another host\'s', () => {
   const text = npmLockfile({ ms: registry('ms', '2.1.3'), q: registry('q', '1.5.1', { resolved: `${tgz('q', '1.5.1')}?cache=1` }) })
   assert.deepEqual(lockedPackages('npm', text, { review: true }), [
     { name: 'ms', version: '2.1.3', source: 'registry', integrity: sri('ms@2.1.3'), lockfile: 'npm' },
@@ -96,8 +96,13 @@ test('read for its reviews, a version keeps its integrity, Yarn\'s sha1, pnpm\'s
   assert.deepEqual(lockedPackages('yarn', tarball, { review: true }), [{ name: 'left-pad', version: '1.3.0', source: 'registry', shasum: '5'.repeat(40), lockfile: 'yarn1' }],
     'Yarn\'s link to a tarball with no integrity, none')
   assert.deepEqual(lockedPackages('pnpm', pnpmPatched, { review: true }), [
-    { name: 'is-number', version: '7.0.0', source: 'registry', integrity: sri('is-number@7.0.0'), patchHash: PATCH, lockfile: 'pnpm' },
+    { name: 'is-number', version: '7.0.0', source: 'registry', integrity: sri('is-number@7.0.0'), patchHash: PATCH, patchPath: 'patches/is-number@7.0.0.patch', lockfile: 'pnpm' },
   ])
+  // pnpm 11's names a patch by its hash alone.
+  const hashOnly = pnpmPatched.replace(`\n    hash: ${PATCH}\n    path: patches/is-number@7.0.0.patch`, ` ${PATCH}`)
+  assert.deepEqual(lockedPackages('pnpm', hashOnly, { review: true }), [
+    { name: 'is-number', version: '7.0.0', source: 'registry', integrity: sri('is-number@7.0.0'), patchHash: PATCH, lockfile: 'pnpm' },
+  ], 'a patch named by its hash alone, no file')
 })
 
 // A version as a lockfile locks it, of npm's registry with its integrity.
@@ -111,6 +116,15 @@ const bare = ({ was: _was, ...pkg }) => pkg
 // A reviewer as a version's review tells them: their latest verdict,
 // passing it where it is an accepting one that does.
 const by = (login, status = 'accept', passes = status === 'accept') => ({ login, status, ...passes ? { passes: true } : {} })
+
+test('a version a commit\'s lockfiles each lock patched alike keeps the first of their patch\'s files in the repository, from its root, past those that name none there', () => {
+  const pkg = at('patched', '1.0.0', { patchHash: PATCH, lockfile: 'pnpm' })
+  const read = { unread: [], lockfiles: [{ path: 'a/pnpm-lock.yaml', packages: [pkg] },
+    { path: 'b/pnpm-lock.yaml', packages: [{ ...pkg, patchPath: '../../outside.patch' }] },
+    { path: 'c/pnpm-lock.yaml', packages: [{ ...pkg, patchPath: 'patches/patched@1.0.0.patch', dev: true }] },
+    { path: 'd/pnpm-lock.yaml', packages: [{ ...pkg, patchPath: 'patches/patched@1.0.0.patch' }] }] }
+  assert.deepEqual(lockedIn(read).packages, [{ ...pkg, patchPath: 'c/patches/patched@1.0.0.patch' }])
+})
 
 test('each version a pull request adds is told its review: how many pass it, of its integrity and compared with a version it was; that it needs none; or why it can\'t be reviewed, a file not reviewed', async () => {
   const [ms, tool, kept] = [at('ms', '2.1.3', { was: ['2.1.2'] }), at('tool', '1.0.0', { dev: true }), at('kept', '1.0.0')]
@@ -202,19 +216,35 @@ test('a version added past those told is judged as one added, against the versio
   assert.equal(answer.review.toReview, 1, 'a review against a version it never was passes none')
 })
 
-test('a patched version passes by no review here, only locked so at the commit reviewed since; registered reviewed dependencies, asked of every version wanting one, pass any in its place', async () => {
+test('a patched version passes by reviews of it as patched, its patch\'s hash theirs, or locked so at the commit reviewed since; registered reviewed dependencies, asked of every version wanting one, pass any in its place', async () => {
   const plain = at('plain', '1.0.0', { lockfile: 'npm' })
-  const patched = at('patched', '1.0.0', { patchHash: PATCH, lockfile: 'pnpm' })
+  const patched = at('patched', '1.0.0', { patchHash: PATCH, patchPath: 'patches/patched@1.0.0.patch', lockfile: 'pnpm' })
   const vouched = at('vouched', '1.0.0', { patchHash: PATCH, lockfile: 'pnpm' })
   const [other, failing] = [at('other', '1.0.0', { shasum: '5'.repeat(40), lockfile: 'yarn1' }), at('failing', '1.0.0', { lockfile: 'npm' })]
   const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: [plain, patched, vouched],
     locked: [plain, patched, vouched, other, failing] }] }
   const state = { required: 2, since, canReview: true, reviews: [passing(plain, 'u1'), passing(patched, 'u1'), passing(patched, 'u2'), passing(vouched, 'u1')] }
-  const shownAs = ({ integrity: _integrity, lockfile: _lockfile, shasum: _shasum, patchHash, ...pkg }) => ({ ...pkg, ...patchHash ? { patched: true } : {} })
+  const shownAs = ({ integrity: _integrity, lockfile: _lockfile, shasum: _shasum, patchHash, patchPath, ...pkg }) => ({ ...pkg,
+    ...patchHash ? { patch: { hash: patchHash, ...patchPath ? { path: patchPath } : {} } } : {} })
+  assert.deepEqual(shownAs(patched).patch, { hash: PATCH, path: 'patches/patched@1.0.0.patch' }, 'its patch told by its hash and its file')
   const unpatchedBaseline = new Set([`patched@1.0.0\0${sri('patched@1.0.0')}\0`])
   const alone = await reviewedDependencies(told, state, { baseline: unpatchedBaseline })
   assert.deepEqual(alone.lockfiles[0].added, [{ ...shownAs(plain), reviews: 1, reviewers: [by('u1')] }, { ...shownAs(patched), reviews: 0 }, { ...shownAs(vouched), reviews: 0 }],
-    'two reviewers\' reviews pass no patch; the version locked unpatched at that commit, nor')
+    'two reviewers\' reviews of it unpatched pass no patch; the version locked unpatched at that commit, nor')
+  const ofPatch = { ...state, reviews: [...state.reviews, passing(patched, 'u1', null, { patchHash: PATCH, time: 2 }), passing(patched, 'u2', null, { patchHash: PATCH, time: 2 }),
+    passing(vouched, 'u2', null, { patchHash: 'c'.repeat(64) })] }
+  const reviewed = await reviewedDependencies(told, ofPatch, { baseline: unpatchedBaseline })
+  assert.deepEqual(reviewed.lockfiles[0].added.slice(1), [{ ...shownAs(patched), reviews: 2, reviewers: [by('u1'), by('u2')] }, { ...shownAs(vouched), reviews: 0 }],
+    'two reviewers\' reviews of it as patched pass it; of another patch, not')
+  assert.equal(reviewed.review.toReview, 2)
+  // Two directories patching it apart, and one not: each to review apart, counted so.
+  const apart = at('patched', '1.0.0', { patchHash: 'c'.repeat(64), lockfile: 'pnpm' }), unpatched = at('patched', '1.0.0', { lockfile: 'pnpm' })
+  const dirOf = (path, pkg) => ({ paths: [path], more: 0, moreLocked: 0, added: [pkg], locked: [pkg] })
+  // And a version whose build metadata spells that patch's hash, apart from it.
+  const metadata = at('patched', `1.0.0+${'c'.repeat(64)}`, { lockfile: 'pnpm' })
+  const four = await reviewedDependencies({ ...told, lockfiles: [dirOf('a/pnpm-lock.yaml', patched), dirOf('b/pnpm-lock.yaml', apart), dirOf('c/pnpm-lock.yaml', unpatched),
+    dirOf('d/pnpm-lock.yaml', metadata)] }, { ...state, reviews: [] })
+  assert.equal(four.review.toReview, 4, 'each patch of a version counted apart, as each is listed, and a version spelling a patch apart from it')
   const patchedBaseline = new Set([`patched@1.0.0\0${sri('patched@1.0.0')}\0${PATCH}`])
   assert.deepEqual((await reviewedDependencies(told, state, { baseline: patchedBaseline })).lockfiles[0].added[1], { ...shownAs(patched), baseline: true }, 'locked so, its patch too')
 
@@ -241,7 +271,7 @@ test('a patched version passes by no review here, only locked so at the commit r
   asked.length = 0
   await reviewedDependencies(told, state, { reviewed: { lookup } })
   assert.deepEqual(asked.map(dependency => dependency.name), ['failing'], 'answers kept a while, but a failure')
-  assert.deepEqual(reviewedPackages(told).map(({ name }) => name), ['plain', 'other', 'failing'], 'no patched one\'s reviews asked')
+  assert.deepEqual(reviewedPackages(told).map(({ name }) => name), ['plain', 'patched', 'vouched', 'other', 'failing'], 'a patched one\'s reviews asked too')
 })
 
 // Git's id of an object, as GitHub names a commit's trees and blobs.

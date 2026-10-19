@@ -26,9 +26,13 @@ export interface LockedPackage {
   integrity?: string
   // Where its reviews ask: the sha1 Yarn 1 writes after a tarball's `#`, in
   // hex (`shasum`); the hash of the patch pnpm applies to it
-  // (`patchHash`, its patchedDependencies'); and the lockfile's format.
+  // (`patchHash`, its patchedDependencies'), and the patch's file, where the
+  // lockfile names one (`patchPath`, pnpm 9's and 10's): from the lockfile's
+  // directory as read, from the repository's root once that is known
+  // (patchedIn); and the lockfile's format.
   shasum?: string
   patchHash?: string
+  patchPath?: string
   lockfile?: ReviewedLockfile
   // Where only the importers' devDependencies reach it, as npm's `dev` flag
   // says, and an install of no devDependencies leaves it out: in npm's and
@@ -43,15 +47,19 @@ type Resolution =
   | { type: 'tarball'; tarball: string | undefined; integrity: string | undefined; sha1?: string | undefined; gitHosted?: boolean }
   | { type: 'git'; repo: string }
   | { type: 'directory' }
-interface ReadPackage { name: string; version: string | undefined; resolution: Resolution | undefined; dev?: boolean | undefined; patchHash?: string | undefined }
+interface ReadPackage { name: string; version: string | undefined; resolution: Resolution | undefined; dev?: boolean | undefined; patchHash?: string | undefined
+  patchPath?: string | undefined }
 
-// The packages of a lockfile of `format`, as its reader resolves them.
+// The packages of a lockfile of `format`, as its reader resolves them, a
+// patched one of pnpm's with its patch's file where the lockfile names it.
 // Versions go unchecked against ranges, as only what is locked is asked for.
 function packagesOf(format: LockfileFormat, text: string): ReadPackage[] {
   if (format === 'npm') return Object.values(parseNpmLockfile(text, { checkVersions: false }).packages)
   if (format === 'pnpm') {
     const { lockfile, env } = parsePnpmLockfile(text)
+    const files = new Map(Object.values(lockfile?.patchedDependencies ?? {}).flatMap(({ hash, path }) => path ? [[hash, path] as const] : []))
     return [...Object.values(env?.packages ?? {}), ...Object.values(lockfile?.packages ?? {})]
+      .map(pkg => pkg.patchHash !== undefined && files.has(pkg.patchHash) ? { ...pkg, patchPath: files.get(pkg.patchHash) } : pkg)
   }
   if (format !== 'yarn') throw new TypeError(`lockedPackages: ${format} lockfiles are not read`)
   // Yarn 2 and later write another format, which only the text tells apart.
@@ -88,12 +96,13 @@ function located({ name, version, resolution }: ReadPackage, review: boolean): L
   return integrity ? { ...at, ...shown(url), source: 'mirror', integrity } : { ...at, ...shown(url), source: 'tarball' }
 }
 // As above, and with what its reviews ask (LockedPackage `shasum`,
-// `patchHash`, `lockfile`) where `review`.
+// `patchHash`, `patchPath`, `lockfile`) where `review`.
 function locked(pkg: ReadPackage, format: LockfileFormat, review: boolean): LockedPackage | null {
   const one = located(pkg, review)
   if (!one || !review) return one
   const sha1 = pkg.resolution?.type === 'tarball' ? pkg.resolution.sha1 : undefined
-  return { ...one, ...sha1 ? { shasum: sha1 } : {}, ...pkg.patchHash ? { patchHash: pkg.patchHash } : {}, lockfile: format === 'yarn' ? 'yarn1' : format as ReviewedLockfile }
+  return { ...one, ...sha1 ? { shasum: sha1 } : {}, ...pkg.patchHash ? { patchHash: pkg.patchHash, ...pkg.patchPath ? { patchPath: pkg.patchPath } : {} } : {},
+    lockfile: format === 'yarn' ? 'yarn1' : format as ReviewedLockfile }
 }
 
 // The packages a lockfile of `format` (npm, pnpm or yarn, as
@@ -115,6 +124,20 @@ export function lockedPackages(format: LockfileFormat, text: string, { review = 
     else if (had.dev && !one.dev) delete had.dev
   }
   return [...found.values()]
+}
+
+// `pkg` as a lockfile at `path` locks it, read with its patch's file from
+// the lockfile's directory (LockedPackage `patchPath`): that file from the
+// repository's root, none where it names one outside it.
+export function patchedIn<T extends LockedPackage>(path: string, pkg: T): T {
+  if (pkg.patchPath === undefined) return pkg
+  const { patchPath, ...rest } = pkg
+  const parts = path.split('/').slice(0, -1)
+  for (const part of patchPath.split('/')) {
+    if (part === '..') { if (parts.pop() === undefined) return rest as T }
+    else if (part !== '.' && part !== '') parts.push(part)
+  }
+  return parts.length > 0 ? { ...rest, patchPath: parts.join('/') } as T : rest as T
 }
 
 // Whether a lockfile at `path` is a test's fixture or example: under a

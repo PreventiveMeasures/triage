@@ -17,9 +17,11 @@
 // tarball (a mirror's too), or with no integrity can't be; a file of the
 // project's isn't. Its reviews are those of it, of an integrity it is locked
 // with, either whole, or compared with a version of its package: for a
-// version the pull request adds, one it was; for another, any. A patched one
-// (`patched`) passes by none of them, the app reviewing no patch yet: only
-// by the reviewed dependencies, or locked so, its patch too, at that commit.
+// version the pull request adds, one it was; for another, any. A patched
+// one's (`patch`) are of it as patched, by its patch's hash, its patch read
+// of the repository where its lockfile names the patch's file (npm-patch.ts):
+// compared with the version it patches, where that is one it was, they review
+// the patch alone. Locked so at that commit, its patch too, it needs none.
 // Which versions the repository's lockfiles locked at that commit never
 // changes: it is read once, every lockfile there of those read here
 // (pull-dependencies.ts), and kept by the commit (`baselines` in this
@@ -137,11 +139,14 @@ function stancesOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'an
 type Reviewer = { login: string; status: PublishedReview['status']; passes?: true; comment?: true }
 
 // A version as the client is told it: what its reviews are held to left
-// out, but whether it is patched.
-function shown<T extends LockedPackage>(pkg: T): Omit<T, 'integrity' | 'shasum' | 'patchHash' | 'lockfile'> & { patched?: true } {
+// out, but its patch, where it is patched (`patch`): its hash, which its
+// reviews are held to, and its file, where its lockfile names one, from the
+// repository's root, whence its reviews read it.
+type Patch = { hash: string; path?: string }
+function shown<T extends LockedPackage>(pkg: T): Omit<T, 'integrity' | 'shasum' | 'patchHash' | 'patchPath' | 'lockfile'> & { patch?: Patch } {
   const copy = { ...pkg }
-  for (const field of ['integrity', 'shasum', 'patchHash', 'lockfile'] as const) delete copy[field]
-  return { ...copy, ...pkg.patchHash ? { patched: true as const } : {} }
+  for (const field of ['integrity', 'shasum', 'patchHash', 'patchPath', 'lockfile'] as const) delete copy[field]
+  return { ...copy, ...pkg.patchHash ? { patch: { hash: pkg.patchHash, ...pkg.patchPath ? { path: pkg.patchPath } : {} } } : {} }
 }
 
 // A version as the registered reviewed dependencies are asked of it, by
@@ -204,11 +209,12 @@ function capped<T extends { toReview: unknown[]; unreviewed: unknown[]; unsuppor
 }
 // How many versions of `lists` there are, each once across them, by `key`,
 // as the client tells them once: one wanting reviews by its name and
-// version, one that can't be reviewed by where it is from too.
-type Shown = Pick<LockedPackage, 'name' | 'version' | 'source' | 'from'>
+// version, and its patch's hash, as each patch of it is reviewed apart; one
+// that can't be reviewed by where it is from too.
+type Shown = Pick<LockedPackage, 'name' | 'version' | 'source' | 'from'> & { patch?: Patch }
 const distinct = (lists: Shown[][], key: (pkg: Shown) => string) => new Set(lists.flat().map(key)).size
-const versionKey = (pkg: Shown) => `${pkg.name}@${pkg.version ?? ''}`
-const sourceKey = (pkg: Shown) => `${pkg.source}\0${versionKey(pkg)}\0${pkg.from ?? ''}`
+const versionKey = (pkg: Shown) => `${pkg.name}@${pkg.version ?? ''}\0${pkg.patch?.hash ?? ''}`
+const sourceKey = (pkg: Shown) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
 
 // The reviews an open pull request's comments make of `wanting`, the
 // versions still wanting one (pull-comment-reviews.ts): those that count,
@@ -308,9 +314,9 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
 }
 
 // The package versions a pull request's lockfiles lock that its reviews here
-// may pass, whose reviews are asked: those that can be reviewed, unpatched.
+// may pass, whose reviews are asked: those that can be reviewed.
 export const reviewedPackages = (told: PullDependencies) => told.lockfiles
-  .flatMap(dir => 'error' in dir ? [] : dir.locked.filter(pkg => reviewedAs(pkg) === 'version' && !pkg.patchHash).map(pkg => ({ name: pkg.name, version: pkg.version! })))
+  .flatMap(dir => 'error' in dir ? [] : dir.locked.filter(pkg => reviewedAs(pkg) === 'version').map(pkg => ({ name: pkg.name, version: pkg.version! })))
 
 // A repository's baseline as read for a pull request: its versions and the
 // lockfiles there left unread; none where it reviews since no commit; and

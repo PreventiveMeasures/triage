@@ -147,6 +147,17 @@ export async function loadNpmVersion(name, spec, options) {
   return { entry, details }
 }
 
+// A version's files as a pnpm patch changes them (`patch`, as a review's
+// route names it, `{ hash, repoId, commit, path }`), as Review reads them:
+// details of their own (`npmPatch`), which the server pairs with the patch
+// (bundle-comparison.js), with none of what is read of the version as npm
+// has it, which the server reads of that alone.
+export async function loadPatchedNpmVersion(entry, patch, options) {
+  const data = await fetchNpmPackage(entry.npm.name, entry.npm.version, { ...options, patch })
+  return { ...fileRowDetails({ integrity: `${entry.integrity} patch:${patch.hash}`, size: entry.size }, data.files),
+    npmPatch: { name: entry.npm.name, version: entry.npm.version, patch } }
+}
+
 // What the server sent with a version about its package (npm-insights.ts
 // npmKnown), each part as its own request answers it, kept as if asked for:
 // where the session has none of it yet, or only one being asked for, whose
@@ -384,7 +395,7 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
   const compared = state.bundleCompare?.bundle === entry.integrity ? state.bundleCompare : null
   if (tab === 'review') {
     state.npmReview = { bundle: entry.integrity,
-      ...(route.reviewPackage ? { reviewPackage: route.reviewPackage, reviewSpec: route.reviewSpec ?? null } : {}) }
+      ...(route.reviewPackage ? { reviewPackage: route.reviewPackage, reviewSpec: route.reviewSpec ?? null } : {}), ...(route.patch ? { patch: route.patch } : {}) }
   }
   state.bundles = [entry]
   selectBundle(entry.integrity, tab)

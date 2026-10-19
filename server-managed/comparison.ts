@@ -1,5 +1,6 @@
 // Compare's comparison of two managed bundles or two versions of an npm
-// package (GET /api/bundles/:id/comparison?other=, GET /api/npm/comparison):
+// package, the one shown as a patch changes it where Review asks
+// (GET /api/bundles/:id/comparison?other=, GET /api/npm/comparison):
 // their files paired, at one path or renamed, with the sizes, resolutions,
 // dependency versions and line counts its Overview and Code read beside them,
 // as common/bundle-comparison.js prepareComparison works them out. The viewer
@@ -14,7 +15,8 @@ import { prepareComparison } from '../common/bundle-comparison.js'
 import type { BundleDetails } from '../common/bundle-metadata.js'
 import type { OpenedBlob } from './blob-store.ts'
 import { encodeBrotli } from './brotli.ts'
-import { type NpmPackageFile, npmFileRows } from './npm-packages.ts'
+import { type NpmPackageFile, type NpmVersionDocument, npmFileRows } from './npm-packages.ts'
+import type { NpmPatch } from './npm-patch.ts'
 
 // A side with no files, as Review compares a package's first version with:
 // one for each comparison, as working one out keeps its line counts on it.
@@ -36,6 +38,15 @@ export async function comparisonBody(base: BundleDetails, other: BundleDetails, 
   const comparison = prepareComparison(base, other, scope)
   const { files } = comparison
   const json = JSON.stringify({ ...comparison, files: { ...files, basePaths: files.root ? [...files.basePaths] : [] } })
+  const body = await encodeBrotli(Buffer.from(json))
+  return { size: body.byteLength, stream: Readable.from([body]) }
+}
+
+// A version's `files` as `patch` changes them (npm-patch.ts patchedFiles), as
+// the viewer reads a version's (npm-loads.ts loadNpmPackageBody), with the
+// patch, as sent: `{ name, version, private, integrity, patch, files }`.
+export async function patchedVersionBody(doc: NpmVersionDocument, patch: NpmPatch, files: NpmPackageFile[]): Promise<OpenedBlob> {
+  const json = JSON.stringify({ name: doc.name, version: doc.version, private: doc.private, integrity: doc.dist.integrity, patch, files: npmFileRows(files) })
   const body = await encodeBrotli(Buffer.from(json))
   return { size: body.byteLength, stream: Readable.from([body]) }
 }

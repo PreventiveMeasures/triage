@@ -45,6 +45,21 @@ test('a package version is compared by the server with another, another package\
   await settle()
 })
 
+test('a package version as a pnpm patch changes it is compared by the server, with the patch, apart from the version as npm has it', async () => {
+  const patch = { hash: 'a'.repeat(64), repoId: 1, commit: 'b'.repeat(40), path: 'patches/lib@2.0.0.patch' }
+  const patched = sourcemap(`lib@2.0.0 patch:${patch.hash}`, { 'a.js': 'patched' }, { npmPatch: { name: 'lib', version: '2.0.0', patch } })
+  const base = sourcemap('lib@1.0.0', { 'a.js': '1.0.0' }, { npm: { name: 'lib', version: '1.0.0' } })
+  for (const [side, args] of [[base, ['lib', '2.0.0', '1.0.0', { otherName: 'lib', patch }]], [sourcemap('(empty)', {}), ['lib', '2.0.0', '(empty)', { otherName: 'lib', patch }]]]) {
+    const before = asked.length
+    assert.equal(bundleComparison(side, patched, null, () => {}).status, 'loading')
+    assert.equal(asked.length, before + 1)
+    assert.deepEqual([asked.at(-1).kind, asked.at(-1).args], ['npm', args])
+    asked.at(-1).resolve(answered)
+  }
+  await settle()
+  assert.deepEqual(bundleComparison(base, patched, null, () => {}), { status: 'ready', diff: answered }, 'kept by the patched side\'s own')
+})
+
 test('bundles opened here are compared here, the first once its chunk loads, the rest at once, by the details read', async () => {
   const before = asked.length
   const [base, other] = [sourcemap('l-base', { 'a.js': 'a', 'b.js': 'b' }), sourcemap('l-other', { 'a.js': 'a2', 'c.js': 'b' })]

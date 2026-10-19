@@ -9,11 +9,10 @@
 // is reviewed since (pull-dependency-reviews.ts): a version passes by the
 // reviews its teams publish, and those its pull request's comments make, as
 // many as the repository requires, or by `lookup`'s saying so, and is
-// otherwise unreviewed. A patched version (pnpm's patchedDependencies)
-// passes by `lookup`, or reviews its comments make of its patch, alone, the
-// app reviewing no patch yet. Those comments' reviews count for the pull
-// request alone, as it is open: the host's to keep, as it is merged, among
-// those `lookup` tells of.
+// otherwise unreviewed. A patched version's (pnpm's patchedDependencies)
+// reviews are of its patch, its teams' and its comments' alike. Those
+// comments' reviews count for the pull request alone, as it is open: the
+// host's to keep, as it is merged, among those `lookup` tells of.
 //
 // Each version is asked of `lookup` once a request, as many at once as
 // ASK_AT_ONCE, its answer kept in this instance KEPT_MS; one it fails to

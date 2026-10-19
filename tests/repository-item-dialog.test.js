@@ -196,12 +196,13 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   assert.match(templateText(cut.render()), /<div class="repo-item-failed" role="alert">\s*<p>Its review fails: not every lockfile it changes was read\.<\/p>/u)
 })
 
-test('where the server registers reviewed dependencies, its terms say so, with its comments\' reviews; a version they pass is reviewed, one rejected so, and a patched one wants them, unlinked to reviewing it', async () => {
-  dependencies = number => Promise.resolve({ number, cut: false, formatted: 'Reviewed refused', review: { required: 2, since: null, canReview: true, reviewedDependencies: true, unasked: 1,
+test('where the server registers reviewed dependencies, its terms say so, with its comments\' reviews; a version they pass is reviewed, one rejected so; a patched one reviewed as patched, its patch read where its lockfile names it, at the commit its lockfiles were read at, else unlinked to reviewing it', async () => {
+  const [hash, head] = ['a'.repeat(64), 'b'.repeat(40)]
+  dependencies = number => Promise.resolve({ number, cut: false, head, formatted: 'Reviewed refused', review: { required: 2, since: null, canReview: true, reviewedDependencies: true, unasked: 1,
     commentReviews: 2, commentsFailed: true, lockfiles: { mode: 'exclude', paths: ['docs/'] } }, lockfiles: [
     { paths: ['pnpm-lock.yaml'], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, added: [
-      { name: 'vouched', version: '1.0.0', source: 'registry', reviewed: true }, { name: 'patched', version: '1.0.0', source: 'registry', patched: true, reviews: 0 },
-      { name: 'refused', version: '1.0.0', source: 'registry', reviews: 3, rejected: true }] },
+      { name: 'vouched', version: '1.0.0', source: 'registry', reviewed: true }, { name: 'patched', version: '1.0.0', source: 'registry', patch: { hash, path: 'patches/patched@1.0.0.patch' }, reviews: 0 },
+      { name: 'nameless', version: '1.0.0', source: 'registry', patch: { hash }, reviews: 0 }, { name: 'refused', version: '1.0.0', source: 'registry', reviews: 3, rejected: true }] },
     { paths: ['web/bun.lock'], error: 'lockfile-unsupported' }] })
   answer = () => new Promise(() => {})
   const dialog = shown()
@@ -209,17 +210,20 @@ test('where the server registers reviewed dependencies, its terms say so, with i
   templateText(dialog.render())
   await setImmediate()
   const text = templateText(dialog.render())
-  assert.match(text, /Each version needs 2 full, accepting reviews by as many reviewers, or the server’s reviewed dependencies to pass it; a patched one, not reviews here\./u)
+  assert.match(text, /Each version needs 2 full, accepting reviews by as many reviewers, or the server’s reviewed dependencies to pass it\./u)
   assert.match(text, /role="alert">The server’s reviewed dependencies didn’t answer for 1 version, so it wants reviews\./u)
-  assert.match(text, /Reviews in its comments by 2 reviewers count too while it is open, a patched version’s of its patch\./u)
+  assert.match(text, /Reviews in its comments by 2 reviewers count too while it is open\./u)
   assert.match(text, /role="alert">Its comments couldn’t be read for reviews, so none of theirs count\./u)
   assert.match(text, /These lockfiles aren’t reviewed: <code>docs\/<\/code>\./u)
   assert.match(text, /<h4 class="repo-item-deps-heading">New dependency versions<dependency-review-copy \.text=Reviewed refused \.label=Copy your dependency reviews of its versions>/u,
     'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
   assert.match(text, /href=\/npm\/refused@1\.0\.0\/review [^]*class="repo-item-review is-failed" data-tooltip="A reviewer rejects it[^>]*>rejected</u, 'one rejected wants reviews, however many pass it')
   assert.match(text, /href=\/npm\/vouched@1\.0\.0\/review [^]*class="repo-item-review is-passed" data-tooltip="The server’s reviewed dependencies pass it"><svg[^]*<\/svg>reviewed</u)
-  assert.match(text, /<a class="repo-item-row" href=\/npm\/patched@1\.0\.0 [^]*class="repo-item-review is-wanted" data-tooltip="Reviews here pass no patch[^>]*>unreviewed<[^]*data-tooltip="pnpm patches it as it installs it">patched</u,
-    'a patched one opens its version, reviews here passing none of it')
+  assert.match(text, new RegExp(`<a class="repo-item-row" href=/npm/patched@1\\.0\\.0/review\\?patch=${hash}&repo=7&commit=${head}&path=patches/patched%401\\.0\\.0\\.patch [^]*`
+    + 'class=repo-item-review is-wanted data-tooltip=0 full, accepting reviews of 2 required>0/2<[^]*data-tooltip=pnpm patches it as it installs it, by patches/patched@1\\.0\\.0\\.patch, which its reviews are of>patched<', 'u'),
+    'a patched one reviewed as patched, its patch read of its repository at the commit its lockfiles were read at')
+  assert.match(text, /<a class="repo-item-row" href=\/npm\/nameless@1\.0\.0 [^]*>0\/2<[^]*by a patch its lockfile names no file of, which reviews here can’t read>patched</u,
+    'one whose lockfile names no file of its patch opens its version')
   assert.match(text, /<code>web\/bun\.lock<\/code><\/p>\s*<p class="repo-item-quiet" role="alert">Bun’s lockfile here isn’t read\.</u)
   assert.match(text, /<p>Its review fails: not every lockfile it changes was read\.<\/p>/u, 'which fails its review')
 })

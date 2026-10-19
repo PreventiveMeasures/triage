@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { checkDependencyReviews, checkReviewedTarballs, checkTeamReviewList, reviewContext } from './_managed-dependency-reviews.js'
+import { checkDependencyReviews, checkPatchedReviews, checkReviewedTarballs, checkTeamReviewList, reviewContext } from './_managed-dependency-reviews.js'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
 
@@ -25,6 +25,41 @@ test('a review keeps the shasums of the tarballs it reads, as its writer tells t
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   await checkReviewedTarballs(db)
+})
+
+test('a patched version\'s reviews are of its patch, apart from those of it unpatched, each keeping where its patch was read (SQLite)', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  await checkPatchedReviews(db)
+})
+
+test('reviews written before patches were reviewed are of no patch, and a database that had them takes drafts of a patch beside them', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'dependency-review-patches-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'db.sqlite')
+  const original = openSqliteManagedDb(path)
+  const session = await createSession({ sessionCookieName: 'sid', sessionTtlMs: 3600000 }, original,
+    { githubUserId: 100, login: 'author', name: null, avatarUrl: null }, Date.now())
+  await original.setUserRole(session.userId, 'admin')
+  const sid = hashToken(session.setCookie.split(';')[0].slice(4))
+  await original.createTeam('team', 'Team', 100)
+  await original.setTeamDependencyReview(sid, 'team', true)
+  const before = await original.changeDependencyReview(reviewContext, sid, { action: 'start', reviewId: null, revision: null }, 100)
+  await original.close()
+  // As a database was before: no patch columns, its drafts one a comparison of the version alone.
+  const raw = new DatabaseSync(path)
+  raw.exec(`DROP INDEX managed_dependency_review_draft_idx; ALTER TABLE managed_dependency_review DROP COLUMN patch_hash; ALTER TABLE managed_dependency_review DROP COLUMN patch_source;
+    CREATE UNIQUE INDEX managed_dependency_review_unpublished_idx ON managed_dependency_review(user_id, ecosystem, package, version, integrity, base_package, base_version, base_integrity)
+    WHERE published_at IS NULL`)
+  raw.close()
+  const db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  const [kept] = await db.listOwnDependencyReviewsById(session.userId, [before.id])
+  assert.deepEqual([kept.patchHash, kept.patchSource], [null, null])
+  const patched = await db.changeDependencyReview({ ...reviewContext, patchHash: 'a'.repeat(64) }, sid, { action: 'start', reviewId: null, revision: null }, 200,
+    { shasum: null, baseShasum: null, patch: { repoId: 1, commit: 'c'.repeat(40), path: 'patches/pkg.patch' } })
+  assert.notEqual(patched.id, before.id, 'a draft of the patch beside the version\'s own')
+  await assert.rejects(db.changeDependencyReview(reviewContext, sid, { action: 'start', reviewId: null, revision: null }, 300), /review-conflict/u, 'one of each still')
 })
 
 test('reviews written before their tarballs\' shasums were kept read none, and those written since keep theirs', async t => {

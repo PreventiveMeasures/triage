@@ -1,7 +1,7 @@
 // Managed client pages only. API paths and E2E share hashes are not routes.
 import { BUNDLE_TABS } from '../bundle-tabs.js'
 import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../finding-id.js'
-import { isNpmPackageName, isNpmPackageSpec } from './npm-packages.js'
+import { isNpmPackageName, isNpmPackageSpec, isPatchHash, isPatchPath } from './npm-packages.js'
 
 // How Compare reviews the changes, past its Overview: `code`, beside the
 // tree of changed files. A link names the mode after the bundle or version
@@ -96,17 +96,26 @@ export function managedRoutePath(route) {
 // Search, Compare or Treemap tab, `/npm/<name>[@<version or dist-tag>][/<tab>…]`. Code names
 // its file by number and its lines in the fragment, as a bundle's Code
 // does: `/code/<file>#L4`. Compare names the version compared with, then
-// its mode past the Overview: `/compare/<version>/code` or `/diff`.
+// its mode past the Overview: `/compare/<version>/code` or `/diff`. Review
+// names the version reviewed against, and, of a version as a pnpm patch
+// changes it, the patch (`patch`): its hash, and where it is read, a
+// repository by its id, a commit and its file's path there,
+// `?patch=<hash>&repo=<repo id>&commit=<commit>&path=<path>`.
 export const NPM_TABS = new Set(['overview', 'code', 'search', 'compare', 'review', 'treemap'])
+// A patch as the server reads one (server-managed/npm-patch.ts requestedPatch).
+const isPatch = patch => isPatchHash(patch?.hash) && isRepoId(patch.repoId) && COMMIT.test(patch.commit ?? '') && isPatchPath(patch.path)
 function npmPackagePath(route) {
   if (route.packageName == null) return '/npm'
   const tab = route.bundleTab ?? 'overview'
   if (!isNpmPackageName(route.packageName) || (route.packageSpec != null && !isNpmPackageSpec(route.packageSpec)) || !NPM_TABS.has(tab)
       || (route.compareSpec != null && !isNpmPackageSpec(route.compareSpec))) return null
   if (tab === 'review') {
-    if (route.reviewPackage != null && !isNpmPackageName(route.reviewPackage) || route.reviewSpec != null && !isNpmPackageSpec(route.reviewSpec)) return null
+    if (route.reviewPackage != null && !isNpmPackageName(route.reviewPackage) || route.reviewSpec != null && !isNpmPackageSpec(route.reviewSpec)
+      || route.patch != null && !isPatch(route.patch)) return null
     const base = route.reviewPackage == null ? '' : `/${route.reviewPackage}${route.reviewSpec == null ? '' : `@${route.reviewSpec}`}`
-    return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}/review${base}`
+    const patch = route.patch == null ? ''
+      : `?patch=${route.patch.hash}&repo=${route.patch.repoId}&commit=${route.patch.commit}&path=${route.patch.path.split('/').map(encodeURIComponent).join('/')}`
+    return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}/review${base}${patch}`
   }
   const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
   const lines = file && isLineNumber(route.line)
@@ -115,15 +124,18 @@ function npmPackagePath(route) {
   return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}${tab === 'overview' ? '' : `/${tab}`}${file}${compare}${lines}`
 }
 
-function parseNpmRoute(path, hash) {
+function parseNpmRoute(path, hash, search) {
   const review = /^\/npm\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?\/review(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?)?$/u.exec(path)
   if (review) {
     if (!isNpmPackageName(review[1]) || review[2] != null && !isNpmPackageSpec(review[2])
       || review[3] != null && !isNpmPackageName(review[3]) || review[4] != null && !isNpmPackageSpec(review[4])) return null
     // The full dependency form is canonical; a bare version is a shortcut.
     const versionOnly = review[3] && /^\d+\.\d+\.\d+(?:[-+].*)?$/u.test(review[3]) && review[4] == null
+    const patch = search.has('patch')
+      ? { hash: search.get('patch'), repoId: /^[1-9]\d*$/u.test(search.get('repo') ?? '') ? Number(search.get('repo')) : null, commit: search.get('commit'), path: search.get('path') } : null
+    if (patch && !isPatch(patch)) return null
     return { view: 'npm', packageName: review[1], packageSpec: review[2] ?? null, bundleTab: 'review',
-      ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}) }
+      ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}), ...(patch ? { patch } : {}) }
   }
   const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|search|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
   if (!match) return undefined
@@ -256,7 +268,7 @@ export function parseManagedRoute(url) {
     if (bundleTab !== 'code' || bundle[5] || !/^[1-9]\d*$/u.test(bundle[4]) || !Number.isSafeInteger(file)) return null
     return { ...route, file, ...codeLines(url.hash) }
   }
-  const npm = parseNpmRoute(path, url.hash)
+  const npm = parseNpmRoute(path, url.hash, url.searchParams)
   if (npm !== undefined) return npm
   const code = parseRepositoryCodeRoute(url)
   if (code !== undefined) return code

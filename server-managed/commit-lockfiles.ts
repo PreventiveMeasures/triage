@@ -12,7 +12,7 @@
 import { createClient } from '@preventive/upstream/github.js'
 import { upstreamGithub } from './github-errors.ts'
 import { GithubApiError } from './github-app.ts'
-import type { LockedPackage } from './locked-packages.ts'
+import { type LockedPackage, patchedIn } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
 import { type GithubAsked, type ListedLockfile, type LockfileStore, eachOf, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
 
@@ -57,16 +57,19 @@ export async function lockedAt(fullName: string, token: string, sha: string, kep
 }
 
 // The versions those of `read`'s lockfiles `held` holds to lock, each once,
-// and their paths.
+// each patch's file from the repository's root (patchedIn), the first of
+// them that names one there, and their paths.
 export function lockedIn(read: CommitLockfiles, held: (path: string) => boolean = () => true) {
   const packages = new Map<string, LockedPackage>()
   const paths: string[] = []
   for (const lockfile of read.lockfiles.filter(({ path }) => held(path))) {
     paths.push(lockfile.path)
     for (const pkg of lockfile.packages) {
+      const found = patchedIn(lockfile.path, { ...pkg })
       const kept = packages.get(lockedWith(pkg))
-      if (!kept) packages.set(lockedWith(pkg), { ...pkg })
-      else if (kept.dev && !pkg.dev) delete kept.dev
+      if (!kept) { packages.set(lockedWith(pkg), found); continue }
+      if (kept.dev && !pkg.dev) delete kept.dev
+      if (kept.patchPath === undefined && found.patchPath !== undefined) kept.patchPath = found.patchPath
     }
   }
   return { packages: [...packages.values()], paths }

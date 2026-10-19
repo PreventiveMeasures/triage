@@ -1960,6 +1960,8 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 }
 .team-deps-above:not(.is-reviewed) { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
 .team-deps-also { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* A version pnpm patches, reviewed as patched. */
+.team-deps-patched { flex: none; color: var(--muted); font-size: .66rem; line-height: 1.5; white-space: nowrap; }
 /* A version's details, its row's tooltip: its name and version whole, the
    pull request it is listed under marked among those adding it. */
 .team-deps-tip-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }

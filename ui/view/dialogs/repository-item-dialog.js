@@ -188,11 +188,11 @@ class RepositoryItemDialog extends AppDialog {
       ${told.map(dir => html`<div class="repo-item-lockfiles">
         <p>${dir.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}</p>
         ${dir.error ? html`<p class="repo-item-quiet" role="alert">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
-          : html`<ul>${dir.added.toSorted((a, b) => Number(Boolean(a.was)) - Number(Boolean(b.was))).map(pkg => html`<li>${this.renderPackage(pkg, review)}</li>`)}</ul>
+          : html`<ul>${dir.added.toSorted((a, b) => Number(Boolean(a.was)) - Number(Boolean(b.was))).map(pkg => html`<li>${this.renderPackage(pkg, review, false, entry.head)}</li>`)}</ul>
             ${dir.more > 0 ? html`<p class="repo-item-quiet">and ${dir.more.toLocaleString('en-US')} more</p>` : nothing}`}
       </div>`)}
       ${others?.count > 0 ? html`<details class="repo-item-unreviewed"><summary>${plural(others.count, 'other version')} in its lockfiles ${others.count === 1 ? 'wants' : 'want'} reviews</summary>
-        <ul>${others.versions.map(pkg => html`<li>${this.renderPackage(pkg, review, true)}</li>`)}</ul>
+        <ul>${others.versions.map(pkg => html`<li>${this.renderPackage(pkg, review, true, entry.head)}</li>`)}</ul>
         ${others.count > others.versions.length ? html`<p class="repo-item-quiet">and ${(others.count - others.versions.length).toLocaleString('en-US')} more</p>` : nothing}
       </details>` : nothing}
       ${cut ? html`<p class="repo-item-quiet">It changes more files, or lockfiles in more directories, than are read; those past them aren’t told.</p>` : nothing}`
@@ -210,13 +210,13 @@ class RepositoryItemDialog extends AppDialog {
   renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [], commentReviews, commentsFailed, lockfiles }) {
     const named = baselineUnread.slice(0, 5)
     return html`<p class="repo-item-quiet">Each version needs ${plural(required, 'full, accepting review')} by as many reviewers${reviewedDependencies
-      ? ', or the server’s reviewed dependencies to pass it; a patched one, not reviews here' : since
+      ? ', or the server’s reviewed dependencies to pass it' : since
       ? html`; those the repository’s lockfiles locked at <code>${since.slice(0, 7)}</code> need none` : nothing}.</p>
       ${baselineError ? html`<p class="repo-item-quiet" role="alert">The versions its lockfiles locked at that commit couldn’t be read (${baselineError}), so every version wants its reviews.</p>` : nothing}
       ${named.length > 0 ? html`<p class="repo-item-quiet" role="alert">At that commit, ${named.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}${baselineUnread.length > named.length
         ? ` and ${(baselineUnread.length - named.length).toLocaleString('en-US')} more` : ''} couldn’t be read, so the versions ${baselineUnread.length === 1 ? 'it' : 'they'} locked want reviews.</p>` : nothing}
       ${unasked ? html`<p class="repo-item-quiet" role="alert">The server’s reviewed dependencies didn’t answer for ${plural(unasked, 'version')}, so ${unasked === 1 ? 'it wants' : 'they want'} reviews.</p>` : nothing}
-      ${commentReviews ? html`<p class="repo-item-quiet">Reviews in its comments by ${plural(commentReviews, 'reviewer')} count too while it is open, a patched version’s of its patch.</p>` : nothing}
+      ${commentReviews ? html`<p class="repo-item-quiet">Reviews in its comments by ${plural(commentReviews, 'reviewer')} count too while it is open.</p>` : nothing}
       ${commentsFailed ? html`<p class="repo-item-quiet" role="alert">Its comments couldn’t be read for reviews, so none of theirs count.</p>` : nothing}
       ${lockfiles ? html`<p class="repo-item-quiet">${lockfiles.mode === 'include' ? 'Only these lockfiles are reviewed: ' : 'These lockfiles aren’t reviewed: '}${lockfiles.paths.length === 0 ? 'none'
         : lockfiles.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}.</p>` : nothing}`
@@ -243,27 +243,33 @@ class RepositoryItemDialog extends AppDialog {
   // the highest other version it was (none for a version that was installed
   // from elsewhere alone, which a comparison of versions can't show), or,
   // where its review is in effect and the reader reviews, reviewed against
-  // it, one that can be, unpatched; its review; whether only devDependencies
-  // need it, whether it is patched; and where one not of npm's registry is
-  // from; and, one of npm's registry wanting reviews, the lines it changes
-  // against the version it was, or whole (npm-delta.js). Another its
-  // lockfiles lock (`other`), wanting reviews or failing them, by its version
-  // alone, reviewed whole.
-  renderPackage(pkg, review = null, other = false) {
+  // it, one that can be, a patched one as patched, against the version it
+  // patches where that was one, its patch alone, its patch read at `head`,
+  // the commit its lockfiles were read at, where its lockfile names the
+  // patch's file; its review; whether only devDependencies need it, whether
+  // it is patched; and where one not of npm's registry is from; and, one of
+  // npm's registry wanting reviews, unpatched, the lines it changes against
+  // the version it was, or whole (npm-delta.js). Another its lockfiles lock
+  // (`other`), wanting reviews or failing them, by its version alone,
+  // reviewed whole.
+  renderPackage(pkg, review = null, other = false, head = null) {
     const { name, version, source, from, dev, was } = pkg
     const npm = (source === 'registry' || source === 'mirror') && version
     const before = other ? undefined : was?.find(prior => prior !== version)
-    const reviewed = npm && !pkg.patched && review?.canReview && reviewOf(pkg, review) !== 'unsupported' ? managedRoutePath({ view: 'npm', packageName: name, packageSpec: version, bundleTab: 'review',
-      ...before ? { reviewPackage: name, reviewSpec: before } : {} }) : null
+    const patch = pkg.patch?.path && head ? { hash: pkg.patch.hash, repoId: this.repository.repoId, commit: head, path: pkg.patch.path } : null
+    const base = patch && !other && was?.includes(version) ? version : before
+    const reviewed = npm && (!pkg.patch || patch) && review?.canReview && reviewOf(pkg, review) !== 'unsupported' ? managedRoutePath({ view: 'npm', packageName: name, packageSpec: version,
+      bundleTab: 'review', ...base ? { reviewPackage: name, reviewSpec: base } : {}, ...patch ? { patch } : {} }) : null
     const href = npm ? reviewed || (before && managedRoutePath({ view: 'npm', packageName: name, packageSpec: version, bundleTab: 'compare', compareSpec: before }))
       || managedRoutePath({ view: 'npm', packageName: name, packageSpec: version }) : null
     const label = html`${PACKAGE_ICON}<span class="repo-item-title">${name}${version ? html`<span class="repo-item-version">@${version}</span>` : nothing}</span>
       ${other ? nothing : was ? html`<span class="repo-item-was" data-tooltip-truncated data-tooltip=${`Was ${was.join(', ')}`}>from ${was.join(', ')}</span>`
         : html`<span class="repo-item-tag is-new" data-tooltip="Its lockfiles locked no version of it before">new</span>`}
       ${this.renderReview(pkg, review)}
-      ${source === 'registry' && version && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${name} .version=${version} .base=${before ?? '(empty)'}></npm-delta>` : nothing}
+      ${source === 'registry' && version && !pkg.patch && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${name} .version=${version} .base=${before ?? '(empty)'}></npm-delta>` : nothing}
       ${dev ? html`<span class="repo-item-tag" data-tooltip="Only devDependencies need it">dev</span>` : nothing}
-      ${pkg.patched ? html`<span class="repo-item-tag" data-tooltip="pnpm patches it as it installs it">patched</span>` : nothing}
+      ${pkg.patch ? html`<span class="repo-item-tag" data-tooltip=${pkg.patch.path ? `pnpm patches it as it installs it, by ${pkg.patch.path}, which its reviews are of`
+        : 'pnpm patches it as it installs it, by a patch its lockfile names no file of, which reviews here can’t read'}>patched</span>` : nothing}
       ${SOURCES[source] ? html`<span class="repo-item-tag" data-tooltip=${from ?? nothing}>${SOURCES[source]}</span>` : nothing}`
     return href ? html`<a class="repo-item-row" href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : html`<span class="repo-item-row">${label}</span>`
   }
@@ -271,8 +277,7 @@ class RepositoryItemDialog extends AppDialog {
   // A version's review, where its pull request's is in effect: that it can't
   // be reviewed, and why; none needed, its repository's lockfiles having
   // locked it at the commit reviewed since; passed by the server's reviewed
-  // dependencies; a patched one wanting them; passed, with how many reviews;
-  // or wanting them.
+  // dependencies; passed, with how many reviews; or wanting them.
   renderReview(pkg, review) {
     const state = reviewOf(pkg, review)
     if (state === 'unsupported') return html`<span class="repo-item-review is-failed" data-tooltip=${UNSUPPORTED[pkg.unsupported]}>can’t review</span>`
@@ -281,9 +286,6 @@ class RepositoryItemDialog extends AppDialog {
     }
     if (pkg.rejected) {
       return html`<span class="repo-item-review is-failed" data-tooltip="A reviewer rejects it: it wants their newer accepting review">rejected</span>`
-    }
-    if (pkg.patched && state === 'wanted') {
-      return html`<span class="repo-item-review is-wanted" data-tooltip="Reviews here pass no patch: the server’s reviewed dependencies, or reviews of its patch in the pull request’s comments, pass it">unreviewed</span>`
     }
     if (state === 'baseline') return html`<span class="repo-item-tag" data-tooltip="Locked at the commit reviews are counted since: it needs none">baseline</span>`
     if (!state) return nothing
