@@ -53,14 +53,30 @@ const TELLING = { status: 'loading', until: Number.POSITIVE_INFINITY }
 
 const held = new Map()
 const listeners = new Set()
-// The reads in flight, stopped once what they read is forgotten.
-const inFlight = new Set()
+// The reads in flight, by the team each reads, stopped once what they read
+// is forgotten, or once no tab shows their team: a read runs minutes, and
+// resumes, which a tab left would leave running for none.
+const inFlight = new Map()
+// The team each tab shows, by its element.
+const showing = new Map()
 let heldFor = null
+let sweeping = false
 const changed = () => { for (const notify of listeners) notify() }
 function forget() {
   held.clear()
-  for (const read of inFlight) read.abort()
+  for (const read of inFlight.keys()) read.abort()
   inFlight.clear()
+}
+// Reads of teams no tab shows stopped, once those moved meanwhile are back
+// in place, what they held read again once drawn (readTeam).
+function stopUnshown() {
+  if (sweeping) return
+  sweeping = true
+  queueMicrotask(() => {
+    sweeping = false
+    const teams = new Set(showing.values())
+    for (const [read, team] of inFlight) if (!teams.has(team)) read.abort()
+  })
 }
 globalThis.addEventListener?.('dependency-review-changed', () => {
   forget()
@@ -114,7 +130,7 @@ function readTeam(team, asked, repoIds, resumes) {
     else current.delete(repoId)
   }
   const controller = new AbortController()
-  inFlight.add(controller)
+  inFlight.set(controller, team)
   let unread = null
   fetchTeamDependencies(team, line => {
     if (controller.signal.aborted) return
@@ -273,12 +289,15 @@ class TeamDependencies extends StateElement {
     super.connectedCallback()
     listeners.add(this._notify)
     this._unsubscribe = subscribePullDependencies(this._notify)
+    showing.set(this, this.team)
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
     listeners.delete(this._notify)
     this._unsubscribe?.()
+    showing.delete(this)
+    stopUnshown()
   }
 
   open(event, { repo, item }) {
@@ -308,6 +327,12 @@ class TeamDependencies extends StateElement {
   }
 
   render() {
+    // Another team shown, the one shown before no longer read for it; one
+    // drawn once its tab is gone shows none.
+    if (this.isConnected && showing.get(this) !== this.team) {
+      if (showing.has(this)) stopUnshown()
+      showing.set(this, this.team)
+    }
     const repos = [...new Map((this.repositories ?? []).map(repo => [repo.repoId, repo])).values()]
     const entries = teamRepositories(this.team, repos.map(repo => repo.repoId))
     const reads = repos.map((repo, at) => ({ repo, read: entries[at] }))
