@@ -306,7 +306,8 @@ test('past the pull requests kept, a page of them all updated together read on t
   const request = await fixture(t)
   const now = Math.floor(Date.now() / 1000) * 1000
   const [tied, older] = [now - 60 * 60_000, now - 2 * 60 * 60_000]
-  // Sixty updated together, then one before them; a page a query.
+  // Sixty updated together, then one before them; a page a query, its
+  // cursor of the characters GitHub's take.
   const results = [...Array.from({ length: 60 }, (_, at) => pullNode(300 - at, { updatedAt: new Date(tied).toISOString() })),
     pullNode(10, { updatedAt: new Date(older).toISOString() })]
   const searches = []
@@ -314,9 +315,9 @@ test('past the pull requests kept, a page of them all updated together read on t
     if (!body.query.includes('search(type: ISSUE')) return graphql(body)
     searches.push([body.variables.query.split('updated:<=')[1], body.variables.after])
     const bound = Date.parse(body.variables.query.split('updated:<=')[1])
-    const from = body.variables.after ? Number(atob(body.variables.after).split(':')[1]) : 0
+    const from = body.variables.after ? Number(/^Y3_(\d+)-$/u.exec(body.variables.after)[1]) : 0
     const listed = results.filter(node => Date.parse(node.updatedAt) <= bound).slice(from, from + 50)
-    return { data: { search: { pageInfo: { endCursor: btoa(`cursor:${from + listed.length}`) }, nodes: listed } } }
+    return { data: { search: { pageInfo: { endCursor: `Y3_${from + listed.length}-` }, nodes: listed } } }
   })
   // None kept past an hour and a half ago.
   await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { pulls: [],
@@ -330,7 +331,7 @@ test('past the pull requests kept, a page of them all updated together read on t
   }
   assert.deepEqual(shown, results.map(node => node.number), 'each once, the tied all of them')
   const time = at => new Date(at).toISOString().slice(0, 19) + '+00:00'
-  assert.deepEqual(searches, [[time(now - 30 * 60_000), null], [time(now - 30 * 60_000), btoa('cursor:50')]], 'the same search read on, past them')
+  assert.deepEqual(searches, [[time(now - 30 * 60_000), null], [time(now - 30 * 60_000), 'Y3_50-']], 'the same search read on, past them, by its cursor as GitHub gave it')
 })
 
 test('past the pull requests kept, those updated together across a page\'s end, in whatever order GitHub gives them, none left out', async t => {
@@ -344,9 +345,9 @@ test('past the pull requests kept, those updated together across a page\'s end, 
   github(t, body => {
     if (!body.query.includes('search(type: ISSUE')) return graphql(body)
     const bound = Date.parse(body.variables.query.split('updated:<=')[1])
-    const from = body.variables.after ? Number(atob(body.variables.after).split(':')[1]) : 0
+    const from = body.variables.after ? Number(/^Y3_(\d+)-$/u.exec(body.variables.after)[1]) : 0
     const listed = results.filter(node => Date.parse(node.updatedAt) <= bound).slice(from, from + 50)
-    return { data: { search: { pageInfo: { endCursor: btoa(`cursor:${from + listed.length}`) }, nodes: listed } } }
+    return { data: { search: { pageInfo: { endCursor: `Y3_${from + listed.length}-` }, nodes: listed } } }
   })
   await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { pulls: [],
     since: pulseSince(52, now), through: now, reach: now - 30 * 60_000, next: null }, Date.now())

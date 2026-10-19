@@ -263,7 +263,7 @@ const startsOf = (cursor: string) => cursor.split(/[ ,]/u).filter(part => SHA.te
 // (`~<ms>~<cursor>`), those updated with them read on through the same
 // search; any other, as an older server gave (GitHub's), read from the
 // newest again.
-const POSITION = /^(\d{1,15})\.(\d{1,10})(?:~(\d{1,15})~([A-Za-z\d+/=]{1,200}))?$/u
+const POSITION = /^(\d{1,15})\.(\d{1,10})(?:~(\d{1,15})~([\w+/=-]{1,200}))?$/u
 const positionOf = (item: AgentPull) => `${item.updatedAt ?? 0}.${item.number}`
 // Those updated by a time, as GitHub's search takes it, to the second; any
 // where it names none.
@@ -306,7 +306,7 @@ async function agentPulls(fullName: string, token: string, cursor: string | null
   const rows = nodes.flatMap(node => pull(node) ?? [])
   const last = rows.at(-1)
   const ended = found?.search?.pageInfo?.endCursor
-  const together = Number.isFinite(by) && rows.every(item => item.updatedAt === last?.updatedAt) && typeof ended === 'string' && /^[A-Za-z\d+/=]{1,200}$/u.test(ended)
+  const together = Number.isFinite(by) && rows.every(item => item.updatedAt === last?.updatedAt) && typeof ended === 'string' && /^[\w+/=-]{1,200}$/u.test(ended)
   const after = nodes.length >= AGENT_PULLS_PAGE && last ? `${positionOf(last)}${together ? `~${by}~${ended}` : ''}` : null
   return { pulls: rows.filter(item => item.updatedAt !== time || item.number !== past), after: after === cursor ? null : after }
 }
