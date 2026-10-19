@@ -436,3 +436,35 @@ test('publication changes reject an in-flight individual preview', async t => {
   const focused = await h.request('/api/teams/broad/reports?reportId=private-links', 'manage')
   assert.equal(focused.status, 404)
 })
+
+test('a team\'s reports tell their trees\' files and the dependency directory they name, the trees asked for apart under the same access', async t => {
+  const h = await fixture(t)
+  const tree = { 'src/a.js': { imports: ['vendor/lib/x.js'], size: 10, fileHash: 'f', treeHash: 't' }, 'vendor/lib/x.js': { imports: [] } }
+  await h.seed('treed', { findings: [{ id: 'treed-own', file: 'src/a.js' }], tree })
+  await h.seed('hidden-treed', { findings: [{ id: 'hidden-own', file: 'src/h.js' }], tree: { 'src/h.js': {} } }, { visible: false })
+  const reports = await h.request('/api/teams/broad/reports')
+  assert.equal(reports.status, 200)
+  const treed = reports.body.reports.find(report => report.id === 'treed').data
+  assert.equal(Object.hasOwn(treed, 'tree'), false, 'the tree is not sent with its report')
+  assert.equal(treed.treeFiles, 2)
+  assert.equal(treed.treeDependencies, 'vendor')
+  assert.ok(reports.body.reports.every(report => !Object.hasOwn(report.data, 'tree')))
+  assert.equal(Object.hasOwn(reports.body.reports.find(report => report.id === 'a').data, 'treeFiles'), false, 'a report without one tells none')
+  const reads = h.reads.length
+  const trees = await h.request('/api/teams/broad/trees')
+  assert.equal(trees.status, 200)
+  const sent = { 'src/a.js': { imports: ['vendor/lib/x.js'], size: 10, fileHash: 'f' }, 'vendor/lib/x.js': { imports: [] } }
+  assert.deepEqual(trees.body, { trees: { treed: sent } }, 'each file\'s, without the hash of its tree')
+  assert.equal(h.reads.length, reads, 'built with its reports, and kept with them')
+  // A restricted team's reports keep their tree as they keep their report.
+  assert.deepEqual((await h.request('/api/teams/restricted/trees')).body, { trees: { treed: sent } })
+  const preview = await h.request('/api/teams/broad/trees?reportId=hidden-treed', 'admin')
+  assert.deepEqual(Object.keys(preview.body.trees), ['hidden-treed'])
+  for (const [path, role] of [
+    ['/api/teams/broad/trees?reportId=hidden-treed', 'triage'], ['/api/teams/broad/trees', 'none'], ['/api/teams/broad/trees', 'missing'],
+    ['/api/teams/missing/trees', 'triage'], ['/api/teams/broad/trees?reportId=missing', 'admin'],
+  ]) {
+    assert.equal((await h.request(path, role)).status, (await h.request(path.replace('/trees', '/reports'), role)).status, `${role} ${path}`)
+  }
+  assert.equal((await h.request('/api/teams/broad/trees', 'triage', 'POST', {})).status, 405)
+})

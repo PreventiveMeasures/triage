@@ -1432,7 +1432,7 @@ async function handleReportQuery(req: IncomingMessage, res: ServerResponse): Pro
 }
 
 function serveTeamReports(url: URL, res: ServerResponse): boolean {
-  const match = /^\/api\/teams\/([^/]+)\/(reports|annotations)$/u.exec(url.pathname)
+  const match = /^\/api\/teams\/([^/]+)\/(reports|trees|annotations)$/u.exec(url.pathname)
   if (!match) return false
   const team = currentTeams().find(entry => entry.id === match[1])
   if (!team) { sendJson(res, 404, { error: 'no-team' }); return true }
@@ -1451,11 +1451,15 @@ function serveTeamReports(url: URL, res: ServerResponse): boolean {
     sendJson(res, 200, { reports: Object.fromEntries(byReport), entries: Object.fromEntries([...triage].filter(([id]) => ids.has(id))), comments: comments.filter(comment => ids.has(comment.findingId)) })
     return true
   }
-  sendJson(res, 200, { reports: selected.map(entry => {
+  // Trees apart, as the managed server sends them (team-reports.ts withoutTree).
+  const read = selected.map(entry => {
     const report = reportFixtures.find(item => item.id === entry.id)!
-    return { id: report.id, filename: report.filename, data: readManagedReport(report.content, report.filename).data,
-      repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } }
-  }) })
+    const { tree, ...data } = readManagedReport(report.content, report.filename).data as { tree?: Record<string, unknown> }
+    return { report, tree, data: tree ? { ...data, treeFiles: Object.keys(tree).length } : data }
+  })
+  if (match[2] === 'trees') { sendJson(res, 200, { trees: Object.fromEntries(read.filter(({ tree }) => tree).map(({ report, tree }) => [report.id, tree])) }); return true }
+  sendJson(res, 200, { reports: read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data,
+    repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } })) })
   return true
 }
 

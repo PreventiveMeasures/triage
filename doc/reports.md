@@ -71,6 +71,7 @@ An admin or manager who is a team member can open one inside the team's scope as
 Anyone else gets `404`.
 
 A team view loads at most 4,096 reports and 1 GiB, and a larger workspace fails with `413`.
+Its reports come without their file trees: each tells how many files its tree holds (`treeFiles`) and the dependency directory it names (`treeDependencies`), and `GET /api/teams/:id/trees` answers the trees by report ID (each file's without its `treeHash`), under the same access, only once the view's Graph or Files needs them.
 The server rechecks access and publication after loading, and refuses rather than return a workspace that changed meanwhile.
 The browser keeps report content, comments, history and GitHub metadata in memory only, and responses are never HTTP-cached.
 

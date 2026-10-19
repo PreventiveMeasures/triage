@@ -90,14 +90,17 @@ function waitForHydration(promise, signal) {
 // reads without reconnecting the same stream. A team stream includes the catalog,
 // so a view wanting the catalog alone keeps an open one rather than reconnect to
 // leave its team and again to come back; a public share's goes with its team.
-export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
+// A view `loading` its team's reports connects meanwhile, attaching no reads
+// until they are in; one hydrating with `annotations` its preload asked for
+// (preloadManagedTeam) reads them at once, not waiting for the feed.
+export function startManagedTeamFeed({ catalogOnly = false, loading = false, hydrate, annotations } = {}) {
   // Let go while hidden: the feed the view wants starts when it is shown
   // again, though a view loading meanwhile still loads.
   if (pausedHidden && globalThis.document?.hidden && !hydrate) return undefined
   const session = state.managedSession, view = currentViewSignal()
   const focused = ['findings', 'files', 'links'].includes(state.currentView)
   const contentList = ['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)
-  const wanted = (contentList || focused && (!catalogOnly || active?.teamId === state.currentManagedTeam && !active.signal.aborted))
+  const wanted = (contentList || loading || focused && (!catalogOnly || active?.teamId === state.currentManagedTeam && !active.signal.aborted))
     ? state.currentManagedTeam : null
   // Kept while live and its team is still one of the reader's: one left or
   // deleted goes once the catalog says so, before a reconnect would find it
@@ -130,7 +133,7 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   }
   const subscription = active
   // Sidebar renders must not start annotation reads while a report is loading.
-  if (catalogOnly || contentList || !teamId) return subscription.target?.ready
+  if (catalogOnly || contentList || loading || !teamId) return subscription.target?.ready
   // The first reactive render can wrap this array after loading. Normalize its
   // identity so painting the hydrated view does not invalidate its consumer.
   const reports = store(state.reports)
@@ -146,30 +149,49 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   // The view hydrates with the shared annotation read made here, so that the
   // revision it read at is known (readTargetUpdates).
   target.hydration = hydrate ? initialHydration(async hydrationSignal => {
-    const version = subscription.version
-    const readAnnotations = createManagedAnnotationRead(subscription.teamId, hydrationSignal)
+    // A preload's read is at the events its connection had told when it was
+    // asked for; another connection's are all after it.
+    const version = annotations ? (annotations.subscription === subscription ? annotations.version : 0) : subscription.version
+    const readAnnotations = annotations?.read ?? createManagedAnnotationRead(subscription.teamId, hydrationSignal)
     const success = await hydrate(hydrationSignal, readAnnotations)
     if (success && target.current()) {
       target.version = version
       target.revision = readAnnotations?.revision() ?? null
+      // Those told since, as the reports loaded, are caught up with as one
+      // told now is: nothing read again where they tell what was read.
+      if (target.version < subscription.version) catchUp(subscription, target)
     }
     return success
   }, signal, target.current) : null
   target.ready = target.hydration?.promise
+  if (target.hydration && annotations) void target.hydration.start()
   // A retained connection has already supplied its initial invalidation. The
   // new report can hydrate immediately; no new stream or fallback delay needed.
-  if (subscription.version || subscription.finished) {
+  else if (subscription.version || subscription.finished) {
     if (target.hydration) void target.hydration.start()
-    else if (target.version < subscription.version) {
-      void refreshTarget(subscription, target, subscription.signal).then(success => {
-        // An event received during navigation must not be lost. If catching up
-        // fails, reconnect just as the watcher does for a failed live refresh.
-        if (!success && target.current()) { stopManagedTeamFeed(); startManagedTeamFeed() }
-        return success
-      })
-    }
+    else if (target.version < subscription.version) catchUp(subscription, target)
   }
   return target.ready
+}
+
+// A team's reports loading (ingest.js switchToManagedTeam): its feed connects,
+// and its annotations are asked for, as they load rather than after, for the
+// view's hydration to take (startManagedTeamFeed `annotations`).
+export function preloadManagedTeam(signal) {
+  startManagedTeamFeed({ loading: true })
+  const read = createManagedAnnotationRead(state.currentManagedTeam, signal)
+  if (!read) return undefined
+  read.start()
+  return { read, subscription: active, version: active?.version ?? 0 }
+}
+
+// An event received during navigation must not be lost. If catching up fails,
+// reconnect just as the watcher does for a failed live refresh.
+function catchUp(subscription, target) {
+  void refreshTarget(subscription, target, subscription.signal).then(success => {
+    if (!success && target.current()) { stopManagedTeamFeed(); startManagedTeamFeed() }
+    return success
+  })
 }
 
 function watchSubscription(subscription) {

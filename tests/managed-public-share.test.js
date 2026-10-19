@@ -75,6 +75,18 @@ test('public workspace catalogs preserve analyzer metadata without loading repor
   assert.equal(response.body.team.app, null)
 })
 
+test('a public workspace\'s reports tell their trees apart, its trees asked for under the share alone', async t => {
+  const h = await fixture(t), token = await h.mint()
+  const tree = { 'src/a.js': { imports: ['node_modules/x/index.js'] }, 'node_modules/x/index.js': {} }
+  const get = h.store.get
+  h.store.get = id => id === 'visible' ? Promise.resolve(Buffer.from(JSON.stringify({ findings: [{ id: 'visible-finding', file: 'src/a.js' }], tree }))) : get(id)
+  const visible = (await h.request('/api/teams/team/reports', { token })).body.reports.find(report => report.id === 'visible').data
+  assert.deepEqual([visible.tree, visible.treeFiles, visible.treeDependencies], [undefined, 2, 'node_modules'])
+  assert.deepEqual((await h.request('/api/teams/team/trees', { token })).body, { trees: { visible: tree } })
+  assert.equal((await h.request('/api/teams/other/trees', { token })).status, 404)
+  assert.equal((await h.request('/api/teams/team/trees', { token: 'A'.repeat(43) })).status, 401)
+})
+
 test('directory team links include bundles at or below their scope and immediately lose moved bundles', async t => {
   const h = await fixture(t), token = await h.mint()
   const catalog = async () => (await h.request('/api/teams/team/shared', { token })).body.team.bundles
