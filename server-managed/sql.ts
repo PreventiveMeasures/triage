@@ -28,7 +28,7 @@ const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'g
   'listGithubMetadata', 'listGithubRepositoryVisibility', 'setGithubMetadata', 'recordGithubMetadataAttempts', 'setGithubRepositoryVisibility',
   'listLinkReports', 'listLegacyLinkReports', 'listReportFilenamesWithBundleHash', 'listReportsForRepo', 'listBundlesForRepo',
   'listFindingCatalogReports', 'userCanReadBundleAdvisories',
-  'sessionWithUser', 'getTeamReportAccessSnapshot', 'getReportAccessSnapshot', 'getReportView', 'getUserGithubId', 'getUserTeamFeedSnapshot', 'getAnnotations', 'getAnnotationRevision', 'getUserTokens',
+  'sessionWithUser', 'getTeamReportAccessSnapshot', 'getReportAccessSnapshot', 'getBundleAccessSnapshot', 'getReportView', 'getUserGithubId', 'getUserTeamFeedSnapshot', 'getAnnotations', 'getAnnotationRevision', 'getUserTokens',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
   'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'getFirstUpstreamCacheEntries', 'setUpstreamCacheEntry', 'setUpstreamCacheEntries', 'ensureSessionUploadKey',

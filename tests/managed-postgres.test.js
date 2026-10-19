@@ -534,8 +534,9 @@ test('Postgres bundle delivery and advisories use bounded authorization reads', 
       await handler({ url: `/api/bundles/${bundleId}/${part}?team=team`, method: part === 'advisories' ? 'GET' : 'HEAD',
         headers: { cookie: session.setCookie.split(';')[0] } }, res)
       assert.equal(res.status, 200, `${role}/${part}`)
-      const snapshotQueries = role === 'admin' ? 4 : part === 'advisories' && role !== 'manage' ? 6 : 5
-      assert.equal(queries.length, 1 + snapshotQueries * (part === 'advisories' ? 3 : 2))
+      // Each access snapshot is one statement, whatever the role, outside any transaction.
+      assert.equal(queries.length, 1 + (part === 'advisories' ? 3 : 2))
+      assert.ok(!queries.some(sql => /^(?:BEGIN|COMMIT)\b/u.test(sql)), `${role}/${part}`)
       assert.equal(queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1)
       t.diagnostic(`${role}/${part}: ${queries.length} SQL statements, ${queries.filter(sql => sql.startsWith('UPDATE managed_user SET last_seen_at')).length} presence writes`)
     }

@@ -494,7 +494,7 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   getBundleByIntegrity(integrity: string): Promise<ManagedBundle | null>
   resolveBundleUpload(integrity: string): Promise<ManagedBundle | null>
   getBundle(id: string): Promise<ManagedBundle | null>
-  // One read snapshot of the live session, bundle and grants. Passing a team
+  // One statement reads the live session, bundle and grants. Passing a team
   // (or null for any team) also checks advisory security access; omission skips it.
   getBundleAccessSnapshot(sessionId: string, now: number, id: string, advisoriesTeamId?: string | null): Promise<{
     bundle: ManagedBundle | null; canReadAdvisories: boolean
@@ -696,13 +696,6 @@ function prepareStatements(db: ManagedSql) {
     selectGithubIdStmt: db.prepare(`SELECT github_user_id AS githubId FROM managed_user WHERE id = ?`),
     insertSessionStmt: db.prepare(
       `INSERT INTO managed_session (id, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
-    ),
-    selectSessionStmt: db.prepare(
-      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey,
-              u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
-         FROM managed_session s
-         JOIN managed_user u ON u.id = s.user_id
-        WHERE s.id = ? AND s.expires_at > ?`,
     ),
     selectOwnSessionStmt: db.prepare(
       `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey,
@@ -1160,6 +1153,32 @@ function prepareStatements(db: ManagedSql) {
         WHERE b.id = ? AND tu.user_id = ? AND tu.view_security = 1
           AND (? IS NULL OR tr.team_id = ?) LIMIT 1`,
     ),
+    // A bundle access snapshot's reads in one statement, so one snapshot of
+    // the database answers them all: the session's user, view sessions
+    // included; the bundle, NULL where there is none; whether one of the
+    // user's team scopes contains it, the grant both selectBundleReadableStmt
+    // (a manager's, beside their own uploads) and selectRepoPathReadableStmt
+    // (a reader's, of its repository directory) ask for; and, where the flag
+    // asks, whether one in the team (any, where NULL) shows them its
+    // advisories (selectBundleSecurityStmt).
+    selectBundleAccessStmt: db.prepare(
+      `WITH viewer AS (
+         SELECT u.id AS uid, u.role AS role
+           FROM managed_session s JOIN managed_user u ON u.id = s.user_id
+          WHERE s.id = ? AND s.expires_at > ?
+       )
+       SELECT v.uid AS uid, v.role AS role, b.id AS id, b.slug AS slug, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
+              b.byte_size AS byteSize, b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.repo_directory AS repoDirectory, b.visible AS visible,
+              b.uploaded_at AS uploadedAt, b.provenance AS provenance, b.build_conditions AS buildConditions,
+              EXISTS(SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+                       JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+                      WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = v.uid) AS granted,
+              (? = 1 AND EXISTS(SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
+                       JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+                      WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = v.uid AND tu.view_security = 1
+                        AND (? IS NULL OR tr.team_id = ?))) AS security
+         FROM viewer v LEFT JOIN managed_bundle b ON b.id = ?`,
+    ),
     // The viewer's effective visibility permissions for a report: OR'd (MAX over
     // 0/1) across memberships whose repository path contains the report. NULLs
     // (no such membership) read as 0 = no permission.
@@ -1577,22 +1596,19 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       return row == null ? null : mapBundle(row)
     },
     async getBundleAccessSnapshot(sessionId: string, now: number, id: string, advisoriesTeamId?: string | null) {
-      const session = await stmts.selectSessionStmt.get(sessionId, now) as SessionRow | undefined
-      if (!session) return null
+      // One statement, shared by SQLite and Postgres; the advisories grant is
+      // read only where a team (or null, any) is passed.
+      const team = advisoriesTeamId ?? null
+      const row = await stmts.selectBundleAccessStmt.get(sessionId, now, advisoriesTeamId === undefined ? 0 : 1, team, team, id) as
+        { uid: string; role: Role; granted: unknown; security: unknown } & (BundleRow | { id: null }) | undefined
+      if (!row) return null
       const denied = { bundle: null, canReadAdvisories: false }
-      if (!roleAtLeast(session.role, 'view')) return denied
-      const row = await selectBundleStmt.get(id) as BundleRow | undefined
-      if (!row) return denied
-      const manager = roleAtLeast(session.role, 'manage')
+      if (!roleAtLeast(row.role, 'view') || row.id === null) return denied
+      const manager = roleAtLeast(row.role, 'manage')
       if (!manager && row.visible !== 1) return denied
-      if (session.role !== 'admin') {
-        const allowed = manager ? await selectBundleReadableStmt.get(id, session.uid, session.uid)
-          : row.repoId !== null && await selectRepoPathReadableStmt.get(row.repoDirectory, row.repoId, session.uid)
-        if (!allowed) return denied
-      }
-      const canReadAdvisories = manager || (advisoriesTeamId !== undefined
-        && await stmts.selectBundleSecurityStmt.get(id, session.uid, advisoriesTeamId, advisoriesTeamId) != null)
-      return { bundle: mapBundle(row), canReadAdvisories }
+      // Admins read every bundle, managers their own uploads too.
+      if (row.role !== 'admin' && !(row.granted || (manager && row.uploadedBy === row.uid))) return denied
+      return { bundle: mapBundle(row), canReadAdvisories: manager || Boolean(row.security) }
     },
     async listBundles(userId?: string): Promise<AdminBundle[]> {
       const rows = (await selectBundlesStmt.all(userId ?? null, userId ?? null, userId ?? null)) as BundleListRow[]

@@ -3,7 +3,9 @@
 // listManagedIssues; getReportView as getReport and userCanReadReport;
 // getUserTokens as the tokens set; sessionWithUser as getSessionWithUser,
 // recording presence; getUserTeamFeedSnapshot as getFeedState and
-// listTeamsForUser.
+// listTeamsForUser; getBundleAccessSnapshot as the session, getBundle and the
+// grants its role asks for (userCanReadBundle, userCanReadRepoPath and
+// userCanReadBundleAdvisories).
 import assert from 'node:assert/strict'
 
 // SQLite rows have no prototype; rows read out of JSON have the plain one.
@@ -74,4 +76,55 @@ export async function checkFoldedReads(db) {
   assert.deepEqual(plain(feed.teams), plain(await db.listTeamsForUser(member)))
   assert.deepEqual(feed.teams.map(team => team.reports.map(report => report.id)), [['published']])
   assert.equal(await db.getUserTeamFeedSnapshot('own', 1000), null)
+
+  // Bundle access, for each role, bundle and advisories team, through an own
+  // session and an admin's view of the same user: published and unpublished,
+  // in and beside a team's directory, in a hidden team's, uploaded by the
+  // user, unassigned, and missing.
+  const reader = await db.upsertUser(identity(4), 50)
+  await db.createSession({ id: 'reader', userId: reader, csrfToken: 'csrf', expiresAt: 1000 }, 50)
+  await db.createSession({ id: 'admin', userId: admin, csrfToken: 'csrf', expiresAt: 1000 }, 50)
+  assert.equal(await db.createViewSession({ id: 'view', viewerSessionId: 'admin', userId: reader, csrfToken: 'view-csrf' }, 50), true)
+  for (const [team, path, security] of [['secure', 'app', true], ['plain', 'lib', false], ['hidden', 'secret', true]]) {
+    await db.createTeam(team, team, 50)
+    await db.setTeamRepo(team, 7, path)
+    await db.setTeamMember(team, reader, { dependencies: false, security })
+  }
+  await db.setTeamHidden('hidden', true, 50)
+  const bundles = { app: [7, 'app', admin, true], draft: [7, 'app/sub', admin, false], lib: [7, 'lib', null, true], sibling: [7, 'application', null, true],
+    secret: [7, 'secret', null, true], owned: [7, 'elsewhere', reader, true], 'owned-draft': [7, 'elsewhere', reader, false],
+    unassigned: [null, '', null, true], 'owned-unassigned': [null, '', reader, true] }
+  for (const [id, [repoId, repoDirectory, uploadedBy, visible]] of Object.entries(bundles)) {
+    await db.insertBundle({ id, integrity: id, filename: `${id}.stasis`, kind: 'stasis', byteSize: 12, repoId, repoDirectory, uploadedBy, visible }, 51)
+  }
+  const granted = new Set()
+  const checkBundleAccess = async (session, role, teams) => {
+    const { user } = session === 'view' ? await db.getViewSessionWithUser('view', 'admin', 60) : await db.getSessionWithUser(session, 60)
+    const manager = ['admin', 'manage'].includes(role)
+    assert.deepEqual([user.id, user.role], [reader, role])
+    for (const id of [...Object.keys(bundles), 'missing']) {
+      const bundle = await db.getBundle(id)
+      const allowed = bundle && role !== 'none' && (manager || bundle.visible) && (role === 'admin' || (manager ? await db.userCanReadBundle(reader, id)
+        : bundle.repoId !== null && await db.userCanReadRepoPath(reader, bundle.repoId, bundle.repoDirectory)))
+      for (const team of teams) {
+        const access = await db.getBundleAccessSnapshot(session, 60, id, team)
+        const advisories = manager || (team !== undefined && await db.userCanReadBundleAdvisories(reader, id, team))
+        assert.deepEqual(plain(access), plain(allowed ? { bundle, canReadAdvisories: advisories } : { bundle: null, canReadAdvisories: false }),
+          `${role} ${session} ${id} ${team}`)
+        if (access.bundle) granted.add(`${role} ${id}${access.canReadAdvisories ? ' advisories' : ''}`)
+      }
+    }
+  }
+  for (const role of ['admin', 'manage', 'triage', 'view', 'none']) {
+    await db.setUserRole(reader, role)
+    await checkBundleAccess('reader', role, [undefined, null, 'secure', 'plain', 'hidden', 'team', 'missing'])
+    await checkBundleAccess('view', role, [undefined, 'secure'])
+  }
+  // Each rule both grants and denies something in these.
+  assert.deepEqual([...granted].filter(key => !/^(?:admin|manage) /u.test(key)).toSorted(),
+    ['triage app', 'triage app advisories', 'triage lib', 'view app', 'view app advisories', 'view lib'])
+  assert.deepEqual([...granted].filter(key => key.startsWith('manage ')).toSorted(), ['manage app advisories', 'manage draft advisories',
+    'manage lib advisories', 'manage owned advisories', 'manage owned-draft advisories', 'manage owned-unassigned advisories'])
+  assert.equal(await db.getBundleAccessSnapshot('reader', 1000, 'app'), null, 'expired')
+  assert.equal(await db.getBundleAccessSnapshot('missing', 60, 'app'), null)
 }
