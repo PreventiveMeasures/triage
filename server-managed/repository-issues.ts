@@ -8,7 +8,7 @@
 // packages are told (pull-dependencies.ts touchesLockfile), and its reviews
 // (pull-reviews.ts), each reviewer's. A nonpublic repository's are read with
 // its GitHub App's installation, which reads pull requests only with their
-// own permission (README).
+// own permission (doc/code-viewer.md).
 import { GithubApiError } from './github-app.ts'
 import { touchesLockfile } from './pull-dependencies.ts'
 import { ACTOR, type GraphAccount, type GraphqlError, actorOf, githubGraphql } from './repository-history.ts'
