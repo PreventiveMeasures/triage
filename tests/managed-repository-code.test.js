@@ -125,7 +125,7 @@ function github(t, { truncate = false, reads = Infinity, archives = tree => tree
     const path = url.pathname
     if (path === '/repos/org/repo' && asked.filter(entry => entry === '/repos/org/repo').length > reads) return Response.json({ message: 'Not Found' }, { status: 404 })
     if (path === '/repos/org/repo') return Response.json(publicMetadata)
-    if (path === '/repos/org/repo/commits/heads%2Fmain') return Response.json({ sha: head() })
+    if (path === '/repos/org/repo/commits/heads%2Fmain') return Response.json({ sha: await head() })
     if (path === '/repos/org/repo/commits/heads%2Ffeature' || path === '/repos/org/repo/commits/tags%2Fv1') return Response.json({ sha: other })
     const at = /^\/repos\/org\/repo\/git\/commits\/([a-f\d]{40})$/u.exec(path)?.[1]
     if (at === commit || at === other) return Response.json({ sha: at, tree: { sha: treeAt('') } })
@@ -498,6 +498,24 @@ test('a repository deactivated or removed has what was kept of its code removed,
   }
 })
 
+test('a read of the default branch whose head comes as the repository is deactivated or removed keeps nothing, nor its head', async t => {
+  for (const [path, body] of [['/api/admin/repositories/select', { repoId: 1, selected: false }],
+    ['/api/admin/repositories/remove', { repoId: 1, fullName: 'org/repo', acknowledge: true, deleteTriage: false }]]) {
+    const request = await fixture(t, { role: 'admin', storage: true })
+    const slow = Promise.withResolvers()
+    const asked = github(t, { head: () => slow.promise.then(() => commit) })
+    const reading = request({ repoId: '1', ref: '', path: 'src/allowed' })
+    while (!asked.includes('/repos/org/repo/commits/heads%2Fmain')) await new Promise(resolve => { setImmediate(resolve) })
+    assert.equal(await request.post(path, body), 200, path)
+    slow.resolve()
+    assert.equal((await reading).status, 404, `${path}: not sent`)
+    await request.settle()
+    assert.deepEqual(await request.kept(), [], path)
+    assert.equal(await codeHeadStore(request.db).read('1'), null, `${path}: nor the commit it read`)
+    t.mock.restoreAll()
+  }
+})
+
 test('a body past MAX_KEPT_CODE_BYTES is not kept, nor one kept past it read', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
@@ -507,7 +525,7 @@ test('a body past MAX_KEPT_CODE_BYTES is not kept, nor one kept past it read', a
     open: () => Promise.resolve({ size: MAX_KEPT_CODE_BYTES + 1, stream: Readable.from([]) }),
     delete: () => Promise.resolve(),
   }
-  const kept = repositoryCodeKept(storage, codeHeadStore(db), job => { work.push(job) })
+  const kept = repositoryCodeKept(storage, codeHeadStore(db), () => Promise.resolve(true), job => { work.push(job) })
   assert.equal(await kept.at(1, '', commit, 'main'), true)
   const at = { repoId: 1, repo: 'org/repo', commit, path: '' }
   // Bodies by their sizes alone, as neither keeping one nor this storage reads more of it.

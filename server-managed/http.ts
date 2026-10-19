@@ -1693,12 +1693,14 @@ async function keptTree<T>(memory: Lru<T>, store: KeptStore<T>, key: string, kep
 
 // The default branch's head's directories as kept in byte storage
 // (repository-code.ts repositoryCodeKept), the commit they are kept at in
-// the database; none where this server has no byte storage for them. Work
-// behind an answer is tracked (serverless, its invocation kept alive till it
-// settles), as a kept read read again behind one is.
+// the database, for a repository active as it is selected; none where this
+// server has no byte storage for them. Work behind an answer is tracked
+// (serverless, its invocation kept alive till it settles), as a kept read
+// read again behind one is.
 function repositoryCodeKeptOf(deps: ManagedHttpDeps): RepositoryCodeKept | null {
   if (!deps.repositoryCodeStorage) return null
-  return repositoryCodeKept(deps.repositoryCodeStorage, codeHeadStore(deps.db, deps.config.debug), work => {
+  const active = async (repoId: number) => (await deps.db.listSelectedRepos()).some(row => row.repoId === repoId)
+  return repositoryCodeKept(deps.repositoryCodeStorage, codeHeadStore(deps.db, deps.config.debug), active, work => {
     deps.track(work)
     deps.waitUntil?.(work)
   }, deps.config.debug)
