@@ -1893,6 +1893,23 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   & > h2 { margin: 0 0 .25rem; font-size: .875rem; font-weight: 500; color: var(--text); }
   & > .team-deps-quiet:first-child, & > h2 + .team-deps-quiet { margin: 0 0 .25rem; }
 }
+/* The order the pull requests are in, picked above them at their end: a
+   select stripped of its native chrome, its chevron drawn by its holder,
+   as a select's pseudo-elements aren't. */
+.team-deps-sort {
+  position: relative; align-self: flex-end; display: inline-block; margin-bottom: -.25rem;
+  & > select {
+    appearance: none; -webkit-appearance: none;
+    padding: .2rem 1.5rem .2rem .55rem; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); color: var(--text); font: inherit; font-size: .75rem;
+    &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  }
+  &::after {
+    content: ''; position: absolute; right: .55rem; top: 50%; width: .35rem; height: .35rem;
+    border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+    transform: translateY(-70%) rotate(45deg); pointer-events: none;
+  }
+}
 /* The pull requests' cards side by side in their order, each a column a
    little wider than its versions', however many it lists. */
 .team-deps-pulls {

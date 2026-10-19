@@ -11,7 +11,7 @@ export interface ReviewInput { file: string; comment: string; status: ReviewVerd
 export interface ReviewEntry extends ReviewInput { id: string; time: number }
 export interface ReviewTeam { id: string; name: string }
 export interface DependencyReview extends ReviewContext, ReviewSummary {
-  id: string; user: string | null; userLogin: string; time: number; revision: number
+  id: string; user: string | null; userLogin: string; userName: string | null; time: number; revision: number
   publishedAt: number | null; revokedAt: number | null; entries: ReviewEntry[]; teams: ReviewTeam[]; files: string[] | null
   nonTextFiles: string[] | null
   status: ReviewVerdict | null; comment: string
@@ -74,7 +74,9 @@ CREATE INDEX IF NOT EXISTS managed_dependency_review_team_idx ON managed_depende
 const values = (c: ReviewContext) => [c.ecosystem, c.package, c.version, c.integrity, c.basePackage ?? '', c.baseVersion ?? '', c.baseIntegrity ?? '']
 const targetWhere = 'ecosystem = ? AND package = ? AND version = ? AND integrity = ?'
 const contextWhere = `${targetWhere} AND base_package = ? AND base_version = ? AND base_integrity = ?`
-const columns = `id, user_id AS user, user_login AS userLogin, ecosystem, package, version, integrity,
+// Its author by the login they reviewed as, and by the name the app's user
+// has now (null once they are none, or have none), as the lists show them.
+const columns = `id, user_id AS user, user_login AS userLogin, (SELECT n.name FROM managed_user n WHERE n.id = user_id) AS userName, ecosystem, package, version, integrity,
   NULLIF(base_package, '') AS basePackage, NULLIF(base_version, '') AS baseVersion, NULLIF(base_integrity, '') AS baseIntegrity,
   time, revision, published_at AS publishedAt, revoked_at AS revokedAt, files, status, comment`
 const conflict = () => { throw new ManagedMutationError(409, 'review-conflict') }

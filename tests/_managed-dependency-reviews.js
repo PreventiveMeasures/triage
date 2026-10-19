@@ -143,7 +143,11 @@ export async function checkDependencyReviews(db) {
   assert.deepEqual((await db.listOwnDependencyReviews(users.alice.userId, null)).reviews.map(item => item.id), [review.id])
   // Those published to a team, revoked ones too, of one who reads them there.
   const team = await db.listTeamDependencyReviews('one', users.alice.userId, null)
-  assert.deepEqual([team.reviews.map(item => [item.id, item.userLogin, item.revokedAt !== null]), team.next], [[[review.id, 'alice', true]], null])
+  assert.deepEqual([team.reviews.map(item => [item.id, item.userLogin, item.userName, item.revokedAt !== null]), team.next], [[[review.id, 'alice', null, true]], null])
+  // Its author by the name the app's user has now, as their sign-in gives it.
+  await createSession(config, db, { githubUserId: 100, login: 'alice', name: 'Alice Liddell', avatarUrl: null }, Date.now())
+  assert.deepEqual((await db.listTeamDependencyReviews('one', users.alice.userId, null)).reviews.map(item => [item.userLogin, item.userName]), [['alice', 'Alice Liddell']])
+  assert.deepEqual((await db.listDependencyReviews(reviewContext, users.alice.userId)).map(item => item.userName), ['Alice Liddell'], 'as a version\'s reviews list them')
   assert.deepEqual((await db.listTeamDependencyReviews('one', users.admin.userId, null)).reviews.map(item => item.id), [review.id], 'an admin reads every team’s')
   for (const who of ['bob', 'carol', 'viewer', 'outsider']) assert.equal(await db.listTeamDependencyReviews('one', users[who].userId, null), null, `${who} reads none there`)
   assert.deepEqual((await db.listTeamDependencyReviews('disabled', users.alice.userId, null)).reviews, [], 'none published there')

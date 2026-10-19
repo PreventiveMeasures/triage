@@ -8,7 +8,7 @@ import { DELETE_ICON_SVG } from './icons.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { compareSourceOptions, renderComparisonHeader, renderComparisonPicker, renderComparisonSummary } from './bundle-compare-picker.js'
 import { renderComparisonViewer } from './bundle-compare-view.js'
-import { reviewBadge, reviewDate, reviewFileStates, reviewNote, reviewProgress, reviewTitle, sameReviewContext, verdictIcon, verdictLabel, verdictLabels } from './npm-review-presentation.js'
+import { reviewAuthor, reviewBadge, reviewDate, reviewFileStates, reviewNote, reviewProgress, reviewTitle, sameReviewContext, verdictIcon, verdictLabel, verdictLabels } from './npm-review-presentation.js'
 
 const busy = page => page._blocked || page._loading
 const isFrozen = page => page._shownReview?.publishedAt != null
@@ -134,7 +134,7 @@ export function renderReviewEntry(page, review) {
   const selected = page._additionalTeams.get(review.id) ?? new Set(remaining.length === 1 ? remaining.map(team => team.id) : [])
   const chosen = remaining.filter(team => selected.has(team.id)).map(team => team.id)
   return html`<section class="npm-review-entry" aria-current=${String(current)}><div class="npm-review-history-heading">
-      <strong>${review.userLogin}</strong>${current ? html`<span class="npm-review-current">Current</span>` : nothing}${reviewBadge(review)}</div>
+      <strong>${reviewAuthor(review)}</strong>${current ? html`<span class="npm-review-current">Current</span>` : nothing}${reviewBadge(review)}</div>
     <p class="npm-review-help">${review.basePackage ? `${review.basePackage === review.package ? review.baseVersion : `${review.basePackage}@${review.baseVersion}`} → ${review.version}` : 'All package files'}</p>
     <div class="npm-review-entry-result">${published ? verdictLabel(review.status) : nothing}<span class="dependency-review-coverage">
       ${published ? html`${summary.coverage === 'full' ? 'Full' : html`<span class="dependency-review-partial">Partial</span>`} · ` : nothing}${summary.checkedFiles}${summary.totalFiles === null ? nothing : `/${summary.totalFiles}`} files checked</span></div>

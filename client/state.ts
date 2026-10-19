@@ -116,6 +116,7 @@ export interface State {
   bundleDetails: unknown
   bundleDetailsTab: string
   teamDependenciesTab: 'pulls' | 'versions' | 'branch' | 'reviews'
+  teamDependenciesSort: 'newest' | 'updated' | 'fewest'
   selectedPackage: string | null
   selectedPackageVersion: string | null
   packageDetailsTab: 'overview' | 'issues'
@@ -589,6 +590,10 @@ export const state: State = store<State>({
   // address names it, /team/<slug>/dependencies[/<tab>]: the one last
   // picked, which its header tab opens again.
   teamDependenciesTab: 'pulls',
+  // How its Pull requests sub-tab orders them (team-dependencies.js): the
+  // newest opened first, the latest updated first, or those adding fewest
+  // versions to review first.
+  teamDependenciesSort: 'newest',
   // Packages view selection — the package name (string) of the open
   // row, null when no detail panel is up. Mirrors the selectedBundle
   // pattern: clicking a row sets it; the deselect button clears it.
