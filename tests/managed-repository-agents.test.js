@@ -302,6 +302,64 @@ test('the pull requests as the Pulse keeps them too, read no further: those past
   assert.deepEqual([full.body.pulls.length, full.body.after.pulls], [50, `${at(59)}.51`])
 })
 
+test('past the pull requests kept, a page of them all updated together read on through the same search, past them, each once', async t => {
+  const request = await fixture(t)
+  const now = Math.floor(Date.now() / 1000) * 1000
+  const [tied, older] = [now - 60 * 60_000, now - 2 * 60 * 60_000]
+  // Sixty updated together, then one before them; a page a query.
+  const results = [...Array.from({ length: 60 }, (_, at) => pullNode(300 - at, { updatedAt: new Date(tied).toISOString() })),
+    pullNode(10, { updatedAt: new Date(older).toISOString() })]
+  const searches = []
+  github(t, body => {
+    if (!body.query.includes('search(type: ISSUE')) return graphql(body)
+    searches.push([body.variables.query.split('updated:<=')[1], body.variables.after])
+    const bound = Date.parse(body.variables.query.split('updated:<=')[1])
+    const from = body.variables.after ? Number(atob(body.variables.after).split(':')[1]) : 0
+    const listed = results.filter(node => Date.parse(node.updatedAt) <= bound).slice(from, from + 50)
+    return { data: { search: { pageInfo: { endCursor: btoa(`cursor:${from + listed.length}`) }, nodes: listed } } }
+  })
+  // None kept past an hour and a half ago.
+  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { pulls: [],
+    since: pulseSince(52, now), through: now, reach: now - 30 * 60_000, next: null }, Date.now())
+  const shown = []
+  let after = `${now - 30 * 60_000}.1`
+  for (let page = 0; page < 4 && after; page++) {
+    const { body } = await request({ repoId: '1', pulls: after })
+    shown.push(...body.pulls.map(pull => pull.number))
+    after = body.after?.pulls ?? null
+  }
+  assert.deepEqual(shown, results.map(node => node.number), 'each once, the tied all of them')
+  const time = at => new Date(at).toISOString().slice(0, 19) + '+00:00'
+  assert.deepEqual(searches, [[time(now - 30 * 60_000), null], [time(now - 30 * 60_000), btoa('cursor:50')]], 'the same search read on, past them')
+})
+
+test('past the pull requests kept, those updated together across a page\'s end, in whatever order GitHub gives them, none left out', async t => {
+  const request = await fixture(t)
+  const now = Math.floor(Date.now() / 1000) * 1000
+  const tied = now - 2 * 60 * 60_000
+  // Forty a minute apart, then twenty updated together, the lower numbers
+  // first, then one before them.
+  const results = [...Array.from({ length: 40 }, (_, at) => pullNode(500 - at, { updatedAt: new Date(now - (40 + at) * 60_000).toISOString() })),
+    ...Array.from({ length: 20 }, (_, at) => pullNode(at + 1, { updatedAt: new Date(tied).toISOString() })), pullNode(100, { updatedAt: new Date(tied - 60_000).toISOString() })]
+  github(t, body => {
+    if (!body.query.includes('search(type: ISSUE')) return graphql(body)
+    const bound = Date.parse(body.variables.query.split('updated:<=')[1])
+    const from = body.variables.after ? Number(atob(body.variables.after).split(':')[1]) : 0
+    const listed = results.filter(node => Date.parse(node.updatedAt) <= bound).slice(from, from + 50)
+    return { data: { search: { pageInfo: { endCursor: btoa(`cursor:${from + listed.length}`) }, nodes: listed } } }
+  })
+  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { pulls: [],
+    since: pulseSince(52, now), through: now, reach: now - 30 * 60_000, next: null }, Date.now())
+  const shown = new Set()
+  let after = `${now - 30 * 60_000}.1`
+  for (let page = 0; page < 4 && after; page++) {
+    const { body } = await request({ repoId: '1', pulls: after })
+    for (const pull of body.pulls) shown.add(pull.number)
+    after = body.after?.pulls ?? null
+  }
+  assert.deepEqual([...shown].toSorted((x, y) => x - y), results.map(node => node.number).toSorted((x, y) => x - y))
+})
+
 test('a read of the pull requests the Pulse left not finished, those kept no longer fresh: the Agents tab reads it on as the Pulse would, never cut short', async t => {
   const request = await fixture(t)
   const now = Math.floor(Date.now() / 60_000) * 60_000

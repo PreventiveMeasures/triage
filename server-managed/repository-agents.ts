@@ -83,9 +83,12 @@ const PAGE_QUERY = `query($owner: String!, $name: String!) {
     }
   }
 }`
-// A page of the pull requests a search finds, as GitHub sorts them.
-const SEARCH_QUERY = `query($query: String!) {
-  search(type: ISSUE, query: $query, first: ${AGENT_PULLS_PAGE}) { nodes { ... on PullRequest { ${AGENT_PULL_FIELDS} commits { totalCount } } } }
+// A page of the pull requests a search finds, as GitHub sorts them, on from
+// where `after` says its page before ended.
+const SEARCH_QUERY = `query($query: String!, $after: String) {
+  search(type: ISSUE, query: $query, first: ${AGENT_PULLS_PAGE}, after: $after) {
+    pageInfo { endCursor } nodes { ... on PullRequest { ${AGENT_PULL_FIELDS} commits { totalCount } } }
+  }
 }`
 
 type Login = { login?: unknown; databaseId?: unknown } | null | undefined
@@ -108,7 +111,7 @@ const pulledQuery = (count: number) => `query($owner: String!, $name: String!, $
 type Pulled = { repository?: Record<string, { associatedPullRequests?: { totalCount?: unknown } } | null> | null }
 type Page = { repository?: { defaultBranchRef?: { target?: { oid?: unknown; history?: Connection<CommitNode> } | null } | null
   issues?: Connection<IssueNode> } | null }
-type Found = { search?: { nodes?: (PullNode | null)[] } | null } | null
+type Found = { search?: { pageInfo?: { endCursor?: unknown }; nodes?: (PullNode | null)[] } | null } | null
 type RefsPage = { repository?: { refs?: Connection<RefNode> } | null }
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
@@ -255,9 +258,12 @@ export const COMMITS_CURSOR = new RegExp(`^(?:[\\da-f]{40}(?:,[\\da-f]{40}){0,${
 const startsOf = (cursor: string) => cursor.split(/[ ,]/u).filter(part => SHA.test(part))
 
 // A cursor of the pull requests: the last listed, by when it was updated and
-// its number (`<ms>.<number>`), those below it read next; any other, as an
-// older server gave (GitHub's), read from the newest again.
-const POSITION = /^(\d{1,15})\.(\d{1,10})$/u
+// its number (`<ms>.<number>`), those below it read next; of a search's page
+// all updated together, the time it searched by and where its page ended too
+// (`~<ms>~<cursor>`), those updated with them read on through the same
+// search; any other, as an older server gave (GitHub's), read from the
+// newest again.
+const POSITION = /^(\d{1,15})\.(\d{1,10})(?:~(\d{1,15})~([A-Za-z\d+/=]{1,200}))?$/u
 const positionOf = (item: AgentPull) => `${item.updatedAt ?? 0}.${item.number}`
 // Those updated by a time, as GitHub's search takes it, to the second; any
 // where it names none.
@@ -291,12 +297,18 @@ async function agentPulls(fullName: string, token: string, cursor: string | null
     return { pulls: page, after: listed.length > page.length || !whole ? positionOf(page.at(-1)!) : null }
   }
   if (whole) return { pulls: [], after: null }
-  const found = await githubGraphql(SEARCH_QUERY, { query: `repo:${fullName} is:pr sort:updated-desc${updatedBy(Math.min(time, bottom))}` }, token, fetchImpl) as Found
+  // Those updated by when the last was, those updated with it again among
+  // them (GitHub orders those by no number), the last itself left out; a
+  // page all updated together read on through the same search, past them.
+  const [by, through] = at?.[3] === undefined ? [Math.min(time, bottom), null] : [Number(at[3]), at[4]!]
+  const found = await githubGraphql(SEARCH_QUERY, { query: `repo:${fullName} is:pr sort:updated-desc${updatedBy(by)}`, after: through }, token, fetchImpl) as Found
   const nodes = found?.search?.nodes ?? []
   const rows = nodes.flatMap(node => pull(node) ?? [])
   const last = rows.at(-1)
-  const after = nodes.length >= AGENT_PULLS_PAGE && last ? positionOf(last) : null
-  return { pulls: rows.filter(below), after: after === cursor ? null : after }
+  const ended = found?.search?.pageInfo?.endCursor
+  const together = Number.isFinite(by) && rows.every(item => item.updatedAt === last?.updatedAt) && typeof ended === 'string' && /^[A-Za-z\d+/=]{1,200}$/u.test(ended)
+  const after = nodes.length >= AGENT_PULLS_PAGE && last ? `${positionOf(last)}${together ? `~${by}~${ended}` : ''}` : null
+  return { pulls: rows.filter(item => item.updatedAt !== time || item.number !== past), after: after === cursor ? null : after }
 }
 
 // A page of what the repository's agents left: its pull requests below the
