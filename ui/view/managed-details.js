@@ -4,6 +4,7 @@ import { reportEntries } from '@preventive/report'
 import { setManagedWorkspace } from '../../client/managed/workspace.js'
 import { FINDING_DETAIL_FIELDS } from '../../common/managed/finding-detail.js'
 import { forgetFindingText } from './format.js'
+import { clearMergedGroups, getRevalidationConflicts } from './group.js'
 import { showToast } from './toast.js'
 
 // A team's board is drawn from its reports without their findings' detail
@@ -14,9 +15,12 @@ import { showToast } from './toast.js'
 // (client/managed/workspace.js) built again from them.
 let current = null
 
-// Whether the loaded reports' findings wait for their detail.
-export function managedDetailsPending() {
-  return current !== null && !current.done && current.reports === store(state.reports)
+// What a view needing the loaded findings' detail shows in its place: null
+// once they have it, or need none; 'loading' while it comes; 'failed' where
+// it never will.
+export function managedDetailsWaiting() {
+  if (current === null || current.reports !== store(state.reports) || current.ok) return null
+  return current.done ? 'failed' : 'loading'
 }
 
 // Whether the loaded reports' findings have their detail, once they have it
@@ -26,40 +30,56 @@ export function managedDetailsReady() {
 }
 
 // Fills the loaded reports' findings in from `request`'s whole reports, then
-// `loaded()`, as long as `isCurrent()`; one that fails leaves them as they
-// are, telling so.
-export function awaitManagedDetails(teamId, request, isCurrent, loaded) {
+// `loaded()`, as long as they are still loaded; whole reports that fail, or
+// do not hold the same findings, leave them as they are, telling so.
+export function awaitManagedDetails(teamId, request, loaded) {
   const reports = store(state.reports)
-  const entry = current = { reports, done: false, ready: null }
+  const entry = current = { reports, done: false, ok: false, ready: null }
   entry.ready = (async () => {
     const workspace = await Promise.resolve(request).catch(() => null)
     entry.done = true
-    if (!isCurrent() || store(state.reports) !== reports) return false
-    if (workspace) {
-      fillDetails(reports, workspace)
+    if (store(state.reports) !== reports) return false
+    const fill = workspace && detailsFill(reports, workspace)
+    if (fill) {
+      fill()
+      entry.ok = true
       setManagedWorkspace(teamId, workspace)
+      // Merged rows are copies of their findings, built again with the
+      // detail; copies disagreeing on what the revalidation pass said are told
+      // apart by its prose alone (common/finding-duplicates.js).
+      clearMergedGroups()
+      state.revalidateConflicts = getRevalidationConflicts()
     } else showToast('Could not load finding details. Open the team again to retry.')
     loaded()
-    return !!workspace
+    return entry.ok
   })()
 }
 
-// Each ingested finding (ingest.js ingestReport) is its report's entry's
-// member at the same place, non-empty entries alone.
-function fillDetails(reports, workspace) {
+// Fills each ingested finding (ingest.js ingestReport) from its report's
+// entry's member at the same place, non-empty entries alone. None where a
+// loaded report or finding has no match, as when a report changed between the
+// two reads: findings are filled all together, or not at all.
+function detailsFill(reports, workspace) {
   const whole = new Map(workspace.map(report => [report.id, report.data]))
+  const pairs = []
   for (const report of reports) {
-    const data = whole.get(report._managedReportId)
-    if (!data) continue
-    const groups = (reportEntries(data) ?? []).map(entry => Array.isArray(entry) ? entry : [entry]).filter(group => group.length > 0)
-    if (groups.length !== report.groups.length) continue
+    const entries = reportEntries(whole.get(report._managedReportId))
+    if (!entries) return null
+    const groups = entries.map(entry => Array.isArray(entry) ? entry : [entry]).filter(group => group.length > 0)
+    if (groups.length !== report.groups.length) return null
     for (const [index, group] of report.groups.entries()) {
+      if (groups[index].length !== group.length) return null
       for (const [member, finding] of group.entries()) {
         const detail = groups[index][member]
-        if (!detail || detail.id !== finding.id) continue
-        for (const field of FINDING_DETAIL_FIELDS) if (Object.hasOwn(detail, field)) finding[field] = detail[field]
-        forgetFindingText(finding)
+        if (detail?.id !== finding.id) return null
+        pairs.push([finding, detail])
       }
+    }
+  }
+  return () => {
+    for (const [finding, detail] of pairs) {
+      for (const field of FINDING_DETAIL_FIELDS) if (Object.hasOwn(detail, field)) finding[field] = detail[field]
+      forgetFindingText(finding)
     }
   }
 }

@@ -848,7 +848,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
     })
     if (isStaleLoad(gen)) return false
   }
-  if (details) awaitManagedDetails(team.id, details, () => !isStaleLoad(gen), () => render())
+  if (details) awaitManagedDetails(team.id, details, () => render())
   // Hydrate every report before the merged view becomes interactive. The
   // managed triage layer routes later edits by the per-report ids stamped
   // above, so overlapping findings are sent to a report that actually owns

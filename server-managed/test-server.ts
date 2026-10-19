@@ -19,7 +19,7 @@ import { liteReportData } from '../common/managed/finding-detail.js'
 import { findingsRepository, readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { createHash, randomUUID } from 'node:crypto'
-import { reportEntries } from '@preventive/report'
+import { backfillFindingIds, reportEntries } from '@preventive/report'
 import { teamCatalogRevision } from './team-catalog.ts'
 import { BundleBuildError, githubBundleFilename, parseBundleBuild } from './bundle-build.ts'
 import { PULSE_WEEKS, pulseSince } from './repository-pulse.ts'
@@ -1441,29 +1441,40 @@ function serveTeamReports(url: URL, res: ServerResponse): boolean {
   if (reportId !== null && !team.reports.some(report => report.id === reportId)) { sendJson(res, 404, { error: 'no-report' }); return true }
   const hidden = team.reports.find(report => report.id === reportId && !report.visible)
   const selected = hidden ? [hidden] : team.reports.filter(report => report.visible)
-  if (match[2] === 'annotations') {
-    const byReport = new Map(selected.filter(report => reportId === null || report.id === reportId).map(entry => {
-      const report = reportFixtures.find(item => item.id === entry.id)!
-      const data = readManagedReport(report.content, report.filename).data
+  void sendTeamReports(url, res, match[2]!, reportId, selected).catch(() => { if (!res.headersSent) sendJson(res, 500, { error: 'fixture' }) })
+  return true
+}
+
+// A fixture report as the managed server reads it: every finding with an ID
+// (team-reports.ts buildTeamWorkspace).
+async function readTeamReport(id: string) {
+  const report = reportFixtures.find(item => item.id === id)!
+  const data = readManagedReport(report.content, report.filename).data as { tree?: Record<string, unknown> }
+  await backfillFindingIds((reportEntries(data) ?? []).flat().filter((finding): finding is Record<string, unknown> => !!finding && typeof finding === 'object'))
+  return { report, data }
+}
+
+async function sendTeamReports(url: URL, res: ServerResponse, route: string, reportId: string | null, selected: readonly { id: string }[]) {
+  if (route === 'annotations') {
+    const byReport = new Map(await Promise.all(selected.filter(report => reportId === null || report.id === reportId).map(async entry => {
+      const { data } = await readTeamReport(entry.id)
       const ids = (reportEntries(data) ?? []).flat().map(finding => (finding as { id: string }).id).filter(id => typeof id === 'string')
       return [entry.id, ids] as const
-    }))
+    })))
     const ids = new Set([...byReport.values()].flat())
     sendJson(res, 200, { reports: Object.fromEntries(byReport), entries: Object.fromEntries([...triage].filter(([id]) => ids.has(id))), comments: comments.filter(comment => ids.has(comment.findingId)) })
-    return true
+    return
   }
   // Trees apart, as the managed server sends them (team-reports.ts withoutTree).
-  const read = selected.map(entry => {
-    const report = reportFixtures.find(item => item.id === entry.id)!
-    const { tree, ...data } = readManagedReport(report.content, report.filename).data as { tree?: Record<string, unknown> }
+  const read = await Promise.all(selected.map(async entry => {
+    const { report, data: { tree, ...data } } = await readTeamReport(entry.id)
     return { report, tree, data: tree ? { ...data, treeFiles: Object.keys(tree).length } : data }
-  })
-  if (match[2] === 'trees') { sendJson(res, 200, { trees: Object.fromEntries(read.filter(({ tree }) => tree).map(({ report, tree }) => [report.id, tree])) }); return true }
+  }))
+  if (route === 'trees') { sendJson(res, 200, { trees: Object.fromEntries(read.filter(({ tree }) => tree).map(({ report, tree }) => [report.id, tree])) }); return }
   // The board's, without the findings' detail, as the managed server sends it.
   const lite = url.searchParams.get('lite') === '1'
   sendJson(res, 200, { reports: read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data: lite ? liteReportData(data) : data,
     repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } })) })
-  return true
 }
 
 const fixtureFeeds = new Set<ServerResponse>()
