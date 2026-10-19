@@ -397,7 +397,8 @@ test('the branches the Commits tab kept, and the default branch\'s head, read ag
   await store.write('1\0pulse-head', { sha: b }, Date.now() - 3 * 60_000)
   const { body } = await request({ repoId: '1' })
   assert.ok(body.branches.some(branch => branch.name === 'claude/zzz-newest'), 'the branch pushed since')
-  assert.equal(asked.filter(query => query.query.includes('refs(refPrefix: "refs/heads/"')).length, 2, 'every page read again, not behind')
+  assert.equal(asked.filter(query => query.query.includes('refs(refPrefix: "refs/heads/"') && !query.query.includes('pushedAt')).length, 2,
+    'every page read again, not behind, its repository\'s stamp asked first')
   assert.ok(body.commits.some(commit => commit.oid === a), 'the history from the head as it is now')
 })
 

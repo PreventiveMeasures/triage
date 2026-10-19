@@ -153,6 +153,10 @@ export const scanReadStore = <T>(db: UpstreamCacheStore, type: 'listings' | 'loc
 export const REPOSITORY_READ_KEPT_MS = 24 * 60 * 60_000
 export const repositoryReadStore = (db: UpstreamCacheStore, debug = false): KeptStore<object> =>
   keptStore<object>(db, 'repository/reads', REPOSITORY_READ_KEPT_MS, debug)
+// GitHub's answers to GETs that came with an ETag (github-requests.ts
+// taggedRead), by their request's key, for any instance to ask again
+// If-None-Match, kept as long as what was read of a repository is.
+export const githubTagStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'github/tags', REPOSITORY_READ_KEPT_MS, debug)
 // Pages of a repository's history (repository-history.ts historyFrom), by its
 // id and the commit each starts at, which never change: kept a month after
 // they were last read from GitHub.

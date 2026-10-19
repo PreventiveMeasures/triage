@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 import { githubJson } from '../server-managed/github-app.ts'
+import { keepTaggedReadsIn } from '../server-managed/github-requests.ts'
 import { githubGraphql } from '../server-managed/repository-history.ts'
 
 const url = 'https://api.github.com/repos/org/repo'
@@ -83,6 +84,52 @@ test('a GET GitHub refuses after answering it with an ETag is refused, its body 
   const untagged = (input, options) => Promise.resolve(options.headers['if-none-match'] ? new Response(null, { status: 304 }) : Response.json({ name: 'two' }))
   await githubJson(`${url}/untagged`, 'alice', untagged)
   assert.deepEqual(await githubJson(`${url}/untagged`, 'alice', untagged), { name: 'two' })
+})
+
+test('an installation\'s tokens, minted anew every few minutes, share the answers kept; a user\'s token its own', async () => {
+  const asked = []
+  const fetch = (input, options) => {
+    asked.push([options.headers.authorization, options.headers['if-none-match'] ?? null])
+    return Promise.resolve(options.headers['if-none-match'] === '"one"' ? new Response(null, { status: 304 }) : Response.json({ name: 'one' }, { headers: { etag: '"one"' } }))
+  }
+  await githubJson(url, 'ghs_first', fetch)
+  assert.deepEqual(await githubJson(url, 'ghs_second', fetch), { name: 'one' })
+  await githubJson(url, 'gho_user', fetch)
+  assert.deepEqual(asked, [['Bearer ghs_first', null], ['Bearer ghs_second', '"one"'], ['Bearer gho_user', null]])
+})
+
+test('an answer kept beyond the process is asked again If-None-Match where the process holds none, as an instance starting anew; none larger than a quarter megabyte kept so', async t => {
+  const stored = new Map()
+  let failing = false
+  keepTaggedReadsIn({
+    read: key => failing ? Promise.reject(new Error('down')) : Promise.resolve(stored.get(key) ?? null),
+    write: (key, read) => { if (failing) return Promise.reject(new Error('down')); stored.set(key, read); return Promise.resolve() },
+  })
+  t.after(() => keepTaggedReadsIn(null))
+  const transport = big => {
+    const asked = []
+    const fetch = (input, options) => {
+      asked.push(options.headers['if-none-match'] ?? null)
+      return Promise.resolve(options.headers['if-none-match'] === '"one"' ? new Response(null, { status: 304 })
+        : Response.json({ name: 'one', padding: big ? 'x'.repeat(300 * 1024) : '' }, { headers: { etag: '"one"' } }))
+    }
+    return { fetch, asked }
+  }
+  const first = transport(false)
+  await githubJson(url, 'alice', first.fetch)
+  assert.equal(stored.size, 1, 'kept beyond the process')
+  const fresh = transport(false)
+  assert.deepEqual(await githubJson(url, 'alice', fresh.fetch), { name: 'one', padding: '' }, 'not modified: the body kept beyond it')
+  assert.deepEqual(fresh.asked, ['"one"'])
+  // One too large for it, held by the process alone.
+  const large = transport(true)
+  await githubJson(`${url}/large`, 'alice', large.fetch)
+  assert.equal(stored.size, 1)
+  // The store failing: none kept, none written, GitHub asked whole.
+  failing = true
+  const down = transport(false)
+  assert.deepEqual(await githubJson(`${url}/down`, 'alice', down.fetch), { name: 'one', padding: '' })
+  assert.deepEqual(down.asked, [null])
 })
 
 test('a full pending-read map lets new reads proceed without evicting work already shared', async () => {

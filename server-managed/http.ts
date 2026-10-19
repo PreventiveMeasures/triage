@@ -138,7 +138,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTipStore, codeHeadStore, codeTreeStore, commitPullStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
+import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTipStore, codeHeadStore, codeTreeStore, commitPullStore, githubTagStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
   issueListStore, lockfileReadStore,
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
@@ -177,6 +177,7 @@ import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/manag
 import { CONFIG_PATH, type ManagedSessionInfo, type ServerInfo } from '../common/server-info.ts'
 import { bundleCommitHash } from '../common/bundle-commit.js'
 import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
+import { type TaggedRead, keepTaggedReadsIn } from './github-requests.ts'
 import { upstreamGithub } from './github-errors.ts'
 import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
@@ -239,6 +240,7 @@ import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseNarrowing, type PulseStats, 
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { type AgentMerges, agentCommits, agentMerges, directCommits, sameMerges } from './agent-merges.ts'
 import { listedActivity } from './listed-activity.ts'
+import { STAMP_READ, repositoryStamp } from './repository-stamp.ts'
 import { ISSUES_LIST_READ_VERSION, type IssueList, type Listed, PULLS_READ_VERSION, type PullList, pullsReadTo, readIssues, readPulls } from './repository-pulls.ts'
 import { AGENT_MARKS_READ } from './app-agents.ts'
 import { releaseCommits } from './release-commits.ts'
@@ -1869,7 +1871,8 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     // Open pull heads do not depend on the commit history. Start them with
     // it, handling failures immediately even if the history fails first.
     if (token && path === '' && page === 1) {
-      readingPulls = keptAnswer(deps, `${repoId}\0openPulls`, () => openPullHeads(repo, token), undefined, fresh).then(answer => answer.value.pulls, quiet(null))
+      readingPulls = keptAnswer(deps, `${repoId}\0openPulls`, () => openPullHeads(repo, token), undefined, fresh, fresh ? null : stampOf(deps, repoId, repo, token))
+        .then(answer => answer.value.pulls, quiet(null))
     }
     let body: object
     if (all) {
@@ -1878,7 +1881,8 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
       // follow, the deepest page says.
       // Asked for afresh, those kept answered as just read: how long till
       // they may be read again (`retryIn`), for the client to ask then.
-      const heads = starts ? null : await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token), undefined, fresh)
+      const heads = starts ? null : await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token), undefined, fresh,
+        fresh ? null : stampOf(deps, repoId, repo, token))
       const retryIn = heads && fresh && heads.kept ? heads.at + REPOSITORY_READ_FLOOR_MS - Date.now() : 0
       body = starts ? { all: true, page, commits: (await historyFrom(repo, token, starts, pages)).commits, more: page < MAX_HISTORY_PAGE }
         : { all: true, ...await repositoryAllHistory(repo, token, heads!.value, pages), ...retryIn > 0 ? { retryIn } : {} }
@@ -1888,7 +1892,7 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
       // branches reads and the latest tags, kept for both; without, GitHub's
       // first page of each.
       const naming = () => token
-        ? keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token)).then(({ value }) => ({
+        ? keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(repo, token), undefined, false, stampOf(deps, repoId, repo, token)).then(({ value }) => ({
           branches: value.heads.map(({ name, sha }) => ({ name, sha })), tags: value.tags }))
         : keptAnswer(deps, `${repoId}\0refs`, () => repositoryRefTips(repo, token)).then(answer => answer.value)
       const tips = page === 1 ? naming() : null
@@ -2052,33 +2056,58 @@ const refusedRead = (err: unknown) => err instanceof GithubApiError
 // answered where that read fails. Those asking for one not kept while it is
 // read, as a tab's first readers do together, are answered by that read. One GitHub refuses to read again is no
 // longer kept: the next to ask is refused as GitHub refused it. `at` is when
-// what it answers was read.
+// what it answers was read. With `stamp`, the repository's change stamp
+// (stampOf), one kept is read again, behind it or afresh, only where the
+// stamp moved since it was read whole again (the stamp read before it
+// was), or that was STAMP_TRUSTED_MS ago or longer; else it is kept as read
+// now, as GitHub would answer it. One read the first time, none's stamp
+// asked for, is read whole once more before its stamp keeps it.
+const STAMP_TRUSTED_MS = 60 * 60_000
 async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>,
-  keepThrough: (err: unknown) => boolean = () => false, fresh = false): Promise<{ value: T; kept: boolean; at: number }> {
+  keepThrough: (err: unknown) => boolean = () => false, fresh = false, stamp: Stamp | null = null): Promise<{ value: T; kept: boolean; at: number }> {
   const store = repositoryReadStore(deps.db, deps.config.debug)
   // One kept longer than a day, not yet removed (pruneKept removes them as
   // others are written), is none.
   const stored = await store.read(key)
   const held = stored && Date.now() - stored.at < REPOSITORY_READ_KEPT_MS ? stored : null
-  // Read, and kept as read when it was, which it is said read at.
-  const readKept = async () => {
+  // The stamp what is kept was read whole at, and when (`read`).
+  const stampKey = `${key}\0stamp`
+  // Read, and kept as read when it was, which it is said read at, with the
+  // stamp read before it (`began`), where one was.
+  const readKept = async (began: string | null = null) => {
     try {
       const value = await read()
       const at = Date.now()
       await store.write(key, value, at)
-      return { value, at }
+      if (began !== null) await store.write(stampKey, { stamp: began, read: at }, at)
+      return { value, at, kept: false }
     } catch (err) {
       if (refusedRead(err)) await store.remove(key)
       throw err
     }
   }
+  // Read whole again, or kept as read now where the repository's stamp
+  // hasn't moved since it was.
+  const refresh = async () => {
+    if (held && stamp) {
+      const [told, current] = await Promise.all([store.read(stampKey), stamp().catch(() => null)])
+      const was = told?.value as { stamp?: unknown; read?: unknown } | undefined
+      if (current !== null && was?.stamp === current && typeof was.read === 'number' && Date.now() - was.read < STAMP_TRUSTED_MS) {
+        const at = Date.now()
+        await store.write(key, held.value, at)
+        return { value: held.value as T, at, kept: true }
+      }
+      return readKept(current)
+    }
+    return readKept()
+  }
   const reread = () => {
     let reading = repositoryRereads.get(key)
     if (!reading) {
-      reading = readKept().finally(() => repositoryRereads.delete(key))
+      reading = refresh().finally(() => repositoryRereads.delete(key))
       repositoryRereads.set(key, reading)
     }
-    return reading as Promise<{ value: T; at: number }>
+    return reading as Promise<{ value: T; at: number; kept: boolean }>
   }
   const age = held ? Date.now() - held.at : Infinity
   const now = fresh && age >= REPOSITORY_READ_FLOOR_MS
@@ -2092,12 +2121,22 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
     return { value: held.value as T, kept: true, at: held.at }
   }
   try {
-    return { ...await reread(), kept: false }
+    return await reread()
   } catch (err) {
     if (held && ((now && !refusedRead(err)) || keepThrough(err))) return { value: held.value as T, kept: true, at: held.at }
     throw err
   }
 }
+
+// Repository `repoId`'s change stamp (repository-stamp.ts), read with `token`
+// at most every REPOSITORY_READ_FLOOR_MS by every reader together, for its
+// kept answers to be read again only where it moved (keptAnswer); `also`
+// what else such an answer moves with, as a period's days do.
+type Stamp = () => Promise<string>
+const stampOf = (deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, also = ''): Stamp => async () =>
+  `${(await keptAnswer(deps, `${repoId}\0stamp\0${STAMP_READ}`, () => repositoryStamp(fullName, token), undefined, true)).value.stamp}${also}`
+// The day it is (UTC), as a period's answer moves with it.
+const today = () => `\0${Math.floor(Date.now() / (24 * 60 * 60_000))}`
 
 // The pages of repository `repoId`'s history kept (historyPageStore), each by
 // the commit it starts at (repository-history.ts historyFrom) and the rules
@@ -2221,9 +2260,9 @@ const keptIssues = (deps: ManagedHttpDeps, repoId: number, fullName: string, tok
 // What is kept by `key` (keptAnswer), read now where it was read
 // REPOSITORY_READ_FRESH_MS ago or longer, not behind: for an answer that is
 // kept as fresh itself, as told of it (the Agents tab's).
-async function currentAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>) {
+async function currentAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>, stamp: Stamp | null = null) {
   const stored = await repositoryReadStore(deps.db, deps.config.debug).read(key)
-  return keptAnswer(deps, key, read, undefined, !stored || Date.now() - stored.at >= REPOSITORY_READ_FRESH_MS)
+  return keptAnswer(deps, key, read, undefined, !stored || Date.now() - stored.at >= REPOSITORY_READ_FRESH_MS, stamp)
 }
 
 // Repository `repoId`'s default branch's head, as its tabs read it: as the
@@ -2237,7 +2276,8 @@ async function defaultTip(deps: ManagedHttpDeps, repoId: number, fullName: strin
   const tip = all?.heads.find(head => head.name === all.defaultBranch)?.sha
   if (typeof tip === 'string' && /^[a-f\d]{40}$/u.test(tip)) return { sha: tip, kept: true }
   const head = async () => ({ sha: await defaultHead(fullName, token) })
-  const read = await (current ? currentAnswer(deps, `${repoId}\0pulse-head`, head) : keptAnswer(deps, `${repoId}\0pulse-head`, head))
+  const stamp = stampOf(deps, repoId, fullName, token)
+  const read = await (current ? currentAnswer(deps, `${repoId}\0pulse-head`, head, stamp) : keptAnswer(deps, `${repoId}\0pulse-head`, head, undefined, false, stamp))
   return { sha: read.value.sha, kept: read.kept }
 }
 
@@ -2287,10 +2327,10 @@ function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
 // `readAt`, when it was read from GitHub, one kept as old as it was kept, so
 // that a reader holding two reads of the same can tell the later.
 async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
-  read: (fullName: string, token: string) => Promise<object>, key: string | null = null, readAt = false): Promise<void> {
+  read: (fullName: string, token: string) => Promise<object>, key: string | null = null, readAt = false, stamped = false): Promise<void> {
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const { value, kept, at } = key === null ? { value: await read(fullName, token), kept: false, at: Date.now() }
-      : await keptAnswer(deps, `${repoId}\0${key}`, () => read(fullName, token))
+      : await keptAnswer(deps, `${repoId}\0${key}`, () => read(fullName, token), undefined, false, stamped ? stampOf(deps, repoId, fullName, token) : null)
     return { value: readAt ? { ...value, readAt: at } : value, kept }
   })
 }
@@ -2387,7 +2427,10 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
     || (after !== null && !ISSUES_CURSOR.test(after))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const { value: { commits: _commits, ...page }, kept, at } = await keptAnswer(deps, `${repoId}\0issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}`,
-      async () => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }))
+      async () => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }), undefined, false,
+      // An issue's tile tells nothing its update time doesn't move with; a
+      // pull request's, its checks.
+      kind === 'issues' ? stampOf(deps, repoId, fullName, token) : null)
     return { value: { ...page, readAt: at }, kept }
   })
 }
@@ -2408,9 +2451,9 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors, historyPages(deps, repoId, true, true),
     commitPulls(deps, repoId), { pulls: () => keptPulls(deps, repoId, fullName, token, null), issues: () => keptIssues(deps, repoId, fullName, token, null),
       head: async () => (await defaultTip(deps, repoId, fullName, token, true)).sha,
-      heads: async () => (await currentAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(fullName, token))).value,
+      heads: async () => (await currentAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(fullName, token), stampOf(deps, repoId, fullName, token))).value,
       tips: branchTips(deps, repoId), authored: authoredCommits(deps, repoId) }),
-    `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
+    `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`, false, true)
 }
 
 // GET /api/admin/repositories/item: the issue or pull request numbered
@@ -2483,7 +2526,7 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
       const read = await pullDependenciesAt(fullName, token, number, kept)
       reading.told = read.told
       return { commits: read.commits }
-    })
+    }, undefined, false, stampOf(deps, repoId, fullName, token))
   // What its commits tell, as read, else as kept by them, else, no longer
   // kept, read again: by those given, without asking GitHub for them.
   const held = reading.told ?? (typeof answered.value.commits === 'string' ? await kept.read(answered.value.commits) : null)
@@ -2863,7 +2906,7 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const [period, year] = await Promise.all([
-      keptAnswer(deps, `${repoId}\0pulse\0${weeks}`, () => pulseActivity(deps, repoId, fullName, token, weeks)),
+      keptAnswer(deps, `${repoId}\0pulse\0${weeks}`, () => pulseActivity(deps, repoId, fullName, token, weeks), undefined, false, stampOf(deps, repoId, fullName, token, today())),
       pulseCommits(deps, repoId, fullName, token, weeks),
     ])
     return { value: { weeks, ...period.value, stats: year.stats && periodStats(year.stats, weeks), reading: year.reading, pulls: year.pulls,
@@ -2940,7 +2983,7 @@ async function handleRepositoryPulseItems(res: ServerResponse, deps: ManagedHttp
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const narrowing = { from, to, authors }
     const items = await keptAnswer(deps, `${repoId}\0pulse-items\0${weeks}\0${from}\0${to ?? ''}\0${narrowing.authors.join(',')}`,
-      () => pulseActivity(deps, repoId, fullName, token, weeks, narrowing))
+      () => pulseActivity(deps, repoId, fullName, token, weeks, narrowing), undefined, false, stampOf(deps, repoId, fullName, token, today()))
     return { value: { weeks, ...items.value }, kept: items.kept }
   })
 }
@@ -3007,7 +3050,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
       const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true), globalThis.fetch, whole)
       if (year.complete) recounted.stats = await count(year, read)
       return read
-    }, () => true).catch((err: unknown) => { console.warn('managed: pulse attribution read failed:', err) })
+    }, () => true, false, stampOf(deps, repoId, fullName, token, today())).catch((err: unknown) => { console.warn('managed: pulse attribution read failed:', err) })
     return recounted.stats ?? stats
   }
   // A year kept, read whole as far back as the period needs, as it was;
@@ -5032,6 +5075,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   // Kept reads' prunes run behind their writes: tracked, so the database
   // outlives them, and on serverless kept alive past the answer.
   ownKeptPrunes(db, prune => { track(prune); deps.waitUntil?.(prune) })
+  // GitHub's tagged answers kept beyond this process, for an instance
+  // starting anew to ask again If-None-Match (github-requests.ts).
+  const tags = githubTagStore<TaggedRead>(db, config.debug)
+  keepTaggedReadsIn({ read: async key => (await tags.read(key))?.value ?? null, write: (key, read) => tags.write(key, read, Date.now()) })
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost')

@@ -198,6 +198,7 @@
     "server-managed/repository-pulse.ts",
     "server-managed/repository-pulls.ts",
     "server-managed/listed-activity.ts",
+    "server-managed/repository-stamp.ts",
     "server-managed/repository-aliases.ts",
     "server-managed/repository-discovery.ts",
     "server-managed/repository-policy.ts",
