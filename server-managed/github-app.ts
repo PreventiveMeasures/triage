@@ -6,16 +6,13 @@ import { Buffer } from 'node:buffer'
 import { createHash, createSign } from 'node:crypto'
 import { createClient } from '@preventive/upstream/github.js'
 import type { ManagedConfig } from './config.ts'
-import { GithubApiError, githubUnreachable, throwGithubResponseError, upstreamGithub } from './github-errors.ts'
-import { onTokenRejected, shareGithubRead, tokenRejected } from './github-requests.ts'
-import { timed } from './request-timing.ts'
+import { GithubApiError, upstreamGithub } from './github-errors.ts'
+import { USER_AGENT, githubJson, onTokenRejected } from './github-requests.ts'
 
 export { GithubApiError } from './github-errors.ts'
-export { onTokenRejected } from './github-requests.ts'
+export { githubJson, onTokenRejected } from './github-requests.ts'
 
 const GITHUB_API = 'https://api.github.com'
-const API_VERSION = '2022-11-28'
-const USER_AGENT = 'deepview-triage'
 const PER_PAGE = 100
 const INSTALLATION_TOKEN_TTL_MS = 5 * 60_000
 const INSTALLATION_TOKEN_EXPIRY_MARGIN_MS = 60_000
@@ -67,42 +64,6 @@ export function mergeRepos(...lists: ConnectedRepo[][]): ConnectedRepo[] {
     for (const repo of list) byName.set(repo.fullName, repo)
   }
   return [...byName.values()].toSorted((a, b) => a.fullName.localeCompare(b.fullName))
-}
-
-// One GitHub API call returning parsed JSON, optionally Bearer-authed by a
-// user token, App JWT, or installation token, `body` sent as JSON (a GraphQL
-// query's, given longer to answer). Network / non-2xx / malformed fold into a
-// GithubApiError (401 passes through for the caller to handle). Identical GETs
-// share an outstanding read through its body. POSTs only opt in for read-only
-// GraphQL queries (repository-history.ts), never for mutations or token mints.
-export function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET', body?: unknown,
-  readOnly = method === 'GET'): Promise<unknown> {
-  if (readOnly) return shareGithubRead(fetchImpl, JSON.stringify([url, token, method, body]), () => githubJson(url, token, fetchImpl, method, body, false))
-  // Each call told in its request's Server-Timing (request-timing.ts).
-  return timed('gh', async () => {
-    let res: Response
-    const started = Date.now()
-    try {
-      res = await fetchImpl(url, {
-        method,
-        signal: AbortSignal.timeout(body === undefined ? 10_000 : 20_000),
-        redirect: 'error',
-        headers: {
-          ...(token == null ? {} : { authorization: `Bearer ${token}` }), 'accept': 'application/vnd.github+json',
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }), 'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      })
-    } catch (error) { throw githubUnreachable(error, started) }
-    if (res.status === 401 && token) tokenRejected(token, fetchImpl)
-    if (!res.ok) await throwGithubResponseError(res)
-    // The answer's body is read within the same timeout: one not read whole is
-    // GitHub not reached, as one not answered is; only one that isn't JSON is
-    // malformed.
-    try { return await res.json() } catch (error) {
-      throw error instanceof SyntaxError ? new GithubApiError(502, 'github-malformed') : githubUnreachable(error, started)
-    }
-  })
 }
 
 // Validate one repo object into a ConnectedRepo (or null to skip), tagging it

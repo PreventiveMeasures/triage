@@ -210,6 +210,33 @@ for (const deleted of [false, true]) {
   })
 }
 
+test('a directory\'s listing at a commit, which never changes, is kept for every reader: its branch\'s head asked as ever, the listing not again', async t => {
+  const { request } = await fixture(t, { role: 'admin' })
+  const asked = []
+  let head = commit
+  t.mock.method(globalThis, 'fetch', url => {
+    const { pathname, searchParams } = new URL(url)
+    asked.push(pathname)
+    if (pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
+    if (pathname.endsWith('/commits/heads%2Fmain')) return Promise.resolve(Response.json({ sha: head }))
+    assert.equal(pathname, '/repos/org/repo/contents/src')
+    const name = searchParams.get('ref') === commit ? 'a' : 'b'
+    return Promise.resolve(Response.json([{ name: `${name}.ts`, path: `src/${name}.ts`, type: 'file' }]))
+  })
+  const listed = async () => (await request({ repoId: '1', ref: 'heads/main', path: 'src' })).body
+  assert.deepEqual(await listed(), { entries: [{ name: 'a.ts', path: 'src/a.ts', type: 'file' }], limited: false, path: 'src', commit })
+  assert.deepEqual(await listed(), { entries: [{ name: 'a.ts', path: 'src/a.ts', type: 'file' }], limited: false, path: 'src', commit })
+  assert.deepEqual(asked.filter(path => path.includes('/contents/')).length, 1, 'listed once')
+  assert.equal(asked.filter(path => path.includes('/commits/')).length, 2, 'the head asked each time')
+  head = 'b'.repeat(40)
+  assert.deepEqual((await listed()).entries, [{ name: 'b.ts', path: 'src/b.ts', type: 'file' }], 'the head moved on: listed at it')
+  assert.equal(asked.filter(path => path.includes('/contents/')).length, 2)
+  // The commit alone, as an Activity view opens at: none listed.
+  head = 'c'.repeat(40)
+  assert.deepEqual((await request({ repoId: '1', ref: 'heads/main', path: 'src', listing: 'none' })).body, { path: 'src', commit: head })
+  assert.equal(asked.filter(path => path.includes('/contents/')).length, 2)
+})
+
 test('refs withDefault populates a cold cache and can clear a missing default', async t => {
   const { db, request } = await fixture(t, { role: 'admin' })
   assert.equal((await db.listSelectedRepos())[0].cachedDefaultBranch, null)
@@ -416,8 +443,9 @@ test('browser endpoints require a team member\'s access, honor path grants, and 
   assert.equal(directoryReads, 0, 'ancestor navigation never reads unauthorized directory listings')
   assert.equal(upstream.mock.callCount(), 2, 'ancestor navigation still checks live GitHub access')
   assert.equal((await request({ ...params, path: 'src/allowed' })).body.entries[0].name, 'entry.ts')
+  // A listing kept for its commit is read once; one at another commit is read.
   duringRead = () => db.removeTeamMember('team', userId)
-  assert.equal((await request({ ...params, path: 'src/allowed' })).status, 404, 'membership revoked while reading')
+  assert.equal((await request({ ...params, ref: 'b'.repeat(40), path: 'src/allowed' })).status, 404, 'membership revoked while reading')
   // A member at the view role reads as a manager does; one with no role, nothing.
   duringRead = async () => {}
   await db.setUserRole(userId, 'view')
@@ -434,7 +462,7 @@ const userTokens = { accessToken: 'login-token', refreshToken: null, expiresAt: 
 function packageFixture(t) {
   const bytes = Buffer.from(JSON.stringify({ main: './index.js', exports: { './cli': './bin/cli.js' }, bin: { cli: './bin/cli.js' }, description: 'do not return raw contents' }))
   const state = {
-    metadata: publicMetadata, duringBlob: async () => {},
+    metadata: publicMetadata, duringBlob: async () => {}, commit,
     entry: { name: 'package.json', path: 'src/allowed/package.json', type: 'file', size: bytes.length, sha: 'b'.repeat(40), download_url: 'https://untrusted.invalid/package.json' },
     blob: { encoding: 'base64', size: bytes.length, content: bytes.toString('base64') },
   }
@@ -446,7 +474,7 @@ function packageFixture(t) {
     assert.equal(options.headers.authorization, 'Bearer login-token')
     if (parsed.pathname === '/repos/org/repo') return Response.json(state.metadata)
     if (parsed.pathname === '/repos/org/repo/contents/src/allowed') {
-      assert.equal(parsed.searchParams.get('ref'), commit)
+      assert.equal(parsed.searchParams.get('ref'), state.commit)
       return Response.json(state.entry ? [state.entry] : [])
     }
     assert.equal(parsed.pathname, `/repos/org/repo/git/blobs/${'b'.repeat(40)}`)
@@ -486,22 +514,25 @@ test('virtual directories and absent, oversized, or non-file manifests never tri
 test('package reads recheck membership, narrowed path grants, and live GitHub visibility', async t => {
   const { request, db, userId } = await fixture(t, { tokens: userTokens })
   const { state } = packageFixture(t)
-  const params = { repoId: '1', ref: commit, path: 'src/allowed' }
+  // Each at a commit of its own, its listing not yet kept.
+  const params = () => ({ repoId: '1', ref: state.commit, path: 'src/allowed' })
   state.duringBlob = () => db.removeTeamMember('team', userId)
-  assert.equal((await request(params)).status, 404)
+  assert.equal((await request(params())).status, 404)
   await db.setTeamMember('team', userId, { dependencies: true, security: true })
   state.duringBlob = async () => {
     await db.removeTeamRepo('team', 1)
     await db.setTeamRepo('team', 1, 'src/allowed/nested')
   }
-  const narrowed = await request(params)
+  state.commit = 'c'.repeat(40)
+  const narrowed = await request(params())
   assert.equal(narrowed.status, 200)
   assert.deepEqual(narrowed.body.entries, [{ name: 'nested', path: 'src/allowed/nested', type: 'dir' }])
   assert.deepEqual(narrowed.body.packageEntryPoints, [])
   await db.removeTeamRepo('team', 1)
   await db.setTeamRepo('team', 1, 'src/allowed')
   state.duringBlob = () => { state.metadata = { ...publicMetadata, private: true, visibility: 'private' } }
-  assert.equal((await request(params)).status, 404)
+  state.commit = 'd'.repeat(40)
+  assert.equal((await request(params())).status, 404)
 })
 
 test('invalid package JSON leaves the authorized file listing usable', async t => {
@@ -521,13 +552,15 @@ test('Solidity tree discovery stays inside pinned authorized listings and rechec
   const calls = []
   let duringTree = async () => {}
   let metadata = publicMetadata
+  // Each read at a commit of its own, its listing not yet kept.
+  let at = commit
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     const parsed = new URL(url)
     calls.push(parsed.pathname)
     assert.equal(options.headers.authorization, 'Bearer login-token')
     if (parsed.pathname === '/repos/org/repo') return Response.json(metadata)
     if (parsed.pathname === '/repos/org/repo/contents/src/allowed') {
-      assert.equal(parsed.searchParams.get('ref'), commit)
+      assert.equal(parsed.searchParams.get('ref'), at)
       return Response.json([{ name: 'contracts', path: 'src/allowed/contracts', type: 'dir', sha: treeSha }])
     }
     assert.equal(parsed.pathname, `/repos/org/repo/git/trees/${treeSha}`)
@@ -545,13 +578,15 @@ test('Solidity tree discovery stays inside pinned authorized listings and rechec
   assert.equal(result.body.soliditySuggestionsLimited, false)
   assert.equal(result.body.commit, commit)
   duringTree = () => db.removeTeamMember('team', userId)
-  assert.equal((await request(params)).status, 404)
+  at = 'b'.repeat(40)
+  assert.equal((await request({ ...params, ref: at })).status, 404)
   await db.setTeamMember('team', userId, { dependencies: true, security: true })
   duringTree = async () => {
     await db.removeTeamRepo('team', 1)
     await db.setTeamRepo('team', 1, 'src/allowed/nested')
   }
-  const narrowed = await request(params)
+  at = 'd'.repeat(40)
+  const narrowed = await request({ ...params, ref: at })
   assert.equal(narrowed.status, 200)
   assert.deepEqual(narrowed.body.entries, [{ name: 'nested', path: 'src/allowed/nested', type: 'dir' }])
   assert.deepEqual(narrowed.body.solidityEntryPoints, [])
@@ -559,7 +594,8 @@ test('Solidity tree discovery stays inside pinned authorized listings and rechec
   await db.removeTeamRepo('team', 1)
   await db.setTeamRepo('team', 1, 'src/allowed')
   duringTree = () => { metadata = { ...publicMetadata, private: true, visibility: 'private' } }
-  assert.equal((await request(params)).status, 404)
+  at = 'e'.repeat(40)
+  assert.equal((await request({ ...params, ref: at })).status, 404)
 })
 
 function githubFixture(t, { publicRepo = false, permission = 'read', identityId = 1, permissionUserId = 1 } = {}) {
@@ -731,7 +767,8 @@ for (const failure of ['token mint', 'authenticated metadata']) {
     }
     metadata = publicMetadata
     revokeDuringRead = true
-    assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).status, 404, 'public visibility is still rechecked after source reads')
+    // At a commit its listing is not yet kept for.
+    assert.equal((await request({ repoId: '1', ref: 'b'.repeat(40), path: 'src/allowed' })).status, 404, 'public visibility is still rechecked after source reads')
   })
 }
 

@@ -41,9 +41,13 @@ async function fixture(t, { role = 'admin', tokens = userTokens, serverless = fa
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track(work) { tracked.push(work) },
     ...retained ? { waitUntil: work => { retained.push(work) } } : {} })
-  return async (query, { method = 'GET', path = 'issues' } = {}) => {
+  // Another admin, with a GitHub token of their own.
+  const other = await createSession(config, db, { githubUserId: 90_001, login: 'other', name: null, avatarUrl: null }, Date.now())
+  await db.setUserRole(other.userId, 'admin')
+  await db.setUserTokens(other.userId, { ...userTokens, accessToken: 'other-token' })
+  return async (query, { method = 'GET', path = 'issues', as = session } = {}) => {
     const res = { status: 0, body: '', headers: {}, writeHead(status, headers) { this.status = status; this.headers = headers }, end(body) { this.body = body } }
-    await handler({ method, url: `/api/admin/repositories/${path}?${new URLSearchParams(query)}`, headers: { cookie: session.setCookie.split(';')[0] } }, res)
+    await handler({ method, url: `/api/admin/repositories/${path}?${new URLSearchParams(query)}`, headers: { cookie: (as === 'other' ? other : as).setCookie.split(';')[0] } }, res)
     return { status: res.status, body: JSON.parse(res.body) }
   }
 }
@@ -254,6 +258,26 @@ test('a page read is kept for every reader: answered as kept a while, then at on
   assert.equal(retained.length, answered + 1, 'the read behind it retained')
   await Promise.all(retained)
   assert.equal((await first({ repoId: '1', kind: 'pulls' })).body.items[0].title, 'After', 'the next to ask has what was read behind it')
+})
+
+test('a page none kept asked for by several readers at once is read once, with the first one\'s token, each answered by that read; once it is, the next asks again', async t => {
+  let held = Promise.withResolvers()
+  const asked = github(t, () => held.promise.then(() => page([{ number: 2, title: 'Shared', state: 'OPEN', stateReason: null, createdAt: null, updatedAt: null, closedAt: null,
+    author: null, comments: { totalCount: 0 }, labels: labels() }])))
+  const request = await fixture(t)
+  const answers = Promise.all([request({ repoId: '1', kind: 'issues' }), request({ repoId: '1', kind: 'issues' }, { as: 'other' }), request({ repoId: '1', kind: 'pulls' })])
+  while (asked.length < 2) await setImmediate()
+  for (let turn = 0; turn < 50; turn++) await setImmediate()
+  assert.equal(asked.length, 2, 'the issues read once, the pull requests their own')
+  assert.ok(asked.every(({ auth }) => auth === 'Bearer login-token'))
+  held.resolve()
+  const [first, second] = await answers
+  assert.deepEqual([first.body.items[0].title, second.body.items[0].title, first.body.readAt], ['Shared', 'Shared', second.body.readAt])
+  held = Promise.withResolvers()
+  held.resolve()
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 25 * 60 * 60_000 })
+  await request({ repoId: '1', kind: 'issues' })
+  assert.equal(asked.length, 3, 'a day on, read again')
 })
 
 test('an item is one issue or pull request as its popup shows it: as its tile, with its description\'s Markdown and what it closes or what closes it', async t => {

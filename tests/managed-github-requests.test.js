@@ -46,6 +46,45 @@ test('GitHub GET sharing is scoped to the exact URL, token and transport', async
   assert.equal(calls.length, 5)
 })
 
+test('a GET GitHub answered with an ETag is asked again If-None-Match, a 304 answered by the body kept; by its URL, token and transport', async () => {
+  const asked = []
+  let body = { name: 'one' }, etag = 'W/"one"'
+  const fetch = (input, options) => {
+    asked.push([input, options.headers.authorization ?? null, options.headers['if-none-match'] ?? null])
+    if (options.headers['if-none-match'] === etag) return Promise.resolve(new Response(null, { status: 304, headers: { etag } }))
+    return Promise.resolve(Response.json(body, { headers: { etag } }))
+  }
+  const first = await githubJson(url, 'alice', fetch)
+  first.name = 'changed by its caller'
+  assert.deepEqual(await githubJson(url, 'alice', fetch), { name: 'one' }, 'not modified: the body kept, each caller its own')
+  assert.deepEqual(asked.at(-1), [url, 'Bearer alice', 'W/"one"'])
+  await githubJson(url, 'bob', fetch)
+  await githubJson(`${url}?page=2`, 'alice', fetch)
+  await githubJson(url, 'alice', (input, options) => fetch(input, options))
+  assert.deepEqual(asked.slice(2).map(([, , tag]) => tag), [null, null, null], 'another token, URL or transport its own')
+  ;[body, etag] = [{ name: 'two' }, 'W/"two"']
+  assert.deepEqual(await githubJson(url, 'alice', fetch), { name: 'two' }, 'modified: read whole, and kept by its new ETag')
+  assert.deepEqual(await githubJson(url, 'alice', fetch), { name: 'two' })
+  assert.equal(asked.at(-1)[2], 'W/"two"')
+  // A POST is never asked so.
+  await githubJson(url, 'alice', fetch, 'POST', { name: 'post' })
+  await githubJson(url, 'alice', fetch, 'POST', { name: 'post' })
+  assert.equal(asked.at(-1)[2], null)
+})
+
+test('a GET GitHub refuses after answering it with an ETag is refused, its body kept not answered', async () => {
+  let refuse = false
+  const fetch = (input, options) => Promise.resolve(refuse ? Response.json({ message: 'Not Found' }, { status: 404 })
+    : options.headers['if-none-match'] ? new Response(null, { status: 304 }) : Response.json({ name: 'one' }, { headers: { etag: '"one"' } }))
+  await githubJson(url, 'alice', fetch)
+  refuse = true
+  await assert.rejects(githubJson(url, 'alice', fetch), { status: 404 })
+  // One not answered with an ETag is not kept: a 304 to it, never asked for, is a failure.
+  const untagged = (input, options) => Promise.resolve(options.headers['if-none-match'] ? new Response(null, { status: 304 }) : Response.json({ name: 'two' }))
+  await githubJson(`${url}/untagged`, 'alice', untagged)
+  assert.deepEqual(await githubJson(`${url}/untagged`, 'alice', untagged), { name: 'two' })
+})
+
 test('a full pending-read map lets new reads proceed without evicting work already shared', async () => {
   const gate = Promise.withResolvers()
   let calls = 0

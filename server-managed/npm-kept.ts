@@ -190,10 +190,10 @@ export const historyTreeStore = <T>(db: UpstreamCacheStore, debug = false): Kept
 // What the code viewer read of a repository's trees (http.ts
 // repositoryTreesOf), which never changes once a commit or tree names it: the
 // tree at a directory of a commit, by the repository's id, the commit and the
-// directory (`trees`), and how many files a tree holds and their bytes, by
-// the repository's id and the tree's (`tree-files`): kept as its history's
-// pages are.
-export const codeTreeStore = <T>(db: UpstreamCacheStore, type: 'trees' | 'tree-files', debug = false): KeptStore<T> =>
+// directory (`trees`), how many files a tree holds and their bytes, by
+// the repository's id and the tree's (`tree-files`), and a directory's
+// listing at a commit, by them (`listings`): kept as its history's pages are.
+export const codeTreeStore = <T>(db: UpstreamCacheStore, type: 'trees' | 'tree-files' | 'listings', debug = false): KeptStore<T> =>
   keptStore<T>(db, `repository/code-${type}`, HISTORY_PAGE_KEPT_MS, debug)
 // The commit the code viewer keeps a repository's directories at in byte
 // storage, its default branch's head as last read, and the repository's

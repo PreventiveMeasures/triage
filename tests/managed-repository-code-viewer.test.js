@@ -22,7 +22,8 @@ mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: {
   pushRoute: route => { pushes.push(route) }, showing: route => { showings.push([route, state.currentView, state.repositoryCodeOpening ?? null]) } } } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryCode(repoId, ref, path) { requests.push([repoId, ref, path]); return answer(repoId, ref, path) },
-  fetchRepositoryContents(repoId, ref, path) { contentsRequests.push([repoId, ref, path]); return contents(repoId, ref, path) },
+  // The commit alone asked for, `'commit'`.
+  fetchRepositoryContents(repoId, ref, path, options) { contentsRequests.push([repoId, ref, path, ...options?.commitOnly ? ['commit'] : []]); return contents(repoId, ref, path) },
   fetchBrowsableRepositories: () => Promise.resolve([{ repoId: 7, fullName: 'org/repo' }, { repoId: 8, fullName: 'org/other' }]),
   fetchRepositoryRefs: () => { refsReads++; return refsAnswer() },
   fetchBundleContents() {}, fetchBundleMetadata() {},
@@ -233,7 +234,7 @@ test('a directory that fails to open says why at its route, and lists its direct
   assert.equal(state.repositoryCodeOpening.commit, commit)
   assert.equal(state.repositoryCodeOpening.code, 'directory-too-large')
   await setImmediate()
-  assert.deepEqual(contentsRequests, [[7, '', ''], [7, commit, '']], 'its root listed for the commit its Treemap draws at as it opened, then its directories')
+  assert.deepEqual(contentsRequests, [[7, '', '', 'commit'], [7, commit, '']], 'its root\'s commit, for its Treemap to draw at as it opened, then its directories listed')
   assert.deepEqual(state.repositoryCodeOpening.listing, { commit, directories: [{ name: 'docs', path: 'docs', type: 'dir' }, { name: 'src', path: 'src', type: 'dir' }] })
   // Another of its tabs fails as it did, its Commits showing, nothing read again.
   assert.deepEqual(await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'commits' }, () => true, () => {}),
@@ -273,15 +274,15 @@ test('opening on its Treemap, a directory shows at its commit while its files ar
   assert.equal(state.currentView, 'bundles')
   assert.equal(state.bundles[0].repository.commit, develop, 'its files read, drawn by them')
 
-  // Its route naming none, listing the repository's root reads it, as its
-  // files are read.
+  // Its route naming none, the repository's root's commit read, as its files
+  // are read.
   contents = () => Promise.resolve({ commit: develop.toUpperCase(), entries: [] })
   answer = (repoId, ref, path) => new Promise(resolve => { finish = () => resolve({ ...data, commit: develop, path }) })
   const named = openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit: null, ref: 'heads/develop', revision: { kind: 'branch', name: 'develop' },
     path: '', bundleTab: 'treemap' }, () => true, () => {})
   assert.equal(state.repositoryCodeOpening.commit, null)
   await setImmediate()
-  assert.deepEqual(contentsRequests, [[7, 'heads/develop', '']])
+  assert.deepEqual(contentsRequests, [[7, 'heads/develop', '', 'commit']])
   assert.equal(state.repositoryCodeOpening.commit, develop)
   assert.deepEqual(requests.at(-1), [7, 'heads/develop', ''], 'its files read all the while')
   finish()
@@ -296,17 +297,23 @@ test('opening on its Treemap, a directory shows at its commit while its files ar
   assert.equal(contentsRequests.length, 0)
 })
 
-test('a repository\'s branches and tags read again as its code opens anew show those read before meanwhile, kept where that read fails', async () => {
+test('a repository\'s branches and tags read again as its code opens anew show those read before meanwhile, kept where that read fails', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
   const named = { ...refsListed, branchCommits: [{ name: 'main', sha: commit }] }
   refsAnswer = () => Promise.resolve(named)
   repositoryRefs(7)
   await setImmediate()
   const linked = { repoId: 7, commit, revision: null }
   assert.deepEqual(shownRevision(linked, repositoryRefs(7)), { kind: 'branch', name: 'main' })
-  // Another tab opening reads them again; the header names the commit as before till they arrive.
+  // Another tab opening within half a minute reads none.
+  const read = refsReads
+  await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'pulse' }, () => true, () => {})
+  repositoryRefs(7)
+  assert.equal(refsReads, read, 'read just now')
+  // One opening later reads them again; the header names the commit as before till they arrive.
+  t.mock.timers.tick(30_000)
   let arrive
   refsAnswer = () => new Promise(resolve => { arrive = resolve })
-  const read = refsReads
   await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'commits' }, () => true, () => {})
   assert.deepEqual(shownRevision(linked, repositoryRefs(7)), { kind: 'branch', name: 'main' }, 'not the commit meanwhile')
   assert.equal(refsReads, read + 1)
@@ -315,6 +322,7 @@ test('a repository\'s branches and tags read again as its code opens anew show t
   await setImmediate()
   assert.deepEqual(shownRevision(linked, repositoryRefs(7)), { kind: 'branch', name: 'develop' }, 'what GitHub tells now, once it does')
   // One failing keeps them.
+  t.mock.timers.tick(30_000)
   refsAnswer = () => Promise.reject(new Error('GitHub is down.'))
   await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: 'issues' }, () => true, () => {})
   repositoryRefs(7)
@@ -325,9 +333,10 @@ test('a repository\'s branches and tags read again as its code opens anew show t
   assert.equal(refsReads, read + 2, 'not read again till its code opens anew')
 })
 
-test('History at a commit opens alone, reading none of the directory\'s files, its other tabs opening them', async () => {
+test('History at a commit opens alone, reading none of the directory\'s files, its other tabs opening them', async t => {
   repositoryRefs(7)
   await setImmediate()
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 60_000 })
   const read = refsReads
   const route = await openRepositoryCodeRoute({ view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'commits' }, () => true, () => {})
   assert.deepEqual(route, { view: 'repository-code', repoId: 7, commit, path: 'packages/app', bundleTab: 'commits' })
@@ -344,7 +353,7 @@ test('History at a commit opens alone, reading none of the directory\'s files, i
   assert.deepEqual(requests, [[7, commit, 'packages/app']])
   assert.equal(state.currentView, 'bundles')
 
-  // At a revision named, it opens at the commit its listing reads, named so.
+  // At a revision named, it opens at the commit the root is read at, named so.
   requests.length = 0
   const develop = 'd'.repeat(40)
   contents = () => Promise.resolve({ commit: develop, entries: [] })
@@ -352,7 +361,7 @@ test('History at a commit opens alone, reading none of the directory\'s files, i
     path: 'packages/app', bundleTab: 'commits' }, () => true, () => {})
   assert.deepEqual(named, { view: 'repository-code', repoId: 7, commit: develop, path: 'packages/app', bundleTab: 'commits' })
   assert.deepEqual(requests, [], 'no files read')
-  assert.deepEqual(contentsRequests, [[7, 'heads/develop', '']], 'the root, the directory there or not')
+  assert.deepEqual(contentsRequests, [[7, 'heads/develop', '', 'commit']], 'the root\'s commit alone, the directory there or not')
   assert.equal(state.repositoryCodeOpening.historyOnly, true)
   assert.deepEqual([state.repositoryCodeOpening.commit, state.repositoryCodeOpening.revision], [develop, { kind: 'branch', name: 'develop' }])
   // A commit picked on Commits by the tag naming it, named so on Code too,
