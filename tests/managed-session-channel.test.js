@@ -54,3 +54,14 @@ test('what a tab tells is a digest alone, no token; a public share, which no coo
   assert.match(listener.heard[0].mark, /^[\da-f]{64}$/u)
   assert.ok(!JSON.stringify(listener.heard).includes('csrf-'), 'the CSRF token never travels')
 })
+
+test('a tab whose probe failed, keeping the session it had, is told the other tab\'s still differs, and not once its own matches', async () => {
+  const [a, b] = await Promise.all([tab('a3'), tab('b3')])
+  assert.equal(await a.toldOtherThan(session('frank')), false, 'none told')
+  await a.announceManagedSession(session('frank'))
+  await b.announceManagedSession(session('grace'))
+  await settle()
+  assert.equal(await a.toldOtherThan(session('frank')), true, 'its probe kept frank, b told of grace')
+  assert.equal(await a.toldOtherThan(session('grace')), false, 'its probe found grace')
+  assert.equal(await a.toldOtherThan(session('grace', { publicShare: true })), false, 'a public share is no cookie\'s')
+})

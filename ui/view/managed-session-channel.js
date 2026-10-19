@@ -9,6 +9,7 @@
 const CHANNEL = 'deepview-managed-session'
 let channel = null
 let told = null
+let heard = null
 const watchers = new Set()
 
 function opened() {
@@ -16,7 +17,9 @@ function opened() {
     channel = new BroadcastChannel(CHANNEL)
     channel.addEventListener('message', event => {
       const mark = event.data?.mark
-      if (typeof mark === 'string' && told !== null && mark !== told) for (const watcher of watchers) watcher()
+      if (typeof mark !== 'string') return
+      heard = mark
+      if (told !== null && mark !== told) for (const watcher of watchers) watcher()
     })
     // Node's would hold its process open; a browser's has no such method.
     channel.unref?.()
@@ -45,6 +48,13 @@ export async function announceManagedSession(session) {
   // A BroadcastChannel reaches its own origin's tabs alone; it takes no target origin.
   // eslint-disable-next-line unicorn/require-post-message-target-origin
   channel.postMessage({ mark })
+}
+
+// Whether the tab that told last told of another session than `session`, as
+// when this tab's probe failed and kept the session it had.
+export async function toldOtherThan(session) {
+  if (heard === null || session?.publicShare) return false
+  return heard !== await markOf(session)
 }
 
 // `onOther` called as another tab tells of another session than the one
