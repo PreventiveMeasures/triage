@@ -15,7 +15,7 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { acceptsReportMetadata } from './report-response.ts'
-import { liteReportData } from '../common/managed/finding-detail.js'
+import { liteWorkspace } from '../common/managed/finding-detail.js'
 import { findingsRepository, readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { createHash, randomUUID } from 'node:crypto'
@@ -1472,9 +1472,11 @@ async function sendTeamReports(url: URL, res: ServerResponse, route: string, rep
   }))
   if (route === 'trees') { sendJson(res, 200, { trees: Object.fromEntries(read.filter(({ tree }) => tree).map(({ report, tree }) => [report.id, tree])) }); return }
   // The board's, without the findings' detail, as the managed server sends it.
-  const lite = url.searchParams.get('lite') === '1'
-  sendJson(res, 200, { reports: read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data: lite ? liteReportData(data) : data,
-    repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } })) })
+  const whole = read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data,
+    repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } }))
+  if (url.searchParams.get('lite') !== '1') { sendJson(res, 200, { reports: whole }); return }
+  const lite = liteWorkspace(whole, [])
+  sendJson(res, 200, { reports: lite.reports, ...lite.folded ? { folded: true } : {} })
 }
 
 const fixtureFeeds = new Set<ServerResponse>()

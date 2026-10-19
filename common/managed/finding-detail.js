@@ -1,4 +1,5 @@
-import { findingTitle } from '@preventive/report'
+import { findingTitle, reportEntries, revalidateKindOf } from '@preventive/report'
+import { managedTeamRevalidationConflicted } from './team-app.js'
 
 // A finding's detail: what its popup, the views besides the board and an
 // export read, and the board does not. Its narrative and evidence, the hash
@@ -33,9 +34,33 @@ function liteFinding(finding) {
   return lite
 }
 
-// A report's data, its findings without their detail.
-export function liteReportData(data) {
+const isPass = finding => revalidateKindOf(finding) === 'revalidation'
+
+// A report's data, its findings without their detail. A workspace opening in
+// App mode shows of an entry holding the revalidation pass's row that row
+// alone (ui/view/group.js foldedTabs): with `fold`, such an entry is sent as
+// the pass's rows, the rows beneath them left for the whole reports
+// (ui/view/managed-details.js).
+export function liteReportData(data, { fold = false } = {}) {
   const key = Array.isArray(data?.findings) ? 'findings' : Array.isArray(data?.groups) ? 'groups' : null
   if (!key) return data
-  return { ...data, [key]: data[key].map(entry => Array.isArray(entry) ? entry.map(liteFinding) : liteFinding(entry)) }
+  const entries = data[key].map(entry => {
+    if (!Array.isArray(entry)) return liteFinding(entry)
+    const shown = fold && entry.length > 1 && entry.some(isPass) ? entry.filter(isPass) : entry
+    return shown.map(liteFinding)
+  })
+  return { ...data, [key]: entries }
+}
+
+const rows = data => (reportEntries(data) ?? []).flat().length
+
+// A team's reports as its board is first sent them (server-managed/team-reports.ts),
+// each `liteReportData`, folded where nothing in the workspace contradicts the
+// revalidation pass, which opens a view of it in App mode
+// (ui/view/render.js configureReportRevalidation); `folded` where that left
+// rows out.
+export function liteWorkspace(reports, links) {
+  const fold = !managedTeamRevalidationConflicted(Object.assign(reports.map(({ filename, data }) => ({ filename, data })), { links }))
+  const lite = reports.map(report => ({ ...report, data: liteReportData(report.data, { fold }) }))
+  return { reports: lite, folded: fold && lite.some((report, index) => rows(report.data) < rows(reports[index].data)) }
 }

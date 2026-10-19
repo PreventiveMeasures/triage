@@ -138,7 +138,9 @@ export function startManagedTeamFeed({ catalogOnly = false, loading = false, hyd
   // identity so painting the hydrated view does not invalidate its consumer.
   const reports = store(state.reports)
   const previous = subscription.target
-  if (previous?.view === view && previous.reports === reports && !previous.signal.aborted) return previous.ready
+  // One asked to hydrate them takes over one attached without (a render's,
+  // meanwhile), which would answer no hydration at all.
+  if (previous?.view === view && previous.reports === reports && !previous.signal.aborted && (!hydrate || previous.hydration)) return previous.ready
   previous?.controller.abort()
   const controller = new AbortController(), signal = AbortSignal.any([controller.signal, subscription.signal, view])
   const same = previous?.reports === reports

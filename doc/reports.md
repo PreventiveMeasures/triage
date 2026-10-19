@@ -73,7 +73,8 @@ Anyone else gets `404`.
 A team view loads at most 4,096 reports and 1 GiB, and a larger workspace fails with `413`.
 Its reports come without their file trees: each tells how many files its tree holds (`treeFiles`) and the dependency directory it names (`treeDependencies`), and `GET /api/teams/:id/trees` answers the trees by report ID (each file's without its `treeHash`), under the same access, only once the view's Graph or Files needs them.
 `GET /api/teams/:id/reports?lite=1` sends the same reports with each finding's detail left out (its description, evidence and narrative, its hashes, export, commits, dates and other facts, and the run meta beside `model` and `type`: `common/managed/finding-detail.js` lists them; an untitled finding keeps its description's first line, which names it), and neither carries what nothing reads: a finding's `treeHash`, the `_idBasis` its ID was derived from, or a run's `think`.
-The browser draws a team's board from those and asks for the whole reports beside them; a finding's popup, the other view modes and an export wait for them.
+Where no copy of a finding contradicts the revalidation pass, so that the team opens in App mode, the lite reports also leave out the rows beneath each App row, which App mode does not show, and say `"folded": true`.
+The browser draws a team's board from those and asks for the whole reports beside them; a finding's popup, the other view modes and an export wait for them, as does a lens other than App's when the board's reports were folded, and folded reports are replaced by the whole ones once they arrive, keeping the reader's filters.
 The server rechecks access and publication after loading, and refuses rather than return a workspace that changed meanwhile.
 The browser keeps report content, comments, history and GitHub metadata in memory only, and responses are never HTTP-cached.
 

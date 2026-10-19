@@ -2,6 +2,7 @@ import { inheritReportMeta, isAppFinding, reportEntries } from '@preventive/repo
 import { collectDuplicates } from '../../client/linked-findings.js'
 import { hasRevalidateStamp } from '../finding-filters.js'
 import { workspaceAppMetadata } from '../workspace-app.js'
+import { mergeReportGroups } from '../workspace-groups.js'
 
 // The same classification as local workspaces, using only the complete,
 // server-filtered published workspace: the reports of one team response and
@@ -9,6 +10,21 @@ import { workspaceAppMetadata } from '../workspace-app.js'
 // catalog, so the sidebar opens a team collapsed to its App findings at once.
 // The server backfills finding IDs before building these envelopes.
 export function managedTeamAppMetadata(workspace, options = {}) {
+  const { reports, duplicates } = viewReports(workspace)
+  return workspaceAppMetadata(reports, id => [...duplicates.get(id) ?? []], options)
+}
+
+// Whether copies of one finding in the workspace disagree on what the
+// revalidation pass said, which takes the App lens off a view of it
+// (ui/view/render.js configureReportRevalidation). Asked of all its rows, so
+// that a view of any of its reports holds none either.
+export function managedTeamRevalidationConflicted(workspace) {
+  return mergeReportGroups(viewReports(workspace).reports).conflicts.size > 0
+}
+
+// The workspace's reports as a view holds them (ui/view/ingest.js), with the
+// duplicates its links name.
+function viewReports(workspace) {
   const duplicates = new Map(), reports = []
   collectDuplicates(workspace.links ?? [], duplicates)
   for (const { filename, data } of workspace) {
@@ -27,5 +43,5 @@ export function managedTeamAppMetadata(workspace, options = {}) {
     }))
     reports.push({ fileName: filename, groups })
   }
-  return workspaceAppMetadata(reports, id => [...duplicates.get(id) ?? []], options)
+  return { reports, duplicates }
 }

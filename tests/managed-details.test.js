@@ -14,7 +14,7 @@ mock.module('../ui/view/group.js', { namedExports: {
   getRevalidationConflicts: () => new Map(state.reports.flatMap(report => report.groups.flat())
     .filter(f => f.revalidateVerdict === 'disputed').map(f => [f.id, { finding: f, copies: [] }])),
 } })
-const { awaitManagedDetails, managedDetailsReady, managedDetailsWaiting } = await import('../ui/view/managed-details.js')
+const { awaitManagedDetails, managedDetailsFolded, managedDetailsReady, managedDetailsReplacing, managedDetailsWaiting } = await import('../ui/view/managed-details.js')
 const { findingText } = await import('../ui/view/format.js')
 
 // A report as ingest.js keeps it: its non-empty entries' members, copied.
@@ -83,4 +83,49 @@ test('details that fail leave the board as it is, telling so; ones answered once
   await settle()
   assert.equal(Object.hasOwn(state.reports[0].groups[0][0], 'evidence'), false)
   assert.deepEqual(workspaces, [])
+})
+
+// The whole reports where the board's copy left the rows beneath an App row out.
+const unfolded = [{ id: 'r', data: { findings: [[whole.data.findings[0], { id: 'u', file: 'src/a.js', revalidate: 'partial' }], ...whole.data.findings.slice(1)] } }]
+
+test('a board\'s copy leaving rows out is ingested again whole once the view stands, waited for as long, the view held meanwhile', async () => {
+  const asked = [], loaded = [], replaced = Promise.withResolvers(), shown = Promise.withResolvers()
+  const again = [{ _managedReportId: 'r', groups: [[{ id: 'a', _id: 'a', revalidateVerdict: 'disputed' }, { id: 'u', _id: 'u' }]] }]
+  awaitManagedDetails('team', Promise.resolve(unfolded), () => loaded.push(true), { folded: true, shown: shown.promise,
+    replace: workspace => { asked.push(workspace); state.reports = again; return replaced.promise } })
+  await settle()
+  assert.deepEqual([asked, managedDetailsFolded(), managedDetailsWaiting(), managedDetailsReplacing()], [[], true, 'loading', false], 'not before the view stands')
+  shown.resolve(true)
+  await settle()
+  assert.deepEqual(asked, [unfolded])
+  assert.deepEqual([managedDetailsReplacing(), managedDetailsFolded(), managedDetailsWaiting()], [true, true, 'loading'], 'the reports ingested meanwhile wait as the board\'s copy did')
+  let ready = null
+  void (async () => { ready = await managedDetailsReady() })()
+  await settle()
+  assert.equal(ready, null, 'an export waits for them too')
+  replaced.resolve(true)
+  await settle()
+  assert.deepEqual([loaded, ready, managedDetailsWaiting(), managedDetailsFolded(), managedDetailsReplacing()], [[true], true, null, false, false])
+  assert.deepEqual([workspaces, clearedMerges, [...state.revalidateConflicts.keys()], toasts], [[['team', unfolded]], 1, ['a'], []])
+})
+
+test('whole reports that cannot be ingested in the board\'s place leave it as it is, telling so; ones for a view left wait for nothing', async () => {
+  for (const replace of [() => Promise.resolve(false), () => Promise.reject(new Error('no'))]) {
+    state.reports = ingested()
+    awaitManagedDetails('team', Promise.resolve(unfolded), () => {}, { folded: true, replace })
+    assert.equal(await managedDetailsReady(), false)
+    assert.deepEqual([managedDetailsWaiting(), managedDetailsFolded()], ['failed', true])
+  }
+  assert.equal(toasts.length, 2)
+  // One that went Home, as a failed load does, told why there.
+  awaitManagedDetails('team', Promise.resolve(unfolded), () => assert.fail('another view'), { folded: true, replace: () => { state.reports = []; return Promise.resolve(false) } })
+  assert.equal(await managedDetailsReady(), false)
+  assert.deepEqual([toasts.length, await managedDetailsReady(), managedDetailsWaiting()], [2, true, null], 'the reports now loaded wait for nothing of these')
+  const asked = [], left = new AbortController()
+  state.reports = ingested()
+  awaitManagedDetails('team', Promise.resolve(unfolded), () => assert.fail('a view left'), { folded: true, shown: new Promise(() => {}), signal: left.signal,
+    replace: workspace => { asked.push(workspace); return Promise.resolve(true) } })
+  left.abort()
+  await settle()
+  assert.deepEqual([asked, toasts.length, workspaces], [[], 2, []])
 })

@@ -197,6 +197,7 @@ export async function fetchTeamReports(teamId, { signal, reportId = null, lite =
   const links = responseLinks(body)
   if (links === null) return null
   Object.defineProperty(reports, 'links', { value: links })
+  if (body.folded === true) Object.defineProperty(reports, 'folded', { value: true })
   return reports
 }
 
