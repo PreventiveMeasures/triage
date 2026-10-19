@@ -92,6 +92,13 @@ test('a patch is read as git writes a diff, and applied as pnpm applies it: each
   // Quoted, as git writes a path past ASCII.
   const quoted = parsePatch('diff --git "a/\\303\\251.js" "b/\\303\\251.js"\ndeleted file mode 100644\nindex 1111111..0000000\n')
   assert.deepEqual(quoted.map(file => [file.path, file.deleted]), [['é.js', true]])
+  // Its own lines ending in CRLFs, as an editor or autocrlf leaves it: read
+  // as git wrote it. One git wrote of a file whose lines end in CRLFs keeps
+  // its CRs.
+  assert.deepEqual(parsePatch(PATCH.replaceAll('\n', '\r\n')), patch, 'one of CRLFs read as git wrote it')
+  const ofCrlf = parsePatch('diff --git a/w.js b/w.js\n--- a/w.js\n+++ b/w.js\n@@ -1,2 +1,2 @@\n a\r\n-b\r\n+c\r\n')
+  assert.equal(texts(patchedFiles(files({ 'w.js': 'a\r\nb\r\n' }), ofCrlf))['w.js'], 'a\r\nc\r\n', 'a file of CRLFs patched as git wrote it')
+  assert.throws(() => patchedFiles(files({ 'w.js': 'a\nb\n' }), ofCrlf), failure('patch-does-not-apply'), 'not one of LFs')
 })
 
 test('a patch of bytes, of a file outside the package, or that its lines miscount isn\'t read', () => {
@@ -199,7 +206,7 @@ async function setup(t, pkg, held) {
 test('a version as a patch changes it is read, compared and reviewed by one who reads the whole of the repository the patch is read of, the patch held to its hash', async t => {
   const pkg = packageOf('patched-lib', '1.0.0', PACKAGE)
   const path = 'patches/patched-lib@1.0.0.patch'
-  const h = await setup(t, pkg, { [path]: PATCH })
+  const h = await setup(t, pkg, { [path]: PATCH, 'patches/crlf.patch': PATCH.replaceAll('\n', '\r\n') })
   const hash = createHash('sha256').update(PATCH).digest('hex')
   const patch = { patchHash: hash, patchRepoId: '1', patchCommit: commit, patchPath: path }
   const query = more => new URLSearchParams({ name: 'patched-lib', version: '1.0.0', ...more })
@@ -214,6 +221,8 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
   h.asked.length = 0
   assert.equal((await h.send(`/api/npm/package?${query(patch)}`)).status, 200)
   assert.deepEqual(h.asked, [], 'and kept, what a commit holds never changing')
+  assert.deepEqual((await h.send(`/api/npm/package?${query({ ...patch, patchPath: 'patches/crlf.patch' })}`)).json().files, body.files,
+    'one committed with CRLFs, its hash as pnpm hashes it, read as git wrote it')
 
   const compared = (await h.send(`/api/npm/comparison?${query({ otherVersion: '(empty)', ...patch })}`)).json()
   assert.deepEqual(compared.files.onlyOther.map(row => row.path).toSorted(), ['added.js', 'image.bin', 'index.js', 'new name.js', 'package.json'], 'compared as patched')

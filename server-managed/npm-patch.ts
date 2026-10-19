@@ -151,8 +151,12 @@ function readHunk(lines: string[], at: number, end: number): { hunk: PatchHunk; 
 // A patch's files as git's diff writes them, as pnpm writes a patch: a file's
 // `diff --git` line, its headers, the paths its sides have, and its hunks;
 // what comes before the first file, or between one file and the next, left
-// out. Throws for one it can't read, or of bytes.
-export function parsePatch(text: string): PatchedFile[] {
+// out. One whose own lines end in CRLFs, as an editor or git's autocrlf
+// leaves one, is read as git wrote it, with LFs, as pnpm hashes it: a line
+// git writes ends in a CR only where the file it changes has one, and never
+// a `diff --git` line. Throws for one it can't read, or of bytes.
+export function parsePatch(patch: string): PatchedFile[] {
+  const text = /^diff --git .*\r$/mu.test(patch) ? patch.replaceAll('\r\n', '\n') : patch
   const lines = text.split('\n')
   // The lines read: those but the empty one past the patch's last ending.
   const end = lines.length - (text.endsWith('\n') ? 1 : 0)
