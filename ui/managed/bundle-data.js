@@ -101,8 +101,9 @@ const NPM_ERRORS = {
 // Reads asked for ahead of their readers (prefetch), by their URL, each
 // `{ reading, until, generation }`: the first read of one within
 // PREFETCH_MS, of the session that asked for it, takes its answer, none read
-// again; one taken failing, but for a session change, read anew; one none
-// takes in time called off.
+// again; one taken failing, or refused, as a server busy for a moment
+// refuses it, read anew, but for a session change; one none takes in time
+// called off.
 const PREFETCH_MS = 15_000
 const prefetched = new Map()
 
@@ -141,7 +142,8 @@ export async function request(url, errors, read, signal) {
   const generation = managedAppState.generation
   const ask = () => managedFetch(url, { credentials: 'same-origin', signal })
   const ahead = takePrefetched(url, generation)
-  const response = await (ahead ? abortable(ahead, signal).catch(err => signal.aborted ? Promise.reject(err) : ask()) : ask())
+  const taken = ahead && await abortable(ahead, signal).then(answer => answer.ok ? answer : null, err => { if (signal.aborted) throw err; return null })
+  const response = taken || await ask()
   signal.throwIfAborted()
   if (!response.ok) {
     const body = await response.json().catch(() => null)

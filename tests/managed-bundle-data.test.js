@@ -215,10 +215,11 @@ test('advisory reason and team are encoded independently without sending invento
 test('an Activity view\'s first read asked for ahead is taken by the first to read it, none read again; one failing read anew, another session\'s not taken', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const asked = []
-  let fail = false
+  let fail = false, refuse = false
   t.mock.method(globalThis, 'fetch', url => {
     asked.push(url)
     if (fail) return Promise.reject(new TypeError('offline'))
+    if (refuse) return Promise.resolve(Response.json({ error: 'repository-busy' }, { status: 503 }))
     return Promise.resolve(Response.json({ read: asked.length }))
   })
   prefetchActivity(7, 'pulse', { weeks: 52 })
@@ -236,10 +237,15 @@ test('an Activity view\'s first read asked for ahead is taken by the first to re
   prefetchActivity(7, 'pulse', { weeks: 4 })
   fail = false
   assert.deepEqual(await fetchRepositoryPulse(7, 4), { read: 6 })
+  // One refused, as a server busy for a moment refuses it: read anew.
+  refuse = true
+  prefetchActivity(7, 'pulse', { weeks: 13 })
+  refuse = false
+  assert.deepEqual(await fetchRepositoryPulse(7, 13), { read: 8 })
   // Another session's: not taken.
   managedAppState.setSession({ id: 'bob', role: 'manage' })
-  assert.deepEqual(await fetchRepositoryAgents(7), { read: 7 })
-  assert.equal(asked.length, 7)
+  assert.deepEqual(await fetchRepositoryAgents(7), { read: 9 })
+  assert.equal(asked.length, 9)
 })
 
 test('a read asked for ahead that none takes in time is called off', t => {
