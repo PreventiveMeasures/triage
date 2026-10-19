@@ -1690,7 +1690,12 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
       return
     }
     if (res.destroyed) return
-    const load = loadRepositoryCodeBody({ repoId, repo, commit, path, tree, listed }, () => upstreamGithub(() => client.getRepoTreeTarball({ repo, tree })))
+    // A tarball upstream finds no tree in, as @preventive/archive refuses
+    // one with a symlink past the repository's root, is one the viewer
+    // cannot read; one holding another tree is GitHub's answer gone wrong.
+    const load = loadRepositoryCodeBody({ repoId, repo, commit, path, tree, listed }, symlinksAbove => upstreamGithub(() => client.getRepoTreeTarball({ repo, tree, symlinksAbove }).catch((err: unknown) => {
+      throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(', got no tree: ') ? new GithubApiError(422, 'directory-unreadable') : err
+    })))
     res.once('close', load.release)
     const bytes = await load.result
     if (!(await fenced()) || res.destroyed) return

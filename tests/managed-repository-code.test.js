@@ -101,8 +101,9 @@ function tarball(tree) {
 
 // GitHub, as the reader and upstream's client ask it; `asked` the paths asked
 // for, `truncate` cutting recursive listings short, `reads` how many times
-// the repository answers before it is gone.
-function github(t, { truncate = false, reads = Infinity } = {}) {
+// the repository answers before it is gone, `archives` the tree whose
+// tarball it sends for the one asked.
+function github(t, { truncate = false, reads = Infinity, archives = tree => tree } = {}) {
   const asked = []
   t.mock.method(globalThis, 'fetch', input => {
     const url = new URL(typeof input === 'string' ? input : input.url)
@@ -118,7 +119,7 @@ function github(t, { truncate = false, reads = Infinity } = {}) {
       return Promise.resolve(Response.json({ ...listing(tree, recursive), ...(recursive && truncate ? { truncated: true } : {}) }))
     }
     const archived = /^\/repos\/org\/repo\/tarball\/([a-f\d]{40})$/u.exec(path)?.[1]
-    if (archived && trees.has(archived)) return Promise.resolve(new Response(tarball(archived)))
+    if (archived && trees.has(archived)) return Promise.resolve(new Response(tarball(archives(archived))))
     return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
   })
   return asked
@@ -229,6 +230,13 @@ test('a directory\'s symlinks may reach the repository\'s root, as a monorepo pa
   assert.deepEqual(await request({ repoId: '1', ref: commit, path: 'escape' }),
     { status: 422, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: { error: 'directory-unreadable' } },
     'a link past the root, as @preventive/archive refuses its tarball')
+})
+
+test('a directory\'s tarball holding another tree is GitHub\'s answer gone wrong, not one the viewer cannot read', async t => {
+  const request = await fixture(t, { role: 'admin' })
+  github(t, { archives: tree => tree === treeAt('src/allowed') ? treeAt('src/other') : tree })
+  assert.deepEqual(await request({ repoId: '1', ref: commit, path: 'src/allowed' }),
+    { status: 502, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }, body: { error: 'github-malformed' } })
 })
 
 test('a directory too large to hold, or listed short, is refused before its tarball is asked for', async t => {

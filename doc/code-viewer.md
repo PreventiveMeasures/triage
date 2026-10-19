@@ -81,6 +81,8 @@ Code, Search and Compare then say why and list the subdirectories to open instea
 
 Symlinks may point anywhere inside the repository.
 An absolute symlink, or one that climbs above the repository root, makes the directory `422 directory-unreadable`.
+So does any other tarball that holds no tree git writes, such as one with a file name that isn't UTF-8.
+A tarball that holds a tree other than the directory's is `502 github-malformed`.
 
 Directory loads share the npm viewer's load capacity, and a large directory takes more of it.
 When it is full, the answer is `429 repository-busy`.

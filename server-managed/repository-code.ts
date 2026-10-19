@@ -49,9 +49,14 @@ const directoryError = (err: unknown) => {
 
 // The directory as the viewer reads it, as brotli-encoded JSON: `{ repoId,
 // repo, commit, path, tree, files }`, its files as npmFileRows gives them,
-// by their paths in the directory, from `tarball`, the tree's.
-export function loadRepositoryCodeBody(input: RepositoryCodeInput, tarball: () => Promise<Uint8Array>): NpmLoad<Buffer> {
+// by their paths in the directory, from `tarball`, the tree's, as upstream
+// verifies it with its symlinks let climb `symlinksAbove` levels.
+export function loadRepositoryCodeBody(input: RepositoryCodeInput, tarball: (symlinksAbove: number) => Promise<Uint8Array>): NpmLoad<Buffer> {
   const { repoId, repo, commit, path, tree, listed } = input
+  // A symlink may reach the repository's root, as a monorepo package's
+  // LICENSE links the root's, and no further: the directory's depth, less
+  // the level the archive's root already stands above its top directory.
+  const symlinksAbove = path.split('/').length - 1
   // Its places among the active loads, by its files as listed, hold their
   // JSON too, which the listing cannot tell, as escaping may grow a text
   // sixfold: as much as a package's may take for each.
@@ -59,10 +64,7 @@ export function loadRepositoryCodeBody(input: RepositoryCodeInput, tarball: () =
   const maxLength = Math.min(MAX_REPOSITORY_CODE_JSON_LENGTH, places * MAX_NPM_JSON_LENGTH)
   return sharedLoad(`repository ${repoId} ${repo} ${commit} ${path} ${tree}`, async () => {
     let files
-    // A symlink may reach the repository's root, as a monorepo package's
-    // LICENSE links the root's, and no further: the directory's depth, less
-    // the level the archive's root already stands above its top directory.
-    try { files = npmFileRows(await readTarballFiles(await tarball(), { ...REPOSITORY_TAR, symlinksAbove: path.split('/').length - 1 }), maxLength) }
+    try { files = npmFileRows(await readTarballFiles(await tarball(symlinksAbove), { ...REPOSITORY_TAR, symlinksAbove }), maxLength) }
     catch (err) { throw directoryError(err) }
     return encodeBrotli(Buffer.from(JSON.stringify({ repoId, repo, commit, path, tree, files })))
   }, 'repository-busy', { places })
