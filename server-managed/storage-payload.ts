@@ -19,6 +19,24 @@ export function storageRowPaths(type: StorageRowKind, row: Pick<StorageRow, 'id'
 // are: public npm versions' pretty-printed files (pretty-print.ts).
 export const PUBLIC_CACHE = 'npm'
 export const PUBLIC_CACHE_PREFIX = `cache/${PUBLIC_CACHE}/`
+// A cache of private content no row owns: the code viewer's directories at
+// repositories' default branches' heads (repository-code.ts
+// repositoryCodeKept), by repository. Plaintext while storage is not
+// encrypted, as other caches are; once it is, kept apart under
+// ENCRYPTED_CACHE_PREFIX as a bundle's caches are, so that what was kept
+// before is never read and legacy cleanup removes it, and encrypted with the
+// master key, as upload parts are, each write's key derived from its path,
+// so that one path's ciphertext fails to authenticate at another. No storage
+// row holds a repository's code for a data key of its own to be wrapped in:
+// its selection is none, and stays as it is deactivated. A key of its own
+// would add a column and its migration only for its deletion to make what is
+// left unreadable at once, as a deleted bundle's caches are; here deletion
+// is physical, by the repository's prefix, at best, as an upload part's is,
+// and what a failed one leaves is a directory as GitHub has it at a commit,
+// read only by a reader GitHub lets read that repository.
+export const REPOSITORY_CODE_CACHE = 'repository-code'
+const REPOSITORY_CODE_CACHE_PREFIX = `cache/${REPOSITORY_CODE_CACHE}/`
+export const masterKeyCache = (identity: string) => identity.startsWith(REPOSITORY_CODE_CACHE_PREFIX)
 export function storageOwner(identity: string): { type: StorageRowKind; id: string; cache: boolean } | null {
   const match = /^(reports|bundles)\/([^/]+)$/u.exec(identity)
   if (match) {

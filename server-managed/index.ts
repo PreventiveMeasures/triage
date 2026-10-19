@@ -44,7 +44,7 @@ export async function createManagedApp(config: ManagedConfig, options: ManagedAp
 
 async function assembleManagedApp(config: ManagedConfig, { ui = true, ...options }: ManagedAppOptions, rollback: AsyncDisposableStack, waitUntil?: (promise: Promise<unknown>) => void) {
   const storage = await openManagedStorage(config)
-  const { db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, prettyCache, npmCacheStorage } = storage
+  const { db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, prettyCache, npmCacheStorage, repositoryCodeStorage } = storage
   rollback.defer(() => db.close())
   const originGate = createOriginGate(config.host, config.trustProxyEnv)
 
@@ -60,7 +60,7 @@ async function assembleManagedApp(config: ManagedConfig, { ui = true, ...options
     indexOnly: options.next != null, scanServer: options.serverInfo?.deepviewScanServer ?? null,
   }) : () => false
   const routeRequest = createManagedRequestHandler({
-    ...options, config, db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, prettyCache, npmCacheStorage, originGate, serveStatic,
+    ...options, config, db, avatarStore, reportStore, bundleStore, bundleCache, reportSourcesCache, prettyCache, npmCacheStorage, repositoryCodeStorage, originGate, serveStatic,
     ...(storage.uploadStore ? { uploadStore: storage.uploadStore } : {}), ...(waitUntil ? { waitUntil } : {}),
     isShuttingDown, track,
   })

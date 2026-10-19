@@ -408,16 +408,18 @@ for (const remote of [false, true]) {
       'reports/111111111111111111111111111111111111', `reports/nested/${id}`,
       `cache-encrypted-v1/webpack/build.json.${randomUUID()}.tmp`]
     const legacy = [`reports/${randomUUID()}`, `bundles/${randomUUID()}`, `bundles/${randomUUID()}.map.br`,
-      `cache/bundles/${id}/old/metadata.json`, `cache/report-sources/${id}/v1-hash/sources.json.gz`]
+      `cache/bundles/${id}/old/metadata.json`, `cache/report-sources/${id}/v1-hash/sources.json.gz`, `cache/repository-code/1/${'a'.repeat(40)}/v1-hash.json.br`]
     for (const path of [...unrelated, ...legacy]) await f.raw.put(path, Buffer.from(path))
     await f.db.enableStorageEncryption()
     const b = await bundle(f), live = await report(f)
     await f.stores.cacheStorage.put(b, 'metadata.json', Buffer.from('live cache'))
+    await f.stores.repositoryCodeStorage.put(`1/${'a'.repeat(40)}/v1-hash.json.br`, Buffer.from('live code'))
     const ciphertext = await bytes(f.raw, `reports/${live}`)
     const stale = [`reports/${live}.${randomUUID()}.tmp`, `bundles/${b}.map.br.${randomUUID()}.tmp`,
       `cache/bundles/${b}/metadata.json.${randomUUID()}.tmp`,
       `cache-encrypted-v1/bundles/${b}/metadata.json.${randomUUID()}.tmp`,
-      `cache-encrypted-v1/report-sources/${b}/v1-hash/sources.gz.${randomUUID()}.tmp`]
+      `cache-encrypted-v1/report-sources/${b}/v1-hash/sources.gz.${randomUUID()}.tmp`,
+      `cache-encrypted-v1/repository-code/1/${'a'.repeat(40)}/v1-hash.json.br.${randomUUID()}.tmp`]
     async function age(path) {
       if (remote) f.objects.get(`.managed/${path}`).uploadedAt = new Date(0)
       else await utimes(join(f.dir, path), new Date(0), new Date(0))
@@ -435,6 +437,37 @@ for (const remote of [false, true]) {
     for (const path of unrelated) assert.equal((await bytes(f.raw, path)).toString(), path)
     assert.equal((await f.stores.reportStore.get(live)).toString(), 'private report')
     assert.equal((await consume((await f.stores.cacheStorage.open(b, 'metadata.json')).stream)).toString(), 'live cache')
+    assert.equal((await consume((await f.stores.repositoryCodeStorage.open(`1/${'a'.repeat(40)}/v1-hash.json.br`)).stream)).toString(), 'live code')
+  })
+}
+
+for (const remote of [false, true]) {
+  test(`${remote ? 'Vercel' : 'disk'}: kept repository code, which no row owns, is plaintext until activation, then kept apart, encrypted with the master key bound to its path`, async t => {
+    const f = await fixture(t, remote), [a, b] = ['a', 'b'].map(c => c.repeat(40))
+    const code = f.stores.repositoryCodeStorage, read = async path => (await consume((await code.open(path)).stream)).toString()
+    await code.put(`1/${a}/v1-old.json.br`, Buffer.from('old code'))
+    assert.equal((await bytes(f.raw, `cache/repository-code/1/${a}/v1-old.json.br`)).toString(), 'old code', 'as other caches are')
+    await f.db.enableStorageEncryption()
+    await assert.rejects(code.open(`1/${a}/v1-old.json.br`), /Managed cache unavailable/u, 'what was kept before is never read')
+    assert.equal(await code.exists(`1/${a}/v1-old.json.br`), false)
+    for (const [commit, name] of [[a, 'one'], [a, 'two'], [b, 'one']]) await code.put(`1/${commit}/v1-${name}.json.br`, Buffer.from(`${commit[0]} ${name}`))
+    await code.put(`2/${a}/v1-one.json.br`, Buffer.from('another repository'))
+    const at = `cache-encrypted-v1/repository-code/1/${a}/v1-one.json.br`, stored = await bytes(f.raw, at)
+    assert.ok(stored.subarray(0, 16).equals(Buffer.from('DeepView.storage')))
+    assert.equal(stored.indexOf(Buffer.from('a one')), -1)
+    assert.equal(await code.exists(`1/${a}/v1-one.json.br`), true)
+    assert.equal(await read(`1/${a}/v1-one.json.br`), 'a one')
+    // Another path's ciphertext in its place fails to authenticate.
+    await f.raw.put(at, await bytes(f.raw, `cache-encrypted-v1/repository-code/1/${a}/v1-two.json.br`))
+    await assert.rejects(read(`1/${a}/v1-one.json.br`), /authenticate|unsupported state/u)
+    // A repository's code goes by its prefix, but for the commit kept, in both generations.
+    await code.delete('1', b)
+    const left = async prefix => (await f.raw.list(prefix, null, 100)).objects.map(object => object.key).toSorted()
+    assert.deepEqual(await left('cache/'), [])
+    assert.deepEqual(await left('cache-encrypted-v1/'), [`cache-encrypted-v1/repository-code/1/${b}/v1-one.json.br`, `cache-encrypted-v1/repository-code/2/${a}/v1-one.json.br`])
+    await code.delete('1')
+    assert.deepEqual(await left('cache-encrypted-v1/'), [`cache-encrypted-v1/repository-code/2/${a}/v1-one.json.br`])
+    assert.equal(await read(`2/${a}/v1-one.json.br`), 'another repository')
   })
 }
 

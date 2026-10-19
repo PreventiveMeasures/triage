@@ -101,11 +101,13 @@ The low-level schemas are compatible with a shared file, but the launcher requir
 | Bundle metadata cache | `cache/bundles/<uuid>/...` | `.managed/cache/bundles/<uuid>/...` |
 | Report source cache | `cache/report-sources/<bundleUuid>/...` | `.managed/cache/report-sources/<bundleUuid>/...` |
 | Pretty-printed public npm files | `cache/npm/pretty-v<N>/<sha512hex>.<ext>.br` | `.managed/cache/npm/pretty-v<N>/<sha512hex>.<ext>.br` |
+| Code viewer's default branch directories | `cache/repository-code/<repoId>/<commit>/v<N>-<sha256hex>.json.br` | `.managed/cache/repository-code/<repoId>/<commit>/v<N>-<sha256hex>.json.br` |
 | Managed upload parts | Not enabled by the disk adapter | `.managed/uploads/<derivedUuid>` |
 | Managed encrypted caches (when enabled) | `cache-encrypted-v1/` | `.managed/cache-encrypted-v1/` |
 
 Once startup enables encryption with `MANAGED_STORAGE_ENCRYPTION_KEY`, reports and bundles keep their paths and get random data keys, wrapped in their SQL rows.
 Caches rebuild in the encrypted cache namespace using their bundle's key.
+The code viewer's directories rebuild there too, encrypted with the master key bound to their path, as no SQL row owns them.
 Legacy payloads migrate in place through resumable SQL-row batches.
 GitHub access and refresh tokens are encrypted too, and so are deduplication link reports (`managed_link_report`).
 Other SQL data and e2e encryption are unchanged.
@@ -123,6 +125,11 @@ It is not a general orphan-object sweep.
 Pretty-printed copies are named by `PRETTY_VERSION` (`server-managed/pretty-print.ts`).
 A bundle's copies sit under its cache directory and go with the bundle.
 Maintenance removes the public npm copies of every earlier version, `cache/npm/pretty-v1/` up to the one before, once per process.
+The code viewer keeps a repository's directories only at its default branch's head, and keeps that commit in `managed_upstream_cache`.
+A read that finds the default branch at another commit removes the repository's directories of every other commit.
+A directory being kept for a head that moved on meanwhile removes itself, so instances that briefly disagree at a push only read a directory again.
+Deactivating or removing a repository removes its whole `cache/repository-code/<repoId>/` prefix.
+There are no push webhooks, so a repository nobody reads keeps its last head's directories until one of these happens.
 
 Ordinary managed requests trigger maintenance on the first request per instance, then hourly while traffic continues, with a one-minute retry backoff after failures.
 The response proceeds alongside cleanup, and the triggering invocation awaits both.
@@ -130,7 +137,7 @@ Concurrent requests share the sweep.
 Results and failures are logged as `managed-reaper:` under the triggering request.
 Persistent servers also have an hourly timer; serverless instances need traffic, or the optional cron, when idle.
 With `MANAGED_STORAGE_ENCRYPTION_MIGRATE=1`, maintenance also migrates referenced plaintext and removes legacy caches, orphan plaintext and stale atomic-write temporary files.
-Cleanup recognizes managed UUID filenames and bundle cache directories, and leaves unrelated files in a shared database directory alone.
+Cleanup recognizes managed UUID filenames, bundle cache directories and the code viewer's directories, and leaves unrelated files in a shared database directory alone.
 It does not collect encrypted orphan report or bundle files, which no longer have a live SQL data key.
 
 E2e commits and reaping are designed for concurrent instances.

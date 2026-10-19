@@ -4,7 +4,7 @@ import { Readable } from 'node:stream'
 import { type StorageKey, decryptStorageStream, encryptStorageStream, wrapStorageValue } from '../server-common/storage-crypto.ts'
 import { ENCRYPTED_CACHE_PREFIX, type ObjectStorage, type RawObject, type RawObjectStorage, deleteObjects, objectPath, openObjectVersion } from './object-storage.ts'
 import { type StorageDb, type StorageEncryptionState, type StorageRow, type StorageRowKind, dataKeyIdentity, unwrapDataKey } from './storage-db.ts'
-import { PUBLIC_CACHE_PREFIX, inspectStorageObject, storageOwner, storageRowPaths, verifyStoragePayload } from './storage-payload.ts'
+import { PUBLIC_CACHE_PREFIX, inspectStorageObject, masterKeyCache, storageOwner, storageRowPaths, verifyStoragePayload } from './storage-payload.ts'
 
 const STORAGE_WRITE_MS = 180_000
 export const STORAGE_UPLOAD_TTL_MS = 86_400_000
@@ -68,6 +68,12 @@ async function decryptOwned(stored: RawObject, key: StorageKey, type: StorageRow
 async function openEncrypted(raw: RawObjectStorage, db: StorageDb, key: StorageKey, identity: string, state: StorageEncryptionState): ReturnType<ObjectStorage['open']> {
   const owner = storageOwner(identity)
   if (!owner) {
+    // A cache no row owns: its ciphertext alone, what was kept as plaintext
+    // before activation never read.
+    if (masterKeyCache(identity)) {
+      const stored = await raw.open(encryptedCachePath(identity))
+      return stored && decryptStorageStream(stored.stream, key.bytes, identity)
+    }
     if (!identity.startsWith('uploads/')) throw new Error('Unknown managed storage owner')
     const stored = await raw.open(identity)
     if (!stored) return null
@@ -229,7 +235,7 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
         if (!row || (owner.cache ? !row.dataKey : !storageRowPaths(owner.type, row).includes(identity))) return false
       }
       // Existence is metadata only; open() authenticates the actual bytes.
-      return await raw.head(state && owner?.cache ? encryptedCachePath(identity) : identity) !== null
+      return await raw.head(state && (owner?.cache || masterKeyCache(identity)) ? encryptedCachePath(identity) : identity) !== null
     },
     async put(identity, bytes, { replaceReport = false } = {}) {
       logicalKey(identity)
@@ -248,10 +254,10 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
         dataKey = randomBytes(32)
         wrapped = wrapStorageValue(key!, dataKeyIdentity(owner.type, owner.id), dataKey)
       } else {
-        if (!identity.startsWith('uploads/')) throw new Error('Unknown managed storage owner')
+        if (!identity.startsWith('uploads/') && !masterKeyCache(identity)) throw new Error('Unknown managed storage owner')
         dataKey = Buffer.from(key!.bytes)
       }
-      const target = owner?.cache ? encryptedCachePath(identity) : identity
+      const target = owner?.cache || masterKeyCache(identity) ? encryptedCachePath(identity) : identity
       const encrypted = encryptStorageStream(Readable.from([bytes]), dataKey, identity, bytes.length)
       try {
         await raw.put(target, encrypted, AbortSignal.timeout(STORAGE_WRITE_MS), undefined, bytes.length)
@@ -268,13 +274,15 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
       // when migration is disabled or another instance has just enabled it.
       for (const target of deletionPaths(identity)) await raw.delete(target)
     },
-    async deletePrefix(prefix) {
+    async deletePrefix(prefix, keep) {
       logicalKey(`${prefix}validate`)
-      if (!prefix.endsWith('/')) throw new Error('Invalid storage prefix')
+      if (!prefix.endsWith('/') || (keep !== undefined && (!keep.startsWith(prefix) || !keep.endsWith('/')))) throw new Error('Invalid storage prefix')
       await mode()
       const signal = AbortSignal.timeout(STORAGE_WRITE_MS)
-      for (const target of deletionPaths(prefix)) {
-        await deleteObjects(raw, target, signal)
+      // What is kept, in the same generation as each removed.
+      const kept = keep === undefined ? [] : deletionPaths(keep)
+      for (const [i, target] of deletionPaths(prefix).entries()) {
+        await deleteObjects(raw, target, signal, undefined, kept[i])
         await raw.prune?.(target, signal)
       }
     },

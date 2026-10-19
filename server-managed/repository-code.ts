@@ -4,9 +4,14 @@
 // bundle builds keep theirs (getRepoTreeTarball), and its files as the npm
 // viewer reads a package's (npm-packages.ts npmFileRows). Readers asking for
 // the same directory meanwhile share its body, a load among the npm viewer's
-// active ones (npm-loads.ts sharedLoad).
+// active ones (npm-loads.ts sharedLoad). The default branch's head's bodies
+// are kept in byte storage, for the next to open them (repositoryCodeKept).
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
 import { encodeBrotli } from './brotli.ts'
+import { CacheMissError, type CacheStorage } from './cache-storage.ts'
+import type { KeptStore } from './npm-kept.ts'
+import { plainObject } from './npm-manifest.ts'
 import { MAX_NPM_JSON_LENGTH, NpmPackageError, npmFileRows } from './npm-packages.ts'
 import { type NpmLoad, loadPlaces, readTarballFiles, sharedLoad } from './npm-loads.ts'
 
@@ -69,3 +74,121 @@ export function loadRepositoryCodeBody(input: RepositoryCodeInput, tarball: (sym
     return encodeBrotli(Buffer.from(JSON.stringify({ repoId, repo, commit, path, tree, files })))
   }, 'repository-busy', { places })
 }
+
+// The form of the bodies kept, bumped as what a body holds changes
+// (npmFileRows): one kept in another is none to read.
+const KEPT_CODE_VERSION = 1
+// The largest body kept. Source text runs, as brotli's JSON, to a third of
+// its bytes or less, and a directory's binary files are named, not held, so
+// this keeps one of some 200 MiB of text: nearly every directory that opens
+// at all (MAX_REPOSITORY_CODE_BYTES). One past it would take as much byte
+// storage as hundreds of ordinary directories, and hold a serverless
+// invocation a while uploading it: it is sent as ever, and read again the
+// next time.
+export const MAX_KEPT_CODE_BYTES = 64 * 1024 * 1024
+const COMMIT = /^[a-f\d]{40}$/u
+
+// A directory as kept: the repository by its id and name, the commit and the
+// directory, as its body names them.
+export type KeptCodeAt = Pick<RepositoryCodeInput, 'repoId' | 'repo' | 'commit' | 'path'>
+// Under the repository, then the commit, so either goes by its prefix; the
+// repository's name and the directory hashed, as a key's parts are names.
+const keptKey = ({ repoId, repo, commit, path }: KeptCodeAt) =>
+  `${repoId}/${commit}/v${KEPT_CODE_VERSION}-${createHash('sha256').update(JSON.stringify([repo, path])).digest('hex')}.json.br`
+
+// Bodies being read, and being kept, by their storage and key: readers asking
+// for one meanwhile share its read, and a body kept once.
+const keptReads = new WeakMap<CacheStorage, Map<string, Promise<Buffer | null>>>()
+const keeping = new WeakMap<CacheStorage, Set<string>>()
+
+// A body kept, read whole, where it is one MAX_KEPT_CODE_BYTES keeps.
+async function readKept(storage: CacheStorage, key: string): Promise<Buffer | null> {
+  const { size, stream } = await storage.open(key)
+  try {
+    if (size !== null && size > MAX_KEPT_CODE_BYTES) return null
+    const parts: Buffer[] = []
+    let length = 0
+    for await (const part of stream) {
+      length += (part as Buffer).byteLength
+      if (length > MAX_KEPT_CODE_BYTES) return null
+      parts.push(Buffer.from(part as Buffer))
+    }
+    return Buffer.concat(parts, length)
+  } finally { stream.destroy() }
+}
+
+// The directories of repositories' default branches' heads, as
+// loadRepositoryCodeBody encodes them, kept in the managed byte storage
+// (`storage`: Vercel Blob, else the filesystem, encrypted at rest where
+// storage is: storage-payload.ts REPOSITORY_CODE_CACHE), so that one opened
+// again, on any instance, asks GitHub for no tarball, and is neither unpacked
+// nor encoded again; by the commit `heads` keeps for each repository, the
+// head as last read (npm-kept.ts codeHeadStore). Most opens read the head:
+// `/repo/<repo id>` opens it, and its route then names its commit, as do its
+// directories opened from it and a reload. A read naming the default branch
+// (`''`, or `heads/` and its name) takes its head as GitHub resolves it for
+// the commit kept, the directories kept at any other removed (`own`ed,
+// behind its answer); any other read, of a commit, a tag or another branch,
+// reads and keeps a directory only where what it resolves to is the commit
+// kept. Nothing kept is per reader, and each is read only once the reader's
+// own access has named its commit. A body names what it was read of, so
+// instances disagreeing on the head meanwhile, as at a push, only cost a
+// directory read again: one kept for a head since moved on removes itself.
+// Byte storage, as the database, is an optimization: its failures read as a
+// directory kept nowhere, and keep nothing.
+export function repositoryCodeKept(storage: CacheStorage, heads: KeptStore<{ commit: string }>, own: (work: Promise<unknown>) => void, debug = false) {
+  const warn = (what: string) => (error: unknown) => { if (debug) console.warn(`managed: kept repository code ${what} failed:`, error) }
+  const headOf = async (repoId: number) => {
+    const kept: unknown = (await heads.read(String(repoId)))?.value
+    return plainObject(kept) && typeof kept['commit'] === 'string' ? kept['commit'] : null
+  }
+  return {
+    // Whether a read of `ref` at repository `repoId`, resolved to `commit`
+    // with `defaultBranch` GitHub's, reads and keeps its directories.
+    async at(repoId: number, ref: string, commit: string, defaultBranch: string): Promise<boolean> {
+      if (!COMMIT.test(commit)) return false
+      const kept = await headOf(repoId)
+      if (ref !== '' && (defaultBranch === '' || ref !== `heads/${defaultBranch}`)) return kept === commit
+      if (kept !== commit) {
+        await heads.write(String(repoId), { commit }, Date.now())
+        own(storage.delete(String(repoId), commit).catch(warn('removal')))
+      }
+      return true
+    },
+    // The body kept of the directory `at` names, or null.
+    read(at: KeptCodeAt): Promise<Buffer | null> {
+      const key = keptKey(at)
+      const reads = keptReads.get(storage) ?? keptReads.set(storage, new Map()).get(storage)!
+      let read = reads.get(key)
+      if (!read) {
+        const started: Promise<Buffer | null> = readKept(storage, key).catch((error: unknown) => {
+          if (!(error instanceof CacheMissError)) warn('read')(error)
+          return null
+        }).finally(() => { if (reads.get(key) === started) reads.delete(key) })
+        reads.set(key, read = started)
+      }
+      return read
+    },
+    // The directory's body kept, behind its answer, where it is no larger
+    // than MAX_KEPT_CODE_BYTES; and removed again, with the rest of its
+    // commit's, where the head kept is another by then, as when it moved on
+    // or the repository was removed meanwhile.
+    keep(at: KeptCodeAt, body: Buffer): void {
+      const key = keptKey(at)
+      const kept = keeping.get(storage) ?? keeping.set(storage, new Set()).get(storage)!
+      if (body.byteLength > MAX_KEPT_CODE_BYTES || kept.has(key)) return
+      kept.add(key)
+      own((async () => {
+        await storage.put(key, body)
+        if (await headOf(at.repoId) !== at.commit) await storage.delete(`${at.repoId}/${at.commit}`)
+      })().catch(warn('write')).finally(() => kept.delete(key)))
+    },
+    // What is kept of repository `repoId`, removed as the repository is: its
+    // head first, so that a body being kept meanwhile removes itself.
+    async remove(repoId: number): Promise<void> {
+      await heads.remove(String(repoId))
+      await storage.delete(String(repoId))
+    },
+  }
+}
+export type RepositoryCodeKept = ReturnType<typeof repositoryCodeKept>

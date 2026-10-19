@@ -3,7 +3,7 @@ import { type StorageKey, decryptStorageStream, encryptStorageStream } from '../
 import { ENCRYPTED_CACHE_PREFIX, type RawObjectStorage, deleteObjects, isBlobId, openObjectVersion } from './object-storage.ts'
 import { type StorageDb, type StorageEncryptionState, type StorageMigrationRow, type StorageRow, type StorageRowKind, unwrapDataKey } from './storage-db.ts'
 import { STORAGE_UPLOAD_TTL_MS } from './storage-encryption.ts'
-import { StoragePayloadError, inspectStorageObject, storageOwner, storageRowPaths, verifiedStoragePayload, verifyStoragePayload } from './storage-payload.ts'
+import { StoragePayloadError, inspectStorageObject, masterKeyCache, storageOwner, storageRowPaths, verifiedStoragePayload, verifyStoragePayload } from './storage-payload.ts'
 
 async function replacementFailure(raw: RawObjectStorage, identity: string, version: string, signal: AbortSignal): Promise<string> {
   const format = (value: string) => value.startsWith('W/') ? 'weak' : value.startsWith('"') && value.endsWith('"') ? 'quoted' : 'unquoted'
@@ -113,7 +113,10 @@ function cleanupTarget(identity: string) {
   const path = temporary ? temp![1]! : identity
   const encryptedCache = path.startsWith(ENCRYPTED_CACHE_PREFIX)
   if (encryptedCache && !temporary) return null
-  const owner = storageOwner(encryptedCache ? `cache/${path.slice(ENCRYPTED_CACHE_PREFIX.length)}` : path)
+  const logical = encryptedCache ? `cache/${path.slice(ENCRYPTED_CACHE_PREFIX.length)}` : path
+  // A cache no row owns is a cache all the same: its plaintext legacy, and
+  // its temporary files removed past the staging window.
+  const owner = storageOwner(logical) ?? (masterKeyCache(logical) ? { cache: true as const } : null)
   return owner ? { owner, temporary } : null
 }
 

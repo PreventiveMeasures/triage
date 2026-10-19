@@ -239,6 +239,9 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
     // The user's permission level on it where the gate asked GitHub of it, as
     // for a private repository; null for a public one.
     permission: () => level,
+    // Its default branch as GitHub named it when access was first checked,
+    // `''` where it named none: the one whose head `commit('')` reads.
+    defaultBranch,
     async refs() {
       // Suggestions are bounded; the input also accepts any branch or tag name.
       const list = async (kind: string) => {

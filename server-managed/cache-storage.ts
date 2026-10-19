@@ -5,12 +5,13 @@ export class CacheMissError extends Error {
   constructor() { super('Managed cache unavailable') }
 }
 
-// Keys are internal relative paths; delete removes a whole directory of variants.
+// Keys are internal relative paths; delete removes a whole directory of
+// variants, but for one directory within it where `keep` names one.
 export interface CacheStorage {
   exists(key: string): Promise<boolean>
   put(key: string, bytes: Buffer): Promise<void>
   open(key: string): Promise<OpenedBlob>
-  delete(prefix: string): Promise<void>
+  delete(prefix: string, keep?: string): Promise<void>
 }
 
 export function validateCacheKey(key: string): string {
