@@ -75,6 +75,12 @@ export const AGENT_PULL_FIELDS = `number title state isDraft createdAt updatedAt
   closingIssuesReferences(first: ${CLOSES}) { nodes { number } } labels(first: ${LABELS}) { nodes { name } }`
 // What an issue is read by, for its row (issue).
 export const AGENT_ISSUE_FIELDS = `number title state createdAt updatedAt author { ${ACTOR} }`
+// The latest issues, however long ago they were updated.
+const ISSUES_QUERY = `query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    issues(first: ${AGENT_ISSUES}, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${AGENT_ISSUE_FIELDS} } }
+  }
+}`
 // A page of the pull requests a search finds, as GitHub sorts them, on from
 // where `after` says its page before ended.
 const SEARCH_QUERY = `query($query: String!, $after: String) {
@@ -102,6 +108,7 @@ const pulledQuery = (count: number) => `query($owner: String!, $name: String!, $
 }`
 type Pulled = { repository?: Record<string, { associatedPullRequests?: { totalCount?: unknown } } | null> | null }
 type Page = { repository?: { defaultBranchRef?: { target?: { history?: Connection<CommitNode> } | null } | null } | null }
+type Issues = { repository?: { issues?: Connection<IssueNode> } | null }
 type Found = { search?: { pageInfo?: { endCursor?: unknown }; nodes?: (PullNode | null)[] } | null } | null
 type RefsPage = { repository?: { refs?: Connection<RefNode> } | null }
 
@@ -305,6 +312,17 @@ async function agentPulls(fullName: string, token: string, cursor: string | null
   return { pulls: rows.filter(item => item.updatedAt !== time || item.number !== past), after: after === cursor ? null : after }
 }
 
+// The repository's latest issues, as many as AGENT_ISSUES: of those kept
+// (`kept`), where they hold as many, or every one the repository has; else
+// read, as those kept hold none updated before the year they are read for.
+async function latestIssues(fullName: string, token: string, kept: Kept['issues'], fetchImpl: typeof fetch): Promise<AgentIssue[]> {
+  const list = await kept()
+  if (list.rows.length >= AGENT_ISSUES || list.all) return list.rows.slice(0, AGENT_ISSUES).map(({ closedAt: _closedAt, reason: _reason, ...row }) => row)
+  const [owner, name] = fullName.split('/') as [string, string]
+  const data = await githubGraphql(ISSUES_QUERY, { owner, name }, token, fetchImpl) as Issues
+  return (data?.repository?.issues?.nodes ?? []).flatMap(node => issue(node) ?? [])
+}
+
 // A page of what the repository's agents left: its pull requests below the
 // one the cursor `pulls` names, as kept (`kept`, agentPulls), its default
 // branch's commits on from those `commits` names, as its history is kept
@@ -320,7 +338,7 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
   const first = cursors.pulls === null && cursors.commits === null
   const [head, issues, branches, authored, pulls] = await Promise.all([
     first ? kept.head() : null,
-    first ? kept.issues() : null,
+    first ? latestIssues(fullName, token, kept.issues, fetchImpl) : [],
     first ? Promise.all(AGENT_BRANCH_PREFIXES.map(prefix => agentBranches(owner, name, prefix, token, fetchImpl))) : [],
     first ? githubGraphql(AUTHORED_QUERY, { owner, name, emails: AGENT_EMAILS }, token, fetchImpl) as Promise<Page> : null,
     first || cursors.pulls !== null ? agentPulls(fullName, token, cursors.pulls, kept.pulls, fetchImpl) : { pulls: [], after: null },
@@ -338,7 +356,7 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
     pulls: pulls.pulls.map(({ merged: _merged, ...row }: AgentPull & { merged?: unknown }) => row),
     commits: commits.filter((commit, index) => commits.findIndex(other => other.oid === commit.oid) === index),
     ...first ? {
-      issues: (issues?.rows ?? []).slice(0, AGENT_ISSUES).map(({ closedAt: _closedAt, reason: _reason, ...row }) => row),
+      issues,
       branches: branches.flat(),
       agents: APP_AGENTS.map(({ id, name: agent, avatar }): AppAgent => ({ id, name: agent, ...avatar ? { avatar } : {} })),
     } : {},

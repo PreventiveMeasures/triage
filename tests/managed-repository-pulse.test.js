@@ -595,7 +595,8 @@ test('a period\'s pull requests and issues told of those the tabs keep, read for
   await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { rows: [{ number: 7, title: 'Pull 7',
     state: 'merged', draft: false, author: 'ada', authorId: 7, createdAt: yesterday, updatedAt: yesterday, head: null, fork: null, additions: 0, deletions: 0, commits: 1,
     closes: [], signals: { sessions: [], tasks: [], claude: false, codex: false, agents: [] }, merged: { sha: commits[3].oid, at: yesterday, agent: false } }],
-  since, through: yesterday, next: null }, Date.now())
+  // Read as far back as ten weeks ago, as a quarter needed.
+  since, through: yesterday, reach: now - 10 * WEEK, next: null }, Date.now())
   await issueListStore(request.db).write(`1\0${ISSUES_LIST_READ_VERSION}`, { rows: [{ number: 8, title: 'Issue 8', state: 'closed', author: 'grace', authorId: 9,
     createdAt: yesterday - DAY, updatedAt: yesterday, closedAt: yesterday, reason: 'completed' }], since, through: yesterday, next: null }, Date.now())
   // The branches as Commits read them a moment ago, the default branch's head among them.
@@ -609,8 +610,11 @@ test('a period\'s pull requests and issues told of those the tabs keep, read for
   const searched = () => asked.filter(item => typeof item === 'object' && item.query.includes('search('))
   assert.equal(searched().length, 0, 'none searched for')
   assert.equal(asked.filter(item => typeof item === 'object' && item.query.includes('defaultBranchRef { target { oid } }')).length, 0, 'the head not read again')
+  // Narrowed to a day further back than those kept were read: searched for.
+  const back = await request({ repoId: '1', weeks: '4', from: new Date(now - 20 * WEEK).toISOString().slice(0, 10) }, { path: 'pulse/items' })
+  assert.deepEqual([back.body.merged.count, searched().length], [99, 1])
   const year = await request({ repoId: '1', weeks: '52' })
-  assert.deepEqual([year.body.merged.count, searched().length], [99, 1], 'the year before past those kept: searched for')
+  assert.deepEqual([year.body.merged.count, searched().length], [99, 2], 'the year before past those kept: searched for')
 })
 
 test('a pull request labelled for an agent, or no longer, after its year was counted: the merged pull requests read again once those read are no longer fresh, the year counted again where what they bring changed', async t => {

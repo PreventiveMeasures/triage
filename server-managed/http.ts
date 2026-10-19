@@ -2800,7 +2800,8 @@ const pulseDay = (value: string | null) => {
 // (repositoryActivity), as while they are read.
 async function pulseActivity(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, weeks: number, narrowing: PulseNarrowing | null = null) {
   const now = Date.now()
-  const need = pulseSince(2 * weeks, now)
+  // As far back as the period before it starts, and its narrowing's first day.
+  const need = Math.min(pulseSince(2 * weeks, now), narrowing?.from ?? Number.POSITIVE_INFINITY)
   if (need >= pulseSince(52, now)) {
     const [pulls, issues] = await Promise.all([keptPulls(deps, repoId, fullName, token, need, false), keptIssues(deps, repoId, fullName, token, need)])
     const whole = (list: Listed<unknown> | null): list is Listed<unknown> => list !== null && !list.next && pullsReadTo(list) <= need

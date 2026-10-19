@@ -5,11 +5,11 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { AGENT_MARKS_READ } from '../server-managed/app-agents.ts'
 import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
-import { historyPageStore, pullListStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
+import { historyPageStore, issueListStore, pullListStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { AGENTS_READ_VERSION } from '../server-managed/repository-agents.ts'
 import { graphCommit, historyMarks } from '../server-managed/repository-history.ts'
 import { PULSE_YEAR_VERSION, pulseSince } from '../server-managed/repository-pulse.ts'
-import { PULLS_READ_VERSION } from '../server-managed/repository-pulls.ts'
+import { ISSUES_LIST_READ_VERSION, PULLS_READ_VERSION } from '../server-managed/repository-pulls.ts'
 import { createSession } from '../server-managed/session.ts'
 
 test('the app agents are those of GITHUB_AGENTS with branches of their own, each told by its prefix and its fingerprint', () => {
@@ -361,6 +361,24 @@ test('past the pull requests kept, those updated together across a page\'s end, 
     after = body.after?.pulls ?? null
   }
   assert.deepEqual([...shown].toSorted((x, y) => x - y), results.map(node => node.number).toSorted((x, y) => x - y))
+})
+
+test('the latest issues as kept for the Pulse too, where they hold as many, or all the repository has; else, none kept updated before the year, read as ever', async t => {
+  const request = await fixture(t)
+  const asked = github(t, graphql)
+  const now = Date.now()
+  const store = issueListStore(request.db)
+  const key = `1\0${ISSUES_LIST_READ_VERSION}`
+  // A quiet repository's: none updated in the year, older ones beyond.
+  await store.write(key, { rows: [], since: pulseSince(52, now), through: null, next: null }, Date.now())
+  const quiet = await request({ repoId: '1' })
+  assert.deepEqual(quiet.body.issues.map(issue => issue.number), [12, 13])
+  assert.equal(asked.filter(query => /issues\(first: 100, orderBy/u.test(query.query)).length, 1, 'the latest read, however long ago they were updated')
+  // Every one it has kept: none read.
+  await repositoryReadStore(request.db).remove('1\0agents\0' + AGENTS_READ_VERSION + '\0\0')
+  await store.write(key, { rows: [], since: pulseSince(52, now), through: null, all: true, next: null }, Date.now())
+  assert.deepEqual((await request({ repoId: '1' })).body.issues, [])
+  assert.equal(asked.filter(query => /issues\(first: 100, orderBy/u.test(query.query)).length, 1)
 })
 
 test('a read of the pull requests the Pulse left not finished, those kept no longer fresh: the Agents tab reads it on as the Pulse would, never cut short', async t => {
