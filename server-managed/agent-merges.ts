@@ -33,7 +33,7 @@ type Rebase = [sha: string, at: number, subjects: string[], more?: number]
 export function agentMerges(list: PullList, since: number): AgentMerges {
   const merges = new Map<string, number>()
   const [rebases, pulls, pullRebases]: [Rebase[], [string, number, number][], Rebase[]] = [[], [], []]
-  for (const { number, merged } of list.pulls) {
+  for (const { number, merged } of list.rows) {
     if (!merged || merged.at < since) continue
     const { sha, at, subjects, more = 0 } = merged
     const rebase: Rebase | null = subjects ? more > 0 ? [sha, at, subjects, more] : [sha, at, subjects] : null

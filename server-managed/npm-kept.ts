@@ -169,6 +169,10 @@ export const commitPullStore = <T>(db: UpstreamCacheStore, debug = false): KeptS
 // Pulse and the Agents tab read them (repository-pulls.ts readPulls), by its
 // id: kept as its history's pages are, those updated since read on.
 export const pullListStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/pulls', HISTORY_PAGE_KEPT_MS, debug)
+// A repository's issues, the most recently updated first, as the Pulse and
+// the Agents tab read them (repository-pulls.ts readIssues): kept as its
+// pull requests are.
+export const issueListStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/issues-list', HISTORY_PAGE_KEPT_MS, debug)
 // The files each of a repository's commits changes (repository-changes.ts
 // repositoryChanges), by the commit, which never change: kept as its
 // history's pages are.

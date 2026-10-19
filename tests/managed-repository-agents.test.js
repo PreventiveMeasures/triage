@@ -5,11 +5,11 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { AGENT_MARKS_READ } from '../server-managed/app-agents.ts'
 import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
-import { historyPageStore, pullListStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
+import { historyPageStore, issueListStore, pullListStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { AGENTS_READ_VERSION } from '../server-managed/repository-agents.ts'
 import { graphCommit, historyMarks } from '../server-managed/repository-history.ts'
 import { PULSE_YEAR_VERSION, pulseSince } from '../server-managed/repository-pulse.ts'
-import { PULLS_READ_VERSION } from '../server-managed/repository-pulls.ts'
+import { ISSUES_LIST_READ_VERSION, PULLS_READ_VERSION } from '../server-managed/repository-pulls.ts'
 import { createSession } from '../server-managed/session.ts'
 
 test('the app agents are those of GITHUB_AGENTS with branches of their own, each told by its prefix and its fingerprint', () => {
@@ -96,8 +96,9 @@ const firstPage = () => ({ data: { repository: {
     null, { number: 'x' },
   ]) },
   defaultBranchRef: { target: { oid: a } },
-  issues: { nodes: [{ number: 12, title: 'Chips', state: 'OPEN', createdAt: null, updatedAt: null, author: { login: 'ada', databaseId: 7 } },
-    { number: 13, title: 'History', state: 'CLOSED', createdAt: null, updatedAt: null, author: null }, null] },
+  issues: { nodes: [{ number: 12, title: 'Chips', state: 'OPEN', createdAt: null, updatedAt: '2026-10-15T00:00:00Z', author: { login: 'ada', databaseId: 7 } },
+    { number: 13, title: 'History', state: 'CLOSED', createdAt: null, updatedAt: '2026-10-14T00:00:00Z', author: null, closedAt: '2026-10-14T00:00:00Z',
+      stateReason: 'COMPLETED' }, null] },
 } } })
 // The default branch's commits, the newest first, from its head.
 const branchCommits = [
@@ -191,8 +192,9 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
     '175728472+copilot-pull-request-reviewer[bot]@users.noreply.github.com', '49699333+dependabot@users.noreply.github.com', '49699333+dependabot[bot]@users.noreply.github.com'])
   const moved = body.commits.find(commit => commit.oid === 'f'.repeat(40))
   assert.deepEqual([moved.author, moved.authorId], ['Copilot', 198982749], 'each by its author\'s login and account id')
-  assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', authorId: 7, createdAt: null, updatedAt: null },
-    { number: 13, title: 'History', state: 'closed', author: null, authorId: null, createdAt: null, updatedAt: null }])
+  assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', authorId: 7, createdAt: null, updatedAt: Date.parse('2026-10-15T00:00:00Z') },
+    { number: 13, title: 'History', state: 'closed', author: null, authorId: null, createdAt: null, updatedAt: Date.parse('2026-10-14T00:00:00Z') }],
+  'the latest issues as kept for the Pulse too, never when or why one closed')
   assert.deepEqual(body.users, { Copilot: { agent: 'copilot' }, 'dependabot[bot]': { agent: 'dependabot' }, 'any-login': { agent: 'neo' } },
     'its agents\' accounts as the app draws them; `dependabot`, named by Dependabot\'s account and another, no one\'s')
   // Every page of each agent's branches read, the newest first, named in full.
@@ -212,8 +214,8 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   // An agent links its session in its own texts: no comment is read, nor an issue's body.
   assert.doesNotMatch(listed.query, /comments/u)
   assert.doesNotMatch(page.query, /comments|issues\([^)]*\) [^]*body|pullRequests/u)
-  assert.deepEqual([listed.variables, page.variables], [{ owner: 'org', name: 'repo', after: null }, { owner: 'org', name: 'repo' }],
-    'the pull requests as kept for the Pulse too, their first page')
+  assert.deepEqual([listed.variables, page.variables], [{ owner: 'org', name: 'repo', after: null }, { owner: 'org', name: 'repo', after: null }],
+    'the pull requests and issues as kept for the Pulse too, their first pages')
   assert.match(listed.query, /labels\(first: 100\) \{ nodes \{ name \} \}/u, 'a pull request\'s labels read, as many as GitHub gives a page')
   assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: $prefix')).map(query => [query.variables.prefix, query.variables.after]).toSorted(),
     [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null], ['refs/heads/copilot/', null], ['refs/heads/dependabot/', null], ['refs/heads/neo/', null]])
@@ -286,7 +288,7 @@ test('the pull requests as the Pulse keeps them too, read no further: those past
   const row = (number, minutes) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: null, authorId: null, createdAt: null, updatedAt: at(minutes),
     head: null, fork: null, additions: 0, deletions: 0, commits: 1, closes: [], signals: { sessions: [], tasks: [], claude: false, codex: false, agents: [] } })
   // Read as far back as two minutes ago, as a period of the Pulse needed.
-  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { pulls: [row(3, 1),
+  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { rows: [row(3, 1),
     { ...row(2, 2), merged: { sha: c, at: at(2), agent: false } }], since: pulseSince(52, now), through: at(1), reach: at(2), next: null }, Date.now())
   const first = await request({ repoId: '1' })
   assert.deepEqual([first.body.pulls.map(pull => pull.number), first.body.after.pulls], [[3, 2], `${at(2)}.2`])
@@ -320,7 +322,7 @@ test('past the pull requests kept, a page of them all updated together read on t
     return { data: { search: { pageInfo: { endCursor: `Y3_${from + listed.length}-` }, nodes: listed } } }
   })
   // None kept past an hour and a half ago.
-  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { pulls: [],
+  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { rows: [],
     since: pulseSince(52, now), through: now, reach: now - 30 * 60_000, next: null }, Date.now())
   const shown = []
   let after = `${now - 30 * 60_000}.1`
@@ -349,7 +351,7 @@ test('past the pull requests kept, those updated together across a page\'s end, 
     const listed = results.filter(node => Date.parse(node.updatedAt) <= bound).slice(from, from + 50)
     return { data: { search: { pageInfo: { endCursor: `Y3_${from + listed.length}-` }, nodes: listed } } }
   })
-  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { pulls: [],
+  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { rows: [],
     since: pulseSince(52, now), through: now, reach: now - 30 * 60_000, next: null }, Date.now())
   const shown = new Set()
   let after = `${now - 30 * 60_000}.1`
@@ -359,6 +361,24 @@ test('past the pull requests kept, those updated together across a page\'s end, 
     after = body.after?.pulls ?? null
   }
   assert.deepEqual([...shown].toSorted((x, y) => x - y), results.map(node => node.number).toSorted((x, y) => x - y))
+})
+
+test('the latest issues as kept for the Pulse too, where they hold as many, or all the repository has; else, none kept updated before the year, read as ever', async t => {
+  const request = await fixture(t)
+  const asked = github(t, graphql)
+  const now = Date.now()
+  const store = issueListStore(request.db)
+  const key = `1\0${ISSUES_LIST_READ_VERSION}`
+  // A quiet repository's: none updated in the year, older ones beyond.
+  await store.write(key, { rows: [], since: pulseSince(52, now), through: null, next: null }, Date.now())
+  const quiet = await request({ repoId: '1' })
+  assert.deepEqual(quiet.body.issues.map(issue => issue.number), [12, 13])
+  assert.equal(asked.filter(query => /issues\(first: 100, orderBy/u.test(query.query)).length, 1, 'the latest read, however long ago they were updated')
+  // Every one it has kept: none read.
+  await repositoryReadStore(request.db).remove('1\0agents\0' + AGENTS_READ_VERSION + '\0\0')
+  await store.write(key, { rows: [], since: pulseSince(52, now), through: null, all: true, next: null }, Date.now())
+  assert.deepEqual((await request({ repoId: '1' })).body.issues, [])
+  assert.equal(asked.filter(query => /issues\(first: 100, orderBy/u.test(query.query)).length, 1)
 })
 
 test('a read of the pull requests the Pulse left not finished, those kept no longer fresh: the Agents tab reads it on as the Pulse would, never cut short', async t => {
@@ -374,7 +394,7 @@ test('a read of the pull requests the Pulse left not finished, those kept no lon
   const store = pullListStore(request.db)
   const key = `1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`
   // Its first page read a minute ago, by the Pulse, for the year.
-  await store.write(key, { pulls: [], since: pulseSince(52, now), through: null, next: { after: '100', from: now, stop: pulseSince(52, now), read: 100, to: now - 99 * 60_000 } },
+  await store.write(key, { rows: [], since: pulseSince(52, now), through: null, next: { after: '100', from: now, stop: pulseSince(52, now), read: 100, to: now - 99 * 60_000 } },
     Date.now() - 60_000)
   await request({ repoId: '1' })
   const { value } = await store.read(key)
