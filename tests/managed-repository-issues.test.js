@@ -262,7 +262,7 @@ test('a page read is kept for every reader: answered as kept a while, then at on
 
 test('a page of issues kept is read again behind its readers only where its repository\'s stamp moved since it was read whole, or an hour on; one of pull requests, their checks with them, each time', async t => {
   let issueAt = '2026-10-19T00:00:00Z'
-  const stamp = () => ({ data: { repository: { pushedAt: '2026-10-19T00:00:00Z', heads: { totalCount: 3 }, tags: { totalCount: 1 },
+  const stamp = () => ({ data: { repository: { pushedAt: '2026-10-19T00:00:00Z', defaultBranchRef: { name: 'main' }, heads: { totalCount: 3 }, tags: { totalCount: 1 },
     pullRequests: { totalCount: 5, nodes: [{ updatedAt: '2026-10-18T00:00:00Z' }] }, issues: { totalCount: 9, nodes: [{ updatedAt: issueAt }] } } } })
   const asked = github(t, body => body.query.includes('pushedAt') ? stamp()
     : page([{ number: 2, title: 'Kept', state: 'OPEN', stateReason: null, createdAt: null, updatedAt: null, closedAt: null, author: null, comments: { totalCount: 0 },

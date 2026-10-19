@@ -1,8 +1,9 @@
 // A repository's change stamp: what moves as anything its tabs read of it
 // changes, but the checks its pull requests run, which move no pull
 // request's update time, read in one cheap GraphQL query: when it was last
-// pushed to, how many branches and tags it has, and how many pull requests
-// and issues it has and when the one updated last was. An answer kept of it
+// pushed to, which branch is its default, how many branches and tags it
+// has, and how many pull requests and issues it has and when the one
+// updated last was. An answer kept of it
 // is read again behind its readers only where its stamp moved since the
 // answer was read (http.ts keptAnswer).
 import { GithubApiError } from './github-errors.ts'
@@ -10,11 +11,12 @@ import { githubGraphql } from './github-graphql.ts'
 
 // The rules a stamp is read by: its key's, so that a stamp read by others is
 // none's (http.ts stampOf).
-export const STAMP_READ = 1
+export const STAMP_READ = 2
 
 const STAMP_QUERY = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
     pushedAt
+    defaultBranchRef { name }
     heads: refs(refPrefix: "refs/heads/", first: 1) { totalCount }
     tags: refs(refPrefix: "refs/tags/", first: 1) { totalCount }
     pullRequests(first: 1, orderBy: { field: UPDATED_AT, direction: DESC }) { totalCount nodes { updatedAt } }
@@ -22,7 +24,8 @@ const STAMP_QUERY = `query($owner: String!, $name: String!) {
   }
 }`
 type Counted = { totalCount?: unknown; nodes?: ({ updatedAt?: unknown } | null)[] | null } | null
-type Stamped = { repository?: { pushedAt?: unknown; heads?: Counted; tags?: Counted; pullRequests?: Counted; issues?: Counted } | null } | null
+type Stamped = { repository?: { pushedAt?: unknown; defaultBranchRef?: { name?: unknown } | null; heads?: Counted; tags?: Counted; pullRequests?: Counted; issues?: Counted } | null }
+  | null
 
 // Repository `fullName`'s stamp, read with `token`, as text to compare.
 export async function repositoryStamp(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<{ stamp: string }> {
@@ -33,5 +36,6 @@ export async function repositoryStamp(fullName: string, token: string, fetchImpl
   const { heads, tags, pullRequests, issues } = repository
   if (![heads, tags, pullRequests, issues].every(connection => Number.isSafeInteger(connection?.totalCount))) throw new GithubApiError(502, 'github-malformed')
   const latest = (connection: Counted | undefined) => [connection?.totalCount, connection?.nodes?.[0]?.updatedAt ?? null]
-  return { stamp: JSON.stringify([repository.pushedAt ?? null, heads?.totalCount, tags?.totalCount, ...latest(pullRequests), ...latest(issues)]) }
+  return { stamp: JSON.stringify([repository.pushedAt ?? null, repository.defaultBranchRef?.name ?? null, heads?.totalCount, tags?.totalCount, ...latest(pullRequests),
+    ...latest(issues)]) }
 }
