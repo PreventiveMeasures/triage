@@ -350,30 +350,43 @@ export async function repositoryAllHistory(fullName: string, token: string, { he
 }
 
 const chunked = <T>(items: T[], size: number) => Array.from({ length: Math.ceil(items.length / size) }, (_, at) => items.slice(at * size, (at + 1) * size))
-// `run` for each of `items`, as many at once as `parallel`.
-async function eachOf<T>(items: T[], parallel: number, run: (item: T) => Promise<void>) {
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, async () => { while (next < items.length) await run(items[next++]!) }))
-}
 // GitHub stopping a query past its time: in its answer's errors, or as a 502
 // or 504 of its own.
 const SLOW = new Set(['github-timeout', 'github-status-502', 'github-status-504'])
 // `run` for `items` in batches of `size`, as many at once as `parallel`; a
 // batch GitHub stops past its time run again in halves, down to one alone,
-// so that one too slow to read fails alone, the others read. Where one
-// fails, none more is started, those running done before its error is
-// thrown, so that what they read is kept.
+// so that one too slow to read fails alone, the others read. The halves
+// wait their turn with the rest, and as many batches are halved as run at
+// once twice over at most, GitHub slow throughout past that. Where one
+// fails, none more is run, those running done before its error is thrown,
+// so that what they read is kept.
 export async function inBatches<T>(items: T[], size: number, parallel: number, run: (batch: T[]) => Promise<void>) {
   const failed: unknown[] = []
-  const attempt = async (batch: T[]): Promise<void> => {
-    if (failed.length > 0) return
-    try { await run(batch) } catch (err) {
-      if (batch.length === 1 || !(err instanceof GithubApiError && SLOW.has(err.message))) { failed.push(err); return }
-      const half = Math.ceil(batch.length / 2)
-      await Promise.all([attempt(batch.slice(0, half)), attempt(batch.slice(half))])
-    }
+  const waiting: (() => void)[] = []
+  let halved = 0, running = 0
+  const turn = () => {
+    if (running < parallel) { running++; return Promise.resolve() }
+    return new Promise<void>(resolve => { waiting.push(resolve) })
   }
-  await eachOf(chunked(items, size), parallel, attempt)
+  // A turn done, handed to the batch waiting longest.
+  const done = () => {
+    const next = waiting.shift()
+    if (next) next()
+    else running--
+  }
+  const attempt = async (batch: T[]): Promise<void> => {
+    await turn()
+    try {
+      if (failed.length === 0) await run(batch)
+      return
+    } catch (err) {
+      if (batch.length === 1 || halved >= 2 * parallel || !(err instanceof GithubApiError && SLOW.has(err.message))) { failed.push(err); return }
+      halved++
+    } finally { done() }
+    const half = Math.ceil(batch.length / 2)
+    await Promise.all([attempt(batch.slice(0, half)), attempt(batch.slice(half))])
+  }
+  await Promise.all(chunked(items, size).map(attempt))
   if (failed.length > 0) throw failed[0]
 }
 
