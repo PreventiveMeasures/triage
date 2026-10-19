@@ -58,4 +58,10 @@ test('Neo is its account, by its id whatever its login, as it is its fingerprint
     [{ name: 'any-login[bot]', login: 'any-login[bot]', id: 274065190, agent: 'neo' }], 'its trailer and its fingerprint, once')
   assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Someone <3115942+someone@users.noreply.github.com>', ada), [{ name: 'Someone', login: 'someone', id: 3115942 }],
     'an account of its App\'s id, someone else\'s')
+  // Its App's bot its author, its account beside it, as GitHub lists it, by the older no-reply address: one Neo.
+  const bot = { name: 'any-login[bot]', email: '268952163+any-login[bot]@users.noreply.github.com', account: { login: 'any-login[bot]', id: 268952163 } }
+  assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: any-login <any-login@users.noreply.github.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>', bot,
+    [{ name: 'any-login', email: 'any-login@users.noreply.github.com', account: { login: 'any-login', id: 274065190 } },
+      { name: 'Claude Opus 5.5', email: 'noreply@anthropic.com', account: { login: null, id: null } }]),
+  [{ name: 'Claude Opus 5.5', login: null, id: null, agent: 'claude' }])
 })

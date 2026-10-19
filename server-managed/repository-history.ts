@@ -9,11 +9,13 @@
 // read a page from a commit at a time, each page kept by the commit it starts
 // at (historyFrom): a commit's history never changes, and where a commit read
 // starts a page kept, that page glues on, and those after it.
-import { type Coauthor, MAX_COAUTHORS, type Maker, coauthorsOf } from './commit-coauthors.ts'
+import { type Coauthor, MAX_COAUTHORS, type Maker, coauthorTrailers, coauthorsOf } from './commit-coauthors.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
-import { type GraphActor, accountOf, commitAccount } from './github-accounts.ts'
+import { type GraphActor, accountOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
+import { githubGraphql } from './github-graphql.ts'
 
-export { ACTOR, type GraphAccount, type GraphActor, type NamedAccount, accountOf, actorOf, commitAccount } from './github-accounts.ts'
+export { ACTOR, type GraphAccount, type GraphActor, type NamedAccount, accountOf, actorOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
+export { type GraphqlError, githubGraphql } from './github-graphql.ts'
 
 export const HISTORY_PAGE = 100
 // The deepest page read, as far as Older commits goes.
@@ -79,19 +81,27 @@ function historyCommit(sha: unknown, parents: unknown[], message: unknown, autho
 
 type RestCommit = { sha?: unknown; parents?: { sha?: unknown }[]; author?: { login?: unknown; id?: unknown } | null
   commit?: { message?: unknown; author?: { name?: unknown; email?: unknown } | null; committer?: { date?: unknown } | null } }
-const restCommit = (item: RestCommit) => historyCommit(item?.sha, Array.isArray(item?.parents) ? item.parents.map(parent => parent?.sha) : [],
-  item?.commit?.message, { name: item?.commit?.author?.name, email: item?.commit?.author?.email, account: accountOf(item?.author) }, item?.commit?.committer?.date)
+// Its co-authors (`listed`) by its trailers, with the accounts of their addresses.
+const restCommit = (item: RestCommit, listed: Maker[] | null = null) => historyCommit(item?.sha, Array.isArray(item?.parents) ? item.parents.map(parent => parent?.sha) : [],
+  item?.commit?.message, { name: item?.commit?.author?.name, email: item?.commit?.author?.email, account: accountOf(item?.author) }, item?.commit?.committer?.date,
+  null, listed)
 
 const repoApi = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
 
 // A page of the commits `commit` reaches, newest first as GitHub lists them,
 // those touching `path` alone where it names a directory; `more` where a
-// full page leaves some for the next, one that may be read.
+// full page leaves some for the next, one that may be read. GitHub links
+// each's author to its account; with a token, its co-authors by GitHub's older
+// no-reply address too (linkNoreplyUsers).
 export async function repositoryHistory(fullName: string, token: string | null, commit: string, path: string, page: number, fetchImpl: typeof fetch = globalThis.fetch) {
   const params = new URLSearchParams({ sha: commit, per_page: String(HISTORY_PAGE), page: String(page), ...path ? { path } : {} })
   const data = await githubJson(`${repoApi(fullName)}/commits?${params}`, token, fetchImpl)
   if (!Array.isArray(data)) throw new GithubApiError(502, 'github-malformed')
-  return { commits: data.flatMap(item => restCommit(item as RestCommit) ?? []), more: data.length >= HISTORY_PAGE && page < MAX_HISTORY_PAGE }
+  const items = data as RestCommit[]
+  const trailers = items.map(item => coauthorTrailers(item?.commit?.message).map(({ name, email }): GraphActor & { name: string } => ({ name, email, user: null })))
+  if (token) await linkNoreplyUsers(trailers.flat(), token, fetchImpl)
+  return { commits: items.flatMap((item, at) => restCommit(item, token ? trailers[at]!.map(actor => ({ name: actor.name, email: actor.email, account: commitAccount(actor) })) : null) ?? []),
+    more: data.length >= HISTORY_PAGE && page < MAX_HISTORY_PAGE }
 }
 
 // The commits the repository's branches and tags point at, as GitHub's
@@ -104,41 +114,8 @@ export async function repositoryRefTips(fullName: string, token: string | null, 
   return { branches: tips(branches), tags: tips(tags) }
 }
 
-export type GraphqlError = { type?: unknown; path?: unknown; message?: unknown }
-
-const NAMED_ERRORS = new Set(['RATE_LIMITED', 'NOT_FOUND', 'FORBIDDEN'])
-// GitHub's own words for a query it stopped past its time (ten seconds):
-// "Something went wrong while executing your query. This may be the result
-// of a timeout, …", with no type.
-const TIMED_OUT = /\btimeout\b/iu
-
-// One GraphQL query with `token`, answered with its `data`: one GitHub answers
-// with errors, but for those the caller reads past (`tolerated`, the fields
-// they name then null), is rate limited, names what isn't there, is refused,
-// as one a GitHub App lacks the permission for is, or a token the scope for
-// (`INSUFFICIENT_SCOPES`, a sign-in's having none), took GitHub too long, or
-// else is malformed, as one GitHub rejects unread is (a field or type its API
-// doesn't know). GitHub's words for errors of none of those first three types
-// are logged, those read past too.
-export async function githubGraphql(query: string, variables: Record<string, unknown>, token: string, fetchImpl: typeof fetch,
-  tolerated: (error: GraphqlError) => boolean = () => false) {
-  const body = await githubJson('https://api.github.com/graphql', token, fetchImpl, 'POST', { query, variables }, true) as { data?: unknown; errors?: GraphqlError[] } | null
-  const all = Array.isArray(body?.errors) ? body.errors : []
-  const unnamed = all.filter(error => !NAMED_ERRORS.has(String(error?.type)))
-  if (unnamed.length > 0) {
-    console.warn('managed: GitHub answered a query with errors:', JSON.stringify(unnamed.slice(0, 3)
-      .map(error => ({ type: error?.type, message: String(error?.message).slice(0, 300), path: error?.path }))))
-  }
-  const errors = all.filter(error => !tolerated(error))
-  if (errors.length > 0) {
-    if (errors.some(error => error?.type === 'RATE_LIMITED')) throw new GithubApiError(429, 'github-rate-limited', 60)
-    if (errors.some(error => error?.type === 'NOT_FOUND')) throw new GithubApiError(404, 'github-not-found')
-    if (errors.some(error => error?.type === 'FORBIDDEN' || error?.type === 'INSUFFICIENT_SCOPES')) throw new GithubApiError(502, 'github-status-403')
-    if (errors.some(error => typeof error?.message === 'string' && TIMED_OUT.test(error.message))) throw new GithubApiError(502, 'github-timeout')
-    throw new GithubApiError(502, 'github-malformed')
-  }
-  return body?.data
-}
+// A commit's author and those GitHub lists beside it.
+export const commitActors = (node: GraphCommit | null | undefined) => [node?.author, ...node?.authors?.nodes ?? []]
 
 // A tag's target, an annotated tag's own target in turn, through as many as
 // MAX_TAG_DEPTH annotated tags, each object's type naming what it is.
@@ -245,7 +222,9 @@ async function readPages(fullName: string, token: string | null, tops: string[],
   const [owner, name] = fullName.split('/') as [string, string]
   await inBatches(tops, PAGES_PER_QUERY, PAGES_PARALLEL, async batch => {
     const data = await githubGraphql(historiesQuery(batch.length), { owner, name, ...Object.fromEntries(batch.map((sha, at) => [`o${at}`, sha])) }, token, fetchImpl) as Histories
-    await Promise.all(batch.map((top, at) => got(top, (data?.repository?.[`b${at}`]?.history?.nodes ?? []).flatMap(node => graphCommit(node) ?? []))))
+    const nodes = batch.map((_, at) => data?.repository?.[`b${at}`]?.history?.nodes ?? [])
+    await linkNoreplyUsers(nodes.flat().flatMap(commitActors), token, fetchImpl)
+    await Promise.all(batch.map((top, at) => got(top, nodes[at]!.flatMap(node => graphCommit(node) ?? []))))
   })
   return read
 }

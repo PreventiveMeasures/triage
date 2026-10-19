@@ -1,7 +1,9 @@
 // The pull requests squashed into a repository's commits, as the code
 // viewer's Commits tab draws them (repository-history.ts), each looked up
 // with GraphQL once and kept by its commit.
-import { COMMIT_FRAGMENT, type GraphCommit, type GraphqlError, type HistoryCommit, githubGraphql, graphCommit, inBatches, variablesOf } from './repository-history.ts'
+import { linkNoreplyUsers } from './github-accounts.ts'
+import { type GraphqlError, githubGraphql } from './github-graphql.ts'
+import { COMMIT_FRAGMENT, type GraphCommit, type HistoryCommit, commitActors, graphCommit, inBatches, variablesOf } from './repository-history.ts'
 
 const SHA = /^[a-f\d]{40}$/u
 
@@ -118,6 +120,7 @@ async function lookUpSquashes(fullName: string, token: string, unknown: HistoryC
   await inBatches(merged, SQUASH_PULLS, SQUASH_PARALLEL, async batch => {
     const data = await githubGraphql(squashedQuery(batch.length), { owner, name, ...Object.fromEntries(batch.map(({ number }, at) => [`n${at}`, number])) },
       token, fetchImpl, notFound) as SquashedPage
+    await linkNoreplyUsers(Object.values(data?.repository ?? {}).flatMap(pull => (pull?.commits?.nodes ?? []).flatMap(item => commitActors(item?.commit))), token, fetchImpl)
     for (const [at, { commit, number }] of batch.entries()) {
       const node = data?.repository?.[`p${at}`]
       if (!node) continue

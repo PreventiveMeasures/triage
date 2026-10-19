@@ -21,9 +21,9 @@
 // review pull requests, as GitHub Actions' bot, `github-actions` (41898282,
 // `[bot]` to the REST API), its mark the GitHub Actions App's avatar; other
 // workflows the bot runs are as much its own. Neo, its GitHub App (3115942),
-// as its account (274065190), known by its id alone, whatever GitHub names
-// it, and drawn by its App's avatar, wherever its account or its fingerprint
-// names it. Cursor's agents commit as whoever ran them, with a
+// as its account (274065190) and its App's bot (268952163), each known by
+// its id alone, whatever GitHub names it, and drawn by its App's avatar,
+// wherever either or its fingerprint names it. Cursor's agents commit as whoever ran them, with a
 // `Co-authored-by: Cursor Agent <cursoragent@cursor.com>` trailer; the app
 // has no mark of Cursor's, and draws it by its name's letter. Each by the
 // addresses (`emails`) its commits name it by, as author or co-author.
@@ -45,7 +45,8 @@ export const GITHUB_AGENTS = {
   claude: { name: 'Claude', mark: 'anthropic', accounts: [{ id: 81847, logins: ['claude'] }, { logins: ['claude[bot]'] }], names: ['Claude'], emails: ['noreply@anthropic.com'] },
   codex: { name: 'Codex', mark: 'openai', accounts: [{ id: 199175422, logins: ['chatgpt-codex-connector', 'chatgpt-codex-connector[bot]'] }], names: ['Codex'],
     emails: ['codex@openai.com'] },
-  neo: { name: 'Neo', avatar: 'app-3115942', accounts: [{ id: 274065190, logins: [] }], names: [], prefix: 'neo/', fingerprint: '🤖 Generated with [Neo](' },
+  neo: { name: 'Neo', avatar: 'app-3115942', accounts: [{ id: 274065190, logins: [] }, { id: 268952163, logins: [] }], names: [], prefix: 'neo/',
+    fingerprint: '🤖 Generated with [Neo](' },
   copilot: { name: 'Copilot', mark: 'github-copilot', accounts: [{ id: 198982749, logins: ['Copilot', 'copilot-swe-agent'] },
     { id: 175728472, logins: ['Copilot', 'copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]'] }], names: ['Copilot'], prefix: 'copilot/' },
   dependabot: { name: 'Dependabot', avatar: 'app-29110', accounts: [{ id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }], names: ['dependabot[bot]'],

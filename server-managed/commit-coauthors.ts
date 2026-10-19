@@ -10,7 +10,7 @@ export const MAX_COAUTHORS = 3
 // The rules co-authors are read by, the agents' addresses and names among
 // them: what was kept read by others (history pages, squashed pull requests)
 // read again by these, once raised.
-export const COAUTHORS_READ = 3
+export const COAUTHORS_READ = 4
 const MAX_NAME = 256
 const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 
@@ -29,6 +29,11 @@ const FINGERPRINTED = APP_AGENTS.filter(agent => agent.fingerprint)
 // One named as a commit's author or co-author: by name, the address its
 // commit gives (where it is read), and account.
 export type Maker = { name: unknown; email?: unknown; account: NamedAccount }
+
+// Those a commit's message names in its `Co-authored-by:` trailers
+// (agent-tasks.ts trailerBlock), each by name and address.
+export const coauthorTrailers = (message: unknown) => typeof message === 'string'
+  ? [...trailerBlock(message.replaceAll('\r\n', '\n')).matchAll(COAUTHOR_TRAILER)].map(([, name, email]) => ({ name: name!, email: email! })) : []
 
 // The agent one who made a commit is: by their account, else the address
 // their commit names them by; else, GitHub naming no account for them, by
@@ -50,7 +55,7 @@ const makerAgent = ({ name, email, account }: Maker): GithubAgentId | null => gi
 // two people of one name with accounts or addresses of their own two.
 export function coauthorsOf(message: unknown, author: Maker, listed: Maker[] | null = null): Coauthor[] {
   const text = typeof message === 'string' ? message.replaceAll('\r\n', '\n') : ''
-  const named = listed ?? [...trailerBlock(text).matchAll(COAUTHOR_TRAILER)].map(([, name, email]) => ({ name, email, account: commitAccount({ email }) }))
+  const named = listed ?? coauthorTrailers(text).map(({ name, email }) => ({ name, email, account: commitAccount({ email }) }))
   const signals = agentSignals([text], FINGERPRINTED)
   const marked = [...signals.claude || signals.sessions.length > 0 ? ['claude'] : [], ...signals.tasks.length > 0 || signals.codex ? ['codex'] : [],
     ...CURSOR_AGENT.test(text) ? ['cursor'] : [], ...signals.agents]

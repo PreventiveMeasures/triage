@@ -20,7 +20,7 @@ import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accoun
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
 // another are counted again.
-export const PULSE_YEAR_VERSION = 9
+export const PULSE_YEAR_VERSION = 11
 const WEEK_MS = 7 * 24 * 60 * 60_000
 const DAY_MS = 24 * 60 * 60_000
 const MAX_CONTRIBUTORS = 100
@@ -227,15 +227,21 @@ export async function yearCommits(fullName: string, token: string, head: string,
   return { complete: true, commits: [...found.values()].filter(dated), passed: [...found.values()].filter(commit => !dated(commit) && within(commit)) }
 }
 
+// Whether an author is a GitHub App's bot: by its login (`<app>[bot]`, as a
+// commit's no-reply address names it, github-accounts.ts commitAccount),
+// else, for one GitHub names no account for, by the name it commits as.
+const bot = (login: string | null | undefined, name: string | null | undefined) => /\[bot\]$/iu.test(login ?? name ?? '')
+
 // Whether an agent made `commit` or co-authored it: its author one of
 // GitHub's agents (common/managed/github-agents.ts githubAgent), or any of
 // its co-authors an agent (commit-coauthors.ts coauthorsOf), as Commits
-// marks them; or one an agent's pull request brought (`merges`,
+// marks them, or any bot, whichever GitHub App's; or one an agent's pull request brought (`merges`,
 // agent-merges.ts agentCommits); or one an account agents work as pushed to
 // the branch directly (`direct`, github-agents.ts agentOperated).
 const withAgent = (commit: HistoryCommit, merges: ReadonlySet<string>, direct: ReadonlySet<string>) => merges.has(commit.sha)
   || (direct.has(commit.sha) && agentOperated(commit.authorLogin, commit.authorId ?? null))
-  || githubAgent(commit.authorLogin, commit.authorId ?? null, commit.authorName) !== null || (commit.coauthors ?? []).some(coauthor => coauthor.agent)
+  || githubAgent(commit.authorLogin, commit.authorId ?? null, commit.authorName) !== null || bot(commit.authorLogin, commit.authorName)
+  || (commit.coauthors ?? []).some(coauthor => Boolean(coauthor.agent) || bot(coauthor.login, coauthor.name))
 
 // The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
 // statistics count them, merges left out: a week a row, its commits each day

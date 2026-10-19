@@ -1,6 +1,8 @@
 // GitHub accounts as GitHub's REST and GraphQL APIs name them, where a
 // repository's activity names its authors (repository-history.ts and the
 // Commits, Issues, Agents and Pulse tabs' readers).
+import { githubGraphql } from './github-graphql.ts'
+
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 
 // An account as GitHub names it: its login, else null, and its numeric id
@@ -23,11 +25,36 @@ export const actorOf = (actor: GraphAccount) => accountOf({ login: actor?.login,
 // GitHub knows its address for; else, as GitHub's REST API does, the account
 // whose noreply address its address is, `<id>+<login>@users.noreply.github.com`:
 // a GitHub App's bot's, which is no user (GraphQL's `user` is a User's, never
-// a bot's).
+// a bot's). One by GitHub's older no-reply address, `<login>@users.noreply.github.com`,
+// naming no id, its user looked up by its login (repository-history.ts linkNoreplyUsers).
 const NOREPLY = /^([1-9]\d{0,11})\+([^@]+)@users\.noreply\.github\.com$/iu
 export type GraphActor = { email?: unknown; user?: GraphAccount | null }
 export function commitAccount(author: GraphActor | null | undefined): NamedAccount {
   const user = actorOf(author?.user)
   const noreply = user.id === null && typeof author?.email === 'string' ? NOREPLY.exec(author.email) : null
   return noreply ? accountOf({ login: noreply[2], id: Number(noreply[1]) }) : user
+}
+
+// GitHub's no-reply address of old, `<login>@users.noreply.github.com`, which
+// names no id: GitHub links the commits it authors to the account of its
+// login, as its REST API names them, but its GraphQL API names no user for it.
+const NOREPLY_LOGIN = /^([A-Za-z\d][A-Za-z\d-]{0,38})@users\.noreply\.github\.com$/iu
+const MAX_NOREPLY_LOGINS = 100
+
+// Commits' authors and co-authors (`actors`), as GitHub's GraphQL API names
+// them, those it names no user for by such an address named the user of its
+// login, as GitHub links them: those logins, as many as MAX_NOREPLY_LOGINS,
+// looked up in one query, where any is.
+export async function linkNoreplyUsers(actors: (GraphActor | null | undefined)[], token: string, fetchImpl: typeof fetch): Promise<void> {
+  const unnamed = actors.flatMap(actor => {
+    const login = actor && !actor.user && typeof actor.email === 'string' ? NOREPLY_LOGIN.exec(actor.email)?.[1]?.toLowerCase() : undefined
+    return login ? [{ actor: actor!, login }] : []
+  })
+  const logins = [...new Set(unnamed.map(({ login }) => login))].slice(0, MAX_NOREPLY_LOGINS)
+  if (logins.length === 0) return
+  const query = `query(${logins.map((_, at) => `$l${at}: String!`).join(', ')}) { ${logins.map((_, at) => `u${at}: user(login: $l${at}) { login databaseId }`).join(' ')} }`
+  const data = await githubGraphql(query, Object.fromEntries(logins.map((login, at) => [`l${at}`, login])), token, fetchImpl,
+    error => error?.type === 'NOT_FOUND') as Record<string, GraphAccount> | null
+  const users = new Map(logins.map((login, at) => [login, data?.[`u${at}`] ?? null]))
+  for (const { actor, login } of unnamed) actor.user = users.get(login) ?? null
 }

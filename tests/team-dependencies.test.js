@@ -15,6 +15,8 @@ const state = { managedSession: { id: 's', role: 'triage' }, managedTeams: [{ id
 // The team reads asked, by the repositories each names (none: all), and the
 // pull requests or deltas asked alone.
 const asked = { teams: [], dependencies: [], deltas: [] }
+// Each team read's signal, as asked.
+const reads = []
 const terms = { required: 2, since: null, canReview: true }
 const dir = (more = {}) => ({ paths: ['package-lock.json'], added: [], more: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, moreLocked: 0, ...more })
 const wants = (name, more = {}) => ({ name, version: '1.0.0', source: 'registry', reviews: 0, ...more })
@@ -71,10 +73,12 @@ function teamLines(repoIds) {
 mock.module('../client/index.js', { exports: { state } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmDeltas(versions) { asked.deltas.push(versions); return new Promise(() => {}) },
-  async fetchTeamDependencies(teamId, onLine, { repoIds }) {
+  async fetchTeamDependencies(teamId, onLine, { repoIds, signal }) {
     asked.teams.push([teamId, repoIds])
+    reads.push(signal)
     for (const line of teamLines(repoIds)) {
       await setImmediate()
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
       onLine(line)
     }
   },
@@ -254,4 +258,36 @@ test('a team\'s grown old shown as it was while it is read again; all read anew 
   assert.equal(asked.teams.length, 3)
   await read(view)
   assert.deepEqual(asked.dependencies, [])
+})
+
+test('a team\'s read stopped once no tab shows it, its tab left or showing another team; read again once shown', async () => {
+  state.managedSession = { id: 'left', role: 'triage' }
+  state.teamDependenciesTab = 'pulls'
+  asked.teams.length = 0
+  const view = shown([repo(7, 'org/a'), repo(8, 'org/b')])
+  const connected = value => Object.defineProperty(view, 'isConnected', { value, configurable: true })
+  connected(true)
+  view.render()
+  await setImmediate()
+  connected(false)
+  view.disconnectedCallback()
+  await settle()
+  assert.ok(reads.at(-1).aborted, 'its tab left, stopped')
+  connected(true)
+  assert.match(await read(view), />a#1</u, 'shown again, read again')
+  assert.deepEqual(asked.teams, [['team-1', null], ['team-1', null]])
+  assert.ok(!reads.at(-1).aborted)
+
+  // Another team's shown: the first stopped, the repositories it held read for the other.
+  state.managedSession = { id: 'switched', role: 'triage' }
+  asked.teams.length = 0
+  view.render()
+  await setImmediate()
+  view.team = 'team-2'
+  const text = await read(view)
+  assert.ok(reads.at(-2).aborted, 'the first team\'s stopped')
+  assert.deepEqual(asked.teams, [['team-1', null], ['team-2', null]])
+  assert.match(text, />a#1</u)
+  connected(false)
+  view.disconnectedCallback()
 })
