@@ -58,15 +58,36 @@ test('managed issue submits the selected, edited sections and uses the same body
 test('opening the managed dialog prepares section defaults before the repository check', t => {
   const dialog = dialogFixture(t)
   dialog.finding = { description: 'Main description', impact: 'Impact details', reproduction: 'Steps' }
-  dialog.draftOptions = { evidence: '**Evidence:**\n1. Source evidence.' }
+  dialog.draftOptions = { evidence: '**Evidence:**\n1. Source evidence.', findingLink: 'https://triage.test/team/t/r/finding' }
   t.mock.method(dialog, 'check', redirect => {
     assert.equal(redirect, true)
-    assert.match(dialog.body, /Impact details/u)
-    assert.doesNotMatch(dialog.body, /Steps/u)
-    assert.deepEqual(dialog.sections.map(s => [s.id, s.selected]), [['impact', true], ['evidence', false], ['reproduction', false]])
+    assert.match(dialog.body, /Impact details[^]*Source evidence[^]*Steps\n\nTriage: https:\/\/triage\.test\/team\/t\/r\/finding$/u)
+    assert.deepEqual(dialog.sections.map(s => [s.id, s.selected]), [['impact', true], ['evidence', true], ['reproduction', true]])
   })
   dialog.beforeOpen()
   assert.equal(dialog.check.mock.callCount(), 1)
+})
+
+test('an untouched draft keeps every section for the API and only Impact for the GitHub form', async t => {
+  const dialog = dialogFixture(t), previous = globalThis.window, redirected = Promise.withResolvers()
+  let mode = 'form'
+  globalThis.window = { location: { assign: redirected.resolve } }
+  t.after(() => { globalThis.window = previous })
+  t.mock.method(globalThis, 'fetch', () => Response.json({ mode, labels: [] }))
+  dialog.finding = { description: 'Main description', impact: 'Impact details', reproduction: 'Steps' }
+  dialog.draftOptions = { findingLink: 'https://triage.test/f' }
+  dialog.beforeOpen()
+  assert.deepEqual(dialog.sections.map(s => s.selected), [true, true])
+  const destination = await redirected.promise
+  assert.deepEqual(dialog.sections.map(s => s.selected), [true, false])
+  assert.equal(new URL(destination).searchParams.get('body'), 'Main description\n\n**Impact:**\nImpact details\n\nTriage: https://triage.test/f')
+  mode = 'api'; await dialog.check()
+  assert.deepEqual(dialog.sections.map(s => s.selected), [true, true])
+  dialog.toggleSection('impact', false)
+  const body = dialog.body
+  mode = 'form'; await dialog.check()
+  assert.equal(dialog.body, body)
+  assert.equal(new URL(dialog.fallbackUrl()).searchParams.get('body'), body)
 })
 
 test('section checkboxes remain editable during access checks but lock during creation and uncertain outcomes', t => {

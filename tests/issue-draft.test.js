@@ -23,6 +23,54 @@ test('issue draft offers populated sections with only impact selected initially'
   assert.deepEqual(createIssueDraft({ description: 'Only prose.', impact: '  ', evidence: [] }).sections, [])
 })
 
+test('all sections can start selected, in order, above the finding link on the bottom line', () => {
+  const link = 'https://triage.test/team/t/r/finding'
+  let draft = draftFor(finding, { allSections: true, findingLink: link })
+  assert.ok(draft.sections.every(s => s.selected))
+  assert.match(draft.body, /Confidence: 8\/10\n\n\*\*Impact:\*\*[^]*\*\*Evidence:\*\*[^]*\*\*Reproduction:\*\*[^]*\*\*Recommendation:\*\*[^]*\*\*Confidence reason:\*\*\nThe route is reachable\.\n\nTriage: https:\/\/triage\.test\/team\/t\/r\/finding$/u)
+  draft = toggleIssueDraftSection(draft, 'reproduction', false)
+  draft = editIssueDraft(draft, draft.body.replace('Check ownership', 'Verify ownership'))
+  draft = toggleIssueDraftSection(draft, 'reproduction', true)
+  assert.match(draft.body, /Verify ownership[^]*\n\n\*\*Reproduction:\*\*\nSend an unauthenticated request\.\n\nTriage: https:\/\/triage\.test\/team\/t\/r\/finding$/u)
+  for (const { id } of draft.sections) draft = toggleIssueDraftSection(draft, id, false)
+  assert.match(draft.body, /Confidence: 8\/10\n\nTriage: https:\/\/triage\.test\/team\/t\/r\/finding$/u)
+  assert.equal(draft.body.slice(draft.footer.start, draft.footer.end), `Triage: ${link}`)
+})
+
+test('sections that would take the body past GitHub\'s limit start unselected', () => {
+  const link = 'https://triage.test/f'
+  const evidence = `**Evidence:**\n${'1. A location.\n'.repeat(5000)}`
+  const draft = draftFor(finding, { evidence, allSections: true, findingLink: link })
+  assert.deepEqual(draft.sections.filter(s => !s.selected).map(s => s.id), ['evidence'])
+  assert.ok(draft.body.length <= 65_536)
+  assert.match(draft.body, /\*\*Confidence reason:\*\*\nThe route is reachable\.\n\nTriage: https:\/\/triage\.test\/f$/u)
+  const description = 'x'.repeat(65_530)
+  assert.deepEqual(createIssueDraft({ description, impact: 'Impact' }, { allSections: true, findingLink: link }),
+    { body: description, sections: [{ id: 'impact', label: 'Impact', text: '**Impact:**\nImpact', selected: false, start: 0, end: 0 }], footer: null })
+})
+
+test('the finding link ends a draft without other text and is released by edits across it', () => {
+  let draft = createIssueDraft({ reproduction: 'Steps' }, { findingLink: 'https://triage.test/f' })
+  assert.equal(draft.body, '\n\nTriage: https://triage.test/f')
+  draft = toggleIssueDraftSection(draft, 'reproduction', true)
+  assert.equal(draft.body, '**Reproduction:**\nSteps\n\nTriage: https://triage.test/f')
+  draft = toggleIssueDraftSection(draft, 'reproduction', false)
+  assert.equal(draft.body, '\n\nTriage: https://triage.test/f')
+  // Typing into the link keeps it tracked; joining it to the text above leaves later sections after it.
+  draft = createIssueDraft({ description: 'Opening.', impact: 'Impact text', reproduction: 'Steps' }, { findingLink: 'https://triage.test/f' })
+  draft = editIssueDraft(draft, draft.body.replace('Triage: ', 'Triage finding: '))
+  draft = toggleIssueDraftSection(draft, 'reproduction', true)
+  assert.match(draft.body, /Steps\n\nTriage finding: https:\/\/triage\.test\/f$/u)
+  draft = toggleIssueDraftSection(draft, 'reproduction', false)
+  draft = editIssueDraft(draft, draft.body.replace('Impact text\n\nTriage', 'Impact text Triage'))
+  draft = toggleIssueDraftSection(draft, 'reproduction', true)
+  assert.equal(draft.body, 'Opening.\n\n**Impact:**\nImpact text Triage finding: https://triage.test/f\n\n**Reproduction:**\nSteps')
+  draft = editIssueDraft(draft, 'Rewritten.')
+  assert.equal(draft.footer, null)
+  draft = toggleIssueDraftSection(draft, 'impact', true)
+  assert.equal(draft.body, 'Rewritten.\n\n**Impact:**\nImpact text')
+})
+
 test('labelled report descriptions expose whole sections, including multiple paragraphs and code', () => {
   const draft = createIssueDraft({ description: 'Opening.\n\n**Impact:** First paragraph.\n\nSecond paragraph.\n\n**Reproduction steps:** Run this:\n\n```\n**Not a section:**\n\nexample\n```\n\n**Mitigation:** Restrict access.' })
   assert.deepEqual(draft.sections.map(s => s.id), ['impact', 'reproduction', 'mitigation'])
