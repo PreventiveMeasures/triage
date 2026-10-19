@@ -6,8 +6,11 @@
 // them (repository-replay.js), a play button. The strip shows them as one tab,
 // Activity, opening on the view last shown; each view's bar starts with
 // their picker, an icon each, which switches between them as the strip's
-// tabs do (events.js, `data-bundle-tab`).
+// tabs do (events.js, `data-bundle-tab`). A view's sub-tab past its first
+// is in its route too (routes.js isActivitySubtab), as `/pulse/year`.
 import { html, svg } from 'lit'
+import { isActivitySubtab } from '../../common/managed/routes.js'
+import { managedHistory } from './managed-history.js'
 
 const icon = body => html`<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"
   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`
@@ -34,6 +37,37 @@ let lastShown = 'commits'
 export function activityTab(tab) {
   if (ACTIVITY_TABS.has(tab)) lastShown = tab
   return lastShown
+}
+
+// Each view's sub-tab, by its tab, as its route named it last or the reader
+// last picked it, none for its first: kept, as the view last shown is, as
+// the reader goes between views, directories and repositories, whose routes
+// name it in turn; and the views shown, told as one changes.
+const subtabs = new Map()
+const subtabListeners = new Set()
+
+// The sub-tab view `tab` shows, null its first.
+export const activitySubtab = tab => subtabs.get(tab) ?? null
+// A route's sub-tab field for view `tab`, the one it shows; none for its first.
+export const activitySubtabField = tab => subtabs.has(tab) ? { subtab: subtabs.get(tab) } : {}
+// `listener(tab)` told as view `tab` comes to show another sub-tab.
+export const watchActivitySubtabs = listener => { subtabListeners.add(listener) }
+
+// View `tab` showing `subtab`, its first where that is none past it, as a
+// route opening names it.
+export function showActivitySubtab(tab, subtab) {
+  const shown = isActivitySubtab(tab, subtab) ? subtab : null
+  if (shown === activitySubtab(tab)) return
+  if (shown) subtabs.set(tab, shown)
+  else subtabs.delete(tab)
+  for (const listener of subtabListeners) listener(tab)
+}
+
+// `subtab` of view `tab` picked for the directory shown (`repository`, an
+// entry's): shown, at its address, an entry of its own.
+export function pickActivitySubtab({ repoId, commit, path }, tab, subtab) {
+  showActivitySubtab(tab, subtab)
+  managedHistory?.pushRoute({ view: 'repository-code', repoId, commit, path, bundleTab: tab, ...activitySubtabField(tab) })
 }
 
 // The views' picker, `tab` the one shown.

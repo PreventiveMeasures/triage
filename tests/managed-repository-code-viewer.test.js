@@ -8,7 +8,7 @@ import { managedRoutePath, parseManagedRoute } from '../common/managed/routes.js
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 
 const state = {}
-const contentsRequests = [], navigations = [], requests = [], showings = []
+const contentsRequests = [], navigations = [], pushes = [], requests = [], showings = []
 let answer = null, contents = null, refsReads = 0
 const refsListed = { defaultBranch: 'main', branches: ['main', 'develop'], tags: ['v1'] }
 let refsAnswer = () => Promise.resolve(refsListed)
@@ -19,7 +19,7 @@ mock.module('../client/index.js', { exports: {
 mock.module('../ui/view/render.js', { exports: { render() {} } })
 mock.module('../ui/view/graph/state.js', { exports: { cleanupGraph2() {}, graph2: {} } })
 mock.module('../ui/view/managed-history.js', { namedExports: { managedHistory: { active: true, navigate: route => { navigations.push(route) },
-  showing: route => { showings.push([route, state.currentView, state.repositoryCodeOpening ?? null]) } } } })
+  pushRoute: route => { pushes.push(route) }, showing: route => { showings.push([route, state.currentView, state.repositoryCodeOpening ?? null]) } } } })
 mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryCode(repoId, ref, path) { requests.push([repoId, ref, path]); return answer(repoId, ref, path) },
   fetchRepositoryContents(repoId, ref, path) { contentsRequests.push([repoId, ref, path]); return contents(repoId, ref, path) },
@@ -31,6 +31,7 @@ const { openRepositoryCodeRoute, openRepositoryCodeTab, repositoryRefs, reposito
 const { bundleFileGithub } = await import('../ui/view/bundle-file-github.js')
 const { repositoryCompareSource } = await import('../ui/view/repository-compare.js')
 const { managedTabLocation } = await import('../ui/view/managed-bundle-navigation.js')
+const { activitySubtab, pickActivitySubtab } = await import('../ui/view/repository-activity.js')
 
 const commit = 'c'.repeat(40)
 const data = {
@@ -44,6 +45,7 @@ beforeEach(() => {
   requests.length = 0
   contentsRequests.length = 0
   navigations.length = 0
+  pushes.length = 0
   answer = (repoId, ref, path) => Promise.resolve({ ...data, path })
   contents = () => Promise.resolve({ commit, entries: [] })
   refsAnswer = () => Promise.resolve(refsListed)
@@ -377,6 +379,43 @@ test('Issues, Pull requests, Agents, Pulse and Replay, reading none of the direc
     assert.deepEqual([state.repositoryCodeOpening.tab, state.repositoryCodeOpening.historyOnly], [tab, true])
   }
   assert.equal(parseManagedRoute(new URL(`https://triage.test/repo/7/${commit}/issues/2`)), null, 'only Code names a file')
+})
+
+test('an Activity view\'s sub-tab past its first is in its route, kept as another view or directory opens, and picked, an entry of its own', async () => {
+  const at = (tab, subtab = null, path = '') => ({ view: 'repository-code', repoId: 7, commit, path, bundleTab: tab, ...subtab ? { subtab } : {} })
+  for (const [tab, subtab] of [['pulse', 'week'], ['pulse', 'quarter'], ['pulse', 'year'], ['replay', '100'], ['replay', '1000'], ['issues', 'closed'], ['pulls', 'closed'],
+    ['agents', 'claude'], ['agents', 'codex'], ['agents', 'neo-2']]) {
+    assert.equal(managedRoutePath(at(tab, subtab, 'src')), `/repo/7/${commit}/${tab}/${subtab}?path=src`)
+    assert.deepEqual(parseManagedRoute(new URL(`https://triage.test/repo/7/${commit}/${tab}/${subtab}?path=src`)), at(tab, subtab, 'src'))
+  }
+  // The first is named by none.
+  for (const [tab, subtab] of [['pulse', 'month'], ['replay', '300'], ['issues', 'open'], ['pulls', 'open'], ['agents', 'all']]) {
+    assert.equal(managedRoutePath(at(tab, subtab)), `/repo/7/${commit}/${tab}`)
+    assert.equal(parseManagedRoute(new URL(`https://triage.test/repo/7/${commit}/${tab}/${subtab}`)), null, `${tab}/${subtab}`)
+  }
+  for (const path of ['commits/all', 'history/unmerged', 'pulse/day', 'replay/50', 'issues/merged', 'agents/Claude', 'pulse/year/code', 'search/year']) {
+    assert.equal(parseManagedRoute(new URL(`https://triage.test/repo/7/${commit}/${path}`)), null, path)
+  }
+  assert.equal(managedRoutePath({ ...at('code'), subtab: 'year' }), `/repo/7/${commit}`, 'none but an Activity view\'s')
+
+  // Opened at its route, the view shows it; another view's route names that
+  // view's own, another directory's the one shown.
+  assert.deepEqual(await openRepositoryCodeRoute(at('pulse', 'year'), () => true, () => {}), at('pulse', 'year'))
+  assert.equal(activitySubtab('pulse'), 'year')
+  openRepositoryCodeTab(state.repositoryCodeOpening, 'pulls')
+  openRepositoryCodeTab(state.repositoryCodeOpening, 'pulse')
+  assert.deepEqual(navigations.map(route => [route.bundleTab, route.subtab]), [['pulls', undefined], ['pulse', 'year']])
+  assert.deepEqual(repositoryCodeRoute(repositoryCodeEntry(data), 'pulse'), at('pulse', 'year', 'packages/app'))
+  // Picked, it is shown, at a route of its own; its first, at one naming none.
+  pickActivitySubtab(state.repositoryCodeOpening, 'pulse', 'quarter')
+  assert.equal(activitySubtab('pulse'), 'quarter')
+  pickActivitySubtab(state.repositoryCodeOpening, 'pulse', 'month')
+  assert.equal(activitySubtab('pulse'), null)
+  assert.deepEqual(pushes, [at('pulse', 'quarter'), at('pulse')])
+  // A route naming none, as Back or a link gives, shows the first.
+  await openRepositoryCodeRoute(at('agents', 'claude'), () => true, () => {})
+  assert.deepEqual(await openRepositoryCodeRoute(at('agents'), () => true, () => {}), at('agents'))
+  assert.equal(activitySubtab('agents'), null)
 })
 
 test('the header opens another repository at its default branch, another revision of the directory on the same tab, and a typed one on Enter alone', () => {

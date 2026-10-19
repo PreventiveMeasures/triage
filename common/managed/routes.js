@@ -146,7 +146,8 @@ function parseNpmRoute(path, hash) {
 // link opens, names its file by number and its lines in the fragment, as a
 // bundle's Code does: `/code/<file>#L4`. Compare names the commit compared
 // with, then its mode past the Overview, as an npm version's does:
-// `/compare/<commit>/code`. Without a commit,
+// `/compare/<commit>/code`. An Activity view names its sub-tab past the
+// first (isActivitySubtab): `/pulse/year`. Without a commit,
 // `/repo/<repo id>[?path=<directory>]`, it opens on the default
 // branch's head, or on the revision a route held in memory names (`ref`),
 // and its route then names the commit it opened. Links from before it moved
@@ -155,6 +156,15 @@ export const REPOSITORY_CODE_TABS = new Set(['code', 'search', 'treemap', 'compa
 // The tabs reading none of the directory's files, which a directory at a
 // commit shows alone.
 export const REPOSITORY_FILELESS_TABS = new Set(['commits', 'issues', 'pulls', 'agents', 'pulse', 'replay'])
+// The Activity views' sub-tabs past their first: Issues' and Pull requests'
+// closed ones (open, the first), Pulse's periods (a month, the first),
+// Replay's commits played (the last 300, the first), and one agent's
+// sessions, by its id (every agent's, `all`, the first).
+const ACTIVITY_SUBTABS = new Map([['issues', new Set(['closed'])], ['pulls', new Set(['closed'])],
+  ['pulse', new Set(['week', 'quarter', 'year'])], ['replay', new Set(['100', '1000'])]])
+const AGENT_ID = /^[a-z][a-z\d-]{0,31}$/u
+export const isActivitySubtab = (tab, subtab) => tab === 'agents' ? typeof subtab === 'string' && AGENT_ID.test(subtab) && subtab !== 'all'
+  : ACTIVITY_SUBTABS.get(tab)?.has(subtab) === true
 const COMMIT = /^[a-f\d]{40}$/u
 const MAX_DIRECTORY = 500
 const isRepoId = value => Number.isSafeInteger(value) && value > 0
@@ -176,9 +186,10 @@ function repositoryCodePath(route) {
   if (route.commit == null) return `/repo/${route.repoId}${directory}`
   const file = tab === 'code' && isLineNumber(route.file) ? `/code/${route.file}` : tab === 'code' ? '' : `/${tab}`
   const compare = tab === 'compare' && route.compareCommit != null ? `/${route.compareCommit}${compareModeSuffix(route.compareMode)}` : ''
+  const subtab = isActivitySubtab(tab, route.subtab) ? `/${route.subtab}` : ''
   const lines = tab === 'code' && isLineNumber(route.file) && isLineNumber(route.line)
     ? `#L${route.line}${isLineNumber(route.endLine) && route.endLine > route.line ? `-L${route.endLine}` : ''}` : ''
-  return `/repo/${route.repoId}/${route.commit}${file}${compare}${directory}${lines}`
+  return `/repo/${route.repoId}/${route.commit}${file}${compare}${subtab}${directory}${lines}`
 }
 
 function parseRepositoryCodeRoute(url) {
@@ -195,6 +206,7 @@ function parseRepositoryCodeRoute(url) {
   if (tab === 'compare') {
     return COMMIT.test(match[4]) && (match[5] == null || COMPARE_MODES.has(match[5])) ? { ...route, compareCommit: match[4], ...compareModeField(match[5]) } : null
   }
+  if (REPOSITORY_FILELESS_TABS.has(tab)) return match[5] == null && isActivitySubtab(tab, match[4]) ? { ...route, subtab: match[4] } : null
   const file = Number(match[4])
   return tab === 'code' && match[5] == null && /^[1-9]\d*$/u.test(match[4]) && Number.isSafeInteger(file) ? { ...route, file, ...codeLines(url.hash) } : null
 }

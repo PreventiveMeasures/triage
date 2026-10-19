@@ -86,7 +86,7 @@ Build the UI with `pnpm build` before starting a managed or combined server.
 | `/team/:team[/report/:report]/finding/:findingId` | A finding, in a team or a report |
 | `/team/:team/bundle/:bundle[/:tab]` | A team's bundle |
 | `/manage/bundle/:bundle[/:tab]` | A bundle with no accessible team (manager or admin) |
-| `/repo/:repoId[/:commit[/:tab]][?path=:dir]` | A repository directory at its default branch or a commit, on Code, Search, Treemap, Compare, or an Activity view (`commits`, `issues`, `pulls`, `agents`, `pulse`, `replay`) |
+| `/repo/:repoId[/:commit[/:tab[/:subtab]]][?path=:dir]` | A repository directory at its default branch or a commit, on Code, Search, Treemap, Compare, or an Activity view (`commits`, `issues`, `pulls`, `agents`, `pulse`, `replay`); a view's pick past its first is a sub-tab: `issues/closed`, `pulls/closed`, `agents/:agent`, `pulse/{week,quarter,year}`, `replay/{100,1000}` |
 | `/npm[/:name[@:version][/:tab]]` | npm package lookup, or a version; `:version` may be a dist-tag |
 | `/npm/:name@:version/review[/:base@:baseVersion]` | Review a package, or an update from a base version |
 | `/manage[/{bundle,scans,report,history}]` | Manage overview, Bundles, Scans, Reports, Activity history (`?actor=:login` filters it) |
