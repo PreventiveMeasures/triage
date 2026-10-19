@@ -24,6 +24,7 @@ import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../co
 import { ROLES, canReadRepositoryCode, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import { setManagedTeamFeedRefresh, startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
+import { announceManagedSession, heardManagedSessions, toldOtherThan, watchManagedSessions } from './managed-session-channel.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -2081,9 +2082,11 @@ function applyServerInfo(info, { runtime = true } = {}) {
 }
 
 // Probe the managed server for the current session (lazy client/managed chunk)
-// and repaint the auth control. Only reached in managed mode.
-function refreshManagedSession() {
-  if (managedSessionRefresh?.generation === clientModeGeneration) return managedSessionRefresh.promise
+// and repaint the auth control. Only reached in managed mode. `again` asks
+// anew though one is in flight, which may have read the cookie before another
+// tab changed it: the new one supersedes it (managedSessionRequest).
+function refreshManagedSession({ again = false } = {}) {
+  if (!again && managedSessionRefresh?.generation === clientModeGeneration) return managedSessionRefresh.promise
   managedSessionPending = true
   const refresh = { generation: clientModeGeneration, promise: null }
   managedSessionRefresh = refresh
@@ -2102,7 +2105,26 @@ async function revalidateManagedSession() {
   const isCurrent = () => generation === clientModeGeneration && request === managedSessionRequest && isManagedUiMode()
   try {
     const previous = state.managedSession
-    const session = await managedProbeSession({ fallback: previous, sent: takeStartupSession() })
+    const unanswered = {}
+    const sent = takeStartupSession()
+    // What other tabs told before a probe sent now is older than its answer;
+    // the startup session was asked for before this tab could hear.
+    const since = sent === undefined ? heardManagedSessions() : undefined
+    const probed = await managedProbeSession({ fallback: unanswered, sent })
+    if (!isCurrent()) return
+    // Unanswered while another tab tells of another session, which the cookie
+    // may now name, signed out here or not: nothing is read for this one
+    // meanwhile, lest the other's be shown as its own, and it asks again.
+    if (probed === unanswered && await toldOtherThan(previous)) {
+      if (isCurrent() && sessionRecheck === null) askManagedSessionLater(0)
+      return
+    }
+    const session = probed === unanswered ? previous : probed
+    // An answer is told the other tabs before it is shown or read for: one
+    // told of another session during the probe, which may then have read the
+    // cookie before it changed, has this tab ask again at once, superseding
+    // this refresh (managed-session-channel.js).
+    if (probed !== unanswered && !getPreviewRole()) await announceManagedSession(session, since)
     if (!isCurrent()) return
     state.managedSession = session
     managedSessionPending = false
@@ -2382,6 +2404,31 @@ document.addEventListener('managed-bundle-open', event => {
 })
 
 document.addEventListener('managed-import-complete', () => { void refreshManagedSession() })
+
+// Another tab told of another session than this one's, its cookie changed
+// there: this one's asked again at once, superseding one in flight, which may
+// have read the cookie before; and, where a probe that failed kept the
+// session it had, again later while that tab's still differs, each wait
+// longer, to a minute. A refresh outside these whose probe failed so asks
+// again after the first wait.
+const SESSION_RECHECKS_MS = [5_000, 15_000, 45_000, 60_000]
+let sessionRecheck = null
+let sessionRechecks = 0
+async function recheckManagedSession(attempt = 0) {
+  clearTimeout(sessionRecheck)
+  sessionRecheck = null
+  const chain = ++sessionRechecks
+  if (!isManagedUiMode() || getPreviewRole()) return
+  await refreshManagedSession({ again: true })
+  if (chain !== sessionRechecks || !await toldOtherThan(state.managedSession)) return
+  if (chain === sessionRechecks) askManagedSessionLater(attempt)
+}
+// Asked again after `attempt`'s wait, in place of an ask pending.
+function askManagedSessionLater(attempt) {
+  clearTimeout(sessionRecheck)
+  sessionRecheck = setTimeout(() => { void recheckManagedSession(attempt + 1) }, SESSION_RECHECKS_MS[Math.min(attempt, SESSION_RECHECKS_MS.length - 1)])
+}
+watchManagedSessions(() => { void recheckManagedSession() })
 
 document.addEventListener('managed-feed-closed', () => {
   managedSessionPending = true
