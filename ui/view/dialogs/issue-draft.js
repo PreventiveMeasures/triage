@@ -12,6 +12,8 @@ const FIELDS = [
 const sectionKey = label => label.toLowerCase().replaceAll(/[^\p{L}\p{N}]/gu, '')
 const FIELD_IDS = new Map([...FIELDS.map(([id, label]) => [sectionKey(label), id]),
   ['reproductionsteps', 'reproduction'], ['recommendedfix', 'recommendation']])
+// GitHub's issue body limit, which the server enforces before creating one.
+const MAX_BODY = 65_536
 
 // Keep optional narrative sections separate from the description, including
 // formats that put labelled sections in the description instead of fields.
@@ -49,11 +51,17 @@ export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevali
   const ordered = [...FIELDS.map(([id]) => content.get(id)).filter(Boolean), ...[...content.values()].filter(s => !FIELDS.some(([id]) => id === s.id))]
   let draft = { body: blocks.join('\n\n'), sections: ordered.map(({ id, label, parts }) => ({ id, label,
     text: `**${label}:**\n${parts.join('\n\n')}`, selected: false, start: 0, end: 0 })), footer: null }
-  for (const { id } of draft.sections) if (allSections || id === 'impact') draft = toggleIssueDraftSection(draft, id, true)
-  if (findingLink) {
+  const link = findingLink ? `Triage: ${findingLink}` : ''
+  // A section starts selected only while the body, link included, stays
+  // within what GitHub accepts; evidence alone can be far longer.
+  for (const { id } of draft.sections) {
+    const next = allSections || id === 'impact' ? toggleIssueDraftSection(draft, id, true) : draft
+    if (next.body.length + (link ? link.length + 2 : 0) <= MAX_BODY) draft = next
+  }
+  if (link) {
     // Separated even from an empty body, so a section toggled on can go above it.
-    const start = draft.body.length + 2, text = `Triage: ${findingLink}`
-    draft = { ...draft, body: `${draft.body}\n\n${text}`, footer: { start, end: start + text.length } }
+    const start = draft.body.length + 2
+    draft = { ...draft, body: `${draft.body}\n\n${link}`, footer: { start, end: start + link.length } }
   }
   return draft
 }

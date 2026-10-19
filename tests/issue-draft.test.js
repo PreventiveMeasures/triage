@@ -37,6 +37,15 @@ test('all sections can start selected, in order, above the finding link on the b
   assert.equal(draft.body.slice(draft.footer.start, draft.footer.end), `Triage: ${link}`)
 })
 
+test('sections that would take the body past GitHub\'s limit start unselected', () => {
+  const link = 'https://triage.test/f'
+  const evidence = `**Evidence:**\n${'1. A location.\n'.repeat(5000)}`
+  const draft = draftFor(finding, { evidence, allSections: true, findingLink: link })
+  assert.deepEqual(draft.sections.filter(s => !s.selected).map(s => s.id), ['evidence'])
+  assert.ok(draft.body.length <= 65_536)
+  assert.match(draft.body, /\*\*Confidence reason:\*\*\nThe route is reachable\.\n\nTriage: https:\/\/triage\.test\/f$/u)
+})
+
 test('the finding link ends a draft without other text and is released by edits across it', () => {
   let draft = createIssueDraft({ reproduction: 'Steps' }, { findingLink: 'https://triage.test/f' })
   assert.equal(draft.body, '\n\nTriage: https://triage.test/f')
