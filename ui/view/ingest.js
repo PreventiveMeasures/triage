@@ -802,9 +802,14 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.currentWorkspace = reportId === null ? `managed-team:${team.id}` : null
   state.currentManagedTeam = team.id
   state.currentManagedReport = reportId
-  // A report of findings is the one its annotations are read for; a link
-  // report's span the reports it links, known once they are in.
-  state.managedReports = opened && !deduplication && opened.analyzer !== LINKS_KIND ? [{ id: opened.id, filename: opened.filename }] : []
+  // What will load, as the catalog names it, so that a catalog telling the
+  // same as it loads finds nothing changed (managed-report-catalog.js): a
+  // team's published reports, or a report of findings, the one its
+  // annotations are read for; a link report's span the reports it links,
+  // known once they are in.
+  state.managedReports = deduplication ? []
+    : reportId === null ? team.reports.filter(r => r.visible !== false).map(r => ({ id: r.id, filename: r.filename }))
+      : opened.analyzer === LINKS_KIND ? [] : [{ id: opened.id, filename: opened.filename }]
   state.managedComments.clear()
   state.managedIssues.clear()
   state.managedReport = null

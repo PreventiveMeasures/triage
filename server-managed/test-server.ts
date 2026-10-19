@@ -1484,7 +1484,8 @@ function serveFixtureFeed(path: string, res: ServerResponse): boolean {
   if (!/^\/api\/teams(?:\/[^/]+)?\/feed$/u.test(path)) return false
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
   fixtureFeeds.add(res)
-  res.write(': fixture\n\n')
+  // Each connection first tells the catalog, as the managed server's does.
+  res.write(`event: teams\ndata: ${JSON.stringify({ revision: teamCatalogRevision(currentTeams()) })}\n\n`)
   const heartbeat = setInterval(() => { res.write(': fixture\n\n') }, 20_000)
   heartbeat.unref()
   res.on('close', () => { clearInterval(heartbeat); fixtureFeeds.delete(res) })
