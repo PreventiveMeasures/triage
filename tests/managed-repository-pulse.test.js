@@ -97,20 +97,20 @@ const memoryPages = () => {
 }
 const pages = () => memoryPages()
 const graphQueries = asked => asked.filter(item => typeof item === 'object' && item.query.includes('history(first:')).length
-const PULLS_LISTED = 'pullRequests(first: 100, after: $after'
+const PULLS_LISTED = 'pullRequests(first: $first, after: $after'
 const mergedQueries = asked => asked.filter(item => typeof item === 'object' && item.query.includes(PULLS_LISTED)).length
 // Each pull request's number: its own, else one of its merge commit's.
 const numbers = new Map()
 const numbered = pull => pull.number === undefined
   ? { ...pull, number: numbers.get(pull.mergeCommit?.oid) ?? numbers.set(pull.mergeCommit?.oid, numbers.size + 1).get(pull.mergeCommit?.oid) } : pull
 // The pull requests, the most recently updated first, as GitHub lists them
-// a hundred a page from the cursor asked (a position here); else `other`
-// answers.
+// as many a page as asked from the cursor asked (a position here); else
+// `other` answers.
 const mergedPulls = (pulls, other = () => ({ data: {} })) => body => {
   if (!body.query.includes(PULLS_LISTED)) return other(body)
-  const from = Number(body.variables.after ?? 0)
-  return { data: { repository: { pullRequests: { pageInfo: { hasNextPage: from + 100 < pulls.length, endCursor: String(from + 100) },
-    nodes: pulls.slice(from, from + 100).map(numbered) } } } }
+  const [from, size] = [Number(body.variables.after ?? 0), body.variables.first]
+  return { data: { repository: { pullRequests: { pageInfo: { hasNextPage: from + size < pulls.length, endCursor: String(from + size) },
+    nodes: pulls.slice(from, from + size).map(numbered) } } } }
 }
 // The pull requests read on from those `kept` (repository-pulls.ts
 // readPulls), as far back as `need`, and what those merged since `since`
@@ -248,7 +248,7 @@ test('the agents\' pull requests merged in the year: by their branches, the most
   // One merged since, read alone, from the newest on to the newest read before.
   pulls.unshift({ ...pull(1000, since + 700 * 12 * HOUR), headRefName: 'codex/new' })
   const again = await readMerges(since, whole)
-  assert.equal(mergedQueries(asked), 8)
+  assert.deepEqual([mergedQueries(asked), asked.at(-1).variables.first], [8, 10], 'those updated since the newest read, ten a page first')
   assert.deepEqual([again.through, again.merges.length, again.merges.some(([sha]) => sha === shaOf(1001))], [since + 700 * 12 * HOUR, agents.length + 1, true])
   // A year begun since, those merged before it left out.
   const later = await readMerges(since + 300 * 12 * HOUR, again)
@@ -271,7 +271,7 @@ test('the agents\' pull requests merged in the year: by their branches, the most
   // before reached kept through them, then the year whole.
   pulls.unshift(...Array.from({ length: 550 }, (_, at) => ({ ...pull(2000 + at, since + (1300 - at) * 12 * HOUR), headRefName: `claude/many-${at}` })))
   const many = await readMerges(since, further, since + 450 * 12 * HOUR)
-  assert.deepEqual([many.next?.read, many.reach], [500, since + 403 * 12 * HOUR])
+  assert.deepEqual([many.next?.read, many.reach], [410, since + 403 * 12 * HOUR], 'ten first, as few are mostly updated since, then a hundred a page')
   const caught = await readMerges(since, many, since + 450 * 12 * HOUR)
   assert.deepEqual([caught.next, caught.through, caught.reach], [null, since + 1300 * 12 * HOUR, since + 403 * 12 * HOUR])
   let year = caught

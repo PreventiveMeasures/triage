@@ -214,7 +214,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   // An agent links its session in its own texts: no comment is read, nor an issue's body.
   assert.doesNotMatch(listed.query, /comments/u)
   assert.doesNotMatch(page.query, /comments|issues\([^)]*\) [^]*body|pullRequests/u)
-  assert.deepEqual([listed.variables, page.variables], [{ owner: 'org', name: 'repo', after: null }, { owner: 'org', name: 'repo', after: null }],
+  assert.deepEqual([listed.variables, page.variables], [{ owner: 'org', name: 'repo', after: null, first: 100 }, { owner: 'org', name: 'repo', after: null, first: 100 }],
     'the pull requests and issues as kept for the Pulse too, their first pages')
   assert.match(listed.query, /labels\(first: 100\) \{ nodes \{ name \} \}/u, 'a pull request\'s labels read, as many as GitHub gives a page')
   assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: "refs/heads/"')).map(query => query.variables.after), [null, 'h_2'],
@@ -443,9 +443,10 @@ test('a read of the pull requests the Pulse left not finished, those kept no lon
   // A thousand, a minute apart, the newest now, a hundred a page.
   const pulls = Array.from({ length: 1000 }, (_, at) => pullNode(1000 - at, { updatedAt: new Date(now - at * 60_000).toISOString() }))
   github(t, body => {
-    if (!body.query.includes('pullRequests(first: 100')) return graphql(body)
-    const from = Number(body.variables.after ?? 0)
-    return { data: { repository: { pullRequests: { pageInfo: { hasNextPage: from + 100 < pulls.length, endCursor: String(from + 100) }, nodes: pulls.slice(from, from + 100) } } } }
+    if (!body.query.includes('pullRequests(first: $first')) return graphql(body)
+    const [from, size] = [Number(body.variables.after ?? 0), body.variables.first]
+    return { data: { repository: { pullRequests: { pageInfo: { hasNextPage: from + size < pulls.length, endCursor: String(from + size) },
+      nodes: pulls.slice(from, from + size) } } } }
   })
   const store = pullListStore(request.db)
   const key = `1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`
@@ -490,7 +491,7 @@ test('a later page reads on from the cursors it names alone, without issues and 
   // Below the one it names, of those kept: all the repository has, none left.
   const { body } = await request({ repoId: '1', pulls: `${Date.parse('2026-10-15T00:00:00Z')}.750` })
   assert.equal(asked.length, 1, 'no branches read again')
-  assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', after: null })
+  assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', after: null, first: 100 })
   assert.deepEqual([body.pulls.map(pull => pull.number), body.commits, body.issues, body.branches, body.more], [[700], [], undefined, undefined, false])
   // One an older server gave, GitHub's: from the newest, as kept.
   assert.deepEqual((await request({ repoId: '1', pulls: cursor })).body.pulls.map(pull => pull.number), [800, 700])
