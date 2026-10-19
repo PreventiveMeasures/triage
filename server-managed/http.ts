@@ -136,7 +136,7 @@ import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import { type KeptStore, REPOSITORY_READ_KEPT_MS, codeHeadStore, codeTreeStore, commitPullStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
-  lockfileReadStore,
+  issueListStore, lockfileReadStore,
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { type NpmDelta, keptNpmDeltas, npmDelta } from './npm-delta.ts'
@@ -230,10 +230,12 @@ import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDepend
 import { formattedPull, withFormatted } from './dependency-review-comments.ts'
 import type { ReviewedDependencies } from './reviewed-dependencies.ts'
 import { commentReviews } from './pull-comment-reviews.ts'
-import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
+import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseNarrowing, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince,
+  repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { type AgentMerges, agentCommits, agentMerges, directCommits, sameMerges } from './agent-merges.ts'
-import { PULLS_READ_VERSION, type PullList, pullsReadTo, readPulls } from './repository-pulls.ts'
+import { listedActivity } from './listed-activity.ts'
+import { ISSUES_LIST_READ_VERSION, type IssueList, type Listed, PULLS_READ_VERSION, type PullList, pullsReadTo, readIssues, readPulls } from './repository-pulls.ts'
 import { AGENT_MARKS_READ } from './app-agents.ts'
 import { releaseCommits } from './release-commits.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
@@ -2117,36 +2119,63 @@ function commitPulls(deps: ManagedHttpDeps, repoId: number): CommitPulls {
   }
 }
 
-// How long repository `repoId`'s pull requests kept (keptPulls) are taken as
-// they are before those updated since are read: less than its readers keep
-// their answers (keptAnswer), that one read of them serves both.
-const PULLS_FRESH_MS = 30_000
-// Each repository's reads of its pull requests, by its id: one at a time,
-// each after those asked before it.
-const pullsReads = new Map<number, Promise<unknown>>()
+// How long a repository's pull requests or issues kept (keptList) are taken
+// as they are before those updated since are read: less than their readers
+// keep their answers (keptAnswer), that one read of them serves them all.
+const LIST_FRESH_MS = 30_000
+// Each repository's reads of its pull requests, and of its issues, by them
+// and its id: one at a time, each after those asked before it.
+const listReads = new Map<string, Promise<unknown>>()
 
-// Repository `repoId`'s pull requests, as kept (repository-pulls.ts
-// readPulls), read on where they were read PULLS_FRESH_MS ago or longer, or
-// not as far back as `need`: as far back as it, for the Pulse; for the
-// Agents tab (null), as far back as they were read, those updated since read
-// (a read not finished, on), else their first page. One read of a
+// A repository's pull requests or issues, as kept in `store` by `key`
+// (repository-pulls.ts readList, `read`), read on where they were read
+// LIST_FRESH_MS ago or longer, or not as far back as `need`: as far back as
+// it, for the Pulse; for the Agents tab (null), as far back as they were
+// read, those updated since read (a read not finished, on), else their
+// first page. Not to be read further back (`further` false): those kept,
+// none where none are, where they are not read as far as `need`, or a read
+// of them is not finished, those updated since read alone. One read of a
 // repository's at a time, the rest after it, from what it kept.
-function keptPulls(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, need: number | null): Promise<PullList> {
-  const store = pullListStore<PullList>(deps.db, deps.config.debug)
-  const key = `${repoId}\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`
-  const reading = (pullsReads.get(repoId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+function keptList<L extends Listed<unknown>>(store: KeptStore<L>, key: string, read: (since: number, kept: L | null, need: number) => Promise<L>,
+  need: number | null, further = true): Promise<L | null> {
+  const reading = (listReads.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
     const kept = await store.read(key)
     const list = kept?.value ?? null
-    if (list && Date.now() - kept!.at < PULLS_FRESH_MS && (need === null || pullsReadTo(list) <= need)) return list
+    if (list && Date.now() - kept!.at < LIST_FRESH_MS && (need === null || pullsReadTo(list) <= need)) return list
+    if (!further && need !== null && (!list || list.next || pullsReadTo(list) > need)) return list
     const since = pulseSince(52, Date.now())
-    const read = await readPulls(fullName, token, since, list, globalThis.fetch,
-      need ?? (list ? list.next ? since : list.reach ?? since : Date.now()))
-    await store.write(key, read, Date.now())
-    return read
+    const listed = await read(since, list, need ?? (list ? list.next ? since : list.reach ?? since : Date.now()))
+    await store.write(key, listed, Date.now())
+    return listed
   })
-  pullsReads.set(repoId, reading)
-  void reading.catch(() => {}).finally(() => { if (pullsReads.get(repoId) === reading) pullsReads.delete(repoId) })
+  listReads.set(key, reading)
+  void reading.catch(() => {}).finally(() => { if (listReads.get(key) === reading) listReads.delete(key) })
   return reading
+}
+// Repository `repoId`'s pull requests (keptList), kept by how agents are
+// told too; those kept alone, not read further back (`further` false).
+function keptPulls(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, need: number | null): Promise<PullList>
+function keptPulls(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, need: number, further: false): Promise<PullList | null>
+function keptPulls(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, need: number | null, further = true) {
+  return keptList(pullListStore<PullList>(deps.db, deps.config.debug), `${repoId}\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`,
+    (since, kept, asked) => readPulls(fullName, token, since, kept, globalThis.fetch, asked), need, further)
+}
+// Repository `repoId`'s issues (keptList).
+const keptIssues = (deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, need: number | null) =>
+  keptList(issueListStore<IssueList>(deps.db, deps.config.debug), `${repoId}\0${ISSUES_LIST_READ_VERSION}`,
+    (since, kept, asked) => readIssues(fullName, token, since, kept, globalThis.fetch, asked), need) as Promise<IssueList>
+
+// Repository `repoId`'s default branch's head, as its tabs read it: as the
+// Commits tab's branches last told it (`heads`), where they were read
+// fresh, else read alone and kept (`pulse-head`); whether it was kept
+// (`kept`), GitHub asked for none of it.
+async function defaultTip(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string): Promise<{ sha: string | null; kept: boolean }> {
+  const heads = await repositoryReadStore(deps.db, deps.config.debug).read(`${repoId}\0heads`)
+  const all = heads && Date.now() - heads.at < REPOSITORY_READ_FRESH_MS ? heads.value as AllHeads : null
+  const tip = all?.heads.find(head => head.name === all.defaultBranch)?.sha
+  if (typeof tip === 'string' && /^[a-f\d]{40}$/u.test(tip)) return { sha: tip, kept: true }
+  const read = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
+  return { sha: read.value.sha, kept: read.kept }
 }
 
 // What the Pulse keeps of repository `repoId`'s pull requests merged, as
@@ -2298,7 +2327,8 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
     sendJson(res, 400, { error: 'bad-request' }); return
   }
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors, historyPages(deps, repoId, true, true),
-    commitPulls(deps, repoId), () => keptPulls(deps, repoId, fullName, token, null)),
+    commitPulls(deps, repoId), { pulls: () => keptPulls(deps, repoId, fullName, token, null), issues: () => keptIssues(deps, repoId, fullName, token, null),
+      head: async () => (await defaultTip(deps, repoId, fullName, token)).sha }),
     `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
 }
 
@@ -2416,8 +2446,8 @@ async function handleRepositoryBranchDependencies(res: ServerResponse, deps: Man
 // setting as read already (`known`), where it was.
 async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number,
   known?: RepoDependencyReview | null): Promise<{ value: object; kept: boolean }> {
-  const headRead = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
-  const head = headRead.value.sha
+  const headRead = await defaultTip(deps, repoId, fullName, token)
+  const head = headRead.sha
   if (!head) return { value: { head: null, review: null }, kept: false }
   const asked: GithubAsked = { github: !headRead.kept }
   // Those its review holds to alone read, as many as are read of them.
@@ -2447,7 +2477,7 @@ async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpD
   const repoId = Number(query.get('repoId'))
   if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
-    const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
+    const head = (await defaultTip(deps, repoId, fullName, token)).sha
     return { value: { head, lockfiles: head ? (await lockfilesAt(fullName, token, head, lockfileKept(deps, repoId))).map(({ path, format }) => ({ path, format })) : [] }, kept: false }
   })
 }
@@ -2719,7 +2749,7 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const [period, year] = await Promise.all([
-      keptAnswer(deps, `${repoId}\0pulse\0${weeks}`, () => repositoryActivity(fullName, token, weeks)),
+      keptAnswer(deps, `${repoId}\0pulse\0${weeks}`, () => pulseActivity(deps, repoId, fullName, token, weeks)),
       pulseCommits(deps, repoId, fullName, token, weeks),
     ])
     return { value: { weeks, ...period.value, stats: year.stats && periodStats(year.stats, weeks), reading: year.reading, pulls: year.pulls,
@@ -2761,6 +2791,24 @@ const pulseDay = (value: string | null) => {
   return Number.isSafeInteger(at) ? at : null
 }
 
+// The pull requests and issues of a period of `weeks` weeks, narrowed as
+// asked (`narrowing`), as the Pulse shows them: of those kept
+// (listed-activity.ts listedActivity), where they are read whole as far
+// back as the period before it starts, within the year they are read for:
+// the issues read on as far first; the pull requests as the year's commits
+// read them (pulseCommits), never further for this; else searched for
+// (repositoryActivity), as while they are read.
+async function pulseActivity(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, weeks: number, narrowing: PulseNarrowing | null = null) {
+  const now = Date.now()
+  const need = pulseSince(2 * weeks, now)
+  if (need >= pulseSince(52, now)) {
+    const [pulls, issues] = await Promise.all([keptPulls(deps, repoId, fullName, token, need, false), keptIssues(deps, repoId, fullName, token, need)])
+    const whole = (list: Listed<unknown> | null): list is Listed<unknown> => list !== null && !list.next && pullsReadTo(list) <= need
+    if (whole(pulls) && whole(issues)) return listedActivity(pulls.rows, issues.rows, weeks, now, narrowing)
+  }
+  return repositoryActivity(fullName, token, weeks, now, globalThis.fetch, narrowing)
+}
+
 // GET /api/admin/repositories/pulse/items: the Pulse tab's pull requests and
 // issues narrowed to a picked day or week (`from` to `to`, else on from
 // `from`) and the GitHub accounts a picked contributor committed as
@@ -2777,7 +2825,7 @@ async function handleRepositoryPulseItems(res: ServerResponse, deps: ManagedHttp
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const narrowing = { from, to, authors }
     const items = await keptAnswer(deps, `${repoId}\0pulse-items\0${weeks}\0${from}\0${to ?? ''}\0${narrowing.authors.join(',')}`,
-      () => repositoryActivity(fullName, token, weeks, Date.now(), globalThis.fetch, narrowing))
+      () => pulseActivity(deps, repoId, fullName, token, weeks, narrowing))
     return { value: { weeks, ...items.value }, kept: items.kept }
   })
 }
@@ -2789,17 +2837,17 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   // weeks and as many before them, which it is shown beside; the year's,
   // all of it.
   const need = Math.max(first, pulseSince(2 * weeks, now))
-  const head = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
-  if (!head.value.sha) return { stats: commitStats([], first), reading: null, pulls: null, pending: false, kept: head.kept }
+  const head = await defaultTip(deps, repoId, fullName, token)
+  if (!head.sha) return { stats: commitStats([], first), reading: null, pulls: null, pending: false, kept: head.kept }
   const store = repositoryReadStore(deps.db, deps.config.debug)
-  const key = `${repoId}\0pulse-year\0${PULSE_YEAR_VERSION}\0${head.value.sha}\0${first}`
+  const key = `${repoId}\0pulse-year\0${PULSE_YEAR_VERSION}\0${head.sha}\0${first}`
   const lastKey = `${repoId}\0pulse-year-last`
   const mergesKey = pulseMergesKey(repoId)
   const last = async () => {
     const kept = (await store.read(lastKey))?.value as { first: number; stats: PulseStats } | undefined
     return kept && first - kept.first <= PULSE_LAST_MS ? kept.stats : null
   }
-  const sha = head.value.sha
+  const sha = head.sha
   // What tells whose the year's commits are, kept as read: the agents' pull
   // requests merged (agentMerges), as the pull requests kept tell, read as
   // far back as `whole` (keptPulls), and the commits that release the

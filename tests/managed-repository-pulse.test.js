@@ -5,14 +5,14 @@ import { namedAccounts } from '../common/managed/github-logins.ts'
 import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { historyPageStore, pullListStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
+import { historyPageStore, issueListStore, pullListStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { AGENTS_READ_VERSION } from '../server-managed/repository-agents.ts'
 import { historyFrom } from '../server-managed/repository-history.ts'
 import { PULSE_YEAR_VERSION, StatsPending, YEAR_COMMITS, commitStats, periodStats, pulseSince, repositoryActivity, repositoryLines, repositoryStats, withLines, yearCommits }
   from '../server-managed/repository-pulse.ts'
 import { createSession } from '../server-managed/session.ts'
 import { agentCommits, agentMerges, directCommits, sameMerges } from '../server-managed/agent-merges.ts'
-import { PULLS_READ_VERSION, readPulls } from '../server-managed/repository-pulls.ts'
+import { ISSUES_LIST_READ_VERSION, PULLS_READ_VERSION, readPulls } from '../server-managed/repository-pulls.ts'
 import { releaseChanges, releaseCommits } from '../server-managed/release-commits.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -286,12 +286,12 @@ test('every pull request the repository has, read once its last is, and as the n
   const pulls = [pull(1, 3), pull(2, 1)]
   github(t, { graphql: mergedPulls(pulls) })
   const read = await readPulls('org/repo', 'token', since, null)
-  assert.deepEqual([read.all, read.pulls.length], [true, 2])
+  assert.deepEqual([read.all, read.rows.length], [true, 2])
   pulls.unshift(pull(3, 4))
   const again = await readPulls('org/repo', 'token', since, read)
-  assert.deepEqual([again.all, again.pulls.length, again.through], [true, 3, since + 4 * DAY])
+  assert.deepEqual([again.all, again.rows.length, again.through], [true, 3, since + 4 * DAY])
   const later = await readPulls('org/repo', 'token', since + 2 * DAY, again)
-  assert.deepEqual(['all' in later, later.pulls.length], [false, 2])
+  assert.deepEqual(['all' in later, later.rows.length], [false, 2])
 })
 
 test('a pull request labelled for an agent is an agent\'s, whatever its branch; one labelled for none, not', async t => {
@@ -576,12 +576,41 @@ test('the pull requests kept as the Agents tab read them are the Pulse\'s: fresh
   const now = Date.now()
   const row = (number, merged) => ({ number, title: `Pull ${number}`, state: 'merged', draft: false, author: null, authorId: null, createdAt: null, updatedAt: now,
     head: null, fork: null, additions: 0, deletions: 0, commits: 1, closes: [], signals: { sessions: [], tasks: [], claude: false, codex: false, agents: [] }, merged })
-  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { pulls: [
+  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { rows: [
     row(7, { sha: commits[3].oid, at: now, agent: true }), row(6, { sha: commits[4].oid, at: now, agent: false })], since: pulseSince(52, now), through: now, next: null },
   Date.now())
   const { body } = await request({ repoId: '1' })
   assert.equal(body.stats.weeks.flatMap(week => week.agentDays).reduce((sum, count) => sum + count, 0), 1)
   assert.equal(mergedQueries(asked), 0)
+})
+
+test('a period\'s pull requests and issues told of those the tabs keep, read for the year, and the head of the branches Commits read, none searched for; a year\'s searched for', async t => {
+  const request = await fixture(t)
+  const commits = chain(50, Date.now())
+  const asked = github(t, { commits, graphql: body => ({ data: body.query.includes('search(') ? { merged: { issueCount: 99, nodes: [] } } : {} }) })
+  const now = Date.now()
+  const yesterday = now - DAY
+  const day = new Date(yesterday).toISOString().slice(0, 10)
+  const since = pulseSince(52, now)
+  await pullListStore(request.db).write(`1\0${PULLS_READ_VERSION}\0${AGENTS_READ_VERSION}\0${PULSE_YEAR_VERSION}`, { rows: [{ number: 7, title: 'Pull 7',
+    state: 'merged', draft: false, author: 'ada', authorId: 7, createdAt: yesterday, updatedAt: yesterday, head: null, fork: null, additions: 0, deletions: 0, commits: 1,
+    closes: [], signals: { sessions: [], tasks: [], claude: false, codex: false, agents: [] }, merged: { sha: commits[3].oid, at: yesterday, agent: false } }],
+  since, through: yesterday, next: null }, Date.now())
+  await issueListStore(request.db).write(`1\0${ISSUES_LIST_READ_VERSION}`, { rows: [{ number: 8, title: 'Issue 8', state: 'closed', author: 'grace', authorId: 9,
+    createdAt: yesterday - DAY, updatedAt: yesterday, closedAt: yesterday, reason: 'completed' }], since, through: yesterday, next: null }, Date.now())
+  // The branches as Commits read them a moment ago, the default branch's head among them.
+  await repositoryReadStore(request.db).write('1\0heads', { heads: [{ name: 'main', sha: commits[0].oid, at: now }], defaultBranch: 'main', tags: [], cut: false },
+    Date.now())
+  const month = await request({ repoId: '1' })
+  assert.deepEqual([month.body.merged.count, month.body.merged.items.map(item => item.number), month.body.closed.count, month.body.closed.items[0].reason],
+    [1, [7], 1, 'completed'])
+  const narrowed = await request({ repoId: '1', weeks: '4', from: day, to: day, authors: 'ADA' }, { path: 'pulse/items' })
+  assert.deepEqual([narrowed.body.merged.count, narrowed.body.closed.count], [1, 0], 'its contributor\'s alone')
+  const searched = () => asked.filter(item => typeof item === 'object' && item.query.includes('search('))
+  assert.equal(searched().length, 0, 'none searched for')
+  assert.equal(asked.filter(item => typeof item === 'object' && item.query.includes('defaultBranchRef { target { oid } }')).length, 0, 'the head not read again')
+  const year = await request({ repoId: '1', weeks: '52' })
+  assert.deepEqual([year.body.merged.count, searched().length], [99, 1], 'the year before past those kept: searched for')
 })
 
 test('a pull request labelled for an agent, or no longer, after its year was counted: the merged pull requests read again once those read are no longer fresh, the year counted again where what they bring changed', async t => {
@@ -801,7 +830,7 @@ test('the pulse counts the year from the default branch\'s commits as Commits ke
   const reads = asked.length
   const month = await request({ repoId: '1' })
   assert.equal(month.body.stats.weeks.length, 52, 'the year kept by its head, for every period')
-  assert.equal(asked.length, reads + 1, 'the month\'s pull requests and issues alone read')
+  assert.equal(asked.length, reads, 'the month\'s pull requests and issues told of those kept, those read for the year, none searched for')
   // When each period's commits are made, its own, the others' not sent.
   const made = body => body.stats.punch.flat().reduce((sum, count) => sum + count, 0)
   const last = (body, weeks) => body.stats.weeks.slice(-weeks).reduce((sum, week) => sum + week.commits, 0)

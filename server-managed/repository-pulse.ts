@@ -26,7 +26,7 @@ const WEEK_MS = 7 * 24 * 60 * 60_000
 const DAY_MS = 24 * 60 * 60_000
 const MAX_CONTRIBUTORS = 100
 const DIRECT_LISTED = 500
-const LISTED = 10
+export const LISTED = 10
 // Merged pull requests and closed issues are searched by when each was last
 // updated, GitHub sorting by no merge or close: as many as this are read, and
 // the latest merged or closed of them listed.
