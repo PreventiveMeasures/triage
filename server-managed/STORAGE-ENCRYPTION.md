@@ -21,6 +21,7 @@ Only one master key is supported; rotation and old-key lists are not implemented
 | Reports, including Brotli-compressed reports | Random per-report key, wrapped in `managed_report.data_key` |
 | Bundles, including Brotli sourcemaps | Random per-bundle key, wrapped in `managed_bundle.data_key` |
 | Bundle metadata/package inventory, report-source and pretty-printed file caches | Their bundle's data key |
+| The code viewer's directories of default branch heads (`cache/repository-code/`) | Master key, with fresh per-write derivation bound to the path |
 | Temporary Vercel Blob upload parts | Master key, with fresh per-write derivation |
 | Global deduplication link reports | Master key; encrypted JSON stored directly in `managed_link_report.encrypted_groups`, bound to the row |
 | GitHub access and refresh tokens | Master key; each SQL value is wrapped separately and bound to its user and field |
@@ -140,13 +141,15 @@ Database and provider failures still fail the cleanup job.
 
 Legacy caches are ignored as soon as encryption is activated.
 Rebuilds use the bundle key and a separate `cache-encrypted-v1/` namespace.
+The code viewer's directories rebuild in that namespace too, with the master key, as no SQL row owns a repository's code.
+Each write derives its key from the master key and the object's path, so one path's ciphertext fails to authenticate at another.
 A bounded, independent inventory removes old caches and unreferenced plaintext; `cleanupComplete` reports when that inventory is done.
 Deleting a bundle removes both cache namespaces, even with migration disabled.
 Stray files do not block migration of referenced data.
 Old upload parts stay readable during the 24-hour activation grace period, and the normal staging sweep removes them.
 Expiry does not guarantee physical deletion at exactly 24 hours.
 
-Cleanup recognizes only managed paths: `reports/<uuid>` and `reports/<uuid>.br`, `bundles/<uuid>` and `bundles/<uuid>.map.br`, and caches under `cache/bundles/<uuid>/` and `cache/report-sources/<uuid>/`.
+Cleanup recognizes only managed paths: `reports/<uuid>` and `reports/<uuid>.br`, `bundles/<uuid>` and `bundles/<uuid>.map.br`, and caches under `cache/bundles/<uuid>/`, `cache/report-sources/<uuid>/` and `cache/repository-code/`.
 Unrelated files beside a database in a shared directory are left alone.
 Disk deployments do not create or reap upload parts; the staging sweep runs only with Neon and Blob storage.
 
@@ -210,6 +213,8 @@ Encrypted orphan files have no live SQL key.
 Physical deletion remains best effort.
 Readers already holding a key, retained SQL pages and WAL, replicas and backups can keep key material, so SQL deletion alone does not guarantee immediate forensic erasure.
 Report-source caches belong to the bundle, so deleting a report does not destroy the bundle's cache key.
+The code viewer's directories have no SQL key to delete.
+Deactivating or removing their repository deletes them by prefix, and that physical deletion is best effort too.
 Previously retained plaintext copies and backups need their own retention policy.
 
 Back up **database + byte store + master key** as a compatible set.

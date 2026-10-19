@@ -30,7 +30,8 @@ export interface ObjectStorage {
   exists(key: string): Promise<boolean>
   put(key: string, bytes: Buffer, options?: { replaceReport?: boolean }): Promise<string | null>
   delete(key: string): Promise<void>
-  deletePrefix(prefix: string): Promise<void>
+  // Every object under `prefix`, but those under `keep`, a prefix within it.
+  deletePrefix(prefix: string, keep?: string): Promise<void>
 }
 
 export function isBlobId(value: string): boolean {
@@ -52,14 +53,14 @@ export async function openObjectVersion(raw: RawObjectStorage, key: string, vers
   return null
 }
 
-export async function deleteObjects(raw: RawObjectStorage, prefix: string, signal: AbortSignal, before?: number): Promise<number> {
+export async function deleteObjects(raw: RawObjectStorage, prefix: string, signal: AbortSignal, before?: number, keep?: string): Promise<number> {
   const eligible = (modifiedAt: number) => before === undefined || modifiedAt < before
   // Finish listing before deleting: provider cursors may be offset-based.
   const cursors = new Set<string>(), keys = new Set<string>()
   let cursor: string | null = null
   do {
     const page = await raw.list(prefix, cursor, 100, signal)
-    for (const object of page.objects) if (eligible(object.modifiedAt)) keys.add(object.key)
+    for (const object of page.objects) if (eligible(object.modifiedAt) && (keep === undefined || !object.key.startsWith(keep))) keys.add(object.key)
     cursor = page.cursor
     if (cursor !== null && cursors.has(cursor)) throw new Error('Invalid blob pagination')
     if (cursor !== null) cursors.add(cursor)

@@ -1,17 +1,30 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import { test } from 'node:test'
 import { brotliDecompressSync, gzipSync } from 'node:zlib'
+import { STORAGE_MAGIC } from '../server-common/storage-crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { codeHeadStore } from '../server-managed/npm-kept.ts'
+import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_PACKAGE_FILES } from '../server-managed/npm-packages.ts'
-import { MAX_REPOSITORY_CODE_BYTES, MAX_REPOSITORY_CODE_FILES, loadRepositoryCodeBody, repositoryCodeFits } from '../server-managed/repository-code.ts'
+import { MAX_KEPT_CODE_BYTES, MAX_REPOSITORY_CODE_BYTES, MAX_REPOSITORY_CODE_FILES, loadRepositoryCodeBody, repositoryCodeFits,
+  repositoryCodeKept } from '../server-managed/repository-code.ts'
 import { tar } from './_managed-npm.js'
+import { managedStores } from './_managed-storage.js'
+import { storageTestKey } from './_managed-storage-db.js'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }
 const commit = 'a'.repeat(40)
+// Another commit, of the same tree: another branch's and a tag's, and the
+// default branch's once it moves.
+const other = 'b'.repeat(40)
 const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
 
 const files = {
@@ -102,31 +115,45 @@ function tarball(tree) {
 // GitHub, as the reader and upstream's client ask it; `asked` the paths asked
 // for, `truncate` cutting recursive listings short, `reads` how many times
 // the repository answers before it is gone, `archives` the tree whose
-// tarball it sends for the one asked.
-function github(t, { truncate = false, reads = Infinity, archives = tree => tree } = {}) {
+// tarball it sends for the one asked, `head` the default branch's commit,
+// and `hold` what a tree's tarball waits on before it is sent.
+function github(t, { truncate = false, reads = Infinity, archives = tree => tree, head = () => commit, hold = () => null } = {}) {
   const asked = []
-  t.mock.method(globalThis, 'fetch', input => {
+  t.mock.method(globalThis, 'fetch', async input => {
     const url = new URL(typeof input === 'string' ? input : input.url)
-    asked.push(url.pathname + url.search)
-    const path = url.pathname
-    if (path === '/repos/org/repo' && asked.filter(entry => entry === '/repos/org/repo').length > reads) return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
-    if (path === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
-    if (path === '/repos/org/repo/commits/heads%2Fmain') return Promise.resolve(Response.json({ sha: commit }))
-    if (path === `/repos/org/repo/git/commits/${commit}`) return Promise.resolve(Response.json({ sha: commit, tree: { sha: treeAt('') } }))
+    // The repository renamed (`org/renamed`) answers as it, by its new name.
+    const renamed = url.pathname.startsWith('/repos/org/renamed')
+    const path = renamed ? url.pathname.replace('/repos/org/renamed', '/repos/org/repo') : url.pathname
+    asked.push(path + url.search)
+    if (path === '/repos/org/repo' && asked.filter(entry => entry === '/repos/org/repo').length > reads) return Response.json({ message: 'Not Found' }, { status: 404 })
+    if (path === '/repos/org/repo') return Response.json(renamed ? { ...publicMetadata, full_name: 'org/renamed' } : publicMetadata)
+    if (path === '/repos/org/repo/commits/heads%2Fmain') return Response.json({ sha: await head() })
+    if (path === '/repos/org/repo/commits/heads%2Ffeature' || path === '/repos/org/repo/commits/tags%2Fv1') return Response.json({ sha: other })
+    const at = /^\/repos\/org\/repo\/git\/commits\/([a-f\d]{40})$/u.exec(path)?.[1]
+    if (at === commit || at === other) return Response.json({ sha: at, tree: { sha: treeAt('') } })
     const tree = /^\/repos\/org\/repo\/git\/trees\/([a-f\d]{40})$/u.exec(path)?.[1]
     if (tree && trees.has(tree)) {
       const recursive = url.searchParams.get('recursive') === '1'
-      return Promise.resolve(Response.json({ ...listing(tree, recursive), ...(recursive && truncate ? { truncated: true } : {}) }))
+      return Response.json({ ...listing(tree, recursive), ...(recursive && truncate ? { truncated: true } : {}) })
     }
     const archived = /^\/repos\/org\/repo\/tarball\/([a-f\d]{40})$/u.exec(path)?.[1]
-    if (archived && trees.has(archived)) return Promise.resolve(new Response(tarball(archives(archived))))
-    return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
+    if (archived && trees.has(archived)) {
+      await hold(archived)
+      return new Response(tarball(archives(archived)))
+    }
+    return Response.json({ message: 'Not Found' }, { status: 404 })
   })
   return asked
 }
 
-async function fixture(t, { role = 'manage' } = {}) {
-  const db = openSqliteManagedDb(':memory:')
+// The managed server reading the fixture, as `role`, with byte storage for
+// the code it keeps where `storage` asks for it (on disk, encrypted with
+// `key` where one is given). Its `elsewhere()` is another instance: the same
+// database and byte storage, none of this one's memory. `settle()` waits for
+// the work done behind its answers, `kept()` lists what its byte storage
+// holds, and `post` sends an admin's mutation.
+async function fixture(t, { role = 'manage', storage = false, key = null } = {}) {
+  const db = openSqliteManagedDb(':memory:', { storageEncryptionKey: key })
   t.after(() => db.close())
   const session = await createSession(config, db, { githubUserId: 1, login: 'manager', name: null, avatarUrl: null }, Date.now())
   await db.setUserRole(session.userId, role)
@@ -134,8 +161,19 @@ async function fixture(t, { role = 'manage' } = {}) {
   await db.createTeam('team', 'Team', Date.now())
   await db.setTeamRepo('team', 1, 'src/allowed')
   await db.setTeamMember('team', session.userId, { dependencies: true, security: true })
-  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
-  return async (query, { method = 'GET', signedIn = true } = {}) => {
+  let stores = null
+  if (storage) {
+    const dir = await mkdtemp(join(tmpdir(), 'triage-repository-code-'))
+    t.after(() => rm(dir, { recursive: true, force: true }))
+    if (key) await db.enableStorageEncryption()
+    stores = await managedStores(t, createDiskObjectStorage(dir), { db, key, disk: true })
+  }
+  const pending = []
+  const handlerOf = instance => createManagedRequestHandler({ config, db: instance, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false,
+    track: work => { pending.push(work) }, ...stores ? { repositoryCodeStorage: stores.repositoryCodeStorage } : {} })
+  const handler = handlerOf(db)
+  const cookie = session.setCookie.split(';')[0]
+  const requestOf = served => async (query, { method = 'GET', signedIn = true } = {}) => {
     const chunks = []
     let closed = () => {}
     const res = {
@@ -146,11 +184,28 @@ async function fixture(t, { role = 'manage' } = {}) {
       once(event, listener) { if (event === 'close') closed = listener },
       off() {}, setTimeout() {},
     }
-    await handler({ method, url: `/api/admin/repositories/code?${new URLSearchParams(query)}`, headers: { cookie: signedIn ? session.setCookie.split(';')[0] : undefined } }, res)
+    await served({ method, url: `/api/admin/repositories/code?${new URLSearchParams(query)}`, headers: { cookie: signedIn ? cookie : undefined } }, res)
     const body = Buffer.concat(chunks)
-    return { status: res.status, headers: res.headers, body: JSON.parse(res.headers['content-encoding'] === 'br' ? brotliDecompressSync(body).toString() : body.toString()) }
+    // As sent, too (`bytes`), left out of comparisons.
+    return Object.defineProperty({ status: res.status, headers: res.headers, body: JSON.parse(res.headers['content-encoding'] === 'br' ? brotliDecompressSync(body).toString() : body.toString()) },
+      'bytes', { value: body })
   }
+  return Object.assign(requestOf(handler), {
+    db, raw: stores?.raw,
+    elsewhere: () => requestOf(handlerOf(Object.create(db))),
+    settle: async () => { while (pending.length > 0) await Promise.all(pending.splice(0)) },
+    // Byte storage's paths, of either generation.
+    kept: async () => (await Promise.all(['cache/', 'cache-encrypted-v1/'].map(async prefix => (await stores.raw.list(prefix, null, 100)).objects.map(object => object.key)))).flat(),
+    async post(path, body) {
+      const res = { status: 0, writeHead(status) { this.status = status }, end() {} }
+      await handler(Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), { method: 'POST', url: path,
+        headers: { cookie, 'x-csrf-token': session.csrfToken, 'content-type': 'application/json' } }), res)
+      return res.status
+    },
+  })
 }
+// The commit of each directory a fixture's byte storage keeps.
+const keptCommits = async request => (await request.kept()).map(path => /\/repository-code\/1\/([a-f\d]{40})\//u.exec(path)?.[1] ?? path)
 
 test('a directory reads at its revision\'s commit, its files as the npm viewer reads a package\'s, by their paths in it', async t => {
   const request = await fixture(t, { role: 'admin' })
@@ -192,6 +247,7 @@ test('a directory too large to read is told so again without its listing asked a
   const listings = () => asked.filter(entry => entry.endsWith('?recursive=1')).length
   assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).status, 413)
   assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).status, 413)
+  assert.equal((await request.elsewhere()({ repoId: '1', ref: commit, path: 'src/allowed' })).status, 413, 'nor by another instance')
   assert.equal(listings(), 1)
 })
 
@@ -310,4 +366,229 @@ test('a directory the commit has none at is none to read; bad queries, other met
   assert.equal((await request({ repoId: '1', path: '../src' })).status, 400)
   assert.equal((await request({ repoId: '1' }, { method: 'POST' })).status, 405)
   assert.equal((await request({ repoId: '1' }, { signedIn: false })).status, 401)
+})
+
+// Until GitHub has been asked for the tarball of `tree`.
+async function tarballAsked(asked, tree) {
+  while (!asked.includes(`/repos/org/repo/tarball/${tree}`)) await new Promise(resolve => { setImmediate(resolve) })
+}
+
+test('a directory\'s tree and what it holds, as GitHub answered them, are kept in the database for another instance to read', async t => {
+  const request = await fixture(t, { role: 'admin' })
+  const asked = github(t)
+  const commits = () => asked.filter(entry => entry === `/repos/org/repo/git/commits/${commit}`).length
+  const listings = () => asked.filter(entry => entry === `/repos/org/repo/git/trees/${treeAt('src/allowed')}?recursive=1`).length
+  const first = await request({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(first.status, 200)
+  const again = await request.elsewhere()({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.deepEqual(again.body, first.body)
+  assert.deepEqual([commits(), listings()], [1, 1], 'neither asked again by an instance that never read them')
+  assert.equal(asked.filter(entry => entry.includes('/tarball/')).length, 2, 'its files read again, with no byte storage to keep them')
+})
+
+test('a directory of the default branch\'s head is kept in byte storage: opened again, by the branch or its commit, on another instance, nothing of it is asked of GitHub again', async t => {
+  const request = await fixture(t, { role: 'admin', storage: true })
+  const asked = github(t)
+  const access = () => asked.filter(entry => entry === '/repos/org/repo').length
+  const first = await request({ repoId: '1', ref: '', path: 'src/allowed' })
+  assert.equal(first.status, 200)
+  await request.settle()
+  const kept = await request.kept()
+  assert.equal(kept.length, 1)
+  assert.match(kept[0], /^cache\/repository-code\/1\/a{40}\/v1-[a-f\d]{64}\.json\.br$/u, 'by the repository, then the commit')
+  const read = asked.length
+  const elsewhere = request.elsewhere()
+  for (const ref of ['', 'heads/main', commit]) {
+    const again = await elsewhere({ repoId: '1', ref, path: 'src/allowed' })
+    assert.equal(again.status, 200, ref)
+    assert.deepEqual(again.headers, first.headers, ref)
+    assert.deepEqual(again.bytes, first.bytes, `${ref}: as it was sent`)
+  }
+  assert.deepEqual(asked.slice(read).filter(entry => entry !== '/repos/org/repo'), ['/repos/org/repo/commits/heads%2Fmain', '/repos/org/repo/commits/heads%2Fmain'],
+    'by the branch, its head alone: no tree, listing or tarball')
+  assert.equal(access(), 2 + 3 * 2, 'the reader\'s access asked as ever, before and after')
+  // The reader's access gone by the time it is checked again: what is kept is not sent.
+  t.mock.restoreAll()
+  const later = github(t, { reads: 1 })
+  const gone = await elsewhere({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(gone.status, 404)
+  assert.equal(gone.body.files, undefined)
+  assert.ok(!later.some(entry => entry.includes('/git/') || entry.includes('/tarball/')), 'it was read as kept')
+})
+
+test('a kept directory takes a place among the active loads as one read from GitHub does: none left, it is refused as busy, and sent once one is', async t => {
+  const request = await fixture(t, { role: 'admin', storage: true })
+  github(t)
+  assert.equal((await request({ repoId: '1', ref: '', path: 'src/allowed' })).status, 200)
+  await request.settle()
+  const elsewhere = request.elsewhere()
+  // Every place taken by the largest directory there is, read from GitHub, unanswered.
+  const gate = Promise.withResolvers()
+  const largest = loadRepositoryCodeBody({ repoId: 2, repo: 'org/other', commit: other, path: '', tree: 'e'.repeat(40),
+    listed: { files: MAX_REPOSITORY_CODE_FILES, bytes: MAX_REPOSITORY_CODE_BYTES } }, () => gate.promise)
+  const busy = await elsewhere({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.deepEqual([busy.status, busy.body.error], [429, 'repository-busy'])
+  gate.reject(new Error('gone'))
+  await largest.result.catch(() => {})
+  largest.release()
+  const sent = await elsewhere({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(sent.status, 200)
+})
+
+test('only the default branch\'s head is kept: a read of another branch, a tag, or a commit not known as its head keeps nothing', async t => {
+  const request = await fixture(t, { role: 'admin', storage: true })
+  const asked = github(t)
+  assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).status, 200)
+  await request.settle()
+  assert.deepEqual(await request.kept(), [], 'a commit no read of the default branch has named its head')
+  assert.equal((await request({ repoId: '1', ref: '', path: 'src/allowed' })).status, 200)
+  for (const ref of ['heads/feature', 'tags/v1', other]) assert.equal((await request({ repoId: '1', ref, path: 'src/allowed' })).body.commit, other, ref)
+  assert.equal((await request({ repoId: '1', ref: commit, path: 'src' })).status, 200)
+  await request.settle()
+  assert.deepEqual(await keptCommits(request), [commit, commit], 'the head\'s directories, by its branch and by its commit')
+  assert.equal(asked.filter(entry => entry.includes('/tarball/')).length, 6, 'the others read each time')
+})
+
+test('when the default branch moves, a read of it removes what was kept at the head before; one kept for that head meanwhile removes itself', async t => {
+  let head = commit
+  const slow = Promise.withResolvers()
+  const request = await fixture(t, { role: 'admin', storage: true })
+  const asked = github(t, { head: () => head, hold: tree => tree === treeAt('src/linked') ? slow.promise : null })
+  for (const path of ['src/allowed', 'src']) assert.equal((await request({ repoId: '1', ref: '', path })).status, 200, path)
+  await request.settle()
+  assert.deepEqual(await keptCommits(request), [commit, commit])
+  head = other
+  assert.equal((await request({ repoId: '1', ref: 'heads/main', path: 'src/allowed' })).body.commit, other)
+  await request.settle()
+  assert.deepEqual(await keptCommits(request), [other])
+  // The head before, by its commit, as an older route names it: read, not kept.
+  assert.equal((await request({ repoId: '1', ref: commit, path: 'src' })).status, 200)
+  await request.settle()
+  assert.deepEqual(await keptCommits(request), [other])
+  // A read of the head as kept, its tarball still coming as another instance
+  // finds the branch moved: what it keeps goes again.
+  const reading = request.elsewhere()({ repoId: '1', ref: other, path: 'src/linked' })
+  await tarballAsked(asked, treeAt('src/linked'))
+  head = commit
+  assert.equal((await request({ repoId: '1', ref: '', path: 'src/allowed' })).body.commit, commit)
+  slow.resolve()
+  assert.equal((await reading).body.commit, other)
+  await request.settle()
+  assert.deepEqual(await keptCommits(request), [commit])
+})
+
+test('a repository renamed has what was kept under its name before removed as a read next names its head, as is one kept under it meanwhile', async t => {
+  const request = await fixture(t, { role: 'admin', storage: true })
+  const slow = Promise.withResolvers()
+  const asked = github(t, { hold: tree => tree === treeAt('src/linked') ? slow.promise : null })
+  for (const path of ['src/allowed', 'src']) assert.equal((await request({ repoId: '1', ref: '', path })).status, 200, path)
+  await request.settle()
+  assert.deepEqual(await keptCommits(request), [commit, commit])
+  // Another directory of its head, by its name before, its tarball coming as it is renamed.
+  const reading = request({ repoId: '1', ref: commit, path: 'src/linked' })
+  await tarballAsked(asked, treeAt('src/linked'))
+  await request.db.selectRepo({ ...repo, fullName: 'org/renamed' }, Date.now())
+  const read = await request({ repoId: '1', ref: '', path: 'src/allowed' })
+  assert.deepEqual([read.status, read.body.repo], [200, 'org/renamed'])
+  slow.resolve()
+  assert.equal((await reading).status, 409)
+  await request.settle()
+  // The directory read by its new name, kept unless the read by its name
+  // before removed its commit's as it found the name moved on.
+  const renamed = `cache/repository-code/1/${commit}/v1-${createHash('sha256').update(JSON.stringify(['org/renamed', 'src/allowed'])).digest('hex')}.json.br`
+  assert.deepEqual((await request.kept()).filter(key => key !== renamed), [], 'none kept under its name before')
+  assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).bytes.equals(read.bytes), true, 'read by its new name')
+  await request.settle()
+})
+
+test('a repository deactivated or removed has what was kept of its code removed, as is one kept for it meanwhile', async t => {
+  for (const [path, body] of [['/api/admin/repositories/select', { repoId: 1, selected: false }],
+    ['/api/admin/repositories/remove', { repoId: 1, fullName: 'org/repo', acknowledge: true, deleteTriage: false }]]) {
+    const request = await fixture(t, { role: 'admin', storage: true })
+    const slow = Promise.withResolvers()
+    const asked = github(t, { hold: tree => tree === treeAt('src/linked') ? slow.promise : null })
+    for (const ref of ['', commit]) assert.equal((await request({ repoId: '1', ref, path: ref ? 'src' : 'src/allowed' })).status, 200, path)
+    await request.settle()
+    assert.deepEqual(await keptCommits(request), [commit, commit], path)
+    // Another directory of its head, its tarball coming as the repository goes.
+    const reading = request({ repoId: '1', ref: commit, path: 'src/linked' })
+    await tarballAsked(asked, treeAt('src/linked'))
+    assert.equal(await request.post(path, body), 200, path)
+    assert.deepEqual(await request.kept(), [], path)
+    assert.equal(await codeHeadStore(request.db).read('1'), null, `${path}: nor the commit they were kept at`)
+    slow.resolve()
+    assert.equal((await reading).status, 404, `${path}: not sent`)
+    await request.settle()
+    assert.deepEqual(await request.kept(), [], `${path}: what it read kept for none`)
+    t.mock.restoreAll()
+  }
+})
+
+test('a read of the default branch whose head comes as the repository is deactivated or removed keeps nothing, nor its head', async t => {
+  for (const [path, body] of [['/api/admin/repositories/select', { repoId: 1, selected: false }],
+    ['/api/admin/repositories/remove', { repoId: 1, fullName: 'org/repo', acknowledge: true, deleteTriage: false }]]) {
+    const request = await fixture(t, { role: 'admin', storage: true })
+    const slow = Promise.withResolvers()
+    const asked = github(t, { head: () => slow.promise.then(() => commit) })
+    const reading = request({ repoId: '1', ref: '', path: 'src/allowed' })
+    while (!asked.includes('/repos/org/repo/commits/heads%2Fmain')) await new Promise(resolve => { setImmediate(resolve) })
+    assert.equal(await request.post(path, body), 200, path)
+    slow.resolve()
+    assert.equal((await reading).status, 404, `${path}: not sent`)
+    await request.settle()
+    assert.deepEqual(await request.kept(), [], path)
+    assert.equal(await codeHeadStore(request.db).read('1'), null, `${path}: nor the commit it read`)
+    t.mock.restoreAll()
+  }
+})
+
+test('a body past MAX_KEPT_CODE_BYTES is not kept, nor one kept past it read', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const put = [], work = []
+  const storage = {
+    put: (key, bytes) => { put.push(bytes.byteLength); return Promise.resolve() },
+    open: () => Promise.resolve({ size: MAX_KEPT_CODE_BYTES + 1, stream: Readable.from([]) }),
+    delete: () => Promise.resolve(),
+  }
+  const kept = repositoryCodeKept(storage, codeHeadStore(db), () => Promise.resolve(true), job => { work.push(job) })
+  const at = { repoId: 1, repo: 'org/repo', commit, path: '' }
+  assert.equal(await kept.at(at, '', 'main'), true)
+  // Bodies by their sizes alone, as neither keeping one nor this storage reads more of it.
+  kept.keep(at, { byteLength: MAX_KEPT_CODE_BYTES + 1 })
+  kept.keep({ ...at, path: 'src' }, { byteLength: MAX_KEPT_CODE_BYTES })
+  await Promise.all(work)
+  assert.deepEqual(put, [MAX_KEPT_CODE_BYTES])
+  const read = kept.read(at)
+  assert.equal(await read.result, null)
+  read.release()
+})
+
+test('with storage encrypted, a kept directory is ciphertext at rest, bound to its path, and reads back', async t => {
+  const request = await fixture(t, { role: 'admin', storage: true, key: storageTestKey })
+  const asked = github(t)
+  const tarballs = () => asked.filter(entry => entry.includes('/tarball/')).length
+  const allowed = await request({ repoId: '1', ref: '', path: 'src/allowed' })
+  const src = await request({ repoId: '1', ref: '', path: 'src' })
+  await request.settle()
+  const kept = await request.kept()
+  assert.equal(kept.length, 2)
+  assert.ok(kept.every(path => path.startsWith('cache-encrypted-v1/repository-code/1/')), 'apart from the plaintext generation')
+  const stored = await Promise.all(kept.map(async path => {
+    const parts = []
+    for await (const part of (await request.raw.open(path)).stream) parts.push(part)
+    return Buffer.concat(parts)
+  }))
+  for (const bytes of stored) {
+    assert.ok(bytes.subarray(0, STORAGE_MAGIC.length).equals(STORAGE_MAGIC))
+    for (const sent of [allowed, src]) assert.equal(bytes.indexOf(sent.bytes.subarray(0, 32)), -1, 'none of a body as sent')
+  }
+  assert.deepEqual((await request.elsewhere()({ repoId: '1', ref: commit, path: 'src/allowed' })).bytes, allowed.bytes)
+  assert.equal(tarballs(), 2, 'read back as kept')
+  // One path's ciphertext in another's place reads as none kept: that
+  // directory is read again, its own files sent.
+  for (const [i, path] of kept.entries()) await request.raw.put(path, stored[1 - i])
+  const again = await request.elsewhere()({ repoId: '1', ref: commit, path: 'src' })
+  assert.deepEqual(again.body, src.body)
+  assert.equal(tarballs(), 3)
 })

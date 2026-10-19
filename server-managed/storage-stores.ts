@@ -8,7 +8,7 @@ import { createBundleStore } from './bundle-store.ts'
 import { createReportStore } from './report-store.ts'
 import { CacheMissError, type CacheStorage, validateCacheKey } from './cache-storage.ts'
 import { type ObjectStorage, isBlobId } from './object-storage.ts'
-import { PUBLIC_CACHE } from './storage-payload.ts'
+import { PUBLIC_CACHE, REPOSITORY_CODE_CACHE } from './storage-payload.ts'
 
 function id(value: string): string {
   if (!isBlobId(value)) throw new Error('Invalid managed blob id')
@@ -35,7 +35,7 @@ function cacheStore(objects: ObjectStorage, name: string): CacheStorage {
       if (!value) throw new CacheMissError()
       return value
     },
-    delete: prefix => objects.deletePrefix(`${path(prefix)}/`),
+    delete: (prefix, keep) => objects.deletePrefix(`${path(prefix)}/`, keep === undefined ? undefined : `${path(`${prefix}/${keep}`)}/`),
   }
 }
 
@@ -86,5 +86,6 @@ export function createManagedStores(objects: ObjectStorage, avatarSidecar: boole
     cacheStorage,
     reportSourcesStorage: cacheStore(objects, 'report-sources'),
     npmCacheStorage: cacheStore(objects, PUBLIC_CACHE),
+    repositoryCodeStorage: cacheStore(objects, REPOSITORY_CODE_CACHE),
   }
 }

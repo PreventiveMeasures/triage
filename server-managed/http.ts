@@ -135,8 +135,9 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, lockfileReadStore, npmDeltaStore, npmPublishTimeStore, npmVersionStore,
-  ownKeptPrunes, pullDependencyStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { type KeptStore, REPOSITORY_READ_KEPT_MS, codeHeadStore, codeTreeStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, lockfileReadStore,
+  npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { plainObject } from './npm-manifest.ts'
 import { type NpmDelta, keptNpmDeltas, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
@@ -211,7 +212,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, VERSION_KEPT_MS, canReadPrivateNpm, npmFileRows, npmPublishTime, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
-import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
+import { type RepositoryCodeKept, loadRepositoryCodeBody, repositoryCodeFits, repositoryCodeKept } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
 import { COAUTHORS_READ } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, openPullHeads,
@@ -444,6 +445,9 @@ export interface ManagedHttpDeps {
   prettyCache?: PrettyCache
   // The public npm cache, where risk keeps public packages' assessments (npm-risk.ts).
   npmCacheStorage?: CacheStorage
+  // Where the code viewer keeps the default branch's head's directories
+  // (repository-code.ts repositoryCodeKept).
+  repositoryCodeStorage?: CacheStorage
   uploadStore?: BlobStore
   originGate: OriginGate
   isShuttingDown: () => boolean
@@ -992,7 +996,9 @@ async function handleConnectRepositoryApp(req: IncomingMessage, res: ServerRespo
 // POST /api/admin/repositories/select — an admin toggles whether a repo is
 // active in the operate-on set. Mutation: same-origin + CSRF. Body { repoId,
 // selected }. selected:true verifies + records the read context; selected:false
-// deactivates the row while retaining its reports, bundles, and metadata.
+// deactivates the row while retaining its reports, bundles, and metadata, but
+// for the code the code viewer kept of it, which no one reads meanwhile
+// (removeKeptCode).
 async function handleSelectRepository(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
@@ -1008,6 +1014,7 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
     const repo = (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId)
     if (await readAdminSession(res, deps, cookie) == null) return
     await deps.db.deactivateRepo(repoId)
+    await removeKeptCode(deps, repoId)
     if (repo) await activity(deps, s.user, 'repository', 'deactivated a repository', { repo: repo.fullName })
     sendJson(res, 200, { ok: true, selected: false }); return
   }
@@ -1141,7 +1148,15 @@ async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse,
     await deps.reportSourcesCache?.deleteBundle(bundle.id).catch((err) => { console.warn('managed: report sources delete failed:', err) })
     await deps.bundleStore.delete(bundle.id).catch(() => {})
   }
+  await removeKeptCode(deps, repo.repoId)
   sendJson(res, 200, { ok: true, deletedReports, deletedBundles, deletedTriage })
+}
+
+// The code the code viewer kept of a repository no longer read, its
+// directories' files (repositoryCodeKeptOf), removed once its row is: as a
+// bundle's derivatives are, at best, a failure warned of.
+async function removeKeptCode(deps: ManagedHttpDeps, repoId: number): Promise<void> {
+  await repositoryCodeKeptOf(deps)?.remove(repoId).catch((err: unknown) => { console.warn('managed: kept repository code delete failed:', err) })
 }
 
 // Strip a client-supplied upload filename to a safe display string. The bytes
@@ -1635,21 +1650,60 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
 // tarball is asked for; the reader's access is checked again once it is
 // read, before any of it is sent. The load stays held until this response is
 // written or abandoned, and a reader who stops reading it gives it up after
-// a while.
+// a while. A directory of the default branch's head is kept in byte storage
+// as it was sent, for the next to open it (repositoryCodeKeptOf).
 // What GitHub answered of a repository's trees for the code viewer, which a
 // commit or tree it names never changes: the tree at a directory of a commit
 // (getRepoTreeId reads the commit, then a listing a level down to it), and
 // how many files a tree holds under it and their bytes (repositoryTreeFiles),
 // by the repository's id, for the next to open it. Asked of them only once
 // the reader's own access has named the commit, as GitHub would have
-// answered them; by the database, as each instance has one.
+// answered them; held by each instance a while, by the database it has, and
+// kept in that database for every instance (npm-kept.ts codeTreeStore).
 const REPOSITORY_TREES_KEPT = 4096
 type TreeFiles = Awaited<ReturnType<typeof repositoryTreeFiles>>
 const repositoryTrees = new WeakMap<ManagedDb, { ids: Lru<string>; files: Lru<TreeFiles> }>()
-function repositoryTreesOf(db: ManagedDb) {
-  let kept = repositoryTrees.get(db)
-  if (!kept) repositoryTrees.set(db, kept = { ids: lru(REPOSITORY_TREES_KEPT), files: lru(REPOSITORY_TREES_KEPT) })
-  return kept
+const treeId = (value: unknown): value is string => typeof value === 'string' && /^[a-f\d]{40}$/u.test(value)
+const treeFiles = (value: unknown): value is TreeFiles => value === null || (plainObject(value)
+  && Number.isSafeInteger(value['files']) && (value['files'] as number) >= 0 && Number.isSafeInteger(value['bytes']) && (value['bytes'] as number) >= 0)
+function repositoryTreesOf(deps: ManagedHttpDeps) {
+  let held = repositoryTrees.get(deps.db)
+  if (!held) repositoryTrees.set(deps.db, held = { ids: lru(REPOSITORY_TREES_KEPT), files: lru(REPOSITORY_TREES_KEPT) })
+  const { ids, files } = held
+  return {
+    id: (key: string, read: () => Promise<string>) => keptTree(ids, codeTreeStore<string>(deps.db, 'trees', deps.config.debug), key, treeId, read),
+    files: (key: string, read: () => Promise<TreeFiles>) => keptTree(files, codeTreeStore<TreeFiles>(deps.db, 'tree-files', deps.config.debug), key, treeFiles, read),
+  }
+}
+// What `memory` holds by `key`, else what `store` keeps of it as `kept`
+// takes it, else what `read` answers, then held and kept.
+async function keptTree<T>(memory: Lru<T>, store: KeptStore<T>, key: string, kept: (value: unknown) => value is T, read: () => Promise<T>): Promise<T> {
+  const held = memory.get(key)
+  if (held !== undefined) return held
+  const stored = await store.read(key)
+  let value: T
+  if (stored && kept(stored.value)) value = stored.value
+  else {
+    value = await read()
+    await store.write(key, value, Date.now())
+  }
+  memory.set(key, value)
+  return value
+}
+
+// The default branch's head's directories as kept in byte storage
+// (repository-code.ts repositoryCodeKept), the commit they are kept at in
+// the database, for a repository active as it is selected; none where this
+// server has no byte storage for them. Work behind an answer is tracked
+// (serverless, its invocation kept alive till it settles), as a kept read
+// read again behind one is.
+function repositoryCodeKeptOf(deps: ManagedHttpDeps): RepositoryCodeKept | null {
+  if (!deps.repositoryCodeStorage) return null
+  const active = async (repoId: number) => (await deps.db.listSelectedRepos()).some(row => row.repoId === repoId)
+  return repositoryCodeKept(deps.repositoryCodeStorage, codeHeadStore(deps.db, deps.config.debug), active, work => {
+    deps.track(work)
+    deps.waitUntil?.(work)
+  }, deps.config.debug)
 }
 
 async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
@@ -1668,12 +1722,6 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
     const commit = await reader.commit(ref)
     const repo = access.repo.fullName
     const client = createClient({ token: reader.readToken() })
-    const treeKey = `${access.repo.repoId}\0${commit}\0${path}`, trees = repositoryTreesOf(deps.db)
-    // A directory the commit has none at is none to read, as browsing it says.
-    const tree = trees.ids.get(treeKey) ?? await upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
-      throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(' has no directory at ') ? new GithubApiError(404, 'no-directory') : err
-    }))
-    trees.ids.set(treeKey, tree)
     // Access still held, and the same repository, before anything read is sent.
     const fenced = async () => {
       await reader.recheckAccess()
@@ -1682,10 +1730,37 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
       if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return false }
       return true
     }
+    const send = (bytes: Buffer) => {
+      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      res.writeHead(200, {
+        'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(bytes.byteLength),
+        'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff',
+      })
+      writeResponse(res, bytes)
+    }
+    // The default branch's head's directory as kept, once the reader's own
+    // access has named its commit, sent as one read is, access checked again;
+    // its place among the active loads held till it is written or abandoned,
+    // else given up before a read from GitHub asks for its own.
+    const at = { repoId, repo, commit, path }, kept = repositoryCodeKeptOf(deps)
+    const atHead = kept !== null && await kept.at(at, ref, reader.defaultBranch)
+    if (atHead) {
+      const keptLoad = kept.read(at)
+      res.once('close', keptLoad.release)
+      const held = await keptLoad.result
+      if (held) {
+        if (await fenced() && !res.destroyed) send(held)
+        return
+      }
+      keptLoad.release()
+    }
+    const trees = repositoryTreesOf(deps)
+    // A directory the commit has none at is none to read, as browsing it says.
+    const tree = await trees.id(`${repoId}\0${commit}\0${path}`, () => upstreamGithub(() => client.getRepoTreeId({ repo, sha: commit, ...(path ? { directory: path } : {}) }).catch((err: unknown) => {
+      throw err instanceof Error && err.name === 'AssertionError' && err.message.includes(' has no directory at ') ? new GithubApiError(404, 'no-directory') : err
+    })))
     // Too large names the commit it was read at, for History to read.
-    const filesKey = `${access.repo.repoId}\0${tree}`
-    let listed = trees.files.get(filesKey)
-    if (listed === undefined) trees.files.set(filesKey, listed = await repositoryTreeFiles(repo, reader.readToken(), tree))
+    const listed = await trees.files(`${repoId}\0${tree}`, () => repositoryTreeFiles(repo, reader.readToken(), tree))
     if (!repositoryCodeFits(listed)) {
       if (await fenced()) sendJson(res, 413, { error: 'directory-too-large', commit })
       return
@@ -1699,13 +1774,10 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
     })))
     res.once('close', load.release)
     const bytes = await load.result
+    // Like other GitHub caches, kept before the access fence below.
+    if (atHead) kept.keep(at, bytes)
     if (!(await fenced()) || res.destroyed) return
-    res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
-    res.writeHead(200, {
-      'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(bytes.byteLength),
-      'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff',
-    })
-    writeResponse(res, bytes)
+    send(bytes)
   } catch (err) {
     if (res.headersSent || res.destroyed) return
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
