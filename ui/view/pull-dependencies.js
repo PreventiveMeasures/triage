@@ -5,10 +5,11 @@
 // /api/admin/repositories/pull-dependencies): read only of one GitHub says
 // changes a lockfile, or may, its files more than it listed
 // (`touchesLockfile`), as many at once as READ_AT_ONCE, those asked first
-// read first, as a page of tiles asks of each in turn, those a page asks of
-// in the background (a team's Dependencies tab) after the rest, as many of a
-// repository's as READ_TOGETHER asked together, one asked of meanwhile moved
-// before them; and kept for the session that read them a while, as the
+// read first, as a page of tiles asks of each in turn, those waiting for a
+// turn as many of a repository's as SHOWN_TOGETHER asked together, those a
+// page asks of in the background (a team's Dependencies tab) after the rest,
+// as many as READ_TOGETHER together, one asked of meanwhile moved before
+// them; and kept for the session that read them a while, as the
 // tiles are, one grown old shown while it is read again, as are those a
 // team's Dependencies tab reads together (seedPullDependencies,
 // team-dependencies.js). Each answer's versions are worked out once
@@ -23,6 +24,7 @@ import { isPatchHash, isPatchPath } from '../../common/managed/npm-packages.js'
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
 const READ_AT_ONCE = 2
+const SHOWN_TOGETHER = 5
 const READ_TOGETHER = 20
 
 const held = new Map()
@@ -134,16 +136,17 @@ export function checked(answer) {
       ? { lockfiles: { mode: review.lockfiles.mode, paths: review.lockfiles.paths } } : {} } } : {} }
 }
 
-// The next asked read as one is, as many at once as READ_AT_ONCE, those
-// asked in the background after the rest, one of them read with as many of
-// its repository's waiting as READ_TOGETHER.
+// The next asked read as one is, as many at once as READ_AT_ONCE, with as
+// many of its repository's waiting with it as SHOWN_TOGETHER, those asked
+// in the background after the rest, as many as READ_TOGETHER.
 function readNext() {
   while (reading < READ_AT_ONCE && waiting.length + behind.length > 0) {
     const first = waiting.shift() ?? behind.shift()
+    const [queue, together] = first.background ? [behind, READ_TOGETHER] : [waiting, SHOWN_TOGETHER]
     const jobs = [first]
-    for (let at = 0; first.background && at < behind.length && jobs.length < READ_TOGETHER;) {
-      const job = behind[at]
-      if (job.pull.repoId === first.pull.repoId && job.review === first.review) jobs.push(...behind.splice(at, 1))
+    for (let at = 0; at < queue.length && jobs.length < together;) {
+      const job = queue[at]
+      if (job.pull.repoId === first.pull.repoId && job.review === first.review) jobs.push(...queue.splice(at, 1))
       else at++
     }
     for (const job of jobs) queued.delete(job.key)

@@ -2454,8 +2454,12 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || numbers.length > MAX_ASKED_PULLS || numbers.some(number => number === null) || new Set(numbers).size < numbers.length
     || !['1', null].includes(query.get('review'))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
-    if (listed === null) return pullDependencyAnswer(deps, fullName, token, user, repoId, numbers[0]!, review)
-    const answers = await eachOf(numbers as number[], PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, review).catch((err: unknown) => {
+    // Each by the commits the Pull requests tab's page it is on names, where
+    // one kept names them, as its tile is of that page (keptPullCommits).
+    const commits = await keptPullCommits(deps, repoId, numbers as number[])
+    if (listed === null) return pullDependencyAnswer(deps, fullName, token, user, repoId, numbers[0]!, review, commits.get(numbers[0]!))
+    const answers = await eachOf(numbers as number[], PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, review, commits.get(number))
+      .catch((err: unknown) => {
       // GitHub asked, though it failed: its access asked again after.
       if (err instanceof GithubApiError) return { value: { number, error: err.message }, kept: false }
       throw err
@@ -2696,21 +2700,47 @@ async function teamOpenPulls(deps: ManagedHttpDeps, repoId: number, fullName: st
   let after: string | null = null, kept = true
   for (let page = 0; page < TEAM_PULL_PAGES; page++) {
     const cursor = after
-    const answer = await keptAnswer(deps, `${repoId}\0issues\0${ISSUES_READ_VERSION}\0pulls\0open\0${cursor ?? ''}`,
-      async () => ({ kind: 'pulls', state: 'open', ...await repositoryIssues(fullName, token, 'pulls', 'open', cursor) }))
+    const answer = await keptAnswer(deps, openPullsKey(repoId, cursor), async () => ({ kind: 'pulls', state: 'open', ...await repositoryIssues(fullName, token, 'pulls', 'open', cursor) }))
     kept &&= answer.kept
-    const value = answer.value as { items?: unknown; more?: unknown; after?: unknown; commits?: unknown }
+    const value = answer.value as OpenPullsPage
     items.push(...(Array.isArray(value.items) ? value.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0))
-    for (const pull of Array.isArray(value.commits) ? value.commits as { number?: unknown; base?: unknown; head?: unknown }[] : []) {
-      const { number, base, head } = pull ?? {}
-      if (Number.isSafeInteger(number) && typeof base === 'string' && OBJECT_ID.test(base) && typeof head === 'string' && OBJECT_ID.test(head)) {
-        commits.set(number as number, { base, head })
-      }
-    }
+    pageCommits(value, commits)
     if (value.more !== true || typeof value.after !== 'string') return { items, commits, more: false, kept }
     after = value.after
   }
   return { items, commits, more: true, kept }
+}
+type OpenPullsPage = { items?: unknown; more?: unknown; after?: unknown; commits?: unknown }
+const openPullsKey = (repoId: number, cursor: string | null) => `${repoId}\0issues\0${ISSUES_READ_VERSION}\0pulls\0open\0${cursor ?? ''}`
+// Each open pull request's base's and head's commits a page of them names,
+// into `commits` by its number.
+function pageCommits(page: OpenPullsPage, commits: Map<number, PullCommits>) {
+  for (const pull of Array.isArray(page.commits) ? page.commits as { number?: unknown; base?: unknown; head?: unknown }[] : []) {
+    const { number, base, head } = pull ?? {}
+    if (Number.isSafeInteger(number) && typeof base === 'string' && OBJECT_ID.test(base) && typeof head === 'string' && OBJECT_ID.test(head)) {
+      commits.set(number as number, { base, head })
+    }
+  }
+}
+
+// Open pull requests `numbers`' base's and head's commits, as the pages of
+// them the Pull requests tab read were kept with them (GET issues), as many
+// of those as TEAM_PULL_PAGES on from its first, while all are kept: GitHub
+// not asked, nor pages read where none is kept. A tile of a page kept, even
+// one read again behind it, is of the commits it names.
+async function keptPullCommits(deps: ManagedHttpDeps, repoId: number, numbers: number[]) {
+  const store = repositoryReadStore(deps.db, deps.config.debug)
+  const commits = new Map<number, PullCommits>()
+  let after: string | null = null
+  for (let page = 0; page < TEAM_PULL_PAGES && numbers.some(number => !commits.has(number)); page++) {
+    const stored = await store.read(openPullsKey(repoId, after))
+    if (!stored || Date.now() - stored.at >= REPOSITORY_READ_KEPT_MS) break
+    const value = stored.value as OpenPullsPage
+    pageCommits(value, commits)
+    if (value.more !== true || typeof value.after !== 'string') break
+    after = value.after
+  }
+  return commits
 }
 
 // The lines the versions wanting reviews of `answers` change, as their rows

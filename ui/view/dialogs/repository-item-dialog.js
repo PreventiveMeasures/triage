@@ -10,6 +10,7 @@
 // branch, is a link to GitHub, and a session to where it ran.
 import { html, nothing, unsafeCSS } from 'lit'
 import { autorun } from '@rray/frontend/state-management'
+import { state as clientState } from '#client/index.js'
 import { styleMap } from '../style-map.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { fetchRepositoryItem } from '../client-managed.js'
@@ -39,6 +40,13 @@ const SOURCES = { mirror: 'mirror', git: 'git', tarball: 'tarball', file: 'file'
 const UNSUPPORTED = { git: 'From git, which isn’t reviewed', tarball: 'A tarball not npm’s registry’s of its version, which isn’t reviewed',
   integrity: 'Locked with no integrity, which its reviews are held to' }
 const LOCKFILE_ERRORS = { 'lockfile-unreadable': 'A lockfile here couldn’t be read', 'lockfile-unsupported': 'Bun’s lockfile here isn’t read', 'github-not-found': 'GitHub has none of a lockfile here at a commit compared' }
+
+// Each issue or pull request a popup read, by the session, the repository
+// and its number, `{ item, at }`: a popup opening on one read less than
+// ITEM_FRESH_MS ago shows it as read, none read again; those older let go.
+const ITEM_FRESH_MS = 60_000
+const readItems = new Map()
+const itemKey = (repoId, number) => `${clientState.managedSession?.id}\0${clientState.managedSession?.role}\0${repoId}\0${number}`
 
 class RepositoryItemDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(proseCSS), unsafeCSS(codeTokensCSS), unsafeCSS(appUserCSS), unsafeCSS(styles)]
@@ -77,12 +85,19 @@ class RepositoryItemDialog extends AppDialog {
     this._trail = [...this._trail, target]
     if (target.number == null || this._items.has(target.number)) return
     const number = target.number
-    this._items = new Map(this._items).set(number, { status: 'loading' })
     const { repoId } = this.repository
+    const read = readItems.get(itemKey(repoId, number))
+    if (read && Date.now() - read.at < ITEM_FRESH_MS) {
+      this._items = new Map(this._items).set(number, { status: 'ready', item: read.item })
+      return
+    }
+    this._items = new Map(this._items).set(number, { status: 'loading' })
     fetchRepositoryItem(repoId, number, { signal: this._controller.signal }).then(
       item => {
         // Known as the latest read of it, where none later is, for its tile.
         knowItems(repoId, [item], readAtOf(item))
+        for (const [key, { at }] of readItems) if (Date.now() - at >= ITEM_FRESH_MS) readItems.delete(key)
+        readItems.set(itemKey(repoId, number), { item, at: Date.now() })
         return { status: 'ready', item }
       },
       err => err?.name === 'AbortError' ? null : { status: 'error', error: err?.message || 'It could not be read.' },

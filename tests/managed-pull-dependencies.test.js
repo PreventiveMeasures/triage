@@ -361,6 +361,26 @@ test('GET pull-dependencies answers several of a repository\'s pull requests tog
   }
 })
 
+test('GET pull-dependencies takes an open pull request\'s commits from the Pull requests tab\'s page kept naming them, GitHub not asked for them; one on none asked', async t => {
+  const request = await fixture(t)
+  const asked = github(t)
+  const rest = globalThis.fetch
+  const node = { number: 5, title: 'Pull 5', state: 'OPEN', comments: { totalCount: 0 }, labels: { totalCount: 0, nodes: [] }, baseRefOid: tip, headRefOid: head,
+    files: { totalCount: 1, nodes: [{ path: 'package-lock.json' }] } }
+  t.mock.method(globalThis, 'fetch', (input, init) => new URL(typeof input === 'string' ? input : input.url).pathname === '/graphql'
+    ? Promise.resolve(Response.json({ data: { repository: { open: { totalCount: 1 }, closed: { totalCount: 0 }, page: { pageInfo: { hasNextPage: false }, nodes: [node] } } } }))
+    : rest(input, init))
+  assert.deepEqual((await request('issues', { repoId: '1', kind: 'pulls', state: 'open' })).body.items.map(item => item.number), [5])
+  const answer = await request('pull-dependencies', { repoId: '1', number: '5', review: '1' })
+  assert.equal(answer.status, 200)
+  assert.equal(answer.body.lockfiles.length, 5)
+  assert.ok(!asked.includes('/repos/org/repo/pulls/5'), 'its commits not asked for')
+  const batched = await request('pull-dependencies', { repoId: '1', numbers: '5,6' })
+  assert.deepEqual(batched.body.pulls.map(pull => pull.error ?? pull.number), [5, 'github-not-found'])
+  assert.ok(asked.includes('/repos/org/repo/pulls/6'), 'one on no page kept asked for')
+  assert.ok(!asked.includes('/repos/org/repo/pulls/5'))
+})
+
 test('an open pull request\'s tile, and any one\'s popup, tell whether it changes a lockfile, by the files GitHub lists of it', async t => {
   const request = await fixture(t)
   const queries = []
