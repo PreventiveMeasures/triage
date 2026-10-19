@@ -2563,8 +2563,12 @@ function withExportFilters(fields, fn) {
 document.addEventListener('download-requested', async () => {
   if (state.reports.length === 0) return
   const { confirmed, view, fields, mode, oneSamplePerGroup } = await openExportConfirmDialog('download')
-  // A team's findings are written with their detail, which may still be on its way.
-  await managedDetailsReady()
+  // A team's findings are written with their detail, which may still be on
+  // its way; one whose detail never came is not written without it.
+  if (!(await managedDetailsReady())) {
+    showToast('Could not load finding details to export. Open the team again to retry.')
+    return
+  }
   // View replaces the confirmation with the file itself — same
   // selection, serialized the same way the download would, shown
   // read-only. It ends the flow: closing the preview leaves the report

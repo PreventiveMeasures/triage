@@ -19,9 +19,10 @@ export function managedDetailsPending() {
   return current !== null && !current.done && current.reports === store(state.reports)
 }
 
-// Settles once the loaded reports' findings have their detail, or never will.
+// Whether the loaded reports' findings have their detail, once they have it
+// or never will: false for a team's whose request failed.
 export function managedDetailsReady() {
-  return managedDetailsPending() ? current.ready : Promise.resolve()
+  return current !== null && current.reports === store(state.reports) ? current.ready : Promise.resolve(true)
 }
 
 // Fills the loaded reports' findings in from `request`'s whole reports, then
@@ -33,12 +34,13 @@ export function awaitManagedDetails(teamId, request, isCurrent, loaded) {
   entry.ready = (async () => {
     const workspace = await Promise.resolve(request).catch(() => null)
     entry.done = true
-    if (!isCurrent() || store(state.reports) !== reports) return
+    if (!isCurrent() || store(state.reports) !== reports) return false
     if (workspace) {
       fillDetails(reports, workspace)
       setManagedWorkspace(teamId, workspace)
     } else showToast('Could not load finding details. Open the team again to retry.')
     loaded()
+    return !!workspace
   })()
 }
 
