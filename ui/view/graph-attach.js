@@ -7,6 +7,7 @@
 // downloaded + parsed once per session.
 
 import { html, render as litRender } from 'lit'
+import { built } from './built.js'
 
 let loadPromise = null
 // Resolved module reference, cached after the first successful
@@ -26,8 +27,8 @@ export function loadGraph() {
     // it — keeps `ui/graph.js` (and the LitElement + shadow CSS +
     // canvas modules it transitively pulls in) out of the main
     // bundle. Browser resolves relative to the page URL, so this
-    // works at any deploy path.
-    const path = './graph.js'
+    // works at any deploy path, under the page's build (built.js).
+    const path = built('./graph.js')
     try {
       const mod = await import(path)
       loaded = mod

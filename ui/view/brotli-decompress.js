@@ -27,6 +27,7 @@
 // `/brotli-sw.js` from a prior SW-based fallback revision.
 
 import { trustedScriptURL } from './trusted-types.js'
+import { built } from './built.js'
 
 let initPromise = null
 let fallbackPromise = null
@@ -87,8 +88,9 @@ function loadFallback() {
     // resolve it — that keeps `brotli-fallback.js` (and the
     // foliojs/brotli decoder it pulls in) out of the main view.js
     // bundle. The browser resolves the URL relative to the page,
-    // so it works at any deploy path (root or subdirectory).
-    const path = FALLBACK_PATH
+    // so it works at any deploy path (root or subdirectory), under
+    // the page's build (built.js).
+    const path = built(FALLBACK_PATH)
     return await import(path)
   })()
   return fallbackPromise
@@ -129,7 +131,7 @@ function spawnWorker() {
     // fires `error` below — which retires the worker and sends the
     // decode back to the main thread. The URL goes through the app's
     // Trusted Types policy: index.html's CSP refuses a plain one.
-    worker = new Worker(trustedScriptURL(new URL(FALLBACK_PATH, import.meta.url)), { type: 'module' })
+    worker = new Worker(trustedScriptURL(new URL(built(FALLBACK_PATH), import.meta.url)), { type: 'module' })
   } catch {
     workerUnusable = true
     return null

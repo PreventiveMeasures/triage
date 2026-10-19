@@ -9,6 +9,7 @@
 // code blocks in finding descriptions). Unknown ones resolve to null
 // so the caller falls back to plain text without paying the import
 // cost.
+import { built } from './built.js'
 
 let loadPromise = null
 
@@ -18,8 +19,8 @@ function loadPrism() {
     // Path held in a variable so esbuild can't statically resolve
     // it — keeps prismjs out of the main bundle. The browser
     // resolves the URL relative to the page; works at any deploy
-    // path (root or subdirectory).
-    const path = './prism.js'
+    // path (root or subdirectory), under the page's build (built.js).
+    const path = built('./prism.js')
     return await import(path)
   })()
   return loadPromise

@@ -54,6 +54,10 @@ Then `out/` is never read, and requests outside `/api/` answer 404.
 The host serves `out/` itself, and in managed modes it also serves `index.html` at the page URLs.
 When the server serves that file, it rewrites the file's `./` asset URLs to absolute ones (deep page URLs need this) and adds the `DEEPVIEW_SCAN_SERVER` origin to its `connect-src`.
 A host that serves the file unchanged does neither.
+Each page in `out/` names its build and asks for `view.js`, `view.css` and the bundles it loads at runtime under it (`?v=`), so a cached copy of another release's bundle is never loaded beside it.
+Chunks are named by their content.
+A host serving `out/` itself must still have browsers revalidate the HTML (`Cache-Control: no-cache`, as this server sends), or a page can stay a release behind.
+`Last-Modified` alone can't tell releases apart: npm gives every file in the package the same modification time.
 
 For an installed package, run the host with `node --import @preventive/triage/strip-types-loader host.js` so Node can load TypeScript from `node_modules`.
 From a checkout, import `./server.ts` instead.

@@ -8,7 +8,10 @@
 // transient failure. The browser keeps a module whose fetch failed as failed
 // for the page's life, so a retry asks for it under a URL of its own (the
 // static servers serve a file whatever its query). A chunk the bundle
-// imports that failed stays failed until a reload.
+// imports that failed stays failed until a reload. Each is asked for under
+// the page's build (built.js).
+import { built } from './built.js'
+
 export function lazyEntry(path) {
   let promise = null
   let failures = 0
@@ -16,7 +19,7 @@ export function lazyEntry(path) {
     // The module once loaded, for callers that can't wait for it.
     module: null,
     load() {
-      promise ??= import(failures ? `${path}?retry=${failures}` : path)
+      promise ??= import(built(path, failures ? { retry: failures } : {}))
         .then(module => (entry.module = module), err => { promise = null; failures++; throw err })
       return promise
     },

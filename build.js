@@ -12,6 +12,7 @@ import { basename, resolve as resolvePath, dirname } from 'node:path'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect as netConnect } from 'node:net'
 import { minify as oxcMinify } from 'oxc-minify'
+import { buildId, stampedHtml } from './build-id.js'
 import { escapedControls } from './build-controls.js'
 import { minifyLitSource } from './build-lit-minify.js'
 import { litSvgAsHtml } from './build-lit-svg.js'
@@ -147,9 +148,9 @@ if (mode === 'build') {
   // @preventive/compare's peer): it compresses further than esbuild's
   // minifier, out/'s JavaScript some 2.6% smaller under Brotli. It keeps the
   // licence comments esbuild kept, which it drops by default. A chunk's name
-  // stays esbuild's hash of its own output; nothing caches by it, the static
-  // servers revalidate every file by ETag. Then the control characters both
-  // print raw, escaped again (build-controls.js).
+  // stays esbuild's hash of its own output, which oxc-minify turns into the
+  // same file each time. Then the control characters both print raw, escaped
+  // again (build-controls.js).
   await Promise.all(Object.keys(outputs).filter(path => path.endsWith('.js')).map(async path => {
     const { code, errors } = await oxcMinify(path, await readFile(path, 'utf8'), { module: true, codegen: { legalComments: 'inline' } })
     if (errors.length) throw new Error(`oxc-minify failed on ${path}: ${errors.map(e => e.message).join('; ')}`)
@@ -163,6 +164,10 @@ if (mode === 'build') {
   const preload = '<link rel="modulepreload" href="./view.js" />'
   if (!index.includes(preload)) throw new Error('out/index.html lost its view.js modulepreload')
   await writeFile('out/index.html', index.replace(preload, [preload, ...chunks.map(c => `<link rel="modulepreload" href="./${c}" />`)].join('\n')))
+  // Each page names the build of the scripts and styles it loads, and asks
+  // for its own and the bundles it loads at runtime under it (build-id.js).
+  const id = buildId(await Promise.all(Object.keys(outputs).filter(path => /\.(?:css|js)$/u.test(path)).map(async path => [path, await readFile(path)])))
+  for (const name of (await readdir('out')).filter(name => name.endsWith('.html'))) await writeFile(`out/${name}`, stampedHtml(await readFile(`out/${name}`, 'utf8'), id))
 } else if (mode === 'serve') {
   const scanServer = configuredScanServer(process.env['DEEPVIEW_SCAN_SERVER']) ?? DEFAULT_SCAN_SERVER
   // Mirror the previous `--servedir=ui --outdir=ui` setup: esbuild

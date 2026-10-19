@@ -8,9 +8,10 @@ import './managed/repository-risk.js'
 import { ManagedPage } from './managed/page.js'
 import { managedFetch } from '../client/managed/request.js'
 import { managedAppState } from './managed/state.js'
+import { built } from './view/built.js'
 export function clearFindingHistory() { managedAppState.invalidate(['finding-history']) }
 export async function loadWorkspaceImportPage() {
-  const path = './client-managed-import.js'
+  const path = built('./client-managed-import.js')
   const mod = await import(path)
   mod.registerWorkspaceImport(ManagedPage, managedFetch)
 }

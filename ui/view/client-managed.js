@@ -8,6 +8,7 @@ import { canViewFindingHistory } from './finding-history.js'
 import { applyManagedIssues } from './managed-issues.js'
 import { invalidateManagedFixes } from './managed-pull-requests.js'
 import { forgetGithubUsers, knowingGithubUsers } from './github-users.js'
+import { built } from './built.js'
 
 let loadPromise = null
 let managedModule = null
@@ -35,7 +36,7 @@ export async function fetchReportSources(id, teamId = state.currentManagedTeam) 
 export function loadManagedBundle() {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
-    const path = './client-managed.js'
+    const path = built('./client-managed.js')
     try {
       managedModule = await import(path)
       return managedModule

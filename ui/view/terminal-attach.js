@@ -21,6 +21,7 @@
 
 import { bundleFilesAsMap } from './bundle-sources.js'
 import { stripCommonPathPrefix } from './format.js'
+import { built } from './built.js'
 
 let loadPromise = null
 let cached = null
@@ -41,8 +42,9 @@ function loadTerminal() {
     // Path held in a variable so esbuild can't statically resolve
     // it — keeps terminal.js (and the prismjs-sized lit + shell
     // payload it pulls) out of the main bundle. Browser resolves
-    // it against the page URL, so this works at any deploy path.
-    const path = './terminal.js'
+    // it against the page URL, so this works at any deploy path,
+    // under the page's build (built.js).
+    const path = built('./terminal.js')
     try {
       return await import(path)
     } catch (err) {

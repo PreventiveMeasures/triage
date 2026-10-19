@@ -35,6 +35,7 @@
 
 import { getSecureItem, readCachedServerInfo, state } from '#client/index.js'
 import { applyDefaultSyncHost } from '#client/sync-host.js'
+import { built } from './built.js'
 
 let realModule = null
 let loadPromise = null
@@ -73,8 +74,9 @@ export function loadSync() {
     // Path held in a variable so esbuild can't statically resolve
     // it — keeps `ui/client-sync.js` (and its transitive sync /
     // crypto / transport payload) out of the main view bundle.
-    // Browser resolves it against the page URL.
-    const path = './client-sync.js'
+    // Browser resolves it against the page URL, under the page's
+    // build (built.js).
+    const path = built('./client-sync.js')
     try {
       const mod = await import(path)
       // Apply the host wiring from the MAIN bundle so the
