@@ -10,6 +10,7 @@ const CHANNEL = 'deepview-managed-session'
 let channel = null
 let told = null
 let heard = null
+let heardCount = 0
 let announcing = 0
 const watchers = new Set()
 
@@ -20,6 +21,7 @@ function opened() {
       const mark = event.data?.mark
       if (typeof mark !== 'string') return
       heard = mark
+      heardCount++
       if (told !== null && mark !== told) for (const watcher of watchers) watcher()
     })
     // Node's would hold its process open; a browser's has no such method.
@@ -40,23 +42,33 @@ async function markOf(session) {
 }
 
 // The session this tab found, told the others where it is another than the
-// one it last told. Another told before this tab had told its own, which
-// went unheeded (its probe then perhaps read the cookie before it changed),
-// is heeded now, once. One a later call overtook, its digest done after,
-// tells nothing.
-export async function announceManagedSession(session) {
+// one it last told. Where nothing was told since its probe was sent
+// (`since`, heardManagedSessions then), what it found is the newer: another
+// told before, its sender perhaps closed since, is told over and heard no
+// more. Otherwise another told before this tab had told its own, which went
+// unheeded (its probe then perhaps read the cookie before it changed), is
+// heeded now, once. One a later call overtook, its digest done after, tells
+// nothing.
+export async function announceManagedSession(session, since) {
   if (session?.publicShare) return
   const turn = ++announcing
   const mark = await markOf(session)
   if (turn !== announcing || mark === null || !opened()) return
   const first = told === null
-  if (mark !== told) {
+  const over = since === heardCount && heard !== null && heard !== mark
+  if (mark !== told || over) {
     told = mark
     // A BroadcastChannel reaches its own origin's tabs alone; it takes no target origin.
     // eslint-disable-next-line unicorn/require-post-message-target-origin
     channel.postMessage({ mark })
   }
-  if (first && heard !== null && heard !== mark) for (const watcher of watchers) watcher()
+  if (over) heard = mark
+  else if (first && heard !== null && heard !== mark) for (const watcher of watchers) watcher()
+}
+
+// How many tellings this tab has heard, taken as a probe is sent.
+export function heardManagedSessions() {
+  return heardCount
 }
 
 // Whether the tab that told last told of another session than `session`, as

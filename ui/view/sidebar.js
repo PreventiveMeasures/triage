@@ -24,7 +24,7 @@ import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../co
 import { ROLES, canReadRepositoryCode, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import { setManagedTeamFeedRefresh, startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
-import { announceManagedSession, toldOtherThan, watchManagedSessions } from './managed-session-channel.js'
+import { announceManagedSession, heardManagedSessions, toldOtherThan, watchManagedSessions } from './managed-session-channel.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -2106,7 +2106,11 @@ async function revalidateManagedSession() {
   try {
     const previous = state.managedSession
     const unanswered = {}
-    const probed = await managedProbeSession({ fallback: unanswered, sent: takeStartupSession() })
+    const sent = takeStartupSession()
+    // What other tabs told before a probe sent now is older than its answer;
+    // the startup session was asked for before this tab could hear.
+    const since = sent === undefined ? heardManagedSessions() : undefined
+    const probed = await managedProbeSession({ fallback: unanswered, sent })
     if (!isCurrent()) return
     // Unanswered while another tab tells of another session, which the cookie
     // may now name, signed out here or not: nothing is read for this one
@@ -2120,7 +2124,7 @@ async function revalidateManagedSession() {
     // told of another session during the probe, which may then have read the
     // cookie before it changed, has this tab ask again at once, superseding
     // this refresh (managed-session-channel.js).
-    if (probed !== unanswered && !getPreviewRole()) await announceManagedSession(session)
+    if (probed !== unanswered && !getPreviewRole()) await announceManagedSession(session, since)
     if (!isCurrent()) return
     state.managedSession = session
     managedSessionPending = false
