@@ -21,7 +21,7 @@ import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
 import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
-import { automaticFixFor } from './managed-issues.js'
+import { automaticFixFor, cardLinkFor } from './managed-issues.js'
 import { graph2 } from './graph/state.js'
 import { attachGraphLayout, loadedGraphMod } from './graph-attach.js'
 import { attachTerminal } from './terminal-attach.js'
@@ -948,13 +948,15 @@ function kanbanCardTemplate(g, opts = {}) {
   // Fix-link / comment shortcut — pinned to the bottom of the badge
   // column, directly above the meta row's confidence number (kanban
   // variant only; the focus-side queue stays indicator-free). One slot,
-  // fix wins over comment, never both. A URL-shaped fix renders as a
-  // real link (the payoff of surfacing it on the card is one-click
-  // access to the PR); a free-form fix or a comment reuses the
-  // `.mark-fix` / `.mark-comment` classes so the existing dialog
-  // delegates in events.js pick the click up — the kanban modal-toggle
-  // listener skips `.kanban-action` clicks so the popover stays shut.
-  const fix = activeEntry?.fix || automaticFixFor(activeTab)
+  // a link wins over comment, never both: the manual Fix, else the pull
+  // request linked to the saved issue, else that issue (cardLinkFor). A
+  // URL renders as a real link (the payoff of surfacing it on the card
+  // is one-click access to the PR or issue); a free-form fix or a
+  // comment reuses the `.mark-fix` / `.mark-comment` classes so the
+  // existing dialog delegates in events.js pick the click up — the
+  // kanban modal-toggle listener skips `.kanban-action` clicks so the
+  // popover stays shut.
+  const fix = cardLinkFor(activeTab, activeEntry)
   const comment = activeEntry?.comment ?? ''
   let action = nothing
   if (isKanban && fix) {

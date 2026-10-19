@@ -9,6 +9,7 @@ mock.module('../ui/view/dom.js', { namedExports: { report: null } })
 const { getPackagesIndex } = await import('../client/bundle-finding-index.js')
 const { state } = await import('../client/state.ts')
 const { findingCardInnerTemplate } = await import('../ui/view/render-finding.js')
+const { cardLinkFor } = await import('../ui/view/managed-issues.js')
 
 function cardTemplates(t, overrides = {}, findingOverrides = {}) {
   const next = { serverMode: 'managed', localMode: false, currentManagedTeam: 'team',
@@ -80,3 +81,21 @@ for (const manual of ['', 'https://github.com/o/r/pull/2', 'https://github.com/o
     if (manual) assert.ok(links.some(template => template.values.includes(manual)))
   })
 }
+
+test('kanban cards link the manual Fix, else the issue\'s pull request, else the issue', t => {
+  const autoFix = 'https://github.com/o/r/pull/3', finding = { id: 'finding' }, url = 'https://github.com/o/r/issues/1'
+  const previous = { serverMode: state.serverMode, localMode: state.localMode, currentManagedTeam: state.currentManagedTeam,
+    managedSession: state.managedSession, managedIssues: state.managedIssues }
+  t.after(() => Object.assign(state, previous))
+  Object.assign(state, { serverMode: 'managed', localMode: false, currentManagedTeam: 'team',
+    managedSession: { id: 'user', role: 'view', csrfToken: 'csrf' }, managedIssues: new Map([['finding', { url, autoFix: null }]]) })
+  assert.equal(cardLinkFor(finding, null), url)
+  assert.equal(cardLinkFor(finding, { fix: '' }), url)
+  assert.equal(cardLinkFor(finding, { fix: 'https://github.com/o/r/pull/2' }), 'https://github.com/o/r/pull/2')
+  assert.equal(cardLinkFor(finding, { fix: 'patched upstream' }), 'patched upstream')
+  state.managedIssues.set('finding', { url, autoFix })
+  assert.equal(cardLinkFor(finding, null), autoFix)
+  assert.equal(cardLinkFor(finding, { fix: 'https://github.com/o/r/pull/2' }), 'https://github.com/o/r/pull/2')
+  state.managedSession = { publicShare: true }
+  assert.equal(cardLinkFor(finding, null), '', 'public links never show saved issues')
+})
