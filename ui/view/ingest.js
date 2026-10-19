@@ -870,11 +870,12 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   // A link report read as one of findings is read again for those it links.
   const annotations = selectedLink ? undefined : preload
   // The board's copy leaving rows out is replaced by the whole reports once
-  // the view is shown (managed-details.js).
+  // the view is shown (managed-details.js); details in sooner draw nothing
+  // until then, the view still loading.
   const shown = Promise.withResolvers()
   let opening = null
   if (details) {
-    awaitManagedDetails(team.id, details, () => render(), { folded: workspace.folded === true, shown: shown.promise, signal: viewSignal,
+    awaitManagedDetails(team.id, details, () => { void shown.promise.then(() => render()) }, { folded: workspace.folded === true, shown: shown.promise, signal: viewSignal,
       replace: whole => replaceManagedReports(whole, findings, { gen, hydrate, annotations, opening }) })
   }
   if (findings.length > 0) {
