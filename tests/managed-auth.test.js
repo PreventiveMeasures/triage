@@ -359,7 +359,7 @@ test('POST /api/admin/set-role: admin-only mutation, CSRF, not-self', async () =
   await db.close()
 })
 
-test('GET /api/avatar/<id>: approved users may fetch avatars (401 unauth, 404 missing)', async () => {
+test('GET /api/avatar/<id>: approved users may fetch avatars (401 unauth, 404 missing), kept by the browser a while and asked again by their ETag', async () => {
   const db = openSqliteManagedDb(':memory:')
   const now = Date.now()
   const sess = await createSession(config, db, { githubUserId: 1, login: 'alice', name: null, avatarUrl: null }, now)
@@ -382,9 +382,9 @@ test('GET /api/avatar/<id>: approved users may fetch avatars (401 unauth, 404 mi
       get headersSent() { return this.ended },
     }
   }
-  async function get(url, cookie) {
+  async function get(url, cookie, headers = {}) {
     const res = mockRes()
-    handler({ method: 'GET', url, headers: cookie ? { cookie } : {} }, res)
+    handler({ method: 'GET', url, headers: { ...headers, ...cookie ? { cookie } : {} } }, res)
     await pending
     return res
   }
@@ -392,7 +392,16 @@ test('GET /api/avatar/<id>: approved users may fetch avatars (401 unauth, 404 mi
   assert.equal((await get(`/api/avatar/${s.user.id}`, null)).statusCode, 401)
   const own = await get(`/api/avatar/${s.user.id}`, ck)
   assert.equal(own.statusCode, 200)
-  assert.equal(own.headers['cache-control'], 'no-store', 'a user\'s never kept by the browser')
+  assert.equal(own.headers['cache-control'], 'private, max-age=300, stale-while-revalidate=86400', 'a user\'s kept five minutes, then shown while asked again')
+  assert.match(own.headers['etag'], /^"[\w-]{22}"$/u)
+  // Asked again by the image kept: unchanged, none sent; another, sent.
+  const kept = await get(`/api/avatar/${s.user.id}`, ck, { 'if-none-match': `"other", W/${own.headers['etag']}` })
+  assert.deepEqual([kept.statusCode, kept.body, kept.headers['etag'], kept.headers['cache-control']], [304, '', own.headers['etag'], own.headers['cache-control']])
+  await avatarStore.put(s.user.id, 'image/png', Buffer.from([4, 5]))
+  const changed = await get(`/api/avatar/${s.user.id}`, ck, { 'if-none-match': own.headers['etag'] })
+  assert.equal(changed.statusCode, 200)
+  assert.notEqual(changed.headers['etag'], own.headers['etag'])
+  assert.equal((await get(`/api/avatar/${s.user.id}`, null, { 'if-none-match': changed.headers['etag'] })).statusCode, 401, 'access asked first')
   assert.equal((await get('/api/avatar/00000000-0000-4000-8000-000000000000', ck)).statusCode, 404)
   await db.close()
 })

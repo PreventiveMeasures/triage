@@ -476,20 +476,26 @@ function firstHeader(v: string | string[] | undefined): string | null {
   return null
 }
 
+// A user's avatar, drawn on every tile, comment and review by them: kept by
+// the browser five minutes, then shown as kept for a day while the browser
+// asks again behind it, its image named by its ETag, so that an unchanged one
+// answers with none (304). One changed on another's profile shows within
+// minutes; a user's own change, at once, as their page asks for it again
+// (ui/view/github-users.js refreshAvatar).
+const USER_AVATAR_CACHE = 'private, max-age=300, stale-while-revalidate=86400'
+
 // `key` is the image chosen for `id`; one not cached falls back to `id`'s own.
-// A user's is never kept by the browser, as it changes with their profile.
-async function serveAvatar(res: ServerResponse, avatarStore: AvatarStore, id: string, key = id, cacheControl = 'no-store'): Promise<void> {
-  sendAvatar(res, await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id)), cacheControl)
+async function serveAvatar(req: IncomingMessage, res: ServerResponse, avatarStore: AvatarStore, id: string, key = id, cacheControl = USER_AVATAR_CACHE): Promise<void> {
+  sendAvatar(req, res, await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id)), cacheControl)
 }
 
-function sendAvatar(res: ServerResponse, avatar: CachedAvatar | null, cacheControl = 'no-store'): void {
+function sendAvatar(req: IncomingMessage, res: ServerResponse, avatar: CachedAvatar | null, cacheControl: string): void {
   if (avatar == null) { sendJson(res, 404, { error: 'no-avatar' }); return }
-  res.writeHead(200, {
-    'content-type': avatar.contentType,
-    'content-length': String(avatar.bytes.length),
-    'x-content-type-options': 'nosniff',
-    'cache-control': cacheControl,
-  })
+  const etag = `"${createHash('sha256').update(`${avatar.contentType}\0`).update(avatar.bytes).digest('base64url').slice(0, 22)}"`
+  const headers = { 'etag': etag, 'cache-control': cacheControl, 'x-content-type-options': 'nosniff' }
+  const asked = req.headers['if-none-match']
+  if (typeof asked === 'string' && asked.split(',').some(tag => [etag, `W/${etag}`].includes(tag.trim()))) { res.writeHead(304, headers); res.end(); return }
+  res.writeHead(200, { ...headers, 'content-type': avatar.contentType, 'content-length': String(avatar.bytes.length) })
   res.end(avatar.bytes)
 }
 
@@ -505,15 +511,15 @@ const AGENT_AVATAR = /^(app|user)-([1-9]\d{0,11})$/u
 // for it alone.
 const AGENT_AVATAR_CACHE = 'private, max-age=86400'
 
-async function serveAgentAvatar(res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {
+async function serveAgentAvatar(req: IncomingMessage, res: ServerResponse, avatarStore: AvatarStore, avatar: string): Promise<void> {
   const [, kind, id] = AGENT_AVATAR.exec(avatar)!
   const key = `00000000-0000-0000-000${kind === 'app' ? 0 : 1}-${id!.padStart(12, '0')}`
   // Read once where it is kept; read again only past fetching it.
   const kept = await avatarStore.get(key)
-  if (kept != null) { sendAvatar(res, kept, AGENT_AVATAR_CACHE); return }
+  if (kept != null) { sendAvatar(req, res, kept, AGENT_AVATAR_CACHE); return }
   await cacheAvatar(avatarStore, key, `https://avatars.githubusercontent.com/${kind === 'app' ? 'in' : 'u'}/${id}`, globalThis.fetch)
     .catch((err) => { console.warn('managed: agent avatar caching failed:', err) })
-  await serveAvatar(res, avatarStore, key, key, AGENT_AVATAR_CACHE)
+  await serveAvatar(req, res, avatarStore, key, key, AGENT_AVATAR_CACHE)
 }
 
 const MAX_JSON_BODY_BYTES = 4096
@@ -4851,8 +4857,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path.startsWith(AVATAR_PREFIX)) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const id = path.slice(AVATAR_PREFIX.length)
-      if (AGENT_AVATARS.has(id) && AGENT_AVATAR.test(id)) { await serveAgentAvatar(res, avatarStore, id); return }
-      await serveAvatar(res, avatarStore, id, url.searchParams.has('own') ? id : await db.getAvatarKey(id))
+      if (AGENT_AVATARS.has(id) && AGENT_AVATAR.test(id)) { await serveAgentAvatar(req, res, avatarStore, id); return }
+      await serveAvatar(req, res, avatarStore, id, url.searchParams.has('own') ? id : await db.getAvatarKey(id))
       return
     }
     // Admin: list users (admin-only).

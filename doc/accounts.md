@@ -65,6 +65,7 @@ Linking and unlinking are recorded in the access history.
 
 A user's login and GitHub ID always stay the sign-in account's.
 The user picks their displayed name and avatar from any of their accounts, and the choice shows wherever they appear.
+The browser keeps an avatar five minutes, then shows it while asking again, so another user's new avatar shows within minutes and the user's own at once.
 A linked account's name is kept as it was when linked, and linking it again refreshes it.
 Unlinking the account that gave the name or avatar switches it back to the sign-in account's.
 
