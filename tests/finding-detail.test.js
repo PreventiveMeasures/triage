@@ -12,7 +12,7 @@ test('a report\'s board copy leaves each finding\'s detail out, an untitled one 
   const lite = liteReportData(data)
   assert.deepEqual(lite, { source: 'codex-security', bundleHashes: ['b'], findings: [
     { id: 'a', title: 'Named', severity: 'high' },
-    [{ id: 'b', description: `${long.slice(0, 199)}…` }, { id: 'c' }, null],
+    [{ id: 'b', description: `${long.slice(0, 119)}…` }, { id: 'c' }, null],
   ] })
   assert.equal(data.findings[0].evidence, 'evidence', 'the report itself is left whole')
   assert.deepEqual(liteReportData({ groups: [[{ id: 'g', impact: 'i' }]] }), { groups: [[{ id: 'g' }]] })

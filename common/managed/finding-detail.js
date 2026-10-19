@@ -2,15 +2,24 @@ import { findingTitle } from '@preventive/report'
 
 // A finding's detail: what its popup, the views besides the board and an
 // export read, and the board does not. Its narrative and evidence, the hash
-// its Code button finds a bundle by, and the export it names. A team's
+// its Code button finds a bundle by, the export it names, the facts its card
+// and an export tell (write-md-finding.js PLAIN_FIELDS, CODE_FIELDS, but for
+// `priority`, which the board sorts and filters by), and the run meta its
+// card's run line and a report's header read (its `model` and `type`, which
+// the board's filters read, stay). A team's
 // reports are first sent without it (server-managed/team-reports.ts), the
 // board drawn from them, and their findings filled in from the whole reports
 // (ui/view/managed-details.js).
-export const FINDING_DETAIL_FIELDS = Object.freeze(['description', 'evidence', 'impact', 'reproduction', 'recommendation',
-  'confidenceReason', 'revalidateVerdict', 'revalidateRecommendation', 'fileHash', 'exportName', 'methodName'])
+export const FINDING_DETAIL_FIELDS = Object.freeze([
+  'description', 'evidence', 'impact', 'reproduction', 'recommendation', 'confidenceReason', 'revalidateVerdict', 'revalidateRecommendation',
+  'fileHash', 'exportName', 'methodName',
+  'commitHash', 'auditedCommit', 'detectedAt', 'committedAt', 'dateCreated', 'status', 'branch', 'pocStatus', 'parent', 'slug', 'reportPath',
+  'category', 'discoveredIn', 'effort', 'exportsMode',
+])
 const DETAIL = new Set(FINDING_DETAIL_FIELDS)
-// More of a name than a board card's three lines show.
-const NAME_CHARS = 200
+// As much of a name as a heading takes (@preventive/report write-md-finding.js
+// HEADING_MAX), about a board card's three lines.
+const NAME_CHARS = 120
 
 // A finding without its detail. One without a title of its own is named by its
 // description's first line (findingTitle), which it keeps as its description,

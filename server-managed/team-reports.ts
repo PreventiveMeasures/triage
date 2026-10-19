@@ -158,13 +158,21 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   for (let i = 0; i < reports.length; i++) {
     const access = snapshot.reports[i]!, report = reports[i]!
     report.data = filterReportData(report.data, access.permissions, access.repo, securityIds)
+    if (report.data && typeof report.data === 'object' && 'think' in report.data) {
+      const { think: _think, ...data } = report.data as Finding
+      report.data = data
+    }
     const ids = new Set<string>()
     for (const finding of groupsOf(report.data).flat()) {
       // Preserve linked security classification for the UI lens, including a
       // linked component that a dependency permission will hide from the UI.
       finding['isSecurity'] = securityIds.has(String(finding['id']))
-      // The hash of its file's tree, which nothing a team view shows reads.
+      // The hash of its file's tree, the fingerprint its ID was derived from
+      // and whether its run thought, which nothing a team view reads, nor an
+      // export (@preventive/report write-md-finding.js) writes.
       delete finding['treeHash']
+      delete finding['_idBasis']
+      delete finding['think']
       if (typeof finding['id'] === 'string') { ids.add(finding['id']); allIds.add(finding['id']) }
     }
     visible.set(report.id, { ids, sourcePaths: managedFindingSourcePaths(groupsOf(report.data).flat()) })

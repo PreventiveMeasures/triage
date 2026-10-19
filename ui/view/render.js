@@ -1869,12 +1869,14 @@ function loadedUpstream() {
 }
 
 // The header's run-meta chips. Every field they read is the report's own,
-// copied onto its findings at ingest (@preventive/report inheritReportMeta).
-let analyzerTags = { reports: [], single: false, tags: [] }
+// copied onto its findings at ingest (@preventive/report inheritReportMeta),
+// a team report's filled in with its findings' detail (managed-details.js).
+let analyzerTags = { reports: [], single: false, details: null, tags: [] }
 function loadedAnalyzerTags(single) {
-  if (analyzerTags.single !== single || !sameReports(analyzerTags.reports, state.reports)) {
+  const details = managedDetailsWaiting()
+  if (analyzerTags.single !== single || analyzerTags.details !== details || !sameReports(analyzerTags.reports, state.reports)) {
     const findings = state.reports.flatMap((r) => r.groups.flat())
-    analyzerTags = { reports: [...state.reports], single,
+    analyzerTags = { reports: [...state.reports], single, details,
       tags: buildAnalyzerTags(findings, single ? COMBO_FIELDS.filter(f => f !== 'type') : COMBO_FIELDS) }
   }
   return analyzerTags.tags
