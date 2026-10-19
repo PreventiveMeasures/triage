@@ -17,8 +17,23 @@ registerHooks({ resolve(specifier, context, nextResolve) {
 } })
 let renders = 0
 mock.module('../ui/view/render.js', { exports: { render: () => { renders++ } } })
-const { withRepositoryActivity } = await import('../ui/view/activity-load.js')
+// A view's first read asked for while the bundle loads (prefetchActivity).
+const prefetches = []
+mock.module('../ui/view/client-managed.js', { exports: { prefetchActivity(...args) { prefetches.push(args) } } })
+const { prefetchActivityView, withRepositoryActivity } = await import('../ui/view/activity-load.js')
+const { showActivitySubtab } = await import('../ui/view/repository-activity.js')
 const history = () => html`<repository-history></repository-history>`
+
+test('while the bundle loads, a view\'s first read is asked for, in the sub-tab it shows', () => {
+  prefetchActivityView(7, 'issues')
+  showActivitySubtab('pulls', 'closed')
+  prefetchActivityView(7, 'pulls')
+  prefetchActivityView(7, 'pulse')
+  showActivitySubtab('pulse', 'quarter')
+  prefetchActivityView(7, 'pulse')
+  assert.deepEqual(prefetches, [[7, 'issues', { state: 'open', weeks: 4 }], [7, 'pulls', { state: 'closed', weeks: 4 }], [7, 'pulse', { state: 'open', weeks: 4 }],
+    [7, 'pulse', { state: 'open', weeks: 13 }]])
+})
 
 test('the Activity views wait for their bundle, loaded once, and draw once it lands', async () => {
   assert.match(templateText(withRepositoryActivity(history)), /Loading…/u)
@@ -27,4 +42,6 @@ test('the Activity views wait for their bundle, loaded once, and draw once it la
   assert.equal(renders, 1, 'the bundle landing renders again')
   assert.match(templateText(withRepositoryActivity(history)), /<repository-history>/u)
   assert.deepEqual(asked, ['./activity.js'])
+  prefetchActivityView(7, 'agents')
+  assert.equal(prefetches.length, 4, 'the bundle here, its views read as they open')
 })

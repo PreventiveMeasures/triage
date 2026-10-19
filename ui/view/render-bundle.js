@@ -48,7 +48,7 @@ import { activityTab } from './repository-activity.js'
 import { browsableRepositories, openRepositoryCodeTab, repositoryCodeListing, repositoryCodeName, repositoryCodePending, repositoryCodeRoute, repositoryFullName,
   repositoryRefs } from './repository-code.js'
 import './repository-treemap.js'
-import { withRepositoryActivity } from './activity-load.js'
+import { prefetchActivityView, withRepositoryActivity } from './activity-load.js'
 import { npmAdvisoriesColumn, npmAlerts, npmBinaryColumn, npmContents, npmFileFlags, npmFileTags, npmFilesFilter, npmFilesRead, npmGithubFigures, npmOverviewBadges, npmPackageLinks, npmProvenanceFact, npmProvenanceNamesBuilder, npmReadabilityWarning, npmSocketFileAlerts, npmSocketFileTags, npmStatsRow } from './npm-overview.js'
 import { byFlags } from './file-flags.js'
 import { npmComparisonSource } from './npm-compare-source.js'
@@ -2170,8 +2170,10 @@ const repositoryCodeTabs = tab => [['treemap', 'Treemap'], ['code', 'Code'], ['s
 
 // The body of a tab of a repository's directory reading none of its files
 // (REPOSITORY_FILELESS_TABS): its Commits, Issues, Pull requests, Agents,
-// Pulse or Replay, once their bundle is here (activity-load.js).
+// Pulse or Replay, once their bundle is here (activity-load.js), the view's
+// first read asked for meanwhile, however the view came to show.
 function repositoryFilelessTab(repository, tab) {
+  prefetchActivityView(repository.repoId, tab)
   return withRepositoryActivity(() => tab === 'commits' ? html`<repository-history .repository=${repository} .repo=${repositoryFullName(repository)}
     .refs=${repositoryRefs(repository.repoId)}></repository-history>`
     : tab === 'agents' ? html`<repository-agents .repository=${repository} .repo=${repositoryFullName(repository)}></repository-agents>`

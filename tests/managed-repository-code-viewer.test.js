@@ -27,12 +27,10 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchBrowsableRepositories: () => Promise.resolve([{ repoId: 7, fullName: 'org/repo' }, { repoId: 8, fullName: 'org/other' }]),
   fetchRepositoryRefs: () => { refsReads++; return refsAnswer() },
   fetchBundleContents() {}, fetchBundleMetadata() {},
-  prefetchActivity(...args) { prefetches.push(args) },
 } })
-// The Activity views' bundle, here or not.
+// The Activity views' first reads asked for as their bundle loads.
 const prefetches = []
-let activityLoaded = false
-mock.module('../ui/view/activity-load.js', { exports: { withRepositoryActivity: Object.assign(() => null, { loaded: () => activityLoaded }) } })
+mock.module('../ui/view/activity-load.js', { exports: { prefetchActivityView(...args) { prefetches.push(args) } } })
 const { openRepositoryCodeRoute, openRepositoryCodeTab, repositoryRefs, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
 const { bundleFileGithub } = await import('../ui/view/bundle-file-github.js')
 const { repositoryCompareSource } = await import('../ui/view/repository-compare.js')
@@ -395,20 +393,17 @@ test('Issues, Pull requests, Agents, Pulse and Replay, reading none of the direc
   assert.equal(parseManagedRoute(new URL(`https://triage.test/repo/7/${commit}/issues/2`)), null, 'only Code names a file')
 })
 
-test('an Activity view opening before its bundle is here asks for its first read meanwhile, in the sub-tab its route names; once it is, none', async () => {
+test('an Activity view\'s route opening asks for its first read as its bundle loads, before the commit it opens at is read, in the sub-tab it names; Code\'s none', async () => {
   prefetches.length = 0
   const at = (tab, subtab = null) => ({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: tab, ...subtab ? { subtab } : {} })
-  for (const route of [at('issues'), at('pulls', 'closed'), at('agents'), at('pulse'), at('pulse', 'year')]) await openRepositoryCodeRoute(route, () => true, () => {})
-  assert.deepEqual(prefetches.map(([repoId, tab, { state: listed, weeks }]) => [repoId, tab, listed, weeks]),
-    [[7, 'issues', 'open', 4], [7, 'pulls', 'closed', 4], [7, 'agents', 'open', 4], [7, 'pulse', 'open', 4], [7, 'pulse', 'open', 52]])
-  activityLoaded = true
-  try {
-    await openRepositoryCodeRoute(at('pulse'), () => true, () => {})
-    await openRepositoryCodeRoute(at('pulls'), () => true, () => {})
-    assert.equal(prefetches.length, 5, 'its bundle here, the view reads as it opens')
-  } finally {
-    activityLoaded = false
-  }
+  for (const route of [at('issues'), at('pulls', 'closed'), at('agents'), at('pulse', 'year')]) await openRepositoryCodeRoute(route, () => true, () => {})
+  assert.deepEqual(prefetches, [[7, 'issues'], [7, 'pulls'], [7, 'agents'], [7, 'pulse']])
+  assert.equal(activitySubtab('pulse'), 'year', 'its sub-tab shown as it asks')
+  await openRepositoryCodeRoute(at('pulls'), () => true, () => {})
+  await openRepositoryCodeRoute(at('pulse'), () => true, () => {})
+  answer = (repoId, ref, path) => Promise.resolve({ ...data, path })
+  await openRepositoryCodeRoute(at('code'), () => true, () => {})
+  assert.equal(prefetches.length, 6, 'Code reads its files')
 })
 
 test('an Activity view\'s sub-tab past its first is in its route, kept as another view or directory opens, and picked, an entry of its own', async () => {

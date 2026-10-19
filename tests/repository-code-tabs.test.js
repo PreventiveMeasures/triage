@@ -14,7 +14,9 @@ mock.module('../ui/view/dialogs/npm-compare-advisories-dialog.js', { exports: { 
 mock.module('../ui/view/dialogs/why-dialog.js', { exports: { openWhyDialog() {} } })
 mock.module('../ui/view/prism-highlight.js', { exports: { langForPath: () => null, langForTag: () => null, highlight: () => Promise.resolve(null) } })
 mock.module('../ui/view/repository-compare.js', { exports: { repositoryCompareSource: () => null } })
-mock.module('../ui/view/activity-load.js', { exports: { withRepositoryActivity: template => template() } })
+// The Activity views' first reads asked for as their bundle loads.
+const prefetches = []
+mock.module('../ui/view/activity-load.js', { exports: { withRepositoryActivity: template => template(), prefetchActivityView(...args) { prefetches.push(args) } } })
 mock.module('../ui/view/repository-code.js', { exports: {
   browsableRepositories: () => ({ status: 'ready', value: [] }), openRepositoryCodeTab() {}, repositoryCodeListing: () => '', repositoryCodeName: ({ repo }) => repo,
   repositoryCodePending: () => null, repositoryCodeRoute: () => null, repositoryFullName: ({ repo }) => repo, repositoryRefs: () => ({ status: 'loading' }), navigateToRepositoryCode() {}, shownRevision: () => ({}),
@@ -42,6 +44,15 @@ test('a directory open shows its commits, issues, pull requests, agents, pulse a
   // Another tab open, Activity opens on the view last shown.
   state.bundleDetailsTab = 'code'
   assert.match(templateText(renderBundlesList([entry])), /data-bundle-tab="agents" aria-selected=false [^>]*>Activity</u)
+})
+
+test('an Activity view drawn, as the strip\'s tab switches to it, asks for its first read as its bundle loads; Code none', () => {
+  prefetches.length = 0
+  state.bundleDetailsTab = 'pulse'
+  templateText(renderBundlesList([entry]))
+  state.bundleDetailsTab = 'code'
+  templateText(renderBundlesList([entry]))
+  assert.deepEqual(prefetches, [[7, 'pulse']])
 })
 
 test('Activity\'s picker: an icon each, Replay\'s a play button, its name to read, no tooltip, opening each view as its tab does, the one shown pressed', () => {
