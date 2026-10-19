@@ -34,6 +34,12 @@ The pool is registered with [`attachDatabasePool`](https://vercel.com/docs/funct
 Each release keeps the invocation alive until idle connections have closed, so none survives a suspended instance.
 A failed lease is discarded, never reused.
 
+Every managed response carries a `Server-Timing` header, which the browser's developer tools show beside the request.
+It gives the database's time and statement count (`db`), new connections' time (`conn`), GitHub's time and call count (`gh`), `cold` on an instance's first request, and the total time (`app`).
+It holds counts and durations alone, nothing of what was asked.
+A request's statements run one after another on its connection, so `db`'s time over its statements is about one round trip to the database; tens of milliseconds each point to the function running in another region than the database.
+A long `conn` with `cold` points to a cold start instead.
+
 Ordinary managed requests start a due session/upload sweep alongside the normal response.
 The managed app registers maintenance with [`waitUntil`](https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#waituntil), so it can finish after the response ends.
 This also holds when an embedding host such as Fastify mounts the request listener returned by `init()`.
