@@ -8,6 +8,7 @@ import { managedFindingSourcePaths, readManagedReport } from '../common/managed/
 import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
 import { revalidationLinks, securityLinks } from '../common/security-links.js'
 import { treeDependencyDirectory } from '../client/dependency-paths.js'
+import { liteReportData } from '../common/managed/finding-detail.js'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import { triageWireEntry } from './triage-response.ts'
@@ -22,10 +23,15 @@ const VISIBILITY_CACHE_MAX_ITEMS = 250_000
 const VISIBILITY_CACHE_MAX_SNAPSHOTS = 32
 const caches = new WeakMap<ManagedDb, Map<string, Visibility>>()
 const REPORT_CACHE_BYTES = 16 * 1024 * 1024
-// A workspace's encoded reports, and its reports' file trees apart.
-type EncodedWorkspace = { reports: Buffer; trees: Buffer }
+// A workspace's encoded reports, the same without their findings' detail for
+// the board (`lite`), and its reports' file trees apart.
+type EncodedWorkspace = { reports: Buffer; lite: Buffer; trees: Buffer }
+export type TeamResponsePart = keyof EncodedWorkspace
+// The part a team's `reports` or `trees` route asks for.
+export const teamResponsePart = (route: string, url: URL): TeamResponsePart =>
+  route === 'trees' ? 'trees' : url.searchParams.get('lite') === '1' ? 'lite' : 'reports'
 const reportCaches = new WeakMap<ManagedDb, Map<string, EncodedWorkspace>>()
-const encodedBytes = ({ reports, trees }: EncodedWorkspace) => reports.length + trees.length
+const encodedBytes = ({ reports, lite, trees }: EncodedWorkspace) => reports.length + lite.length + trees.length
 // A workspace's report reads at once. Its reports' sizes are bounded together
 // before any is read, and each is held parsed till the build ends, so more at
 // once costs only the raw bytes in flight: a cold build of a team's reports
@@ -157,6 +163,8 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
       // Preserve linked security classification for the UI lens, including a
       // linked component that a dependency permission will hide from the UI.
       finding['isSecurity'] = securityIds.has(String(finding['id']))
+      // The hash of its file's tree, which nothing a team view shows reads.
+      delete finding['treeHash']
       if (typeof finding['id'] === 'string') { ids.add(finding['id']); allIds.add(finding['id']) }
     }
     visible.set(report.id, { ids, sourcePaths: managedFindingSourcePaths(groupsOf(report.data).flat()) })
@@ -168,8 +176,22 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
     if (links && !snapshot.hiddenReportId) report.data = { source: 'links', findings: [], links: links.map(ids => [...new Set(ids.filter(id => allIds.has(id)))]).filter(ids => ids.length >= 2) }
   }
   const trees = Buffer.from(`{"trees":{${reports.map(withoutTree).filter(tree => tree !== null).join(',')}}}`)
-  // Bounded together, as when the trees were sent with their reports.
-  let outputBytes = 14 + trees.length
+  const links = mergeLinkGroups(globalLinks, allIds)
+  const encoded = {
+    // Bounded together, as when the trees were sent with their reports.
+    reports: encodeReports(reports, links, trees.length),
+    // The board's, its findings without their detail (common/managed/finding-detail.js).
+    lite: encodeReports(reports.map(report => ({ ...report, data: liteReportData(report.data) })), links, 0),
+    trees,
+  }
+  retainVisibility(db, workspaceKey(snapshot), visible)
+  retainReports(db, workspaceKey(snapshot), encoded)
+  return { ...encoded, visible }
+}
+// `{ reports, links }` as a response sends them, `spent` bytes already
+// counted against the bound.
+function encodeReports(reports: readonly TeamReport[], links: readonly string[][], spent: number): Buffer {
+  let outputBytes = spent + 14
   const parts = [Buffer.from('{"reports":[')]
   for (const [index, report] of reports.entries()) {
     const bytes = Buffer.from(JSON.stringify(report))
@@ -178,14 +200,10 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
     if (index) parts.push(Buffer.from(','))
     parts.push(bytes)
   }
-  const links = mergeLinkGroups(globalLinks, allIds)
   const suffix = Buffer.from(links.length > 0 ? `],"links":${JSON.stringify(links)}}` : ']}')
   if (outputBytes + suffix.length > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   parts.push(suffix)
-  const encoded = { reports: Buffer.concat(parts), trees }
-  retainVisibility(db, workspaceKey(snapshot), visible)
-  retainReports(db, workspaceKey(snapshot), encoded)
-  return { ...encoded, visible }
+  return Buffer.concat(parts)
 }
 const pendingWorkspaces = new WeakMap<ManagedDb, Map<string, ReturnType<typeof buildTeamWorkspace>>>()
 async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot) {
@@ -200,15 +218,12 @@ async function loadTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Team
 }
 // Treat the encoded body as immutable and recheck access before sending it.
 // Warm HTTP reads need neither a parsed copy nor another serialization pass.
-export async function loadTeamReportsResponse(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Buffer> {
+// Its `lite` reports and its `trees`, by report ID (withoutTree), are of the
+// same snapshot and take the same recheck.
+export async function loadTeamReportsResponse(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot,
+  part: TeamResponsePart = 'reports'): Promise<Buffer> {
   const cached = reportCaches.get(db)?.get(workspaceKey(snapshot))
-  return cached?.reports ?? (await loadTeamWorkspace(db, store, snapshot)).reports
-}
-// The workspace's reports' file trees, by report ID (withoutTree), for the
-// same snapshot as its reports and with the same recheck before sending.
-export async function loadTeamTreesResponse(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Buffer> {
-  const cached = reportCaches.get(db)?.get(workspaceKey(snapshot))
-  return cached?.trees ?? (await loadTeamWorkspace(db, store, snapshot)).trees
+  return cached?.[part] ?? (await loadTeamWorkspace(db, store, snapshot))[part]
 }
 export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
   // Object consumers get their own copy, including when sharing a cold load.

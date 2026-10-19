@@ -181,9 +181,11 @@ export async function fetchReports(ids, { signal } = {}) {
 
 // Published report selections keep the full workspace for classification.
 // An authorized hidden report opens independently of the published workspace.
-export async function fetchTeamReports(teamId, { signal, reportId = null } = {}) {
-  const query = reportId === null ? '' : `?reportId=${encodeURIComponent(reportId)}`
-  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/reports${query}`, null, { signal })
+// `lite`: its findings without their detail, for the board (common/managed/finding-detail.js).
+export async function fetchTeamReports(teamId, { signal, reportId = null, lite = false } = {}) {
+  const query = new URLSearchParams(reportId === null ? {} : { reportId })
+  if (lite) query.set('lite', '1')
+  const body = await getJson(`/api/teams/${encodeURIComponent(teamId)}/reports${query.size > 0 ? `?${query}` : ''}`, null, { signal })
   if (!Array.isArray(body?.reports)) return null
   const reports = [], seen = new Set()
   for (const entry of body.reports) {

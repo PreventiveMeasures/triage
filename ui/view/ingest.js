@@ -32,6 +32,7 @@ import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { loadManagedReportComments } from './managed-comments.js'
 import { preloadManagedTeam, startManagedTeamFeed } from './managed-feed.js'
+import { awaitManagedDetails } from './managed-details.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
 import { beginViewNavigation, currentViewGeneration, currentViewSignal } from './view-navigation.js'
 export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
@@ -807,13 +808,16 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.managedComments.clear()
   state.managedIssues.clear()
   state.managedReport = null
-  // The team's feed and annotations are asked for as its reports are.
+  // The team's feed and annotations are asked for as its reports are. Its
+  // board is drawn from them without their findings' detail, the whole
+  // reports asked for beside them (managed-details.js).
   const preload = deduplication ? undefined : preloadManagedTeam(viewSignal)
+  const details = deduplication ? null : fetchTeamReports(team.id, { reportId: hiddenReport?.id ?? null })
   void renderSidebar()
   let workspace
   try {
     workspace = deduplication ? await (await loadManagedBundle()).fetchManagedLinkWorkspace(reportId, { signal: viewSignal })
-      : await fetchTeamReports(team.id, { reportId: hiddenReport?.id ?? null })
+      : await fetchTeamReports(team.id, { reportId: hiddenReport?.id ?? null, lite: true })
   } catch (error) {
     if (!isStaleLoad(gen)) await failManagedTeamLoad(error.message || 'Could not load link report.')
     return false
@@ -844,6 +848,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
     })
     if (isStaleLoad(gen)) return false
   }
+  if (details) awaitManagedDetails(team.id, details, () => render())
   // Hydrate every report before the merged view becomes interactive. The
   // managed triage layer routes later edits by the per-report ids stamped
   // above, so overlapping findings are sent to a report that actually owns

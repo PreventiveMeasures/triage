@@ -391,6 +391,13 @@ export function findingText(f) {
   return text
 }
 
+// A finding filled in since its text was kept: a team's, drawn from its
+// detail-less copy first (managed-details.js).
+export function forgetFindingText(f) {
+  findingTexts.on.delete(f)
+  findingTexts.off.delete(f)
+}
+
 // The per-finding run-meta line (@preventive/report/src/finding.js runMetaLine) under
 // the revalidation layer's state: the pass's row names itself only
 // while the layer is on. Led by the finding's category where a report
