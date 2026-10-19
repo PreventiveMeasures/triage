@@ -17,8 +17,11 @@ const GITHUB_API = 'https://api.github.com'
 const API_VERSION = '2022-11-28'
 const USER_AGENT = 'deepview-triage'
 const PER_PAGE = 100
-const INSTALLATION_TOKEN_TTL_MS = 5 * 60_000
-const INSTALLATION_TOKEN_EXPIRY_MARGIN_MS = 60_000
+// An installation token is kept until this long before GitHub's expiry
+// (an hour from its mint), the longest a request runs (vercel.managed.json
+// maxDuration), lest one expire while a request uses it; one GitHub rejects
+// sooner goes at once (onTokenRejected).
+const INSTALLATION_TOKEN_EXPIRY_MARGIN_MS = 5 * 60_000
 const MAX_INSTALLATION_TOKENS = 256
 interface InstallationTokenEntry { token: string | null; expiresAt: number; pending: Promise<string> | null }
 // Credentials only: visibility, user identities, and permissions are never
@@ -221,7 +224,7 @@ async function installationAccessToken(appId: string, privateKey: string, instal
       if (typeof body?.token !== 'string' || body.token === '') throw new GithubApiError(502, 'github-install-token-denied')
       entry.token = body.token
       const expiresAt = typeof body.expires_at === 'string' ? Date.parse(body.expires_at) : NaN
-      entry.expiresAt = Number.isFinite(expiresAt) ? Math.min(now + INSTALLATION_TOKEN_TTL_MS, expiresAt - INSTALLATION_TOKEN_EXPIRY_MARGIN_MS) : 0
+      entry.expiresAt = Number.isFinite(expiresAt) ? expiresAt - INSTALLATION_TOKEN_EXPIRY_MARGIN_MS : 0
       if (entry.expiresAt <= Date.now() && cache.get(key) === entry) cache.delete(key)
       return body.token
     } catch (err) {

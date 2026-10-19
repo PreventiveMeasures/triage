@@ -77,22 +77,35 @@ export async function createSession(
 // A request's sign-in, whose presence its first read to find it records.
 // Every read after it in that request (the rechecks after its reads of
 // storage, GitHub or npm among them) only reads: last_seen_at was written a
-// moment before, by the read that let the request in.
-const requests = new AsyncLocalStorage<{ seen: boolean }>()
+// moment before, by the read that let the request in. What the router's
+// gate read is handed to the read after it that says nothing was read
+// between them (`handed`), asking nothing again; once only, and to none
+// once another read came first.
+type SessionRead = { session: ManagedSession; user: StoredUser }
+const requests = new AsyncLocalStorage<{ seen: boolean; handed: { cookieHeader: string | undefined; read: SessionRead } | null }>()
 export function runRequestPresence<T>(work: () => T): T {
-  return requests.run({ seen: false }, work)
+  return requests.run({ seen: false, handed: null }, work)
+}
+export function handOverSession(cookieHeader: string | undefined, read: SessionRead): void {
+  const request = requests.getStore()
+  if (request) request.handed = { cookieHeader, read }
 }
 
 // Resolve the current session (+ user) from the request's cookies, or null.
 // A view cookie resolves only to that admin's view as another user: a view
 // that has ended never falls back to the admin's own session. `own` skips the
-// view and reads the signed-in session itself.
+// view and reads the signed-in session itself. `handed` takes the gate's
+// read, where it is this read's first since (handOverSession).
 export async function readSession(
-  config: ManagedConfig, db: ManagedDb, cookieHeader: string | undefined, now: number, { own = false } = {},
-): Promise<{ session: ManagedSession; user: StoredUser } | null> {
+  config: ManagedConfig, db: ManagedDb, cookieHeader: string | undefined, now: number, { own = false, handed = false } = {},
+): Promise<SessionRead | null> {
+  const request = requests.getStore()
+  const given = request?.handed
+  if (request) request.handed = null
+  if (handed && !own && given && given.cookieHeader === cookieHeader) return given.read
   const ids = sessionIds(config, cookieHeader, { own })
   if (!ids) return null
-  const request = requests.getStore(), seen = request?.seen === true
+  const seen = request?.seen === true
   const s = ids.viewer === null
     ? await (seen ? db.getSessionWithUser : db.sessionWithUser)(ids.id, now)
     : await (seen ? db.getViewSessionWithUser : db.viewSessionWithUser)(ids.id, ids.viewer, now)

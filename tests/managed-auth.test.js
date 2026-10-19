@@ -16,7 +16,7 @@ import { brotliDecompressSync } from 'node:zlib'
 
 import { hashToken, randomToken, safeEqual } from '../server-managed/crypto.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { createSession, endSession, readSession } from '../server-managed/session.ts'
+import { createSession, endSession, handOverSession, readSession, runRequestPresence } from '../server-managed/session.ts'
 import { OAuthError, buildLoginRedirect, ensureUserAccessToken, handleCallback, refreshUserToken } from '../server-managed/github-oauth.ts'
 import { appJwt, collectRepos, githubAppConfigured, installUrl, listInstalledRepos, listUserRepos, mergeRepos, repoAccessToken } from '../server-managed/github-app.ts'
 import { bundleIntegrity } from '../server-managed/bundle.ts'
@@ -166,6 +166,33 @@ test('last seen migration: only known session creation is backfilled, and reopen
   db = openSqliteManagedDb(path)
   t.after(() => db.close())
   assert.equal((await db.listUsers()).find((u) => u.id === known).lastSeenAt, 300)
+})
+
+test('session: the gate\'s read handed once to the read after it that asks for it; any other read first, or another cookie, reads again', async () => {
+  const db = openSqliteManagedDb(':memory:')
+  const now = Date.now()
+  const { setCookie } = await createSession(config, db, { githubUserId: 43, login: 'gate', name: null, avatarUrl: null }, now)
+  const cookie = cookiePair(setCookie)
+  let reads = 0
+  const counted = read => (...args) => { reads++; return read(...args) }
+  for (const name of ['sessionWithUser', 'getSessionWithUser']) db[name] = counted(db[name].bind(db))
+  await runRequestPresence(async () => {
+    const gate = await readSession(config, db, cookie, now)
+    handOverSession(cookie, gate)
+    assert.equal(await readSession(config, db, cookie, now, { handed: true }), gate, 'handed, nothing asked')
+    assert.equal(reads, 1)
+    assert.notEqual(await readSession(config, db, cookie, now, { handed: true }), gate, 'once only')
+    assert.equal(reads, 2)
+    handOverSession(cookie, gate)
+    await readSession(config, db, cookie, now)
+    assert.notEqual(await readSession(config, db, cookie, now, { handed: true }), gate, 'a recheck first: read again')
+    assert.equal(reads, 4)
+    handOverSession(cookie, gate)
+    assert.equal(await readSession(config, db, 'dvsid=other', now, { handed: true }), null, 'another cookie\'s is its own')
+    handOverSession(cookie, gate)
+    assert.notEqual(await readSession(config, db, cookie, now, { handed: true, own: true }), gate, 'the signed-in session itself read')
+  })
+  assert.notEqual(await readSession(config, db, cookie, now, { handed: true }), null, 'outside a request, read')
 })
 
 test('session: create → read → expire → end', async () => {

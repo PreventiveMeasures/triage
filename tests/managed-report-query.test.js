@@ -211,7 +211,7 @@ test('batch database calls stay constant as report count grows and preserve per-
   assert.deepEqual([...calls.values()].map(method => method.mock.callCount()), singleCounts)
   assert.equal(calls.get('getReportAccessSnapshot').mock.callCount(), 2)
   assert.equal(calls.get('sessionWithUser').mock.callCount(), 1, 'presence is recorded by the first session read alone')
-  assert.ok(calls.get('getSessionWithUser').mock.callCount() >= 1, 'later reads in the request only read')
+  assert.equal(calls.get('getSessionWithUser').mock.callCount(), 0, 'the handler\'s own read takes the gate\'s, its rechecks the snapshot\'s')
   for (const name of ['listAllRepos', 'getReport', 'userCanReadReport', 'reportPermissionsFor']) assert.equal(calls.get(name).mock.callCount(), 0)
   assert.equal(response.body.reports.length, ids.length)
   for (const [index, entry] of response.body.reports.entries()) {
