@@ -99,9 +99,11 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   const contentList = ['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)
   const wanted = (contentList || focused && (!catalogOnly || active?.teamId === state.currentManagedTeam && !active.signal.aborted))
     ? state.currentManagedTeam : null
-  // Kept while its team is still one of the reader's: one left or deleted
-  // goes once the catalog says so, before a reconnect would find it gone.
-  const kept = !wanted && !hydrate && !session?.publicShare && active?.teamId && active.current()
+  // Kept while live and its team is still one of the reader's: one left or
+  // deleted goes once the catalog says so, before a reconnect would find it
+  // gone; one connecting, or reconnecting after a drop, tells no catalog
+  // meanwhile, so a catalog feed is opened at once instead.
+  const kept = !wanted && !hydrate && !session?.publicShare && active?.teamId && managedTeamFeedLive()
     && state.managedTeams?.some(team => team.id === active.teamId) ? active : null
   const teamId = kept ? kept.teamId : wanted
   if (!isManagedUiMode() || !session || session.role === 'none' || session.publicShare && !teamId) {

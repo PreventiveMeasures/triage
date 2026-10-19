@@ -26,6 +26,8 @@ mock.module('../ui/view/managed-comments.js', { namedExports: {
 } })
 const { managedTeamFeedLive, startManagedTeamFeed, stopManagedTeamFeed, setManagedTeamFeedRefresh } = await import('../ui/view/managed-feed.js')
 const settle = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => { setImmediate(resolve) }) }
+// A connection's first event, the catalog, which makes the feed live.
+const live = (call, revision) => call.onTeams(call.signal, revision)
 function open(team, options) {
   state.currentManagedTeam = team
   state.managedReports = [{ id: `${team}-report` }, { id: `${team}-links` }]
@@ -58,6 +60,7 @@ test('one feed follows the focused team and reconnects only when its endpoint ch
   assert.equal(calls[1].teamId, 'two')
   assert.equal(await calls[0].onUpdate(calls[0].signal), false)
   assert.equal(await calls[1].onUpdate(calls[1].signal), true)
+  await live(calls[1])
   beginViewNavigation() // Home / bundle / Manage all begin navigation.
   state.currentManagedTeam = null
   startManagedTeamFeed()
@@ -115,7 +118,7 @@ test('catalog revisions reach the shared page catalog without changing its conne
   assert.deepEqual(revisions, ['catalog-v1'])
 })
 
-test('sidebar renders keep one feed and do not subscribe to triage before hydration', () => {
+test('sidebar renders keep one feed and do not subscribe to triage before hydration', async () => {
   state.currentManagedTeam = 'one'
   startManagedTeamFeed({ catalogOnly: true })
   startManagedTeamFeed({ catalogOnly: true })
@@ -126,6 +129,7 @@ test('sidebar renders keep one feed and do not subscribe to triage before hydrat
   assert.equal(calls.length, 2)
   assert.equal(calls[0].signal.aborted, true)
   assert.equal(calls[1].teamId, 'one')
+  await live(calls[1])
   beginViewNavigation(); state.currentView = 'manage'
   startManagedTeamFeed({ catalogOnly: true })
   assert.equal(calls[1].signal.aborted, false)
@@ -477,6 +481,7 @@ test('a view wanting the catalog alone keeps the team\'s stream, reading nothing
   const catalogs = []
   setManagedTeamFeedRefresh((current, signal, revision) => { catalogs.push(revision); return true })
   open('one'); startManagedTeamFeed()
+  await live(calls[0], 'v1')
   for (const view of ['bundles', 'manage', 'home', 'npm']) {
     beginViewNavigation(); state.currentView = view
     startManagedTeamFeed({ catalogOnly: true }); startManagedTeamFeed()
@@ -484,7 +489,7 @@ test('a view wanting the catalog alone keeps the team\'s stream, reading nothing
   assert.equal(calls.length, 1)
   assert.equal(calls[0].signal.aborted, false)
   assert.equal(await calls[0].onTeams(calls[0].signal, 'v2'), true)
-  assert.deepEqual(catalogs, ['v2'], 'the catalog told as a catalog feed tells it')
+  assert.deepEqual(catalogs, ['v1', 'v2'], 'the catalog told as a catalog feed tells it')
   assert.equal(await calls[0].onUpdate(calls[0].signal), true)
   assert.deepEqual(refreshes, [], 'no annotations read for a view not the team\'s')
   beginViewNavigation(); state.currentView = 'findings'
@@ -500,11 +505,11 @@ test('a view wanting the catalog alone keeps the team\'s stream, reading nothing
   assert.equal(calls[1].teamId, null)
 })
 
-test('a kept stream gives way to another team, another session, role or token, local mode and no role; a view loading its own reports or a public share keeps none', () => {
+test('a kept stream gives way to another team, another session, role or token, local mode and no role; a view loading its own reports or a public share keeps none', async () => {
   const away = () => { beginViewNavigation(); state.currentView = 'bundles'; startManagedTeamFeed({ catalogOnly: true }) }
-  const back = team => { beginViewNavigation(); state.currentView = 'findings'; open(team) }
-  open('one'); away()
-  back('two')
+  const back = async team => { beginViewNavigation(); state.currentView = 'findings'; open(team); await live(calls.at(-1)) }
+  open('one'); await live(calls[0]); away()
+  await back('two')
   assert.equal(calls[0].signal.aborted, true)
   assert.equal(calls[1].teamId, 'two')
   for (const session of [{ id: 'other', role: 'triage' }, { id: 'other', role: 'view' }, { id: 'other', role: 'view', csrfToken: 'new' }]) {
@@ -514,28 +519,41 @@ test('a kept stream gives way to another team, another session, role or token, l
     startManagedTeamFeed({ catalogOnly: true })
     assert.equal(last.signal.aborted, true)
     assert.equal(calls.at(-1).teamId, null, 'another session starts its own catalog feed')
-    back('two')
+    await back('two')
   }
   away(); state.managedSession = { id: 'other', role: 'none' }
   startManagedTeamFeed({ catalogOnly: true })
   assert.equal(calls.at(-1).signal.aborted, true)
   state.managedSession = { id: 'other', role: 'view', csrfToken: 'new' }
-  back('two'); away(); state.localMode = true
+  await back('two'); away(); state.localMode = true
   startManagedTeamFeed({ catalogOnly: true })
   assert.equal(calls.at(-1).signal.aborted, true)
   state.localMode = false
   // A view hydrating its own reports takes the stream for its team, none kept.
-  back('two'); away()
+  await back('two'); away()
   const before = calls.length
   state.currentView = 'findings'; state.currentManagedTeam = null
   startManagedTeamFeed({ hydrate: () => true })
   assert.equal(calls.length, before + 1)
   assert.equal(calls.at(-1).teamId, null)
   state.managedSession = { id: 'share', role: 'view', publicShare: true }
-  back('one')
+  await back('one')
   const shared = calls.at(-1)
   away()
   assert.equal(shared.signal.aborted, true, 'a public share\'s stream goes with its team')
+})
+
+test('a team stream connecting, or reconnecting after a drop, tells no catalog meanwhile: a view wanting the catalog alone opens a catalog feed at once', async () => {
+  const away = () => { beginViewNavigation(); state.currentView = 'bundles'; startManagedTeamFeed({ catalogOnly: true }) }
+  open('one'); away()
+  assert.equal(calls[0].signal.aborted, true, 'connecting')
+  assert.equal(calls[1].teamId, null)
+  beginViewNavigation(); state.currentView = 'findings'; open('one')
+  await live(calls[2])
+  calls[2].onDrop()
+  away()
+  assert.equal(calls[2].signal.aborted, true, 'reconnecting after a drop')
+  assert.equal(calls[3].teamId, null)
 })
 
 test('the feed is live once a connection has told the catalog, and not before, once it drops, closes, pauses or the session changes', async () => {
