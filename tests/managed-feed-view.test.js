@@ -7,8 +7,10 @@ const state = store({ serverMode: 'managed', currentView: 'findings', localMode:
 const calls = [], refreshes = []
 let refresh = () => Promise.resolve(true)
 let preview = false
-// The revision the mocked annotation reads are answered at.
+// The revision the mocked annotation reads are answered at, and the teams
+// whose reads were asked for before any report read them (start).
 let readRevision = null
+const started = []
 mock.module('../client/index.js', { namedExports: { state, isManagedUiMode: () => state.serverMode === 'managed' && !state.localMode } })
 mock.module('../ui/view/client-managed.js', { namedExports: {
   watchTeamFeed: (teamId, options) => {
@@ -18,13 +20,13 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   },
 } })
 mock.module('../ui/view/managed-triage.js', { namedExports: {
-  createManagedAnnotationRead: () => Object.assign(() => Promise.resolve(null), { revision: () => readRevision }),
+  createManagedAnnotationRead: teamId => Object.assign(() => Promise.resolve(null), { start: () => started.push(teamId), revision: () => readRevision }),
   refreshManagedReportTriage: (id, options) => { refreshes.push(['triage', id]); return refresh(options) },
 } })
 mock.module('../ui/view/managed-comments.js', { namedExports: {
   loadManagedReportComments: id => { refreshes.push(['comments', id]); return Promise.resolve(true) },
 } })
-const { managedTeamFeedLive, startManagedTeamFeed, stopManagedTeamFeed, setManagedTeamFeedRefresh } = await import('../ui/view/managed-feed.js')
+const { managedTeamFeedLive, preloadManagedTeam, startManagedTeamFeed, stopManagedTeamFeed, setManagedTeamFeedRefresh } = await import('../ui/view/managed-feed.js')
 const settle = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => { setImmediate(resolve) }) }
 // A connection's first event, the catalog, which makes the feed live.
 const live = (call, revision) => call.onTeams(call.signal, revision)
@@ -36,7 +38,7 @@ function open(team, options) {
 }
 beforeEach(() => {
   stopManagedTeamFeed(); beginViewNavigation()
-  calls.length = 0; refreshes.length = 0
+  calls.length = 0; refreshes.length = 0; started.length = 0
   state.currentView = 'findings'; state.localMode = false
   state.managedSession = { id: 'user', role: 'triage' }
   state.managedTeams = [{ id: 'one', reports: [] }, { id: 'two', reports: [] }]
@@ -258,6 +260,65 @@ test('a first event arriving while HTTP hydration reads, telling the revision it
   assert.equal(await ready, true)
   assert.equal(await update, true)
   assert.deepEqual(refreshes, [])
+})
+
+// A team clicked: its reports load (state.reports empty) while its feed
+// connects and its annotations are asked for; then they are in.
+function preload(team) {
+  state.currentManagedTeam = team
+  state.managedReports = []
+  state.reports = []
+  return preloadManagedTeam(new AbortController().signal)
+}
+const loaded = team => {
+  state.managedReports = [{ id: `${team}-report` }]
+  state.reports.push({ _managedReportId: `${team}-report` })
+}
+
+test('a team preloaded as its reports load connects and asks for its annotations at once, hydrating with that read without waiting for the feed', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  readRevision = 'r1'
+  const annotations = preload('one')
+  assert.equal(calls.length, 1, 'the feed connects as the reports load')
+  assert.deepEqual(started, ['one'], 'the annotations are asked for as the reports are')
+  assert.equal(await calls[0].onUpdate(calls[0].signal, 'r1'), true)
+  assert.deepEqual(refreshes, [], 'a view still loading reads nothing for an event')
+  loaded('one')
+  const hydrated = []
+  const ready = startManagedTeamFeed({ hydrate: (signal, readAnnotations) => { hydrated.push(readAnnotations); return Promise.resolve(true) }, annotations })
+  assert.equal(await ready, true, 'no fallback wait: the read is under way')
+  assert.equal(hydrated[0], annotations.read)
+  await settle()
+  assert.deepEqual(refreshes, [], 'an event told while loading, at the revision read, reads nothing again')
+  assert.equal(calls.length, 1)
+  assert.equal(await calls[0].onUpdate(calls[0].signal, 'r1'), true)
+  assert.deepEqual(refreshes, [])
+})
+
+test('an event told while a preloaded team\'s reports load, at another revision than its read, reads again once it hydrates', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  readRevision = 'r0'
+  const annotations = preload('one')
+  assert.equal(await calls[0].onUpdate(calls[0].signal, 'r1'), true)
+  loaded('one')
+  assert.equal(await startManagedTeamFeed({ hydrate: () => Promise.resolve(true), annotations }), true)
+  await settle()
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
+})
+
+test('a preload\'s read, its connection replaced before the reports are in, counts every event of the new one as after it', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  readRevision = 'r0'
+  const annotations = preload('one')
+  stopManagedTeamFeed()
+  loaded('one')
+  const ready = startManagedTeamFeed({ hydrate: () => Promise.resolve(true), annotations })
+  assert.equal(calls.length, 2)
+  assert.equal(await ready, true)
+  assert.equal(await calls[1].onUpdate(calls[1].signal, 'r0'), true)
+  assert.deepEqual(refreshes, [], 'its revision: nothing read again')
+  assert.equal(await calls[1].onUpdate(calls[1].signal, 'r1'), true)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']])
 })
 
 test('the first reactive render after hydration keeps the same report scope and live subscription', async t => {

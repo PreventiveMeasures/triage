@@ -6,7 +6,7 @@ import { npmPackageRoute } from './npm-package.js'
 import { repositoryCodeRoute } from './repository-code.js'
 import { setManagedWorkspace } from '../../client/managed/workspace.js'
 import { DEPENDENCY_TABS, managedRouteForIds } from '../../common/managed/routes.js'
-import { adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
+import { LINKS_KIND, adoptRepoUrlFor, analyzeContent, computeLinkHint, deleteBundle, deleteFile, deleteWorkspace, dropBundleFromHashIndex, ensureTriageLoaded, getSecureItem, getWorkspaceAppMetadata, isManagedUiMode, listBundles, listFiles, listWorkspaces, loadRepoUrlFor, parseLinkedFindings, pruneOrphanTriage, readFile, readFileBytes, removeCount, removeSecureItem, saveBundle, saveFile, saveRepoUrlFor, setBundleWorkspace, setCount, setReportWorkspace, setSecureItem, state, workspaceAppCacheToken } from '#client/index.js'
 import { closeWorkspace as closePresence, deleteBundleFromRemote, deleteFromRemote as deletePresence, holdLocalChangeChecks, isInRemoteOrCached, openWorkspace as openPresence, putFile, triageSync } from './client-sync.js'
 import { openImportConflictDialog, openSyncDownloadDialog } from './lazy-dialogs.js'
 // Up front, not in the dialogs' bundle (lazy-dialogs.js says why).
@@ -31,7 +31,7 @@ import { clearReportSources, fetchTeamReports, loadManagedBundle, login as manag
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
 import { loadManagedReportComments } from './managed-comments.js'
-import { startManagedTeamFeed } from './managed-feed.js'
+import { preloadManagedTeam, startManagedTeamFeed } from './managed-feed.js'
 import { setLoadedWorkspaceAppReports, updateWorkspaceAppMetadata } from './workspace-app-load.js'
 import { beginViewNavigation, currentViewGeneration, currentViewSignal } from './view-navigation.js'
 export { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
@@ -780,29 +780,13 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   const gen = beginViewNavigation()
   const hiddenReport = team.reports.find(r => r.id === reportId && r.visible === false)
   const viewSignal = currentViewSignal()
-  let workspace
-  try {
-    workspace = deduplication ? await (await loadManagedBundle()).fetchManagedLinkWorkspace(reportId, { signal: viewSignal })
-      : await fetchTeamReports(team.id, { reportId: hiddenReport?.id ?? null })
-  } catch (error) {
-    if (!isStaleLoad(gen)) showToast(error.message || 'Could not load link report.')
-    return false
-  }
-  if (isStaleLoad(gen)) return false
-  clearReportSources()
-  if (workspace === null || reportId !== null && !workspace.some(r => r.id === reportId)) {
-    showToast('Could not load all team reports. Please try again.')
-    return false
-  }
-  const selectedLink = workspace.find(r => r.id === reportId && r.data.source === 'links' && Array.isArray(r.data.links))
-  const selected = workspace.filter(r => reportId === null || selectedLink || r.id === reportId)
-  const findings = selected.filter(r => r.data.source !== 'links' || !Array.isArray(r.data.links))
-  // The managed client validates every parsed JSON response before clearing
-  // the prior view, so a failed report cannot turn a team into a partial view.
+  const opened = reportId === null ? null : team.reports.find(r => r.id === reportId)
+  // Replace the previous view's controls at once, the team's header with its
+  // loading status in their place (a report's, the status alone), as its
+  // reports load. No partially hydrated findings may remain interactive
+  // during the awaits; a failed load goes Home rather than leave a partial view.
   closeSessionsExcept(new Set())
-  // Replace the previous report's controls while the new view is loading.
-  // No partially hydrated findings may remain interactive during the awaits.
-  // A team keeps its header meanwhile.
+  clearReportSources()
   renderTriageLoading(reportId === null && !deduplication ? team.id : null)
   report.classList.add('active')
   dropZone.classList.add('hidden')
@@ -811,16 +795,40 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   clearMergedGroups()
   state.workspaceMerges = []
   state.revalidateConflicts = new Map()
-  state.currentFile = reportId === null ? null : workspace.find(r => r.id === reportId).filename
+  state.currentFile = opened?.filename ?? null
   // Namespaced, in-memory workspace identity: all existing workspace lens
   // rules apply, without registering a local workspace or sync subscription.
   state.currentWorkspace = reportId === null ? `managed-team:${team.id}` : null
   state.currentManagedTeam = team.id
   state.currentManagedReport = reportId
-  setManagedWorkspace(team.id, workspace)
-  state.managedReports = selected.map((entry) => ({ id: entry.id, filename: entry.filename }))
+  // A report of findings is the one its annotations are read for; a link
+  // report's span the reports it links, known once they are in.
+  state.managedReports = opened && !deduplication && opened.analyzer !== LINKS_KIND ? [{ id: opened.id, filename: opened.filename }] : []
   state.managedComments.clear()
   state.managedIssues.clear()
+  state.managedReport = null
+  // The team's feed and annotations are asked for as its reports are.
+  const preload = deduplication ? undefined : preloadManagedTeam(viewSignal)
+  void renderSidebar()
+  let workspace
+  try {
+    workspace = deduplication ? await (await loadManagedBundle()).fetchManagedLinkWorkspace(reportId, { signal: viewSignal })
+      : await fetchTeamReports(team.id, { reportId: hiddenReport?.id ?? null })
+  } catch (error) {
+    if (!isStaleLoad(gen)) await failManagedTeamLoad(error.message || 'Could not load link report.')
+    return false
+  }
+  if (isStaleLoad(gen)) return false
+  if (workspace === null || reportId !== null && !workspace.some(r => r.id === reportId)) {
+    await failManagedTeamLoad('Could not load all team reports. Please try again.')
+    return false
+  }
+  const selectedLink = workspace.find(r => r.id === reportId && r.data.source === 'links' && Array.isArray(r.data.links))
+  const selected = workspace.filter(r => reportId === null || selectedLink || r.id === reportId)
+  const findings = selected.filter(r => r.data.source !== 'links' || !Array.isArray(r.data.links))
+  state.currentFile = reportId === null ? null : workspace.find(r => r.id === reportId).filename
+  setManagedWorkspace(team.id, workspace)
+  state.managedReports = selected.map((entry) => ({ id: entry.id, filename: entry.filename }))
   state.managedReport = reportId === null ? null : state.managedReports[0] ?? null
   state.currentReportWorkspace = null
   state.currentLinks = null
@@ -850,11 +858,12 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
       ]))
       return results.every(Boolean) && !signal.aborted && !isStaleLoad(gen)
     }
-    const hydrated = deduplication ? await hydrate(currentViewSignal()) : await startManagedTeamFeed({ hydrate })
+    // A link report read as one of findings is read again for those it links.
+    const annotations = selectedLink ? undefined : preload
+    const hydrated = deduplication ? await hydrate(currentViewSignal()) : await startManagedTeamFeed({ hydrate, annotations })
     if (isStaleLoad(gen)) return false
     if (!hydrated) {
-      await goHome({ history: false })
-      showToast('Could not load report annotations. Open the team or report again to retry.')
+      await failManagedTeamLoad('Could not load report annotations. Open the team or report again to retry.')
       return false
     }
   }
@@ -872,6 +881,13 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   startManagedTeamFeed()
   await renderSidebar()
   return true
+}
+
+// A team or report that failed to load leaves Home in place of its loading
+// view, telling why.
+async function failManagedTeamLoad(message) {
+  await goHome({ history: false })
+  showToast(message)
 }
 
 // Replace the active view with the merged contents of an entire
