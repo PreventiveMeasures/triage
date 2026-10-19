@@ -101,14 +101,20 @@ function linksOf(data: unknown): string[][] | null {
 // (loadTeamTreesResponse). The report tells in its place how many files it
 // holds (`treeFiles`) and the dependency directory it names
 // (`treeDependencies`), which classifies findings as the tree itself would
-// (client/dependency-paths.js).
+// (client/dependency-paths.js). Each file's is sent without the hash of its
+// tree (`treeHash`), which no team view reads.
 function withoutTree(report: TeamReport): string | null {
   const tree = (report.data as { tree?: unknown } | null)?.tree
   if (!tree || typeof tree !== 'object' || Array.isArray(tree)) return null
   const { tree: _tree, ...data } = report.data as Finding
   const named = treeDependencyDirectory(tree)
   report.data = { ...data, treeFiles: Object.keys(tree).length, ...(named ? { treeDependencies: named } : {}) }
-  return `${JSON.stringify(report.id)}:${JSON.stringify(tree)}`
+  const files = Object.entries(tree).map(([file, entry]) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [file, entry]
+    const { treeHash: _treeHash, ...kept } = entry as Finding
+    return [file, kept]
+  })
+  return `${JSON.stringify(report.id)}:${JSON.stringify(Object.fromEntries(files))}`
 }
 async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<EncodedWorkspace & { visible: Visibility }> {
   if (snapshot.reports.length > MAX_REPORT_QUERY_COUNT || snapshot.reports.reduce((n, r) => n + r.byteSize, 0) > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')

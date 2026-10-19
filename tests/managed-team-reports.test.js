@@ -453,10 +453,11 @@ test('a team\'s reports tell their trees\' files and the dependency directory th
   const reads = h.reads.length
   const trees = await h.request('/api/teams/broad/trees')
   assert.equal(trees.status, 200)
-  assert.deepEqual(trees.body, { trees: { treed: tree } })
+  const sent = { 'src/a.js': { imports: ['vendor/lib/x.js'], size: 10, fileHash: 'f' }, 'vendor/lib/x.js': { imports: [] } }
+  assert.deepEqual(trees.body, { trees: { treed: sent } }, 'each file\'s, without the hash of its tree')
   assert.equal(h.reads.length, reads, 'built with its reports, and kept with them')
   // A restricted team's reports keep their tree as they keep their report.
-  assert.deepEqual((await h.request('/api/teams/restricted/trees')).body, { trees: { treed: tree } })
+  assert.deepEqual((await h.request('/api/teams/restricted/trees')).body, { trees: { treed: sent } })
   const preview = await h.request('/api/teams/broad/trees?reportId=hidden-treed', 'admin')
   assert.deepEqual(Object.keys(preview.body.trees), ['hidden-treed'])
   for (const [path, role] of [
