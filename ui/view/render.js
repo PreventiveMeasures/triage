@@ -56,6 +56,7 @@ import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, triage
 import './team-dependencies.js'
 import { createViewRenderer } from './render-transition.js'
 import { loadManagedTrees } from './managed-trees.js'
+import { managedDetailsPending } from './managed-details.js'
 import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
@@ -1252,9 +1253,9 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
            second pane, so the card keeps its Code shortcut into the
            bundle overlay instead. -->
       <div class="kanban-detail-body">
-        ${focusGroup
+        ${focusGroup && !managedDetailsPending()
           ? (full ? focusMainTemplate(focusGroup, actions, true) : findingCardPlaceholder(focusGroup, false, 'kanban-detail', false, true))
-          : html`<div class="links-preview-message" role="status">${preview.error || 'Loading finding…'}</div>`}
+          : html`<div class="links-preview-message" role="status">${preview?.error || 'Loading finding…'}</div>`}
       </div>
     </div>
     ${items.length === 0 ? nothing : html`<aside class="kanban-detail-side" aria-label=${`${column.label} findings`}>
@@ -1709,7 +1710,7 @@ function leaveTrees() {
   if (state.viewMode === 'graph') state.viewMode = 'kanban'
 }
 
-const treesLoadingTemplate = what => html`<p class="triage-loading" role="status">Loading ${what}…</p>`
+const loadingTemplate = what => html`<p class="triage-loading" role="status">Loading ${what}…</p>`
 
 // Alphabetical with the null bucket pinned last — the shape both the
 // model and repo option lists in renderImpl sort with.
@@ -2527,6 +2528,9 @@ function renderImpl() {
   const treesLoading = treeFileCount > 1 && !treeData && (state.currentView === 'files' || state.viewMode === 'graph')
     && loadManagedTrees(loaded => { if (!loaded) leaveTrees(); render() })
   const treeAvailable = treeFileCount > 1
+  // A team's board is drawn before its findings have their detail; any other
+  // view mode waits for it, saying it is loading (managed-details.js).
+  const detailsLoading = state.viewMode !== 'kanban' && managedDetailsPending()
   // Same shape as the sort-priority drop above — `graph` is only a
   // valid view-mode while a tree-bearing report is loaded; if the
   // user previously picked it and the underlying data went away
@@ -2557,7 +2561,7 @@ function renderImpl() {
       report.replaceChildren(fHeader, treeSlot)
     }
     if (fHeader) litRender(headerTpl, fHeader)
-    if (treeSlot) litRender(treeData ? renderTreeView(treeData, findingCounts) : treesLoadingTemplate('files'), treeSlot)
+    if (treeSlot) litRender(treeData ? renderTreeView(treeData, findingCounts) : loadingTemplate('files'), treeSlot)
     showReport()
     document.title = `DeepView — ${typeLabel || 'no analyzer'}`
     return
@@ -2590,7 +2594,7 @@ function renderImpl() {
   // toolbar above the graph's own — see the
   // `extraTopRow` argument to renderGraph2Layout below.
   let g2DataForBody = null
-  if (state.viewMode === 'graph' && treeData) {
+  if (state.viewMode === 'graph' && treeData && !detailsLoading) {
     g2DataForBody = buildGraph2Data()
     // Tree disappeared between the treeAvailable gate and buildGraph2Data
     // (workspace switch race); fall back to the default kanban view so
@@ -2686,7 +2690,8 @@ function renderImpl() {
         : html`<p style=${styleMap({ color: 'var(--green)' })}>No ${typeLabel} issues found.</p>`
     }
 
-    bodyTemplate = treesLoading ? treesLoadingTemplate('graph') : findingsBodyTemplate(filtered, selectedGroup, groupStates)
+    bodyTemplate = treesLoading ? loadingTemplate('graph') : detailsLoading ? loadingTemplate('findings')
+      : findingsBodyTemplate(filtered, selectedGroup, groupStates)
   }
 
   // Slot-reuse: only rebuild the chrome when the structure

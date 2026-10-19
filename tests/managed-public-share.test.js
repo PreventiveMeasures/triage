@@ -87,6 +87,15 @@ test('a public workspace\'s reports tell their trees apart, its trees asked for 
   assert.equal((await h.request('/api/teams/team/trees', { token: 'A'.repeat(43) })).status, 401)
 })
 
+test('a public workspace\'s board reports come without their findings\' detail', async t => {
+  const h = await fixture(t), token = await h.mint()
+  const get = h.store.get
+  h.store.get = id => id === 'visible' ? Promise.resolve(Buffer.from(JSON.stringify({ findings: [{ id: 'visible-finding', file: 'src/a.js', title: 'T', description: 'Body', evidence: [] }] }))) : get(id)
+  const finding = async path => (await h.request(path, { token })).body.reports.find(report => report.id === 'visible').data.findings[0]
+  assert.deepEqual(await finding('/api/teams/team/reports?lite=1'), { id: 'visible-finding', file: 'src/a.js', title: 'T', isSecurity: false })
+  assert.equal((await finding('/api/teams/team/reports')).description, 'Body')
+})
+
 test('directory team links include bundles at or below their scope and immediately lose moved bundles', async t => {
   const h = await fixture(t), token = await h.mint()
   const catalog = async () => (await h.request('/api/teams/team/shared', { token })).body.team.bundles

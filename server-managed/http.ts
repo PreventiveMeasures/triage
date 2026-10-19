@@ -190,7 +190,7 @@ import { isExactVersion } from '@preventive/upstream/semver.js'
 import { VIEW_AS_PATH, VIEW_ONLY_ERROR, clearViewCookie, endViewSession, runViewing, startViewSession, viewToken } from './view-as.ts'
 import type { ActivityContext, ActivityInput } from './activity.ts'
 import { acceptsReportMetadata } from './report-response.ts'
-import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, loadTeamTreesResponse, recheckTeam, teamFindingIds, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
+import { TeamReportsError, type TeamResponsePart, loadTeamAnnotations, loadTeamReportsResponse, recheckTeam, teamFindingIds, teamResponsePart, teamSnapshot, teamSourcePaths, teamWorkspaceFindingIds } from './team-reports.ts'
 import { FINDING_CATALOG_PAGE_BYTES, FINDING_CATALOG_PAGE_COUNT, MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
 import { lookupFixes, storedFixUrls } from './github-pulls.ts'
 import { lookupIssueLinks } from './github-issue-links.ts'
@@ -3683,11 +3683,12 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
 
 // The server selects the complete published workspace for classification.
 // Privileged hidden-report previews are independently scoped and bounded.
-// Its reports' file trees are asked for apart, by its graph or Files alone.
+// Its reports' file trees are asked for apart, by its graph or Files alone,
+// and its board's reports without their findings' detail (`?lite=1`).
 async function handleTeamReports(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, teamId: string, reportId: string | null,
-  part: 'reports' | 'trees' = 'reports'): Promise<void> {
+  part: TeamResponsePart = 'reports'): Promise<void> {
   const snapshot = await teamSnapshot(deps.db, session.id, teamId, reportId)
-  const body = await (part === 'trees' ? loadTeamTreesResponse : loadTeamReportsResponse)(deps.db, deps.reportStore, snapshot)
+  const body = await loadTeamReportsResponse(deps.db, deps.reportStore, snapshot, part)
   await recheckTeam(deps.db, session.id, snapshot)
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
   writeResponse(res, body)
@@ -5061,7 +5062,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const teamReports = /^\/api\/teams\/([^/]+)\/(reports|trees)$/u.exec(path)
     if (teamReports) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleTeamReports(res, deps, workspaceSession!.session, teamReports[1]!, url.searchParams.get('reportId'), teamReports[2] as 'reports' | 'trees'); return
+      await handleTeamReports(res, deps, workspaceSession!.session, teamReports[1]!, url.searchParams.get('reportId'), teamResponsePart(teamReports[2]!, url)); return
     }
     if (path === REPORT_QUERY_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }

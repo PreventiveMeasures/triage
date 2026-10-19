@@ -235,3 +235,20 @@ test('a team\'s trees are kept with its reports: a catalog refresh leaving the t
   assert.notStrictEqual(await fetchTeamTrees('team'), trees)
   assert.equal(calls.mock.callCount(), 2)
 })
+
+test('a team\'s board reports and its whole ones are asked for and kept apart, under the team', async t => {
+  setManagedReportCatalog([{ id: 'team', reports: [{ id: 'report', cacheKey: 'v1' }] }])
+  const urls = []
+  t.mock.method(globalThis, 'fetch', url => {
+    urls.push(url)
+    return Promise.resolve(Response.json({ reports: [{ id: 'report', filename: 'r.json', ...content(url.includes('lite') ? 'lite' : 'whole') }] }))
+  })
+  const [lite, whole] = await Promise.all([fetchTeamReports('team', { lite: true }), fetchTeamReports('team')])
+  assert.deepEqual(urls.toSorted(), ['/api/teams/team/reports', '/api/teams/team/reports?lite=1'])
+  assert.deepEqual([lite[0].data.findings[0].id, whole[0].data.findings[0].id], ['lite', 'whole'])
+  assert.strictEqual(await fetchTeamReports('team', { lite: true }), lite)
+  await fetchTeamReports('team', { reportId: 'report', lite: true })
+  assert.equal(urls.at(-1), '/api/teams/team/reports?reportId=report&lite=1')
+  setManagedReportCatalog([{ id: 'team', reports: [{ id: 'report', cacheKey: 'v2' }] }])
+  assert.notStrictEqual(await fetchTeamReports('team', { lite: true }), lite)
+})

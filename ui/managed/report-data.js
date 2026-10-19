@@ -42,9 +42,9 @@ export async function fetchReports(ids) {
 
 // The same report may have different findings in different teams. Keep the
 // entire response together, including links, in a team-specific memory entry.
-export function fetchTeamReports(teamId, { reportId = null } = {}) {
-  const suffix = reportId === null ? '' : `:${reportId}`
-  return cachedReport(`team:${teamId}${suffix}`, signal => requestTeamReports(teamId, { signal, reportId }))
+export function fetchTeamReports(teamId, { reportId = null, lite = false } = {}) {
+  const suffix = `${reportId === null ? '' : `:${reportId}`}${lite ? ':lite' : ''}`
+  return cachedReport(`team:${teamId}${suffix}`, signal => requestTeamReports(teamId, { signal, reportId, lite }))
 }
 
 // Their file trees, kept as their reports are: under the team, which a

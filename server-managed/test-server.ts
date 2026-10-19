@@ -15,6 +15,7 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { acceptsReportMetadata } from './report-response.ts'
+import { liteReportData } from '../common/managed/finding-detail.js'
 import { findingsRepository, readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { createHash, randomUUID } from 'node:crypto'
@@ -1458,7 +1459,9 @@ function serveTeamReports(url: URL, res: ServerResponse): boolean {
     return { report, tree, data: tree ? { ...data, treeFiles: Object.keys(tree).length } : data }
   })
   if (match[2] === 'trees') { sendJson(res, 200, { trees: Object.fromEntries(read.filter(({ tree }) => tree).map(({ report, tree }) => [report.id, tree])) }); return true }
-  sendJson(res, 200, { reports: read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data,
+  // The board's, without the findings' detail, as the managed server sends it.
+  const lite = url.searchParams.get('lite') === '1'
+  sendJson(res, 200, { reports: read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data: lite ? liteReportData(data) : data,
     repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } })) })
   return true
 }

@@ -7,7 +7,7 @@ import type { OpenedBlob } from './blob-store.ts'
 import type { WorkspaceShareSnapshot } from './workspace-shares.ts'
 import { sendJson, sendLines, writeResponse } from './http-response.ts'
 import { hashToken } from './crypto.ts'
-import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, loadTeamTreesResponse, teamReportVisibility } from './team-reports.ts'
+import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, teamReportVisibility, teamResponsePart } from './team-reports.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
@@ -84,7 +84,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
       await send(await loadTeamAnnotations(deps.db, deps.reportStore, snapshot, url.searchParams.get('reportId'))); return
     }
     if (teamRoute[2] === 'shared') { await sendTeam(); return }
-    const body = await (teamRoute[2] === 'trees' ? loadTeamTreesResponse : loadTeamReportsResponse)(deps.db, deps.reportStore, snapshot)
+    const body = await loadTeamReportsResponse(deps.db, deps.reportStore, snapshot, teamResponsePart(teamRoute[2]!, url))
     await recheck()
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer' })
     writeResponse(res, body); return

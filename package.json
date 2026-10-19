@@ -280,6 +280,8 @@
     "common/linked-workspace-groups.js",
     "common/managed/agent-tasks.ts",
     "common/managed/comments.ts",
+    "common/managed/finding-detail.d.ts",
+    "common/managed/finding-detail.js",
     "common/managed/github-agents.ts",
     "common/managed/github-logins.ts",
     "common/managed/npm-packages.d.ts",
