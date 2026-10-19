@@ -169,6 +169,12 @@ export const commitPullStore = <T>(db: UpstreamCacheStore, debug = false): KeptS
 // Pulse and the Agents tab read them (repository-pulls.ts readPulls), by its
 // id: kept as its history's pages are, those updated since read on.
 export const pullListStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/pulls', HISTORY_PAGE_KEPT_MS, debug)
+// A branch's tip, by its repository and commit, as the Agents tab looks it
+// up (repository-agents.ts agentBranches), and the commits the app agents'
+// accounts authored from a head, by it (authoredCommits): kept as the
+// history is, neither changing.
+export const branchTipStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/branch-tips', HISTORY_PAGE_KEPT_MS, debug)
+export const authoredCommitStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/agents-authored', HISTORY_PAGE_KEPT_MS, debug)
 // A repository's issues, the most recently updated first, as the Pulse and
 // the Agents tab read them (repository-pulls.ts readIssues): kept as its
 // pull requests are.

@@ -131,29 +131,29 @@ const historyPage = ({ o0 }) => ({ data: { repository: { b0: { history: { pageIn
 // Whether a pull request brought each commit asked of: the third's alone.
 const pulledPage = variables => ({ data: { repository: Object.fromEntries(Object.entries(variables).flatMap(([key, sha]) => /^o\d+$/u.test(key)
   ? [[`c${key.slice(1)}`, { associatedPullRequests: { totalCount: sha === c ? 1 : 0 } }]] : [])) } })
-// An agent's branches as GitHub lists them, by name, a page at a time; a
-// name whole under `refs/heads/`, or under the prefix listed.
-const ref = (prefix, name, at, message = 'Work') => ({ prefix, name, target: { committedDate: at, message, author: { user: { login: 'ChristopherTuring' } } } })
-const refPages = {
-  'refs/heads/claude/': { null: { pageInfo: { hasNextPage: true, endCursor: 'b_2' }, nodes: [ref('refs/heads/', 'claude/aaa-old', '2026-01-01T00:00:00Z'),
-    ref('refs/heads/', 'claude/magical-mayer-83oicz', '2026-10-15T02:00:00Z', `Tabs\n\nClaude-Session: ${session}`)] },
-  b_2: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/', 'claude/zzz-newest', '2026-10-15T04:00:00Z')] } },
-  'refs/heads/codex/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/codex/', 'try-lazy-trees', '2026-10-15T03:00:00Z'), null] } },
-  'refs/heads/neo/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [ref('refs/heads/neo/', 'try-pnpm', '2026-10-15T05:00:00Z')] } },
-  'refs/heads/copilot/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
-  'refs/heads/dependabot/': { null: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ prefix: 'refs/heads/dependabot/', name: 'npm_and_yarn/ws-8.21.0',
-    target: { committedDate: '2026-10-15T06:00:00Z', message: 'Bump ws', author: { email: '49699333+dependabot[bot]@users.noreply.github.com', user: null } } }] } },
-}
-// The commits the app agents' accounts authored, however far back: one
-// deeper than the first page, and one it holds too.
-const authoredPage = () => ({ data: { repository: { defaultBranchRef: { target: { history: { nodes: [
+// The repository's branches as the Commits tab reads them, by name, a page
+// at a time, each its tip and when that was committed; and their tips, each
+// its message and author.
+const tipSha = n => String(n).padStart(40, 'b')
+const heads = [['claude/aaa-old', 1, '2026-01-01T00:00:00Z'], ['claude/magical-mayer-83oicz', 2, '2026-10-15T02:00:00Z'], ['claude/zzz-newest', 3, '2026-10-15T04:00:00Z'],
+  ['codex/try-lazy-trees', 4, '2026-10-15T03:00:00Z'], ['dependabot/npm_and_yarn/ws-8.21.0', 7, '2026-10-15T06:00:00Z'], ['feature/x', 5, '2026-10-15T07:00:00Z'],
+  ['main', a, '2026-10-15T01:00:00Z'], ['neo/try-pnpm', 6, '2026-10-15T05:00:00Z']].map(([name, tip, at]) => ({ name, target: { oid: tip === a ? a : tipSha(tip), committedDate: at } }))
+const headsPage = ({ after }) => ({ data: { repository: { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: '2026-10-15T01:00:00Z' } },
+  branches: after === null ? { pageInfo: { hasNextPage: true, endCursor: 'h_2' }, nodes: heads.slice(0, 4) } : { pageInfo: { hasNextPage: false, endCursor: null },
+    nodes: heads.slice(4) }, tags: { nodes: [] } } } })
+const tips = { [tipSha(2)]: { message: `Tabs\n\nClaude-Session: ${session}` },
+  [tipSha(7)]: { message: 'Bump ws', author: { email: '49699333+dependabot[bot]@users.noreply.github.com', user: null } } }
+const tipsPage = variables => ({ data: { repository: Object.fromEntries(Object.entries(variables).flatMap(([key, sha]) => /^o\d+$/u.test(key)
+  ? [[`c${key.slice(1)}`, { message: 'Work', author: { user: { login: 'ChristopherTuring' } }, ...tips[sha] }]] : [])) } })
+// The commits the app agents' accounts authored from the head, however far
+// back: one deeper than the first page, and one it holds too.
+const authoredPage = () => ({ data: { repository: { object: { history: { nodes: [
   commitNode('f'.repeat(40), 'Move the database (#50)', { author: { email: '198982749+Copilot@users.noreply.github.com', user: null } }),
   commitNode('9'.repeat(40), 'Fix the build (#7)', { committedDate: '2026-05-14T00:00:00Z',
     author: { email: '198982749+Copilot@users.noreply.github.com', user: null } }),
-] } } } } } })
+] } } } } })
 const graphql = ({ query, variables }) => query.includes('user(login:') ? { data: { u0: { login: 'any-login', databaseId: 274065190 } } }
-  : query.includes('refs(refPrefix: $prefix')
-  ? { data: { repository: { refs: refPages[variables.prefix][variables.after ?? 'null'] } } }
+  : query.includes('refs(refPrefix: "refs/heads/"') ? headsPage(variables) : query.includes('... on Commit { message author') ? tipsPage(variables)
   : query.includes('author: { emails: $emails }') ? authoredPage() : query.includes('nodes { ...historyCommit }') ? historyPage(variables)
   : query.includes('... on Commit { associatedPullRequests') ? pulledPage(variables) : firstPage()
 
@@ -217,8 +217,13 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   assert.deepEqual([listed.variables, page.variables], [{ owner: 'org', name: 'repo', after: null }, { owner: 'org', name: 'repo', after: null }],
     'the pull requests and issues as kept for the Pulse too, their first pages')
   assert.match(listed.query, /labels\(first: 100\) \{ nodes \{ name \} \}/u, 'a pull request\'s labels read, as many as GitHub gives a page')
-  assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: $prefix')).map(query => [query.variables.prefix, query.variables.after]).toSorted(),
-    [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null], ['refs/heads/copilot/', null], ['refs/heads/dependabot/', null], ['refs/heads/neo/', null]])
+  assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: "refs/heads/"')).map(query => query.variables.after), [null, 'h_2'],
+    'the branches as the Commits tab reads and keeps them, every page')
+  const looked = () => asked.filter(query => query.query.includes('... on Commit { message author'))
+  assert.deepEqual(looked().flatMap(query => Object.entries(query.variables).flatMap(([key, sha]) => /^o\d+$/u.test(key) ? [sha] : [])).toSorted(),
+    [1, 2, 3, 4, 6, 7].map(tipSha).toSorted(), 'the agents\' branches\' tips alone looked up')
+  const authored = () => asked.filter(query => query.query.includes('author: { emails: $emails }'))
+  assert.equal(authored()[0].variables.head, a, 'the commits the app agents\' accounts authored from the head')
   assert.ok(asked.every(query => query.auth === 'Bearer login-token'))
   // Asked again, kept: nothing read of GitHub's GraphQL again, branches neither.
   const reads = asked.length
@@ -229,6 +234,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   await repositoryReadStore(request.db).remove('1\0agents\0' + AGENTS_READ_VERSION + '\0\0')
   assert.deepEqual((await request({ repoId: '1' })).body.commits, body.commits)
   assert.equal(asked.filter(query => query.query.includes('nodes { ...historyCommit }') || query.query.includes('... on Commit { associatedPullRequests')).length, 2)
+  assert.deepEqual([looked().length, authored().length], [1, 1], 'the tips looked up, and those authored from the head, kept')
 })
 
 test('the history the Commits tab and Pulse keep is the Agents tab\'s: a page kept with its commits\' marks not read again; one kept before they were, read again', async t => {

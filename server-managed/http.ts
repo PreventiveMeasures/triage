@@ -135,7 +135,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { type KeptStore, REPOSITORY_READ_KEPT_MS, codeHeadStore, codeTreeStore, commitPullStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
+import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTipStore, codeHeadStore, codeTreeStore, commitPullStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
   issueListStore, lockfileReadStore,
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
@@ -219,7 +219,7 @@ import { COAUTHORS_READ, coauthorsOf } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { type KnownMerges, type SquashedPull, type Squashes, squashedPulls } from './repository-squashes.ts'
-import { AGENTS_READ_VERSION, COMMITS_CURSOR, type CommitPulls, repositoryAgents } from './repository-agents.ts'
+import { AGENTS_READ_VERSION, type AuthoredCommit, type BranchTip, type BranchTips, COMMITS_CURSOR, type CommitPulls, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits, type PullDependencies,
   type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
@@ -2119,6 +2119,31 @@ function commitPulls(deps: ManagedHttpDeps, repoId: number): CommitPulls {
   }
 }
 
+// Repository `repoId`'s branches' tips as the Agents tab looks them up
+// (repository-agents.ts BranchTips), kept by the commit.
+function branchTips(deps: ManagedHttpDeps, repoId: number): BranchTips {
+  const store = branchTipStore<BranchTip>(deps.db, deps.config.debug)
+  const keyOf = (sha: string) => `${repoId}\0${sha}`
+  return {
+    async read(shas) {
+      const kept = await store.readMany(shas.map(keyOf))
+      return new Map(shas.flatMap(sha => { const tip = kept.get(keyOf(sha))?.value; return tip ? [[sha, tip] as const] : [] }))
+    },
+    write: (sha, tip) => store.write(keyOf(sha), tip, Date.now()),
+  }
+}
+
+// The commits repository `repoId`'s app agents' accounts authored from a
+// head, as the Agents tab reads them (repository-agents.ts AuthoredCommits),
+// kept by it.
+function authoredCommits(deps: ManagedHttpDeps, repoId: number) {
+  const store = authoredCommitStore<AuthoredCommit[]>(deps.db, deps.config.debug)
+  return {
+    read: async (key: string) => { const kept = (await store.read(`${repoId}\0${key}`))?.value; return Array.isArray(kept) ? kept : null },
+    write: (key: string, commits: AuthoredCommit[]) => store.write(`${repoId}\0${key}`, commits, Date.now()),
+  }
+}
+
 // How long a repository's pull requests or issues kept (keptList) are taken
 // as they are before those updated since are read: less than their readers
 // keep their answers (keptAnswer), that one read of them serves them all.
@@ -2328,7 +2353,9 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
   }
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors, historyPages(deps, repoId, true, true),
     commitPulls(deps, repoId), { pulls: () => keptPulls(deps, repoId, fullName, token, null), issues: () => keptIssues(deps, repoId, fullName, token, null),
-      head: async () => (await defaultTip(deps, repoId, fullName, token)).sha }),
+      head: async () => (await defaultTip(deps, repoId, fullName, token)).sha,
+      heads: async () => (await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(fullName, token))).value.heads,
+      tips: branchTips(deps, repoId), authored: authoredCommits(deps, repoId) }),
     `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
 }
 
