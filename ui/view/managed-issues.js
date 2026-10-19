@@ -6,6 +6,9 @@ export function managedIssueFor(finding) {
     ? state.managedIssues.get(finding?.id) ?? null : null
 }
 export function automaticFixFor(finding) { return managedIssueFor(finding)?.autoFix ?? '' }
+// The one link a kanban card has room for: the manual Fix wins, then the
+// pull request linked to the saved issue, then the issue itself.
+export function cardLinkFor(finding, entry) { return entry?.fix || automaticFixFor(finding) || managedIssueFor(finding)?.url || '' }
 
 // These read-only values stay separate from triage: editing or clearing Fix
 // must never serialize an automatic link as a user's override.

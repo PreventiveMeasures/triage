@@ -177,6 +177,7 @@ The newest pull request linked to the issue, other than one closed without mergi
 Linked pull requests outside the team's repositories are neither shown nor saved.
 A manual Fix stays a user override, and both show when they differ.
 Either one satisfies **Has fix**, and derived updates add no triage history.
+A kanban card has room for one link: the manual Fix, else the derived Fix, else the issue.
 
 A database reservation stops simultaneous requests, even on different servers, from creating duplicate issues.
 A lost GitHub response is never retried automatically, and the dialog offers a status check instead.
