@@ -31,14 +31,14 @@ test('the reviews its comments make count beside its teams\', each reviewer once
   const lookup = dependency => { asked.push(dependency.name); return Promise.resolve(dependency.name === 'other') }
   let wanting = null
   const comments = list => { wanting = list.map(dependency => dependency.name).toSorted(); return Promise.resolve({ failed: false, reviews: [
-    review(ms, 'u1', { time: 5 }), review(ms, 'u2', { time: 5 }), review(ms, 'u5', { time: 5 }), review(patched, 'u2', { time: 5 }), review(patched, 'u3', { time: 5 }),
+    review(ms, 'u1', { status: 'accept-with-nits', time: 5 }), review(ms, 'u2', { time: 5 }), review(ms, 'u5', { time: 5 }), review(patched, 'u2', { time: 5 }), review(patched, 'u3', { time: 5 }),
     review(other, 'u3', { status: 'reject', time: 5 }), review(held, 'u3', { status: 'reject', time: 5 }),
   ] }) }
   const answer = await reviewedDependencies(told, state, { reviewed: { lookup }, commentReviews: comments })
   assert.deepEqual(wanting, ['ms', 'patched'], 'its comments read for those still wanting one, the reviewed dependencies asked first')
-  assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(ms), reviews: 3, commented: 2, reviewers: [passes('u1'), passes('u5', true), passes('u2', true)] },
+  assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(ms), reviews: 3, commented: 2, reviewers: [{ ...passes('u1', true), status: 'accept-with-nits' }, passes('u5', true), passes('u2', true)] },
     { ...strip(patched), reviews: 2, commented: 2, reviewers: [passes('u2', true), passes('u3', true)] }],
-    'u1 once, for their review here and in its comments; u2 in its comments alone, and u5, whose review here is partial; a patched one passed by reviews of its patch')
+    'u1 once, for their review here and in its comments, their latest verdict, in its comments, told so; u2 in its comments alone, and u5, whose review here is partial; a patched one passed by reviews of its patch')
   assert.deepEqual(answer.lockfiles[0].unreviewed, [{ ...strip(held), reviews: 2, rejected: true, commented: 1,
     reviewers: [passes('u1'), passes('u4'), { login: 'u3', status: 'reject', comment: true }] }], 'a reject in its comments holds one its teams passed')
   assert.deepEqual(asked.toSorted(), ['held', 'ms', 'other', 'patched'], 'one held asked of the reviewed dependencies too, which pass `other` whatever rejects it')

@@ -108,8 +108,8 @@ const ACCEPTING = new Set(['accept', 'accept-with-nits'])
 // (any, for `any`); and how many review it in its pull request's comments
 // alone (`commented`), which count for it alone: whose reviews passing it,
 // else whose latest, are its comments'. Each reviewer too (`reviewers`), by
-// their login, their latest verdict, whether they pass it, and whether in
-// its comments alone.
+// their login, their latest verdict, whether they pass it, and whether that
+// verdict is its comments' (`comment`), which counts for it alone.
 function stancesOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'any') {
   const hashes = hashesOf(pkg)
   const by = new Map<string, PublishedReview[]>()
@@ -130,7 +130,7 @@ function stancesOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'an
     if (comment) commented++
     if (latest.status === 'reject') rejected = true
     else if (passes) passing++
-    reviewers.push({ login: latest.login, status: latest.status, ...passes ? { passes: true as const } : {}, ...comment ? { comment: true as const } : {} })
+    reviewers.push({ login: latest.login, status: latest.status, ...passes ? { passes: true as const } : {}, ...latest.comment ? { comment: true as const } : {} })
   }
   return { passing, rejected, commented, reviewers }
 }

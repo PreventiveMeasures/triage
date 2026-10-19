@@ -89,8 +89,8 @@ function checkedVersion(pkg) {
       : count(reviews) === null ? {} : { reviews, ...rejected === true ? { rejected } : {}, ...count(commented) > 0 ? { commented } : {}, ...by.length > 0 ? { reviewers: by } : {} } }]
 }
 // Each reviewer of a version as an answer names them: their login, their
-// latest verdict, whether they pass it (`passes`), and whether in its pull
-// request's comments alone (`comment`).
+// latest verdict, whether they pass it (`passes`), and whether that verdict
+// is its pull request's comments' (`comment`), which counts there alone.
 const VERDICTS = new Set(['accept', 'accept-with-nits', 'request-changes', 'reject'])
 const checkedReviewers = list => Array.isArray(list) ? list.flatMap(one => typeof one?.login === 'string' && VERDICTS.has(one.status)
   ? [{ login: one.login, status: one.status, ...one.passes === true ? { passes: true } : {}, ...one.comment === true ? { comment: true } : {} }] : []) : []
