@@ -44,8 +44,12 @@ test('a row\'s lines are read once it nears the viewport, those asked within a f
   const [request] = pending
   request.tell({ name: 'ms', version: '2.1.3', otherVersion: '2.1.2', additions: 1234, deletions: 2, typeless: { additions: 30, deletions: 1 }, binary: true })
   const text = templateText(delta.render())
-  assert.match(text, /data-tooltip=Lines it adds and removes, against 2\.1\.2><span class="is-added">\+1,234<\/span> <span class="is-deleted">−2<\/span><span class="npm-delta-binary"[^>]*>, binary<\/span>/u,
+  assert.match(text, /data-tooltip=Lines it adds and removes, against 2\.1\.2 \.tooltipContent=<div class="compare-tip">[^]*?<\/div>><span class="is-added">\+1,234<\/span> <span class="is-deleted">−2<\/span><span class="npm-delta-binary">, binary<\/span>/u,
     'each as its line comes')
+  assert.match(text, new RegExp(String.raw`<div class="compare-tip-head">Lines changed</div>\s*<div class="compare-tip-rows"><span class="compare-tip-label">Against</span><span>2\.1\.2</span>\s*` +
+    String.raw`<span class="compare-tip-label">Added</span><span class="is-added">\+1,234</span>\s*<span class="compare-tip-label">Removed</span><span class="is-deleted">−2</span>\s*` +
+    String.raw`<span class="compare-tip-label">Types aside</span><span><span class="is-added">\+30</span> <span class="is-deleted">−1</span></span></div>[^]*` +
+    String.raw`<div class="compare-tip-note">Binary files changed too, which no line counts</div>`, 'u'), 'what it tells, formatted, its tooltip')
   assert.match(text, /\(<span class="is-added">\+30<\/span> <span class="is-deleted">−1<\/span>\s+-types\)/u)
   npmDelta('ms', '2.1.3', '2.1.2')
   await frame()
@@ -64,7 +68,7 @@ test('a row\'s lines are read once it nears the viewport, those asked within a f
   const failed = Object.assign(new Delta(), { name: 'b', version: '1.0.0', base: '(empty)' })
   failed._watch()
   near.get(failed)(true)
-  assert.match(templateText(failed.render()), /class="npm-delta is-error" data-tooltip=Counting its lines took too long\.>\?</u)
+  assert.match(templateText(failed.render()), /class="npm-delta is-error" data-tooltip=Counting its lines took too long\. \.tooltipContent=<div class="compare-tip">\s*<div class="compare-tip-head">Lines not counted<\/div><div>Counting its lines took too long\.<\/div><\/div>>\?</u)
   failed._unwatch()
   assert.equal(near.has(failed), false)
 

@@ -192,10 +192,23 @@ class NpmDeltaElement extends LitElement {
     const entry = npmDelta(this.name, this.version, this.base ?? '(empty)')
     const against = this.base && this.base !== '(empty)' ? `against ${this.base}` : 'the whole package'
     if (entry.status === 'loading') return html`<span class="npm-delta is-loading" aria-label="Counting its lines">…</span>`
-    if (entry.status === 'error') return html`<span class="npm-delta is-error" data-tooltip=${entry.error}>?</span>`
-    return html`<span class="npm-delta" data-tooltip=${`Lines it adds and removes, ${against}`}>${counted(entry.additions, entry.deletions)}${entry.binary
-      ? html`<span class="npm-delta-binary" data-tooltip="Binary files changed too, which no line counts">, binary</span>` : nothing}${entry.typeless
-      ? html` <span class="npm-delta-typeless" data-tooltip="Leaving out the declaration files changed in types alone">(${counted(entry.typeless.additions, entry.typeless.deletions)}
+    if (entry.status === 'error') {
+      return html`<span class="npm-delta is-error" data-tooltip=${entry.error} .tooltipContent=${html`<div class="compare-tip">
+        <div class="compare-tip-head">Lines not counted</div><div>${entry.error}</div></div>`}>?</span>`
+    }
+    // What it tells, formatted, its tooltip: what it is against, the lines
+    // added and removed, those but for declaration files changed in types
+    // alone, and that binary files changed too.
+    const tip = html`<div class="compare-tip"><div class="compare-tip-head">Lines changed</div>
+      <div class="compare-tip-rows"><span class="compare-tip-label">Against</span><span>${this.base && this.base !== '(empty)' ? this.base : 'none, the whole package'}</span>
+        <span class="compare-tip-label">Added</span><span class="is-added">+${entry.additions.toLocaleString('en-US')}</span>
+        <span class="compare-tip-label">Removed</span><span class="is-deleted">−${entry.deletions.toLocaleString('en-US')}</span>
+        ${entry.typeless ? html`<span class="compare-tip-label">Types aside</span><span>${counted(entry.typeless.additions, entry.typeless.deletions)}</span>` : nothing}</div>
+      ${entry.typeless ? html`<div class="compare-tip-note">Types aside: leaving out the declaration files changed in types alone</div>` : nothing}
+      ${entry.binary ? html`<div class="compare-tip-note">Binary files changed too, which no line counts</div>` : nothing}</div>`
+    return html`<span class="npm-delta" data-tooltip=${`Lines it adds and removes, ${against}`} .tooltipContent=${tip}>${counted(entry.additions, entry.deletions)}${entry.binary
+      ? html`<span class="npm-delta-binary">, binary</span>` : nothing}${entry.typeless
+      ? html` <span class="npm-delta-typeless">(${counted(entry.typeless.additions, entry.typeless.deletions)}
         -types)</span>` : nothing}</span>`
   }
 }
