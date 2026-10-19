@@ -21,7 +21,8 @@ test('a report\'s board copy leaves each finding\'s detail out, an untitled one 
   assert.strictEqual(liteReportData(links), links)
   const read = readLiteReportData(structuredClone(lite))
   assert.equal(read.findings[1][0].description, `${long.slice(0, 117)}…`, 'a name cut ends in an ellipsis once read')
-  assert.deepEqual(readLiteReportData({ findings: [{ id: 'd', description: 'Wait... then' }] }).findings[0].description, 'Wait... then', 'dots not at its end are its own')
+  assert.deepEqual(readLiteReportData({ findings: [{ id: 'd', description: 'Wait... then' }, { id: 'e', description: 'Then wait...' }] }).findings.map(f => f.description),
+    ['Wait... then', 'Then wait...'], 'dots in a name not cut are its own')
 })
 
 const pass = (id, extra = {}) => ({ id, file: 'src/a.js', isApp: true, revalidate: 'revalidation', title: `App ${id}`, ...extra })
