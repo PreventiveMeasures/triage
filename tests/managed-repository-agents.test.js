@@ -97,6 +97,8 @@ const firstPage = () => ({ data: { repository: {
     // another repository's (as one moved has), told by its no-reply address
     // alone, as GitHub names no user for a bot.
     commitNode('e'.repeat(40), 'Bump esbuild\n\n🤖 Generated with [Neo](https://neo.example)'),
+    // One Neo's account authored by GitHub's older no-reply address, naming no id, its account looked up by its login.
+    commitNode('4'.repeat(40), 'Pin pnpm', { author: { email: 'any-login@users.noreply.github.com', user: null } }),
     commitNode('f'.repeat(40), 'Move the database (#50)', { author: { email: '198982749+Copilot@users.noreply.github.com', user: null } }),
     // Ones by addresses naming no agent: another's, Copilot's login with another's id, and its id with another's login.
     commitNode('0'.repeat(40), 'Not Copilot', { author: { email: 'copilot@example.com', user: null } }),
@@ -126,7 +128,8 @@ const authoredPage = () => ({ data: { repository: { defaultBranchRef: { target: 
   commitNode('9'.repeat(40), 'Fix the build (#7)', { committedDate: '2026-05-14T00:00:00Z',
     author: { email: '198982749+Copilot@users.noreply.github.com', user: null } }),
 ] } } } } } })
-const graphql = ({ query, variables }) => query.includes('refs(refPrefix: $prefix')
+const graphql = ({ query, variables }) => query.includes('user(login:') ? { data: { u0: { login: 'any-login', databaseId: 274065190 } } }
+  : query.includes('refs(refPrefix: $prefix')
   ? { data: { repository: { refs: refPages[variables.prefix][variables.after ?? 'null'] } } }
   : query.includes('author: { emails: $emails }') ? authoredPage() : firstPage()
 
@@ -153,6 +156,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
     [b, 'Fix a flaky test', { sessions: [], tasks: [], claude: true, codex: false, agents: [] }],
     ['3'.repeat(40), 'Tidy the docs', { sessions: [], tasks: [], claude: false, codex: true, agents: [] }],
     ['e'.repeat(40), 'Bump esbuild', { sessions: [], tasks: [], claude: false, codex: false, agents: ['neo'] }],
+    ['4'.repeat(40), 'Pin pnpm', { sessions: [], tasks: [], claude: false, codex: false, agents: ['neo'] }],
     ['f'.repeat(40), 'Move the database (#50)', { sessions: [], tasks: [], claude: false, codex: false, agents: ['copilot'] }],
     ['9'.repeat(40), 'Fix the build (#7)', { sessions: [], tasks: [], claude: false, codex: false, agents: ['copilot'] }]],
   'those no agent marked, or a pull request merged, are not; those the app agents authored however far back, each once')
@@ -163,7 +167,7 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   assert.deepEqual([moved.author, moved.authorId], ['Copilot', 198982749], 'each by its author\'s login and account id')
   assert.deepEqual(body.issues, [{ number: 12, title: 'Chips', state: 'open', author: 'ada', authorId: 7, createdAt: null, updatedAt: null },
     { number: 13, title: 'History', state: 'closed', author: null, authorId: null, createdAt: null, updatedAt: null }])
-  assert.deepEqual(body.users, { Copilot: { agent: 'copilot' }, 'dependabot[bot]': { agent: 'dependabot' } },
+  assert.deepEqual(body.users, { Copilot: { agent: 'copilot' }, 'dependabot[bot]': { agent: 'dependabot' }, 'any-login': { agent: 'neo' } },
     'its agents\' accounts as the app draws them; `dependabot`, named by Dependabot\'s account and another, no one\'s')
   // Every page of each agent's branches read, the newest first, named in full.
   assert.deepEqual(body.branches.map(branch => [branch.name, branch.signals.sessions, branch.signals.agents]), [['claude/zzz-newest', [], []],

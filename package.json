@@ -130,6 +130,7 @@
     "server-managed/github-actions.ts",
     "server-managed/github-app.ts",
     "server-managed/github-errors.ts",
+    "server-managed/github-graphql.ts",
     "server-managed/github-metadata.ts",
     "server-managed/github-issue-oauth.ts",
     "server-managed/github-issues.ts",

@@ -48,9 +48,9 @@ test('an agent\'s account is told by its login, its id confirming it where both 
     .map(([login, account]) => login ? githubAgent(login, account) : githubAgent(null, null, account)), ['actions', 'actions', null, 'actions'])
   assert.deepEqual([[null, ' Claude '], [null, 'copilot'], [null, 'dependabot[bot]'], [null, 'Dependabot'], ['someone', 'Codex'], [null, 'Claude Monet'], [null, null]]
     .map(([login, name]) => githubAgent(login, null, name)), ['claude', 'copilot', 'dependabot', null, null, null, null], 'a human\'s account is theirs, whatever their commits name them')
-  // Neo's account, known by its id alone, whatever GitHub names it; its GitHub App's id, another's account.
-  assert.deepEqual([['any-login[bot]', 274065190], ['renamed', 274065190], ['claude', 274065190], ['neo', null], ['someone', 3115942], [null, 'Neo']]
-    .map(([login, id]) => login ? githubAgent(login, id) : githubAgent(null, null, id)), ['neo', 'neo', 'neo', null, null, null])
+  // Neo's account and its App's bot, each known by its id alone, whatever GitHub names it; its GitHub App's id, another's account.
+  assert.deepEqual([['any-login', 274065190], ['any-login[bot]', 268952163], ['renamed', 274065190], ['claude', 274065190], ['neo', null], ['someone', 3115942],
+    [null, 'Neo']].map(([login, id]) => login ? githubAgent(login, id) : githubAgent(null, null, id)), ['neo', 'neo', 'neo', 'neo', null, null, null])
 })
 
 test('an account agents work as is told by its id where GitHub gives it, whatever it is renamed to, else by its login; no agent\'s own', () => {
