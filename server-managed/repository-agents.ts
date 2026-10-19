@@ -181,16 +181,21 @@ async function pulledCommits(fullName: string, token: string, shas: string[], ke
   return new Set(shas.filter(sha => known.get(sha) === true))
 }
 
-// Where commits listed stop: the parents of those listed not listed, the
-// newest first (each by its child's time), as many as ALL_BRANCHES, as the
-// Commits tab reads on from (repository-history.js); null where none are.
-function frontier(commits: HistoryCommit[]) {
+// Where commits listed stop: those the cursor named but left unread still
+// unlisted (`left`, newer than those below the commits read from the rest),
+// then the parents of those listed not listed, the newest first (each by its
+// child's time), as the Commits tab reads on from (repository-history.js):
+// each read in its turn, as many as ALL_BRANCHES an answer, none dropped
+// till MAX_FRONTIER are left (a cursor's length bounded, a URL's); null
+// where none are.
+function frontier(commits: HistoryCommit[], left: string[]) {
   const listed = new Set(commits.map(commit => commit.sha))
   const at = new Map<string, number>()
   for (const commit of commits) {
     for (const parent of commit.parents) if (!listed.has(parent)) at.set(parent, Math.max(at.get(parent) ?? Number.NEGATIVE_INFINITY, commit.committedAt ?? 0))
   }
-  const starts = [...at].toSorted((a, b) => b[1] - a[1]).slice(0, ALL_BRANCHES).map(([sha]) => sha)
+  const below = [...at].toSorted((a, b) => b[1] - a[1]).map(([sha]) => sha)
+  const starts = [...new Set([...left.filter(sha => !listed.has(sha)), ...below])].slice(0, MAX_FRONTIER)
   return starts.length > 0 ? starts.join(',') : null
 }
 
@@ -235,10 +240,11 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
 export const AGENTS_READ_VERSION = 8
 
 // A cursor of the default branch's commits: those the pages before stopped
-// at, the newest first (frontier), as many as ALL_BRANCHES, commas between;
-// one an older server gave, GitHub's, `<oid> <offset>`, read on from its
-// commit.
-export const COMMITS_CURSOR = new RegExp(`^(?:[\\da-f]{40}(?:,[\\da-f]{40}){0,${ALL_BRANCHES - 1}}|[\\da-f]{40} \\d{1,9})$`, 'u')
+// at (frontier), as many as MAX_FRONTIER, commas between, the first
+// ALL_BRANCHES of them read next; one an older server gave, GitHub's,
+// `<oid> <offset>`, read on from its commit.
+const MAX_FRONTIER = 4 * ALL_BRANCHES
+export const COMMITS_CURSOR = new RegExp(`^(?:[\\da-f]{40}(?:,[\\da-f]{40}){0,${MAX_FRONTIER - 1}}|[\\da-f]{40} \\d{1,9})$`, 'u')
 const startsOf = (cursor: string) => cursor.split(/[ ,]/u).filter(part => SHA.test(part))
 
 const nextCursor = (connection: Connection<unknown> | undefined, cursor = ISSUES_CURSOR) => {
@@ -266,14 +272,15 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
   const repository = data?.repository
   if (data !== null && !repository) throw new GithubApiError(404, 'github-not-found')
   const head = repository?.defaultBranchRef?.target?.oid
-  const starts = cursors.commits === null ? first && typeof head === 'string' && SHA.test(head) ? [head] : [] : startsOf(cursors.commits)
+  const named = cursors.commits === null ? first && typeof head === 'string' && SHA.test(head) ? [head] : [] : startsOf(cursors.commits)
+  const starts = named.slice(0, ALL_BRANCHES)
   const history = starts.length > 0 ? (await historyFrom(fullName, token, starts, pages, fetchImpl)).commits : []
   const marked = history.filter(commit => commit.marks)
   const nodes = authored?.repository?.defaultBranchRef?.target?.history?.nodes ?? []
   const [brought] = await Promise.all([pulledCommits(fullName, token, marked.map(commit => commit.sha), pulled, fetchImpl),
     linkNoreplyUsers(nodes.map(node => node?.author), token, fetchImpl)])
   const commits = [...marked.filter(commit => !brought.has(commit.sha)).map(keptCommit), ...nodes.flatMap(node => directCommit(node) ?? [])]
-  const after = { pulls: nextCursor(repository?.pullRequests), commits: frontier(history) }
+  const after = { pulls: nextCursor(repository?.pullRequests), commits: frontier(history, named.slice(ALL_BRANCHES)) }
   return {
     pulls: (repository?.pullRequests?.nodes ?? []).flatMap(node => pull(node) ?? []),
     commits: commits.filter((commit, index) => commits.findIndex(other => other.oid === commit.oid) === index),

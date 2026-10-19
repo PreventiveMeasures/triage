@@ -237,6 +237,30 @@ test('the history the Commits tab and Pulse keep is the Agents tab\'s: a page ke
   assert.deepEqual(asked.filter(query => query.query.includes('nodes { ...historyCommit }')).map(query => query.variables.o0), [b])
 })
 
+test('a frontier however wide read on in turns, as many of it an answer as all branches are at first, none of it dropped', async t => {
+  const request = await fixture(t)
+  const asked = github(t, graphql)
+  const pages = historyPageStore(request.db)
+  const sha = (prefix, at) => `${prefix}${String(at).padStart(39, '0')}`
+  const tops = Array.from({ length: 30 }, (_, at) => sha('a', at))
+  // Each kept a commit whose parent is unlisted, the first the newest.
+  for (const [at, top] of tops.entries()) {
+    await pages.write(`1\0${COAUTHORS_READ}\0${top}`, [{ sha: top, parents: [sha('b', at)], subject: 'Merge', authorName: 'Ada', authorLogin: 'ada', authorId: 7,
+      coauthors: [], committedAt: Date.parse('2026-10-15T00:00:00Z') - at * 60_000, additions: 1, deletions: 0, authoredAt: null, authorZone: null,
+      marked: AGENT_MARKS_READ }], Date.now())
+  }
+  const parents = Array.from({ length: 25 }, (_, at) => sha('b', at))
+  const { body } = await request({ repoId: '1', commits: tops.join(',') })
+  assert.equal(asked.filter(query => query.query.includes('nodes { ...historyCommit }')).length, 0, 'the pages kept read')
+  // Those named past the first 25 left unread, read next, ahead of the
+  // parents of those read.
+  assert.deepEqual(body.after.commits.split(','), [...tops.slice(25), ...parents])
+  const next = await request({ repoId: '1', commits: body.after.commits })
+  assert.deepEqual(asked.flatMap(query => Object.entries(query.variables).flatMap(([key, value]) => /^o\d+$/u.test(key) ? [value] : [])).toSorted(),
+    parents.slice(0, 20), 'the first 25 named read, of GitHub where none is kept')
+  assert.deepEqual(next.body.after.commits.split(','), [...parents.slice(20), ...Array.from({ length: 5 }, (_, at) => sha('b', 25 + at))])
+})
+
 test('a commit\'s marks kept with the history as it is read: its message\'s, Claude\'s address, an agent\'s account; none where none is', () => {
   const ada = { name: 'Ada', email: 'ada@example.com', user: { login: 'ada', databaseId: 7 } }
   const node = (message, author = ada) => ({ oid: a, message, committedDate: '2026-10-15T00:00:00Z', additions: 1, deletions: 0, author, authors: { nodes: [author] },
@@ -282,6 +306,6 @@ test('agents\' work is read only with a token by a reader whose grants reach the
   assert.deepEqual(await (await fixture(t, { role: 'manage' }))({ repoId: '1' }), { status: 404, body: { error: 'no-directory' } })
   const request = await fixture(t)
   for (const query of [{ repoId: '0' }, { repoId: '1', pulls: 'a b' }, { repoId: '1', commits: '' }, { repoId: '1', commits: 'a b' },
-    { repoId: '1', pulls: `${'c'.repeat(40)} 99` }]) assert.equal((await request(query)).status, 400, JSON.stringify(query))
+    { repoId: '1', pulls: `${'c'.repeat(40)} 99` }, { repoId: '1', commits: Array.from({ length: 101 }, () => a).join(',') }]) assert.equal((await request(query)).status, 400, JSON.stringify(query))
   assert.equal((await request({ repoId: '1' }, { method: 'POST' })).status, 405)
 })
