@@ -2008,8 +2008,9 @@ const REPOSITORY_READ_FLOOR_MS = 10_000
 // How long a history's answer waits on GitHub looking up the pull requests
 // squashed into its commits (handleRepositoryHistory).
 const SQUASH_WAIT_MS = 1500
-// The repositories' reads being read again, behind a kept answer or as asked
-// for afresh, by key: one at a time, those asking meanwhile answered by it.
+// The repositories' reads being read, first or again, behind a kept answer or
+// as asked for afresh, by key: one at a time, those asking meanwhile
+// answered by it.
 const repositoryRereads = new Map<string, Promise<unknown>>()
 // A read GitHub refused, not failed: its credential or the GitHub App's
 // permission for it withdrawn (Issues, Pull requests, Checks), the
@@ -2025,7 +2026,8 @@ const refusedRead = (err: unknown) => err instanceof GithubApiError
 // deps.waitUntil); `kept` where it was, or where reading it again
 // failed as `keepThrough` lets it. One asked for afresh (`fresh`) is read
 // now, unless it was read REPOSITORY_READ_FLOOR_MS since, what was kept
-// answered where that read fails. One GitHub refuses to read again is no
+// answered where that read fails. Those asking for one not kept while it is
+// read, as a tab's first readers do together, are answered by that read. One GitHub refuses to read again is no
 // longer kept: the next to ask is refused as GitHub refused it. `at` is when
 // what it answers was read.
 async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>,
@@ -2067,7 +2069,7 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
     return { value: held.value as T, kept: true, at: held.at }
   }
   try {
-    return { ...now ? await reread() : await readKept(), kept: false }
+    return { ...await reread(), kept: false }
   } catch (err) {
     if (held && ((now && !refusedRead(err)) || keepThrough(err))) return { value: held.value as T, kept: true, at: held.at }
     throw err
