@@ -112,6 +112,7 @@ Each side picks a branch, a tag or a commit, and **Swap** exchanges them.
 
 **Activity** shows what happens around the code, in six views, each with its own route: `commits`, `issues`, `pulls`, `agents`, `pulse` and `replay`.
 It opens on the view last shown, or on Commits.
+A view's pick other than its default is part of the route too, as in `pulse/year`, and switching views, directories or repositories keeps each view's last pick.
 None of these views reads the directory's files, so they work where the directory is too large to open.
 
 ## Commits
@@ -137,6 +138,7 @@ The server reads each commit message for these and keeps and answers only the na
 
 **Issues** and **Pull requests** show the repository's items as a grid of tiles, the most recently updated first.
 **Open** and **Closed** pick which to show, each with its count; for pull requests, Closed includes merged.
+Closed is at `issues/closed` or `pulls/closed`.
 A **Filter** matches every typed word against number, title, author, labels and branch.
 Items load fifty at a time, and more load as the scroll nears the end.
 
@@ -180,6 +182,7 @@ GitHub's own error text is logged on the server only.
 **Agents** shows the work sessions agents did in the repository, in the same tiles, the most recently active first.
 A session holds its tasks: the pull requests it opened, and the commits it pushed straight to the default branch without a pull request.
 **All**, **Claude**, **Codex** and each app agent with sessions pick whose sessions show, and **Filter** matches title, author, branch, number, commit or session id.
+One agent's sessions are at `agents/<agent>`, as in `agents/codex`; while none of its sessions is read, All shows.
 Clicking a tile opens the session: its pull requests, issues, commits and branches, and a link to where it ran.
 
 Agents are recognised by what they leave on GitHub:
@@ -208,6 +211,7 @@ Loading stops after a page that adds no session; **More** then reads on.
 ## Pulse
 
 **Pulse** shows how the default branch moves over a **Week**, **Month**, **Quarter** or **Year**: one, four, thirteen or fifty-two weeks up to today, in GitHub's weeks (Sunday first, UTC).
+Month is the default, and the others are at `pulse/week`, `pulse/quarter` and `pulse/year`.
 
 - Figures: commits, contributors, pull requests merged and opened, issues closed and opened, and lines added and removed.
   Commits, pull requests and issues are compared with the same days of the week one period earlier.
@@ -228,7 +232,7 @@ While GitHub is still computing them, the tab says so and offers **Ask again**.
 Directories form a tree from the directory shown, with each directory's files as dots around it, coloured by file kind.
 Each commit's author and co-authors fly to the files it changes, which show as added, modified or removed.
 
-- **Last 100**, **Last 300** (the default) or **Last 1,000** picks how many commits play.
+- **Last 100**, **Last 300** (the default) or **Last 1,000** picks how many commits play; the others are at `replay/100` and `replay/1000`.
 - Merges are left out, and commits play oldest first.
 - **½×** to **8×** set the speed, and the track under the canvas plays, pauses and seeks.
 - It starts playing as it opens, unless the reader asks for reduced motion.

@@ -31,7 +31,7 @@ import { fetchRepositoryPulse, fetchRepositoryPulseItems } from './client-manage
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { STATE_ICONS, icon, issueState, plainClick } from './repository-tiles.js'
-import { activityPicker } from './repository-activity.js'
+import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
 import { appUser, commitAgent, commitAuthor, commitAuthorName, githubUser } from './github-users.js'
 import { heldRead } from './held-read.js'
 
@@ -65,8 +65,10 @@ const lastShown = new Map()
 const lastYear = new Map()
 const shownElements = new Set()
 let keptFor = null
-// The period the reader last picked, and the pull requests and issues.
-let shownWeeks = 4
+// The period shown, by its name, its route's sub-tab (repository-activity.js),
+// a month where it names none; and the pull requests and issues the reader
+// last picked.
+const shownWeeks = () => PERIODS.find(([, name]) => name.toLowerCase() === activitySubtab('pulse'))?.[0] ?? 4
 const shownLists = { pulls: 'merged', issues: 'closed' }
 // Each list: its title, and its kinds, each its name and GitHub's search.
 const LISTS = {
@@ -96,6 +98,8 @@ function sessionReads() {
 }
 
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
+// Another period shown, as its route names it, Back giving one.
+watchActivitySubtabs(tab => { if (tab === 'pulse') for (const element of shownElements) element.periodShown() })
 const counted = value => Number.isSafeInteger(value) && value >= 0 ? value : 0
 
 // The pull requests merged or opened, or issues closed or opened (`kind`),
@@ -512,12 +516,19 @@ class RepositoryPulse extends LitElement {
   }
 
   pick(weeks) {
-    shownWeeks = weeks
+    pickActivitySubtab(this.repository, 'pulse', PERIODS.find(([shown]) => shown === weeks)[1].toLowerCase())
+    this.periodShown()
+  }
+
+  // Another period shown, picked or as its route names it: none of its
+  // columns pointed at or picked, its contributors and the commits pushed
+  // directly the first of them.
+  periodShown() {
     this._column = null
     this._picked = null
     this._everyone = false
     this._allDirect = false
-    repaint()
+    this.requestUpdate()
   }
 
   showList(kind, shown) {
@@ -529,18 +540,20 @@ class RepositoryPulse extends LitElement {
   // again.
   askAgain() {
     const { repoId } = this.repository
-    const key = `${repoId}\0${shownWeeks}`
+    const weeks = shownWeeks()
+    const key = `${repoId}\0${weeks}`
     const entry = sessionReads().get(key)
     if (entry?.status !== 'ready' || entry.asking) return
     entry.tries = 0
-    askAgain(key, entry, repoId, shownWeeks, 0)
+    askAgain(key, entry, repoId, weeks, 0)
     repaint()
   }
 
   render() {
     if (!this.repository) return nothing
     const { repoId } = this.repository
-    const entry = pulseRead(repoId, shownWeeks)
+    const weeks = shownWeeks()
+    const entry = pulseRead(repoId, weeks)
     if (entry.status === 'ready') keep(repoId, entry)
     const now = Date.now()
     // The period's answer where it holds its year, counted whole as far back
@@ -549,8 +562,8 @@ class RepositoryPulse extends LitElement {
     // faded.
     const own = entry.status === 'ready' ? entry.answer : null
     const year = lastYear.get(repoId)
-    const answer = own?.stats && wholeSince(own.stats, own.since) ? own : year && entry.status !== 'error' && wholeSince(year.stats, periodSince(shownWeeks, now))
-      ? withYear(own, year, shownWeeks, now) : own && { ...own, stats: null }
+    const answer = own?.stats && wholeSince(own.stats, own.since) ? own : year && entry.status !== 'error' && wholeSince(year.stats, periodSince(weeks, now))
+      ? withYear(own, year, weeks, now) : own && { ...own, stats: null }
     const faded = !answer && entry.status === 'loading' ? lastShown.get(repoId) ?? null : null
     const shown = answer ? { answer, asking: entry.asking === true } : faded
     // The year shown while a later one is read, said at the bar's end.
@@ -558,14 +571,14 @@ class RepositoryPulse extends LitElement {
     return html`<div class="history-bar">
         ${activityPicker('pulse')}
         <div class="history-modes" role="group" aria-label="Period">
-          ${PERIODS.map(([weeks, name]) => html`<button type="button" aria-pressed=${String(shownWeeks === weeks)} @click=${() => this.pick(weeks)}>${name}</button>`)}
+          ${PERIODS.map(([period, name]) => html`<button type="button" aria-pressed=${String(weeks === period)} @click=${() => this.pick(period)}>${name}</button>`)}
         </div>
         ${shown ? html`<span class="pulse-range">${rangeName(shown.answer.since, now)}</span>` : nothing}
         ${updating ? html`<span class="pulse-updating" role="status">${this.renderWaiting(shown, waitingTexts(shown.answer, true))}</span>` : nothing}
       </div>
       ${shown ? html`<div class=${`pulse-scroll${faded ? ' is-reading' : ''}`} aria-busy=${String(entry.status !== 'ready')}>${this.renderPulse(shown, now)}</div>`
         : entry.status === 'error' ? html`<div class="bundles-slide-placeholder is-error"><p role="alert">${entry.error}</p>
-            <button type="button" @click=${() => { sessionReads().delete(`${repoId}\0${shownWeeks}`); repaint() }}>Retry</button></div>`
+            <button type="button" @click=${() => { sessionReads().delete(`${repoId}\0${weeks}`); repaint() }}>Retry</button></div>`
         : html`<div class="bundles-slide-placeholder" role="status">Reading the repository’s pulse…</div>`}`
   }
 

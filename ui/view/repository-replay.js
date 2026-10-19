@@ -19,7 +19,7 @@
 import { LitElement, html, nothing, svg } from 'lit'
 import { state } from '#client/index.js'
 import { fetchRepositoryChanges, fetchRepositoryTree } from './client-managed.js'
-import { activityPicker } from './repository-activity.js'
+import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
 import { rereadHistory, revisionHistory, subjectLinks, unwatchHistories, watchHistories } from './repository-history.js'
 import { appUser, commitAgent, commitAuthors } from './github-users.js'
 import { CLAUDE_MARK_PATH, COPILOT_MARK_PATH, OPENAI_MARK_PATH } from './icons.js'
@@ -60,8 +60,9 @@ const treesRead = new Map()
 const shownElements = new Set()
 const images = new Map()
 let keptFor = null
-// How many commits and how fast, as the reader last picked.
-let shownCount = 300
+// How many commits, as its route's sub-tab names them (repository-activity.js),
+// the last 300 where it names none; and how fast, as the reader last picked.
+const shownCount = () => Number(activitySubtab('replay') ?? 300)
 let shownSpeed = 1
 
 function sessionReplays() {
@@ -77,6 +78,7 @@ function sessionReplays() {
 }
 
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
+watchActivitySubtabs(tab => { if (tab === 'replay') repaint() })
 const reducedMotion = () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 
 // The replay of the latest `count` commits of the directory `repository`
@@ -367,8 +369,7 @@ class RepositoryReplay extends LitElement {
   }
 
   pickCount(count) {
-    shownCount = count
-    repaint()
+    pickActivitySubtab(this.repository, 'replay', String(count))
   }
 
   pickSpeed(speed) {
@@ -744,7 +745,7 @@ class RepositoryReplay extends LitElement {
 
   render() {
     if (!this.repository) return nothing
-    const replay = replayOf(this.repository, shownCount)
+    const replay = replayOf(this.repository, shownCount())
     // Another picked, the one shown paused where it was.
     if (this.replay && this.replay !== replay) this.replay.playing = false
     this.replay = replay
@@ -764,7 +765,7 @@ class RepositoryReplay extends LitElement {
     return html`<div class="history-bar">
         ${activityPicker('replay')}
         <div class="history-modes" role="group" aria-label="Commits played">
-          ${REPLAY_COUNTS.map(count => html`<button type="button" aria-pressed=${String(shownCount === count)} @click=${() => this.pickCount(count)}>Last ${number(count)}</button>`)}
+          ${REPLAY_COUNTS.map(count => html`<button type="button" aria-pressed=${String(replay.count === count)} @click=${() => this.pickCount(count)}>Last ${number(count)}</button>`)}
         </div>
         ${summary ? html`<span class="history-summary">${summary}</span>` : nothing}
       </div>

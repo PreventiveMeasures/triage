@@ -17,7 +17,7 @@ import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { BRANCH_ICON, COMMIT_ICON, PULL_ICON, agentIcon, agentName, knowAgents, plainClick, sessionLink } from './repository-tiles.js'
-import { activityPicker } from './repository-activity.js'
+import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
 import { commitAgent, githubUser, githubUserName } from './github-users.js'
 import { heldRead } from './held-read.js'
 
@@ -33,8 +33,6 @@ const MAX_CHIPS = 12
 const lists = new Map()
 const shownElements = new Set()
 let keptFor = null
-// Every agent's sessions, or one's, as the reader last picked.
-let shownAgent = 'all'
 
 function sessionLists() {
   const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
@@ -46,6 +44,7 @@ function sessionLists() {
 }
 
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
+watchActivitySubtabs(tab => { if (tab === 'agents') repaint() })
 
 // A server's answer, its artifacts those it names by number, id or name, and
 // the agents it knows by their GitHub Apps or accounts (its first page's),
@@ -238,8 +237,7 @@ class RepositoryAgents extends LitElement {
   }
 
   pick(agent) {
-    shownAgent = agent
-    repaint()
+    pickActivitySubtab(this.repository, 'agents', agent)
   }
 
   render() {
@@ -248,8 +246,11 @@ class RepositoryAgents extends LitElement {
     const ready = entry.status === 'ready'
     const sessions = ready ? entry.sessions : []
     const counted = agent => ready ? html`<span class="n">${(agent === 'all' ? sessions : sessions.filter(session => session.agents.includes(agent))).length}${entry.more ? '+' : ''}</span>` : nothing
-    // One picked whose sessions are none of those read now, all.
-    const picked = agentsOf(entry).includes(shownAgent) ? shownAgent : 'all'
+    // Every agent's sessions, or one's, as its route's sub-tab names it
+    // (repository-activity.js); one whose sessions are none of those read
+    // now, all.
+    const named = activitySubtab('agents')
+    const picked = agentsOf(entry).includes(named) ? named : 'all'
     const shown = filterSessions(sessions, picked, this._filter)
     return html`<div class="history-bar issues-bar">
         ${activityPicker('agents')}

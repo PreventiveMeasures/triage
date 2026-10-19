@@ -23,6 +23,7 @@ const opened = []
 mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
 const { contributorStats, niceScale, periodContributors, pulseColumns, pulseSummary } = await import('../ui/view/repository-pulse.js')
 const { knowGithubUsers, knowingGithubUsers } = await import('../ui/view/github-users.js')
+const { showActivitySubtab } = await import('../ui/view/repository-activity.js')
 knowing = knowingGithubUsers
 const Pulse = customElements.get('repository-pulse')
 
@@ -254,6 +255,22 @@ test('a column pointed at, or read with the arrow keys, shows its figures and wh
   view.pick(13)
   assert.equal(view._picked, null)
   view.pick(4)
+})
+
+test('the period its route names shown, as Back gives another, none of its columns pointed at or picked', () => {
+  answer = () => new Promise(() => {})
+  const view = shown()
+  // Shown, rendered here alone.
+  view.performUpdate = () => {}
+  view.connectedCallback()
+  Object.assign(view, { _column: 3, _picked: SINCE, _everyone: true, _allDirect: true })
+  showActivitySubtab('pulse', 'year')
+  assert.deepEqual([view._column, view._picked, view._everyone, view._allDirect], [null, null, false, false])
+  assert.match(templateText(view.render()), /aria-pressed=true [^\n]*>Year</u)
+  assert.deepEqual(requests, [[7, 52]])
+  showActivitySubtab('pulse', null)
+  assert.match(templateText(view.render()), /aria-pressed=true [^\n]*>Month</u)
+  view.disconnectedCallback()
 })
 
 test('another repository\'s pulse in the same element: none of its columns pointed at or picked, its contributors the first of them', () => {

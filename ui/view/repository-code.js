@@ -18,6 +18,7 @@ import { COMMIT_ICON_SVG } from './icons.js'
 import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
+import { activitySubtabField, showActivitySubtab } from './repository-activity.js'
 import { sourceFolderIcon } from './source-file-icon.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { currentViewGeneration, currentViewSignal } from './view-navigation.js'
@@ -132,11 +133,13 @@ export function repositoryCodeDetails(entry, data) {
   return { ...details, repository: entry.repository, npmEntries: repositoryCodeEntries(texts, details.fileSizes) }
 }
 
-// The route of the directory an entry names, on `tab`, at `location`.
+// The route of the directory an entry names, on `tab`, at `location`, an
+// Activity view's naming the sub-tab it shows.
 export function repositoryCodeRoute(entry, tab = 'code', location = null) {
   if (!entry?.repository) return null
   const { repoId, commit, path } = entry.repository
-  return { view: 'repository-code', repoId, commit, path, bundleTab: REPOSITORY_CODE_TABS.has(tab) ? tab : 'code', ...location }
+  const bundleTab = REPOSITORY_CODE_TABS.has(tab) ? tab : 'code'
+  return { view: 'repository-code', repoId, commit, path, bundleTab, ...activitySubtabField(bundleTab), ...location }
 }
 
 // Opens a repository's directory on `bundleTab` (Code by default): at
@@ -145,12 +148,13 @@ export function repositoryCodeRoute(entry, tab = 'code', location = null) {
 // header, `file` a path in it for Code to open on, `repo` its repository's
 // name for its header while it opens, `compare` what Compare compares it
 // with, `{ target, mode }` (repository-compare.js), its route naming a
-// commit, else holding the name until it is read.
+// commit, else holding the name until it is read; an Activity view on the
+// sub-tab it shows.
 export function navigateToRepositoryCode({ repoId, commit = null, ref = null, revision = undefined, path = '', repo = null, file = null, bundleTab = 'code', compare = null }) {
   if (!isManagedUiMode() || !managedHistory?.active) return
   const compared = compare?.target ? { ...COMMIT.test(compare.target) ? { compareCommit: compare.target.toLowerCase() } : { compareTarget: compare.target },
     ...compareModeField(compare.mode) } : {}
-  void managedHistory.navigate({ view: 'repository-code', repoId, commit, path, bundleTab,
+  void managedHistory.navigate({ view: 'repository-code', repoId, commit, path, bundleTab, ...activitySubtabField(bundleTab),
     ...ref == null ? {} : { ref }, ...revision === undefined ? {} : { revision }, ...repo ? { repo } : {}, ...file ? { filePath: file } : {}, ...compared })
 }
 
@@ -241,6 +245,9 @@ export function openRepositoryCodeTab({ repoId, repo, commit, ref, path, revisio
 export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   const { repoId, commit = null, path = '' } = route
   const tab = REPOSITORY_CODE_TABS.has(route.bundleTab) ? route.bundleTab : 'code'
+  // An Activity view on the sub-tab the route names, its first where none.
+  showActivitySubtab(tab, route.subtab)
+  const routeAt = at => ({ view: 'repository-code', repoId, commit: at, path, bundleTab: tab, ...activitySubtabField(tab) })
   sessionData()
   const shown = state.currentView === 'bundles' && state.bundles?.[0]?.repository && state.bundleDetails?.integrity === state.bundles[0].integrity ? state.bundles[0] : null
   // Another tab of the directory shown, as Back gives, keeps it.
@@ -251,7 +258,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   const failed = state.currentView === 'repository-code' ? state.repositoryCodeOpening : null
   if (!entry && commit && failed?.code === 'directory-too-large' && sameDirectory(failed, { repoId, commit, path })) {
     showOpening({ ...failed, tab })
-    return { view: 'repository-code', repoId, commit, path, bundleTab: tab }
+    return routeAt(commit)
   }
   // History, Issues and Pull requests read none of its files: a directory at
   // a commit shows them alone, its other tabs opening them; at a revision
@@ -275,19 +282,19 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
       } catch (err) {
         if (err?.name === 'AbortError' || !isCurrent()) return false
         showOpening({ ...opening, error: err.message, code: err?.code ?? null })
-        return { view: 'repository-code', repoId, commit: null, path, bundleTab: tab }
+        return routeAt(null)
       }
       if (!isCurrent()) return false
       if (!at) {
         showOpening({ ...opening, error: 'The server answered with no commit.' })
-        return { view: 'repository-code', repoId, commit: null, path, bundleTab: tab }
+        return routeAt(null)
       }
     }
     // Named so for its other tabs too, as one picked on Commits is.
     if (revision) revisionNames.set(`${repoId}\0${at}`, revision)
     showOpening({ ...opening, commit: at, ref: null, historyOnly: true })
     renderSidebar()
-    return { view: 'repository-code', repoId, commit: at, path, bundleTab: tab }
+    return routeAt(at)
   }
   if (!entry) {
     const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
@@ -324,7 +331,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
       const failure = { ...opening, commit: failedAt, error: err.message, code: err?.code ?? null }
       showOpening(failure)
       void listDirectories(failure, err)
-      return { view: 'repository-code', repoId, commit: failedAt, path, bundleTab: tab }
+      return routeAt(failedAt)
     } finally {
       // Given up, superseded or failed, the one shown is itself again.
       if (pending && state.repositoryCodePending === pending) {

@@ -21,7 +21,7 @@ import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, issueState, plainClick } from './repository-tiles.js'
 import { addedVersions, pullDependencies, readsDependencies, reviewFailures, reviewOf, subscribePullDependencies, unreviewedVersions } from './pull-dependencies.js'
-import { activityPicker } from './repository-activity.js'
+import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
 import { githubUser, githubUserName } from './github-users.js'
 import { reviewLine } from './pull-reviews.js'
 import { groupAt, groupOf, knowItems, knownItem, knownItems, readAtOf } from './repository-items.js'
@@ -38,8 +38,6 @@ const TOLD_PACKAGES = 20
 const lists = new Map()
 const shownElements = new Set()
 let keptFor = null
-// Open or closed, as the reader last picked, for each kind.
-const shownStates = { issues: 'open', pulls: 'open' }
 
 function sessionLists() {
   const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
@@ -51,6 +49,7 @@ function sessionLists() {
 }
 
 const repaint = () => { for (const element of shownElements) element.requestUpdate() }
+watchActivitySubtabs(tab => { if (tab === 'issues' || tab === 'pulls') repaint() })
 // Each list shown drawn again as its repository's pull requests have their
 // dependencies read, or all may have changed.
 subscribePullDependencies(pull => {
@@ -304,13 +303,14 @@ class RepositoryIssues extends StateElement {
   }
 
   pick(listState) {
-    shownStates[this.kind] = listState
-    repaint()
+    pickActivitySubtab(this.repository, this.kind, listState)
   }
 
   render() {
     if (!this.repository) return nothing
-    const listState = shownStates[this.kind]
+    // Open or closed, as its route's sub-tab names them (repository-activity.js),
+    // open where it names none.
+    const listState = activitySubtab(this.kind) ?? 'open'
     const { key, entry, more } = this.list(listState)
     const ready = entry.status === 'ready'
     const noun = this.kind === 'pulls' ? 'pull requests' : 'issues'
