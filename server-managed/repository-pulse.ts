@@ -76,18 +76,21 @@ export interface PulseCommit { sha: string; at: number; subject: string; login: 
 // each commit's own time zone, and, counted from its commits, each period's
 // (`punches`, by its weeks); `lines` false where GitHub counts none, null
 // while it is counting them; counted from its commits, the latest pushed to
-// the branch directly (`directCommits`, as many as DIRECT_LISTED).
+// the branch directly (`directCommits`, as many as DIRECT_LISTED); and,
+// counted from its commits read no further back than a period needed, when
+// from it is counted whole (`from`), absent for the year whole.
 export interface PulseStats { weeks: PulseWeek[]; contributors: PulseContributor[]; punch: number[][]; punches?: Record<number, number[][]>; lines: boolean | null
-  directCommits?: PulseCommit[] }
+  directCommits?: PulseCommit[]; from?: number }
 // The lines added and removed a week, and each contributor's, as GitHub's
 // statistics count them, `lines` false where it counts none.
 export interface PulseLines { weeks: [number, number, number][]; contributors: { login: string; weeks: [number, number, number][] }[]; lines: boolean }
 // The days (`from`, `to`, both days, UTC; `to` none, on) and the authors (GitHub
 // logins, any of them) a period's pull requests and issues are narrowed to.
 export interface PulseNarrowing { from: number; to: number | null; authors: string[] }
-// The year's commits read so far: all of them (`commits`), else how many
-// (`read`), and whether past YEAR_COMMITS (`tooMany`).
-export type YearCommits = { complete: true; commits: HistoryCommit[]; passed: HistoryCommit[] } | { complete: false; read: number; tooMany: boolean }
+// The year's commits read so far: all of them, or as far back as asked
+// (`commits`, `from`), else how many (`read`), and whether past
+// YEAR_COMMITS (`tooMany`).
+export type YearCommits = { complete: true; commits: HistoryCommit[]; passed: HistoryCommit[]; from: number | null } | { complete: false; read: number; tooMany: boolean }
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 const timeOf = (value: unknown) => {
@@ -204,17 +207,28 @@ export async function defaultHead(fullName: string, token: string, fetchImpl: ty
 // YEAR_QUERIES, the rest left for the next to ask (`complete` false, how
 // many are `read`); more than YEAR_COMMITS, too many (`tooMany`). Read
 // whole, those it was read on past besides (`passed`): undated, or dated
-// before it, a clock behind, the branch's commits since beneath them.
+// before it, a clock behind, the branch's commits since beneath them. Read
+// no further than `need` asks, those since it read whole (`complete`, `from`
+// the newest of those read whose parents are not, every commit after it
+// read; null, the year read whole).
 export async function yearCommits(fullName: string, token: string, head: string, since: number, pages: HistoryPages,
-  fetchImpl: typeof fetch = globalThis.fetch): Promise<YearCommits> {
+  fetchImpl: typeof fetch = globalThis.fetch, need = since): Promise<YearCommits> {
   const found = new Map<string, HistoryCommit>()
   const tried = new Set<string>()
   const within = (commit: HistoryCommit) => commit.committedAt === null || commit.committedAt >= since - YEAR_SKEW_MS
   const dated = (commit: HistoryCommit) => commit.committedAt !== null && commit.committedAt >= since
   const read = () => [...found.values()].filter(dated).length
+  const passed = () => [...found.values()].filter(commit => !dated(commit) && within(commit))
   let queries = 0
   let starts = [head]
   while (starts.length > 0) {
+    // Those not read yet, the head before any, else the parents of those
+    // read, no later than the newest of them (but for a clock behind): read
+    // whole after it.
+    const unread = new Set(starts)
+    const from = found.size === 0 ? Number.POSITIVE_INFINITY : Math.max(Number.NEGATIVE_INFINITY, ...[...found.values()]
+      .filter(commit => commit.parents.some(sha => unread.has(sha))).map(commit => commit.committedAt ?? Number.POSITIVE_INFINITY))
+    if (need > since && from < need) return { complete: true, commits: [...found.values()].filter(dated), passed: passed(), from }
     if (queries >= YEAR_QUERIES) return { complete: false, read: read(), tooMany: false }
     const batch = starts.slice(0, YEAR_STARTS)
     for (const sha of batch) tried.add(sha)
@@ -224,7 +238,7 @@ export async function yearCommits(fullName: string, token: string, head: string,
     if (read() > YEAR_COMMITS) return { complete: false, read: read(), tooMany: true }
     starts = [...new Set([...found.values()].filter(within).flatMap(commit => commit.parents))].filter(sha => !found.has(sha) && !tried.has(sha))
   }
-  return { complete: true, commits: [...found.values()].filter(dated), passed: [...found.values()].filter(commit => !dated(commit) && within(commit)) }
+  return { complete: true, commits: [...found.values()].filter(dated), passed: passed(), from: null }
 }
 
 // Whether an author is a GitHub App's bot: by its login (`<app>[bot]`, as a
