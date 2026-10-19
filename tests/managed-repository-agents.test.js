@@ -5,7 +5,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { AGENT_MARKS_READ } from '../server-managed/app-agents.ts'
 import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
-import { historyPageStore, issueListStore, pullListStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
+import { branchTipStore, historyPageStore, issueListStore, pullListStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { AGENTS_READ_VERSION } from '../server-managed/repository-agents.ts'
 import { graphCommit, historyMarks } from '../server-managed/repository-history.ts'
 import { PULSE_YEAR_VERSION, pulseSince } from '../server-managed/repository-pulse.ts'
@@ -420,6 +420,21 @@ test('the branches the Commits tab kept stopping short of some, too many to read
     'neo/try-pnpm', 'dependabot/npm_and_yarn/ws-8.21.0'])
   assert.deepEqual(prefixes.toSorted(), AGENT_BRANCH_PREFIXES.map(prefix => `refs/heads/${prefix}`).toSorted())
   assert.equal(asked.filter(query => query.query.includes('refs(refPrefix: "refs/heads/"')).length, 0, 'the branches kept not read again')
+})
+
+test('the agents\' branches\' tips kept as their marks were read: one kept by older rules looked up again', async t => {
+  const request = await fixture(t)
+  const asked = github(t, graphql)
+  const kept = branchTipStore(request.db)
+  const marks = { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true, codex: false, agents: [] }
+  await kept.write(`1\0${AGENT_MARKS_READ}\0${tipSha(1)}`, { marks, author: null }, Date.now())
+  await kept.write(`1\0${AGENT_MARKS_READ - 1}\0${tipSha(3)}`, { marks, author: null }, Date.now())
+  const { body } = await request({ repoId: '1' })
+  const looked = asked.filter(query => query.query.includes('... on Commit { message author')).flatMap(query => Object.entries(query.variables)
+    .flatMap(([key, sha]) => /^o\d+$/u.test(key) ? [sha] : []))
+  assert.deepEqual(looked.toSorted(), [2, 3, 4, 6, 7].map(tipSha).toSorted(), 'the one kept by these rules not again')
+  assert.deepEqual(body.branches.find(branch => branch.name === 'claude/aaa-old').signals.sessions, marks.sessions)
+  assert.deepEqual(body.branches.find(branch => branch.name === 'claude/zzz-newest').signals.sessions, [])
 })
 
 test('a read of the pull requests the Pulse left not finished, those kept no longer fresh: the Agents tab reads it on as the Pulse would, never cut short', async t => {

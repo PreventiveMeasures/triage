@@ -2120,10 +2120,11 @@ function commitPulls(deps: ManagedHttpDeps, repoId: number): CommitPulls {
 }
 
 // Repository `repoId`'s branches' tips as the Agents tab looks them up
-// (repository-agents.ts BranchTips), kept by the commit.
+// (repository-agents.ts BranchTips), kept by the commit and the rules their
+// messages' marks were read by (app-agents.ts AGENT_MARKS_READ).
 function branchTips(deps: ManagedHttpDeps, repoId: number): BranchTips {
   const store = branchTipStore<BranchTip>(deps.db, deps.config.debug)
-  const keyOf = (sha: string) => `${repoId}\0${sha}`
+  const keyOf = (sha: string) => `${repoId}\0${AGENT_MARKS_READ}\0${sha}`
   return {
     async read(shas) {
       const kept = await store.readMany(shas.map(keyOf))
@@ -2135,12 +2136,14 @@ function branchTips(deps: ManagedHttpDeps, repoId: number): BranchTips {
 
 // The commits repository `repoId`'s app agents' accounts authored from a
 // head, as the Agents tab reads them (repository-agents.ts AuthoredCommits),
-// kept by it.
+// kept by it and the rules their messages' marks were read by
+// (AGENT_MARKS_READ).
 function authoredCommits(deps: ManagedHttpDeps, repoId: number) {
   const store = authoredCommitStore<AuthoredCommit[]>(deps.db, deps.config.debug)
+  const keyOf = (key: string) => `${repoId}\0${AGENT_MARKS_READ}\0${key}`
   return {
-    read: async (key: string) => { const kept = (await store.read(`${repoId}\0${key}`))?.value; return Array.isArray(kept) ? kept : null },
-    write: (key: string, commits: AuthoredCommit[]) => store.write(`${repoId}\0${key}`, commits, Date.now()),
+    read: async (key: string) => { const kept = (await store.read(keyOf(key)))?.value; return Array.isArray(kept) ? kept : null },
+    write: (key: string, commits: AuthoredCommit[]) => store.write(keyOf(key), commits, Date.now()),
   }
 }
 
