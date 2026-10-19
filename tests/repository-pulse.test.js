@@ -729,7 +729,7 @@ test('the pull requests merged in the year read a few pages an answer: how many 
   view.render()
   await setImmediate()
   let text = templateText(view.render())
-  assert.match(text, /class="pulse-pending pulse-wide" role="status">Reading the pull requests merged in this repository… 500 so far</u)
+  assert.match(text, /class="pulse-pending pulse-wide" role="status">Reading this repository’s pull requests… 500 so far</u)
   assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">–<\/span>\s*<span class="pulse-tile-note">Reading pull requests…/u)
   // The year as it was told beside them, shown meanwhile.
   answer = () => Promise.resolve(pulse({ pulls: (pulls += 500) }))
@@ -737,7 +737,7 @@ test('the pull requests merged in the year read a few pages an answer: how many 
   await setImmediate()
   text = templateText(view.render())
   assert.equal(requests.length, 2)
-  assert.match(text.slice(0, text.indexOf('class=pulse-scroll')), /class="pulse-updating" role="status">Reading the pull requests merged in this repository… 1,000 so far</u, 'in the bar')
+  assert.match(text.slice(0, text.indexOf('class=pulse-scroll')), /class="pulse-updating" role="status">Reading this repository’s pull requests… 1,000 so far</u, 'in the bar')
   assert.equal(text.split('class=pulse-column').length - 1, 56)
   answer = () => Promise.resolve(pulse())
   t.mock.timers.tick(1000)

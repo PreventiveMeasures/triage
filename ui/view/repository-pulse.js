@@ -154,8 +154,8 @@ function keep(repoId, entry) {
   if (entry.answer.stats) lastYear.set(repoId, entry.answer)
 }
 
-// How far the year is read: its commits, or the pull requests merged in it,
-// read so far; null, read whole.
+// How far the year is read: its commits, or the pull requests updated in
+// it (those merged in it among them), read so far; null, read whole.
 const progress = answer => answer.reading ?? answer.pulls
 // How long after an answer to ask again, and how many times: while the year
 // is read, while GitHub computes its statistics; null, not again.
@@ -441,7 +441,7 @@ const versus = (count, previous, before) => previous === null || count === null 
 // `part` of `whole`, in whole percents: none and all alone 0 and 100.
 const share = (part, whole) => part === 0 ? 0 : part === whole ? 100 : Math.min(99, Math.max(1, Math.round(part / whole * 100)))
 // What a year being read, or counted by GitHub, says as it is asked again
-// and after: its commits read so far, or the pull requests merged in it;
+// and after: its commits read so far, or the pull requests updated in it;
 // `latest`, the year shown meanwhile as it was before.
 function waitingTexts(answer, latest = false) {
   const [what, shown] = latest ? ['latest ', ': the year shown is as it was before.'] : ['', '.']
@@ -451,8 +451,8 @@ function waitingTexts(answer, latest = false) {
   }
   return answer.pulls === null
     ? [`GitHub is still counting this repository’s ${what}commits…`, `GitHub hasn’t counted this repository’s ${what}commits yet.`, 'Ask again']
-    : [`Reading the pull requests merged in this repository… ${number(answer.pulls)} so far`,
-      `${number(answer.pulls)} of the pull requests merged in this repository read so far${shown}`, 'Read on']
+    : [`Reading this repository’s pull requests… ${number(answer.pulls)} so far`,
+      `${number(answer.pulls)} of this repository’s pull requests read so far${shown}`, 'Read on']
 }
 // A share beside the one the same days a period earlier gave.
 const versusShare = (now, then, before) => now === then ? `Same as ${before}` : `${now > then ? '↑' : '↓'} from ${then}% ${before}`

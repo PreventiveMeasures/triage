@@ -102,7 +102,7 @@ export function oneAgent(login: string, ids: Iterable<number>): boolean {
 // The accounts agents work as, a person's to GitHub, as the app is told of
 // them, each by its id and logins: the pull requests they open and the
 // commits they push to a branch directly are agents' (the Pulse's,
-// server-managed/agent-merges.ts agentMerges, repository-pulse.ts
+// server-managed/repository-pulls.ts readPulls, repository-pulse.ts
 // commitStats), whatever their branches and labels, the rest of what they do
 // theirs. Christopher Turing's.
 export const AGENT_OPERATED = [{ id: 188797125, logins: ['ChristopherTuring'] }] as const satisfies readonly GithubAgentAccount[]
