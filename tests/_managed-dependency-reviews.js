@@ -297,3 +297,48 @@ export async function checkTeamReviewList(db) {
   assert.equal(await db.getNpmReviewReader('view-alice', users.admin.sid, now, 'team-b'), null, 'nor of one no longer an admin')
   assert.equal(await db.getViewSessionWithUser('view-alice', users.admin.sid, now), null)
 }
+
+// The shasums of the tarballs a review reads, as its writer tells them
+// (changeDependencyReview `tarballs`): kept as a draft is begun, saved and
+// first published, and as one is continued; left as they were as it is
+// published to more teams, or revoked; none where none is told; each as
+// every read lists it.
+export async function checkReviewedTarballs(db) {
+  const users = {}
+  for (const [i, [login, role]] of [['admin', 'admin'], ['author', 'triage']].entries()) {
+    const session = await createSession(config, db, { githubUserId: i + 300, login, name: null, avatarUrl: null }, Date.now())
+    await db.setUserRole(session.userId, role)
+    users[login] = { ...session, sid: hashToken(session.setCookie.split(';')[0].slice(4)) }
+  }
+  for (const id of ['first', 'second']) {
+    await db.createTeam(id, id, Date.now())
+    await db.setTeamMember(id, users.author.userId, { dependencies: true, security: false })
+    await db.setTeamDependencyReview(users.admin.sid, id, true)
+  }
+  const later = { shasum: 'c'.repeat(40), baseShasum: 'd'.repeat(40) }, told = { shasum: 'a'.repeat(40), baseShasum: 'b'.repeat(40) }
+  const shasums = review => ({ shasum: review.shasum, baseShasum: review.baseShasum })
+  const change = (action, now, tarballs, at = reviewContext) => db.changeDependencyReview(at, users.author.sid, action, now, tarballs)
+  let review = await change({ action: 'start', reviewId: null, revision: null }, 100, later)
+  assert.deepEqual(shasums(review), later)
+  review = await change({ action: 'save', reviewId: review.id, revision: review.revision, entryId: null, entry: { file: 'index.js', status: 'accept', comment: '' } }, 200, told)
+  assert.deepEqual(shasums(review), told, 'a draft keeps those it was last saved with')
+  const publish = (teamIds, final, tarballs) => change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds, files: ['index.js'], nonTextFiles: [], final },
+    300, tarballs)
+  review = await publish(['first'], { status: 'accept', comment: '' }, told)
+  assert.deepEqual(shasums(review), told, 'and those it was published with')
+  review = await publish(['second'], null, later)
+  assert.deepEqual(shasums(review), told, 'published to more teams, it keeps its own')
+  for (const [read, listed] of [['team', (await db.listTeamDependencyReviews('second', users.author.userId, null)).reviews],
+    ['own', (await db.listOwnDependencyReviews(users.author.userId, null)).reviews], ['by id', await db.listOwnDependencyReviewsById(users.author.userId, [review.id])],
+    ['of its version', await db.listDependencyReviews(reviewContext, users.author.userId)]]) {
+    assert.deepEqual(listed.map(shasums), [told], read)
+  }
+  const continued = await change({ action: 'continue', reviewId: review.id, revision: review.revision }, 400, later)
+  assert.deepEqual(shasums(continued), later, 'continued, with those it was continued with')
+  assert.deepEqual(shasums(await change({ action: 'revoke', reviewId: review.id, revision: review.revision }, 500)), told, 'revoked, it keeps them')
+  const whole = { ...reviewContext, basePackage: null, baseVersion: null, baseIntegrity: null }
+  assert.deepEqual(shasums(await change({ action: 'start', reviewId: null, revision: null }, 600, { shasum: told.shasum, baseShasum: null }, whole)),
+    { shasum: told.shasum, baseShasum: null }, 'of no base where it has none')
+  assert.deepEqual(shasums(await change({ action: 'start', reviewId: null, revision: null }, 700, undefined, { ...whole, version: '3.0.0' })),
+    { shasum: null, baseShasum: null }, 'none where none is told')
+}

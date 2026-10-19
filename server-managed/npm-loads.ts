@@ -50,9 +50,9 @@ const refused = <T>(status: number, code: string): NpmLoad<T> => {
   return { result, release() {} }
 }
 
-// What names a version's tarball, and so its files: its integrity and URL,
-// and whether it is read with the token.
-const tarballKey = (doc: NpmVersionDocument) => `${doc.dist.integrity} ${doc.dist.tarball} ${doc.private}`
+// What names a version's tarball, and so its files: its integrity, its
+// shasum and URL, and whether it is read with the token.
+const tarballKey = (doc: NpmVersionDocument) => `${doc.dist.integrity} ${doc.dist.shasum ?? ''} ${doc.dist.tarball} ${doc.private}`
 
 function shared<T>(what: string, doc: NpmVersionDocument, work: () => Promise<T>): NpmLoad<T> {
   const { unpackedSize, fileCount } = doc.dist
@@ -118,7 +118,13 @@ function done(key: string, load: Load) {
 // The sha512 an integrity names, in base64, or null where it names none.
 const sha512Of = (integrity: string) => /(?:^|\s)sha512-([\d+/A-Za-z]{86}==)(?=\s|$)/u.exec(integrity)?.[1] ?? null
 // Hashed off the event loop: a tarball runs to tens of MiB.
-const sha512 = async (bytes: Uint8Array) => Buffer.from(await crypto.subtle.digest('SHA-512', bytes as Uint8Array<ArrayBuffer>)).toString('base64')
+const digest = async (algorithm: string, bytes: Uint8Array) => Buffer.from(await crypto.subtle.digest(algorithm, bytes as Uint8Array<ArrayBuffer>))
+// Whether `bytes` are those of the sha512 an integrity names and, where there
+// is one, of the shasum (a sha1, in hex).
+async function hashedAs(bytes: Uint8Array, sha512: string, shasum: string | null): Promise<boolean> {
+  const [own512, own1] = await Promise.all([digest('SHA-512', bytes), shasum === null ? null : digest('SHA-1', bytes)])
+  return own512.toString('base64') === sha512 && (own1 === null || own1.toString('hex') === shasum)
+}
 
 // Upstream's disk cache (setCacheDir), where tarballs are kept between
 // loads, or null to keep none and read none.
@@ -151,23 +157,25 @@ async function downloadTarball(url: string, isPrivate: boolean): Promise<Buffer>
   return bytes
 }
 
-// The version's tarball, its bytes held to the document's sha512 wherever
-// they come from: kept in the cache, where bundle builds keep what they
-// fetch with the token, or in npm's; else downloaded, and then kept. Bytes
-// matching the sha512 the reader's own document names are the tarball that
-// reader may download, wherever they were kept and whoever fetched them.
+// The version's tarball, its bytes held to the document's sha512, and to its
+// shasum where it tells one, wherever they come from: kept in the cache,
+// where bundle builds keep what they fetch with the token, or in npm's; else
+// downloaded, and then kept. Bytes matching the hashes the reader's own
+// document names are the tarball that reader may download, wherever they
+// were kept and whoever fetched them.
 async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
-  const expected = sha512Of(doc.dist.integrity), url = doc.dist.tarball
-  if (!url.startsWith(`${NPM_REGISTRY}/${doc.name}/-/`) || URL.parse(url)?.href !== url || expected === null) throw new NpmPackageError(502, 'upstream-invalid')
+  const expected = sha512Of(doc.dist.integrity), shasum = doc.dist.shasum ?? null, url = doc.dist.tarball
+  if (!url.startsWith(`${NPM_REGISTRY}/${doc.name}/-/`) || URL.parse(url)?.href !== url || expected === null
+    || (shasum !== null && !/^[\da-f]{40}$/u.test(shasum))) throw new NpmPackageError(502, 'upstream-invalid')
   const kept = tarballCache === null ? null : upstreamCachePath(tarballCache, 'npm/tarballs', `${doc.name}@${doc.version}.tgz`)
   if (kept !== null) {
     for (const path of [kept, npmCachePath(expected)]) {
       const bytes = path === null ? null : await readKeptFile(path, MAX_TAR_BYTES)
-      if (bytes && await sha512(bytes) === expected) return bytes
+      if (bytes && await hashedAs(bytes, expected, shasum)) return bytes
     }
   }
   const bytes = await downloadTarball(url, doc.private)
-  if (await sha512(bytes) !== expected) throw new NpmPackageError(502, 'upstream-invalid')
+  if (!await hashedAs(bytes, expected, shasum)) throw new NpmPackageError(502, 'upstream-invalid')
   if (kept !== null) await keepFile(kept, bytes)
   return bytes
 }

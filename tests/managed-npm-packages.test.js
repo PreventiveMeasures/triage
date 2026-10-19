@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer, request } from 'node:http'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brotliDecompressSync, gzipSync } from 'node:zlib'
@@ -807,7 +807,7 @@ test('a load its readers abandon keeps its place until its work is done', async 
   fifth.release()
 })
 
-test('a tarball is read from the package\'s own path on the registry, bounded as it arrives and held to its sha512', async t => {
+test('a tarball is read from the package\'s own path on the registry, bounded as it arrives and held to its sha512 and shasum', async t => {
   const pkg = packageOf('bounded', '1.0.0', { 'index.js': 'x' })
   const version = (dist = {}) => ({ name: 'bounded', version: '1.0.0', private: false, dist: { ...pkg.doc.dist, unpackedSize: null, fileCount: null, ...dist }, manifest: {} })
   const tarballOf = async doc => {
@@ -827,9 +827,13 @@ test('a tarball is read from the package\'s own path on the registry, bounded as
   await assert.rejects(tarballOf(version()), /package-too-large/u, 'a declared length past it is refused unread')
   answer = () => new Response(gzipSync('other'))
   await assert.rejects(tarballOf(version()), /upstream-invalid/u, 'bytes the integrity does not name')
+  answer = () => new Response(pkg.tgz)
+  await assert.rejects(tarballOf(version({ shasum: createHash('sha1').update('other').digest('hex') })), /upstream-invalid/u,
+    'bytes the integrity names, but not the shasum')
+  assert.deepEqual(Buffer.from(await tarballOf(version({ shasum: null }))), pkg.tgz, 'held to the integrity alone where npm tells no shasum')
   calls.length = 0
   for (const dist of [{ tarball: 'https://example.com/bounded/-/bounded-1.0.0.tgz' }, { tarball: `${REGISTRY}/other/-/other-1.0.0.tgz` },
-    { tarball: `${REGISTRY}/bounded/-/../../other.tgz` }, { integrity: 'sha1-abc=' }]) {
+    { tarball: `${REGISTRY}/bounded/-/../../other.tgz` }, { integrity: 'sha1-abc=' }, { shasum: 'not-a-sha1' }, { shasum: pkg.doc.dist.shasum.toUpperCase() }]) {
     await assert.rejects(tarballOf(version(dist)), /upstream-invalid/u, JSON.stringify(dist))
   }
   assert.deepEqual(calls, [], 'nothing off the package\'s path is asked for')
@@ -882,6 +886,10 @@ test('tarballs are kept where bundle builds keep theirs, and served from there o
   await writeFile(join(content, hex.slice(4)), npm.tgz)
   assert.deepEqual(await tarballOf(npm), npm.tgz)
   assert.equal(downloads(), 0, 'neither was downloaded')
+  // A shasum the bytes kept don't match passes them over, as it does those downloaded.
+  await assert.rejects(tarballOf({ doc: { ...npm.doc, dist: { ...npm.doc.dist, shasum: createHash('sha1').update('other').digest('hex') } } }), /upstream-invalid/u)
+  assert.equal(downloads(), 1)
+  await assert.rejects(stat(join(cache, 'npm', 'tarballs', 'from-npm@3.0.0.tgz')), { code: 'ENOENT' }, 'and none is kept')
 })
 
 test('a package\'s whole document asked for at once is asked of npm once, each reader giving up on it alone', async t => {
@@ -999,14 +1007,15 @@ const fullVersion = packageOf('kept-version', '1.2.3', { 'index.js': '' }, {
   peerDependencies: { peer: '^2.0.0' }, optionalDependencies: { opt: '^3.0.0' }, hasInstallScript: true, types: 'index.d.ts', module: 'index.mjs', type: 'module',
   readme: 'x'.repeat(10_000), _id: 'kept-version@1.2.3', _nodeVersion: '22.0.0', devDependencies: { big: '^1.0.0' },
 }).doc
-fullVersion.dist = { ...fullVersion.dist, shasum: 'f'.repeat(40), signatures: [{ keyid: 'k', sig: 's' }], attestations: { url: 'https://registry.npmjs.org/-/npm/v1/attestations/x', provenance: { predicateType: 'p' } } }
+fullVersion.dist = { ...fullVersion.dist, signatures: [{ keyid: 'k', sig: 's' }], attestations: { url: 'https://registry.npmjs.org/-/npm/v1/attestations/x', provenance: { predicateType: 'p' } } }
 
 test('a version\'s document is kept of only the fields read of it, read alike', () => {
   const kept = npmVersionFields(fullVersion)
   assert.deepEqual(npmManifest(kept), npmManifest(fullVersion))
   for (const key of ['readme', '_id', '_nodeVersion', 'devDependencies']) assert.equal(key in kept, false, key)
   assert.deepEqual(kept.scripts, { postinstall: 'node setup.js' }, 'only the scripts npm runs installing it')
-  assert.deepEqual(kept.dist, { tarball: fullVersion.dist.tarball, integrity: fullVersion.dist.integrity, unpackedSize: 100, fileCount: 2, attestations: { provenance: {} } })
+  assert.deepEqual(kept.dist, { tarball: fullVersion.dist.tarball, integrity: fullVersion.dist.integrity, shasum: fullVersion.dist.shasum, unpackedSize: 100, fileCount: 2,
+    attestations: { provenance: {} } })
   assert.ok(JSON.stringify(kept).length < JSON.stringify(fullVersion).length / 5)
 })
 
@@ -1047,6 +1056,22 @@ test('a kept version is asked of npm again a day on, as npm lets a scoped packag
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 25 * 60 * 60_000 })
   assert.equal((await readNpmVersion('@org/turned', '1.0.0', true, signal, store)).private, true, 'asked again, and private now')
   assert.ok(calls.length > asked)
+})
+
+test('a version kept with no shasum, as none was before one was kept, is asked of npm again, and kept with it', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const store = npmVersionStore(db)
+  const pkg = packageOf('kept-unhashed', '1.0.0', { 'index.js': '' })
+  const calls = registry(t, [pkg])
+  const signal = new AbortController().signal
+  const { shasum, ...dist } = pkg.doc.dist
+  await store.write('kept-unhashed', '1.0.0', npmVersionFields({ ...pkg.doc, dist }))
+  assert.equal((await readNpmVersion('kept-unhashed', '1.0.0', false, signal, store)).dist.shasum, shasum)
+  assert.equal(calls.length, 1, 'asked of npm')
+  assert.equal((await store.read('kept-unhashed', '1.0.0')).json.dist.shasum, shasum, 'and kept with its shasum')
+  assert.equal((await readNpmVersion('kept-unhashed', '1.0.0', false, signal, store)).dist.shasum, shasum)
+  assert.equal(calls.length, 1, 'then read of the store')
 })
 
 test('an unscoped version deprecated after it was kept shows its deprecation a day on', async t => {

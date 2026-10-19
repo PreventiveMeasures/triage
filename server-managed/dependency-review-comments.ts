@@ -18,11 +18,14 @@ const MAX_FORMATTED = 1_000_000
 // read after, every one formatted.
 const REVIEWS_AT_ONCE = 200
 
-// `review` as the hook is given it, the version it is of as `locked`, a
-// pull request's lockfile, locks it where it is one's.
+// `review` as the hook is given it: each version with the integrity and
+// shasum the review keeps of the tarball it read, and the version it is of
+// with the patch `locked`, a pull request's lockfile, locks it with, where it
+// is one's.
 function entryOf(review: DependencyReview, locked?: AddedPackage | undefined): DependencyReviewEntry {
-  return { ecosystem: 'npm', old: review.basePackage === null ? null : { name: review.basePackage, version: review.baseVersion ?? '', integrity: review.baseIntegrity ?? '' },
-    new: { name: review.package, version: review.version, integrity: review.integrity, ...locked?.shasum ? { shasum: locked.shasum } : {},
+  return { ecosystem: 'npm', old: review.basePackage === null ? null : { name: review.basePackage, version: review.baseVersion ?? '', integrity: review.baseIntegrity ?? '',
+      ...review.baseShasum ? { shasum: review.baseShasum } : {} },
+    new: { name: review.package, version: review.version, integrity: review.integrity, ...review.shasum ? { shasum: review.shasum } : {},
       ...locked?.patchHash ? { patchHash: locked.patchHash } : {} },
     status: review.status!, coverage: review.coverage === 'full' ? 'full' : 'partial', comment: review.comment,
     files: review.entries.filter(entry => entry.status !== null || entry.comment.trim() !== '').map(entry => ({ path: entry.file, status: entry.status, comment: entry.comment })),

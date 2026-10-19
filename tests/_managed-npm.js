@@ -35,7 +35,8 @@ export function packageOf(name, version, files, extra = {}) {
   const doc = { name, version, description: `${name} for tests`, license: 'MIT', main: 'lib/index.js',
     repository: { type: 'git', url: 'git+https://github.com/org/repo.git', directory: 'packages/pkg' }, gitHead: 'a'.repeat(40),
     dependencies: { dep: '^1.0.0' }, scripts: { postinstall: 'node setup.js', test: 'node --test' }, _npmUser: { name: 'publisher-1', email: 'p@example.com' },
-    dist: { tarball: `${REGISTRY}/${name}/-/${base}-${version}.tgz`, integrity: `sha512-${createHash('sha512').update(tgz).digest('base64')}`, unpackedSize: 100, fileCount: 2 }, ...extra }
+    dist: { tarball: `${REGISTRY}/${name}/-/${base}-${version}.tgz`, integrity: `sha512-${createHash('sha512').update(tgz).digest('base64')}`,
+      shasum: createHash('sha1').update(tgz).digest('hex'), unpackedSize: 100, fileCount: 2 }, ...extra }
   return { doc, tgz }
 }
 
