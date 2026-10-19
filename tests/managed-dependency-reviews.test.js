@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { checkDependencyReviews, reviewContext } from './_managed-dependency-reviews.js'
+import { checkDependencyReviews, checkTeamReviewList, reviewContext } from './_managed-dependency-reviews.js'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
 
@@ -13,6 +13,12 @@ test('dependency review lifecycle, ownership, team access and frozen snapshots (
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   await checkDependencyReviews(db)
+})
+
+test('a team\'s reviews in one statement, each as it is read alone, and their reader asked again in one (SQLite)', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  await checkTeamReviewList(db)
 })
 
 test('legacy notes become one editable note when continuing, without rewriting frozen rows', async t => {

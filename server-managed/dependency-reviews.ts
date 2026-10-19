@@ -30,9 +30,8 @@ export interface DependencyReviewStore {
   // The reviews published to team `teamId`, revoked ones too, the latest
   // published first, a page on from `before` (when it was published, and
   // its id), for one who reads them there (reviewsIn); null for another.
+  // In one statement.
   listTeamDependencyReviews(teamId: string, user: string, before: { time: number; id: string } | null): Promise<{ reviews: DependencyReview[]; next: { time: number; id: string } | null } | null>
-  // Whether `user` reads the reviews published to team `teamId` (reviewsIn).
-  readsTeamDependencyReviews(teamId: string, user: string): Promise<boolean>
   listDependencyReviewTeams(user: string): Promise<ReviewTeam[]>
   listDependencyReviewEnabledTeams(): Promise<string[]>
   setTeamDependencyReview(sessionId: string, teamId: string, enabled: boolean): Promise<boolean>
@@ -124,8 +123,9 @@ async function requireReviewer(db: ManagedSql, user: string) {
   if ((await teams(db, user)).length === 0) throw new ManagedMutationError(403, 'review-access-required')
 }
 
+type ReviewRow = Omit<DependencyReview, 'files' | 'entries' | 'teams' | keyof ReviewSummary> & { files: string | null }
 async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Promise<DependencyReview[]> {
-  const reviews = rows as (Omit<DependencyReview, 'files'> & { files: string | null })[]
+  const reviews = rows as ReviewRow[]
   if (reviews.length === 0) return []
   const ids = reviews.map(review => review.id), placeholders = ids.map(() => '?').join(',')
   const entries = await db.prepare(`SELECT review_id AS reviewId, id, file, comment, status, time
@@ -145,14 +145,21 @@ async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Pro
     return of
   }
   const [entriesOf, teamsOf] = [byReview(entries), byReview(linked)]
-  return reviews.map(review => {
-    const snapshot = review.files === null ? null : JSON.parse(review.files) as string[] | { paths: string[]; nonTextFiles: string[] }
-    const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
-    const nonTextFiles = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
-    const ownEntries = fileEntries((entriesOf.get(review.id) ?? []) as ReviewEntry[])
-    return { ...review, files, nonTextFiles, entries: ownEntries, ...summarizeReview(ownEntries, files, nonTextFiles), teams: (teamsOf.get(review.id) ?? []) as ReviewTeam[] }
-  })
+  return reviews.map(review => expanded(review, (entriesOf.get(review.id) ?? []) as ReviewEntry[], (teamsOf.get(review.id) ?? []) as ReviewTeam[]))
 }
+// A review as its row, its entries and the teams its reader reads it in
+// tell it: its files' snapshot, its entries a file's each (fileEntries), and
+// what they sum up to.
+function expanded(review: ReviewRow, entries: ReviewEntry[], readIn: ReviewTeam[]): DependencyReview {
+  const snapshot = review.files === null ? null : JSON.parse(review.files) as string[] | { paths: string[]; nonTextFiles: string[] }
+  const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
+  const nonTextFiles = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
+  const ownEntries = fileEntries(entries)
+  return { ...review, files, nonTextFiles, entries: ownEntries, ...summarizeReview(ownEntries, files, nonTextFiles), teams: readIn }
+}
+// Rows gathered into one JSON array value (json_group_array): its text on
+// SQLite, parsed already on Postgres, where none gather as NULL.
+export const gathered = <T>(value: unknown): T[] => value == null ? [] : (typeof value === 'string' ? JSON.parse(value) : value) as T[]
 
 async function publish(db: ManagedSql, current: DependencyReview | undefined, user: string, change: Extract<ReviewChange, { action: 'publish' }>, now: number) {
   if (!current || current.revokedAt !== null) return conflict()
@@ -193,17 +200,34 @@ async function listContext(db: ManagedSql, context: ReviewContext, user: string,
   return expandReviews(db, rows, user)
 }
 
-const readsTeam = async (db: ManagedSql, teamId: string, user: string) =>
-  Boolean(await db.prepare(`SELECT 1 FROM managed_team t JOIN managed_user u ON u.id = ? WHERE t.id = ? AND ${reviewsIn(false)}`).get(user, teamId))
-
+// A team's page of reviews in one statement: a row of its reader `v` where
+// they read them there (reviewsIn), none for another, with each review on
+// a row of its own, its entries and the teams `v` reads it in (as
+// expandReviews reads them) each one JSON array.
 async function listTeam(db: ManagedSql, teamId: string, user: string, before: { time: number; id: string } | null) {
-  if (!await readsTeam(db, teamId, user)) return null
-  const rows = await db.prepare(`SELECT ${columns} FROM managed_dependency_review r JOIN managed_dependency_review_team rt ON rt.review_id = r.id
-    WHERE rt.team_id = ? AND r.published_at IS NOT NULL ${before ? 'AND (r.published_at < ? OR (r.published_at = ? AND r.id < ?))' : ''}
-    ORDER BY r.published_at DESC, r.id DESC LIMIT 51`).all(teamId, ...before ? [before.time, before.time, before.id] : []) as DependencyReview[]
-  const page = rows.slice(0, 50)
+  const rows = await db.prepare(`WITH reader AS (
+      SELECT u.id AS id FROM managed_team t JOIN managed_user u ON u.id = ? WHERE t.id = ? AND ${reviewsIn(false)}
+    ), page AS (
+      SELECT ${columns} FROM managed_dependency_review r JOIN managed_dependency_review_team rt ON rt.review_id = r.id
+      WHERE rt.team_id = ? AND r.published_at IS NOT NULL AND EXISTS (SELECT 1 FROM reader)
+        ${before ? 'AND (r.published_at < ? OR (r.published_at = ? AND r.id < ?))' : ''}
+      ORDER BY r.published_at DESC, r.id DESC LIMIT 51
+    )
+    SELECT v.id AS reader, p.*,
+      (SELECT json_group_array(json_object('id', e.id, 'file', e.file, 'comment', e.comment, 'status', e.status, 'time', e.time) ORDER BY e.time, e.id)
+        FROM managed_dependency_file_review e WHERE e.review_id = p.id) AS entries,
+      (SELECT json_group_array(json_object('id', t.id, 'name', t.name) ORDER BY t.name, t.id)
+        FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id JOIN managed_user u ON u.id = v.id
+        WHERE rt.review_id = p.id AND (p.user = u.id OR (${reviewsIn(false)}))) AS teams
+    FROM reader v LEFT JOIN page p ON 1 = 1
+    ORDER BY p.publishedAt DESC, p.id DESC`).all(user, teamId, teamId, ...before ? [before.time, before.time, before.id] : []) as
+    (ReviewRow & { reader: string; entries: unknown; teams: unknown })[]
+  if (rows.length === 0) return null
+  const reviews = rows.filter(row => row.id != null)
+  const page = reviews.slice(0, 50)
   const last = page.at(-1)
-  return { reviews: await expandReviews(db, page, user), next: rows.length > 50 && last ? { time: Number(last.publishedAt), id: last.id } : null }
+  return { reviews: page.map(({ reader: _reader, entries, teams: readIn, ...review }) => expanded(review, gathered(entries), gathered(readIn))),
+    next: reviews.length > 50 && last ? { time: Number(last.publishedAt), id: last.id } : null }
 }
 
 async function saveFile(db: ManagedSql, reviewId: string, entry: ReviewInput, requestedId: string | null, now: number) {
@@ -236,7 +260,6 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
         ORDER BY time, id`).all(user, ...ids), user)
     },
     listTeamDependencyReviews: (teamId, user, before) => listTeam(db, teamId, user, before),
-    readsTeamDependencyReviews: (teamId, user) => readsTeam(db, teamId, user),
     async getLatestOwnDependencyReview(user, target) {
       const row = await db.prepare(`SELECT ${columns} FROM managed_dependency_review
         WHERE user_id = ? AND ecosystem = ? AND package = ? AND version = ? AND integrity = ? ORDER BY time DESC, id DESC LIMIT 1`)

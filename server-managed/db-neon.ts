@@ -17,6 +17,7 @@ import { UPSTREAM_CACHE_SCHEMA } from './upstream-cache.ts'
 import { COMMENT_SCHEMA } from './comments.ts'
 import { ACTIVITY_SCHEMA, uploadAction } from './activity.ts'
 import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
+import { countStatement, timed } from './request-timing.ts'
 import { postgresSchema, postgresSql } from './sql-postgres.ts'
 import { managedTableRenames } from './db-table-names.ts'
 import { WORKSPACE_SHARE_SCHEMA } from './workspace-shares.ts'
@@ -325,7 +326,12 @@ function requestConnections(connect: PgConnect) {
 }
 
 // Exposed for parity tests against real PostgreSQL semantics via PGlite.
-export async function openPostgresManagedDb(connect: PgConnect, options: ManagedDbOptions = {}, reuseConnections = false): Promise<ManagedDb> {
+export async function openPostgresManagedDb(leased: PgConnect, options: ManagedDbOptions = {}, reuseConnections = false): Promise<ManagedDb> {
+  // Each statement told in its request's Server-Timing (request-timing.ts).
+  const connect: PgConnect = async () => {
+    const connection = await leased()
+    return { query: (sql, params) => { countStatement(); return connection.query(sql, params) }, release: discard => connection.release(discard) }
+  }
   const initial = await connect()
   try { await initialize(initial) } catch (err) { await initial.release(true).catch(() => {}); throw err }
   await initial.release()
@@ -431,7 +437,9 @@ export async function openNeonManagedDb(url: string, options: ManagedDbOptions =
   let db: ManagedDb
   try {
     db = await openPostgresManagedDb(async () => {
-      const client = await pool.connect()
+      // A lease's wait told in its request's Server-Timing: a new connection's
+      // TLS, WebSocket and Postgres handshake, where the pool had none idle.
+      const client = await timed('conn', () => pool.connect())
       if (!watched.has(client)) { watched.add(client); client.on('error', () => { failed.add(client) }) }
       return { query: (sql, params) => client.query(sql, params),
         release: discard => Promise.try(() => client.release(discard === true || failed.has(client))) }

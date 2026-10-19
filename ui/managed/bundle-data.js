@@ -249,12 +249,13 @@ export function fetchPullDependencies(repoId, number, { review = false, signal }
 export async function fetchPullDependenciesOf(repoId, numbers, { review = false, signal } = {}) {
   const { pulls } = await request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, numbers: numbers.join(','), ...review ? { review: '1' } : {} })}`,
     PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
-  return new Map((Array.isArray(pulls) ? pulls : []).filter(pull => Number.isSafeInteger(pull?.number)).map(pull => [pull.number, typeof pull.error === 'string'
-    ? Object.assign(new Error(PULL_DEPENDENCIES_ERRORS[pull.error] ?? `It couldn’t be read (${pull.error}).`), { code: pull.error }) : pull]))
+  return pullAnswers(pulls)
 }
+const pullAnswers = pulls => new Map((Array.isArray(pulls) ? pulls : []).filter(pull => Number.isSafeInteger(pull?.number)).map(pull => [pull.number,
+  typeof pull.error === 'string' ? Object.assign(new Error(PULL_DEPENDENCIES_ERRORS[pull.error] ?? `It couldn’t be read (${pull.error}).`), { code: pull.error }) : pull]))
 
-// The versions the repository's default branch's lockfiles lock that want
-// review, where its review is in effect for the reader (`review`, else none).
+// Why the versions the repository's default branch's lockfiles lock that
+// want review, where its review is in effect for the reader, couldn't be read.
 const BRANCH_DEPENDENCIES_ERRORS = {
   ...REPOSITORY_ITEM_ERRORS,
   'github-not-found': 'GitHub has none of a lockfile it lists on the default branch.',
@@ -262,8 +263,23 @@ const BRANCH_DEPENDENCIES_ERRORS = {
   'github-status-403': 'GitHub refused to read its lockfiles. The GitHub App reading this repository needs Contents: read, which an owner of its installation approves.',
   400: 'Not a repository.',
 }
-export function fetchBranchDependencies(repoId, { signal } = {}) {
-  return request(`/api/admin/repositories/branch-dependencies?${new URLSearchParams({ repoId })}`, BRANCH_DEPENDENCIES_ERRORS, response => response.json(), signal)
+// A team's Dependencies tab's, of those of its repositories `repoIds` names,
+// else all, in one request (GET /api/teams/:id/dependencies): `onLine`
+// called with each line as it comes, as the server tells them
+// (server-managed/http.ts handleTeamDependencies), a repository's failure
+// told by why (`error`), and its pull requests' dependencies by number, as
+// fetchPullDependenciesOf tells them (`dependencies`).
+const TEAM_DEPENDENCIES_ERRORS = { 'no-team': 'This team is not available to you.', 400: 'Not a team’s repositories.' }
+export function fetchTeamDependencies(teamId, onLine, { repoIds = null, signal } = {}) {
+  const query = repoIds ? `?${new URLSearchParams({ repoIds: repoIds.join(',') })}` : ''
+  return request(`/api/teams/${encodeURIComponent(teamId)}/dependencies${query}`, TEAM_DEPENDENCIES_ERRORS, async response => {
+    const generation = managedAppState.generation
+    for await (const line of responseLines(response)) {
+      if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+      onLine(typeof line.error === 'string' ? { ...line, error: BRANCH_DEPENDENCIES_ERRORS[line.error] ?? BRANCH_DEPENDENCIES_ERRORS[line.status]
+        ?? `It couldn’t be read (${line.error}).`, code: line.error } : Array.isArray(line.dependencies) ? { ...line, dependencies: pullAnswers(line.dependencies) } : line)
+    }
+  }, signal)
 }
 
 const REPOSITORY_PULSE_ERRORS = {
@@ -452,12 +468,22 @@ export function fetchNpmTypeOnly(name, version, otherVersion, onLine, { signal }
   return requestPrettyLines(`/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal)
 }
 
-// The lines a version changes against another, or `(empty)`, its whole
-// package's, and those but for declaration files changed in types alone.
+// The lines each of several versions changes against another, or
+// `(empty)`, its whole package's, and those but for declaration files
+// changed in types alone, `[name, version, otherVersion]` each, in one
+// request (GET /api/npm/deltas): `onLine` called with each as it is counted,
+// `{ name, version, otherVersion, ...delta }`, or with why it couldn't be
+// (`error`).
 const DELTA_ERRORS = { ...NPM_ERRORS, 'delta-busy': 'Too many packages are being counted. Try again shortly.',
   'delta-timeout': 'Counting its lines took too long.', 'delta-failed': 'Its lines couldn’t be counted.' }
-export function fetchNpmDelta(name, version, otherVersion, { signal } = {}) {
-  return request(`/api/npm/delta?${new URLSearchParams({ name, version, otherVersion })}`, DELTA_ERRORS, response => response.json(), signal)
+export function fetchNpmDeltas(versions, onLine, { signal } = {}) {
+  return request(`/api/npm/deltas?${new URLSearchParams({ versions: JSON.stringify(versions) })}`, DELTA_ERRORS, async response => {
+    const generation = managedAppState.generation
+    for await (const { error, status, ...line } of responseLines(response)) {
+      if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+      onLine(error ? { ...line, error: DELTA_ERRORS[error] ?? DELTA_ERRORS[status] ?? `Request failed (${status})` } : line)
+    }
+  }, signal)
 }
 
 const COMPARISON_ERRORS = {

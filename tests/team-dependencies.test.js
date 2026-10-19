@@ -12,7 +12,9 @@ import './_polyfills.js'
 import { templateText } from './_lit.js'
 
 const state = { managedSession: { id: 's', role: 'triage' }, managedTeams: [{ id: 'team-1', slug: 'deps' }], teamDependenciesTab: 'pulls' }
-const asked = { branches: [], pulls: [], dependencies: [], together: [] }
+// The team reads asked, by the repositories each names (none: all), and the
+// pull requests or deltas asked alone.
+const asked = { teams: [], dependencies: [], deltas: [] }
 const terms = { required: 2, since: null, canReview: true }
 const dir = (more = {}) => ({ paths: ['package-lock.json'], added: [], more: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, moreLocked: 0, ...more })
 const wants = (name, more = {}) => ({ name, version: '1.0.0', source: 'registry', reviews: 0, ...more })
@@ -25,10 +27,9 @@ const branches = {
   9: { cut: false, review: null, lockfiles: [dir()] },
 }
 const pull = (number, more = {}) => ({ number, title: `Pull ${number}`, author: 'octo', state: 'open', touchesLockfile: true, ...more })
-// Repository 8's a page at a time, more than are read.
-const pulls = { 7: [pull(1), pull(3), pull(4, { touchesLockfile: false }), pull(9), pull(10), pull(11)], 8: { '': [pull(2)], p2: [pull(6)], p3: [pull(7, { touchesLockfile: false })] }, 9: [pull(5)] }
-const page = (repoId, after = '') => Array.isArray(pulls[repoId]) ? { items: pulls[repoId], more: false }
-  : { items: pulls[repoId][after] ?? [], more: true, after: after === '' ? 'p2' : `p${Number(after.slice(1)) + 1}` }
+// Repository 8's more than are read.
+const pulls = { 7: { items: [pull(1), pull(3), pull(4, { touchesLockfile: false }), pull(9), pull(10), pull(11)], more: false },
+  8: { items: [pull(2), pull(6), pull(7, { touchesLockfile: false })], more: true } }
 const dependencies = {
   // Its shared one reviewed in its comments, which count for it alone.
   '7#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared', { reviews: 1, commented: 1 }), ...big, gitdep, wants('fine', { reviews: 2 })], unsupported: [gitdep] })] },
@@ -44,22 +45,41 @@ const dependencies = {
   // Its versions past those told wanting reviews, those told passed.
   '8#6': { cut: false, review: { ...terms, toReview: 3 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], more: 250 })] },
 }
+// A team's lines, as the server tells them (fetchTeamDependencies), of those
+// `repoIds` names, else all: the lines `old` changes, counted already, with
+// 7's default branch; its pull requests' dependencies two a line. Those
+// `timeUp` names left for the read's time, once, their default branch told.
+const TEAM = [7, 8, 9, 10, 11, 12]
+let timeUp = new Set()
+function teamLines(repoIds) {
+  const lines = [], unread = []
+  for (const repoId of repoIds ?? TEAM) {
+    // Repository 11 read only in part, 9 reviewing none.
+    if (repoId === 11 || branches[repoId]?.review === null) lines.push({ repoId, branch: null })
+    else if (branches[repoId]) {
+      lines.push({ repoId, branch: branches[repoId], pulls: pulls[repoId], ...repoId === 7 ? { deltas: [['old', '1.0.0', '(empty)', { additions: 3, deletions: 0, typeless: null }]] } : {} })
+      if (timeUp.has(repoId)) { unread.push(repoId); continue }
+      const numbers = pulls[repoId].items.filter(item => item.touchesLockfile !== false).map(item => item.number)
+      for (let at = 0; at < numbers.length; at += 2) {
+        lines.push({ repoId, dependencies: new Map(numbers.slice(at, at + 2).map(number => [number, { number, ...dependencies[`${repoId}#${number}`] }])) })
+      }
+    } else lines.push({ repoId, error: 'It isn’t there.', code: 'github-not-found' })
+  }
+  timeUp = new Set()
+  return [...lines, unread.length > 0 ? { done: false, unread } : { done: true }]
+}
 mock.module('../client/index.js', { exports: { state } })
 mock.module('../ui/view/client-managed.js', { exports: {
-  fetchNpmDelta: () => new Promise(() => {}),
-  fetchBranchDependencies(repoId) {
-    asked.branches.push(repoId)
-    if (repoId === 11) return Promise.reject(Object.assign(new Error('Only some of it.'), { code: 'no-directory' }))
-    return repoId in branches ? Promise.resolve(branches[repoId]) : Promise.reject(new Error('It isn’t there.'))
+  fetchNpmDeltas(versions) { asked.deltas.push(versions); return new Promise(() => {}) },
+  async fetchTeamDependencies(teamId, onLine, { repoIds }) {
+    asked.teams.push([teamId, repoIds])
+    for (const line of teamLines(repoIds)) {
+      await setImmediate()
+      onLine(line)
+    }
   },
-  fetchRepositoryIssues(repoId, kind, options) { asked.pulls.push([repoId, kind, options]); return Promise.resolve(page(repoId, options.after)) },
-  fetchPullDependencies(repoId, number, options) { asked.dependencies.push([repoId, number, options]); return Promise.resolve({ number, ...dependencies[`${repoId}#${number}`] }) },
-  // A repository's asked together, in the background.
-  fetchPullDependenciesOf(repoId, numbers, options) {
-    asked.together.push([repoId, numbers.length])
-    for (const number of numbers) asked.dependencies.push([repoId, number, options])
-    return Promise.resolve(new Map(numbers.map(number => [number, { number, ...dependencies[`${repoId}#${number}`] }])))
-  },
+  fetchPullDependencies(repoId, number, options) { asked.dependencies.push([repoId, number, options]); return new Promise(() => {}) },
+  fetchPullDependenciesOf(repoId, numbers, options) { asked.dependencies.push([repoId, numbers, options]); return new Promise(() => {}) },
 } })
 const opened = []
 mock.module('../ui/view/lazy-dialogs.js', { exports: { openRepositoryItemDialog(props) { opened.push(props) } } })
@@ -70,6 +90,8 @@ mock.module('../ui/view/managed-history.js', { exports: { managedHistory: {
 } } })
 await import('../ui/view/team-dependencies.js')
 const Dependencies = customElements.get('team-dependencies')
+const { pullDependencies } = await import('../ui/view/pull-dependencies.js')
+const { npmDelta } = await import('../ui/view/npm-delta.js')
 
 const repo = (repoId, name) => ({ repoId, name, paths: [], reports: 0, bundles: 0, available: true })
 const settle = async () => { for (let round = 0; round < 12; round++) await setImmediate() }
@@ -89,14 +111,11 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   const text = await read(view)
   assert.deepEqual(tabs(text), [['Pull requests', '4', true], ['Versions', '16', false], ['Default branch', '2', false], ['Reviews', null, false]])
   assert.match(text, /role="tabpanel" id=team-deps-panel-pulls aria-labelledby=team-deps-tab-pulls>/u, 'the one open under them')
-  assert.deepEqual(asked.branches.toSorted(), [7, 8, 9], 'each repository once')
-  assert.deepEqual(asked.pulls.map(([repoId, kind, options]) => [repoId, kind, options.state, options.after ?? null]).toSorted(),
-    [[7, 'pulls', 'open', null], [8, 'pulls', 'open', null], ...Array.from({ length: 19 }, (_, at) => [8, 'pulls', 'open', `p${at + 2}`])].toSorted(),
-    'of those whose review is in effect, twenty pages at most')
-  assert.deepEqual(asked.dependencies.map(([repoId, number, options]) => [repoId, number, options.review]).toSorted(),
-    [[7, 1, true], [7, 10, true], [7, 11, true], [7, 3, true], [7, 9, true], [8, 2, true], [8, 6, true]],
-    'those changing a lockfile, of the repositories reviewing them, with their review')
-  assert.ok(asked.together.some(([, count]) => count > 1), 'a repository\'s read together once a turn comes')
+  assert.deepEqual(asked.teams, [['team-1', null]], 'its repositories, all of them, in one request')
+  assert.deepEqual(asked.dependencies, [], 'no pull request asked alone')
+  assert.equal(pullDependencies(7, 1, true).status, 'ready', 'their dependencies held as a tile or a popup asks for them')
+  assert.deepEqual(asked.dependencies, [], 'none asked again')
+  assert.equal(npmDelta('old', '1.0.0', '(empty)').additions, 3, 'the lines a version changes, counted already, held as its row asks for them')
   assert.match(text, /role="alert">Only b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = cardsOf(text)
@@ -178,7 +197,7 @@ test('a team none of whose repositories reviews its dependencies for its reader 
   const noneText = await read(none)
   assert.match(noneText, /None of this team’s repositories reviews its dependencies for you\./u)
   assert.deepEqual(tabs(noneText).map(([label]) => label), ['Pull requests', 'Versions', 'Reviews'], 'no default branch to show, nor its sub-tab')
-  const failing = Object.assign(new Dependencies(), { repositories: [repo(10, 'org/gone')] })
+  const failing = shown([repo(10, 'org/gone')])
   const failed = await read(failing)
   assert.match(failed, /role="alert">gone: It isn’t there\.</u, 'named without its owner, the only one')
   assert.doesNotMatch(failed, /workspace-content-empty/u, 'nothing told of what it couldn’t read')
@@ -204,4 +223,35 @@ test('pull requests and repositories named with their owners where those reviewe
   view.updated()
   assert.deepEqual(routes, [['replace', { view: 'workspace-dependencies', teamSlug: 'deps', dependencyTab: 'pulls' }]], 'its address the first\'s, replacing its own')
   assert.equal(state.teamDependenciesTab, 'pulls')
+})
+
+test('a read the server\'s time cut short asks again for the repositories it left alone, those told held', async () => {
+  state.managedSession = { id: 'resume', role: 'triage' }
+  state.teamDependenciesTab = 'pulls'
+  asked.teams.length = 0
+  timeUp = new Set([8])
+  const view = shown([repo(7, 'org/a'), repo(8, 'org/b')])
+  const text = await read(view)
+  assert.deepEqual(asked.teams, [['team-1', null], ['team-1', [8]]], 'the one left asked for again, alone')
+  assert.deepEqual(cardsOf(text).map(card => />([ab]#\d+)</u.exec(card)?.[1]), ['b#2', 'b#6', 'a#1', 'a#9'], 'all told as one read tells them')
+  assert.deepEqual(asked.dependencies, [], 'none asked alone')
+})
+
+test('a team\'s grown old shown as it was while it is read again; all read anew once a review is set anew', async t => {
+  state.managedSession = { id: 'stale', role: 'triage' }
+  asked.teams.length = 0
+  const view = shown([repo(7, 'org/a')])
+  await read(view)
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 2 * 60_000 + 1 })
+  const refreshing = templateText(view.render())
+  assert.deepEqual(asked.teams, [['team-1', null], ['team-1', null]], 'asked again once old')
+  assert.match(refreshing, />a#1</u, 'its pull requests shown meanwhile')
+  assert.doesNotMatch(refreshing, /Reading their pull requests/u)
+  await read(view)
+  t.mock.timers.reset()
+  globalThis.dispatchEvent(new Event('dependency-review-changed'))
+  assert.match(templateText(view.render()), /role="status">Reading their pull requests…/u, 'a review set anew, read anew')
+  assert.equal(asked.teams.length, 3)
+  await read(view)
+  assert.deepEqual(asked.dependencies, [])
 })

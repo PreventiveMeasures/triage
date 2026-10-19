@@ -12,6 +12,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { packageOf, registry, withToken } from './_managed-npm.js'
+import { readLines } from './_managed-lines.js'
 
 async function fixture(t) {
   const db = openSqliteManagedDb(':memory:')
@@ -24,7 +25,9 @@ async function fixture(t) {
     sessions[role] = session
   }
   const handler = createManagedRequestHandler({ db, config, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
-  return async (path, who = 'triage') => {
+  // A streamed answer's lines, off a real listener.
+  const lines = (path, who = 'triage') => readLines(t, handler, path, sessions[who]?.setCookie.split(';')[0])
+  return Object.assign(async (path, who = 'triage') => {
     const session = sessions[who]
     const req = Object.assign(Readable.from([]), { url: path, method: 'GET', headers: session ? { cookie: session.setCookie.split(';')[0] } : {} })
     // ServerResponse exposes Node's EventEmitter contract.
@@ -33,7 +36,7 @@ async function fixture(t) {
       writeHead(status, headers) { this.status = status; this.headers = headers }, end(value) { this.body = JSON.parse(value); this.writableEnded = true } })
     await handler(req, res)
     return res
-  }
+  }, { lines })
 }
 const delta = (name, version, otherVersion) => `/api/npm/delta?${new URLSearchParams({ name, version, otherVersion })}`
 
@@ -67,6 +70,40 @@ test('a version\'s lines against another, and those but for declaration files ch
   assert.equal((await send(delta('@corp/lib', '1.1.0', '(empty)'), 'admin')).body.additions, 5)
   assert.equal((await send(delta('lib', '1.1.0', ''))).status, 400)
   assert.equal((await send(delta('lib', '1.1.0', '1.0.0'), null)).status, 401)
+})
+
+// Several versions' lines in one request (GET /api/npm/deltas), as a list's
+// rows near the viewport ask for them together.
+const deltas = asked => `/api/npm/deltas?${new URLSearchParams({ versions: JSON.stringify(asked) })}`
+const byAsked = lines => Object.fromEntries(lines.map(line => [`${line.name}@${line.version} ${line.otherVersion}`, line]))
+
+test('several versions\' lines in one request, each as GET delta answers it, as lines as each is counted; a private one\'s to its readers alone; fifty at most', async t => {
+  const send = await fixture(t)
+  withToken(t)
+  registry(t, [packageOf('lib', '1.0.0', versions[0]), packageOf('lib', '1.1.0', versions[1]), { ...packageOf('@corp/lib', '1.1.0', versions[1]), private: true }])
+  const asked = [['lib', '1.1.0', '1.0.0'], ['lib', '1.1.0', '(empty)'], ['@corp/lib', '1.1.0', '(empty)'], ['lib', '9.9.9', '1.0.0']]
+  // Each as GET delta answers it, of the version asked against.
+  const alone = async ([name, version, otherVersion], who) => {
+    const res = await send(delta(name, version, otherVersion), who)
+    return res.status === 200 ? { ...res.body, otherVersion } : { name, version, otherVersion, error: res.body.error, status: res.status }
+  }
+  const answer = await send.lines(deltas(asked))
+  assert.equal(answer.status, 200)
+  assert.equal(answer.headers['content-type'], 'application/x-ndjson')
+  assert.ok(answer.ended)
+  assert.deepEqual(byAsked(answer.lines), byAsked(await Promise.all(asked.map(one => alone(one)))), 'each as one asked alone, one of no such version refused')
+  assert.deepEqual(byAsked(answer.lines)['@corp/lib@1.1.0 (empty)'], { name: '@corp/lib', version: '1.1.0', otherVersion: '(empty)', error: 'package-not-found', status: 404 },
+    'a private one refused a reader without access to it')
+  const admin = byAsked((await send.lines(deltas(asked), 'admin')).lines)
+  assert.deepEqual(admin['@corp/lib@1.1.0 (empty)'], await alone(asked[2], 'admin'), 'counted for one with it')
+  assert.equal(admin['@corp/lib@1.1.0 (empty)'].additions, 5)
+
+  assert.equal((await send.lines(deltas(Array.from({ length: 50 }, (_, at) => ['lib', '1.1.0', at % 2 ? '1.0.0' : '(empty)'])))).lines.length, 50, 'fifty at once')
+  assert.equal((await send.lines(deltas(Array.from({ length: 51 }, () => asked[0])))).status, 400, 'no more')
+  for (const bad of ['/api/npm/deltas', '/api/npm/deltas?versions=x', deltas([]), deltas([['lib', '1.1.0']]), deltas([['lib', '1.1.0', '']]), deltas([['Not A Name', '1.0.0', '(empty)']])]) {
+    assert.deepEqual([(await send.lines(bad)).status, (await send(bad)).body], [400, { error: 'bad-package' }], bad)
+  }
+  assert.equal((await send.lines(deltas(asked), null)).status, 401)
 })
 
 test('a binary file added, removed or changed is told of, one moved as it was not; one kept before binary files were told of worked out again', async () => {
