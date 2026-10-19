@@ -13,7 +13,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
-import { isPatchOf, parsePatch, patchedFiles, requestedPatch } from '../server-managed/npm-patch.ts'
+import { isPatchOf, parsePatch, patchWeight, patchedFiles, requestedPatch } from '../server-managed/npm-patch.ts'
 import { isPatchHash } from '../common/managed/npm-packages.js'
 import { packageOf, registry } from './_managed-npm.js'
 
@@ -114,6 +114,18 @@ test('a patch of bytes, of a file outside the package, or that its lines miscoun
     assert.throws(() => parsePatch(patch), failure('patch-unreadable'), patch)
   }
   assert.deepEqual(parsePatch('Some preamble.\n'), [], 'none, what comes before the first file left out')
+})
+
+test('a patch read is kept by about the bytes it takes, as V8 takes them: its characters, and the room each line and hunk takes past them', () => {
+  const of = hunks => `diff --git a/x.js b/x.js\n--- a/x.js\n+++ b/x.js\n${hunks}`
+  // Its weight by the size of its text.
+  const ratio = text => patchWeight(parsePatch(text)) / text.length
+  const long = ratio(of(`@@ -1 +1 @@\n-${'a'.repeat(1 << 20)}\n+${'b'.repeat(1 << 20)}\n`))
+  assert.ok(long > 1 && long < 1.01, `a few long lines, about their characters (${long})`)
+  const short = ratio(of(`@@ -1,100000 +1,100000 @@\n${' a\n'.repeat(100_000)}`))
+  assert.ok(short > 20, `many short lines, each on both sides, many times their characters (${short})`)
+  const tiny = ratio(of(Array.from({ length: 10_000 }, (_, at) => `@@ -${at + 1} +${at + 1} @@\n-a\n+b\n`).join('')))
+  assert.ok(tiny > 15, `many tiny hunks, many times their characters (${tiny})`)
 })
 
 test('a patch is held to the hash a lockfile names it by, as pnpm hashes it: a sha256 in hex, or pnpm 9\'s md5 in base32, of its text with its CRLFs as LFs', () => {

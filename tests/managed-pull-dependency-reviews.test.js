@@ -23,7 +23,7 @@ mock.module('../server-managed/lru.ts', { exports: { lru: (...args) => {
 const coldInstance = () => { for (const forget of memories) forget() }
 const { openSqliteManagedDb } = await import('../server-managed/db.ts')
 const { createManagedRequestHandler } = await import('../server-managed/http.ts')
-const { lockedAt } = await import('../server-managed/commit-lockfiles.ts')
+const { lockedAt, lockedIn } = await import('../server-managed/commit-lockfiles.ts')
 const { lockedPackages } = await import('../server-managed/locked-packages.ts')
 const { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages } = await import('../server-managed/pull-dependency-reviews.ts')
 const { MAX_ADDED } = await import('../server-managed/pull-dependencies.ts')
@@ -116,6 +116,15 @@ const bare = ({ was: _was, ...pkg }) => pkg
 // A reviewer as a version's review tells them: their latest verdict,
 // passing it where it is an accepting one that does.
 const by = (login, status = 'accept', passes = status === 'accept') => ({ login, status, ...passes ? { passes: true } : {} })
+
+test('a version a commit\'s lockfiles each lock patched alike keeps the first of their patch\'s files in the repository, from its root, past those that name none there', () => {
+  const pkg = at('patched', '1.0.0', { patchHash: PATCH, lockfile: 'pnpm' })
+  const read = { unread: [], lockfiles: [{ path: 'a/pnpm-lock.yaml', packages: [pkg] },
+    { path: 'b/pnpm-lock.yaml', packages: [{ ...pkg, patchPath: '../../outside.patch' }] },
+    { path: 'c/pnpm-lock.yaml', packages: [{ ...pkg, patchPath: 'patches/patched@1.0.0.patch', dev: true }] },
+    { path: 'd/pnpm-lock.yaml', packages: [{ ...pkg, patchPath: 'patches/patched@1.0.0.patch' }] }] }
+  assert.deepEqual(lockedIn(read).packages, [{ ...pkg, patchPath: 'c/patches/patched@1.0.0.patch' }])
+})
 
 test('each version a pull request adds is told its review: how many pass it, of its integrity and compared with a version it was; that it needs none; or why it can\'t be reviewed, a file not reviewed', async () => {
   const [ms, tool, kept] = [at('ms', '2.1.3', { was: ['2.1.2'] }), at('tool', '1.0.0', { dev: true }), at('kept', '1.0.0')]

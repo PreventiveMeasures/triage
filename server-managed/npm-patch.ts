@@ -250,14 +250,20 @@ export function patchedFiles(files: NpmPackageFile[], patch: PatchedFile[]): Npm
   return [...byPath].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
 }
 
+// About the bytes a patch read takes: the characters of its paths and of the
+// lines its hunks hold, and the room past them each line takes (LINE_COST)
+// and each hunk and file (HUNK_COST), as V8 takes it; so a patch of a few
+// long lines (a minified file's) weighs about its size, and one of many
+// short lines or tiny hunks many times it, as it takes.
+const HUNK_COST = 512, LINE_COST = 32
+const held = (records: string[]) => records.reduce((sum, record) => sum + LINE_COST + record.length, 0)
+export const patchWeight = (files: PatchedFile[]) => files.reduce((sum, file) => sum + HUNK_COST + file.path.length + (file.from?.length ?? 0)
+  + file.hunks.reduce((bytes, hunk) => bytes + HUNK_COST + held(hunk.old) + held(hunk.new), 0), 1)
+
 // Patches read lately, by their source and hash, as what a commit holds never
-// changes: as many characters as MAX_KEPT_PATCHES of their paths and of the
-// lines their hunks hold, a patch of a few long lines (a minified file's)
-// weighing as much as one of many short ones.
-const MAX_KEPT_PATCHES = 32 * 1024 * 1024
-const held = (records: string[]) => records.reduce((sum, record) => sum + record.length, 0)
-const patches: Lru<PatchedFile[]> = lru(MAX_KEPT_PATCHES, files => files.reduce((sum, file) => sum + file.path.length + (file.from?.length ?? 0)
-  + file.hunks.reduce((chars, hunk) => chars + held(hunk.old) + held(hunk.new), 0), 1))
+// changes: as many as MAX_KEPT_PATCHES of the bytes they take (patchWeight).
+const MAX_KEPT_PATCHES = 64 * 1024 * 1024
+const patches: Lru<PatchedFile[]> = lru(MAX_KEPT_PATCHES, patchWeight)
 
 // The patch `patch` names, read as kept, else of repository `fullName` with
 // `token`, held to its hash and read (parsePatch), and kept; `asked` told
