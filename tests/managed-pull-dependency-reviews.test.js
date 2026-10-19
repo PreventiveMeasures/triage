@@ -361,6 +361,15 @@ test('a commit\'s lockfiles, as it lists them and as each is read, are kept beyo
   github(t, { files: { [since]: BASELINE }, missing: ['web/yarn.lock'] })
   await assert.rejects(lock(), /github-not-found/u)
   assert.equal(kept.lockfiles.kept.has(blobOf('yarn', yarnLockfile)), false, 'nor one it has none of')
+  // Its listing kept, one of its lockfiles GitHub fails to give: told asked
+  // all the same, as a caller swallowing the failure (a baseline) would
+  // otherwise skip asking for its access again.
+  t.mock.restoreAll()
+  coldInstance()
+  github(t, { files: { [since]: BASELINE }, failing: [`/repos/org/repo/contents/web/yarn.lock?ref=${since}`] })
+  const refused = { github: false }
+  await assert.rejects(lockedAt('org/repo', 'token', since, kept, () => true, refused), /github-status-503/u)
+  assert.equal(refused.github, true, 'a read GitHub failed told as asked of it')
 
   t.mock.restoreAll()
   coldInstance()

@@ -215,9 +215,15 @@ export async function readLockfile(fullName: string, token: string, ref: string,
   const shared = `${token}\0${fullName}\0${key}`
   const reading = lockfilesReading.get(shared) ?? readOf(fullName, token, ref, lockfile, key, kept).finally(() => lockfilesReading.delete(shared))
   lockfilesReading.set(shared, reading)
-  const { read, github } = await reading
-  if (github && asked) asked.github = true
-  return read
+  // One failing was asked of GitHub too, though a caller swallows its
+  // failure, as a baseline's does: its access is asked again all the same.
+  let told
+  try { told = await reading } catch (err) {
+    if (asked) asked.github = true
+    throw err
+  }
+  if (told.github && asked) asked.github = true
+  return told.read
 }
 async function readOf(fullName: string, token: string, ref: string, { path, format }: { path: string; format: Format }, key: string,
   kept: LockfileStore | null): Promise<{ read: LockfileRead; github: boolean }> {
