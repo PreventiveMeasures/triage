@@ -900,15 +900,18 @@ for (const failure of [
   })
 }
 
-test('GitHub outages do not cause anonymous fallback or token minting', async t => {
+test('GitHub outages do not cause anonymous or installation fallback', async t => {
   const { request } = await fixture(t, { selectedRepo: privateRepo, tokens: userTokens, fixtureConfig: appConfig })
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, options) => { calls.push([new URL(url).pathname, options.headers.authorization]); return Promise.resolve(Response.json({}, { status: 503 })) })
   const response = await request({ repoId: '1' }, { route: 'refs' })
   assert.equal(response.status, 502)
   assert.equal(response.body.error, 'github-status-503')
-  // Who the user is asked beside the metadata, as for a repository last known private.
-  assert.deepEqual(calls.toSorted(), [['/repos/org/repo', 'Bearer login-token'], ['/user', 'Bearer login-token']])
+  // Who the user is asked, and the installation token minted (with the App's
+  // own JWT), beside the metadata, as for a repository last known private;
+  // the metadata is read with neither, nor anonymously.
+  assert.deepEqual(calls.map(([path, authorization]) => [path, path.endsWith('/access_tokens') ? 'app' : authorization]).toSorted(),
+    [['/app/installations/7/access_tokens', 'app'], ['/repos/org/repo', 'Bearer login-token'], ['/user', 'Bearer login-token']])
 })
 
 test('private refs fall back from the login token to installation reads and effective permission checks', async t => {
@@ -1021,6 +1024,35 @@ test('a repository last known private asks who the user is as it asks for its me
   }
   const reader = await createRepositoryBrowser(appConfig, alice, fetch).reader(privateRepo)
   assert.equal(reader.permission(), 'read')
+})
+
+test('a repository last known private mints the installation token as it asks for its metadata, in as many calls', { timeout: 5000 }, async () => {
+  const { fetch: github, calls } = privateGithub()
+  const minted = Promise.withResolvers()
+  // Its metadata answered only once the token was asked for: none would be, minted after.
+  const fetch = (url, options) => {
+    const path = new URL(url).pathname
+    if (path.endsWith('/access_tokens')) minted.resolve()
+    return path === '/repos/org/repo' ? minted.promise.then(() => github(url, options)) : github(url, options)
+  }
+  const reader = await createRepositoryBrowser(appConfig, alice, fetch).reader(privateRepo)
+  assert.deepEqual([reader.readToken(), reader.permission()], ['installation', 'read'])
+  assert.equal(calls.length, 4, 'one metadata, identity, installation token and permission request')
+})
+
+test('a repository last known private, public since, mints the installation token without waiting for it', { timeout: 5000 }, async () => {
+  const calls = [], mint = Promise.withResolvers()
+  const fetch = url => {
+    const path = new URL(url).pathname
+    calls.push(path)
+    if (path.endsWith('/access_tokens')) return mint.promise
+    return Promise.resolve(Response.json(path === '/user' ? { id: 1, login: 'alice' } : publicMetadata))
+  }
+  // Answered with the user's token while the mint is still unanswered.
+  const reader = await createRepositoryBrowser(appConfig, alice, fetch).reader(privateRepo)
+  assert.deepEqual([reader.readToken(), reader.permission()], ['alice', null])
+  assert.deepEqual(calls.toSorted(), ['/app/installations/7/access_tokens', '/repos/org/repo', '/user'])
+  mint.resolve(Response.json({ token: 'installation', expires_at: new Date(Date.now() + 60 * 60_000).toISOString() }))
 })
 
 test('a public repository read anonymously is kept so too, with no credential', async () => {
