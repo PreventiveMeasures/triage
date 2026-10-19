@@ -574,7 +574,13 @@ test('a version as a pnpm patch changes it is reviewed as patched: its files the
   const route = { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '1.0.0', patch }
   assert.equal(managedRoutePath(route), `/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0?patch=${patch.hash}&repo=7&commit=${patch.commit}&path=patches/lib.patch`)
   assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route, 'its route read back')
-  for (const wrong of [{ ...patch, hash: 'nope' }, { ...patch, repoId: 0 }, { ...patch, commit: 'b' }, { ...patch, path: '../x.patch' }, { ...patch, path: '' }]) {
+  // Any path the server reads a patch at (server-managed/npm-patch.ts), as long or as spaced as it may be.
+  for (const path of [`patches/${'x'.repeat(900)}.patch`, 'patches/ odd name .patch']) {
+    const odd = { ...route, patch: { ...patch, path } }
+    assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(odd), 'https://triage.test')), odd, path)
+  }
+  for (const wrong of [{ ...patch, hash: 'nope' }, { ...patch, repoId: 0 }, { ...patch, commit: 'b' }, { ...patch, path: '../x.patch' }, { ...patch, path: '' },
+    { ...patch, path: `${'x'.repeat(1025)}` }, { ...patch, path: 'a\\b.patch' }]) {
     assert.equal(managedRoutePath({ ...route, patch: wrong }), null, JSON.stringify(wrong))
   }
   assert.equal(parseManagedRoute(new URL(`/npm/lib@2.0.0/review?patch=${patch.hash}&repo=7`, 'https://triage.test')), null, 'one naming not where its patch is')

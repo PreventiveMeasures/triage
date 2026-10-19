@@ -13,7 +13,8 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
-import { isPatchHash, isPatchOf, parsePatch, patchedFiles, requestedPatch } from '../server-managed/npm-patch.ts'
+import { isPatchOf, parsePatch, patchedFiles, requestedPatch } from '../server-managed/npm-patch.ts'
+import { isPatchHash } from '../common/managed/npm-packages.js'
 import { packageOf, registry } from './_managed-npm.js'
 
 const files = entries => Object.entries(entries).map(([path, text]) => ({ path, bytes: typeof text === 'string' ? Buffer.from(text) : text }))

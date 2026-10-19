@@ -14,6 +14,7 @@
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { createClient } from '@preventive/upstream/github.js'
+import { isPatchHash, isPatchPath } from '../common/managed/npm-packages.js'
 import { GithubApiError } from './github-app.ts'
 import { upstreamGithub } from './github-errors.ts'
 import { type Lru, lru } from './lru.ts'
@@ -30,13 +31,7 @@ export interface NpmPatch extends PatchSource { hash: string }
 export const MAX_PATCH_BYTES = 8 * 1024 * 1024
 const FUZZ = 20
 
-// A patch's hash as pnpm spells one, either.
-export const isPatchHash = (hash: unknown): hash is string => typeof hash === 'string' && /^(?:[\da-f]{64}|[2-7a-z]{26})$/u.test(hash)
 const COMMIT = /^[\da-f]{40}$/u
-// A path as GitHub's contents take it: names with no empty, `.` or `..` one
-// among them, nor control characters or backslashes.
-const isPath = (path: unknown): path is string => typeof path === 'string' && path.length > 0 && path.length <= 1024 && !/[\p{Cc}\\]/u.test(path)
-  && path.split('/').every(part => part !== '' && part !== '.' && part !== '..')
 
 // The patch a request names, by its hash (`hash`), its repository's id
 // (`repoId`, a number or its digits), the commit and its file's path; null
@@ -46,7 +41,7 @@ export function requestedPatch({ hash, repoId, commit, path }: { hash: unknown; 
   if ([repoId, commit, path].every(field => field == null)) return null
   const id = typeof repoId === 'string' && /^[1-9]\d{0,15}$/u.test(repoId) ? Number(repoId) : repoId
   if (!isPatchHash(hash) || !Number.isSafeInteger(id) || (id as number) <= 0 || typeof commit !== 'string' || !COMMIT.test(commit)
-    || !isPath(path)) return 'invalid'
+    || !isPatchPath(path)) return 'invalid'
   return { hash, repoId: id as number, commit, path }
 }
 
@@ -184,7 +179,7 @@ export function parsePatch(patch: string): PatchedFile[] {
     const after = to ?? (sides ? sides[1] : named), before = from ?? (sides ? sides[0] : named)
     if ((from === null) !== (to === null) || (deleted && created)) throw unreadable()
     const path = deleted ? before : after
-    if (path == null || (!created && before == null) || (!deleted && after == null) || ![before, after].every(side => side == null || isPath(side))
+    if (path == null || (!created && before == null) || (!deleted && after == null) || ![before, after].every(side => side == null || isPatchPath(side))
       || (from === null && !deleted && !created && before !== after)) throw unreadable()
     const hunks: PatchHunk[] = []
     while (lines[at]?.startsWith('@@ ')) {

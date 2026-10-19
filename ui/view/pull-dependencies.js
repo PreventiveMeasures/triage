@@ -18,6 +18,7 @@
 // versions its lockfiles lock that want reviews, and what fails it.
 import { state } from '#client/index.js'
 import { fetchPullDependencies, fetchPullDependenciesOf } from './client-managed.js'
+import { isPatchHash, isPatchPath } from '../../common/managed/npm-packages.js'
 
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
@@ -72,7 +73,6 @@ export const readsDependencies = item => item?.touchesLockfile === true || item?
 
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
 const UNSUPPORTED = new Set(['git', 'tarball', 'integrity'])
-const PATCH_HASH = /^(?:[\da-f]{64}|[2-7a-z]{26})$/u
 
 // A version as one is told once, by its name and version, and its patch's
 // hash where it is patched, as each patch of it is reviewed apart.
@@ -91,7 +91,7 @@ function checkedVersion(pkg) {
   const { was, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patch, ...version } = pkg
   const by = checkedReviewers(reviewers)
   return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {},
-    ...PATCH_HASH.test(patch?.hash ?? '') ? { patch: { hash: patch.hash, ...typeof patch.path === 'string' && patch.path !== '' ? { path: patch.path } : {} } } : {},
+    ...isPatchHash(patch?.hash) ? { patch: { hash: patch.hash, ...isPatchPath(patch.path) ? { path: patch.path } : {} } } : {},
     ...UNSUPPORTED.has(unsupported) ? { unsupported } : baseline === true ? { baseline } : reviewed === true ? { reviewed }
       : count(reviews) === null ? {} : { reviews, ...rejected === true ? { rejected } : {}, ...count(commented) > 0 ? { commented } : {}, ...by.length > 0 ? { reviewers: by } : {} } }]
 }

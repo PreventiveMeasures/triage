@@ -1,7 +1,7 @@
 // Managed client pages only. API paths and E2E share hashes are not routes.
 import { BUNDLE_TABS } from '../bundle-tabs.js'
 import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../finding-id.js'
-import { isNpmPackageName, isNpmPackageSpec } from './npm-packages.js'
+import { isNpmPackageName, isNpmPackageSpec, isPatchHash, isPatchPath } from './npm-packages.js'
 
 // How Compare reviews the changes, past its Overview: `code`, beside the
 // tree of changed files. A link names the mode after the bundle or version
@@ -102,8 +102,8 @@ export function managedRoutePath(route) {
 // repository by its id, a commit and its file's path there,
 // `?patch=<hash>&repo=<repo id>&commit=<commit>&path=<path>`.
 export const NPM_TABS = new Set(['overview', 'code', 'search', 'compare', 'review', 'treemap'])
-const PATCH_HASH = /^(?:[\da-f]{64}|[2-7a-z]{26})$/u
-const isPatch = patch => PATCH_HASH.test(patch?.hash ?? '') && isRepoId(patch.repoId) && COMMIT.test(patch.commit ?? '') && patch.path !== '' && isRepositoryDirectory(patch.path)
+// A patch as the server reads one (server-managed/npm-patch.ts requestedPatch).
+const isPatch = patch => isPatchHash(patch?.hash) && isRepoId(patch.repoId) && COMMIT.test(patch.commit ?? '') && isPatchPath(patch.path)
 function npmPackagePath(route) {
   if (route.packageName == null) return '/npm'
   const tab = route.bundleTab ?? 'overview'

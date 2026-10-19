@@ -209,11 +209,12 @@ function capped<T extends { toReview: unknown[]; unreviewed: unknown[]; unsuppor
 }
 // How many versions of `lists` there are, each once across them, by `key`,
 // as the client tells them once: one wanting reviews by its name and
-// version, one that can't be reviewed by where it is from too.
-type Shown = Pick<LockedPackage, 'name' | 'version' | 'source' | 'from'>
+// version, and its patch's hash, as each patch of it is reviewed apart; one
+// that can't be reviewed by where it is from too.
+type Shown = Pick<LockedPackage, 'name' | 'version' | 'source' | 'from'> & { patch?: Patch }
 const distinct = (lists: Shown[][], key: (pkg: Shown) => string) => new Set(lists.flat().map(key)).size
-const versionKey = (pkg: Shown) => `${pkg.name}@${pkg.version ?? ''}`
-const sourceKey = (pkg: Shown) => `${pkg.source}\0${versionKey(pkg)}\0${pkg.from ?? ''}`
+const versionKey = (pkg: Shown) => `${pkg.name}@${pkg.version ?? ''}${pkg.patch ? `+${pkg.patch.hash}` : ''}`
+const sourceKey = (pkg: Shown) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
 
 // The reviews an open pull request's comments make of `wanting`, the
 // versions still wanting one (pull-comment-reviews.ts): those that count,

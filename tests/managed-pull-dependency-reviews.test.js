@@ -228,6 +228,11 @@ test('a patched version passes by reviews of it as patched, its patch\'s hash th
   assert.deepEqual(reviewed.lockfiles[0].added.slice(1), [{ ...shownAs(patched), reviews: 2, reviewers: [by('u1'), by('u2')] }, { ...shownAs(vouched), reviews: 0 }],
     'two reviewers\' reviews of it as patched pass it; of another patch, not')
   assert.equal(reviewed.review.toReview, 2)
+  // Two directories patching it apart, and one not: each to review apart, counted so.
+  const apart = at('patched', '1.0.0', { patchHash: 'c'.repeat(64), lockfile: 'pnpm' }), unpatched = at('patched', '1.0.0', { lockfile: 'pnpm' })
+  const dirOf = (path, pkg) => ({ paths: [path], more: 0, moreLocked: 0, added: [pkg], locked: [pkg] })
+  const three = await reviewedDependencies({ ...told, lockfiles: [dirOf('a/pnpm-lock.yaml', patched), dirOf('b/pnpm-lock.yaml', apart), dirOf('c/pnpm-lock.yaml', unpatched)] }, { ...state, reviews: [] })
+  assert.equal(three.review.toReview, 3, 'each patch of a version counted apart, as each is listed')
   const patchedBaseline = new Set([`patched@1.0.0\0${sri('patched@1.0.0')}\0${PATCH}`])
   assert.deepEqual((await reviewedDependencies(told, state, { baseline: patchedBaseline })).lockfiles[0].added[1], { ...shownAs(patched), baseline: true }, 'locked so, its patch too')
 
