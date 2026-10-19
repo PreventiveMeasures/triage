@@ -401,6 +401,27 @@ test('the branches the Commits tab kept, and the default branch\'s head, read ag
   assert.ok(body.commits.some(commit => commit.oid === a), 'the history from the head as it is now')
 })
 
+test('the branches the Commits tab kept stopping short of some, too many to read: each agent\'s prefix listed for its own', async t => {
+  const request = await fixture(t)
+  const prefixes = []
+  const asked = github(t, body => {
+    if (!body.query.includes('refs(refPrefix: $prefix')) return graphql(body)
+    prefixes.push(body.variables.prefix)
+    // Named past the prefix asked, as GitHub names them.
+    const prefix = body.variables.prefix.slice('refs/heads/'.length)
+    return { data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: heads.filter(head => head.name.startsWith(prefix))
+      .map(head => ({ prefix: body.variables.prefix, name: head.name.slice(prefix.length), target: head.target })) } } } }
+  })
+  // Fresh, its names read as far as `claude/aaa-old`.
+  await repositoryReadStore(request.db).write('1\0heads', { heads: [{ name: 'claude/aaa-old', sha: tipSha(1), at: Date.parse('2026-01-01T00:00:00Z') },
+    { name: 'main', sha: a, at: Date.parse('2026-10-15T01:00:00Z') }], defaultBranch: 'main', tags: [], cut: true }, Date.now())
+  const { body } = await request({ repoId: '1' })
+  assert.deepEqual(body.branches.map(branch => branch.name), ['claude/zzz-newest', 'claude/magical-mayer-83oicz', 'claude/aaa-old', 'codex/try-lazy-trees',
+    'neo/try-pnpm', 'dependabot/npm_and_yarn/ws-8.21.0'])
+  assert.deepEqual(prefixes.toSorted(), AGENT_BRANCH_PREFIXES.map(prefix => `refs/heads/${prefix}`).toSorted())
+  assert.equal(asked.filter(query => query.query.includes('refs(refPrefix: "refs/heads/"')).length, 0, 'the branches kept not read again')
+})
+
 test('a read of the pull requests the Pulse left not finished, those kept no longer fresh: the Agents tab reads it on as the Pulse would, never cut short', async t => {
   const request = await fixture(t)
   const now = Math.floor(Date.now() / 60_000) * 60_000

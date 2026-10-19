@@ -2364,7 +2364,7 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors, historyPages(deps, repoId, true, true),
     commitPulls(deps, repoId), { pulls: () => keptPulls(deps, repoId, fullName, token, null), issues: () => keptIssues(deps, repoId, fullName, token, null),
       head: async () => (await defaultTip(deps, repoId, fullName, token, true)).sha,
-      heads: async () => (await currentAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(fullName, token))).value.heads,
+      heads: async () => (await currentAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(fullName, token))).value,
       tips: branchTips(deps, repoId), authored: authoredCommits(deps, repoId) }),
     `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
 }

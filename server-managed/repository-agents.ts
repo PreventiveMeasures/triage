@@ -53,6 +53,18 @@ const tipsQuery = (count: number) => `query($owner: String!, $name: String!, ${v
 // Tips looked up a query, and queries at once.
 const TIPS = 100
 const TIPS_PARALLEL = 4
+// An agent's branches, a page at a time, as GitHub lists them by name, where
+// the repository's branches as kept stop short of them (`cut`): each its tip
+// and when that was committed; as many pages of each as MAX_BRANCH_PAGES.
+const BRANCHES_QUERY = `query($owner: String!, $name: String!, $prefix: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    refs(refPrefix: $prefix, first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { prefix name target { oid ... on Commit { committedDate } } }
+    }
+  }
+}`
+const MAX_BRANCH_PAGES = 50
 // What a commit of the default branch is read by.
 const COMMIT_FIELDS = 'oid messageHeadline message committedDate additions deletions author { email user { login databaseId } } associatedPullRequests(first: 1) { totalCount }'
 // The newest of the commits from the default branch's head the app agents'
@@ -107,6 +119,8 @@ type Pulled = { repository?: Record<string, { associatedPullRequests?: { totalCo
 type Authored = { repository?: { object?: { history?: Connection<CommitNode> } | null } | null }
 type Issues = { repository?: { issues?: Connection<IssueNode> } | null }
 type Tips = { repository?: Record<string, { message?: unknown; author?: GitActor | null } | null> | null }
+type RefNode = { prefix?: unknown; name?: unknown; target?: { oid?: unknown; committedDate?: unknown } | null }
+type RefsPage = { repository?: { refs?: Connection<RefNode> } | null }
 type Found = { search?: { pageInfo?: { endCursor?: unknown }; nodes?: (PullNode | null)[] } | null } | null
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
@@ -239,13 +253,36 @@ function agentBranch({ name, at }: { name: string; at: number | null }, tip: Bra
     agents: APP_AGENTS.flatMap(({ id, prefix }) => marks?.agents.includes(id) || authored === id || name.startsWith(prefix) ? [id] : []) } }
 }
 
+// The branches under `prefix`, every one, as many as MAX_BRANCH_PAGES of
+// them list, named in full however GitHub splits its name from the prefix.
+async function prefixHeads(owner: string, name: string, prefix: string, token: string, fetchImpl: typeof fetch) {
+  const found: Head[] = []
+  let after: string | null = null
+  for (let page = 0; page < MAX_BRANCH_PAGES; page++) {
+    const refs: Connection<RefNode> | undefined = (await githubGraphql(BRANCHES_QUERY, { owner, name, prefix: `refs/heads/${prefix}`, after }, token, fetchImpl) as RefsPage)
+      ?.repository?.refs
+    for (const node of refs?.nodes ?? []) {
+      const ref = typeof node?.prefix === 'string' && typeof node.name === 'string' ? `${node.prefix}${node.name}` : null
+      const branch = ref?.startsWith('refs/heads/') ? nameOf(ref.slice('refs/heads/'.length)) : null
+      const sha = node?.target?.oid
+      if (branch?.startsWith(prefix) && typeof sha === 'string' && SHA.test(sha)) found.push({ name: branch, sha, at: timeOf(node!.target!.committedDate) })
+    }
+    const next: Connection<RefNode>['pageInfo'] = refs?.pageInfo
+    if (next?.hasNextPage !== true || typeof next.endCursor !== 'string') break
+    after = next.endCursor
+  }
+  return found
+}
+
 // The newest of the agents' branches, those each prefix names, as many as
 // AGENT_BRANCHES of each, of the repository's branches as kept (`heads`, as
-// the Commits tab reads them), their tips as kept (`tips`), those not looked
-// up, TIPS a query, and kept.
-async function agentBranches(fullName: string, token: string, heads: Head[], tips: BranchTips, fetchImpl: typeof fetch) {
+// the Commits tab reads them; those it stops short of, `cut`, listed by each
+// prefix), their tips as kept (`tips`), those not looked up, TIPS a query,
+// and kept.
+async function agentBranches(fullName: string, token: string, { heads, cut }: { heads: Head[]; cut: boolean }, tips: BranchTips, fetchImpl: typeof fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
-  const named = AGENT_BRANCH_PREFIXES.flatMap(prefix => heads.filter(head => head.name.startsWith(prefix))
+  const all = cut ? (await Promise.all(AGENT_BRANCH_PREFIXES.map(prefix => prefixHeads(owner, name, prefix, token, fetchImpl)))).flat() : heads
+  const named = AGENT_BRANCH_PREFIXES.flatMap(prefix => all.filter(head => head.name.startsWith(prefix))
     .toSorted((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, AGENT_BRANCHES))
   const shown = named.filter((head, index) => named.findIndex(other => other.name === head.name) === index)
   const shas = [...new Set(shown.map(head => head.sha))]
@@ -316,9 +353,11 @@ export interface AuthoredCommits {
 // requests and its issues (repository-pulls.ts PullList, IssueList), each
 // read as far back as their first page where none are, and those updated
 // since read as they are (keptList), its default branch's head (defaultTip),
-// its branches, as the Commits tab reads them (`heads`), their tips
-// (`tips`), and the commits its app agents' accounts authored (`authored`).
-export interface Kept { pulls(): Promise<PullList>; issues(): Promise<IssueList>; head(): Promise<string | null>; heads(): Promise<Head[]>; tips: BranchTips
+// its branches, as the Commits tab reads them (`heads`, whether they stop
+// short of some, `cut`), their tips (`tips`), and the commits its app
+// agents' accounts authored (`authored`).
+export interface Kept { pulls(): Promise<PullList>; issues(): Promise<IssueList>; head(): Promise<string | null>; heads(): Promise<{ heads: Head[]; cut: boolean }>
+  tips: BranchTips
   authored: AuthoredCommits }
 
 // A page of the repository's pull requests, the most recently updated
