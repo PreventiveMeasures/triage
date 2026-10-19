@@ -25,6 +25,8 @@ mock.module('../ui/view/render-finding.js', { namedExports: { renderHighlighted:
 mock.module('../ui/view/format.js', { namedExports: { flowText: text => `[flowed]${text}` } })
 await import('../ui/view/dialogs/repository-item-dialog.js')
 const Dialog = customElements.get('repository-item-dialog')
+// The client's state, its session's what a popup's reads are held for.
+const { state } = await import('../client/index.js')
 
 const shown = () => Object.assign(new Dialog(), { repository: { repoId: 7, repo: 'org/repo' } })
 const tile = { kind: 'pulls', number: 5, title: 'Fix the chips', author: 'grace', createdAt: Date.UTC(2026, 9, 1), updatedAt: Date.UTC(2026, 9, 2), closedAt: null, comments: 3,
@@ -69,6 +71,8 @@ test('an issue or pull request shows what its tile knew at once, then the rest a
 test('an issue it names opens in its place, read once, Back returning; one that fails says why', async () => {
   answer = number => number === 3 ? Promise.reject(new Error('GitHub has no issue or pull request of that number here.'))
     : Promise.resolve({ ...tile, body: '', closes: [], moreLinked: 12, commits: 1, files: 1, mergedBy: null })
+  // Another session: what the last read is held for it alone.
+  state.managedSession = { id: 'another', role: 'admin' }
   asked.length = 0
   const dialog = shown()
   dialog.open({ number: 5, preview: tile })
@@ -87,6 +91,28 @@ test('an issue it names opens in its place, read once, Back returning; one that 
   text = templateText(dialog.render())
   assert.match(text, /Fix the chips[^]*#5/u)
   assert.deepEqual(asked, [[7, 5], [7, 3]], 'each read once')
+})
+
+test('a popup opening on one a popup read less than a minute ago shows it as read, none read again; one failing, or older, read again', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  state.managedSession = { id: 'held', role: 'admin' }
+  answer = number => number === 9 ? Promise.reject(new Error('GitHub failed.')) : Promise.resolve({ ...tile, number, body: 'Read.', closes: [], commits: 1, files: 1, mergedBy: null })
+  asked.length = 0
+  const first = shown()
+  first.open({ number: 8, preview: { ...tile, number: 8 } })
+  first.open({ number: 9, preview: { ...tile, number: 9 } })
+  await setImmediate()
+  const again = shown()
+  again.open({ number: 8, preview: { ...tile, number: 8 } })
+  assert.match(templateText(again.render()), /\[flowed\]Read\./u, 'as read, at once')
+  again.open({ number: 9, preview: { ...tile, number: 9 } })
+  assert.deepEqual(asked, [[7, 8], [7, 9], [7, 9]], 'one read, one failing read again')
+  t.mock.timers.tick(60_000)
+  shown().open({ number: 8, preview: { ...tile, number: 8 } })
+  assert.deepEqual(asked.at(-1), [7, 8], 'a minute on, read again')
+  state.managedSession = { id: 'other', role: 'admin' }
+  shown().open({ number: 8, preview: { ...tile, number: 8 } })
+  assert.equal(asked.length, 5, 'another session reads its own')
 })
 
 test('a session shows who, when and what it did: its pull requests and issues opening in its place, its commits and branches on GitHub, where it ran', () => {
@@ -165,7 +191,7 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   templateText(dialog.render())
   await setImmediate()
   const text = templateText(dialog.render())
-  assert.deepEqual(dependencyOptions, [[31, { review: true }]], 'an open one\'s asked with their review')
+  assert.deepEqual(dependencyOptions, [[31, { review: true, listed: false }]], 'an open one\'s asked with their review, by its number, not a page\'s commits')
   assert.match(text, /Each version needs 2 full, accepting reviews by as many reviewers; those the repository’s lockfiles locked at <code>ddddddd<\/code> need none\./u)
   assert.match(text, /role="alert">At that commit, <code>berry\/yarn\.lock<\/code> couldn’t be read, so the versions it locked want reviews\./u)
   assert.match(text, /<div class="repo-item-failed" role="alert">\s*<p>Its review fails: 3 versions its lockfiles lock can’t be reviewed, as only npm’s registry’s, locked with an integrity, are\.<\/p>/u)

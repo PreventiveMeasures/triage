@@ -5,10 +5,11 @@
 // /api/admin/repositories/pull-dependencies): read only of one GitHub says
 // changes a lockfile, or may, its files more than it listed
 // (`touchesLockfile`), as many at once as READ_AT_ONCE, those asked first
-// read first, as a page of tiles asks of each in turn, those a page asks of
-// in the background (a team's Dependencies tab) after the rest, as many of a
-// repository's as READ_TOGETHER asked together, one asked of meanwhile moved
-// before them; and kept for the session that read them a while, as the
+// read first, as a page of tiles asks of each in turn, those waiting for a
+// turn as many of a repository's as SHOWN_TOGETHER asked together, those a
+// page asks of in the background (a team's Dependencies tab) after the rest,
+// as many as READ_TOGETHER together, one asked of meanwhile moved before
+// them; and kept for the session that read them a while, as the
 // tiles are, one grown old shown while it is read again, as are those a
 // team's Dependencies tab reads together (seedPullDependencies,
 // team-dependencies.js). Each answer's versions are worked out once
@@ -23,6 +24,7 @@ import { isPatchHash, isPatchPath } from '../../common/managed/npm-packages.js'
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
 const READ_AT_ONCE = 2
+const SHOWN_TOGETHER = 5
 const READ_TOGETHER = 20
 
 const held = new Map()
@@ -134,16 +136,17 @@ export function checked(answer) {
       ? { lockfiles: { mode: review.lockfiles.mode, paths: review.lockfiles.paths } } : {} } } : {} }
 }
 
-// The next asked read as one is, as many at once as READ_AT_ONCE, those
-// asked in the background after the rest, one of them read with as many of
-// its repository's waiting as READ_TOGETHER.
+// The next asked read as one is, as many at once as READ_AT_ONCE, with as
+// many of its repository's waiting with it as SHOWN_TOGETHER, those asked
+// in the background after the rest, as many as READ_TOGETHER.
 function readNext() {
   while (reading < READ_AT_ONCE && waiting.length + behind.length > 0) {
     const first = waiting.shift() ?? behind.shift()
+    const [queue, together] = first.background ? [behind, READ_TOGETHER] : [waiting, SHOWN_TOGETHER]
     const jobs = [first]
-    for (let at = 0; first.background && at < behind.length && jobs.length < READ_TOGETHER;) {
-      const job = behind[at]
-      if (job.pull.repoId === first.pull.repoId && job.review === first.review) jobs.push(...behind.splice(at, 1))
+    for (let at = 0; at < queue.length && jobs.length < together;) {
+      const job = queue[at]
+      if (job.pull.repoId === first.pull.repoId && job.review === first.review && job.listed === first.listed) jobs.push(...queue.splice(at, 1))
       else at++
     }
     for (const job of jobs) queued.delete(job.key)
@@ -159,9 +162,9 @@ function readDone(jobs) {
 // `jobs`, one alone, else several of a repository's together, each told
 // its answer or why it failed.
 function readOf(jobs) {
-  const [{ pull: { repoId, number }, review }] = jobs
-  if (jobs.length === 1) return fetchPullDependencies(repoId, number, { review }).then(jobs[0].settle, jobs[0].settle)
-  return fetchPullDependenciesOf(repoId, jobs.map(job => job.pull.number), { review }).then(answers => {
+  const [{ pull: { repoId, number }, review, listed }] = jobs
+  if (jobs.length === 1) return fetchPullDependencies(repoId, number, { review, listed }).then(jobs[0].settle, jobs[0].settle)
+  return fetchPullDependenciesOf(repoId, jobs.map(job => job.pull.number), { review, listed }).then(answers => {
     for (const job of jobs) job.settle(answers.get(job.pull.number) ?? new Error('The server answered with none of it.'))
     return null
   }, err => { for (const job of jobs) job.settle(err) })
@@ -172,10 +175,13 @@ function readOf(jobs) {
 // and with `review` (an open one's), its review's terms where in effect, or
 // 'error' with its `error`; asked again once old, shown as it was meanwhile
 // (`refreshing`), or once an error's retry is due. One asked in the
-// `background` is read after those asked otherwise.
-export function pullDependencies(repoId, number, review = false, { background = false } = {}) {
+// `background` is read after those asked otherwise; one `listed`, as its
+// tile on the Pull requests tab asks, by the commits its page names
+// (fetchPullDependencies), held apart from those asked otherwise, as its
+// popup asks, which a page kept from before a push tells none of.
+export function pullDependencies(repoId, number, review = false, { background = false, listed = false } = {}) {
   const data = sessionHeld()
-  const key = `${repoId}\0${number}\0${review}`
+  const key = `${repoId}\0${number}\0${review}${listed ? '\0listed' : ''}`
   const entry = data.get(key)
   if (entry && Date.now() < entry.until) {
     const job = queued.get(key)
@@ -195,7 +201,7 @@ export function pullDependencies(repoId, number, review = false, { background = 
     if (next) data.set(key, next)
     else data.delete(key)
   }
-  const job = { key, background, review, pull: { repoId, number }, settle }
+  const job = { key, background, review, listed, pull: { repoId, number }, settle }
   queued.set(key, job)
   ;(background ? behind : waiting).push(job)
   readNext()

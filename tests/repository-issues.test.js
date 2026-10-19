@@ -15,7 +15,12 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryIssues(repoId, kind, options) { requests.push([repoId, kind, options]); return answer(repoId, kind, options) },
   fetchRepositoryHistory: () => new Promise(() => {}),
   fetchPullDependencies(repoId, number, options) { dependencyRequests.push([repoId, number]); dependencyOptions.push(options); return dependencies(repoId, number) },
-  fetchPullDependenciesOf() { throw new Error('tiles read each alone') },
+  // Those waiting for a turn, read together: each told its own.
+  fetchPullDependenciesOf(repoId, numbers, options) {
+    dependencyRequests.push([repoId, numbers])
+    dependencyOptions.push(options)
+    return Promise.all(numbers.map(number => dependencies(repoId, number))).then(answers => new Map(numbers.map((number, at) => [number, answers[at]])))
+  },
 } })
 mock.module('../ui/view/repository-code.js', { exports: { navigateToRepositoryCode() {}, shownRevision: () => ({}) } })
 const opened = []
@@ -224,7 +229,7 @@ test('one arriving in a list that no read knew in another state, only updated si
   view.pick('open')
 })
 
-test('an open pull request changing a lockfile, or that may, shows the package versions new to its lockfiles once read, two at a time; one changing none, or not open, asks none', async () => {
+test('an open pull request changing a lockfile, or that may, shows the package versions new to its lockfiles once read, two at a time, those waiting together; one changing none, or not open, asks none', async () => {
   dependencyRequests.length = 0
   const reads = []
   dependencies = (repoId, number) => new Promise(resolve => { reads.push([number, resolve]) })
@@ -243,12 +248,11 @@ test('an open pull request changing a lockfile, or that may, shows the package v
     { paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' },
   ] })
   await setImmediate()
-  assert.deepEqual(dependencyRequests, [[7, 1], [7, 4], [7, 5]])
+  assert.deepEqual(dependencyRequests, [[7, 1], [7, 4], [7, [5, 7]]], 'those waiting meanwhile together; a draft is open, a merged one\'s tile asks none')
   reads.shift()[1]({ number: 4, cut: false, lockfiles: [] })
   reads.shift()[1]({ number: 5, cut: false, lockfiles: [{ paths: ['package-lock.json'], added: [], more: 0 }] })
-  await setImmediate()
-  assert.deepEqual(dependencyRequests, [[7, 1], [7, 4], [7, 5], [7, 7]], 'a draft is open; a merged one\'s tile asks none')
   reads.shift()[1]({ number: 7, cut: false, lockfiles: [{ paths: ['yarn.lock'], added: added(Array.from({ length: 22 }, (_, at) => `p${at}`)), more: 0 }] })
+  await setImmediate()
   await setImmediate()
   const tiles = templateText(view.render()).split('<li ').slice(1)
   assert.match(tiles[0], /<span class="issue-deps" data-tooltip=New in its lockfiles: plain-crypto-js@1\.0\.0 \(new\), tool@1\.0\.0 \(new\), axios@1\.14\.1 \(was 1\.14\.0\), zod@4\.0\.0 \(was 3\.25\.0, 3\.0\.0\) and more><svg[^]*<\/svg><span class="issue-deps-names">plain-crypto-js, tool, axios, zod<\/span>\s*<span class="issue-deps-count">2 new, 2 updated\+<\/span>/u,
@@ -258,7 +262,7 @@ test('an open pull request changing a lockfile, or that may, shows the package v
   assert.match(tiles[6], /<span class="issue-deps-count">22 new<\/span>/u)
   // Kept for the session: drawn again, none asked again.
   templateText(view.render())
-  assert.equal(dependencyRequests.length, 4)
+  assert.equal(dependencyRequests.length, 3)
 })
 
 test('an open pull request\'s tile, where its repository reviews dependencies, shows whether they pass: how many want reviews, a check, or that its review fails, and why on hover', async () => {
@@ -290,7 +294,7 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
   await setImmediate()
   templateText(view.render())
   await setImmediate()
-  assert.ok(dependencyOptions.every(options => options.review === true), 'an open one\'s asked with their review')
+  assert.ok(dependencyOptions.every(options => options.review === true && options.listed === true), 'an open one\'s asked with their review, by the commits its page names')
   const tiles = templateText(view.render()).split('<li ').slice(1)
   assert.match(tiles[0], /data-tooltip=New in its lockfiles: tool@1\.0\.0 \(new, 1\/2 reviews\), left-pad@1\.3\.0 \(new, needs no review\), vouched@1\.0\.0 \(new, reviewed\), patched@1\.0\.0, patched \(new, 0\/2 reviews\), ms@2\.1\.3 \(was 2\.1\.2, 2\/2 reviews\)\. 4 other versions in its lockfiles unreviewed>/u)
   assert.match(tiles[0], /<span class="issue-deps-review is-wanted">2 \+ 4 to review<\/span>/u, 'its own wanting reviews, a patched one with them, then the others its lockfiles lock')
