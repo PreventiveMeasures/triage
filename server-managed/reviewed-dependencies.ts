@@ -64,8 +64,9 @@ export interface CommentReview {
   dependencies: { ecosystem?: 'npm'; name: string; version: string; integrity: string; patchHash?: string; status: ReviewVerdict }[]
 }
 // A version a dependency review is of, or compared it with: its package's
-// name, its version and integrity, and its tarball's shasum and its patch's
-// hash where they are known (a lockfile's, pnpm's patched dependencies').
+// name, its version, the integrity and, where npm tells one, the shasum of
+// its tarball, each held to the tarball reviewed, and its patch's hash where
+// it is known (pnpm's patched dependencies').
 export interface ReviewedVersion { name: string; version: string; integrity: string; shasum?: string; patchHash?: string }
 // One of one's own published dependency reviews, as `formatDependencyReviews`
 // is given it: the version it is of (`new`) and the one it compared it with

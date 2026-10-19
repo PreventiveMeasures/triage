@@ -10,6 +10,7 @@ import { revisionSchema } from './revisions.ts'
 import { MANAGED_SCHEMA, REPO_UPLOAD_INDEXES, VIEW_SESSION_INDEX } from './db-schema.ts'
 import { GITHUB_LINK_USER_COLUMNS } from './github-links.ts'
 import { REPOSITORY_DEPENDENCY_REVIEW_COLUMNS } from './repository-dependency-reviews.ts'
+import { DEPENDENCY_REVIEW_COLUMNS } from './dependency-reviews.ts'
 import { STORAGE_SCHEMA } from './storage-db.ts'
 import { GITHUB_COMMIT_SCHEMA, GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUMN } from './github-metadata.ts'
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
@@ -124,6 +125,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     ensureColumn(db, 'managed_finding_issue', 'auto_fix_checked_at', 'INTEGER')
     ensureColumn(db, 'managed_selected_repo', 'active', 'INTEGER NOT NULL DEFAULT 1')
     for (const [column, type] of REPOSITORY_DEPENDENCY_REVIEW_COLUMNS) ensureColumn(db, 'managed_selected_repo', column, type)
+    for (const [column, type] of DEPENDENCY_REVIEW_COLUMNS) ensureColumn(db, 'managed_dependency_review', column, type)
     ensureColumn(db, 'managed_finding_triage_event', 'report_id', 'TEXT')
     ensureColumn(db, 'managed_finding_triage_event', 'report', 'TEXT')
     ensureColumn(db, 'managed_finding_triage_event', 'repo', 'TEXT')
