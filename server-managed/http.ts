@@ -218,7 +218,7 @@ import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, cha
 import { COAUTHORS_READ } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
-import { type SquashedPull, type Squashes, squashedPulls } from './repository-squashes.ts'
+import { type KnownMerges, type SquashedPull, type Squashes, squashedPulls } from './repository-squashes.ts'
 import { AGENTS_READ_VERSION, COMMITS_CURSOR, type CommitPulls, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits, type PullDependencies,
@@ -1884,7 +1884,7 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const listed = (body as { commits: HistoryCommit[] }).commits
     const none = { pulls: [] as SquashedPull[], pending: false }
     const [squashed, openPulls] = token && path === '' ? await Promise.all([
-      squashedPulls(repo, token, listed, historySquashes(deps, repoId), SQUASH_WAIT_MS).then(read => {
+      pulseMerges(deps, repoId).then(known => squashedPulls(repo, token, listed, historySquashes(deps, repoId), SQUASH_WAIT_MS, globalThis.fetch, known)).then(read => {
         if (read.behind) {
           const behind = read.behind.catch(quiet(null))
           deps.track(behind)
@@ -2097,11 +2097,6 @@ function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false, ma
   }
 }
 
-// The pull requests squashed into repository `repoId`'s commits, kept by
-// each commit and the rules their commits' co-authors were read by
-// (COAUTHORS_READ), null for one none was (repository-squashes.ts
-// squashedPulls); one kept before its commits' co-authors were read, read
-// again.
 // Whether a pull request brought each of repository `repoId`'s commits, as
 // the Agents tab looks it up of those an agent marked (repository-agents.ts
 // pulledCommits), kept by the commit.
@@ -2120,6 +2115,28 @@ function commitPulls(deps: ManagedHttpDeps, repoId: number): CommitPulls {
   }
 }
 
+// What the Pulse keeps of repository `repoId`'s pull requests merged, as
+// it reads them for whose its year's commits are (pulseCommits, agentMerges).
+const pulseMergesKey = (repoId: number) => `${repoId}\0pulse-merges\0${PULSE_YEAR_VERSION}`
+
+// The pull requests merged as the Pulse last read them through (a read not
+// finished, none), for the Commits tab to tell those squashed by
+// (repository-squashes.ts KnownMerges): each's merge commit and its number
+// (none of one read before numbers were), every one merged from as far
+// back as the read reaches (the year's start, or as far as a period needed)
+// till the newest read among them; null where none is kept.
+async function pulseMerges(deps: ManagedHttpDeps, repoId: number): Promise<KnownMerges | null> {
+  const kept = (await repositoryReadStore(deps.db, deps.config.debug).read(pulseMergesKey(repoId)))?.value as AgentMerges | undefined
+  if (!kept || kept.next || kept.through === null || !Array.isArray(kept.pulls)) return null
+  return { numbers: new Map(kept.pulls.map(([sha, , number]) => [sha, number ?? null])), from: Math.max(kept.reach ?? Number.NEGATIVE_INFINITY, pulseSince(52, Date.now())),
+    to: kept.through }
+}
+
+// The pull requests squashed into repository `repoId`'s commits, kept by
+// each commit and the rules their commits' co-authors were read by
+// (COAUTHORS_READ), null for one none was (repository-squashes.ts
+// squashedPulls); one kept before its commits' co-authors were read, read
+// again.
 function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
   const store = historySquashStore<SquashedPull | null>(deps.db, deps.config.debug)
   const keyOf = (sha: string) => `${repoId}\0${COAUTHORS_READ}\0${sha}`
@@ -2741,7 +2758,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   const store = repositoryReadStore(deps.db, deps.config.debug)
   const key = `${repoId}\0pulse-year\0${PULSE_YEAR_VERSION}\0${head.value.sha}\0${first}`
   const lastKey = `${repoId}\0pulse-year-last`
-  const mergesKey = `${repoId}\0pulse-merges\0${PULSE_YEAR_VERSION}`
+  const mergesKey = pulseMergesKey(repoId)
   const last = async () => {
     const kept = (await store.read(lastKey))?.value as { first: number; stats: PulseStats } | undefined
     return kept && first - kept.first <= PULSE_LAST_MS ? kept.stats : null

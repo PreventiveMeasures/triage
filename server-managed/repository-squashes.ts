@@ -21,6 +21,16 @@ export interface Squashes {
   write(sha: string, pull: SquashedPull | null): Promise<void>
 }
 
+// The pull requests merged as another read told them (http.ts pulseMerges,
+// the Pulse's agent-merges.ts agentMerges): each's merge commit, its number
+// where told (null where not), every one merged from `from` till `to` among
+// them; a commit committed within, as a squash's or a rebase's is as it is
+// merged, the merge commit of the one it names, or of none.
+export interface KnownMerges { numbers: ReadonlyMap<string, number | null>; from: number; to: number }
+// How far within `from` and `to` a commit is told by them, for the clocks
+// of a merge and its commit.
+const KNOWN_SKEW_MS = 5 * 60_000
+
 const MAX_SQUASHED = 100
 // Looked up of an answer's commits not yet kept, at most, the newest first;
 // in queries of as many commits, or pull requests (their commits' lines
@@ -66,13 +76,16 @@ const within = (promise: Promise<unknown>, ms: number) => ms === Number.POSITIVE
 // commit of one parent, not one rebased (its commits copied onto the branch,
 // told by their subjects), kept by each commit (`squashes`), those not yet
 // kept looked up with GraphQL, as many as MAX_SQUASH_LOOKUPS an answer, each
-// kept as it is found (lookUpSquashes). Answered with those kept once the
+// kept as it is found (lookUpSquashes), of those merges another read told
+// (`known`), the pull request each was merged by not looked up. Answered
+// with those kept once the
 // repository's lookup is done, or `waitMs` on, that lookup going on behind:
 // `behind`, one this started, for the caller to keep alive, and `pending`
 // while one does. Another's lookup done within it, but not of all of these,
 // those it left are looked up as this one's, within what is left of it.
 export async function squashedPulls(fullName: string, token: string, commits: HistoryCommit[], squashes: Squashes,
-  waitMs = Number.POSITIVE_INFINITY, fetchImpl: typeof fetch = globalThis.fetch): Promise<{ pulls: SquashedPull[]; pending: boolean; behind: Promise<void> | null }> {
+  waitMs = Number.POSITIVE_INFINITY, fetchImpl: typeof fetch = globalThis.fetch, known: KnownMerges | null = null)
+  : Promise<{ pulls: SquashedPull[]; pending: boolean; behind: Promise<void> | null }> {
   const single = commits.filter(commit => commit.parents.length === 1)
   const kept = await squashes.read(single.map(commit => commit.sha))
   let unknown = single.filter(commit => !kept.has(commit.sha))
@@ -90,7 +103,7 @@ export async function squashedPulls(fullName: string, token: string, commits: Hi
   if (another) await settle(another)
   let behind: Promise<void> | null = null
   if (!another || (unknown.length > 0 && !lookingUp.has(fullName))) {
-    const lookup = lookUpSquashes(fullName, token, unknown.slice(0, MAX_SQUASH_LOOKUPS), listed, squashes, fetchImpl)
+    const lookup = lookUpSquashes(fullName, token, unknown.slice(0, MAX_SQUASH_LOOKUPS), listed, squashes, fetchImpl, known)
     const done: Promise<void> = lookup.catch(() => {}).finally(() => { if (lookingUp.get(fullName) === done) lookingUp.delete(fullName) })
     lookingUp.set(fullName, done)
     behind = lookup
@@ -100,12 +113,22 @@ export async function squashedPulls(fullName: string, token: string, commits: Hi
 }
 
 // The pull requests squashed into `unknown`, of the commits `listed`, looked
-// up, each kept as it is found (squashedPulls).
+// up, each kept as it is found (squashedPulls); those committed when
+// `known` tells every merge, by it: a merge commit's pull request, by its
+// number, the rest none's.
 async function lookUpSquashes(fullName: string, token: string, unknown: HistoryCommit[], listed: Map<string, HistoryCommit>, squashes: Squashes,
-  fetchImpl: typeof fetch) {
+  fetchImpl: typeof fetch, known: KnownMerges | null) {
   const [owner, name] = fullName.split('/') as [string, string]
   const merged: { commit: HistoryCommit; number: number }[] = []
-  await inBatches(unknown, SQUASH_COMMITS, SQUASH_PARALLEL, async batch => {
+  const asked: HistoryCommit[] = []
+  for (const commit of unknown) {
+    const told = known !== null && commit.committedAt !== null && commit.committedAt >= known.from + KNOWN_SKEW_MS && commit.committedAt <= known.to - KNOWN_SKEW_MS
+    const number = told ? known.numbers.get(commit.sha) : null
+    if (number === null) asked.push(commit)
+    else if (number === undefined) await squashes.write(commit.sha, null)
+    else merged.push({ commit, number })
+  }
+  await inBatches(asked, SQUASH_COMMITS, SQUASH_PARALLEL, async batch => {
     const data = await githubGraphql(mergedPullsQuery(batch.length), { owner, name, ...Object.fromEntries(batch.map((commit, at) => [`o${at}`, commit.sha])) },
       token, fetchImpl, notFound) as MergedPulls
     for (const [at, commit] of batch.entries()) {

@@ -305,6 +305,15 @@ test('a pull request a bot opened is an agent\'s, whichever GitHub App\'s, whate
   assert.deepEqual(read.merges.map(([sha]) => sha), [shaOf(1)], 'by its type, a user of the same login not')
 })
 
+test('every pull request merged kept with its number, for the Commits tab to tell those squashed by; one read before numbers were, without', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const when = new Date(since + DAY).toISOString()
+  github(t, { graphql: mergedPulls([{ number: 7, updatedAt: when, mergedAt: when, headRefName: 'fix/x', labels: { nodes: [] },
+    mergeCommit: { oid: shaOf(1), parents: { totalCount: 1 } }, commits: { nodes: [] } }]) })
+  const read = await agentMerges('org/repo', 'token', since, { merges: [], rebases: [], through: null, next: null, pulls: [[shaOf(2), since + DAY]] })
+  assert.deepEqual(read.pulls.toSorted(), [[shaOf(1), since + DAY, 7], [shaOf(2), since + DAY]].toSorted())
+})
+
 test('a pull request whose agent\'s label is taken off is read again, none of what it brought an agent\'s', async t => {
   const since = Date.UTC(2025, 9, 19)
   const [merged, later] = [new Date(since + DAY).toISOString(), new Date(since + 2 * DAY).toISOString()]
