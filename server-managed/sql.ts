@@ -24,6 +24,10 @@ const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'g
   'userCanReadReport', 'userCanReadRepo', 'userCanReadRepoPath', 'userCanReadBundle', 'reportPermissionsFor', 'listComments', 'listManagedIssues',
   'listTriageHistory', 'listUsers', 'listUserOptions', 'listActivityReports', 'getRepoFullName', 'getUser', 'getSessionWithUser', 'getViewSessionWithUser',
   'listTriageFixes', 'getRepoDependencyReviews', 'listTeamDependencyReviews', 'getNpmReviewReader',
+  'listDependencyReviewTeams', 'listDependencyReviewEnabledTeams', 'listUserNpmScopes', 'listTeamNpmScopes', 'hasTeamNpmScope',
+  'listGithubMetadata', 'listGithubRepositoryVisibility', 'setGithubMetadata', 'recordGithubMetadataAttempts', 'setGithubRepositoryVisibility',
+  'listLinkReports', 'listLegacyLinkReports', 'listReportFilenamesWithBundleHash', 'listReportsForRepo', 'listBundlesForRepo',
+  'listFindingCatalogReports', 'userCanReadBundleAdvisories',
   'sessionWithUser', 'getTeamReportAccessSnapshot', 'getReportAccessSnapshot', 'getReportView', 'getUserGithubId', 'getUserTeamFeedSnapshot', 'getAnnotations', 'getAnnotationRevision', 'getUserTokens',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
@@ -35,7 +39,7 @@ const UNLOCKED_WRITES = new Set(['sessionWithUser', 'viewSessionWithUser', 'ensu
 export function scopeManagedMethods(methods: ManagedDb, driver: ManagedSqlDriver): ManagedDb {
   const entries = Object.entries(methods).map(([name, method]) => {
     if (name === 'close') return [name, async () => { await driver.close() }]
-    const write = !/^(?:get|list|userCanRead|reportPermissionsFor)/u.test(name)
+    const write = !/^(?:get|list|has|userCanRead|reportPermissionsFor)/u.test(name)
     // Each operation's time told in its request's Server-Timing (request-timing.ts).
     return [name, (...args: unknown[]) => timed('db', () => driver.scope(write, () => method(...args), {
       // Presence writes only one user's timestamp; they need no application

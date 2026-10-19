@@ -330,7 +330,7 @@ test('Postgres lists a team\'s dependency reviews in a few statements, however m
   const listed = await list()
   assert.equal(listed.status, 200)
   assert.equal(JSON.parse(listed.body).reviews.length, 5)
-  assert.equal(queries.length, 5, queries.join('\n'))
+  assert.equal(queries.length, 4, queries.join('\n'))
   assert.equal(queries.filter(sql => /^(?:BEGIN|COMMIT)/u.test(sql)).length, 0)
   t.diagnostic(`reviews/team: ${queries.length} SQL statements for ${pkgs.length} reviews`)
 })
@@ -1405,7 +1405,7 @@ test('Postgres team routes take a statement per read, none for a transaction', a
   for (const [path, budget, reads] of [
     ['/api/teams', 4, 'the session seen, the catalog and its fence, and the classification\'s snapshot'],
     ['/api/teams/team/reports', 3, 'the session seen, and the team snapshot before and after the kept workspace'],
-    [`/api/reports/${id}/triage?team=team`, 8, 'the session seen, then the session, the report view and the team snapshot, twice, and the entries'],
+    [`/api/reports/${id}/triage?team=team`, 7, 'the session seen, the report view and the team snapshot, the three again, and the entries'],
   ]) {
     queries.length = 0
     const response = await send(path, { session, method: 'GET' })
@@ -1413,6 +1413,61 @@ test('Postgres team routes take a statement per read, none for a transaction', a
     assert.equal(queries.length, budget, `${path}: ${reads}`)
     assert.equal(queries.filter(sql => /^(?:BEGIN|COMMIT)/u.test(sql)).length, 0, path)
   }
+})
+
+// Each a single statement, its own snapshot: neither a transaction around
+// it nor the writer lock, a cache write held to its own conditional upsert.
+test('Postgres reads and cache writes of one statement send it alone, no transaction, no writer lock', async t => {
+  const { db, queries } = await database(t)
+  const now = Date.now(), session = await setup(db)
+  const pull = { key: 'pull:org/repo1#1', title: 'Fix', description: null, status: 'open', stateReason: null, fetchedAt: now }
+  for (const [name, call] of [
+    ['hasTeamNpmScope', () => db.hasTeamNpmScope('@org')],
+    ['listUserNpmScopes', () => db.listUserNpmScopes(session.userId)],
+    ['listTeamNpmScopes', () => db.listTeamNpmScopes()],
+    ['listDependencyReviewTeams', () => db.listDependencyReviewTeams(session.userId)],
+    ['listDependencyReviewEnabledTeams', () => db.listDependencyReviewEnabledTeams()],
+    ['setGithubMetadata', () => db.setGithubMetadata([pull])],
+    ['recordGithubMetadataAttempts', () => db.recordGithubMetadataAttempts([pull.key], now)],
+    ['listGithubMetadata', () => db.listGithubMetadata([pull.key])],
+    ['setGithubRepositoryVisibility', () => db.setGithubRepositoryVisibility([{ repoId: 1, github: 'org/repo1', public: false, checkedAt: now }])],
+    ['listGithubRepositoryVisibility', () => db.listGithubRepositoryVisibility([1])],
+    ['listLinkReports', () => db.listLinkReports()],
+    ['listLegacyLinkReports', () => db.listLegacyLinkReports()],
+    ['listReportFilenamesWithBundleHash', () => db.listReportFilenamesWithBundleHash('bundle', 'sha')],
+    ['listReportsForRepo', () => db.listReportsForRepo(1)],
+    ['listBundlesForRepo', () => db.listBundlesForRepo(1)],
+    ['listFindingCatalogReports', () => db.listFindingCatalogReports('', 10)],
+    ['userCanReadBundleAdvisories', () => db.userCanReadBundleAdvisories(session.userId, 'bundle', null)],
+  ]) {
+    queries.length = 0
+    await call()
+    assert.equal(queries.length, 1, `${name}: ${queries.join('\n')}`)
+  }
+  assert.equal((await db.listGithubMetadata([pull.key]))[0]?.attemptedAt, now, 'the writes made')
+  assert.equal((await db.listGithubRepositoryVisibility([1]))[0]?.public, false)
+})
+
+// The router's gate reads the session; a handler's own first read takes what
+// it read, asking nothing again, and a read after another asks again.
+test('Postgres routes read their session once, at the gate, but again after what they read', async t => {
+  const { db, queries } = await database(t)
+  const reports = memoryStore(), send = harness(db, reports), session = await setup(db)
+  for (const [path, budget, reads] of [
+    ['/api/auth/session', 2, 'the session seen, and the teams its user reviews dependencies in'],
+    ['/api/admin/users', 2, 'the session seen at the gate, and the users'],
+    ['/api/admin/scan/models', 1, 'the session seen at the gate, which the handler\'s own read takes'],
+  ]) {
+    await send(path, { session, method: 'GET' })
+    queries.length = 0
+    const response = await send(path, { session, method: 'GET' })
+    assert.equal(response.status, 200, path)
+    assert.equal(queries.length, budget, `${path}: ${reads}\n${queries.join('\n')}`)
+    assert.equal(queries.filter(sql => /^SELECT[^]*FROM managed_session/u.test(sql) || sql.startsWith('UPDATE managed_user SET last_seen_at')).length, 1, `${path}: one session read`)
+  }
+  await db.setUserRole(session.userId, 'triage')
+  queries.length = 0
+  assert.equal((await send('/api/admin/users', { session, method: 'GET' })).status, 403, 'the gate\'s read held to the route\'s role')
 })
 
 test('Postgres team annotation batches have a constant query budget across reports', async t => {
