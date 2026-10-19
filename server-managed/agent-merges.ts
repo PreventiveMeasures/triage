@@ -37,14 +37,18 @@ const timeOf = (value: unknown) => {
 // rebased onto the branch by their last commit there, when merged, and
 // their commits' subjects, the oldest first (agentCommits); when the newest
 // read was last updated, those updated since read again (`through`, null
-// till all are read once); and a read not finished: where it goes on
-// (`after`), when the newest it began with was updated (`from`), the oldest
-// it reads to (`stop`) and how many it has read (`read`). And of every pull
+// till all are read once), and where those read reach back no further than
+// a period needed, when the oldest of them was updated (`reach`), every
+// pull request merged since read (one is updated when merged, or after);
+// and a read not finished: where it goes on (`after`), when the newest it
+// began with was updated (`from`), the oldest it reads to (`stop`), how many
+// it has read (`read`) and when the oldest of them was updated (`to`). And
+// of every pull
 // request merged, an agent's or not, its merge commit and when (`pulls`),
 // and one rebased so (`pullRebases`), for the commits pushed to the branch
 // directly to be told (directCommits).
-export interface AgentMerges { merges: [string, number][]; rebases: Rebase[]; through: number | null
-  next: { after: string; from: number; stop: number; read: number } | null; pulls?: [string, number][]; pullRebases?: Rebase[] }
+export interface AgentMerges { merges: [string, number][]; rebases: Rebase[]; through: number | null; reach?: number
+  next: { after: string; from: number; stop: number; read: number; to?: number } | null; pulls?: [string, number][]; pullRebases?: Rebase[] }
 // A pull request rebased onto the branch: its last commit there, when it was
 // merged, its latest commits' subjects, the oldest first, and how many more
 // it had than those read (`more`).
@@ -86,20 +90,24 @@ const agentPull = ({ headRefName, labels, author }: MergedNode) => agentBranch(h
 // first (a pull request is updated when merged, or after), on from what was
 // `kept`: till one updated before the year, or before the newest read before
 // was, as many queries an answer as MERGED_QUERIES, a read not finished
-// going on from where it was left by the next; one read again whose label
-// no longer names an agent, what it was read to bring forgotten.
+// going on from where it was left by the next, or once those merged since
+// `need` are all read; one read again whose label no longer names an agent,
+// what it was read to bring forgotten.
 export async function agentMerges(fullName: string, token: string, since: number, kept: AgentMerges | null,
-  fetchImpl: typeof fetch = globalThis.fetch): Promise<AgentMerges> {
+  fetchImpl: typeof fetch = globalThis.fetch, need = since): Promise<AgentMerges> {
   const [owner, name] = fullName.split('/') as [string, string]
   const merges = new Map((kept?.merges ?? []).filter(([, at]) => at >= since))
   const rebases = new Map((kept?.rebases ?? []).filter(([, at]) => at >= since).map(([sha, at, subjects, more = 0]) => [sha, [at, subjects, more] as const]))
   const pulls = new Map((kept?.pulls ?? []).filter(([, at]) => at >= since))
   const pullRebases = new Map((kept?.pullRebases ?? []).filter(([, at]) => at >= since).map(([sha, at, subjects, more = 0]) => [sha, [at, subjects, more] as const]))
-  const stop = kept?.next?.stop ?? Math.max(since, kept?.through ?? since)
+  // Those read reaching back no further than they needed, and `need`
+  // further: read again from the newest on, as far back as it needs.
+  const further = !kept?.next && kept?.reach !== undefined && kept.reach >= need
+  const stop = kept?.next?.stop ?? (further ? since : Math.max(since, kept?.through ?? since))
   const listed = (map: typeof rebases) => [...map].map(([sha, [at, subjects, more]]): Rebase => more > 0 ? [sha, at, subjects, more] : [sha, at, subjects])
-  const result = (through: number | null, next: AgentMerges['next']): AgentMerges => ({ merges: [...merges], rebases: listed(rebases), through, next,
-    pulls: [...pulls], pullRebases: listed(pullRebases) })
-  let { after = null, from = null, read = 0 }: { after?: string | null; from?: number | null; read?: number } = kept?.next ?? {}
+  const result = (through: number | null, next: AgentMerges['next'], reach?: number): AgentMerges => ({ merges: [...merges], rebases: listed(rebases), through,
+    ...reach === undefined ? {} : { reach }, next, pulls: [...pulls], pullRebases: listed(pullRebases) })
+  let { after = null, from = null, read = 0, to = null }: { after?: string | null; from?: number | null; read?: number; to?: number | null } = kept?.next ?? {}
   for (let queries = 0; queries < MERGED_QUERIES; queries++) {
     const page = (await githubGraphql(MERGED_QUERY, { owner, name, after }, token, fetchImpl) as MergedPage | null)?.repository?.pullRequests
     let done = page?.pageInfo?.hasNextPage !== true || typeof page.pageInfo.endCursor !== 'string'
@@ -108,6 +116,7 @@ export async function agentMerges(fullName: string, token: string, since: number
       if (updated === null) continue
       if (updated < stop) { done = true; break }
       from ??= updated
+      to = updated
       read++
       const [merged, merge] = [timeOf(node?.mergedAt), node?.mergeCommit?.oid]
       if (!node || merged === null || merged < since || typeof merge !== 'string' || !SHA.test(merge)) continue
@@ -131,10 +140,15 @@ export async function agentMerges(fullName: string, token: string, since: number
       for (const oid of brought) merges.set(oid, merged)
       if (subjects) rebases.set(merge, [merged, subjects, more])
     }
-    if (done) return result(from ?? stop, null)
+    // Read as far back as it reads to: the year's start, every one since
+    // read; else as far as those read before reached.
+    if (done) return result(from ?? stop, null, stop > since ? kept?.reach : undefined)
     after = page!.pageInfo!.endCursor as string
+    // Read as far back as `need`: finished, so far back, those updated
+    // since read by the next as ever.
+    if (need > since && to !== null && to < need) return result(Math.max(from ?? stop, kept?.through ?? Number.NEGATIVE_INFINITY), null, to)
   }
-  return result(kept?.through ?? null, { after: after!, from: from ?? stop, stop, read })
+  return result(kept?.through ?? null, { after: after!, from: from ?? stop, stop, read, ...to === null ? {} : { to } }, kept?.reach)
 }
 
 // Whether two reads of the pull requests merged (agentMerges) bring the

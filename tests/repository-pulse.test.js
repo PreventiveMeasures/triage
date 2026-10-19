@@ -74,6 +74,8 @@ test('a period\'s figures: its commits, beside the same days of the week a perio
   assert.deepEqual(pulseSummary(read, NOW), { commits: 26, previous: 33, agents: null, previousAgents: null, releases: null, previousReleases: null, additions: 40,
     deletions: 8, authors: 3 })
   assert.equal(pulseSummary({ ...read, weeks: 52, since: FIRST }, NOW).previous, null, 'the year before the year GitHub counts')
+  assert.equal(pulseSummary({ ...read, stats: stats({ from: SINCE - DAY }) }, NOW).previous, null, 'the month before not read whole')
+  assert.equal(pulseSummary({ ...read, stats: stats({ from: SINCE - 4 * WEEK - DAY }) }, NOW).previous, 33, 'read whole as far back')
   const large = pulseSummary({ ...read, stats: stats({ lines: false }) }, NOW)
   assert.deepEqual([large.additions, large.deletions], [null, null])
   assert.deepEqual(pulseSummary({ ...read, stats: null, pending: true }, NOW), { commits: null, previous: null, agents: null, previousAgents: null, releases: null,
@@ -576,6 +578,28 @@ test('a quarter, a column a week, every other one named; this week\'s figures so
   const axis = text.match(/class=pulse-axis aria-hidden="true">[^]*?<\/div>/u)[0]
   assert.deepEqual([...axis.matchAll(/>([^<]+)<\/span>/gu)].map(([, label]) => label), ['Jul 19', 'Aug 2', 'Aug 16', 'Aug 30', 'Sep 13', 'Sep 27', 'Oct 11'])
   assert.match(text, /class="pulse-tip-when">Week of Oct 11 <span>so far<\/span>/u)
+})
+
+test('a month counted from its weeks and as many before alone, shown so; the year not shown from it while the year is read', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
+  let release
+  answer = (repoId, weeks) => weeks === 4 ? Promise.resolve(pulse({ stats: stats({ from: SINCE - 4 * WEEK - DAY }) }))
+    : new Promise(resolve => { release = () => resolve(pulse({ weeks, since: FIRST, stats: stats() })) })
+  const view = shown()
+  view.render()
+  await setImmediate()
+  let text = templateText(view.render())
+  assert.match(text, /class=pulse-scroll aria-busy=false/u)
+  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">26<\/span>\s*<span class="pulse-tile-note">↓ 21% from 33 the month before/u, 'beside the month before')
+  view.pick(52)
+  text = templateText(view.render())
+  assert.match(text, /class=pulse-scroll is-reading aria-busy=true/u, 'the month faded, not the year counted no further back')
+  release()
+  await setImmediate()
+  text = templateText(view.render())
+  assert.match(text, /class=pulse-scroll aria-busy=false/u)
+  assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">369<\/span>/u)
+  view.pick(4)
 })
 
 test('another period is shown at once from the year read, its pull requests and issues read for it meanwhile; read, it is kept', async t => {

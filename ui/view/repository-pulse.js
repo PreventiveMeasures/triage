@@ -122,6 +122,9 @@ function checked(answer) {
         name: typeof person.name === 'string' ? person.name : null, weeks: person.weeks, days: Array.isArray(person.days) ? person.days : null })),
     punch: PUNCH_DAYS.map(day => Array.from({ length: 24 }, (_, hour) => counted(answer.stats.punch[day]?.[hour]))),
     periodPunch: answer.stats.periodPunch === true,
+    // When from the year is counted whole, read no further back than a
+    // period needed; null, all of it.
+    from: Number.isSafeInteger(answer.stats.from) ? answer.stats.from : null,
     lines: typeof answer.stats.lines === 'boolean' ? answer.stats.lines : null,
     // Whether the commits agents took part in, and the releases, are counted,
     // each day of the year.
@@ -233,6 +236,10 @@ export function periodSince(weeks, now = Date.now()) {
   return today - new Date(today).getUTCDay() * DAY_MS - (weeks - 1) * WEEK_MS
 }
 
+// Whether a year's statistics are counted whole from `since` on: all of
+// it, or read as far back.
+export const wholeSince = (stats, since) => stats.from === null || stats.from === undefined || stats.from < since
+
 // A period of `weeks` weeks as the year another answer holds (`year`) shows
 // it, `own` its own answer where read: its pull requests and issues, none
 // while it reads, and how its own year is read; when commits are made the
@@ -257,7 +264,7 @@ export function pulseSummary(answer, now = Date.now()) {
   const today = Math.floor(now / DAY_MS) * DAY_MS
   const back = answer.weeks * WEEK_MS
   const period = stats.weeks.filter(week => week.week >= since)
-  const reaches = stats.weeks.length > 0 && stats.weeks[0].week <= since - back
+  const reaches = stats.weeks.length > 0 && stats.weeks[0].week <= since - back && wholeSince(stats, since - back)
   const lines = kind => stats.lines === true ? period.reduce((sum, week) => sum + counted(week[kind]), 0) : null
   return { commits: commitsBetween(stats.weeks, since, today), previous: reaches ? commitsBetween(stats.weeks, since - back, today - back) : null,
     agents: stats.agents ? commitsBetween(stats.weeks, since, today, 'agentDays') : null,
@@ -536,11 +543,14 @@ class RepositoryPulse extends LitElement {
     const entry = pulseRead(repoId, shownWeeks)
     if (entry.status === 'ready') keep(repoId, entry)
     const now = Date.now()
-    // The period's answer where it holds its year, else as the year last read
-    // shows it; with none read, while it reads, the last period read, faded.
+    // The period's answer where it holds its year, counted whole as far back
+    // as the period starts, else as the year last read shows it, where read
+    // so far back; with none read, while it reads, the last period read,
+    // faded.
     const own = entry.status === 'ready' ? entry.answer : null
     const year = lastYear.get(repoId)
-    const answer = own?.stats ? own : year && entry.status !== 'error' ? withYear(own, year, shownWeeks, now) : own
+    const answer = own?.stats && wholeSince(own.stats, own.since) ? own : year && entry.status !== 'error' && wholeSince(year.stats, periodSince(shownWeeks, now))
+      ? withYear(own, year, shownWeeks, now) : own && { ...own, stats: null }
     const faded = !answer && entry.status === 'loading' ? lastShown.get(repoId) ?? null : null
     const shown = answer ? { answer, asking: entry.asking === true } : faded
     // The year shown while a later one is read, said at the bar's end.

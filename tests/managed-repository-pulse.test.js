@@ -223,7 +223,8 @@ test('the agents\' pull requests merged in the year: by their branches, the most
   const asked = github(t, { graphql: mergedPulls(pulls) })
   const read = await agentMerges('org/repo', 'token', since, null)
   assert.equal(mergedQueries(asked), 5)
-  assert.deepEqual([read.through, read.next], [null, { after: '500', from: since + 600 * 12 * HOUR, stop: since, read: 500 }], 'five pages, the rest left')
+  assert.deepEqual([read.through, read.next], [null, { after: '500', from: since + 600 * 12 * HOUR, stop: since, read: 500, to: since + 101 * 12 * HOUR }],
+    'five pages, the rest left, how far back they are read')
   const whole = await agentMerges('org/repo', 'token', since, read)
   assert.equal(mergedQueries(asked), 7, 'on till one updated before the year')
   assert.deepEqual([whole.through, whole.next], [since + 600 * 12 * HOUR, null])
@@ -237,6 +238,30 @@ test('the agents\' pull requests merged in the year: by their branches, the most
   // A year begun since, those merged before it left out.
   const later = await agentMerges('org/repo', 'token', since + 300 * 12 * HOUR, again)
   assert.ok(later.merges.every(([, at]) => at >= since + 300 * 12 * HOUR))
+  // Those merged since a time asked read whole, no page past it: finished
+  // so far back, those updated since read by the next as ever.
+  const recent = await agentMerges('org/repo', 'token', since, null, globalThis.fetch, since + 550 * 12 * HOUR)
+  assert.equal(mergedQueries(asked), 10, 'a page')
+  assert.deepEqual([recent.next, recent.through, recent.reach], [null, since + 700 * 12 * HOUR, since + 502 * 12 * HOUR],
+    'as far back as the page\'s oldest, the one merged since atop it')
+  pulls.unshift({ ...pull(1001, since + 710 * 12 * HOUR), headRefName: 'claude/newer' })
+  const newer = await agentMerges('org/repo', 'token', since, recent, globalThis.fetch, since + 550 * 12 * HOUR)
+  assert.equal(mergedQueries(asked), 11)
+  assert.deepEqual([newer.through, newer.reach, newer.merges.some(([sha]) => sha === shaOf(1002))], [since + 710 * 12 * HOUR, since + 502 * 12 * HOUR, true])
+  // Further back than they reached: read again from the newest on, as far as asked.
+  const further = await agentMerges('org/repo', 'token', since, newer, globalThis.fetch, since + 450 * 12 * HOUR)
+  assert.equal(mergedQueries(asked), 13)
+  assert.deepEqual([further.next, further.through, further.reach], [null, since + 710 * 12 * HOUR, since + 403 * 12 * HOUR])
+  // Those merged since read a few queries an answer, how far back those
+  // before reached kept through them, then the year whole.
+  pulls.unshift(...Array.from({ length: 550 }, (_, at) => ({ ...pull(2000 + at, since + (1300 - at) * 12 * HOUR), headRefName: `claude/many-${at}` })))
+  const many = await agentMerges('org/repo', 'token', since, further, globalThis.fetch, since + 450 * 12 * HOUR)
+  assert.deepEqual([many.next?.read, many.reach], [500, since + 403 * 12 * HOUR])
+  const caught = await agentMerges('org/repo', 'token', since, many, globalThis.fetch, since + 450 * 12 * HOUR)
+  assert.deepEqual([caught.next, caught.through, caught.reach], [null, since + 1300 * 12 * HOUR, since + 403 * 12 * HOUR])
+  let year = caught
+  do year = await agentMerges('org/repo', 'token', since, year); while (year.next)
+  assert.equal('reach' in year, false, 'every one since the year\'s start read, from the newest on again')
 })
 
 test('a pull request labelled for an agent is an agent\'s, whatever its branch; one labelled for none, not', async t => {
@@ -726,10 +751,23 @@ test('a head moved on, its year read anew, the year last counted answered meanwh
   assert.equal(total((await request({ repoId: '1' })).body), 700)
   commits.unshift(...all.slice(0, 600))
   await repositoryReadStore(request.db).write('1\0pulse-head', { sha: all[0].oid }, Date.now())
-  const moved = await request({ repoId: '1', weeks: '1' })
+  const moved = await request({ repoId: '1', weeks: '52' })
   assert.deepEqual([moved.body.reading, total(moved.body)], [500, 700], 'five pages read, the year as it was')
-  const counted = await request({ repoId: '1', weeks: '1' })
+  const counted = await request({ repoId: '1', weeks: '52' })
   assert.deepEqual([counted.body.reading, total(counted.body)], [null, 1300])
+})
+
+test('a month counted once its weeks and as many before are read, the rest of the year read only as a longer period asks, so said', async t => {
+  const request = await fixture(t)
+  const commits = chain(400, Date.now(), DAY)
+  const asked = github(t, { commits })
+  const total = body => body.stats.weeks.reduce((sum, week) => sum + week.commits, 0)
+  const month = await request({ repoId: '1' })
+  assert.deepEqual([month.body.reading, total(month.body), month.body.stats.from, graphQueries(asked)], [null, 100, Date.parse(commits[99].committedDate), 1],
+    'a page read, its last commit\'s parent the only one not, eight weeks before')
+  const year = await request({ repoId: '1', weeks: '52' })
+  assert.deepEqual([year.body.reading, 'from' in year.body.stats, graphQueries(asked)], [null, false, 4], 'the rest read on from the page kept')
+  assert.equal(total((await request({ repoId: '1' })).body), total(year.body), 'the year whole kept for every period')
 })
 
 test('a head moved on past YEAR_COMMITS, GitHub still computing its statistics, the year last counted answered meanwhile', async t => {
