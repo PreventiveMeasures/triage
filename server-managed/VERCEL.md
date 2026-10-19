@@ -35,11 +35,13 @@ Each release keeps the invocation alive until idle connections have closed, so n
 A failed lease is discarded, never reused.
 
 Every response the managed app answers carries a `Server-Timing` header, which the browser's developer tools show beside the request.
-It gives the database's time and statement count (`db`), new connections' time (`conn`), GitHub's time and call count (`gh`), `cold` on an instance's first request, and the app's time from taking the request to writing the response's headers (`app`).
+It gives the time the request's database operations took and the statements they sent (`db`), the time spent getting a connection, a new one's handshake included (`conn`), the time and count of the GitHub calls made through the app's shared GitHub reader (`gh`), `cold` on an instance's first request, and the app's time from taking the request to writing the response's headers (`app`).
+An operation's time runs from its start to its answer, so `db` includes waiting for a connection, `conn` among it, and for the request's other operations.
+Repository reads go through the shared GitHub reader; other GitHub calls, such as sign-in, avatars, issues, Fix links and Dependabot alerts, aren't in `gh`.
 It holds counts and durations alone, nothing of what was asked.
 A streamed response, such as a team's Dependencies or batched line counts, writes its headers before its first line, so its header tells only what was spent until then.
 Timing starts once the app has initialized, so a cold start's initialization is in none of these times, and the `503` of a failed initialization carries no header.
-A request's statements run one after another on its connection, so where they are simple reads, `db`'s time over its statements is close to one round trip to the database; tens of milliseconds each point to the function running far from the database's region.
+Where a request runs simple reads one after another, its `db` time less `conn`, over its statements, is close to one round trip to the database; tens of milliseconds each point to the function running far from the database's region.
 
 Ordinary managed requests start a due session/upload sweep alongside the normal response.
 The managed app registers maintenance with [`waitUntil`](https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#waituntil), so it can finish after the response ends.
