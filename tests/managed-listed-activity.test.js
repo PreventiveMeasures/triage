@@ -39,11 +39,13 @@ test('a period\'s pull requests and issues told of those kept as a search counts
 
 test('a period\'s pull requests and issues narrowed to its days and the logins a contributor committed as, whatever their case, an app\'s as GitHub names its bot', () => {
   const now = Date.UTC(2026, 9, 15, 12)
-  const pulls = [pull(1, { at: Date.UTC(2026, 8, 28, 10) }), pull(2, { at: Date.UTC(2026, 8, 28, 20), author: 'dependabot', authorId: 49699333 }),
-    pull(3, { at: Date.UTC(2026, 8, 28, 12), author: 'grace' }), pull(4, { at: Date.UTC(2026, 8, 29) })]
-  const day = { from: Date.UTC(2026, 8, 28), to: Date.UTC(2026, 8, 28), authors: ['Ada', 'dependabot[bot]'] }
-  assert.deepEqual(listedActivity(pulls, [], 4, now, day).merged.items.map(item => item.number), [2, 1])
-  assert.deepEqual(listedActivity(pulls, [], 4, now, { from: Date.UTC(2026, 8, 28), to: null, authors: [] }).merged.count, 4, 'on from its day, by anyone')
+  // Dependabot's bot, as GitHub's GraphQL API names it, and a user of its name.
+  const pulls = [pull(1, { at: Date.UTC(2026, 8, 28, 10) }), pull(2, { at: Date.UTC(2026, 8, 28, 20), author: 'dependabot', authorId: 49699333, bot: true }),
+    pull(3, { at: Date.UTC(2026, 8, 28, 12), author: 'grace' }), pull(4, { at: Date.UTC(2026, 8, 29) }), pull(5, { at: Date.UTC(2026, 8, 28, 9), author: 'dependabot' })]
+  const day = authors => ({ from: Date.UTC(2026, 8, 28), to: Date.UTC(2026, 8, 28), authors })
+  assert.deepEqual(listedActivity(pulls, [], 4, now, day(['Ada', 'dependabot[bot]'])).merged.items.map(item => item.number), [2, 1])
+  assert.deepEqual(listedActivity(pulls, [], 4, now, day(['Dependabot'])).merged.items.map(item => item.number), [5], 'the user, not the bot of its name')
+  assert.deepEqual(listedActivity(pulls, [], 4, now, { from: Date.UTC(2026, 8, 28), to: null, authors: [] }).merged.count, 5, 'on from its day, by anyone')
 })
 
 test('a repository\'s issues kept as read, the most recently updated first: when and why each closed was', async t => {
@@ -55,13 +57,14 @@ test('a repository\'s issues kept as read, the most recently updated first: when
     return Promise.resolve(Response.json({ data: { repository: { issues: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
       { number: 2, title: 'Two', state: 'CLOSED', stateReason: 'DUPLICATE', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z', closedAt: '2026-10-02T00:00:00Z',
         author: { login: 'ada', databaseId: 7 } },
-      { number: 1, title: 'One', state: 'OPEN', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z', author: null }, null] } } } }))
+      { number: 1, title: 'One', state: 'OPEN', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z', author: { __typename: 'Bot', login: 'renovate' } },
+      null] } } } }))
   })
   const read = await readIssues('org/repo', 'token', since, null)
   assert.deepEqual(read.rows, [
     { number: 2, title: 'Two', state: 'closed', author: 'ada', authorId: 7, createdAt: Date.parse('2026-10-01T00:00:00Z'), updatedAt: Date.parse('2026-10-03T00:00:00Z'),
       closedAt: Date.parse('2026-10-02T00:00:00Z'), reason: 'duplicate' },
-    { number: 1, title: 'One', state: 'open', author: null, authorId: null, createdAt: Date.parse('2026-09-01T00:00:00Z'), updatedAt: Date.parse('2026-10-02T00:00:00Z'),
-      closedAt: null, reason: null }])
+    { number: 1, title: 'One', state: 'open', author: 'renovate', authorId: null, createdAt: Date.parse('2026-09-01T00:00:00Z'), updatedAt: Date.parse('2026-10-02T00:00:00Z'),
+      bot: true, closedAt: null, reason: null }], 'a bot\'s told apart')
   assert.deepEqual([read.all, read.through, read.next], [true, Date.parse('2026-10-03T00:00:00Z'), null])
 })

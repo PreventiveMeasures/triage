@@ -44,9 +44,10 @@ const timeOf = (value: unknown) => {
   return Number.isSafeInteger(at) ? at : null
 }
 
-// A pull request as read: its row on the Agents tab, and one merged, what
-// it brought the default branch (`merged`).
-export type KeptPull = AgentPull & { merged?: Merged }
+// A pull request as read: its row on the Agents tab, whether a GitHub App's
+// bot opened it (`bot`, GitHub's GraphQL API naming one by its app's login
+// alone), and one merged, what it brought the default branch (`merged`).
+export type KeptPull = AgentPull & { bot?: true; merged?: Merged }
 // What a merged pull request brought: its merge commit (`sha`), when it was
 // merged (`at`) and whether it was an agent's (agentPull); an agent's merged
 // with a merge commit, which a year counts none of, its own commits too
@@ -56,9 +57,10 @@ export type KeptPull = AgentPull & { merged?: Merged }
 // its empty commits left out, as a rebase leaves them, and how many more it
 // had than those read (`more`).
 export interface Merged { sha: string; at: number; agent: boolean; own?: string[]; subjects?: string[]; more?: number }
-// An issue as read: as the Agents tab shows it, when it was closed, and why
-// (`reason`, as GitHub tells it: completed, not planned or a duplicate).
-export type KeptIssue = AgentIssue & { closedAt: number | null; reason: IssueReason | null }
+// An issue as read: as the Agents tab shows it, whether a bot opened it
+// (`bot`, as a pull request's), when it was closed, and why (`reason`, as
+// GitHub tells it: completed, not planned or a duplicate).
+export type KeptIssue = AgentIssue & { bot?: true; closedAt: number | null; reason: IssueReason | null }
 export type IssueReason = 'completed' | 'not-planned' | 'duplicate'
 export const ISSUE_REASONS: Record<string, IssueReason> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
 // The pull requests or issues updated since a year's start (`since`) as
@@ -99,7 +101,8 @@ const ISSUES_QUERY = `query($owner: String!, $name: String!, $after: String) {
     }
   }
 }`
-type ClosedNode = IssueNode & { stateReason?: unknown; closedAt?: unknown }
+type ClosedNode = IssueNode & { stateReason?: unknown; closedAt?: unknown; author?: IssueNode['author'] & { __typename?: unknown } }
+const botOf = (author: { __typename?: unknown } | null | undefined) => author?.__typename === 'Bot' ? { bot: true as const } : {}
 type ListPage<Node> = { repository?: Record<string, { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (Node | null)[] } | null> | null }
 
 const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_PREFIXES.some(prefix => name.startsWith(prefix))
@@ -129,7 +132,7 @@ function mergedOf(node: MergedNode): Merged | null {
 // What an issue closed tells beside its row (KeptIssue).
 function closedOf(node: ClosedNode): KeptIssue | null {
   const row = issue(node)
-  return row ? { ...row, closedAt: timeOf(node.closedAt), reason: ISSUE_REASONS[String(node.stateReason)] ?? null } : null
+  return row ? { ...row, ...botOf(node.author), closedAt: timeOf(node.closedAt), reason: ISSUE_REASONS[String(node.stateReason)] ?? null } : null
 }
 
 // The most recently updated first, the higher number first of those
@@ -143,7 +146,7 @@ interface ListSpec<Node, Row> { query: string; connection: 'pullRequests' | 'iss
 const PULLS: ListSpec<MergedNode, KeptPull> = { query: PULLS_QUERY, connection: 'pullRequests', row: node => {
   const row = pull(node)
   const merged = mergedOf(node)
-  return row && merged ? { ...row, merged } : row
+  return row ? { ...row, ...botOf(node.author), ...merged ? { merged } : {} } : null
 } }
 const ISSUES: ListSpec<ClosedNode, KeptIssue> = { query: ISSUES_QUERY, connection: 'issues', row: closedOf }
 

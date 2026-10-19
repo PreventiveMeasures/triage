@@ -74,7 +74,7 @@ export const AGENT_PULL_FIELDS = `number title state isDraft createdAt updatedAt
   headRepositoryOwner { login } additions deletions last: commits(last: 1) { nodes { commit { message } } } mergeCommit { message }
   closingIssuesReferences(first: ${CLOSES}) { nodes { number } } labels(first: ${LABELS}) { nodes { name } }`
 // What an issue is read by, for its row (issue).
-export const AGENT_ISSUE_FIELDS = `number title state createdAt updatedAt author { ${ACTOR} }`
+export const AGENT_ISSUE_FIELDS = `number title state createdAt updatedAt author { __typename ${ACTOR} }`
 // The latest issues, however long ago they were updated.
 const ISSUES_QUERY = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
@@ -317,7 +317,7 @@ async function agentPulls(fullName: string, token: string, cursor: string | null
 // read, as those kept hold none updated before the year they are read for.
 async function latestIssues(fullName: string, token: string, kept: Kept['issues'], fetchImpl: typeof fetch): Promise<AgentIssue[]> {
   const list = await kept()
-  if (list.rows.length >= AGENT_ISSUES || list.all) return list.rows.slice(0, AGENT_ISSUES).map(({ closedAt: _closedAt, reason: _reason, ...row }) => row)
+  if (list.rows.length >= AGENT_ISSUES || list.all) return list.rows.slice(0, AGENT_ISSUES).map(({ bot: _bot, closedAt: _closedAt, reason: _reason, ...row }) => row)
   const [owner, name] = fullName.split('/') as [string, string]
   const data = await githubGraphql(ISSUES_QUERY, { owner, name }, token, fetchImpl) as Issues
   return (data?.repository?.issues?.nodes ?? []).flatMap(node => issue(node) ?? [])
@@ -353,7 +353,7 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
   const commits = [...marked.flatMap(({ commit, signals }) => brought.has(commit.sha) ? [] : [keptCommit(commit, signals)]), ...nodes.flatMap(node => directCommit(node) ?? [])]
   const after = { pulls: pulls.after, commits: frontier(history, named.slice(ALL_BRANCHES)) }
   return {
-    pulls: pulls.pulls.map(({ merged: _merged, ...row }: AgentPull & { merged?: unknown }) => row),
+    pulls: pulls.pulls.map(({ bot: _bot, merged: _merged, ...row }: AgentPull & { bot?: unknown; merged?: unknown }) => row),
     commits: commits.filter((commit, index) => commits.findIndex(other => other.oid === commit.oid) === index),
     ...first ? {
       issues,
