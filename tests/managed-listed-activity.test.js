@@ -52,7 +52,8 @@ test('a repository\'s issues kept as read, the most recently updated first: when
   const since = Date.UTC(2025, 9, 19)
   t.mock.method(globalThis, 'fetch', (input, options = {}) => {
     const body = JSON.parse(options.body)
-    assert.match(body.query, /issues\(first: 100, after: \$after, orderBy: \{ field: UPDATED_AT, direction: DESC \}\)/u)
+    assert.match(body.query, /issues\(first: \$first, after: \$after, orderBy: \{ field: UPDATED_AT, direction: DESC \}\)/u)
+    assert.equal(body.variables.first, 100, 'a hundred a page, none read before')
     assert.doesNotMatch(body.query, /body|comments/u, 'no text read')
     return Promise.resolve(Response.json({ data: { repository: { issues: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [
       { number: 2, title: 'Two', state: 'CLOSED', stateReason: 'DUPLICATE', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z', closedAt: '2026-10-02T00:00:00Z',

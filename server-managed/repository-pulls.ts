@@ -31,8 +31,12 @@ export const PULLS_READ_VERSION = 2
 export const ISSUES_LIST_READ_VERSION = 1
 // The pull requests or issues read an answer, a page a query, as many
 // queries as LIST_QUERIES, the rest left for the next to ask; of each pull
-// request merged, as many of its latest commits as MERGED_COMMITS.
+// request merged, as many of its latest commits as MERGED_COMMITS. Those
+// updated since the newest read, few as they mostly are, read TOP_UP_PAGE
+// first, the rest LIST_PAGE a page (GitHub reading on from a page's end
+// whatever its size).
 const LIST_PAGE = 100
+const TOP_UP_PAGE = 10
 const LIST_QUERIES = 5
 const MERGED_COMMITS = 100
 const LABEL_AGENTS = Object.keys(GITHUB_AGENTS)
@@ -81,9 +85,9 @@ export type IssueList = Listed<KeptIssue>
 // start, -∞; none yet, ∞.
 export const pullsReadTo = (list: Pick<Listed<unknown>, 'next' | 'reach'>) => list.next ? list.next.to ?? Number.POSITIVE_INFINITY : list.reach ?? Number.NEGATIVE_INFINITY
 
-const PULLS_QUERY = `query($owner: String!, $name: String!, $after: String) {
+const PULLS_QUERY = `query($owner: String!, $name: String!, $after: String, $first: Int!) {
   repository(owner: $owner, name: $name) {
-    pullRequests(first: ${LIST_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
+    pullRequests(first: $first, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
       nodes { ${AGENT_PULL_FIELDS} mergedAt mergeCommit { oid parents { totalCount } }
         commits(last: ${MERGED_COMMITS}) { totalCount nodes { commit { oid messageHeadline changedFilesIfAvailable } } } }
@@ -93,9 +97,9 @@ const PULLS_QUERY = `query($owner: String!, $name: String!, $after: String) {
 type MergedNode = PullNode & { mergedAt?: unknown; mergeCommit?: { oid?: unknown; message?: unknown; parents?: { totalCount?: unknown } | null } | null
   author?: PullNode['author'] & { __typename?: unknown }
   commits?: { totalCount?: unknown; nodes?: ({ commit?: { oid?: unknown; messageHeadline?: unknown; changedFilesIfAvailable?: unknown } | null } | null)[] } | null }
-const ISSUES_QUERY = `query($owner: String!, $name: String!, $after: String) {
+const ISSUES_QUERY = `query($owner: String!, $name: String!, $after: String, $first: Int!) {
   repository(owner: $owner, name: $name) {
-    issues(first: ${LIST_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
+    issues(first: $first, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
       nodes { ${AGENT_ISSUE_FIELDS} stateReason closedAt }
     }
@@ -177,9 +181,12 @@ async function readList<Node extends { updatedAt?: unknown }, Row extends { numb
   const stop = kept?.next?.stop ?? (further ? since : Math.max(since, kept?.through ?? since))
   const result = (through: number | null, next: Listed<Row>['next'], reach: number | undefined, all = whole): Listed<Row> => ({
     rows: [...rows.values()].toSorted(newestFirst), since, through, ...reach === undefined ? {} : { reach }, ...all ? { all: true as const } : {}, next })
+  // A read of those updated since the newest read alone.
+  const topping = !kept?.next && !further && kept?.through !== null && kept?.through !== undefined
   let { after = null, from = null, read = 0, to = null }: { after?: string | null; from?: number | null; read?: number; to?: number | null } = kept?.next ?? {}
   for (let queries = 0; queries < LIST_QUERIES; queries++) {
-    const page = (await githubGraphql(spec.query, { owner, name, after }, token, fetchImpl) as ListPage<Node> | null)?.repository?.[spec.connection]
+    const first = topping && queries === 0 ? TOP_UP_PAGE : LIST_PAGE
+    const page = (await githubGraphql(spec.query, { owner, name, after, first }, token, fetchImpl) as ListPage<Node> | null)?.repository?.[spec.connection]
     const end = page?.pageInfo?.hasNextPage !== true || typeof page.pageInfo.endCursor !== 'string'
     let crossed = false
     for (const node of page?.nodes ?? []) {
