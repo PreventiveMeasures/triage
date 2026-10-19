@@ -24,14 +24,14 @@ class ManagedIssueDialog extends AppDialog {
   constructor() {
     super(); this.title = ''; this.body = ''; this.prepared = null; this.busy = false
     this.creating = false; this.message = ''; this.uncertain = false; this.createdUrl = ''; this.createdIssue = null; this.detailsUnavailable = false
-    this.sections = []
+    this.sections = []; this.footer = null; this.draftEdited = false
   }
   beforeOpen() {
-    if (this.finding) Object.assign(this, createIssueDraft(this.finding, this.draftOptions))
+    if (this.finding) Object.assign(this, createIssueDraft(this.finding, { ...this.draftOptions, allSections: true }))
     void this.check(true)
   }
-  editBody(body) { Object.assign(this, editIssueDraft(this, body)) }
-  toggleSection(id, selected) { Object.assign(this, toggleIssueDraftSection(this, id, selected)) }
+  editBody(body) { this.draftEdited = true; Object.assign(this, editIssueDraft(this, body)) }
+  toggleSection(id, selected) { this.draftEdited = true; Object.assign(this, toggleIssueDraftSection(this, id, selected)) }
   current() {
     return !this._settled && this.isCurrent()
   }
@@ -49,6 +49,9 @@ class ManagedIssueDialog extends AppDialog {
       if (!this.current()) return
       this.prepared = prepared
       this.uncertain = false
+      // An untouched draft takes every section through the API, and Impact
+      // alone into the GitHub form, whose URL carries the body.
+      if (this.finding && !this.draftEdited) Object.assign(this, createIssueDraft(this.finding, { ...this.draftOptions, allSections: prepared.mode !== 'form' }))
       if (prepared.mode === 'existing') { this.onCreated?.(prepared.url); window.location.assign(prepared.url) }
       if (redirect && prepared.mode === 'form') window.location.assign(this.fallbackUrl())
     } catch (error) {

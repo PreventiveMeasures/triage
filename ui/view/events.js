@@ -1406,7 +1406,8 @@ report.addEventListener('click', (e) => {
         context: { reportId: finding._managedReportId, findingId: finding.id, repository: url.pathname.split('/').slice(1, 3).join('/') },
         formUrl: url.href, title: url.searchParams.get('title') ?? '', body: url.searchParams.get('body') ?? '',
         finding, draftOptions: { sourceUrl: findingUrl(finding, findingRepoTarget(finding)),
-          evidence: evidenceMarkdown(finding), showRevalidation: revalidationShown() },
+          evidence: evidenceMarkdown(finding), showRevalidation: revalidationShown(),
+          findingLink: findingLinkFor(finding, { reportId: finding._managedReportId }) },
         renderBody: renderHighlighted, render,
       }).catch(() => showToast('Could not open issue creation. Please retry.'))
       return
