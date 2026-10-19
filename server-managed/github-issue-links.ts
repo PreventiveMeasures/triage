@@ -71,8 +71,15 @@ function issueUpdates(jobs: Job[], issues: ManagedIssue[], allowed: Map<string, 
     if (latest && (!repo || repo.repoId !== latest.repository.databaseId)) continue
     const next = latest ? `https://github.com/${repo!.github}/pull/${latest.number}` : null
     if (latest && next) metadata.set(next, { url: next, ...itemMetadata(latest, 'pull')! })
+    // Only a changed derived Fix is written: an unchanged one's check time
+    // alone would bump the annotations revision that every open team feed
+    // polls, for nothing they show. Changes still stamp it, so an older lookup
+    // never replaces a newer change (managed-issues.ts). An older lookup that
+    // differs can now land after a newer unchanged one, as it could already
+    // land before it (whose compare-and-set then fails); either way the next
+    // lookup finds the stored Fix differs, and writes the current one.
     for (const issue of byIssue.get(`${job.repo.repoId}:${job.number}`) ?? []) {
-      updates.push({ findingId: issue.findingId, issueUrl: issue.issueUrl!, previous: issue.autoFixUrl, next, checkedAt })
+      if (issue.autoFixUrl !== next) updates.push({ findingId: issue.findingId, issueUrl: issue.issueUrl!, previous: issue.autoFixUrl, next, checkedAt })
     }
   }
   return updates

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { lookupIssueLinks } from '../server-managed/github-issue-links.ts'
 import { visibleManagedIssues } from '../server-managed/managed-issues.ts'
@@ -69,7 +70,8 @@ test('complete reads always follow the newest eligible PR, replace old automatic
   const manual = await f.db.listTriage(['shared-finding'])
   for (const [nodes, next] of [[ [pull(3)], pullUrl(3) ], [ [pull(9, { state: 'MERGED' }), pull(10, { state: 'CLOSED' })], pullUrl(9) ], [ [pull(11, { state: 'CLOSED' })], null ], [ [], null ]]) {
     const result = await f.lookup(() => response(issue(nodes)))
-    assert.equal(result.updates[0].next, next)
+    const previous = (await f.db.getManagedIssue('shared-finding')).autoFixUrl
+    assert.deepEqual(result.updates.map(update => update.next), previous === next ? [] : [next], 'an unchanged Fix is not written')
     assert.equal(await f.db.applyManagedIssueFixes(f.sessionId, f.snapshot, result.updates), true)
     assert.equal((await f.db.getManagedIssue('shared-finding')).autoFixUrl, next)
     assert.deepEqual(await f.db.listTriage(['shared-finding']), manual)
@@ -166,6 +168,67 @@ test('workspace refresh saves the derived Fix and exposes both links through sco
   assert.deepEqual(data.issues, { 'shared-finding': { url: issueUrl, autoFix: pullUrl(3) } })
   assert.equal(data.entries['shared-finding'].fix, pullUrl(2))
   assert.ok(data.reports[reportId].includes('shared-finding'))
+})
+
+test('a workspace refresh writes nothing for an unchanged derived Fix, so open feeds see no annotation change', async t => {
+  const f = await fixture(t), store = memoryStore()
+  await f.db.setReportVisible(await seedReport(f.db, store, f.session.userId), true)
+  const request = harness(f.db, store)
+  let nodes = [pull(3)]
+  t.mock.method(globalThis, 'fetch', (url, init) => response(...[...JSON.parse(init.body).query.matchAll(/item: (issue|pullRequest)\(number: (\d+)\)/gu)]
+    .map(match => match[1] === 'issue' ? issue(nodes) : pull(Number(match[2])))))
+  const writes = t.mock.method(f.db, 'applyManagedIssueFixes')
+  const refresh = async () => assert.equal((await request('/api/teams/team/fixes', { session: f.session, method: 'GET' })).status, 200)
+  const revision = async () => (await f.db.getFeedState(f.sessionId, Date.now())).annotations
+  await refresh()
+  const saved = await f.db.getManagedIssue('shared-finding'), written = await revision()
+  assert.equal(saved.autoFixUrl, pullUrl(3))
+  assert.equal(writes.mock.callCount(), 1)
+  await refresh()
+  assert.equal(writes.mock.callCount(), 1, 'no write transaction')
+  assert.deepEqual(await f.db.getManagedIssue('shared-finding'), saved, 'not even the check time')
+  assert.equal(await revision(), written)
+  nodes = [pull(3), pull(4)]
+  await refresh()
+  assert.equal(writes.mock.callCount(), 2)
+  assert.equal((await f.db.getManagedIssue('shared-finding')).autoFixUrl, pullUrl(4))
+  assert.ok(await revision() > written, 'a changed one still notifies feeds')
+})
+
+test('an older lookup never replaces a newer change to the derived Fix, even one back to the Fix it read', async t => {
+  const f = await fixture(t)
+  const apply = async updates => assert.equal(await f.db.applyManagedIssueFixes(f.sessionId, f.snapshot, updates), true)
+  const stored = async () => (await f.db.getManagedIssue('shared-finding')).autoFixUrl
+  await apply((await f.lookup(() => response(issue([pull(3)])))).updates)
+  // Lookups that start while another is waiting on GitHub, each a later check.
+  const overlapping = async () => {
+    let answer, asked
+    const waiting = new Promise(resolve => { asked = resolve })
+    const lookup = f.lookup(() => { asked(); return new Promise(resolve => { answer = resolve }) })
+    await waiting
+    await delay(2)
+    return { lookup, answer: nodes => answer(response(issue(nodes))) }
+  }
+  const older = await overlapping()
+  await apply((await f.lookup(() => response(issue([pull(3), pull(5)])))).updates)
+  await apply((await f.lookup(() => response(issue([pull(3), pull(5, { state: 'CLOSED' })])))).updates)
+  assert.equal(await stored(), pullUrl(3), 'changed to 5 and back')
+  older.answer([pull(3), pull(4)])
+  const { updates } = await older.lookup
+  assert.deepEqual(updates.map(update => [update.previous, update.next]), [[pullUrl(3), pullUrl(4)]])
+  await apply(updates)
+  assert.equal(await stored(), pullUrl(3), 'the change back was checked later')
+
+  // An older lookup that differs can land after a newer unchanged one, which
+  // wrote nothing, as it can land before one, which then finds the Fix it read
+  // gone. Either way the next lookup, finding the stored Fix differs, writes.
+  const slower = await overlapping()
+  assert.deepEqual((await f.lookup(() => response(issue([pull(3)])))).updates, [])
+  slower.answer([pull(3), pull(6)])
+  await apply((await slower.lookup).updates)
+  assert.equal(await stored(), pullUrl(6))
+  await apply((await f.lookup(() => response(issue([pull(3)])))).updates)
+  assert.equal(await stored(), pullUrl(3))
 })
 
 
