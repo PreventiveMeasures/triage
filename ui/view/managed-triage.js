@@ -284,7 +284,7 @@ export function resetManagedTriage() {
 // which the follow-up push carries up: the user's triage of those findings,
 // never uploaded. Pushes for the report wait for this to finish. Returns true
 // only when the server state was adopted and this is still the active view.
-export async function hydrateManagedReportTriage(reportId, { renderView = true, signal, readAnnotations } = {}) {
+export async function hydrateManagedReportTriage(reportId, { renderView = true, signal, readAnnotations, except } = {}) {
   const reports = state.reports, teamId = state.currentManagedTeam
   const role = state.managedSession?.role, userId = state.managedSession?.id
   const isCurrent = () => !signal?.aborted && state.serverMode === 'managed' && state.localMode !== true
@@ -304,7 +304,9 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true, 
   // Bail when the fetch failed or the user already navigated elsewhere.
   if (entries == null || !isCurrent()) return false
   let changed = false
-  const reportFindingIds = findingIdsForManagedReport(reportId)
+  // Those `except` names are left as they are: theirs read before, and kept
+  // since (ingest.js replaceManagedReports).
+  const reportFindingIds = [...findingIdsForManagedReport(reportId)].filter(id => !except?.has(id))
   const issuesChanged = annotations && applyManagedIssues(reportFindingIds, annotations.issues, previousIssues)
   for (const id of reportFindingIds) {
     if (!Object.hasOwn(entries, id)) {

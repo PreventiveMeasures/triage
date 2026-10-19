@@ -859,10 +859,11 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   // them instead of silently posting them to the first report only.
   // With the team feed, its annotation read (managed-feed.js), which knows
   // the revision it reads at; else one of its own.
-  const hydrate = async (signal, readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal)) => {
+  // Those `except` names keep what they hold (replaceManagedReports).
+  const hydrate = async (signal, readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal), except = undefined) => {
     const results = await Promise.all(findings.flatMap(entry => [
-      hydrateManagedReportTriage(entry.id, { renderView: false, signal, readAnnotations }),
-      loadManagedReportComments(entry.id, { signal, readAnnotations }),
+      hydrateManagedReportTriage(entry.id, { renderView: false, signal, readAnnotations, except }),
+      loadManagedReportComments(entry.id, { signal, readAnnotations, except }),
     ]))
     return results.every(Boolean) && !signal.aborted && !isStaleLoad(gen)
   }
@@ -911,26 +912,36 @@ const OPENING_FIELDS = ['showRevalidation', 'upstreamOnly', 'revalidationDetaile
 // rows App mode does not show (common/managed/finding-detail.js `fold`):
 // ingested again as they are, the reader's filters left as they set them, or,
 // while they have left the `opening` ones alone, those the whole reports open
-// on; and hydrated from the annotations already read (managed-feed.js), the
-// view held as it was meanwhile (render.js). One that fails once begun goes
-// Home, as a failed load does.
+// on. The findings the board's copy held keep the annotations kept for them
+// since, a reader's edits among them; those it left out are hydrated from the
+// annotations read as the team opened, any told since caught up with
+// (managed-feed.js). The board is held as it was meanwhile (render.js), and
+// takes nothing from its reader. One that fails once begun goes Home, as a
+// failed load does.
 async function replaceManagedReports(workspace, findings, { gen, hydrate, annotations, opening }) {
   const whole = new Map(workspace.map(entry => [entry.id, entry]))
   const entries = findings.map(entry => whole.get(entry.id))
   if (isStaleLoad(gen) || entries.some(entry => !entry)) return false
   const untouched = OPENING_FIELDS.every((key, index) => state[key] === opening[index])
-  state.reports = []
-  clearMergedGroups()
-  for (const entry of entries) {
-    const ingested = await ingestReport(entry.filename, entry.data, gen, {
-      renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepFilters: true,
-    })
-    if (isStaleLoad(gen)) return false
-    if (!ingested) { await failManagedTeamLoad('Could not load all team reports. Please try again.'); return false }
-  }
-  if (!await startManagedTeamFeed({ hydrate, annotations }) || isStaleLoad(gen)) {
-    if (!isStaleLoad(gen)) await failManagedTeamLoad('Could not load report annotations. Open the team or report again to retry.')
-    return false
+  const held = new Set(state.reports.flatMap(loaded => loaded.groups.flat().map(finding => finding.id)))
+  const board = document.querySelector('#findings-body-slot')
+  board?.setAttribute('inert', '')
+  try {
+    state.reports = []
+    clearMergedGroups()
+    for (const entry of entries) {
+      const ingested = await ingestReport(entry.filename, entry.data, gen, {
+        renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepFilters: true,
+      })
+      if (isStaleLoad(gen)) return false
+      if (!ingested) { await failManagedTeamLoad('Could not load all team reports. Please try again.'); return false }
+    }
+    if (!await startManagedTeamFeed({ hydrate: (signal, readAnnotations) => hydrate(signal, readAnnotations, held), annotations }) || isStaleLoad(gen)) {
+      if (!isStaleLoad(gen)) await failManagedTeamLoad('Could not load report annotations. Open the team or report again to retry.')
+      return false
+    }
+  } finally {
+    board?.removeAttribute('inert')
   }
   if (untouched) applyOpeningFilters(getShownGroups())
   return true
