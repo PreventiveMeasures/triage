@@ -215,7 +215,7 @@ import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersi
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { type RepositoryCodeKept, loadRepositoryCodeBody, repositoryCodeFits, repositoryCodeKept } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
-import { COAUTHORS_READ } from './commit-coauthors.ts'
+import { COAUTHORS_READ, coauthorsOf } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { type SquashedPull, type Squashes, squashedPulls } from './repository-squashes.ts'
@@ -1899,10 +1899,11 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const current = await authorize()
     if (!current) return
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
-    // Each commit as the tab draws it, its co-authors with it: what Pulse
-    // counts of it (its lines, its author's time) not sent.
-    const shown = ({ sha, parents, subject, authorName, authorLogin, authorId, coauthors, committedAt }: HistoryCommit) =>
-      ({ sha, parents, subject, authorName, authorLogin, authorId: authorId ?? null, coauthors: coauthors ?? [], committedAt })
+    // Each commit as the tab draws it, its co-authors with it, told by the
+    // agents the app knows now (coauthorsOf): what Pulse counts of it (its
+    // lines, its author's time) and the addresses kept not sent.
+    const shown = (commit: HistoryCommit) => ({ sha: commit.sha, parents: commit.parents, subject: commit.subject, authorName: commit.authorName,
+      authorLogin: commit.authorLogin, authorId: commit.authorId ?? null, coauthors: coauthorsOf(commit), committedAt: commit.committedAt })
     sendJson(res, 200, await withAppUsers(deps.db, { ...body, commits: listed.map(shown),
       ...pulls.length > 0 ? { pulls: pulls.map(pull => ({ ...pull, commits: pull.commits.map(shown) })) } : {}, ...squashed.pending ? { pullsPending: true } : {},
       ...openPulls?.length ? { openPulls } : {} }))
@@ -2084,7 +2085,7 @@ function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false, ma
   const keyOf = (top: string) => `${repoId}\0${COAUTHORS_READ}\0${top}`
   const told = (tops: string[], kept: Map<string, { value: HistoryCommit[] }>) => new Map(tops.flatMap(top => {
     const page = kept.get(keyOf(top))?.value
-    return Array.isArray(page) && page.every(commit => Array.isArray(commit.coauthors)) && (!graphql || page.every(commit => commit.additions != null))
+    return Array.isArray(page) && page.every(commit => Array.isArray(commit.named)) && (!graphql || page.every(commit => commit.additions != null))
       && (!marks || page.every(commit => commit.marked === AGENT_MARKS_READ)) ? [[top, page] as const] : []
   }))
   return {
@@ -2128,7 +2129,7 @@ function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
       const kept = await store.readMany(shas.map(keyOf))
       return new Map(shas.flatMap(sha => {
         const entry = kept.get(keyOf(sha))
-        return entry && (entry.value === null || (Array.isArray(entry.value.commits) && entry.value.commits.every(commit => Array.isArray(commit.coauthors))))
+        return entry && (entry.value === null || (Array.isArray(entry.value.commits) && entry.value.commits.every(commit => Array.isArray(commit.named))))
           ? [[sha, entry.value] as const] : []
       }))
     },

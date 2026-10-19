@@ -15,12 +15,13 @@
 import { agentOperated, githubAgent } from '../common/managed/github-agents.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
 import { shareGithubRead } from './github-requests.ts'
+import { coauthorsOf } from './commit-coauthors.ts'
 import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accountOf, actorOf, githubGraphql, historyFrom } from './repository-history.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
 // another are counted again.
-export const PULSE_YEAR_VERSION = 11
+export const PULSE_YEAR_VERSION = 12
 const WEEK_MS = 7 * 24 * 60 * 60_000
 const DAY_MS = 24 * 60 * 60_000
 const MAX_CONTRIBUTORS = 100
@@ -255,7 +256,7 @@ const bot = (login: string | null | undefined, name: string | null | undefined) 
 const withAgent = (commit: HistoryCommit, merges: ReadonlySet<string>, direct: ReadonlySet<string>) => merges.has(commit.sha)
   || (direct.has(commit.sha) && agentOperated(commit.authorLogin, commit.authorId ?? null))
   || githubAgent(commit.authorLogin, commit.authorId ?? null, commit.authorName) !== null || bot(commit.authorLogin, commit.authorName)
-  || (commit.coauthors ?? []).some(coauthor => Boolean(coauthor.agent) || bot(coauthor.login, coauthor.name))
+  || coauthorsOf(commit).some(coauthor => Boolean(coauthor.agent) || bot(coauthor.login, coauthor.name))
 
 // The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
 // statistics count them, merges left out: a week a row, its commits each day

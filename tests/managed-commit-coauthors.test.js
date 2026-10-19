@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { coauthorsOf } from '../server-managed/commit-coauthors.ts'
+import { MAX_NAMED, coauthorFacts, coauthorsOf as told } from '../server-managed/commit-coauthors.ts'
 
 const nobody = { login: null, id: null }
 const ada = { name: 'Ada', account: nobody }
+// Who made a commit beside its author (`author`), as its history keeps them
+// read from its message and GitHub's list (`listed`), then told as answered.
+const coauthorsOf = (message, { name, email = null, account }, listed = null) => told({ authorName: name, authorEmail: email, authorLogin: account.login,
+  authorId: account.id, ...coauthorFacts(message, listed) })
 
 test('a commit\'s co-authors are its trailers\', each the agent its account, address or name is', () => {
   assert.deepEqual(coauthorsOf('Fix\n\nCo-authored-by: Mona <3+mona@users.noreply.github.com>\nCo-authored-by: Claude Monet <monet@example.com>\n'
@@ -64,4 +68,14 @@ test('Neo is its account, by its id whatever its login, as it is its fingerprint
     [{ name: 'any-login', email: 'any-login@users.noreply.github.com', account: { login: 'any-login', id: 274065190 } },
       { name: 'Claude Opus 5.5', email: 'noreply@anthropic.com', account: { login: null, id: null } }]),
   [{ name: 'Claude Opus 5.5', login: null, id: null, agent: 'claude' }])
+})
+
+test('who a commit names beside its author is kept as named, by name, address and account, its message never: which are agents told as they are answered', () => {
+  const facts = coauthorFacts('Fix\n\n🤖 Generated with [Neo](https://neo.example)\n\nCo-authored-by: Codex <codex@openai.com>\nCo-authored-by: Mona <3+mona@users.noreply.github.com>')
+  assert.deepEqual(facts, { named: [{ name: 'Codex', email: 'codex@openai.com', login: null, id: null }, { name: 'Mona', email: '3+mona@users.noreply.github.com', login: 'mona', id: 3 }],
+    markedBy: ['codex', 'neo'] })
+  assert.equal(coauthorFacts(`Fix\n\n${Array.from({ length: MAX_NAMED + 2 }, (_, at) => `Co-authored-by: P${at} <p${at}@example.com>`).join('\n')}`).named.length, MAX_NAMED)
+  assert.deepEqual(told({ authorName: 'Ada', authorLogin: null, ...facts }), [{ name: 'Codex', login: null, id: null, agent: 'codex' }, { name: 'Mona', login: 'mona', id: 3 },
+    { name: 'Neo', login: null, id: null, agent: 'neo' }])
+  assert.deepEqual(told({ authorName: 'Ada', authorLogin: null }), [], 'one kept before they were read, none')
 })

@@ -13,13 +13,13 @@
 // for the marks an agent leaves, and a pull request's labels for one naming
 // an agent, and those alone are answered, never the texts. GraphQL alone
 // gives them, so it needs a token.
-import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AppAgent, agentSignals } from '../common/managed/agent-tasks.ts'
+import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AgentSignals, type AppAgent, agentSignals } from '../common/managed/agent-tasks.ts'
 import { GITHUB_AGENTS, type GithubAgentAccount, type GithubAgentId } from '../common/managed/github-agents.ts'
 import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
 import { GithubApiError } from './github-app.ts'
 import type { GraphqlError } from './github-graphql.ts'
-import { ACTOR, ALL_BRANCHES, type HistoryCommit, type HistoryPages, type NamedAccount, actorOf, commitAccount, commitMarks, githubGraphql, historyFrom, inBatches,
-  linkNoreplyUsers, variablesOf } from './repository-history.ts'
+import { ACTOR, ALL_BRANCHES, type HistoryCommit, type HistoryPages, type NamedAccount, actorOf, commitAccount, commitMarks, githubGraphql, historyFrom, historyMarks,
+  inBatches, linkNoreplyUsers, messageMarks, variablesOf } from './repository-history.ts'
 import { ISSUES_CURSOR } from './repository-issues.ts'
 
 export const AGENT_PULLS_PAGE = 50
@@ -142,17 +142,17 @@ const authorOf = (actor: GitActor | null | undefined) => both(commitAccount(acto
 function directCommit(node: CommitNode | null): AgentCommit | null {
   if (!node || typeof node.oid !== 'string' || !SHA.test(node.oid) || count(node.associatedPullRequests?.totalCount) > 0) return null
   const author = authorOf(node.author)
-  const signals = commitMarks(node.message, { name: null, email: node.author?.email, account: commitAccount(node.author) })
+  const signals = commitMarks(messageMarks(node.message), { name: null, email: node.author?.email, account: commitAccount(node.author) })
   if (!signals) return null
   return { oid: node.oid, title: nameOf(node.messageHeadline, MAX_TITLE) ?? '', at: timeOf(node.committedDate),
     author: author?.login ?? loginOf(node.author?.user), authorId: author?.id ?? null,
     additions: count(node.additions), deletions: count(node.deletions), signals }
 }
 
-// A commit of the history kept an agent marked (repository-history.ts
-// commitMarks), as one of the default branch's.
-const keptCommit = (commit: HistoryCommit): AgentCommit => ({ oid: commit.sha, title: commit.subject, at: commit.committedAt, author: commit.authorLogin,
-  authorId: commit.authorId ?? null, additions: commit.additions ?? 0, deletions: commit.deletions ?? 0, signals: commit.marks! })
+// A commit of the history kept an agent marked (`signals`,
+// repository-history.ts historyMarks), as one of the default branch's.
+const keptCommit = (commit: HistoryCommit, signals: AgentSignals): AgentCommit => ({ oid: commit.sha, title: commit.subject, at: commit.committedAt,
+  author: commit.authorLogin, authorId: commit.authorId ?? null, additions: commit.additions ?? 0, deletions: commit.deletions ?? 0, signals })
 
 // Whether a pull request brought each commit, kept by the commit.
 export interface CommitPulls {
@@ -275,11 +275,11 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
   const named = cursors.commits === null ? first && typeof head === 'string' && SHA.test(head) ? [head] : [] : startsOf(cursors.commits)
   const starts = named.slice(0, ALL_BRANCHES)
   const history = starts.length > 0 ? (await historyFrom(fullName, token, starts, pages, fetchImpl)).commits : []
-  const marked = history.filter(commit => commit.marks)
+  const marked = history.flatMap(commit => { const signals = historyMarks(commit); return signals ? [{ commit, signals }] : [] })
   const nodes = authored?.repository?.defaultBranchRef?.target?.history?.nodes ?? []
-  const [brought] = await Promise.all([pulledCommits(fullName, token, marked.map(commit => commit.sha), pulled, fetchImpl),
+  const [brought] = await Promise.all([pulledCommits(fullName, token, marked.map(({ commit }) => commit.sha), pulled, fetchImpl),
     linkNoreplyUsers(nodes.map(node => node?.author), token, fetchImpl)])
-  const commits = [...marked.filter(commit => !brought.has(commit.sha)).map(keptCommit), ...nodes.flatMap(node => directCommit(node) ?? [])]
+  const commits = [...marked.flatMap(({ commit, signals }) => brought.has(commit.sha) ? [] : [keptCommit(commit, signals)]), ...nodes.flatMap(node => directCommit(node) ?? [])]
   const after = { pulls: nextCursor(repository?.pullRequests), commits: frontier(history, named.slice(ALL_BRANCHES)) }
   return {
     pulls: (repository?.pullRequests?.nodes ?? []).flatMap(node => pull(node) ?? []),

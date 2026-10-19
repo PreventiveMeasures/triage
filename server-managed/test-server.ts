@@ -27,7 +27,7 @@ import { NpmPackageError, readNpmVersion, readNpmVersions } from './npm-packages
 import { loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { parseTeamNpmScopes } from './team-npm-scopes.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
-import { type Maker, coauthorsOf } from './commit-coauthors.ts'
+import { type Maker, coauthorFacts, coauthorsOf } from './commit-coauthors.ts'
 import { APP_AGENTS } from './app-agents.ts'
 import { usesOfKey } from '../risk/index.js'
 import { actionsLines } from './repository-actions.ts'
@@ -778,7 +778,7 @@ function historyFixture(url: URL, res: ServerResponse): void {
   const now = Date.now()
   const commitOf = ([label, subject, parents, hours, author]: [string, string, string[], number, string]) => ({
     sha: historySha(label), parents: parents.map(historySha), subject, authorName: author, authorLogin: null, committedAt: now - hours * 3_600_000,
-    coauthors: coauthorsOf(`${subject}\n\n${HISTORY_MESSAGES[label] ?? ''}`, { name: author, account: { login: null, id: null } }, HISTORY_LISTED[label]),
+    coauthors: coauthorsOf({ authorName: author, authorLogin: null, ...coauthorFacts(`${subject}\n\n${HISTORY_MESSAGES[label] ?? ''}`, HISTORY_LISTED[label]) }),
   })
   const commits = HISTORY_FIXTURE.map(commitOf)
   // A pull request's branch still at its head is read as any branch is.

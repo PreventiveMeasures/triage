@@ -132,7 +132,9 @@ Each page of history is read from GitHub once and kept, five branches or startin
 A query GitHub stops at its ten-second limit is retried in halves, down to one, and each page is kept as its query answers, so a read that fails still leaves less for the next.
 
 A commit shows its author, then its co-authors from its `Co-authored-by:` trailers, then any agents its message marks (see [Agents](#agents)).
-The server reads each commit message for these and keeps and answers only the names, never the message.
+The server reads each commit message for these and keeps only who it names (their names, addresses and accounts) and the marks agents left in it, never the message.
+Which of them are agents is told as each answer is sent, by the agents the app knows then, so an agent it learns of shows on pages already kept, with no reading GitHub again.
+Answers name them, never their addresses.
 
 ## Issues and pull requests
 
