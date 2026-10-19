@@ -98,12 +98,52 @@ const NPM_ERRORS = {
   502: "The npm registry couldn't be reached.",
 }
 
+// Reads asked for ahead of their readers (prefetch), by their URL, each
+// `{ reading, until, generation }`: the first read of one within
+// PREFETCH_MS, of the session that asked for it, takes its answer, none read
+// again; one taken failing, or refused, as a server busy for a moment
+// refuses it, read anew, but for a session change; one none takes in time
+// called off.
+const PREFETCH_MS = 15_000
+const prefetched = new Map()
+
+// `url` read now, for a read of it soon to take (request).
+export function prefetch(url) {
+  if (prefetched.has(url)) return
+  const unread = new AbortController()
+  const reading = managedFetch(url, { credentials: 'same-origin', signal: AbortSignal.any([unread.signal, managedAppState.sessionController.signal]) })
+  reading.catch(() => {})
+  const entry = { reading, until: Date.now() + PREFETCH_MS, generation: managedAppState.generation }
+  prefetched.set(url, entry)
+  setTimeout(() => {
+    if (prefetched.get(url) !== entry) return
+    prefetched.delete(url)
+    unread.abort()
+  }, PREFETCH_MS)
+}
+function takePrefetched(url, generation) {
+  const entry = prefetched.get(url)
+  if (!entry) return null
+  prefetched.delete(url)
+  return entry.until > Date.now() && entry.generation === generation ? entry.reading : null
+}
+// `promise`, or `signal`'s abort, whichever comes first.
+const abortable = (promise, signal) => new Promise((resolve, reject) => {
+  const abort = () => reject(signal.reason)
+  if (signal.aborted) { abort(); return }
+  signal.addEventListener('abort', abort, { once: true })
+  promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+})
+
 // A read that a session change aborts, its failures named by `errors`, by
-// their error code or else their status.
+// their error code or else their status; one read ahead (prefetch) taken.
 export async function request(url, errors, read, signal) {
   signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
   const generation = managedAppState.generation
-  const response = await managedFetch(url, { credentials: 'same-origin', signal })
+  const ask = () => managedFetch(url, { credentials: 'same-origin', signal })
+  const ahead = takePrefetched(url, generation)
+  const taken = ahead && await abortable(ahead, signal).then(answer => answer.ok ? answer : null, err => { if (signal.aborted) throw err; return null })
+  const response = taken || await ask()
   signal.throwIfAborted()
   if (!response.ok) {
     const body = await response.json().catch(() => null)
@@ -217,9 +257,9 @@ const REPOSITORY_ISSUES_ERRORS = {
 
 // The Issues and Pull requests tabs' tiles (`kind` 'issues' or 'pulls'): those
 // open or closed (`state`), a page at a time, on from the cursor `after`.
+const issuesUrl = (repoId, kind, state, after) => `/api/admin/repositories/issues?${new URLSearchParams({ repoId, kind, state, ...after ? { after } : {} })}`
 export function fetchRepositoryIssues(repoId, kind, { state = 'open', after = null, signal } = {}) {
-  return request(`/api/admin/repositories/issues?${new URLSearchParams({ repoId, kind, state, ...after ? { after } : {} })}`,
-    REPOSITORY_ISSUES_ERRORS, response => response.json(), signal)
+  return request(issuesUrl(repoId, kind, state, after), REPOSITORY_ISSUES_ERRORS, response => response.json(), signal)
 }
 
 const REPOSITORY_AGENTS_ERRORS = {
@@ -232,9 +272,9 @@ const REPOSITORY_AGENTS_ERRORS = {
 // The Agents tab's artifacts: a page of pull requests and of the default
 // branch's commits, on from the cursors `pulls` and `commits` (the first
 // page, naming neither, with issues and branches).
+const agentsUrl = (repoId, pulls, commits) => `/api/admin/repositories/agents?${new URLSearchParams({ repoId, ...pulls ? { pulls } : {}, ...commits ? { commits } : {} })}`
 export function fetchRepositoryAgents(repoId, { pulls = null, commits = null, signal } = {}) {
-  return request(`/api/admin/repositories/agents?${new URLSearchParams({ repoId, ...pulls ? { pulls } : {}, ...commits ? { commits } : {} })}`,
-    REPOSITORY_AGENTS_ERRORS, response => response.json(), signal)
+  return request(agentsUrl(repoId, pulls, commits), REPOSITORY_AGENTS_ERRORS, response => response.json(), signal)
 }
 
 const REPOSITORY_ITEM_ERRORS = {
@@ -316,8 +356,18 @@ const REPOSITORY_PULSE_ERRORS = {
 
 // The Pulse tab's: the default branch's statistics over the last year, and
 // the pull requests and issues of the last `weeks` weeks.
+const pulseUrl = (repoId, weeks) => `/api/admin/repositories/pulse?${new URLSearchParams({ repoId, weeks })}`
 export function fetchRepositoryPulse(repoId, weeks, { signal } = {}) {
-  return request(`/api/admin/repositories/pulse?${new URLSearchParams({ repoId, weeks })}`, REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
+  return request(pulseUrl(repoId, weeks), REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
+}
+
+// The first read an Activity view opening on `tab` makes, read ahead of it
+// while its bundle loads (repository-code.js): Issues' or Pull requests'
+// first page in `state`, Agents' first, Pulse's period of `weeks`.
+export function prefetchActivity(repoId, tab, { state = 'open', weeks = 4 } = {}) {
+  if (tab === 'issues' || tab === 'pulls') prefetch(issuesUrl(repoId, tab, state, null))
+  else if (tab === 'agents') prefetch(agentsUrl(repoId, null, null))
+  else if (tab === 'pulse') prefetch(pulseUrl(repoId, weeks))
 }
 
 // The Pulse tab's pull requests and issues of the days `from` to `to`

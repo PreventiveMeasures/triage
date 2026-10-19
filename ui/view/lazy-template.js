@@ -16,7 +16,7 @@ export function lazyTemplate(path) {
     loading = false
     render()
   }
-  return template => {
+  const shown = template => {
     if (entry.module) return template()
     if (error) {
       return html`<div class="bundles-slide-placeholder is-error">Couldn’t load: ${error} <button type="button" @click=${() => { error = null; render() }}>Retry</button></div>`
@@ -24,4 +24,7 @@ export function lazyTemplate(path) {
     if (!loading) void load()
     return html`<div class="bundles-slide-placeholder">Loading…</div>`
   }
+  // Whether the bundle is here.
+  shown.loaded = () => entry.module !== null
+  return shown
 }

@@ -28,6 +28,9 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchRepositoryRefs: () => { refsReads++; return refsAnswer() },
   fetchBundleContents() {}, fetchBundleMetadata() {},
 } })
+// The Activity views' first reads asked for as their bundle loads.
+const prefetches = []
+mock.module('../ui/view/activity-load.js', { exports: { prefetchActivityView(...args) { prefetches.push(args) } } })
 const { openRepositoryCodeRoute, openRepositoryCodeTab, repositoryRefs, repositoryCodeDetails, repositoryCodeEntries, repositoryCodeEntry, repositoryCodePending, repositoryCodeRoute, shownRevision } = await import('../ui/view/repository-code.js')
 const { bundleFileGithub } = await import('../ui/view/bundle-file-github.js')
 const { repositoryCompareSource } = await import('../ui/view/repository-compare.js')
@@ -388,6 +391,19 @@ test('Issues, Pull requests, Agents, Pulse and Replay, reading none of the direc
     assert.deepEqual([state.repositoryCodeOpening.tab, state.repositoryCodeOpening.historyOnly], [tab, true])
   }
   assert.equal(parseManagedRoute(new URL(`https://triage.test/repo/7/${commit}/issues/2`)), null, 'only Code names a file')
+})
+
+test('an Activity view\'s route opening asks for its first read as its bundle loads, before the commit it opens at is read, in the sub-tab it names; Code\'s none', async () => {
+  prefetches.length = 0
+  const at = (tab, subtab = null) => ({ view: 'repository-code', repoId: 7, commit, path: '', bundleTab: tab, ...subtab ? { subtab } : {} })
+  for (const route of [at('issues'), at('pulls', 'closed'), at('agents'), at('pulse', 'year')]) await openRepositoryCodeRoute(route, () => true, () => {})
+  assert.deepEqual(prefetches, [[7, 'issues'], [7, 'pulls'], [7, 'agents'], [7, 'pulse']])
+  assert.equal(activitySubtab('pulse'), 'year', 'its sub-tab shown as it asks')
+  await openRepositoryCodeRoute(at('pulls'), () => true, () => {})
+  await openRepositoryCodeRoute(at('pulse'), () => true, () => {})
+  answer = (repoId, ref, path) => Promise.resolve({ ...data, path })
+  await openRepositoryCodeRoute(at('code'), () => true, () => {})
+  assert.equal(prefetches.length, 6, 'Code reads its files')
 })
 
 test('an Activity view\'s sub-tab past its first is in its route, kept as another view or directory opens, and picked, an entry of its own', async () => {

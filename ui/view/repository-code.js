@@ -19,6 +19,7 @@ import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
 import { activitySubtabField, showActivitySubtab } from './repository-activity.js'
+import { prefetchActivityView } from './activity-load.js'
 import { sourceFolderIcon } from './source-file-icon.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { currentViewGeneration, currentViewSignal } from './view-navigation.js'
@@ -270,6 +271,9 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   // directory there or not, as its history lists the commits that touched it
   // all the same.
   if (!entry && REPOSITORY_FILELESS_TABS.has(tab)) {
+    // Its view's first read asked for as its bundle loads, the first time
+    // one opens, before the commit it opens at is read.
+    prefetchActivityView(repoId, tab)
     const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
     // Its branches and tags as they are now, for its header and History.
     rereadHeader(`refs\0${repoId}`)
