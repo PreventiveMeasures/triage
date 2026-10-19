@@ -23,7 +23,7 @@ import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, canReadRepositoryCode, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
-import { setManagedTeamFeedRefresh, startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
+import { managedTeamFeedLive, setManagedTeamFeedRefresh, startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
 import { announceManagedSession, heardManagedSessions, toldOtherThan, watchManagedSessions } from './managed-session-channel.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -2085,12 +2085,14 @@ function applyServerInfo(info, { runtime = true } = {}) {
 // and repaint the auth control. Only reached in managed mode. `again` asks
 // anew though one is in flight, which may have read the cookie before another
 // tab changed it: the new one supersedes it (managedSessionRequest).
-function refreshManagedSession({ again = false } = {}) {
+// `keepTeams` keeps the catalog held where the session is the same and the
+// feed live, which tells the catalog as it changes (managedTeamFeedLive).
+function refreshManagedSession({ keepTeams = false, again = false } = {}) {
   if (!again && managedSessionRefresh?.generation === clientModeGeneration) return managedSessionRefresh.promise
   managedSessionPending = true
   const refresh = { generation: clientModeGeneration, promise: null }
   managedSessionRefresh = refresh
-  refresh.promise = revalidateManagedSession().finally(() => {
+  refresh.promise = revalidateManagedSession({ keepTeams }).finally(() => {
     if (managedSessionRefresh === refresh) {
       managedSessionRefresh = null
       void renderSidebar()
@@ -2099,7 +2101,7 @@ function refreshManagedSession({ again = false } = {}) {
   return refresh.promise
 }
 
-async function revalidateManagedSession() {
+async function revalidateManagedSession({ keepTeams = false } = {}) {
   const generation = clientModeGeneration
   const request = ++managedSessionRequest
   const isCurrent = () => generation === clientModeGeneration && request === managedSessionRequest && isManagedUiMode()
@@ -2157,7 +2159,8 @@ async function revalidateManagedSession() {
     // team wait for this read (viewManagedTeams). The read is the session's,
     // not a view's: neither the navigation that opens the page nor leaving
     // that page before the read answers cancels it.
-    const teams = managedSessionTeams = refreshManagedTeams(isCurrent, { signal: new AbortController().signal })
+    const kept = keepTeams && previous?.id === session?.id && previous?.role === session?.role && managedTeamFeedLive()
+    const teams = kept ? null : managedSessionTeams = refreshManagedTeams(isCurrent, { signal: new AbortController().signal })
       .finally(() => { if (managedSessionTeams === teams) managedSessionTeams = null })
     const page = managedHistory.active && Object.hasOwn(MANAGED_PAGES, state.currentView) && !canAccessManagedPage(state.currentView)
       ? managedHistory.navigate({ view: canAccessManagedPage('manage') ? 'manage' : 'home' }, { replace: true })
@@ -2460,7 +2463,10 @@ export async function navigateToAdminPage(view, options = {}) {
   renderSidebar()
   // Use the known role and CSRF token immediately; apply session changes when
   // the background check finishes. Rapid navigation shares the pending check.
-  void refreshManagedSession()
+  // The session is asked each time, as another tab's sign-in or view may have
+  // changed the cookie its feed was opened with; the teams only where it
+  // changed, or the feed isn't live to tell them.
+  void refreshManagedSession({ keepTeams: true })
   // Manage pages share the main scroll container. Start each destination at its
   // header instead of carrying a long list's scroll position into the next page.
   document.querySelector('#main-content')?.scrollTo({ top: 0 })

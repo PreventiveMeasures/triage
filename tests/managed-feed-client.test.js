@@ -155,3 +155,23 @@ stalledEvents.forEach(stalled => {
     assert.equal(signals.at(-1).aborted, false)
   })
 })
+
+test('each connection that ends is told before another is made, a denied or closing one included', async () => {
+  const told = []
+  fetchResponse = signal => response(signal, ['event: teams\ndata: {}\n\n'], { hold: calls.length > 1 })
+  const controller = new AbortController()
+  const done = watchTeamFeed('team', { signal: controller.signal, onUpdate() {}, onTeams: () => { told.push(`teams ${calls.length}`) },
+    onClose() {}, onDrop: () => { told.push(`drop ${calls.length}`) } })
+  await settle()
+  assert.deepEqual(told, ['teams 1', 'drop 1'], 'the first ended at its EOF, before the reconnect')
+  mock.timers.tick(1000); await settle()
+  assert.deepEqual(told, ['teams 1', 'drop 1', 'teams 2'], 'the second still open')
+  controller.abort(); await done
+  assert.equal(told.at(-1), 'drop 2')
+  for (const close of [() => Promise.resolve(new Response('', { status: 401 })), signal => response(signal, ['event: close\ndata: {}\n\n'])]) {
+    fetchResponse = close
+    const ended = []
+    await watchTeamFeed('team', { signal: new AbortController().signal, onUpdate() {}, onClose: () => { ended.push('close') }, onDrop: () => { ended.push('drop') } })
+    assert.deepEqual(ended, ['close', 'drop'])
+  }
+})
