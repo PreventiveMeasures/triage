@@ -120,6 +120,7 @@ The score is out of 100, with four levels:
 - Readers with private access try the registry anonymously first, and retry a scoped package with the token.
 - Access is checked on every request, and again after the registry answers; a reader who lost private access meanwhile gets 404.
 - Streamed pretty-printed files recheck access before each file and stop when it is lost; a comparison rechecks once it is worked out.
+- Line counts asked for many versions at once get the same checks as one, each version on its own.
 - A version npm does not have and a private one the reader cannot open are both 404 `package-not-found`.
 - The browser reuses public versions it read in the session; a private version is fetched each time it opens, so access is rechecked.
 - Public workspace links cannot reach the npm endpoints.

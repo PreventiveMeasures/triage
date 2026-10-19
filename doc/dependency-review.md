@@ -113,6 +113,12 @@ Its sub-tabs are:
 
 A version is listed under the first pull request that adds it, as one review passes it everywhere, and later pull requests that add it say so.
 
+The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
+A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.
+What the tab read is kept for two minutes; drawn after that, it is shown while it is read again.
+A pull request's popup, and its repository's tiles, reuse what the tab read.
+The line counts on its rows come with the tab's answer where they are already counted, and the rest are asked for 50 at a time.
+
 ## Host reviewed dependencies
 
 A host that keeps reviewed dependencies of its own registers them once, before `init()`.
@@ -194,6 +200,7 @@ It is given only the asker's own published, unrevoked reviews, however it is ask
 | A directory locks over 20,000 versions | The review fails |
 | Over 100 lockfiles at the baseline commit, or held on the default branch | The rest are unread: the baseline's need reviews, and the default branch's fail its review |
 | Over 1,000 open pull requests in a repository | The Dependencies tab reads the 1,000 updated latest, and says so |
+| The Dependencies tab's request runs over 4 minutes | The repositories left are read again, up to 3 times; any still left show as failed until the tab is drawn again 30 seconds or more later |
 | A note over 20,000 characters | Refused |
 | A review changed elsewhere meanwhile, or a version or integrity that no longer matches | `409`, and the change is not saved |
 | GitHub refuses the repository's contents or the pull request | The popup says so (`502 github-status-403`) |
@@ -203,6 +210,8 @@ It is given only the asker's own published, unrevoked reviews, however it is ask
 - Dependencies, of a pull request or the default branch, are read and checked as the pull request itself is (see [code-viewer.md](./code-viewer.md)), and access is checked again after GitHub answers, unless the whole answer came from kept data.
 - A repository that reviews no dependencies answers so without asking GitHub, but only once the reader's access in the app is checked.
 - The team Dependencies tab leaves out any repository the reader may read only part of.
+- While the tab's request runs, the reader's session is checked before each repository's answer.
+- Before each answer showing a repository's dependencies, the request also checks that the team is still the reader's and still holds the repository, and that the reader may still read all of it; where not, the answer stops there.
 - The review page and its list check private npm access for both versions of a comparison (see [npm-viewer.md](./npm-viewer.md) for who reads private packages).
 - A team's published reviews list only for one who reads reviews in that team, access is asked again once npm is read (`404 no-team`), and each review is held to the reader's npm access.
 - Every change to a review needs a session, a CSRF token and the triage role, and all but publishing (held to its teams) and revoking also need reviewing in some team (`403 review-access-required`).
