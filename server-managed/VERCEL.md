@@ -39,8 +39,7 @@ It gives the database's time and statement count (`db`), new connections' time (
 It holds counts and durations alone, nothing of what was asked.
 A streamed response, such as a team's Dependencies or batched line counts, writes its headers before its first line, so its header tells only what was spent until then.
 Timing starts once the app has initialized, so a cold start's initialization is in none of these times, and the `503` of a failed initialization carries no header.
-A request's statements run one after another on its connection, so `db`'s time over its statements is about one round trip to the database; tens of milliseconds each point to the function running in another region than the database.
-Where a response that isn't streamed is marked `cold` and takes the browser much longer than its `app`, most of the difference went to starting the instance.
+A request's statements run one after another on its connection, so where they are simple reads, `db`'s time over its statements is close to one round trip to the database; tens of milliseconds each point to the function running far from the database's region.
 
 Ordinary managed requests start a due session/upload sweep alongside the normal response.
 The managed app registers maintenance with [`waitUntil`](https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#waituntil), so it can finish after the response ends.

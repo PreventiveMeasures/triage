@@ -115,7 +115,7 @@ A version is listed under the first pull request that adds it, as one review pas
 
 The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
 A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.
-What the tab read is kept for two minutes, then shown while it is read again.
+What the tab read is kept for two minutes; drawn after that, it is shown while it is read again.
 A pull request's popup, and its repository's tiles, reuse what the tab read.
 The line counts on its rows come with the tab's answer where they are already counted, and the rest are asked for 50 at a time.
 
@@ -200,7 +200,7 @@ It is given only the asker's own published, unrevoked reviews, however it is ask
 | A directory locks over 20,000 versions | The review fails |
 | Over 100 lockfiles at the baseline commit, or held on the default branch | The rest are unread: the baseline's need reviews, and the default branch's fail its review |
 | Over 1,000 open pull requests in a repository | The Dependencies tab reads the 1,000 updated latest, and says so |
-| The Dependencies tab's request runs over 4 minutes | The repositories left are read again, up to 3 times; any still left show as failed, and are read again 30 seconds later once shown |
+| The Dependencies tab's request runs over 4 minutes | The repositories left are read again, up to 3 times; any still left show as failed until the tab is drawn again 30 seconds or more later |
 | A note over 20,000 characters | Refused |
 | A review changed elsewhere meanwhile, or a version or integrity that no longer matches | `409`, and the change is not saved |
 | GitHub refuses the repository's contents or the pull request | The popup says so (`502 github-status-403`) |
