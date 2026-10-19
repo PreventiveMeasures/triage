@@ -6,6 +6,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { historyPageStore } from '../server-managed/npm-kept.ts'
 import { HISTORY_GLUED, historyFrom } from '../server-managed/repository-history.ts'
+import { squashedPulls } from '../server-managed/repository-squashes.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -400,6 +401,33 @@ test('the pull requests squashed into a history GitHub takes long to look up are
   const later = (await request({ repoId: '1', all: 'true' })).body
   assert.deepEqual(later.pulls.map(pull => [pull.merge, pull.number, pull.head]), [[squash, 2, start]])
   assert.equal(later.pullsPending, undefined)
+})
+
+test('squashed pull requests asked for while another lookup of the repository runs, which ends without looking them up, are looked up then', async () => {
+  const [first, second, root] = ['5', '6', '1'].map(char => char.repeat(40))
+  const kept = new Map()
+  const squashes = { read: shas => Promise.resolve(new Map(shas.flatMap(sha => kept.has(sha) ? [[sha, kept.get(sha)]] : []))),
+    write: (sha, pull) => { kept.set(sha, pull); return Promise.resolve() } }
+  const asked = [], gate = Promise.withResolvers()
+  const fetchImpl = async (url, options) => {
+    const { variables } = JSON.parse(options.body)
+    const shas = Object.entries(variables).flatMap(([key, sha]) => /^o\d+$/u.test(key) ? [sha] : [])
+    asked.push(shas)
+    if (shas.includes(first)) await gate.promise
+    return Response.json({ data: { repository: Object.fromEntries(shas.map((sha, at) => [`c${at}`, { associatedPullRequests: { nodes: [] } }])) } })
+  }
+  const commit = sha => ({ sha, parents: [root], subject: 'Work', authorName: null, authorLogin: null, committedAt: null })
+  const page = squashedPulls('org/older', 'token', [commit(first)], squashes, Number.POSITIVE_INFINITY, fetchImpl)
+  await setImmediate()
+  const older = squashedPulls('org/older', 'token', [commit(second)], squashes, Number.POSITIVE_INFINITY, fetchImpl)
+  await setImmediate()
+  assert.deepEqual(asked, [[first]], 'waiting on the lookup running')
+  gate.resolve()
+  const { pulls, pending } = await older
+  assert.deepEqual([pulls, pending], [[], false])
+  assert.deepEqual(asked, [[first], [second]], 'its own looked up once that one ended')
+  assert.equal(kept.get(second), null)
+  await page
 })
 
 test('all branches names the branches it didn\'t read, newest first, and reads on from the commits a later page names, each commit once', async t => {

@@ -67,22 +67,33 @@ const within = (promise: Promise<unknown>, ms: number) => ms === Number.POSITIVE
 // kept as it is found (lookUpSquashes). Answered with those kept once the
 // repository's lookup is done, or `waitMs` on, that lookup going on behind:
 // `behind`, one this started, for the caller to keep alive, and `pending`
-// while one does.
+// while one does. Another's lookup done within it, but not of all of these,
+// those it left are looked up as this one's, within what is left of it.
 export async function squashedPulls(fullName: string, token: string, commits: HistoryCommit[], squashes: Squashes,
   waitMs = Number.POSITIVE_INFINITY, fetchImpl: typeof fetch = globalThis.fetch): Promise<{ pulls: SquashedPull[]; pending: boolean; behind: Promise<void> | null }> {
   const single = commits.filter(commit => commit.parents.length === 1)
   const kept = await squashes.read(single.map(commit => commit.sha))
-  const unknown = single.filter(commit => !kept.has(commit.sha))
+  let unknown = single.filter(commit => !kept.has(commit.sha))
   if (unknown.length === 0) return { pulls: single.flatMap(commit => kept.get(commit.sha) ?? []), pending: false, behind: null }
-  let looking = lookingUp.get(fullName)
-  let behind: Promise<void> | null = null
-  if (!looking) {
-    behind = lookUpSquashes(fullName, token, unknown.slice(0, MAX_SQUASH_LOOKUPS), new Map(commits.map(commit => [commit.sha, commit])), squashes, fetchImpl)
-    const done: Promise<void> = behind.catch(() => {}).finally(() => { if (lookingUp.get(fullName) === done) lookingUp.delete(fullName) })
-    lookingUp.set(fullName, looking = done)
+  const listed = new Map(commits.map(commit => [commit.sha, commit]))
+  const deadline = Date.now() + waitMs
+  const found = new Map<string, SquashedPull | null>()
+  // Waited on, as long as is left, and those of `unknown` it kept found.
+  const settle = async (looking: Promise<void>) => {
+    await within(looking, Math.max(0, deadline - Date.now()))
+    for (const [sha, pull] of await squashes.read(unknown.map(commit => commit.sha))) found.set(sha, pull)
+    unknown = unknown.filter(commit => !found.has(commit.sha))
   }
-  await within(looking, waitMs)
-  const found = await squashes.read(unknown.map(commit => commit.sha))
+  const another = lookingUp.get(fullName)
+  if (another) await settle(another)
+  let behind: Promise<void> | null = null
+  if (!another || (unknown.length > 0 && !lookingUp.has(fullName))) {
+    const lookup = lookUpSquashes(fullName, token, unknown.slice(0, MAX_SQUASH_LOOKUPS), listed, squashes, fetchImpl)
+    const done: Promise<void> = lookup.catch(() => {}).finally(() => { if (lookingUp.get(fullName) === done) lookingUp.delete(fullName) })
+    lookingUp.set(fullName, done)
+    behind = lookup
+    await settle(done)
+  }
   return { pulls: single.flatMap(commit => kept.get(commit.sha) ?? found.get(commit.sha) ?? []), pending: lookingUp.has(fullName), behind }
 }
 
