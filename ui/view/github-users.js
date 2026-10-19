@@ -143,7 +143,12 @@ export function githubUser(login, fallback = login) {
   const agent = typeof login === 'string' ? accountAgent(login) : null
   if (agent) return agentBadge(agent, `@${login} on GitHub`)
   const user = appUser(login)
-  if (!user) return fallback
+  return user ? appUserBadge(user, login) : fallback
+}
+
+// A user of the app (`id`, `login`, `name`) by their avatar and name, else
+// login; the login GitHub names them by (`login`) in its tooltip.
+export function appUserBadge(user, login = user.login) {
   return html`<span class="app-user" data-tooltip=${`@${login} on GitHub`}><span class="app-user-avatar" aria-hidden="true">${(user.name ?? user.login)[0].toUpperCase()}${
     userImage(user)}</span><span class="app-user-name">${user.name ?? user.login}</span></span>`
 }

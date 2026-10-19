@@ -8,7 +8,7 @@ import { NEXT_ICON } from './lit-icons.js'
 import { DELETE_ICON_SVG } from './icons.js'
 import { sourceFileIcon } from './source-file-icon.js'
 import { showToast } from './toast.js'
-import { reviewBadge, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel } from './npm-review-presentation.js'
+import { reviewAuthor, reviewBadge, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel } from './npm-review-presentation.js'
 
 export const dependencyReviewRoute = review => ({ view: 'npm', packageName: review.package, packageSpec: review.version, bundleTab: 'review',
   ...(review.basePackage === null ? {} : { reviewPackage: review.basePackage, reviewSpec: review.baseVersion }) })
@@ -93,7 +93,7 @@ export class DependencyReviewList extends LitElement {
         ${review.basePackage !== null && review.basePackage !== review.package ? html`<span>${review.basePackage} ${review.baseVersion} → </span>` : nothing}
         <strong>${review.package}</strong> <span>${review.basePackage === review.package ? `${review.baseVersion} → ` : ''}${review.version}</span></a>
         <div class="dependency-review-meta">${compactDate(review.publishedAt ?? review.time)}
-          ${this.team ? html`<span class="dependency-review-author">${review.userLogin}</span>` : nothing}
+          ${this.team ? html`<span class="dependency-review-author">${reviewAuthor(review)}</span>` : nothing}
           ${published && review.teams.length > 0 ? html`<span class="dependency-review-teams">${review.teams.map(team => team.name).join(', ')}</span>` : nothing}
           ${published && notes > 0 ? html`<span class="dependency-review-note-count">${notes} ${notes === 1 ? 'note' : 'notes'}</span>` : nothing}
           ${review.revokedAt === null ? nothing : reviewBadge(review)}</div></div>

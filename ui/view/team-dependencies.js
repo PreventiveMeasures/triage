@@ -4,7 +4,7 @@
 // (`state.teamDependenciesTab`) its address's, /team/<slug>/dependencies
 // [/<tab>], and scrolling under them: of each
 // of its repositories whose review is in effect for them, the open pull
-// requests whose versions want reviews, those adding fewest first, each
+// requests whose versions want reviews, in the order picked (SORTS), each
 // version with its review as its pull request's is (pull-dependencies.js),
 // one a pull request above adds told under it alone, as it is reviewed once
 // whichever adds it; every version they add wanting one, each once, by the
@@ -22,6 +22,7 @@
 // without its repository's owner where every repository reviewed has the
 // same one.
 import { html, nothing, svg } from 'lit'
+import { live } from 'lit/directives/live.js'
 import { StateElement } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { fetchTeamDependencies } from './client-managed.js'
@@ -48,6 +49,15 @@ const SHOWN_LISTED = 48
 // opened again by the team's Dependencies tab (ingest.js
 // switchToWorkspaceContent).
 const TABS = [['pulls', 'Pull requests'], ['versions', 'Versions'], ['branch', 'Default branch'], ['reviews', 'Reviews']]
+// The orders of its Pull requests sub-tab (`state.teamDependenciesSort`),
+// by what each is named there: the newest opened first, the latest updated
+// first, or those adding fewest versions to review first, one held by
+// others alone after those adding some, then by the fewest those are; each
+// one's ties by repository, then the newest by number.
+const tied = (a, b) => a.repo.name < b.repo.name ? -1 : a.repo.name > b.repo.name ? 1 : b.item.number - a.item.number
+const latest = field => (a, b) => (b.item[field] ?? 0) - (a.item[field] ?? 0) || tied(a, b)
+const fewest = (a, b) => Number(a.size === 0) - Number(b.size === 0) || a.size - b.size || a.others - b.others || tied(a, b)
+const SORTS = { newest: ['Newest', latest('createdAt')], updated: ['Recently updated', latest('updatedAt')], fewest: ['Fewest to review', fewest] }
 // A pull request whose dependencies are still to be told.
 const TELLING = { status: 'loading', until: Number.POSITIVE_INFINITY }
 
@@ -342,18 +352,18 @@ class TeamDependencies extends StateElement {
       .map(item => ({ repo, item, entry: heldPullDependencies(repo.repoId, item.number, true) ?? TELLING })))
     // Each pull request's versions wanting reviews, as many as its answer
     // tells, and how many in all, those past them too (`toReview`), by which
-    // it is kept and ordered; and the other versions its lockfiles lock that
-    // want them (`others`), the default branch's mostly, which hold it too:
-    // one held by those alone after those adding some.
+    // it is kept; and the other versions its lockfiles lock that want them
+    // (`others`), the default branch's mostly, which hold it too; those
+    // adding fewest first, as Versions takes them, then as picked.
     const wanting = pulls.filter(({ entry }) => entry.status === 'ready' && entry.review).map(pull => {
       const wanted = addedVersions(pull.entry).versions.filter(pkg => ['wanted', 'unsupported'].includes(reviewOf(pkg, pull.entry.review)))
       const told = wanted.filter(pkg => reviewOf(pkg, pull.entry.review) === 'wanted').length
       const toReview = Math.max(pull.entry.review.toReview ?? told, told)
       return { ...pull, wanted, failed: reviewFailures(pull.entry), toReview, untold: toReview - told, size: wanted.length + toReview - told,
         others: unreviewedVersions(pull.entry).count }
-    }).filter(pull => pull.size > 0 || pull.others > 0 || pull.failed)
-      .toSorted((a, b) => Number(a.size === 0) - Number(b.size === 0) || a.size - b.size || a.others - b.others
-        || (a.repo.name < b.repo.name ? -1 : a.repo.name > b.repo.name ? 1 : b.item.number - a.item.number))
+    }).filter(pull => pull.size > 0 || pull.others > 0 || pull.failed).toSorted(fewest)
+    const sort = Object.hasOwn(SORTS, state.teamDependenciesSort) ? state.teamDependenciesSort : 'newest'
+    const sorted = sort === 'fewest' ? wanting : wanting.toSorted(SORTS[sort][1])
     // The repositories whose open pull requests are more than are read.
     const unchecked = reviewed.filter(({ read }) => read.pulls.more)
     // Each version wanting reviews, as the first adding it tells it, by the
@@ -411,27 +421,31 @@ class TeamDependencies extends StateElement {
         ? html`<p class="workspace-content-empty">None of this team’s repositories reviews its dependencies for you.</p>` : nothing}
       ${tab === 'branch' ? nothing : unchecked.map(({ repo, read }) => html`<p class="team-deps-quiet" role="alert">Only ${shorten(repo.name)}’s ${plural(read.pulls.items.length, 'open pull request')}
         updated latest are checked; its others aren’t.</p>`)}
-      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(wanting, adding, reading, unchecked.length > 0, naming)
+      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(sorted, sort, adding, reading, unchecked.length > 0, naming)
         : tab === 'versions' ? this.renderVersions(adding, reading, naming) : branches.map(({ repo, read }) => this.renderBranch(repo, read, naming))}`}
       </div>
     </div>`
   }
 
-  // The pull requests wanting reviews, fewest first, each version a pull
+  // The pull requests wanting reviews, in the order picked (`sort`), which
+  // their selector picks where there are more than one; each version a pull
   // request above adds told by it alone, those listed apart; each version
   // other pull requests review in their comments told so (`elsewhere`); and
   // the reader's reviews of its versions to copy, where the server's host
   // formats them (dependency-review-copy.js); one wanting none is not
   // listed, its copy in its popup. Each named as `naming` names it, every
   // card a column wide, however many versions it lists or opens.
-  renderPulls(wanting, adding, reading, unchecked, { elsewhere, named }) {
+  renderPulls(wanting, sort, adding, reading, unchecked, { elsewhere, named }) {
     if (wanting.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
     }
     const told = new Set()
     const row = pull => pkg => versionRow(pkg, pull.entry.review, { others: (adding.get(versionKey(pkg))?.pulls ?? []).filter(other => other !== pull).map(named),
       elsewhere: elsewhere(pkg, pull) })
-    return html`<ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
+    return html`${wanting.length > 1 ? html`<div class="team-deps-sort"><select aria-label="Sort pull requests" .value=${live(sort)}
+      @change=${event => { state.teamDependenciesSort = event.target.value }}>${Object.entries(SORTS).map(([value, [label]]) =>
+        html`<option value=${value} ?selected=${value === sort}>${label}</option>`)}</select></div>` : nothing}
+    <ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
       const own = pull.wanted.filter(pkg => !told.has(versionKey(pkg)))
       const above = pull.wanted.filter(pkg => told.has(versionKey(pkg)))
       for (const pkg of own) told.add(versionKey(pkg))

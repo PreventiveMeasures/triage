@@ -1,6 +1,6 @@
 // A team's Dependencies tab (ui/view/team-dependencies.js): of each of its
 // repositories whose review is in effect for its reader, the open pull
-// requests whose versions want reviews, fewest first, each version told
+// requests whose versions want reviews, in the order picked, each version told
 // under the first adding it alone, with its review; every version apart, each
 // once; and what each default branch locks that wants reviews; each sub-tab
 // at its address; a pull request named without its owner where every
@@ -11,7 +11,7 @@ import { mock, test } from 'node:test'
 import './_polyfills.js'
 import { templateText } from './_lit.js'
 
-const state = { managedSession: { id: 's', role: 'triage' }, managedTeams: [{ id: 'team-1', slug: 'deps' }], teamDependenciesTab: 'pulls' }
+const state = { managedSession: { id: 's', role: 'triage' }, managedTeams: [{ id: 'team-1', slug: 'deps' }], teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' }
 // The team reads asked, by the repositories each names (none: all), and the
 // pull requests or deltas asked alone.
 const asked = { teams: [], dependencies: [], deltas: [] }
@@ -29,9 +29,11 @@ const branches = {
   9: { cut: false, review: null, lockfiles: [dir()] },
 }
 const pull = (number, more = {}) => ({ number, title: `Pull ${number}`, author: 'octo', state: 'open', touchesLockfile: true, ...more })
+// When one was opened and last updated, by days into the year.
+const dated = (opened, updated) => ({ createdAt: Date.UTC(2026, 0, opened), updatedAt: Date.UTC(2026, 0, updated) })
 // Repository 8's more than are read.
-const pulls = { 7: { items: [pull(1), pull(3), pull(4, { touchesLockfile: false }), pull(9), pull(10), pull(11)], more: false },
-  8: { items: [pull(2), pull(6), pull(7, { touchesLockfile: false })], more: true } }
+const pulls = { 7: { items: [pull(1, dated(10, 60)), pull(3), pull(4, { touchesLockfile: false }), pull(9, dated(15, 32)), pull(10), pull(11)], more: false },
+  8: { items: [pull(2, dated(20, 21)), pull(6, dated(5, 64)), pull(7, { touchesLockfile: false })], more: true } }
 const dependencies = {
   // Its shared one reviewed in its comments, which count for it alone.
   '7#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared', { reviews: 1, commented: 1 }), ...big, gitdep, wants('fine', { reviews: 2 })], unsupported: [gitdep] })] },
@@ -193,6 +195,30 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
 
   view.open({ preventDefault() {} }, { repo: repo(8, 'org/b'), item: pull(2) })
   assert.deepEqual(opened, [{ repository: { repoId: 8, repo: 'org/b' }, target: { number: 2, preview: { ...pull(2), kind: 'pulls' } } }])
+})
+
+test('the pull requests in the order picked, the newest opened first where none is, or the latest updated; versions in theirs whatever is picked', async () => {
+  const view = shown([repo(7, 'org/a'), repo(8, 'org/b')])
+  const order = text => cardsOf(text).map(card => card.match(/class="team-deps-pull-name">([^<]+)</u)[1])
+  const picked = text => [...text.matchAll(/<option value=(\w+) \?selected=true>([^<]+)</gu)].map(m => [m[1], m[2]])
+  try {
+    let text = await read(view)
+    assert.deepEqual(order(text), ['b#2', 'b#6', 'a#1', 'a#9'], 'those adding fewest first, as picked')
+    assert.match(text, /<div class="team-deps-sort"><select aria-label="Sort pull requests"[^]*<option value=newest \?selected=false>Newest<[^]*<option value=updated \?selected=false>Recently updated<[^]*<option value=fewest \?selected=true>Fewest to review</u)
+    const versions = () => { view.pick('versions'); const listed = templateText(view.render()); view.pick('pulls'); return listed }
+    const before = versions()
+    for (const [sort, expected] of [[undefined, ['b#2', 'a#9', 'a#1', 'b#6']], ['updated', ['b#6', 'a#1', 'a#9', 'b#2']], ['other', ['b#2', 'a#9', 'a#1', 'b#6']]]) {
+      state.teamDependenciesSort = sort
+      text = templateText(view.render())
+      assert.deepEqual(order(text), expected, sort ?? 'none picked')
+      assert.deepEqual(picked(text), [[sort === 'updated' ? 'updated' : 'newest', sort === 'updated' ? 'Recently updated' : 'Newest']])
+      assert.equal(versions(), before, 'Versions as it was')
+    }
+    state.teamDependenciesSort = 'newest'
+    text = templateText(view.render())
+    assert.match(cardsOf(text)[2], /<\/svg>1 version a pull request above adds too<\/button>/u, 'a version told under the first adding it, as it is shown')
+    routes.length = 0
+  } finally { state.teamDependenciesSort = 'fewest' }
 })
 
 test('a team none of whose repositories reviews its dependencies for its reader says so, one they read only some of among them; one read failing says it', async () => {

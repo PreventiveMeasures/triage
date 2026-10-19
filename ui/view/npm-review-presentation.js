@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit'
 import { styleMap } from './style-map.js'
+import { appUserBadge } from './github-users.js'
 import { REVIEW_VERDICTS, parseReviewNotes } from '../../common/dependency-reviews.js'
 
 export const verdictLabels = { ...REVIEW_VERDICTS, 'accept-with-nits': 'Accept with nits' }
@@ -8,6 +9,10 @@ const symbols = { accept: '✓', 'accept-with-nits': '·', 'request-changes': '!
 export const verdictIcon = status => html`<span class=${`npm-review-verdict-icon ${status ?? 'unchecked'}`} aria-hidden="true">${symbols[status] ?? ''}</span>`
 export const verdictLabel = status => html`<span class="npm-review-verdict">${verdictIcon(status)}${verdictLabels[status] ?? 'Not reviewed'}</span>`
 export const reviewBadge = review => html`<span class=${`npm-review-badge ${review.revokedAt === null ? review.publishedAt === null ? '' : 'published' : 'revoked'}`}>${reviewState(review)}</span>`
+// Who wrote a review: the app's user by their avatar and the name they have
+// now, the login they reviewed as in its tooltip; that login alone once
+// they are no user of the app's.
+export const reviewAuthor = review => review.user ? appUserBadge({ id: review.user, login: review.userLogin, name: review.userName?.trim() || null }) : review.userLogin
 export const reviewDate = time => html`<time datetime=${new Date(time).toISOString()}>${new Date(time).toLocaleString()}</time>`
 export const reviewProgress = (checked, total) => html`<div class="npm-review-progress" role="progressbar" aria-label="Files checked"
   aria-valuemin="0" aria-valuemax=${total || 1} aria-valuenow=${checked}><span style=${styleMap({ width: `${total ? checked / total * 100 : 0}%` })}></span></div>`

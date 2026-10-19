@@ -101,6 +101,9 @@ test('a reader who publishes to no team reads reviews but neither edits nor revi
   assert.match(text(renderReviewEntry(page, { ...published, formatted: 'Reviewed' })), /<dependency-review-copy \.text=Reviewed>/u, 'one\'s own copied as the server\'s host formats it')
   assert.doesNotMatch(text(renderReviewEntry(page, { ...published, user: 'someone-else', formatted: 'Reviewed' })), /dependency-review-copy/u, 'another\'s never')
   assert.doesNotMatch(entryText, /dependency-review-copy \.text=[^>]/u, 'none where it formats none')
+  assert.match(text(renderReviewEntry(page, { ...published, userName: 'Alice Liddell' })),
+    /<strong><span class="app-user" data-tooltip=@Alice on GitHub><span class="app-user-avatar" aria-hidden="true">A<img src=\/api\/avatar\/alice [^]*<span class="app-user-name">Alice Liddell</u,
+    'its author by their avatar and name')
   page._file = 'index.js'
   assert.match(text(renderReviewEditor(page, 'index.js')), /Reviewing needs a team that reviews dependencies, where you manage or have Dependencies\./u)
   page.session = { ...page.session, role: 'view' }
@@ -283,7 +286,7 @@ test('My reviews lists each frozen set and its final verdict, with copy restrict
   copy.disconnectedCallback()
 })
 
-test('a team\'s reviews list those published to it, by whom, none to copy nor discard, a page on from the last', async () => {
+test('a team\'s reviews list those published to it, by whom, by their avatar and name, none to copy nor discard, a page on from the last', async () => {
   const page = new DependencyReviewList()
   page.team = 'team-1'
   page.session = { id: 'u-me', role: 'triage' }
@@ -293,7 +296,11 @@ test('a team\'s reviews list those published to it, by whom, none to copy nor di
   await page._load()
   assert.deepEqual(requests.at(-1).slice(0, 3), ['team', 'team-1', null])
   const row = text(page._row(full))
-  assert.match(row, /class="dependency-review-author">grace</u)
+  assert.match(row, /class="dependency-review-author"><span class="app-user" data-tooltip=@grace on GitHub><span class="app-user-avatar" aria-hidden="true">G<img src=\/api\/avatar\/alice [^]*<span class="app-user-name">grace</u,
+    'one with no name by their avatar and login, the login they reviewed as in its tooltip')
+  assert.match(text(page._row({ ...full, userName: 'Grace Hopper' })), /data-tooltip=@grace on GitHub>[^]*<span class="app-user-name">Grace Hopper</u, 'one with a name by it')
+  assert.match(text(page._row({ ...full, user: null, userName: null })), /class="dependency-review-author">grace</u, 'one no longer the app\'s user by the login they reviewed as alone')
+  assert.match(text(page._row({ ...full, userName: ' ' })), /<span class="app-user-name">grace</u, 'a blank name as none')
   assert.doesNotMatch(text(page._row({ ...full, formatted: 'Reviewed' })), /dependency-review-copy|dependency-review-discard/u, 'copying a dependency review is for one\'s own')
   answer = { reviews: [{ ...full, id: 'older', publishedAt: 100 }], next: null }
   await page._load(true)

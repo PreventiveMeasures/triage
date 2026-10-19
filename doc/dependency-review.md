@@ -109,10 +109,12 @@ A team that reviews dependencies shows a **Dependencies** tab (`/team/<slug>/dep
 It reads the open pull requests of each team repository whose review is in effect for the reader, up to the 1,000 updated latest per repository, and says where there are more.
 Its sub-tabs are:
 
-- **Pull requests**: those whose versions want reviews or whose review fails, fewest added versions first, each a card that opens its popup.
+- **Pull requests**: those whose versions want reviews or whose review fails, each a card that opens its popup.
+  A selector orders them newest first (the default), most recently updated first, or fewest versions to review first.
 - **Versions**: every added version that wants reviews, once, with the pull requests that add it.
 - **Default branch**, where anything there wants reviews: what each repository's default branch locks that wants reviews or fails them, and its lockfiles left unread.
 - **Reviews**: the reviews published to the team, revoked ones too, latest first, with their authors.
+  Each author shows with their avatar and their name in the app, with their GitHub login in its tooltip.
 
 A version is listed under the first pull request that adds it, as one review passes it everywhere, and later pull requests that add it say so.
 
