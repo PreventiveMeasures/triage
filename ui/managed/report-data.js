@@ -1,4 +1,5 @@
 import { fetchReport as requestReport, fetchReports as requestReports, fetchTeamReports as requestTeamReports } from '../../client/managed/session.js'
+import { fetchTeamTrees as requestTeamTrees } from '../../client/managed/team-trees.js'
 import { managedAppState } from './state.js'
 
 const keyFor = id => `reports:content:${id}`
@@ -44,4 +45,10 @@ export async function fetchReports(ids) {
 export function fetchTeamReports(teamId, { reportId = null } = {}) {
   const suffix = reportId === null ? '' : `:${reportId}`
   return cachedReport(`team:${teamId}${suffix}`, signal => requestTeamReports(teamId, { signal, reportId }))
+}
+
+// Their file trees, kept as their reports are.
+export function fetchTeamTrees(teamId, { reportId = null } = {}) {
+  const suffix = reportId === null ? '' : `:${reportId}`
+  return cachedReport(`trees:${teamId}${suffix}`, signal => requestTeamTrees(teamId, { signal, reportId }))
 }

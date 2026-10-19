@@ -55,6 +55,7 @@ import { canViewFindingHistory } from './finding-history.js'
 import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, triageLoadingTemplate, workspaceContent, workspaceContentButton, workspaceTitleTemplate } from './workspace-content.js'
 import './team-dependencies.js'
 import { createViewRenderer } from './render-transition.js'
+import { loadManagedTrees } from './managed-trees.js'
 import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
@@ -1702,6 +1703,14 @@ const ADMIN_VIEWS = {
   'manage-scans':   { slot: 'manage-scans-slot',   tag: 'managed-admin-scans',   title: 'DeepView — scans' },
 }
 
+// The views a tree draws, left for the findings where there is none to draw.
+function leaveTrees() {
+  if (state.currentView === 'files') state.currentView = 'findings'
+  if (state.viewMode === 'graph') state.viewMode = 'kanban'
+}
+
+const treesLoadingTemplate = what => html`<p class="triage-loading" role="status">Loading ${what}…</p>`
+
 // Alphabetical with the null bucket pinned last — the shape both the
 // model and repo option lists in renderImpl sort with.
 const nullLastCmp = (a, b) => {
@@ -2510,16 +2519,20 @@ function renderImpl() {
   // with N reports surfaces the union of their files / edges —
   // matches the findings merge above and the canvas merge inside
   // buildGraph2Data.
+  // A team's reports tell how many files their trees hold, the trees asked
+  // for once its graph or Files shows, which says it is loading meanwhile
+  // (managed-trees.js).
   const treeData = mergeReportsTree(state.reports)
-  const treeFileCount = treeData ? Object.keys(treeData).length : 0
+  const treeFileCount = treeData ? Object.keys(treeData).length : state.reports.reduce((sum, r) => sum + (r.treeFiles ?? 0), 0)
+  const treesLoading = treeFileCount > 1 && !treeData && (state.currentView === 'files' || state.viewMode === 'graph')
+    && loadManagedTrees(loaded => { if (!loaded) leaveTrees(); render() })
   const treeAvailable = treeFileCount > 1
-  if (!treeAvailable && state.currentView === 'files') state.currentView = 'findings'
   // Same shape as the sort-priority drop above — `graph` is only a
   // valid view-mode while a tree-bearing report is loaded; if the
   // user previously picked it and the underlying data went away
   // (workspace switch, report unload), fall back to the default
   // kanban board so a stale selection can't render an empty body.
-  if (!treeAvailable && state.viewMode === 'graph') state.viewMode = 'kanban'
+  if (!treeAvailable || !treeData && !treesLoading) leaveTrees()
 
   // `headerTemplate` returns a Lit template — slot reuse below
   // ensures the part-cache survives across renders so Lit can
@@ -2544,7 +2557,7 @@ function renderImpl() {
       report.replaceChildren(fHeader, treeSlot)
     }
     if (fHeader) litRender(headerTpl, fHeader)
-    if (treeSlot) litRender(renderTreeView(treeData, findingCounts), treeSlot)
+    if (treeSlot) litRender(treeData ? renderTreeView(treeData, findingCounts) : treesLoadingTemplate('files'), treeSlot)
     showReport()
     document.title = `DeepView — ${typeLabel || 'no analyzer'}`
     return
@@ -2673,7 +2686,7 @@ function renderImpl() {
         : html`<p style=${styleMap({ color: 'var(--green)' })}>No ${typeLabel} issues found.</p>`
     }
 
-    bodyTemplate = findingsBodyTemplate(filtered, selectedGroup, groupStates)
+    bodyTemplate = treesLoading ? treesLoadingTemplate('graph') : findingsBodyTemplate(filtered, selectedGroup, groupStates)
   }
 
   // Slot-reuse: only rebuild the chrome when the structure

@@ -69,7 +69,7 @@ A supplied token takes precedence over any login cookie.
 It may call only these read-only routes, and every other route is denied:
 
 - `/api/shares/:linkId/workspace`, for the token's own workspace only
-- `/api/teams/:id/{shared,reports,feed,annotations}`
+- `/api/teams/:id/{shared,reports,trees,feed,annotations}`
 - the `triage`, `comments` and `sources` routes of reports the link can see
 - the `metadata`, `contents`, `download`, `pretty`, `advisories`, `rename-diff`, `type-only` and `comparison` routes of bundles the link covers, where a comparison must be with another of those bundles
 

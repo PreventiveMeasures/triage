@@ -4,7 +4,7 @@ import { bucketOf, isReportIgnoreScoped, patchEntry, setReportIgnored } from './
 
 // The aggregate index does not use ingest's stamped copies.
 export function stampIndexedFindings(findings, data) {
-  const directory = dependencyDirectory([{ groups: [findings], tree: data.tree }])
+  const directory = dependencyDirectory([{ groups: [findings], tree: data.tree, treeDependencies: data.treeDependencies }])
   for (const finding of findings) {
     inheritReportMeta(finding, data)
     finding.isApp ??= isAppFinding(finding, finding.source ?? data.source)

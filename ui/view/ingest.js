@@ -1483,7 +1483,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // Preserve report boundaries and every original copy. Workspace grouping
     // depends on the App lens, so discarding duplicates here would make it
     // impossible to keep App rows separate and later merge their source rows.
-    const depsDirectory = dependencyDirectory([{ groups: rawEntries.map(toGroup), tree: data.tree }])
+    const depsDirectory = dependencyDirectory([{ groups: rawEntries.map(toGroup), tree: data.tree, treeDependencies: data.treeDependencies }])
     const groups = []
     for (const entry of rawEntries) {
       const members = toGroup(entry)
@@ -1556,6 +1556,11 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
       // (stamped at JSON-export time). The renderer surfaces this as a
       // separate "Tree" tab when more than one file is present.
       tree: data.tree ?? null,
+      // A team's report tells in its place how many files it holds and the
+      // dependency directory it names; the tree is asked for once its graph
+      // or Files shows (managed-trees.js).
+      treeFiles: data.treeFiles ?? null,
+      treeDependencies: data.treeDependencies ?? null,
       bundleHashes: data.bundleHashes ?? [],
     })
     configureDepsDir(state.reports)

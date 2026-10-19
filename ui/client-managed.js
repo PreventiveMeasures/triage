@@ -18,7 +18,7 @@ export { openFindingHistoryDialog, openManagedIssueDialog, openManagedShareDialo
 export * from '../client/managed/session.js'
 export * from '../client/managed/profile.js'
 export { watchTeamFeed } from '../client/managed/team-feed.js'
-export { fetchReport, fetchReports, fetchTeamReports } from './managed/report-data.js'
+export { fetchReport, fetchReports, fetchTeamReports, fetchTeamTrees } from './managed/report-data.js'
 export { fetchManagedLinkWorkspace } from './managed/deduplication-data.js'
 export { getPreviewRole, setPreviewRole } from '../client/managed/request.js'
 export { resetManagedAppState, setManagedAppSession, setManagedReportCatalog } from './managed/state.js'

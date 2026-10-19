@@ -309,6 +309,7 @@ export async function fetchBundleContents(id, options) {
 }
 
 export async function fetchTeamReports(teamId, options) { return (await loadManagedBundle()).fetchTeamReports(teamId, options) }
+export async function fetchTeamTrees(teamId, options) { return (await loadManagedBundle()).fetchTeamTrees(teamId, options) }
 
 export async function watchTeamFeed(teamId, options) {
   return (await loadManagedBundle()).watchTeamFeed(teamId, options)

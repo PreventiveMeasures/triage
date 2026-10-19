@@ -23,7 +23,7 @@ export function setManagedWorkspace(teamId, reports) {
       continue
     }
     const entries = reportEntries(data) ?? []
-    const directory = dependencyDirectory([{ groups: [entries.flat().filter(f => f && typeof f === 'object')], tree: data.tree }])
+    const directory = dependencyDirectory([{ groups: [entries.flat().filter(f => f && typeof f === 'object')], tree: data.tree, treeDependencies: data.treeDependencies }])
     for (const [index, entry] of entries.entries()) {
       const members = (Array.isArray(entry) ? entry : [entry]).filter(f => f && typeof f === 'object').map(f => {
         const finding = { ...f, _managedReportId: report.id, _reportName: report.filename,
