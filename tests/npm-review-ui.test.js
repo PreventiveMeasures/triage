@@ -40,8 +40,15 @@ mock.module('../ui/view/bundle-comparison.js', { namedExports: {
   bundleComparisonDiff: (base, other, scope) => { comparisonsAsked.push([base, other]); return Promise.resolve(prepareComparison(base, other, scope)) },
 } })
 mock.module('../ui/view/npm-compare-source.js', { namedExports: { npmComparisonSource: () => ({ choices: [], options: [] }) } })
+// A version as a patch changes it, each asked for noted.
+const loadedPatches = []
 mock.module('../ui/view/npm-package.js', { namedExports: {
   loadNpmVersion: (name, version) => { loadedBases.push([name, version]); return Promise.resolve({ details: base }) }, npmCompareSource: () => ({ choices: [], options: [] }),
+  loadPatchedNpmVersion: (version, patch) => {
+    loadedPatches.push([version.npm.name, version.npm.version, patch])
+    return Promise.resolve({ integrity: `${version.integrity} patch:${patch.hash}`, kind: 'sourcemap', size: 0,
+      json: { version: 3, sources: ['index.js', 'patched.js'], sourcesContent: ['patched\n', 'added by the patch\n'] }, npmPatch: { name: version.npm.name, version: version.npm.version, patch } })
+  },
   npmPackageRoute: (entry, tab, location) => ({ view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: tab, ...location }),
   parseNpmPackageInput: input => ({ name: input.slice(0, input.lastIndexOf('@')), spec: input.slice(input.lastIndexOf('@') + 1) }),
 } })
@@ -533,6 +540,47 @@ test('Review resumes the latest saved base while explicit links and new reviews 
   empty.details = page.details
   await empty._loadBase('@scope/lib@1.0.0', true)
   assert.equal(empty._context.basePackage, null, 'a saved full-package review overrides Compare’s base too')
+})
+
+test('a version as a pnpm patch changes it is reviewed as patched: its files the patched ones, its context the patch\'s hash, each change asked with where the patch is, its route keeping the patch but for another version', async () => {
+  const patch = { hash: 'a'.repeat(64), repoId: 7, commit: 'b'.repeat(40), path: 'patches/lib.patch' }
+  const page = component()
+  page.details = { kind: 'sourcemap', npm: entry.npm, json: { version: 3, sources: ['index.js'], sourcesContent: ['unpatched\n'] } }
+  page.request = { bundle: entry.integrity, reviewPackage: '@scope/lib', reviewSpec: '1.0.0', patch: { ...patch }, resume: true }
+  page._key = null
+  Object.assign(state, { bundleDetailsTab: 'review', selectedBundle: entry.integrity })
+  answer = { reviews: [], teams: TEAMS }
+  latestAnswer = null
+  loadedPatches.length = 0; latestRequests.length = 0; requests.length = 0
+  assert.match(text(page.render()), /Loading comparison/u)
+  for (let at = 0; at < 5; at++) await Promise.resolve()
+  assert.deepEqual(loadedPatches, [['@scope/lib', '2.0.0', patch]], 'its files as the patch changes them, read once')
+  assert.equal(latestRequests[0][0].patchHash, patch.hash, 'its latest review that of its patch')
+  assert.deepEqual(comparisonsAsked.at(-1)[1].npmPatch.patch, patch, 'compared as patched')
+  assert.equal(page._context.patchHash, patch.hash)
+  assert.deepEqual(page._files, ['index.js', 'patched.js'], 'those the patch adds among its files')
+  assert.deepEqual(state.npmReview.patch, patch, 'its route keeps the patch')
+  assert.equal(requests[0][0].patchHash, patch.hash, 'its reviews those of the patch')
+  assert.deepEqual(page._location('@scope/lib@1.0.0'), { reviewPackage: '@scope/lib', reviewSpec: '1.0.0', patch })
+  assert.deepEqual(page._location('@scope/lib@1.0.0', false), { reviewPackage: '@scope/lib', reviewSpec: '1.0.0' }, 'another version\'s, none')
+  const shown = text(page.render())
+  assert.match(shown, /class="npm-review-patched" data-tooltip=As pnpm’s patch patches\/lib\.patch changes it, read at bbbbbbb>patched</u)
+  assert.match(shown, /otherName=@scope\/lib@2\.0\.0 \(patched\)/u)
+  answer = { review: { ...review, ...page._context, id: 'patched', revision: 1, entries: [{ ...file, id: 'p', file: 'patched.js', status: 'accept', comment: '' }] }, reviews: [], teams: TEAMS }
+  requests.length = 0
+  await page._setFileStatus('patched.js', 'accept')
+  assert.deepEqual(requests[0][0], { ...page._context, patchRepoId: 7, patchCommit: patch.commit, patchPath: patch.path }, 'each change asked with where its patch is')
+  assert.equal(reviewTitle(page._context), '@scope/lib 1.0.0 -> 2.0.0 (patched)')
+  const route = { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '1.0.0', patch }
+  assert.equal(managedRoutePath(route), `/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0?patch=${patch.hash}&repo=7&commit=${patch.commit}&path=patches/lib.patch`)
+  assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route, 'its route read back')
+  for (const wrong of [{ ...patch, hash: 'nope' }, { ...patch, repoId: 0 }, { ...patch, commit: 'b' }, { ...patch, path: '../x.patch' }, { ...patch, path: '' }]) {
+    assert.equal(managedRoutePath({ ...route, patch: wrong }), null, JSON.stringify(wrong))
+  }
+  assert.equal(parseManagedRoute(new URL(`/npm/lib@2.0.0/review?patch=${patch.hash}&repo=7`, 'https://triage.test')), null, 'one naming not where its patch is')
+  assert.deepEqual(dependencyReviewRoute({ ...review, patchHash: patch.hash, patchSource: { repoId: 7, commit: patch.commit, path: patch.path } }).patch, patch,
+    'a patched review opens its patch where it was read')
+  Object.assign(state, { bundleDetailsTab: undefined, selectedBundle: undefined, npmReview: undefined })
 })
 
 test('a late latest-review lookup cannot override a new selection, and a failed lookup is retryable', async () => {

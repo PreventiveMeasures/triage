@@ -226,10 +226,10 @@ function dependencyLine(entry) {
   const reviewed = pkg => {
     const review = reviewOf(pkg, entry.review)
     return review === 'unsupported' ? `, can’t be reviewed: ${UNSUPPORTED[pkg.unsupported]}` : review === 'baseline' ? ', needs no review'
-      : pkg.reviewed ? ', reviewed' : pkg.rejected ? ', rejected' : pkg.patched && review === 'wanted' ? ', patched, unreviewed'
+      : pkg.reviewed ? ', reviewed' : pkg.rejected ? ', rejected'
       : review ? `, ${pkg.reviews}/${entry.review.required} reviews` : ''
   }
-  const named = pkg => `${pkg.name}@${pkg.version ?? '?'}${pkg.was ? ` (was ${pkg.was.join(', ')}${reviewed(pkg)})` : ` (new${reviewed(pkg)})`}`
+  const named = pkg => `${pkg.name}@${pkg.version ?? '?'}${pkg.patch ? ', patched' : ''}${pkg.was ? ` (was ${pkg.was.join(', ')}${reviewed(pkg)})` : ` (new${reviewed(pkg)})`}`
   const rest = versions.length - TOLD_PACKAGES
   const told = [versions.length > 0 ? `New in its lockfiles: ${versions.slice(0, TOLD_PACKAGES).map(named).join(', ')}${rest > 0 ? ` and ${rest.toLocaleString('en-US')}${plus} more` : more ? ' and more' : ''}` : null,
     others > 0 ? `${others.toLocaleString('en-US')} other ${others === 1 ? 'version' : 'versions'} in its lockfiles unreviewed` : null,

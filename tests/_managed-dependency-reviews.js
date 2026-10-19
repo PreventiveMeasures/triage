@@ -342,3 +342,62 @@ export async function checkReviewedTarballs(db) {
   assert.deepEqual(shasums(await change({ action: 'start', reviewId: null, revision: null }, 700, undefined, { ...whole, version: '3.0.0' })),
     { shasum: null, baseShasum: null }, 'none where none is told')
 }
+
+// A patched version's reviews (changeDependencyReview, its context's
+// `patchHash`): apart from those of it unpatched, an author's one draft of
+// each beside the other's; each keeping where its patch was read, as its
+// writer tells it, as it is begun, saved and first published, and as one is
+// continued; listed, and found their author's latest, by their patch; and
+// told so to a repository's pull requests (repoDependencyReviewState).
+export async function checkPatchedReviews(db) {
+  const users = {}
+  for (const [i, [login, role]] of [['admin', 'admin'], ['author', 'triage']].entries()) {
+    const session = await createSession(config, db, { githubUserId: i + 400, login, name: null, avatarUrl: null }, Date.now())
+    await db.setUserRole(session.userId, role)
+    users[login] = { ...session, sid: hashToken(session.setCookie.split(';')[0].slice(4)) }
+  }
+  for (const id of ['first', 'second']) {
+    await db.createTeam(id, id, Date.now())
+    await db.setTeamMember(id, users.author.userId, { dependencies: true, security: false })
+    await db.setTeamDependencyReview(users.admin.sid, id, true)
+  }
+  const other = { ...reviewContext, patchHash: 'b'.repeat(26) }, patched = { ...reviewContext, patchHash: 'a'.repeat(64) }
+  const [read, later] = [{ repoId: 1, commit: 'c'.repeat(40), path: 'patches/pkg.patch' }, { repoId: 1, commit: 'd'.repeat(40), path: 'patches/pkg.patch' }]
+  const tarballs = patch => ({ shasum: null, baseShasum: null, patch })
+  const change = (action, at, now, patch) => db.changeDependencyReview(at, users.author.sid, action, now, tarballs(patch))
+  const save = (review, file = 'index.js') => ({ action: 'save', reviewId: review?.id ?? null, revision: review?.revision ?? null, entryId: null, entry: { file, status: 'accept', comment: '' } })
+  const unpatched = await change(save(null), reviewContext, 100, null)
+  let review = await change(save(null, 'patched.js'), patched, 200, read)
+  assert.notEqual(review.id, unpatched.id, 'a draft of it patched beside one of it unpatched')
+  assert.deepEqual([unpatched.patchHash, unpatched.patchSource], [null, null])
+  assert.deepEqual([review.patchHash, review.patchSource], [patched.patchHash, read], 'its patch, and where it was read')
+  await assert.rejects(change({ action: 'start', reviewId: null, revision: null }, patched, 250, read), /review-conflict/u, 'one draft of each comparison of a patch')
+  const another = await change({ action: 'start', reviewId: null, revision: null }, other, 260, read)
+  assert.equal(another.patchHash, other.patchHash, 'another patch\'s apart, pnpm 9\'s spelling too')
+  review = await change(save(review), patched, 300, later)
+  assert.deepEqual(review.patchSource, later, 'a draft keeps where its patch was read as it was last saved')
+  const publish = (teamIds, final, patch) => change({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds, files: ['index.js', 'patched.js'], nonTextFiles: [], final },
+    patched, 400, patch)
+  review = await publish(['first'], { status: 'accept', comment: '' }, later)
+  review = await publish(['second'], null, read)
+  assert.deepEqual(review.patchSource, later, 'published to more teams, it keeps its own')
+  const ids = list => list.map(one => one.id).toSorted()
+  assert.deepEqual(ids(await db.listDependencyReviews(patched, users.author.userId)), [review.id], 'its version\'s as patched')
+  assert.deepEqual(ids(await db.listDependencyReviews(reviewContext, users.author.userId)), [unpatched.id], 'its version\'s unpatched')
+  assert.deepEqual(ids(await db.listDependencyReviews({ ...patched, basePackage: null, baseVersion: null, baseIntegrity: null }, users.author.userId, true)), [review.id],
+    'of any base, of its patch')
+  assert.equal((await db.getLatestOwnDependencyReview(users.author.userId, patched)).id, review.id)
+  assert.equal((await db.getLatestOwnDependencyReview(users.author.userId, reviewContext)).id, unpatched.id)
+  for (const [where, listed] of [['team', (await db.listTeamDependencyReviews('second', users.author.userId, null)).reviews],
+    ['own', (await db.listOwnDependencyReviews(users.author.userId, null)).reviews.filter(one => one.id === review.id)], ['by id', await db.listOwnDependencyReviewsById(users.author.userId, [review.id])]]) {
+    assert.deepEqual(listed.map(one => [one.patchHash, one.patchSource]), [[patched.patchHash, later]], where)
+  }
+  const continued = await change({ action: 'continue', reviewId: review.id, revision: review.revision }, patched, 500, read)
+  assert.deepEqual([continued.patchHash, continued.patchSource], [patched.patchHash, read], 'continued, of its patch, where it was read then')
+
+  await db.selectRepo({ repoId: 1, fullName: 'org/patched', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }, Date.now())
+  await db.setTeamRepo('first', 1, null)
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
+  const state = await db.repoDependencyReviewState(1, users.author.userId, [{ name: reviewContext.package, version: reviewContext.version }])
+  assert.deepEqual(state.reviews.map(one => [one.id, one.patchHash ?? null]), [[review.id, patched.patchHash]], 'a published one told a repository\'s pull requests by its patch')
+}

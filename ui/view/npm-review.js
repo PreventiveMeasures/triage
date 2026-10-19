@@ -2,7 +2,7 @@ import { LitElement, nothing } from 'lit'
 import { state } from '#client/index.js'
 import { dependencyReviews, discardDependencyReview, latestDependencyReview } from './client-managed.js'
 import { openDiscardReviewDialog } from './lazy-dialogs.js'
-import { loadNpmVersion, npmPackageRoute, parseNpmPackageInput } from './npm-package.js'
+import { loadNpmVersion, loadPatchedNpmVersion, npmPackageRoute, parseNpmPackageInput } from './npm-package.js'
 import { managedHistory } from './managed-history.js'
 import { showToast } from './toast.js'
 import { allowedReviewVerdicts, isReviewableFile, needsPackageJsonReview, summarizeReview } from '../../common/dependency-reviews.js'
@@ -16,8 +16,10 @@ import './mode-switch.js'
 
 export const REVIEW_DISPLAY_LIMITS = { maxLines: 50_000, maxBytes: 2 * 1024 * 1024 }
 export const EMPTY_REVIEW_BASE = { integrity: '(empty)', kind: 'sourcemap', json: { version: 3, sources: [], sourcesContent: [] }, fileSizes: new Map() }
-export const reviewContext = (entry, base) => ({ ecosystem: 'npm', package: entry.npm.name, version: entry.npm.version, integrity: entry.integrity,
-  basePackage: base?.npm?.name ?? null, baseVersion: base?.npm?.version ?? null, baseIntegrity: base?.npm ? base.integrity : null })
+// A review's context: its version, as `patch` changes it where given (its
+// hash, `patchHash`), against `base`, or none.
+export const reviewContext = (entry, base, patch = null) => ({ ecosystem: 'npm', package: entry.npm.name, version: entry.npm.version, integrity: entry.integrity,
+  patchHash: patch?.hash ?? null, basePackage: base?.npm?.name ?? null, baseVersion: base?.npm?.version ?? null, baseIntegrity: base?.npm ? base.integrity : null })
 const dependency = (name, spec) => `${name}@${spec ?? 'latest'}`
 
 export class NpmReview extends LitElement {
@@ -35,7 +37,7 @@ export class NpmReview extends LitElement {
     super()
     this._teams = []; this._reviews = []; this._files = []; this._nonTextFiles = []
     this._selectedTeams = new Set(); this._additionalTeams = new Map(); this._editors = new Map()
-    this._file = null; this._path = null
+    this._file = null; this._path = null; this._patch = null; this._patched = null
     this._loading = false; this._saving = false; this._error = null; this._context = null; this._key = null
     this._controller = new AbortController(); this._mode = 'code'
     this._panel = null; this._selectedReview = null; this._unchecked = false
@@ -50,9 +52,12 @@ export class NpmReview extends LitElement {
     if (state.bundleDetailsTab !== 'review' || state.selectedBundle !== this.entry?.integrity || !this._context || (!this._activeReview && this._ownPublished.length === 0 && !this._unsaved)) return
     state.npmReview = { bundle: this.entry.integrity,
       ...(this._context.basePackage ? { reviewPackage: this._context.basePackage, reviewSpec: this._context.baseVersion } : {}),
-      started: true, user: this.session?.id }
+      ...(this._patch ? { patch: this._patch } : {}), started: true, user: this.session?.id }
   }
   get _writable() { return ['triage', 'manage', 'admin'].includes(this.session?.role) && !this.session?.viewer }
+  // The files reviewed: the version's as its patch changes them, where the
+  // review is of it patched (`_patched`), else its own.
+  get _other() { return this._patched ?? this.details }
   // Writes and publishes reviews: writable, with a team to publish to, as
   // the server says (dependency-reviews.ts reviewsIn). Their own published
   // review revoked, and a draft discarded, writable alone.
@@ -87,9 +92,20 @@ export class NpmReview extends LitElement {
       && this._summary.checkedFiles > 0 && !this._needsPackageJson && !this._unchangedContinuation
       && this._selectedTeams.size > 0 && !this._unsaved && this._allowedVerdicts.includes(this._finalStatus)
   }
-  _location(target) {
+  // The route's location of a review against `target`, of this version as
+  // its patch changes it, where it is patched, but where `patched` is false,
+  // as another version's is.
+  _location(target, patched = true) {
     const parsed = target && target !== '(empty)' ? parseNpmPackageInput(target) : null
-    return parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}
+    return { ...parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}, ...patched && this._patch ? { patch: this._patch } : {} }
+  }
+  // `subject`'s context, the page's or a review's, as a change to it is
+  // asked: a patched one's with where its patch is read, a review's own,
+  // else the page's.
+  _asked(subject = this._context) {
+    const context = Object.fromEntries(Object.keys(this._context).map(field => [field, subject[field] ?? null]))
+    const source = (subject === this._context ? null : subject.patchSource) ?? this._patch
+    return context.patchHash && source ? { ...context, patchRepoId: source.repoId, patchCommit: source.commit, patchPath: source.path } : context
   }
   _navigate(target) { return this._navigateTo(npmPackageRoute(this.entry, 'review', this._location(target))) }
   async _navigateTo(route) {
@@ -98,37 +114,44 @@ export class NpmReview extends LitElement {
     if (this._unsaved && !await this._saveAll()) return
     if (key === this._key && navigation === this._navigation && !this._unsaved) await managedHistory?.navigate(route)
   }
+  // Its base as `target` names it, and, where the review is of this version
+  // as a patch changes it, its files so (npm-package.js
+  // loadPatchedNpmVersion, `_patched`).
   async _loadBase(target, resume = false) {
-    const key = JSON.stringify([this.entry.integrity, target, this.session?.id, this.session?.role])
+    const key = JSON.stringify([this.entry.integrity, target, this._patch, this.session?.id, this.session?.role])
     if (this._baseKey === key) return
     this._baseKey = key; this._base = null; this._baseError = null
     this._controller.abort(); this._cancelSaves(); this._key = null
     this._controller = new AbortController()
     try {
-      const latest = resume ? await latestDependencyReview(reviewContext(this.entry, null), this._controller.signal) : null
+      const signal = this._controller.signal
+      const other = this._patch ? loadPatchedNpmVersion(this.entry, this._patch, { signal }) : Promise.resolve(this.details)
+      other.catch(() => {})
+      const latest = resume ? await latestDependencyReview(reviewContext(this.entry, null, this._patch), signal) : null
       if (this._baseKey !== key) return
       if (latest) target = latest.basePackage ? dependency(latest.basePackage, latest.baseVersion) : '(empty)'
       const parsed = target === '(empty)' ? null : parseNpmPackageInput(target)
       const base = parsed ? (await loadNpmVersion(parsed.name, parsed.spec ?? 'latest')).details : EMPTY_REVIEW_BASE
+      const reviewed = await other
       if (this._baseKey !== key) return
       // Its files as the server pairs them with the base's (bundle-comparison.js), the review opening on them.
-      const diff = await bundleComparisonDiff(base, this.details)
+      const diff = await bundleComparisonDiff(base, reviewed)
       if (this._baseKey !== key) return
       if (resume) {
         if (latest) selectReviewOnOpen(latest)
         this._target = target
         this.request = { bundle: this.entry.integrity, ...this._location(target) }
-        this._baseKey = JSON.stringify([this.entry.integrity, target, this.session?.id, this.session?.role])
+        this._baseKey = JSON.stringify([this.entry.integrity, target, this._patch, this.session?.id, this.session?.role])
       }
-      this._base = base; this._ensureContext(base, diff)
+      this._patched = this._patch ? reviewed : null; this._base = base; this._ensureContext(base, diff)
     } catch (error) { if (this._baseKey === key) this._baseError = error.message }
   }
   _ensureContext(base, diff) {
-    const context = reviewContext(this.entry, base), key = JSON.stringify([this.session?.id, this.session?.role, context])
+    const context = reviewContext(this.entry, base, this._patch), key = JSON.stringify([this.session?.id, this.session?.role, context])
     if (key === this._key) return
     this._controller.abort(); this._cancelSaves(); this._controller = new AbortController(); this._context = context
     this._diff = diff
-    const files = comparisonFileList(base, this.details, this._diff)
+    const files = comparisonFileList(base, this._other, this._diff)
     this._files = orderedComparisonFiles(buildBundleSourceTree(files.map(file => file.path)))
     const nonText = new Set(files.filter(file => !isReviewableFile(file.before, file.after)).map(file => file.path))
     this._nonTextFiles = this._files.filter(path => nonText.has(path))
@@ -141,7 +164,7 @@ export class NpmReview extends LitElement {
       const location = this._location(base.npm ? dependency(base.npm.name, base.npm.version) : '(empty)')
       state.npmReview = { bundle: this.entry.integrity, ...location }
       // Pin tags to the exact bytes shown without loading the same base again.
-      this._baseKey = JSON.stringify([this.entry.integrity, base.npm ? dependency(base.npm.name, base.npm.version) : '(empty)', this.session?.id, this.session?.role])
+      this._baseKey = JSON.stringify([this.entry.integrity, base.npm ? dependency(base.npm.name, base.npm.version) : '(empty)', this._patch, this.session?.id, this.session?.role])
       managedHistory?.replaceRoute(npmPackageRoute(this.entry, 'review', location))
     }
   }
@@ -259,7 +282,7 @@ export class NpmReview extends LitElement {
   }
   async _persistContinuation(save) {
     const continuation = this._continuation, key = this._key
-    const { review } = await dependencyReviews(this._context, { action: 'continue', reviewId: continuation.source.id,
+    const { review } = await dependencyReviews(this._asked(), { action: 'continue', reviewId: continuation.source.id,
       revision: continuation.source.revision }, this.session.csrfToken, this._controller.signal)
     if (key !== this._key || this._continuation !== continuation || save && this._pendingSaves[0] !== save) return null
     this._acceptSave(review, { revision: continuation.source.revision })
@@ -307,7 +330,7 @@ export class NpmReview extends LitElement {
           Object.assign(save.change, { reviewId: continued.id, revision: continued.revision,
             entryId: continued.entries.find(row => row.file === save.change.file)?.id ?? null })
         }
-        const { review } = await dependencyReviews(this._context, save.change, this.session.csrfToken, this._controller.signal)
+        const { review } = await dependencyReviews(this._asked(), save.change, this.session.csrfToken, this._controller.signal)
         if (this._pendingSaves[0] !== save) return
         this._acceptSave(review, save.change)
         clearTimeout(save.timer); this._pendingSaves.shift(); save.resolve(review)
@@ -333,8 +356,7 @@ export class NpmReview extends LitElement {
         change = { ...change, reviewId: continued.id, revision: continued.revision }
       }
       const subject = this._reviews.find(review => review.id === change.reviewId) ?? this._context
-      const context = Object.fromEntries(Object.keys(this._context).map(field => [field, subject[field]]))
-      const { review } = await dependencyReviews(context, change, this.session.csrfToken, this._controller.signal)
+      const { review } = await dependencyReviews(this._asked(subject), change, this.session.csrfToken, this._controller.signal)
       if (key !== this._key) return null
       this._reviews = [...this._reviews.filter(row => row.id !== review.id), review]
       if (change.action === 'publish' && change.finalStatus && sameReviewContext(review, this._context)) {
@@ -394,6 +416,8 @@ export class NpmReview extends LitElement {
     if (!this.entry?.npm || !this.details) return nothing
     const request = this.request?.bundle === this.entry.integrity ? this.request : {}
     this._target = request.reviewPackage ? dependency(request.reviewPackage, request.reviewSpec) : '(empty)'
+    // One patch for as long as it names the same, as the route's is made anew.
+    if (JSON.stringify(request.patch ?? null) !== JSON.stringify(this._patch)) this._patch = request.patch ?? null
     void this._loadBase(this._target, request.resume)
     return renderReview(this)
   }

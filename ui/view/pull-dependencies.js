@@ -72,9 +72,15 @@ export const readsDependencies = item => item?.touchesLockfile === true || item?
 
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
 const UNSUPPORTED = new Set(['git', 'tarball', 'integrity'])
+const PATCH_HASH = /^(?:[\da-f]{64}|[2-7a-z]{26})$/u
 
-// A version as an answer names it: the versions it was, those it names,
-// whether it is patched, and its review, where it tells one: why it can't be
+// A version as one is told once, by its name and version, and its patch's
+// hash where it is patched, as each patch of it is reviewed apart.
+export const versionKey = pkg => `${pkg.name}@${pkg.version ?? ''}${pkg.patch ? `+${pkg.patch.hash}` : ''}`
+
+// A version as an answer names it: the versions it was, those it names, its
+// patch where it is patched (`patch`: its hash, and its file's path where
+// its lockfile names one), and its review, where it tells one: why it can't be
 // reviewed (`unsupported`), needing none (`baseline`), passed by the
 // server's reviewed dependencies (`reviewed`), or how many pass it
 // (`reviews`), whether a reviewer rejects it (`rejected`), how many
@@ -82,9 +88,10 @@ const UNSUPPORTED = new Set(['git', 'tarball', 'integrity'])
 // (`commented`), and its reviewers (`reviewers`, checkedReviewers).
 function checkedVersion(pkg) {
   if (typeof pkg?.name !== 'string') return []
-  const { was, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patched, ...version } = pkg
+  const { was, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patch, ...version } = pkg
   const by = checkedReviewers(reviewers)
-  return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {}, ...patched === true ? { patched } : {},
+  return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {},
+    ...PATCH_HASH.test(patch?.hash ?? '') ? { patch: { hash: patch.hash, ...typeof patch.path === 'string' && patch.path !== '' ? { path: patch.path } : {} } } : {},
     ...UNSUPPORTED.has(unsupported) ? { unsupported } : baseline === true ? { baseline } : reviewed === true ? { reviewed }
       : count(reviews) === null ? {} : { reviews, ...rejected === true ? { rejected } : {}, ...count(commented) > 0 ? { commented } : {}, ...by.length > 0 ? { reviewers: by } : {} } }]
 }
@@ -97,7 +104,8 @@ const checkedReviewers = list => Array.isArray(list) ? list.flatMap(one => typeo
 const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : []
 
 // A server's answer, its directories those it names by their lockfiles'
-// paths, each's versions those it names (checkedVersion), and its review's
+// paths, each's versions those it names (checkedVersion), the commit its
+// lockfiles were read at (`head`), whence its patches are, and its review's
 // terms, where it tells them, with how many versions across its directories
 // want reviews and can't be reviewed, whether the server's reviewed
 // dependencies pass them, and how many those failed to answer; by how many
@@ -112,7 +120,8 @@ export function checked(answer) {
       moreUnreviewed: count(dir.moreUnreviewed) ?? 0, unsupported: versionsOf(dir.unsupported), moreUnsupported: count(dir.moreUnsupported) ?? 0,
       moreLocked: count(dir.moreLocked) ?? 0 })
   const review = answer.review
-  return { lockfiles, cut: answer.cut === true, ...typeof answer.formatted === 'string' && answer.formatted.trim() !== '' ? { formatted: answer.formatted } : {},
+  return { lockfiles, cut: answer.cut === true, ...typeof answer.head === 'string' && /^[\da-f]{40}$/u.test(answer.head) ? { head: answer.head } : {},
+    ...typeof answer.formatted === 'string' && answer.formatted.trim() !== '' ? { formatted: answer.formatted } : {},
     ...count(review?.required) > 0 ? { review: { required: review.required,
     since: typeof review.since === 'string' ? review.since : null, canReview: review.canReview === true,
     ...count(review.toReview) === null ? {} : { toReview: review.toReview },
@@ -242,7 +251,7 @@ function once(name, { lockfiles, review }, work) {
   return value
 }
 
-// What an answer tells new: each package version once, across its
+// What an answer tells new: each package version once (versionKey), across its
 // directories, those of packages new to them first (`fresh`, no `was`), then
 // the new versions of those they locked before; how many of each; whether
 // it tells more than it sends (`more`); and how many want reviews
@@ -257,10 +266,10 @@ export function addedVersions(answer) {
 function added({ lockfiles, review }) {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.added ?? [])) {
-    const key = `${pkg.name}@${pkg.version ?? ''}`
+    const key = versionKey(pkg)
     const had = all.get(key)
     if (!had) { all.set(key, pkg); continue }
-    const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, patched: _patched, reviewers: _reviewers, ...version } = had
+    const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, reviewers: _reviewers, ...version } = had
     all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...bothReviewed(had, pkg, review) })
   }
   const versions = [...all.values()]
@@ -271,14 +280,14 @@ function added({ lockfiles, review }) {
 
 // The review of a version two directories lock, the less passing of theirs
 // (reviewOf, one that can't be reviewed the least), of the fewer reviews
-// where both want them, with its reviewers; patched where either is.
+// where both want them, with its reviewers.
 const PASSING = { unsupported: 0, wanted: 1, passed: 2, baseline: 3 }
 function bothReviewed(had, pkg, review) {
   const passing = one => PASSING[reviewOf(one, review)] ?? 4
   const less = passing(pkg) < passing(had) || (passing(pkg) === passing(had) && (pkg.reviews ?? Infinity) < (had.reviews ?? Infinity)) ? pkg : had
   const { unsupported, baseline, reviewed, reviews, rejected, reviewers } = less
   const commented = Math.max(had.commented ?? 0, pkg.commented ?? 0)
-  return { ...had.patched || pkg.patched ? { patched: true } : {}, ...unsupported ? { unsupported } : baseline ? { baseline } : reviewed ? { reviewed }
+  return { ...unsupported ? { unsupported } : baseline ? { baseline } : reviewed ? { reviewed }
     : reviews == null ? {} : { reviews, ...rejected ? { rejected } : {}, ...commented > 0 ? { commented } : {}, ...reviewers ? { reviewers } : {} } }
 }
 
@@ -297,16 +306,16 @@ export function reviewOf(pkg, review) {
 }
 
 // The other versions an answer's lockfiles lock that want reviews, each once
-// across its directories, and how many it counts in all (`count`), those it
-// didn't send among them: as its review tells, each once, else as its
-// directories do.
+// across its directories (versionKey), and how many it counts in all
+// (`count`), those it didn't send among them: as its review tells, each
+// once, else as its directories do.
 export function unreviewedVersions(answer) {
   return once('unreviewed', answer, () => unreviewed(answer))
 }
 function unreviewed({ lockfiles, review }) {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.unreviewed ?? [])) {
-    const key = `${pkg.name}@${pkg.version ?? ''}`
+    const key = versionKey(pkg)
     if (!all.has(key)) all.set(key, pkg)
   }
   return { versions: [...all.values()], count: review?.unreviewed ?? all.size + lockfiles.reduce((more, dir) => more + (dir.moreUnreviewed ?? 0), 0) }

@@ -782,7 +782,7 @@ class ManagedAdminRepos extends ManagedPage {
         ${Array.isArray(repo.reviewTeams) && repo.reviewTeams.length === 0 ? html`<p class="dependency-review-hint is-warning" role="status">No team that reviews
           dependencies has this repository, so its pull requests show no review. Add it to such a team, or turn dependency review on for a team that has it.</p>`
           : registered || draft.since.trim() ? html`<p class="dependency-review-hint">${registered
-            ? 'Versions this server’s reviewed dependencies pass need no reviews here; a patched one passes by them alone.'
+            ? 'Versions this server’s reviewed dependencies pass need no reviews here.'
             : 'Versions the repository’s lockfiles locked at this commit need no review.'}</p>` : nothing}
       </form>` : nothing}
     </section>`

@@ -14,7 +14,7 @@ const PATCH = 'ab'.repeat(32)
 const at = (name, version, more = {}) => ({ name, version, source: 'registry', integrity: sri(`${name}@${version}`), lockfile: 'npm', ...more })
 const review = (pkg, reviewer, more = {}) => ({ package: pkg.name, version: pkg.version, integrity: pkg.integrity, basePackage: null, baseVersion: null,
   reviewer, login: reviewer, status: 'accept', full: true, time: 1, ...pkg.patchHash ? { patchHash: pkg.patchHash } : {}, ...more })
-const strip = ({ integrity: _integrity, lockfile: _lockfile, patchHash, ...pkg }) => ({ ...pkg, ...patchHash ? { patched: true } : {} })
+const strip = ({ integrity: _integrity, lockfile: _lockfile, patchHash, ...pkg }) => ({ ...pkg, ...patchHash ? { patch: { hash: patchHash } } : {} })
 // A reviewer as a version's review tells them: passing it, in its comments alone where `comment`.
 const passes = (login, comment = false) => ({ login, status: 'accept', passes: true, ...comment ? { comment: true } : {} })
 

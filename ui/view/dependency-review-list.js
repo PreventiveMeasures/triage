@@ -10,8 +10,11 @@ import { sourceFileIcon } from './source-file-icon.js'
 import { showToast } from './toast.js'
 import { reviewAuthor, reviewBadge, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel } from './npm-review-presentation.js'
 
+// A review's page: of its version against its base, as patched where it is
+// a patched one's, the patch read where it was.
 export const dependencyReviewRoute = review => ({ view: 'npm', packageName: review.package, packageSpec: review.version, bundleTab: 'review',
-  ...(review.basePackage === null ? {} : { reviewPackage: review.basePackage, reviewSpec: review.baseVersion }) })
+  ...(review.basePackage === null ? {} : { reviewPackage: review.basePackage, reviewSpec: review.baseVersion }),
+  ...(review.patchHash && review.patchSource ? { patch: { hash: review.patchHash, ...review.patchSource } } : {}) })
 
 const compactDate = time => {
   const date = new Date(time)
@@ -91,7 +94,8 @@ export class DependencyReviewList extends LitElement {
         aria-label=${`${expanded ? 'Hide' : 'Show'} details for ${reviewTitle(review)}`} @click=${() => this._toggleDetails(review.id)}>${NEXT_ICON}</button>
       <div class="dependency-review-identity"><a class="dependency-review-title" href=${managedRoutePath(route)} @click=${open}>
         ${review.basePackage !== null && review.basePackage !== review.package ? html`<span>${review.basePackage} ${review.baseVersion} → </span>` : nothing}
-        <strong>${review.package}</strong> <span>${review.basePackage === review.package ? `${review.baseVersion} → ` : ''}${review.version}</span></a>
+        <strong>${review.package}</strong> <span>${review.basePackage === review.package ? `${review.baseVersion} → ` : ''}${review.version}${review.patchHash
+          ? html` <span class="dependency-review-patched">patched</span>` : nothing}</span></a>
         <div class="dependency-review-meta">${compactDate(review.publishedAt ?? review.time)}
           ${this.team ? html`<span class="dependency-review-author">${reviewAuthor(review)}</span>` : nothing}
           ${published && review.teams.length > 0 ? html`<span class="dependency-review-teams">${review.teams.map(team => team.name).join(', ')}</span>` : nothing}

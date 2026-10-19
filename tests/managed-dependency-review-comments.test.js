@@ -31,6 +31,8 @@ test('each of one\'s own published reviews is formatted alone, as the host forma
   await withFormatted(reviewed, 'me', [review('unknown', { shasum: null, baseShasum: null })])
   assert.deepEqual([given.at(-1).reviews[0].old, given.at(-1).reviews[0].new], [{ name: 'ms', version: '2.1.2', integrity: sri('ms@2.1.2') },
     { name: 'ms', version: '2.1.3', integrity: sri('ms@2.1.3') }], 'no shasum where the review kept none')
+  await withFormatted(reviewed, 'me', [review('patched', { patchHash: 'patch' })])
+  assert.equal(given.at(-1).reviews[0].new.patchHash, 'patch', 'a patched version\'s review with its patch')
 
   for (const answer of [() => Promise.resolve(''), () => Promise.resolve('  '), () => Promise.resolve(null), () => Promise.resolve(undefined), () => Promise.resolve(3),
     () => Promise.reject(new Error('down'))]) {
@@ -50,14 +52,14 @@ test('a pull request\'s, of one\'s own published reviews of the versions it adds
     published('other-base', { baseVersion: '1.0.0' }), published('unpatched', { patchHash: undefined }), published('commented', { id: undefined, comment: true })] }
   const asked = []
   // A store answering another's too, which the formatter is never given.
-  const db = { listOwnDependencyReviewsById: (user, ids) => { asked.push([user, ids]); return Promise.resolve([review('mine'), review('sneaky', { user: 'them' })]) } }
+  const db = { listOwnDependencyReviewsById: (user, ids) => { asked.push([user, ids]); return Promise.resolve([review('mine', { patchHash: 'patch' }), review('sneaky', { user: 'them' })]) } }
   const given = []
   const reviewed = { lookup: () => Promise.resolve(false), formatDependencyReviews: input => { given.push(input); return Promise.resolve('Reviewed in #5') } }
   const pullRequest = { repository: 'org/a', number: 5 }
   assert.equal(await formattedPull(reviewed, db, 'me', told, state, pullRequest), 'Reviewed in #5')
   assert.deepEqual(asked, [['me', ['mine']]], 'those of its versions, of their integrity, patch and a base they were, alone')
   assert.deepEqual([given[0].pullRequest, given[0].reviews.map(one => [one.new.name, one.new.shasum, one.old.shasum, one.new.patchHash])],
-    [pullRequest, [['ms', sha1('ms@2.1.3'), sha1('ms@2.1.2'), 'patch']]], 'the shasums the review kept of the tarballs it read, not the lockfile\'s')
+    [pullRequest, [['ms', sha1('ms@2.1.3'), sha1('ms@2.1.2'), 'patch']]], 'the shasums the review kept of the tarballs it read, not the lockfile\'s, and the patch it is of')
   assert.equal(await formattedPull(reviewed, db, 'me', told, null, pullRequest), null, 'none where its review is not in effect')
   assert.equal(await formattedPull({ lookup: reviewed.lookup }, db, 'me', told, state, pullRequest), null, 'nor where none is registered')
   assert.equal(await formattedPull(reviewed, db, 'nobody', told, state, pullRequest), null, 'nor for one with no review of its versions')

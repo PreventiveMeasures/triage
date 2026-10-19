@@ -1,20 +1,27 @@
 import { randomUUID } from 'node:crypto'
 import { ManagedMutationError } from './management.ts'
+import type { PatchSource } from './npm-patch.ts'
 import type { ManagedSql } from './sql.ts'
 import { REVIEW_VERDICTS, type ReviewSummary, type ReviewVerdict, allowedReviewVerdicts, needsPackageJsonReview, summarizeReview } from '../common/dependency-reviews.js'
 
+// A review is of a version, as npm's registry has it, by its integrity; of
+// it as pnpm patches it (`patchHash`, the patch's hash as a lockfile names
+// it), where it is patched; and compared with a version (its base), or none.
 export interface ReviewContext {
-  ecosystem: 'npm'; package: string; version: string; integrity: string
+  ecosystem: 'npm'; package: string; version: string; integrity: string; patchHash: string | null
   basePackage: string | null; baseVersion: string | null; baseIntegrity: string | null
 }
 // The shasums (sha1s, in hex) of the tarballs a review reads, its version's
 // and its base's, where npm tells them: each held, with its integrity, to the
-// tarball its reviewer was shown, as a review is written (http.ts).
-export interface ReviewedTarballs { shasum: string | null; baseShasum: string | null }
+// tarball its reviewer was shown, as a review is written (http.ts); and where
+// its patch was read (`patch`, npm-patch.ts), a patched version's.
+export interface ReviewedTarballs { shasum: string | null; baseShasum: string | null; patch?: PatchSource | null }
 export interface ReviewInput { file: string; comment: string; status: ReviewVerdict | null }
 export interface ReviewEntry extends ReviewInput { id: string; time: number }
 export interface ReviewTeam { id: string; name: string }
-export interface DependencyReview extends ReviewContext, ReviewedTarballs, ReviewSummary {
+export interface DependencyReview extends ReviewContext, Omit<ReviewedTarballs, 'patch'>, ReviewSummary {
+  // Where its patch was read, as it was written last: whence it is read again.
+  patchSource: PatchSource | null
   id: string; user: string | null; userLogin: string; userName: string | null; time: number; revision: number
   publishedAt: number | null; revokedAt: number | null; entries: ReviewEntry[]; teams: ReviewTeam[]; files: string[] | null
   nonTextFiles: string[] | null
@@ -27,7 +34,7 @@ export type ReviewChange = { action: 'save'; reviewId: string | null; revision: 
   | { action: 'revoke'; reviewId: string; revision: number }
 export interface DependencyReviewStore {
   listDependencyReviews(context: ReviewContext, user: string, allBases?: boolean): Promise<DependencyReview[]>
-  getLatestOwnDependencyReview(user: string, target: Pick<ReviewContext, 'ecosystem' | 'package' | 'version' | 'integrity'>): Promise<DependencyReview | null>
+  getLatestOwnDependencyReview(user: string, target: Pick<ReviewContext, 'ecosystem' | 'package' | 'version' | 'integrity' | 'patchHash'>): Promise<DependencyReview | null>
   listOwnDependencyReviews(user: string, before: { time: number; id: string } | null): Promise<{ reviews: DependencyReview[]; next: { time: number; id: string } | null }>
   // `user`'s own reviews of `ids`, none another's.
   listOwnDependencyReviewsById(user: string, ids: string[]): Promise<DependencyReview[]>
@@ -40,14 +47,17 @@ export interface DependencyReviewStore {
   listDependencyReviewEnabledTeams(): Promise<string[]>
   setTeamDependencyReview(sessionId: string, teamId: string, enabled: boolean): Promise<boolean>
   discardDependencyReview(sessionId: string, reviewId: string, revision: number): Promise<void>
-  // Written with the shasums of the tarballs read (`tarballs`), which a
-  // draft keeps as it is begun, saved and published; none where not told.
+  // Written with the shasums of the tarballs read (`tarballs`), and where its
+  // patch was, which a draft keeps as it is begun, saved and published; none
+  // where not told.
   changeDependencyReview(context: ReviewContext, sessionId: string, change: ReviewChange, now: number, tarballs?: ReviewedTarballs): Promise<DependencyReview>
 }
 
 // An unpublished review belongs only to its author. Publication freezes all
 // entries together and attaches that snapshot to its selected teams. Continuing
 // makes a new review; published entries and their timestamps never change.
+// Each author's one draft of a comparison is held so by
+// DEPENDENCY_REVIEW_INDEXES, once its columns are.
 export const DEPENDENCY_REVIEW_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_dependency_review (
   id TEXT PRIMARY KEY,
@@ -57,13 +67,10 @@ CREATE TABLE IF NOT EXISTS managed_dependency_review (
   base_package TEXT NOT NULL, base_version TEXT NOT NULL, base_integrity TEXT NOT NULL,
   time INTEGER NOT NULL, revision INTEGER NOT NULL, published_at INTEGER, revoked_at INTEGER, files TEXT,
   status TEXT CHECK (status IN ('accept', 'accept-with-nits', 'request-changes', 'reject')), comment TEXT NOT NULL DEFAULT '',
-  shasum TEXT NOT NULL DEFAULT '', base_shasum TEXT NOT NULL DEFAULT ''
+  shasum TEXT NOT NULL DEFAULT '', base_shasum TEXT NOT NULL DEFAULT '', patch_hash TEXT NOT NULL DEFAULT '', patch_source TEXT
 ) STRICT;
 CREATE INDEX IF NOT EXISTS managed_dependency_review_context_idx
   ON managed_dependency_review(ecosystem, package, version, integrity, base_package, base_version, base_integrity, time);
-CREATE UNIQUE INDEX IF NOT EXISTS managed_dependency_review_unpublished_idx
-  ON managed_dependency_review(user_id, ecosystem, package, version, integrity, base_package, base_version, base_integrity)
-  WHERE published_at IS NULL;
 CREATE INDEX IF NOT EXISTS managed_dependency_review_author_idx ON managed_dependency_review(user_id, time, id);
 CREATE TABLE IF NOT EXISTS managed_dependency_file_review (
   id TEXT PRIMARY KEY, review_id TEXT NOT NULL REFERENCES managed_dependency_review(id) ON DELETE CASCADE,
@@ -79,18 +86,28 @@ CREATE TABLE IF NOT EXISTS managed_dependency_review_team (
 CREATE INDEX IF NOT EXISTS managed_dependency_review_team_idx ON managed_dependency_review_team(team_id, review_id);
 `
 // The columns added since the table was, for a database that has it already.
-export const DEPENDENCY_REVIEW_COLUMNS = [['shasum', "TEXT NOT NULL DEFAULT ''"], ['base_shasum', "TEXT NOT NULL DEFAULT ''"]] as const
-const values = (c: ReviewContext) => [c.ecosystem, c.package, c.version, c.integrity, c.basePackage ?? '', c.baseVersion ?? '', c.baseIntegrity ?? '']
-const targetWhere = 'ecosystem = ? AND package = ? AND version = ? AND integrity = ?'
+export const DEPENDENCY_REVIEW_COLUMNS = [['shasum', "TEXT NOT NULL DEFAULT ''"], ['base_shasum', "TEXT NOT NULL DEFAULT ''"],
+  ['patch_hash', "TEXT NOT NULL DEFAULT ''"], ['patch_source', 'TEXT']] as const
+// Each author's one draft of a comparison, its patch's too, made once those
+// columns are: the index held to it before patches were reviewed gone.
+export const DEPENDENCY_REVIEW_INDEXES = `
+DROP INDEX IF EXISTS managed_dependency_review_unpublished_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS managed_dependency_review_draft_idx
+  ON managed_dependency_review(user_id, ecosystem, package, version, integrity, patch_hash, base_package, base_version, base_integrity)
+  WHERE published_at IS NULL;`
+const values = (c: ReviewContext) => [c.ecosystem, c.package, c.version, c.integrity, c.patchHash ?? '', c.basePackage ?? '', c.baseVersion ?? '', c.baseIntegrity ?? '']
+const targetWhere = 'ecosystem = ? AND package = ? AND version = ? AND integrity = ? AND patch_hash = ?'
 const contextWhere = `${targetWhere} AND base_package = ? AND base_version = ? AND base_integrity = ?`
 // Its author by the login they reviewed as, and by the name the app's user
 // has now (null once they are none, or have none), as the lists show them.
 const columns = `id, user_id AS user, user_login AS userLogin, (SELECT n.name FROM managed_user n WHERE n.id = user_id) AS userName, ecosystem, package, version, integrity,
-  NULLIF(base_package, '') AS basePackage, NULLIF(base_version, '') AS baseVersion, NULLIF(base_integrity, '') AS baseIntegrity,
-  NULLIF(shasum, '') AS shasum, NULLIF(base_shasum, '') AS baseShasum,
+  NULLIF(patch_hash, '') AS patchHash, NULLIF(base_package, '') AS basePackage, NULLIF(base_version, '') AS baseVersion, NULLIF(base_integrity, '') AS baseIntegrity,
+  NULLIF(shasum, '') AS shasum, NULLIF(base_shasum, '') AS baseShasum, patch_source AS patchSource,
   time, revision, published_at AS publishedAt, revoked_at AS revokedAt, files, status, comment`
 const conflict = () => { throw new ManagedMutationError(409, 'review-conflict') }
-const shasums = (tarballs: ReviewedTarballs | undefined) => [tarballs?.shasum ?? '', tarballs?.baseShasum ?? '']
+// What a review keeps of the bytes it read: its tarballs' shasums, and where
+// its patch was.
+const shasums = (tarballs: ReviewedTarballs | undefined) => [tarballs?.shasum ?? '', tarballs?.baseShasum ?? '', tarballs?.patch ? JSON.stringify(tarballs.patch) : null]
 
 // Who reviews dependencies in team `t`, user `u` as the query joins them: an
 // admin, in any team; a member who manages, in theirs; a member who triages,
@@ -136,7 +153,7 @@ async function requireReviewer(db: ManagedSql, user: string) {
   if ((await teams(db, user)).length === 0) throw new ManagedMutationError(403, 'review-access-required')
 }
 
-type ReviewRow = Omit<DependencyReview, 'files' | 'entries' | 'teams' | keyof ReviewSummary> & { files: string | null }
+type ReviewRow = Omit<DependencyReview, 'files' | 'entries' | 'teams' | 'patchSource' | keyof ReviewSummary> & { files: string | null; patchSource: string | null }
 async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Promise<DependencyReview[]> {
   const reviews = rows as ReviewRow[]
   if (reviews.length === 0) return []
@@ -162,13 +179,14 @@ async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Pro
 }
 // A review as its row, its entries and the teams its reader reads it in
 // tell it: its files' snapshot, its entries a file's each (fileEntries), and
-// what they sum up to.
+// what they sum up to; where its patch was read.
 function expanded(review: ReviewRow, entries: ReviewEntry[], readIn: ReviewTeam[]): DependencyReview {
   const snapshot = review.files === null ? null : JSON.parse(review.files) as string[] | { paths: string[]; nonTextFiles: string[] }
   const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
   const nonTextFiles = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
   const ownEntries = fileEntries(entries)
-  return { ...review, files, nonTextFiles, entries: ownEntries, ...summarizeReview(ownEntries, files, nonTextFiles), teams: readIn }
+  return { ...review, patchSource: review.patchSource ? JSON.parse(review.patchSource) as PatchSource : null, files, nonTextFiles, entries: ownEntries,
+    ...summarizeReview(ownEntries, files, nonTextFiles), teams: readIn }
 }
 // Rows gathered into one JSON array value (json_group_array): its text on
 // SQLite, parsed already on Postgres, where none gather as NULL.
@@ -185,7 +203,7 @@ async function publish(db: ManagedSql, current: DependencyReview | undefined, us
     if (!summarizeReview(entries, change.files, change.nonTextFiles).checkedFiles) throw new ManagedMutationError(400, 'no-reviewed-files')
     if (!change.final || !allowedReviewVerdicts(entries.filter(entry => !change.nonTextFiles.includes(entry.file))).includes(change.final.status)) throw new ManagedMutationError(400, 'bad-final-verdict')
     if (needsPackageJsonReview(entries, change.files, change.nonTextFiles)) throw new ManagedMutationError(400, 'package-json-not-reviewed')
-    await db.prepare(`UPDATE managed_dependency_review SET published_at = ?, files = ?, status = ?, comment = ?, shasum = ?, base_shasum = ?, revision = revision + 1
+    await db.prepare(`UPDATE managed_dependency_review SET published_at = ?, files = ?, status = ?, comment = ?, shasum = ?, base_shasum = ?, patch_source = ?, revision = revision + 1
       WHERE id = ?`).run(now, JSON.stringify({ paths: [...new Set(change.files)].toSorted(), nonTextFiles: [...new Set(change.nonTextFiles)].toSorted() }),
       change.final.status, change.final.comment, ...shasums(tarballs), current.id)
   } else {
@@ -211,7 +229,7 @@ async function listContext(db: ManagedSql, context: ReviewContext, user: string,
     AND (user_id = ? OR (published_at IS NOT NULL AND EXISTS (
       SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id JOIN managed_user u ON u.id = ?
       WHERE rt.review_id = r.id AND ${reviewsIn(false)})))
-    ORDER BY time, id`).all(...values(context).slice(0, allBases ? 4 : 7), user, user)
+    ORDER BY time, id`).all(...values(context).slice(0, allBases ? 5 : 8), user, user)
   return expandReviews(db, rows, user)
 }
 
@@ -277,8 +295,8 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
     listTeamDependencyReviews: (teamId, user, before) => listTeam(db, teamId, user, before),
     async getLatestOwnDependencyReview(user, target) {
       const row = await db.prepare(`SELECT ${columns} FROM managed_dependency_review
-        WHERE user_id = ? AND ecosystem = ? AND package = ? AND version = ? AND integrity = ? ORDER BY time DESC, id DESC LIMIT 1`)
-        .get(user, target.ecosystem, target.package, target.version, target.integrity)
+        WHERE user_id = ? AND ${targetWhere} ORDER BY time DESC, id DESC LIMIT 1`)
+        .get(user, target.ecosystem, target.package, target.version, target.integrity, target.patchHash ?? '')
       return row ? (await expandReviews(db, [row], user))[0]! : null
     },
     async discardDependencyReview(sessionId, reviewId, revision) {
@@ -312,8 +330,8 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
         if (await unpublished()) return conflict()
         const next = randomUUID()
         await db.prepare(`INSERT INTO managed_dependency_review
-          (id, user_id, user_login, ecosystem, package, version, integrity, base_package, base_version, base_integrity, shasum, base_shasum, time, revision)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`).run(next, user.id, user.login, ...values(context), ...shasums(tarballs), now)
+          (id, user_id, user_login, ecosystem, package, version, integrity, patch_hash, base_package, base_version, base_integrity, shasum, base_shasum, patch_source, time, revision)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`).run(next, user.id, user.login, ...values(context), ...shasums(tarballs), now)
         return next
       }
       if (change.action === 'start') {
@@ -336,7 +354,7 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
       } else {
         if (current?.publishedAt != null) return conflict()
         if (change.entry.status === null && !change.entryId) throw new ManagedMutationError(400, 'bad-review')
-        if (id) await db.prepare('UPDATE managed_dependency_review SET time = ?, shasum = ?, base_shasum = ?, revision = revision + 1 WHERE id = ?').run(now, ...shasums(tarballs), id)
+        if (id) await db.prepare('UPDATE managed_dependency_review SET time = ?, shasum = ?, base_shasum = ?, patch_source = ?, revision = revision + 1 WHERE id = ?').run(now, ...shasums(tarballs), id)
         else { if (change.entryId) return conflict(); id = await create() }
         await saveFile(db, id, change.entry, change.entryId, now)
       }

@@ -69,13 +69,14 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
 .npm-review-package { min-width: 0; }
 .npm-review-package > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .npm-review-package .npm-review-count { flex: none; }
-.npm-review-count, .npm-review-badge {
+.npm-review-count, .npm-review-badge, .npm-review-patched, .dependency-review-patched {
   border-radius: 3px;
   background: var(--surface-active);
   color: var(--muted);
   font-size: .68rem;
   }
 .npm-review-count { display: inline-block; padding: 0 .25rem; font-weight: 400; }
+.npm-review-patched, .dependency-review-patched { display: inline-block; padding: 0 .3rem; cursor: default; }
 .npm-review-badge { display: inline-flex; padding: .1rem .4rem; cursor: default; }
 .npm-review-filters { gap: .7rem; padding: 0 .15rem; }
 npm-review .npm-review-filters button {

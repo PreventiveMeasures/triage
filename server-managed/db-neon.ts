@@ -1,4 +1,4 @@
-import { DEPENDENCY_REVIEW_COLUMNS, DEPENDENCY_REVIEW_SCHEMA } from './dependency-reviews.ts'
+import { DEPENDENCY_REVIEW_COLUMNS, DEPENDENCY_REVIEW_INDEXES, DEPENDENCY_REVIEW_SCHEMA } from './dependency-reviews.ts'
 import { LINK_REPORT_SCHEMA } from './link-reports.ts'
 import { REPOSITORY_ALIAS_SCHEMA } from './repository-aliases.ts'
 import { TEAM_NPM_SCOPE_SCHEMA } from './team-npm-scopes.ts'
@@ -39,7 +39,7 @@ const LOCK = 'SELECT pg_advisory_xact_lock(1937006964, 1835101793)'
 // Whether every version up to the latest is recorded, in one round trip at
 // a cold start: a database with no versions table yet (undefined_table) has
 // none. Outside a transaction, so the failed read aborts nothing.
-const SCHEMA_VERSIONS = 32
+const SCHEMA_VERSIONS = 33
 async function currentSchema(db: PgConnection): Promise<boolean> {
   try {
     const { rows } = await db.query(`SELECT count(*) AS n FROM managed_schema_version WHERE version BETWEEN 1 AND ${SCHEMA_VERSIONS}`)
@@ -192,6 +192,16 @@ async function migrateDependencyReviewShasums(db: PgConnection): Promise<void> {
   await db.query('INSERT INTO managed_schema_version VALUES (32)')
 }
 
+// The patch a dependency review is of, and where it was read, none of
+// those written before; each author's one draft of a comparison held to its
+// patch too.
+async function migrateDependencyReviewPatches(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 33')).rows.length > 0) return
+  await db.query(`ALTER TABLE managed_dependency_review ${DEPENDENCY_REVIEW_COLUMNS.map(([column, type]) => `ADD COLUMN IF NOT EXISTS ${column} ${type}`).join(', ')}`)
+  await db.query(DEPENDENCY_REVIEW_INDEXES)
+  await db.query('INSERT INTO managed_schema_version VALUES (33)')
+}
+
 async function initialize(db: PgConnection): Promise<void> {
   if (await currentSchema(db)) return
   await db.query('BEGIN')
@@ -266,7 +276,7 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
     for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes, migrateDependencyReviews, migrateGithubLinks, migrateRepositoryDependencyReviews,
-      migrateRepositoryDependencyReviewLockfiles, migrateRepoUploadIndexes, migrateDependencyReviewShasums]) await migrate(db)
+      migrateRepositoryDependencyReviewLockfiles, migrateRepoUploadIndexes, migrateDependencyReviewShasums, migrateDependencyReviewPatches]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

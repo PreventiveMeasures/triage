@@ -12,7 +12,7 @@
 import { createClient } from '@preventive/upstream/github.js'
 import { upstreamGithub } from './github-errors.ts'
 import { GithubApiError } from './github-app.ts'
-import type { LockedPackage } from './locked-packages.ts'
+import { type LockedPackage, patchedIn } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
 import { type GithubAsked, type ListedLockfile, type LockfileStore, eachOf, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
 
@@ -57,7 +57,7 @@ export async function lockedAt(fullName: string, token: string, sha: string, kep
 }
 
 // The versions those of `read`'s lockfiles `held` holds to lock, each once,
-// and their paths.
+// each patch's file from the repository's root (patchedIn), and their paths.
 export function lockedIn(read: CommitLockfiles, held: (path: string) => boolean = () => true) {
   const packages = new Map<string, LockedPackage>()
   const paths: string[] = []
@@ -65,7 +65,7 @@ export function lockedIn(read: CommitLockfiles, held: (path: string) => boolean 
     paths.push(lockfile.path)
     for (const pkg of lockfile.packages) {
       const kept = packages.get(lockedWith(pkg))
-      if (!kept) packages.set(lockedWith(pkg), { ...pkg })
+      if (!kept) packages.set(lockedWith(pkg), patchedIn(lockfile.path, { ...pkg }))
       else if (kept.dev && !pkg.dev) delete kept.dev
     }
   }

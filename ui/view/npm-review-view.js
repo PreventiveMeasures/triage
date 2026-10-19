@@ -48,20 +48,25 @@ function reviewHeader(page) {
   return renderComparisonHeader(renderComparisonPicker({ source, label: 'Review', disabled: busy(page),
     from: { options: choices, value: hasBase ? page._target : null, label: 'Review base', pick: value => void page._navigate(value) },
     to: { options: versions, value: page.entry.npm.version, label: 'Version to review', pick: value => void page._navigateTo({
-      view: 'npm', packageName: page.entry.npm.name, packageSpec: value, bundleTab: 'review', ...page._location(page._target),
+      view: 'npm', packageName: page.entry.npm.name, packageSpec: value, bundleTab: 'review', ...page._location(page._target, value === page.entry.npm.version),
     }) },
     clear: hasBase ? { label: 'Clear review base', run: () => void page._navigate('(empty)') } : null,
     openLine: detail => page._openLine(detail),
-    comparison: { base: page._base, other: page.details, files: page._diff.files },
+    comparison: { base: page._base, other: page._other, files: page._diff.files },
   }), renderComparisonSummary(page._diff))
 }
+
+// The patch a patched version's review is of, where it was read, as its tag
+// tells it.
+const patchTag = page => page._patch ? html`<span class="npm-review-patched" data-tooltip=${`As pnpm’s patch ${page._patch.path} changes it, read at ${page._patch.commit.slice(0, 7)}`}>patched</span>`
+  : nothing
 
 function toolbar(page) {
   return html`<div class="npm-review-toolbar"><nav class="npm-review-toolbar-group" aria-label="Review breadcrumbs">
     <button type="button" class="npm-review-button npm-review-text-button" ?disabled=${busy(page)} @click=${() => void page._navigateTo({ view: 'reviews' })}>My reviews</button>
     ${NEXT_ICON}<button type="button" class="npm-review-button npm-review-text-button npm-review-package" aria-haspopup="dialog" ?disabled=${page._blocked}
       @click=${() => page._openPanel('reviews')}><span>${page.entry.npm.name}@${page.entry.npm.version}</span><span class="npm-review-count">${listedReviews(page).length}</span></button>
-    </nav>${reviewActions(page)}</div>`
+    ${patchTag(page)}</nav>${reviewActions(page)}</div>`
 }
 
 export function renderReviewEditor(page, file = page._file, inline = false) {
@@ -162,7 +167,8 @@ function panel(page) {
   const titles = { publish: 'Publish review', reviews: 'Reviews', unsaved: 'Unsaved changes' }
   return html`<dialog class="npm-review-dialog" aria-label=${titles[page._panel]} @cancel=${event => { event.preventDefault(); page._closePanel() }}>
     <button type="button" class="detail-action npm-review-close" aria-label="Close panel" ?disabled=${page._blocked} @click=${() => page._closePanel()}>×</button>
-    <header class="npm-review-dialog-head"><h2>${titles[page._panel]}</h2><p>${page._panel === 'reviews' ? `${page.entry.npm.name}@${page.entry.npm.version}` : reviewTitle(page._context)}</p></header>
+    <header class="npm-review-dialog-head"><h2>${titles[page._panel]}</h2><p>${page._panel === 'reviews' ? `${page.entry.npm.name}@${page.entry.npm.version}${page._patch ? ' (patched)' : ''}`
+      : reviewTitle(page._context)}</p></header>
     ${page._panel === 'publish' ? renderReviewConfirmation(page, page._activeReview) : html`<div class=${`npm-review-dialog-body${page._panel === 'reviews' ? ' npm-review-entries' : ''}`}>
       ${page._panel === 'unsaved' ? html`${page._dirtyFiles.map(file => html`<button type="button" class="npm-review-button"
           @click=${() => { page._closePanel(); page._selectFile(file) }}>${file} ${NEXT_ICON}</button>`)}`
@@ -216,8 +222,9 @@ export function renderReview(page) {
   if (!page._base) {return html`<div class="npm-review-empty" role=${page._baseError ? 'alert' : 'status'}>${page._baseError ?? 'Loading comparison…'}
     ${page._baseError ? html`<button type="button" class="npm-review-button" @click=${() => { page._baseKey = null; void page._loadBase(page._target, page.request?.resume) }}>Retry</button>` : nothing}</div>`}
   return html`${reviewHeader(page)}${toolbar(page)}${page._panel ? nothing : errorMessage(page)}
-    ${renderComparisonViewer({ base: page._base, other: page.details, diff: page._diff, source: page.source, path: page._path, seek: page._seek,
-      baseName: page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package', otherName: `${page.entry.npm.name}@${page.entry.npm.version}`,
+    ${renderComparisonViewer({ base: page._base, other: page._other, diff: page._diff, source: page.source, path: page._path, seek: page._seek,
+      baseName: page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package',
+      otherName: `${page.entry.npm.name}@${page.entry.npm.version}${page._patch ? ' (patched)' : ''}`,
       select: path => page._selectFile(path), extensions: reviewExtensions(page), mode: page._mode,
     })}
     <span class="npm-review-announcement" role="status">${page._notice ?? ''}</span>${page._panel ? nothing : savingMessage(page)}${panel(page)}`

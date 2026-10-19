@@ -24,8 +24,10 @@ const wants = (name, more = {}) => ({ name, version: '1.0.0', source: 'registry'
 const gitdep = { name: 'gitdep', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/gitdep.git', unsupported: 'git' }
 // The first reviewed in its own pull request's comments alone.
 const big = Array.from({ length: 13 }, (_, at) => wants(`big-${at}`, at === 0 ? { reviews: 1, commented: 1 } : {}))
+// pat as pnpm patches it, by the same patch everywhere, its lockfile naming its file.
+const patch = { hash: 'a'.repeat(64), path: 'patches/pat@1.0.0.patch' }
 const branches = {
-  7: { cut: false, review: { ...terms, unreviewed: 2 }, lockfiles: [dir({ unreviewed: [wants('old'), wants('pat', { patched: true })] })] },
+  7: { cut: false, head: 'f'.repeat(40), review: { ...terms, unreviewed: 2 }, lockfiles: [dir({ unreviewed: [wants('old'), wants('pat', { patch })] })] },
   8: { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir(), { paths: ['web/bun.lock'], error: 'lockfile-unsupported' }] },
   9: { cut: false, review: null, lockfiles: [dir()] },
 }
@@ -41,9 +43,9 @@ const dependencies = {
     ...big, gitdep, wants('fine', { reviews: 2 })], unsupported: [gitdep] })] },
   '7#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('fine', { reviews: 2 }), wants('known', { baseline: true })] })] },
   // Its own passed, but held by those its lockfiles locked before it.
-  // Its patch of pat reviewed in its comments, which no other's patch of it is.
-  '7#9': { cut: false, review: { ...terms, unreviewed: 4 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], unreviewed: [wants('old', { reviews: 1, commented: 1 }),
-    wants('pat', { patched: true, reviews: 1, commented: 1, reviewers: [{ login: 'lee', status: 'accept', passes: true, comment: true }] })], moreUnreviewed: 2 })] },
+  // Its patch of pat reviewed in its comments.
+  '7#9': { cut: false, head: 'e'.repeat(40), review: { ...terms, unreviewed: 4 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], unreviewed: [wants('old', { reviews: 1, commented: 1 }),
+    wants('pat', { patch, reviews: 1, commented: 1, reviewers: [{ login: 'lee', status: 'accept', passes: true, comment: true }] })], moreUnreviewed: 2 })] },
   // The reader's reviews of its versions formatted by the server's host, to copy.
   // Every version reviewed, one with the reader's reviews to copy, one without.
   '7#10': { cut: false, review: terms, formatted: 'Reviewed done', lockfiles: [dir({ added: [wants('done', { reviews: 2 })] })] },
@@ -179,7 +181,9 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.match(expanded[3], /aria-expanded=true [^]*href=\/npm\/old@1\.0\.0\/review [^]*and 2 more, not listed</u, 'those its lockfiles locked before, as many as it tells')
   assert.match(expanded[2], /shared[^]*data-tooltip=1 review of 2 required; 1 reviewer in its comments, which count here alone \.tooltipContent=[^]*<span class="compare-tip-label">Passing<\/span><span>1 of 2 required<\/span><span class="compare-tip-label">In its comments<\/span><span>1 reviewer, counting here alone<\/span><\/div><\/div>>1\/2</u,
     'where its comments review it, its count says so')
-  assert.match(expanded[3], /data-tooltip=pat@1\.0\.0 \.tooltipContent=[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u, 'a patched one\'s reviewers in its own comments')
+  assert.match(expanded[3], /data-tooltip=pat@1\.0\.0 \(patched\) \.tooltipContent=[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u, 'a patched one\'s reviewers in its own comments')
+  assert.match(expanded[3], new RegExp(`href=/npm/pat@1\\.0\\.0/review\\?patch=${patch.hash}&repo=7&commit=${'e'.repeat(40)}&path=patches/pat%401\\.0\\.0\\.patch `, 'u'),
+    'a patched one reviewed as patched, its patch read of its repository at the commit its lockfiles were read at')
   assert.doesNotMatch(expanded[2] + expanded[3], /team-deps-elsewhere/u, 'nor told reviewed elsewhere')
   view.toggle('org/a#1:own')
   assert.equal(cardsOf(templateText(view.render()))[2].split('<li>').length - 1, 13)
@@ -203,9 +207,13 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.match(branch, /<h2>a<\/h2>\s*<p class="team-deps-quiet">2 versions unreviewed<\/p>[^]*href=\/npm\/old@1\.0\.0\/review [^]*<span class=>a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*class="team-deps-elsewhere">a#9</u,
     'one a pull request reviews in its comments, which count there alone')
   const patched = branch.split('<li>').find(row => row.includes('>pat<'))
-  assert.ok(patched && !patched.includes('team-deps-elsewhere'), 'a patched one never, as two pull requests may patch it apart')
-  assert.match(patched, /<span class=>a#9<\/span>\s*<span>locks it, patched<\/span>/u)
-  assert.doesNotMatch(patched, /Reviewed by|lee/u, 'nor its tooltip naming who reviews another\'s patch of it')
+  assert.match(patched, new RegExp(`href=/npm/pat@1\\.0\\.0/review\\?patch=${patch.hash}&repo=7&commit=${'f'.repeat(40)}&path=patches/pat%401\\.0\\.0\\.patch `, 'u'),
+    'a patched one reviewed as patched, its patch read at the default branch\'s head')
+  assert.match(patched, /<span class="team-deps-patched">patched<\/span>[^]*class="team-deps-review is-wanted"[^]*>0\/2<[^]*<span class="team-deps-elsewhere">a#9<\/span>/u,
+    'its reviews of it as patched, those a pull request\'s comments make of the same patch told so')
+  assert.match(patched, /<span class="compare-tip-label">Patched<\/span><span>patches\/pat@1\.0\.0\.patch<\/span>/u, 'its patch\'s file in its tooltip')
+  assert.match(patched, /<span class=>a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u,
+    'and who reviews the same patch in that pull request\'s comments')
   assert.match(branch, /<h2>b<\/h2>\s*<p class="team-deps-quiet">0 versions unreviewed, 1 lockfile unread<\/p>\s*<p class="team-deps-quiet" role="alert">Unread, so what it locks isn’t checked:\s*<code>web\/bun\.lock<\/code>/u,
     'one wanting none, but whose lockfile is unread')
   assert.doesNotMatch(branch, /<h2>(?:other\/)?c</u, 'one not reviewed, not shown')

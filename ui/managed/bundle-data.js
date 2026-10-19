@@ -69,7 +69,25 @@ export function fetchBundleAdvisories(id, teamId, reason = '', repoAdvisories = 
   return requestBundle(id, part, managedAppState.sessionController.signal)
 }
 
+// Why a pnpm patch of a version couldn't be read of its repository, or
+// applied (server-managed/npm-patch.ts), as Review reads one.
+export const PATCH_ERRORS = {
+  'patch-not-found': 'The patch isn’t at the commit it was read at.',
+  'patch-mismatch': 'The file at the commit the patch was read at isn’t the patch its lockfile names.',
+  'patch-unreadable': 'The patch couldn’t be read as git writes one.',
+  'patch-unsupported': 'The patch changes a file’s bytes, which isn’t reviewed here.',
+  'patch-does-not-apply': 'The patch doesn’t apply to this version.',
+  'patch-too-large': 'The patch is too large to read here.',
+  'no-repository': 'The repository the patch is in isn’t available to you.',
+  'no-directory': 'Only some of the repository the patch is in is available to you.',
+  'github-token-required': 'Reading the patch needs your GitHub sign-in.',
+}
+// A patch's fields as the npm endpoints take them, where `patch` names one
+// (`{ hash, repoId, commit, path }`).
+export const patchParams = patch => patch ? { patchHash: patch.hash, patchRepoId: String(patch.repoId), patchCommit: patch.commit, patchPath: patch.path } : {}
+
 const NPM_ERRORS = {
+  ...PATCH_ERRORS,
   'bad-tarball': "This package's tarball couldn't be read.",
   'upstream-invalid': "The npm registry's answer for this package couldn't be read.",
   'upstream-too-large': "The npm registry's answer for this package is too large to read here.",
@@ -304,8 +322,10 @@ export function fetchRepositoryPulseItems(repoId, weeks, { from, to = null, auth
   return request(`/api/admin/repositories/pulse/items?${query}`, REPOSITORY_PULSE_ERRORS, response => response.json(), signal)
 }
 
-export function fetchNpmPackage(name, version, { signal } = {}) {
-  return requestNpm('package', { name, version }, signal)
+// A version's manifest and files; with `patch`, its files alone, as the
+// patch changes them, and the patch.
+export function fetchNpmPackage(name, version, { signal, patch = null } = {}) {
+  return requestNpm('package', { name, version, ...patchParams(patch) }, signal)
 }
 
 export function fetchNpmVersions(name, { signal } = {}) {
@@ -506,9 +526,10 @@ export function fetchBundleComparison(id, other, { signal, scope = '' } = {}) {
   return request(`/api/bundles/${encodeURIComponent(id)}/comparison?${scoped(other, scope)}`, COMPARISON_ERRORS, readComparison, signal)
 }
 
-// Two versions' of a package: `version` the one shown, compared with
-// `otherVersion`, of `otherName` where another package's, or with none as `(empty)`.
-export function fetchNpmComparison(name, version, otherVersion, { signal, otherName = name } = {}) {
-  const params = new URLSearchParams({ name, version, otherVersion, ...otherName === name ? {} : { otherName } })
+// Two versions' of a package: `version` the one shown, as `patch` changes it
+// where given, compared with `otherVersion`, of `otherName` where another
+// package's, or with none as `(empty)`.
+export function fetchNpmComparison(name, version, otherVersion, { signal, otherName = name, patch = null } = {}) {
+  const params = new URLSearchParams({ name, version, otherVersion, ...otherName === name ? {} : { otherName }, ...patchParams(patch) })
   return request(`/api/npm/comparison?${params}`, NPM_ERRORS, readComparison, signal)
 }
