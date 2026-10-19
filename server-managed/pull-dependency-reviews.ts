@@ -213,7 +213,7 @@ function capped<T extends { toReview: unknown[]; unreviewed: unknown[]; unsuppor
 // that can't be reviewed by where it is from too.
 type Shown = Pick<LockedPackage, 'name' | 'version' | 'source' | 'from'> & { patch?: Patch }
 const distinct = (lists: Shown[][], key: (pkg: Shown) => string) => new Set(lists.flat().map(key)).size
-const versionKey = (pkg: Shown) => `${pkg.name}@${pkg.version ?? ''}${pkg.patch ? `+${pkg.patch.hash}` : ''}`
+const versionKey = (pkg: Shown) => `${pkg.name}@${pkg.version ?? ''}\0${pkg.patch?.hash ?? ''}`
 const sourceKey = (pkg: Shown) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
 
 // The reviews an open pull request's comments make of `wanting`, the

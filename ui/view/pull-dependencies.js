@@ -76,7 +76,7 @@ const UNSUPPORTED = new Set(['git', 'tarball', 'integrity'])
 
 // A version as one is told once, by its name and version, and its patch's
 // hash where it is patched, as each patch of it is reviewed apart.
-export const versionKey = pkg => `${pkg.name}@${pkg.version ?? ''}${pkg.patch ? `+${pkg.patch.hash}` : ''}`
+export const versionKey = pkg => `${pkg.name}@${pkg.version ?? ''}\0${pkg.patch?.hash ?? ''}`
 
 // A version as an answer names it: the versions it was, those it names, its
 // patch where it is patched (`patch`: its hash, and its file's path where

@@ -251,8 +251,13 @@ export function patchedFiles(files: NpmPackageFile[], patch: PatchedFile[]): Npm
 }
 
 // Patches read lately, by their source and hash, as what a commit holds never
-// changes: each by the lines its hunks hold.
-const patches: Lru<PatchedFile[]> = lru(500_000, files => files.reduce((sum, file) => sum + 1 + file.hunks.reduce((lines, hunk) => lines + hunk.old.length + hunk.new.length, 0), 1))
+// changes: as many characters as MAX_KEPT_PATCHES of their paths and of the
+// lines their hunks hold, a patch of a few long lines (a minified file's)
+// weighing as much as one of many short ones.
+const MAX_KEPT_PATCHES = 32 * 1024 * 1024
+const held = (records: string[]) => records.reduce((sum, record) => sum + record.length, 0)
+const patches: Lru<PatchedFile[]> = lru(MAX_KEPT_PATCHES, files => files.reduce((sum, file) => sum + file.path.length + (file.from?.length ?? 0)
+  + file.hunks.reduce((chars, hunk) => chars + held(hunk.old) + held(hunk.new), 0), 1))
 
 // The patch `patch` names, read as kept, else of repository `fullName` with
 // `token`, held to its hash and read (parsePatch), and kept; `asked` told
