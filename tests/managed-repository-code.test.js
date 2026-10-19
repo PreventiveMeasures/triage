@@ -414,6 +414,25 @@ test('a directory of the default branch\'s head is kept in byte storage: opened 
   assert.ok(!later.some(entry => entry.includes('/git/') || entry.includes('/tarball/')), 'it was read as kept')
 })
 
+test('a kept directory takes a place among the active loads as one read from GitHub does: none left, it is refused as busy, and sent once one is', async t => {
+  const request = await fixture(t, { role: 'admin', storage: true })
+  github(t)
+  assert.equal((await request({ repoId: '1', ref: '', path: 'src/allowed' })).status, 200)
+  await request.settle()
+  const elsewhere = request.elsewhere()
+  // Every place taken by the largest directory there is, read from GitHub, unanswered.
+  const gate = Promise.withResolvers()
+  const largest = loadRepositoryCodeBody({ repoId: 2, repo: 'org/other', commit: other, path: '', tree: 'e'.repeat(40),
+    listed: { files: MAX_REPOSITORY_CODE_FILES, bytes: MAX_REPOSITORY_CODE_BYTES } }, () => gate.promise)
+  const busy = await elsewhere({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.deepEqual([busy.status, busy.body.error], [429, 'repository-busy'])
+  gate.reject(new Error('gone'))
+  await largest.result.catch(() => {})
+  largest.release()
+  const sent = await elsewhere({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(sent.status, 200)
+})
+
 test('only the default branch\'s head is kept: a read of another branch, a tag, or a commit not known as its head keeps nothing', async t => {
   const request = await fixture(t, { role: 'admin', storage: true })
   const asked = github(t)
@@ -496,7 +515,9 @@ test('a body past MAX_KEPT_CODE_BYTES is not kept, nor one kept past it read', a
   kept.keep({ ...at, path: 'src' }, { byteLength: MAX_KEPT_CODE_BYTES })
   await Promise.all(work)
   assert.deepEqual(put, [MAX_KEPT_CODE_BYTES])
-  assert.equal(await kept.read(at), null)
+  const read = kept.read(at)
+  assert.equal(await read.result, null)
+  read.release()
 })
 
 test('with storage encrypted, a kept directory is ciphertext at rest, bound to its path, and reads back', async t => {

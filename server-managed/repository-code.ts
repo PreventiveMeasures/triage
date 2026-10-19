@@ -96,10 +96,11 @@ export type KeptCodeAt = Pick<RepositoryCodeInput, 'repoId' | 'repo' | 'commit' 
 const keptKey = ({ repoId, repo, commit, path }: KeptCodeAt) =>
   `${repoId}/${commit}/v${KEPT_CODE_VERSION}-${createHash('sha256').update(JSON.stringify([repo, path])).digest('hex')}.json.br`
 
-// Bodies being read, and being kept, by their storage and key: readers asking
-// for one meanwhile share its read, and a body kept once.
-const keptReads = new WeakMap<CacheStorage, Map<string, Promise<Buffer | null>>>()
+// Bodies being kept, by their storage and key, each kept once; and each
+// storage's own name among the active loads, as its reads are one of them.
 const keeping = new WeakMap<CacheStorage, Set<string>>()
+const storageNames = new WeakMap<CacheStorage, number>()
+let storagesNamed = 0
 
 // A body kept, read whole, where it is one MAX_KEPT_CODE_BYTES keeps.
 async function readKept(storage: CacheStorage, key: string): Promise<Buffer | null> {
@@ -155,19 +156,19 @@ export function repositoryCodeKept(storage: CacheStorage, heads: KeptStore<{ com
       }
       return true
     },
-    // The body kept of the directory `at` names, or null.
-    read(at: KeptCodeAt): Promise<Buffer | null> {
+    // The body kept of the directory `at` names, or null: a load among the
+    // active ones (npm-loads.ts sharedLoad), as one read from GitHub is, a
+    // place of them, as it holds no more than a package may
+    // (MAX_KEPT_CODE_BYTES), till each reader has released it; readers
+    // asking for it meanwhile share it, and none is read where every place
+    // is taken (`repository-busy`).
+    read(at: KeptCodeAt): NpmLoad<Buffer | null> {
       const key = keptKey(at)
-      const reads = keptReads.get(storage) ?? keptReads.set(storage, new Map()).get(storage)!
-      let read = reads.get(key)
-      if (!read) {
-        const started: Promise<Buffer | null> = readKept(storage, key).catch((error: unknown) => {
-          if (!(error instanceof CacheMissError)) warn('read')(error)
-          return null
-        }).finally(() => { if (reads.get(key) === started) reads.delete(key) })
-        reads.set(key, read = started)
-      }
-      return read
+      const name = storageNames.get(storage) ?? storageNames.set(storage, ++storagesNamed).get(storage)!
+      return sharedLoad(`repository kept ${name} ${key}`, () => readKept(storage, key).catch((error: unknown) => {
+        if (!(error instanceof CacheMissError)) warn('read')(error)
+        return null
+      }), 'repository-busy')
     },
     // The directory's body kept, behind its answer, where it is no larger
     // than MAX_KEPT_CODE_BYTES; and removed again, with the rest of its

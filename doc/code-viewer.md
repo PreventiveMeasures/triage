@@ -96,6 +96,7 @@ Directories of other branches, tags and commits are read from GitHub each time.
 A read of the default branch that finds it at a new commit removes what was kept at the old one.
 Deactivating or removing a repository removes what was kept of its code.
 A directory that comes to more than 64 MiB once compressed is not kept.
+A kept directory is read within the same load capacity as one read from GitHub, taking one place, so it too can be `429 repository-busy`.
 With [storage encryption](../server-managed/STORAGE-ENCRYPTION.md), what is kept is encrypted at rest.
 Nothing kept is per reader, and every read checks the reader's access before and after, as a read from GitHub does.
 

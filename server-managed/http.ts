@@ -1737,13 +1737,20 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
       writeResponse(res, bytes)
     }
     // The default branch's head's directory as kept, once the reader's own
-    // access has named its commit, sent as one read is, access checked again.
+    // access has named its commit, sent as one read is, access checked again;
+    // its place among the active loads held till it is written or abandoned,
+    // else given up before a read from GitHub asks for its own.
     const at = { repoId, repo, commit, path }, kept = repositoryCodeKeptOf(deps)
     const atHead = kept !== null && await kept.at(repoId, ref, commit, reader.defaultBranch)
-    const held = atHead ? await kept.read(at) : null
-    if (held) {
-      if (await fenced() && !res.destroyed) send(held)
-      return
+    if (atHead) {
+      const keptLoad = kept.read(at)
+      res.once('close', keptLoad.release)
+      const held = await keptLoad.result
+      if (held) {
+        if (await fenced() && !res.destroyed) send(held)
+        return
+      }
+      keptLoad.release()
     }
     const trees = repositoryTreesOf(deps)
     // A directory the commit has none at is none to read, as browsing it says.
