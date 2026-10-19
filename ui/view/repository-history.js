@@ -35,6 +35,10 @@ const KEEP_MS = 5 * 60_000
 // The longest a read again of every branch, answered as the server kept them, waits to ask once more.
 const RETRY_FRESH_MS = 15_000
 const RETRY_MS = 30_000
+// How long after an answer whose squashed pull requests GitHub is still
+// looking up to ask for them again, and how many times (askPulls).
+const PULLS_MS = 3000
+const PULLS_TRIES = 10
 // Where every branch's next page reads on from, as many as the server reads
 // branches at first (repository-history.ts ALL_BRANCHES).
 const ALL_STARTS = 25
@@ -70,15 +74,41 @@ const repaint = () => { for (const element of shownElements) element.requestUpda
 function readEntry(answer, settle, sought = new Set()) {
   const entry = { status: 'ready', until: Date.now() + KEEP_MS, page: 1, commits: answer.commits, more: answer.more === true,
     branches: answer.branches ?? [], tags: answer.tags ?? [], defaultBranch: answer.defaultBranch ?? null, unread: answer.unread, cut: answer.cut === true,
-    pulls: answer.pulls, openPulls: answer.openPulls, loadingMore: false, moreError: null, sought }
+    pulls: answer.pulls, pullsPending: answer.pullsPending === true, openPulls: answer.openPulls, loadingMore: false, moreError: null, sought }
   settle?.(entry)
   return entry
+}
+
+// The pull requests squashed into `pulls`' commits added to those `entry`
+// holds, each once.
+function addPulls(entry, pulls) {
+  const merges = new Set(entry.pulls.map(pull => pull.merge))
+  const added = pulls.filter(pull => !merges.has(pull.merge))
+  if (added.length > 0) entry.pulls = [...entry.pulls, ...added]
+}
+
+// A page whose squashed pull requests GitHub was still looking up as the
+// server answered (`pullsPending`, the lookup going on behind it): asked
+// for again (`ask`, on from where `held` says) PULLS_MS later, those found
+// meanwhile added, again while GitHub still looks them up, PULLS_TRIES
+// times at most.
+function askPulls(key, entry, ask, page, held, tries = 1) {
+  setTimeout(() => {
+    if (sessionHistories().get(key) !== entry) return
+    ask(page, held).then(answer => {
+      if (sessionHistories().get(key) !== entry) return null
+      addPulls(entry, answer.pulls)
+      if (answer.pullsPending && tries < PULLS_TRIES) askPulls(key, entry, ask, page, held, tries + 1)
+      return null
+    }, () => null).finally(repaint)
+  }, PULLS_MS)
 }
 
 // One gone old is shown while it is read again (held-read.js).
 function historyRead(key, ask, settle) {
   return heldRead(sessionHistories(), key, () => ask(1), {
     ready: answer => readEntry(answer, settle),
+    settled: entry => { if (entry.pullsPending) askPulls(key, entry, ask, 1, null) },
     failed: err => err?.name === 'AbortError' ? null
       : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'The history could not be read.', code: err?.code ?? null },
     retryMs: RETRY_MS, repaint,
@@ -104,6 +134,7 @@ function refreshHistory(key, held, ask, settle, commit) {
       setTimeout(repaint, retryIn)
     }
     sessionHistories().set(key, entry)
+    if (entry.pullsPending) askPulls(key, entry, ask, 1, null)
     return null
   }, () => null).finally(() => {
     held.refreshing = false
@@ -141,16 +172,18 @@ function readMore(key, entry, ask, settle) {
   // Kept while the next page reads, however long it was held already.
   entry.until = Date.now() + KEEP_MS
   repaint()
-  ask(entry.page + 1, entry).then(answer => {
+  // Where it reads on from, as asked, for its pull requests asked for again.
+  const from = { next: entry.next }
+  ask(entry.page + 1, from).then(answer => {
     if (sessionHistories().get(key) !== entry) return null
     const held = new Set(entry.commits.map(commit => commit.sha))
     entry.commits = [...entry.commits, ...answer.commits.filter(commit => !held.has(commit.sha))]
-    const merges = new Set(entry.pulls.map(pull => pull.merge))
-    entry.pulls = [...entry.pulls, ...answer.pulls.filter(pull => !merges.has(pull.merge))]
+    addPulls(entry, answer.pulls)
     entry.page += 1
     entry.more = answer.more === true
     settle?.(entry)
     entry.until = Date.now() + KEEP_MS
+    if (answer.pullsPending) askPulls(key, entry, ask, entry.page, from)
     return null
   }, err => {
     if (err?.name !== 'AbortError') entry.moreError = err?.message || 'More commits could not be read.'

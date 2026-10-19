@@ -3,9 +3,11 @@ import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
+import { GithubApiError } from '../server-managed/github-errors.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { historyPageStore } from '../server-managed/npm-kept.ts'
-import { HISTORY_GLUED, historyFrom, repositoryHistory } from '../server-managed/repository-history.ts'
+import { HISTORY_GLUED, historyFrom, inBatches, repositoryHistory } from '../server-managed/repository-history.ts'
+import { squashedPulls } from '../server-managed/repository-squashes.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -379,6 +381,108 @@ test('a history is sent all the same where the pull requests squashed into it ca
   const { status, body } = await request({ repoId: '1', all: 'true' })
   assert.equal(status, 200)
   assert.deepEqual([body.commits.map(commit => commit.sha), body.pulls, body.openPulls], [[a], undefined, undefined])
+})
+
+test('histories are read five tips a query, one GitHub stops past its time read again in halves, those read kept where one alone fails', async t => {
+  t.mock.method(console, 'warn', () => {})
+  const tips = Array.from({ length: 12 }, (_, index) => (index + 1).toString(16).padStart(40, '0'))
+  const [main, slow] = [tips[0], tips[7]]
+  let stopping = true
+  const graphql = ({ query, variables }) => {
+    if (query.includes('refs/heads/')) {
+      return { data: { repository: { defaultBranchRef: { name: 'main', target: { oid: main, committedDate: '2026-10-02T00:00:00Z' } }, tags: { nodes: [] },
+        branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: tips.map((oid, index) => ({ name: index ? `b${index}` : 'main', target: { oid, committedDate: null } })) } } } }
+    }
+    if (/pullRequest|PullRequests/u.test(query)) return { data: { repository: {} } }
+    const asked = Object.entries(variables).filter(([key]) => /^o\d+$/u.test(key))
+    if (stopping && asked.some(([, oid]) => oid === slow)) return { errors: [{ message: 'Something went wrong while executing your query. This may be the result of a timeout.' }] }
+    return { data: { repository: Object.fromEntries(asked.map(([key, oid]) => [`b${key.slice(1)}`, { history: { pageInfo: { hasNextPage: false },
+      nodes: [{ oid, message: 'Work', committedDate: '2026-10-01T00:00:00Z', additions: 1, deletions: 0, author: null, parents: { nodes: [] } }] } }])) } }
+  }
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  const pagesAsked = () => historyQueries(asked).filter(entry => 'o0' in entry.body.variables).map(entry => Object.keys(entry.body.variables).filter(key => /^o\d+$/u.test(key)).length)
+  assert.deepEqual((await request({ repoId: '1', all: 'true' })).body, { error: 'github-timeout' })
+  assert.deepEqual(pagesAsked(), [5, 5, 2, 3, 2, 2, 1], 'the slow one\'s five, then three, then it alone')
+  stopping = false
+  const { status, body } = await request({ repoId: '1', all: 'true' })
+  assert.equal(status, 200)
+  assert.equal(body.commits.length, tips.length)
+  const again = historyQueries(asked).filter(entry => 'o0' in entry.body.variables).slice(pagesAsked().length - 1)
+  assert.deepEqual(again.map(entry => entry.body.variables), [{ owner: 'org', name: 'repo', o0: slow }], 'only the one not read before')
+})
+
+test('batches halved where GitHub stops them wait their turn with the rest, as many run at once as given, and as many halved as that twice over', async () => {
+  let most = 0, running = 0
+  const sizes = []
+  const read = inBatches(Array.from({ length: 40 }, (_, at) => at), 10, 2, async batch => {
+    sizes.push(batch.length)
+    most = Math.max(most, ++running)
+    await setImmediate()
+    running--
+    throw new GithubApiError(502, 'github-timeout')
+  })
+  await assert.rejects(read, /github-timeout/u)
+  assert.equal(most, 2, 'never more at once than given')
+  assert.deepEqual(sizes.slice(0, 5), [10, 10, 10, 10, 5], 'each halved, its halves after those waiting')
+  assert.ok(sizes.length <= 6, `GitHub slow throughout: no more halved past four, ${sizes.length} run`)
+})
+
+test('the pull requests squashed into a history GitHub takes long to look up are looked up behind its answer, said pending, and come with the next', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const [squash, root, start] = ['5', '1', '8'].map(char => char.repeat(40))
+  const node = (oid, parents, message) => ({ oid, message, committedDate: '2026-10-01T00:00:00Z', additions: 1, deletions: 0, author: null,
+    parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  const gate = Promise.withResolvers(), looking = Promise.withResolvers()
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (new URL(url).pathname === '/repos/org/repo') return Response.json(publicMetadata)
+    const { query } = JSON.parse(options.body)
+    const repository = query.includes('refs/heads/') ? { defaultBranchRef: { name: 'main', target: { oid: squash, committedDate: '2026-10-01T00:00:00Z' } },
+      branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] }, tags: { nodes: [] } }
+      : query.includes('pullRequests(states') ? { pullRequests: { nodes: [] } }
+      : query.includes('associatedPullRequests') ? (looking.resolve(), await gate.promise, { c0: { associatedPullRequests: { nodes: [{ number: 2, mergeCommit: { oid: squash } }] } } })
+      : query.includes('pullRequest(number') ? { p0: { headRefOid: start, commits: { totalCount: 1, nodes: [{ commit: node(start, [root], 'Start') }] } } }
+      : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [node(squash, [root], 'Feature (#2)'), node(root, [], 'Root')] } } }
+    return Response.json({ data: { repository } })
+  })
+  const request = await fixture(t, { tokens: userTokens })
+  const reading = request({ repoId: '1', all: 'true' })
+  await looking.promise
+  t.mock.timers.tick(1500)
+  const { status, body } = await reading
+  assert.equal(status, 200)
+  assert.deepEqual([body.commits.map(commit => commit.sha), body.pulls, body.pullsPending], [[squash, root], undefined, true])
+  gate.resolve()
+  const later = (await request({ repoId: '1', all: 'true' })).body
+  assert.deepEqual(later.pulls.map(pull => [pull.merge, pull.number, pull.head]), [[squash, 2, start]])
+  assert.equal(later.pullsPending, undefined)
+})
+
+test('squashed pull requests asked for while another lookup of the repository runs, which ends without looking them up, are looked up then', async () => {
+  const [first, second, root] = ['5', '6', '1'].map(char => char.repeat(40))
+  const kept = new Map()
+  const squashes = { read: shas => Promise.resolve(new Map(shas.flatMap(sha => kept.has(sha) ? [[sha, kept.get(sha)]] : []))),
+    write: (sha, pull) => { kept.set(sha, pull); return Promise.resolve() } }
+  const asked = [], gate = Promise.withResolvers()
+  const fetchImpl = async (url, options) => {
+    const { variables } = JSON.parse(options.body)
+    const shas = Object.entries(variables).flatMap(([key, sha]) => /^o\d+$/u.test(key) ? [sha] : [])
+    asked.push(shas)
+    if (shas.includes(first)) await gate.promise
+    return Response.json({ data: { repository: Object.fromEntries(shas.map((sha, at) => [`c${at}`, { associatedPullRequests: { nodes: [] } }])) } })
+  }
+  const commit = sha => ({ sha, parents: [root], subject: 'Work', authorName: null, authorLogin: null, committedAt: null })
+  const page = squashedPulls('org/older', 'token', [commit(first)], squashes, Number.POSITIVE_INFINITY, fetchImpl)
+  await setImmediate()
+  const older = squashedPulls('org/older', 'token', [commit(second)], squashes, Number.POSITIVE_INFINITY, fetchImpl)
+  await setImmediate()
+  assert.deepEqual(asked, [[first]], 'waiting on the lookup running')
+  gate.resolve()
+  const { pulls, pending } = await older
+  assert.deepEqual([pulls, pending], [[], false])
+  assert.deepEqual(asked, [[first], [second]], 'its own looked up once that one ended')
+  assert.equal(kept.get(second), null)
+  await page
 })
 
 test('all branches names the branches it didn\'t read, newest first, and reads on from the commits a later page names, each commit once', async t => {

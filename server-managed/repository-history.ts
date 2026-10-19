@@ -12,7 +12,7 @@
 import { type Coauthor, MAX_COAUTHORS, type Maker, coauthorTrailers, coauthorsOf } from './commit-coauthors.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
 import { type GraphActor, accountOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
-import { type GraphqlError, githubGraphql } from './github-graphql.ts'
+import { githubGraphql } from './github-graphql.ts'
 
 export { ACTOR, type GraphAccount, type GraphActor, type NamedAccount, accountOf, actorOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
 export { type GraphqlError, githubGraphql } from './github-graphql.ts'
@@ -115,7 +115,7 @@ export async function repositoryRefTips(fullName: string, token: string | null, 
 }
 
 // A commit's author and those GitHub lists beside it.
-const commitActors = (node: GraphCommit | null | undefined) => [node?.author, ...node?.authors?.nodes ?? []]
+export const commitActors = (node: GraphCommit | null | undefined) => [node?.author, ...node?.authors?.nodes ?? []]
 
 // A tag's target, an annotated tag's own target in turn, through as many as
 // MAX_TAG_DEPTH annotated tags, each object's type naming what it is.
@@ -156,10 +156,10 @@ export interface HistoryPages {
 }
 
 // What a commit is read by in GraphQL.
-const COMMIT_FRAGMENT = `fragment historyCommit on Commit { oid message committedDate additions deletions author { name email date user { login databaseId } }
+export const COMMIT_FRAGMENT = `fragment historyCommit on Commit { oid message committedDate additions deletions author { name email date user { login databaseId } }
   authors(first: ${MAX_COAUTHORS + 1}) { nodes { name email user { login databaseId } } } parents(first: ${MAX_PARENTS}) { nodes { oid } } }`
 // A query's variables `$<prefix><n>` of `type`, as many as `count`.
-const variablesOf = (prefix: string, count: number, type: string) => Array.from({ length: count }, (_, at) => `$${prefix}${at}: ${type}`).join(', ')
+export const variablesOf = (prefix: string, count: number, type: string) => Array.from({ length: count }, (_, at) => `$${prefix}${at}: ${type}`).join(', ')
 
 // The latest commits of each tip, by its id, `b<n>` the `n`th's.
 const historiesQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('o', count, 'GitObjectID!')}) {
@@ -169,7 +169,7 @@ const historiesQuery = (count: number) => `query($owner: String!, $name: String!
 }
 ${COMMIT_FRAGMENT}`
 
-type GraphCommit = { oid?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
+export type GraphCommit = { oid?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
   author?: ({ name?: unknown; date?: unknown } & GraphActor) | null; authors?: { nodes?: (({ name?: unknown } & GraphActor) | null)[] } | null
   parents?: { nodes?: { oid?: unknown }[] } }
 type GraphTarget = { __typename?: unknown; oid?: unknown; committedDate?: unknown; target?: GraphTarget | null }
@@ -201,22 +201,37 @@ async function repositoryHeads(owner: string, name: string, token: string, fetch
   return { heads, repository: first, cut: true }
 }
 
-// The first page of the history from each of `tops`, by its top: with a
-// token, in one GraphQL query; without, a REST list each.
-async function readPages(fullName: string, token: string | null, tops: string[], fetchImpl: typeof fetch) {
+// Histories read in a GraphQL query, and queries at once: each counts its
+// commits' lines, which GitHub works out as it answers, stopping a query
+// past ten seconds.
+const PAGES_PER_QUERY = 5
+const PAGES_PARALLEL = 5
+
+// The first page of the history from each of `tops`, by its top, each told
+// to `keep` as it is read, so those read stay kept where another fails: with
+// a token, in GraphQL queries of PAGES_PER_QUERY (inBatches); without, a
+// REST list each.
+async function readPages(fullName: string, token: string | null, tops: string[], fetchImpl: typeof fetch,
+  keep: (top: string, commits: HistoryCommit[]) => Promise<void>) {
+  const read = new Map<string, HistoryCommit[]>()
+  const got = (top: string, commits: HistoryCommit[]) => { read.set(top, commits); return keep(top, commits) }
   if (!token) {
-    return new Map(await Promise.all(tops.map(async top => [top, (await repositoryHistory(fullName, null, top, '', 1, fetchImpl)).commits] as const)))
+    await Promise.all(tops.map(async top => got(top, (await repositoryHistory(fullName, null, top, '', 1, fetchImpl)).commits)))
+    return read
   }
   const [owner, name] = fullName.split('/') as [string, string]
-  const data = await githubGraphql(historiesQuery(tops.length), { owner, name, ...Object.fromEntries(tops.map((sha, at) => [`o${at}`, sha])) }, token, fetchImpl) as Histories
-  const nodes = tops.map((_, at) => data?.repository?.[`b${at}`]?.history?.nodes ?? [])
-  await linkNoreplyUsers(nodes.flat().flatMap(commitActors), token, fetchImpl)
-  return new Map(tops.map((top, at) => [top, nodes[at]!.flatMap(node => graphCommit(node) ?? [])]))
+  await inBatches(tops, PAGES_PER_QUERY, PAGES_PARALLEL, async batch => {
+    const data = await githubGraphql(historiesQuery(batch.length), { owner, name, ...Object.fromEntries(batch.map((sha, at) => [`o${at}`, sha])) }, token, fetchImpl) as Histories
+    const nodes = batch.map((_, at) => data?.repository?.[`b${at}`]?.history?.nodes ?? [])
+    await linkNoreplyUsers(nodes.flat().flatMap(commitActors), token, fetchImpl)
+    await Promise.all(batch.map((top, at) => got(top, nodes[at]!.flatMap(node => graphCommit(node) ?? []))))
+  })
+  return read
 }
 
 // Its authors past the first, the git author, GitHub lists from its
 // `Co-authored-by:` trailers.
-const graphCommit = (node: GraphCommit | null | undefined) => historyCommit(node?.oid, (node?.parents?.nodes ?? []).map(parent => parent?.oid),
+export const graphCommit = (node: GraphCommit | null | undefined) => historyCommit(node?.oid, (node?.parents?.nodes ?? []).map(parent => parent?.oid),
   node?.message, { name: node?.author?.name, email: node?.author?.email, account: commitAccount(node?.author) }, node?.committedDate,
   { additions: node?.additions, deletions: node?.deletions, authoredAt: node?.author?.date },
   Array.isArray(node?.authors?.nodes) ? node.authors.nodes.slice(1).map(actor => ({ name: actor?.name, email: actor?.email, account: commitAccount(actor) })) : null)
@@ -236,9 +251,9 @@ const graphCommit = (node: GraphCommit | null | undefined) => historyCommit(node
 export async function historyFrom(fullName: string, token: string | null, starts: string[], pages: HistoryPages, fetchImpl: typeof fetch = globalThis.fetch) {
   const kept = await pages.read(starts)
   const unread = starts.filter(top => !kept.has(top))
-  const read = unread.length > 0 ? await readPages(fullName, token, unread, fetchImpl) : new Map<string, HistoryCommit[]>()
   // Kept only as GitHub listed it from its top: none for a commit it named nothing of.
-  await Promise.all([...read].flatMap(([top, commits]) => commits[0]?.sha === top ? [pages.write(top, commits)] : []))
+  const keep = (top: string, commits: HistoryCommit[]) => commits[0]?.sha === top ? pages.write(top, commits) : Promise.resolve()
+  const read = unread.length > 0 ? await readPages(fullName, token, unread, fetchImpl, keep) : new Map<string, HistoryCommit[]>()
   const listed = new Map<string, HistoryCommit>()
   const add = (commits: HistoryCommit[]) => { for (const commit of commits) if (!listed.has(commit.sha)) listed.set(commit.sha, commit) }
   for (const top of starts) add(kept.get(top) ?? read.get(top) ?? [])
@@ -313,107 +328,45 @@ export async function repositoryAllHistory(fullName: string, token: string, { he
   return { commits: read.commits, branches, tags, defaultBranch, unread, cut, more }
 }
 
-// A pull request squashed into a commit of the default branch's history
-// (`merge`): its number, the commit its head was at when merged (`head`,
-// GitHub's own of it, which a branch reused or pushed over since never
-// moves), and its own commits, the latest MAX_SQUASHED of them, `more`
-// where it had more. Drawn as the merge it was, its commits on a lane of
-// their own (repository-history.js).
-export interface SquashedPull { merge: string; number: number; head: string; commits: HistoryCommit[]; more: boolean }
-// The pull requests squashed into commits, kept by each commit (a merged pull
-// request's commits never change); null for a commit none was.
-export interface Squashes {
-  read(shas: string[]): Promise<Map<string, SquashedPull | null>>
-  write(sha: string, pull: SquashedPull | null): Promise<void>
-}
-
-const MAX_SQUASHED = 100
-// Looked up of an answer's commits not yet kept, at most, the newest first;
-// in queries of as many commits, or pull requests, as many at once.
-export const MAX_SQUASH_LOOKUPS = 500
-const SQUASH_COMMITS = 100
-const SQUASH_PULLS = 20
-const SQUASH_PARALLEL = 4
-
-// The merged pull request that brought each commit in, `c<n>` the `n`th's.
-const mergedPullsQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('o', count, 'GitObjectID!')}) {
-  repository(owner: $owner, name: $name) {
-    ${Array.from({ length: count }, (_, at) => `c${at}: object(oid: $o${at}) { ... on Commit { associatedPullRequests(first: 1) { nodes { number mergeCommit { oid } } } } }`).join('\n    ')}
-  }
-}`
-// Each pull request's head when merged and its latest commits, `p<n>` the `n`th's.
-const squashedQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('n', count, 'Int!')}) {
-  repository(owner: $owner, name: $name) {
-    ${Array.from({ length: count }, (_, at) => `p${at}: pullRequest(number: $n${at}) { headRefOid commits(last: ${MAX_SQUASHED}) { totalCount nodes { commit { ...historyCommit } } } }`).join('\n    ')}
-  }
-}
-${COMMIT_FRAGMENT}`
-
-type MergedPulls = { repository?: Record<string, { associatedPullRequests?: { nodes?: ({ number?: unknown; mergeCommit?: { oid?: unknown } | null } | null)[] } } | null> | null }
-type SquashedPage = { repository?: Record<string, { headRefOid?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: GraphCommit | null } | null)[] } } | null> | null }
-
 const chunked = <T>(items: T[], size: number) => Array.from({ length: Math.ceil(items.length / size) }, (_, at) => items.slice(at * size, (at + 1) * size))
-// `run` for each of `items`, as many at once as `parallel`.
-async function eachOf<T>(items: T[], parallel: number, run: (item: T) => Promise<void>) {
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, async () => { while (next < items.length) await run(items[next++]!) }))
-}
-// A pull request or commit GitHub has none of, as one deleted: its field null.
-const notFound = (error: GraphqlError) => error?.type === 'NOT_FOUND'
-
-// The pull requests squashed into `commits`, a merged pull request's merge
-// commit of one parent, not one rebased (its commits copied onto the branch,
-// told by their subjects), kept by each commit (`squashes`), those not yet
-// kept looked up with GraphQL, as many as MAX_SQUASH_LOOKUPS an answer.
-export async function squashedPulls(fullName: string, token: string, commits: HistoryCommit[], squashes: Squashes,
-  fetchImpl: typeof fetch = globalThis.fetch): Promise<SquashedPull[]> {
-  const [owner, name] = fullName.split('/') as [string, string]
-  const single = commits.filter(commit => commit.parents.length === 1)
-  const listed = new Map(commits.map(commit => [commit.sha, commit]))
-  const kept = await squashes.read(single.map(commit => commit.sha))
-  const unknown = single.filter(commit => !kept.has(commit.sha)).slice(0, MAX_SQUASH_LOOKUPS)
-  const merged: { commit: HistoryCommit; number: number }[] = []
-  const found = new Map<string, SquashedPull | null>()
-  await eachOf(chunked(unknown, SQUASH_COMMITS), SQUASH_PARALLEL, async batch => {
-    const data = await githubGraphql(mergedPullsQuery(batch.length), { owner, name, ...Object.fromEntries(batch.map((commit, at) => [`o${at}`, commit.sha])) },
-      token, fetchImpl, notFound) as MergedPulls
-    for (const [at, commit] of batch.entries()) {
-      const node = data?.repository?.[`c${at}`]
-      if (!node) continue
-      const pull = node.associatedPullRequests?.nodes?.[0]
-      const number = pull?.mergeCommit?.oid === commit.sha && Number.isSafeInteger(pull.number) && (pull.number as number) > 0 ? pull.number as number : null
-      if (number === null) { found.set(commit.sha, null); await squashes.write(commit.sha, null) }
-      else merged.push({ commit, number })
-    }
-  })
-  await eachOf(chunked(merged, SQUASH_PULLS), SQUASH_PARALLEL, async batch => {
-    const data = await githubGraphql(squashedQuery(batch.length), { owner, name, ...Object.fromEntries(batch.map(({ number }, at) => [`n${at}`, number])) },
-      token, fetchImpl, notFound) as SquashedPage
-    await linkNoreplyUsers(Object.values(data?.repository ?? {}).flatMap(pull => (pull?.commits?.nodes ?? []).flatMap(item => commitActors(item?.commit))), token, fetchImpl)
-    for (const [at, { commit, number }] of batch.entries()) {
-      const node = data?.repository?.[`p${at}`]
-      if (!node) continue
-      const own = (node.commits?.nodes ?? []).flatMap(item => graphCommit(item?.commit) ?? [])
-      const head = typeof node.headRefOid === 'string' && SHA.test(node.headRefOid) ? node.headRefOid : own.at(-1)?.sha
-      // Fast-forwarded, its last commit the merge's own; or rebased, its
-      // commits, more than one, copied onto the branch: the merge and those
-      // below it on their first parents, by their subjects, its commits'
-      // (one squashed is told by its commit's title too, by default, and
-      // drawn as it was either way).
-      const below = [commit]
-      for (let next = listed.get(commit.parents[0] ?? ''); next && below.length < own.length; next = listed.get(next.parents[0] ?? '')) below.push(next)
-      const copies = own.toReversed().slice(0, below.length).every((item, step) => below[step]!.subject === item.subject)
-      // Its commits' copies as far as those listed go, but not all of them
-      // listed: told, and kept, once they are.
-      if (own.length > 1 && copies && below.length < own.length) continue
-      const rebased = own.length > 1 && copies
-      const squashed = head !== undefined && head !== commit.sha && own.length > 0 && !own.some(item => item.sha === commit.sha) && !rebased
-      const pull = squashed ? { merge: commit.sha, number, head, commits: own, more: Number(node.commits?.totalCount) > own.length } : null
-      found.set(commit.sha, pull)
-      await squashes.write(commit.sha, pull)
-    }
-  })
-  return single.flatMap(commit => kept.get(commit.sha) ?? found.get(commit.sha) ?? [])
+// GitHub stopping a query past its time: in its answer's errors, or as a 502
+// or 504 of its own.
+const SLOW = new Set(['github-timeout', 'github-status-502', 'github-status-504'])
+// `run` for `items` in batches of `size`, as many at once as `parallel`; a
+// batch GitHub stops past its time run again in halves, down to one alone,
+// so that one too slow to read fails alone, the others read. The halves
+// wait their turn with the rest, and as many batches are halved as run at
+// once twice over at most, GitHub slow throughout past that. Where one
+// fails, none more is run, those running done before its error is thrown,
+// so that what they read is kept.
+export async function inBatches<T>(items: T[], size: number, parallel: number, run: (batch: T[]) => Promise<void>) {
+  const failed: unknown[] = []
+  const waiting: (() => void)[] = []
+  let halved = 0, running = 0
+  const turn = () => {
+    if (running < parallel) { running++; return Promise.resolve() }
+    return new Promise<void>(resolve => { waiting.push(resolve) })
+  }
+  // A turn done, handed to the batch waiting longest.
+  const done = () => {
+    const next = waiting.shift()
+    if (next) next()
+    else running--
+  }
+  const attempt = async (batch: T[]): Promise<void> => {
+    await turn()
+    try {
+      if (failed.length === 0) await run(batch)
+      return
+    } catch (err) {
+      if (batch.length === 1 || halved >= 2 * parallel || !(err instanceof GithubApiError && SLOW.has(err.message))) { failed.push(err); return }
+      halved++
+    } finally { done() }
+    const half = Math.ceil(batch.length / 2)
+    await Promise.all([attempt(batch.slice(0, half)), attempt(batch.slice(half))])
+  }
+  await Promise.all(chunked(items, size).map(attempt))
+  if (failed.length > 0) throw failed[0]
 }
 
 // The open pull requests most recently updated, each by the commit its head
