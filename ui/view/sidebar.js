@@ -24,6 +24,7 @@ import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../co
 import { ROLES, canReadRepositoryCode, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
 import { setManagedTeamFeedRefresh, startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
+import { announceManagedSession, watchManagedSessions } from './managed-session-channel.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
 import { initEncryptionToggle, refreshEncryptionToggle } from './encryption-toggle.js'
@@ -2109,6 +2110,7 @@ async function revalidateManagedSession() {
     if (!previous || previous.id !== session?.id || previous.role !== session?.role) managedTeamsPending = true
     renderSidebar()
     setManagedAppSession(session)
+    if (!getPreviewRole()) void announceManagedSession(session)
     if (previous && (previous.id !== session?.id || previous.role !== session?.role)) {
       state.managedTeams = []
       state.bundles = []
@@ -2382,6 +2384,16 @@ document.addEventListener('managed-bundle-open', event => {
 })
 
 document.addEventListener('managed-import-complete', () => { void refreshManagedSession() })
+
+// Another tab told of another session than this one's, its cookie changed
+// there: this one's asked again, after one in flight, which may have been
+// asked before it changed.
+watchManagedSessions(() => {
+  if (!isManagedUiMode() || getPreviewRole()) return
+  const pending = managedSessionRefresh?.promise
+  if (pending) void pending.finally(() => refreshManagedSession())
+  else void refreshManagedSession()
+})
 
 document.addEventListener('managed-feed-closed', () => {
   managedSessionPending = true
