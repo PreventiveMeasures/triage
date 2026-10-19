@@ -2190,16 +2190,26 @@ const keptIssues = (deps: ManagedHttpDeps, repoId: number, fullName: string, tok
   keptList(issueListStore<IssueList>(deps.db, deps.config.debug), `${repoId}\0${ISSUES_LIST_READ_VERSION}`,
     (since, kept, asked) => readIssues(fullName, token, since, kept, globalThis.fetch, asked), need) as Promise<IssueList>
 
+// What is kept by `key` (keptAnswer), read now where it was read
+// REPOSITORY_READ_FRESH_MS ago or longer, not behind: for an answer that is
+// kept as fresh itself, as told of it (the Agents tab's).
+async function currentAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>) {
+  const stored = await repositoryReadStore(deps.db, deps.config.debug).read(key)
+  return keptAnswer(deps, key, read, undefined, !stored || Date.now() - stored.at >= REPOSITORY_READ_FRESH_MS)
+}
+
 // Repository `repoId`'s default branch's head, as its tabs read it: as the
 // Commits tab's branches last told it (`heads`), where they were read
-// fresh, else read alone and kept (`pulse-head`); whether it was kept
-// (`kept`), GitHub asked for none of it.
-async function defaultTip(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string): Promise<{ sha: string | null; kept: boolean }> {
+// fresh, else read alone and kept (`pulse-head`), read now where that is no
+// longer fresh as asked (`current`); whether it was kept (`kept`), GitHub
+// asked for none of it.
+async function defaultTip(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, current = false): Promise<{ sha: string | null; kept: boolean }> {
   const heads = await repositoryReadStore(deps.db, deps.config.debug).read(`${repoId}\0heads`)
   const all = heads && Date.now() - heads.at < REPOSITORY_READ_FRESH_MS ? heads.value as AllHeads : null
   const tip = all?.heads.find(head => head.name === all.defaultBranch)?.sha
   if (typeof tip === 'string' && /^[a-f\d]{40}$/u.test(tip)) return { sha: tip, kept: true }
-  const read = await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))
+  const head = async () => ({ sha: await defaultHead(fullName, token) })
+  const read = await (current ? currentAnswer(deps, `${repoId}\0pulse-head`, head) : keptAnswer(deps, `${repoId}\0pulse-head`, head))
   return { sha: read.value.sha, kept: read.kept }
 }
 
@@ -2353,8 +2363,8 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
   }
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors, historyPages(deps, repoId, true, true),
     commitPulls(deps, repoId), { pulls: () => keptPulls(deps, repoId, fullName, token, null), issues: () => keptIssues(deps, repoId, fullName, token, null),
-      head: async () => (await defaultTip(deps, repoId, fullName, token)).sha,
-      heads: async () => (await keptAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(fullName, token))).value.heads,
+      head: async () => (await defaultTip(deps, repoId, fullName, token, true)).sha,
+      heads: async () => (await currentAnswer<AllHeads>(deps, `${repoId}\0heads`, () => repositoryAllHeads(fullName, token))).value.heads,
       tips: branchTips(deps, repoId), authored: authoredCommits(deps, repoId) }),
     `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
 }

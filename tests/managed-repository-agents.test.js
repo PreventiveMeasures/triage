@@ -387,6 +387,20 @@ test('the latest issues as kept for the Pulse too, where they hold as many, or a
   assert.equal(asked.filter(query => /issues\(first: 100, orderBy/u.test(query.query)).length, 1)
 })
 
+test('the branches the Commits tab kept, and the default branch\'s head, read again first where no longer fresh: an agent\'s branch pushed since among them', async t => {
+  const request = await fixture(t)
+  const asked = github(t, graphql)
+  const store = repositoryReadStore(request.db)
+  // Kept three minutes ago, before the agents' branches were pushed.
+  await store.write('1\0heads', { heads: [{ name: 'main', sha: a, at: Date.parse('2026-10-15T01:00:00Z') }], defaultBranch: 'main', tags: [], cut: false },
+    Date.now() - 3 * 60_000)
+  await store.write('1\0pulse-head', { sha: b }, Date.now() - 3 * 60_000)
+  const { body } = await request({ repoId: '1' })
+  assert.ok(body.branches.some(branch => branch.name === 'claude/zzz-newest'), 'the branch pushed since')
+  assert.equal(asked.filter(query => query.query.includes('refs(refPrefix: "refs/heads/"')).length, 2, 'every page read again, not behind')
+  assert.ok(body.commits.some(commit => commit.oid === a), 'the history from the head as it is now')
+})
+
 test('a read of the pull requests the Pulse left not finished, those kept no longer fresh: the Agents tab reads it on as the Pulse would, never cut short', async t => {
   const request = await fixture(t)
   const now = Math.floor(Date.now() / 60_000) * 60_000
