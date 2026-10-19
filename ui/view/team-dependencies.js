@@ -255,13 +255,14 @@ const reviewedThere = (pkg, review) => ({ passed: 'passes', baseline: 'needs non
 // (`involved`, each `{ name, adds, pkg, review }`), each with its review
 // there, the one it is listed under (`here`) marked; and who reviews it,
 // each once where its teams' reviews count, and by the pull request in whose
-// comments they review it, which count there alone.
+// comments they review it, which count there alone: a patched one's those
+// of its own pull request alone, as two pull requests may patch it apart.
 function versionTip(pkg, review, { added, above, involved, here }) {
   const [shown, , said] = reviewState(pkg, review) ?? []
   const facts = [added ? ['Present', pkg.was?.join(', ') || 'none, new'] : null, pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
     shown ? ['Review', said ?? shown] : null, above ? ['Listed', `under ${above} above`] : null].filter(Boolean)
   const reviewers = new Map()
-  for (const { name, pkg: theirs } of [{ name: null, pkg }, ...involved]) {
+  for (const { name, pkg: theirs } of [{ name: here, pkg }, ...pkg.patched ? [] : involved]) {
     for (const one of theirs.reviewers ?? []) {
       if (one.comment && !name) continue
       const key = one.comment ? `${one.login}\0${name}` : one.login
