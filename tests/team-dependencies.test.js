@@ -360,3 +360,19 @@ test('a team\'s read stopped once no tab shows it, its tab left or showing anoth
   connected(false)
   view.disconnectedCallback()
 })
+
+test('a version pull requests add patched alike links to its review as patched by the first whose lockfiles name its patch\'s file, read at its commit', async () => {
+  const hash = 'b'.repeat(64), named = { hash, path: 'patches/twice@1.0.0.patch' }
+  TEAM.push(13)
+  branches[13] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
+  pulls[13] = { items: [pull(1), pull(2)], more: false }
+  // The first, adding fewest, names no file of its patch.
+  dependencies['13#1'] = { cut: false, head: '1'.repeat(40), review: terms, lockfiles: [dir({ added: [wants('twice', { patch: { hash } })] })] }
+  dependencies['13#2'] = { cut: false, head: '2'.repeat(40), review: terms, lockfiles: [dir({ added: [wants('twice', { patch: named }), wants('extra')] })] }
+  Object.assign(state, { teamDependenciesTab: 'versions', teamDependenciesSort: 'fewest' })
+  const text = await read(shown([repo(13, 'org/twice')]))
+  const row = text.split('<li>').find(one => one.includes('>twice<'))
+  assert.match(row, new RegExp(`href=/npm/twice@1\\.0\\.0/review\\?patch=${hash}&repo=13&commit=${'2'.repeat(40)}&path=patches/twice%401\\.0\\.0\\.patch `, 'u'))
+  assert.match(row, /class="team-deps-also">twice#1 \+1<\/span>/u, 'told under the first adding it still')
+  state.teamDependenciesTab = 'pulls'
+})

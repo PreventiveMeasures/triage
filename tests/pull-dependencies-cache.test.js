@@ -99,3 +99,13 @@ test('those of a repository asked in the background are read together once a tur
   for (const read of pending.splice(0)) read.resolve(answer('c'))
   await setImmediate()
 })
+
+test('a version two directories lock patched alike is told with the patch of one whose lockfile names its file, as only that can be reviewed', () => {
+  const hash = 'a'.repeat(64), named = { hash, path: 'patches/pat@1.0.0.patch' }
+  const pat = (patch, more = {}) => ({ name: 'pat', version: '1.0.0', source: 'registry', reviews: 0, patch, ...more })
+  const ready = { cut: false, review: { required: 1 }, lockfiles: [{ paths: ['a/pnpm-lock.yaml'], added: [pat({ hash })], unreviewed: [pat({ hash }, { name: 'old' })] },
+    { paths: ['b/pnpm-lock.yaml'], added: [pat(named, { was: ['0.9.0'] })], unreviewed: [pat(named, { name: 'old' })] },
+    { paths: ['c/pnpm-lock.yaml'], added: [pat({ hash, path: 'other.patch' })], unreviewed: [pat({ hash, path: 'other.patch' }, { name: 'old' })] }] }
+  assert.deepEqual(addedVersions(ready).versions.map(({ name, patch, was }) => ({ name, patch, was })), [{ name: 'pat', patch: named, was: ['0.9.0'] }])
+  assert.deepEqual(unreviewedVersions(ready).versions.map(({ name, patch }) => ({ name, patch })), [{ name: 'old', patch: named }])
+})

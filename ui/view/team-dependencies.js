@@ -436,13 +436,14 @@ class TeamDependencies extends StateElement {
     // The repositories whose open pull requests are more than are read.
     const unchecked = reviewed.filter(({ read }) => read.pulls.more)
     // Each version wanting reviews, as the first adding it tells it, by the
-    // pull requests adding it.
+    // pull requests adding it; and the first whose lockfiles name its patch's
+    // file, whence that is read (`patched`).
     const adding = new Map()
     for (const pull of wanting) {
       for (const pkg of pull.wanted) {
-        const added = adding.get(versionKey(pkg))
-        if (added) added.pulls.push(pull)
-        else adding.set(versionKey(pkg), { pkg, pulls: [pull] })
+        const added = adding.get(versionKey(pkg)) ?? adding.set(versionKey(pkg), { pkg, pulls: [] }).get(versionKey(pkg))
+        added.pulls.push(pull)
+        if (!added.patched && pkg.patch?.path) added.patched = { patch: pkg.patch, pull }
       }
     }
     const reading = reads.some(({ read }) => read.status === 'loading') || pulls.some(({ entry }) => entry.status === 'loading')
@@ -561,8 +562,8 @@ class TeamDependencies extends StateElement {
   renderVersions(adding, reading, { elsewhere, named, among }) {
     if (adding.size === 0) return reading ? nothing : html`<p class="workspace-content-empty">No version an open pull request adds wants a review.</p>`
     return html`<section class="team-deps-section" aria-label="Versions to review">
-      ${this.rows('versions', [...adding.values()], ({ pkg, pulls }) => versionRow(pkg, pulls[0].entry.review, { others: pulls.map(named), adders: true,
-        elsewhere: elsewhere(pkg), added: true, involved: among(pkg), ...readAt(pulls[0]) }), Number.POSITIVE_INFINITY)}
+      ${this.rows('versions', [...adding.values()], ({ pkg, pulls, patched }) => versionRow(patched ? { ...pkg, patch: patched.patch } : pkg, pulls[0].entry.review, {
+        others: pulls.map(named), adders: true, elsewhere: elsewhere(pkg), added: true, involved: among(pkg), ...readAt(patched?.pull ?? pulls[0]) }), Number.POSITIVE_INFINITY)}
     </section>`
   }
 

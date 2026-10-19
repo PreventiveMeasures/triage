@@ -270,13 +270,18 @@ function added({ lockfiles, review }) {
     const had = all.get(key)
     if (!had) { all.set(key, pkg); continue }
     const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, reviewers: _reviewers, ...version } = had
-    all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...bothReviewed(had, pkg, review) })
+    all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...patchedOf(had, pkg), ...bothReviewed(had, pkg, review) })
   }
   const versions = [...all.values()]
   const fresh = versions.filter(pkg => !pkg.was)
   return { versions: [...fresh, ...versions.filter(pkg => pkg.was)], fresh: fresh.length, updated: versions.length - fresh.length, more: lockfiles.some(dir => dir.more > 0),
     toReview: review?.toReview ?? versions.filter(pkg => reviewOf(pkg, review) === 'wanted').length }
 }
+
+// The patch of a version two directories lock patched alike, the first's,
+// else the other's where only its lockfile names its file, as only one
+// naming it can be reviewed.
+const patchedOf = (had, pkg) => !had.patch?.path && pkg.patch?.path ? { patch: pkg.patch } : {}
 
 // The review of a version two directories lock, the less passing of theirs
 // (reviewOf, one that can't be reviewed the least), of the fewer reviews
@@ -316,7 +321,8 @@ function unreviewed({ lockfiles, review }) {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.unreviewed ?? [])) {
     const key = versionKey(pkg)
-    if (!all.has(key)) all.set(key, pkg)
+    const had = all.get(key)
+    all.set(key, had ? { ...had, ...patchedOf(had, pkg) } : pkg)
   }
   return { versions: [...all.values()], count: review?.unreviewed ?? all.size + lockfiles.reduce((more, dir) => more + (dir.moreUnreviewed ?? 0), 0) }
 }

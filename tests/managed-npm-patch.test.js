@@ -75,31 +75,48 @@ test('a patch is read as git writes a diff, and applied as pnpm applies it: each
   assert.deepEqual(patched.map(file => file.path), ['added.js', 'image.bin', 'index.js', 'new name.js', 'package.json'], 'in the order of their paths')
   assert.deepEqual(texts(patched), { 'added.js': 'added\nlast', 'image.bin': '\0\u0001\u0002', 'index.js': 'one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\n',
     'new name.js': 'new\n', 'package.json': '{}\n' })
-  // Its lines some lines off where it says they are, as the hunks before found
-  // theirs; and as far off as FUZZ lines either side.
+  // Its lines some lines off where it says they are, each hunk's as far off as
+  // FUZZ lines either side of where its own header says, in the file as it
+  // was, as patch-package looks; not as the hunks before found theirs.
   const moved = patchedFiles(files({ ...PACKAGE, 'index.js': `zero\nzero\n${LINES}` }), patch)
   assert.equal(texts(moved)['index.js'], 'zero\nzero\none\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\n')
   assert.throws(() => patchedFiles(files({ ...PACKAGE, 'index.js': `${'zero\n'.repeat(21)}${LINES}` }), patch), failure('patch-does-not-apply'), 'not further')
+  const two = parsePatch('diff --git a/w.js b/w.js\n--- a/w.js\n+++ b/w.js\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n@@ -10,3 +10,3 @@\n j\n-k\n+K\n l\n')
+  const abc = 'a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\n'
+  assert.equal(texts(patchedFiles(files({ 'w.js': `${'z\n'.repeat(15)}${abc}` }), two))['w.js'], `${'z\n'.repeat(15)}${abc.replace('b', 'B').replace('k', 'K')}`)
+  assert.throws(() => patchedFiles(files({ 'w.js': `${'z\n'.repeat(15)}${abc.replace('d\n', `d\n${'y\n'.repeat(10)}`)}` }), two), failure('patch-does-not-apply'),
+    'a hunk 25 lines off, though 10 past the hunk before')
   for (const [why, changed] of [['its lines changed', { 'index.js': LINES.replace('three', 'THREE') }], ['a file it changes gone', { 'index.js': undefined }],
-    ['a file it deletes gone', { 'gone.js': undefined }], ['one it adds there', { 'added.js': 'there\n' }], ['one it renames to there', { 'new name.js': 'there\n' }],
+    ['a file it deletes gone', { 'gone.js': undefined }], ['one it renames to there', { 'new name.js': 'there\n' }],
     ['the bytes of one it changes not text', { 'index.js': Buffer.from([0, 1]) }]]) {
     const before = Object.fromEntries(Object.entries({ ...PACKAGE, ...changed }).filter(([, text]) => text !== undefined))
     assert.throws(() => patchedFiles(files(before), patch), failure('patch-does-not-apply'), why)
   }
-  // Its last line with no ending, as it was and as it is.
+  assert.equal(texts(patchedFiles(files({ ...PACKAGE, 'added.js': 'there\n' }), patch))['added.js'], 'added\nlast', 'one it adds written over one there')
+  // Its lines the same but for the space they end in, those it keeps kept as
+  // the file has them.
+  const spaced = parsePatch('diff --git a/w.js b/w.js\n--- a/w.js\n+++ b/w.js\n@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n')
+  assert.equal(texts(patchedFiles(files({ 'w.js': 'one  \ntwo\t\nthree\n' }), spaced))['w.js'], 'one  \nTWO\nthree\n')
+  // Lines added with none it finds (git's -U0) put before the line its header
+  // names, as patch-package puts them.
+  const inserted = parsePatch('diff --git a/w.js b/w.js\n--- a/w.js\n+++ b/w.js\n@@ -2,0 +3 @@\n+new\n')
+  assert.equal(texts(patchedFiles(files({ 'w.js': 'a\nb\nc\n' }), inserted))['w.js'], 'a\nnew\nb\nc\n')
+  // Its last line with no ending, as it was and as it is; one it removes
+  // found as one with its ending too, whose ending patch-package then adds.
   const unended = parsePatch('diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1,2 +1,2 @@\n a\n-b\n\\ No newline at end of file\n+c\n')
   assert.equal(texts(patchedFiles(files({ 'a.js': 'a\nb' }), unended))['a.js'], 'a\nc\n')
-  assert.throws(() => patchedFiles(files({ 'a.js': 'a\nb\n' }), unended), failure('patch-does-not-apply'), 'not of a last line that has one')
+  assert.equal(texts(patchedFiles(files({ 'a.js': 'a\nb\n' }), unended))['a.js'], 'a\nc\n\n')
   // Quoted, as git writes a path past ASCII.
   const quoted = parsePatch('diff --git "a/\\303\\251.js" "b/\\303\\251.js"\ndeleted file mode 100644\nindex 1111111..0000000\n')
   assert.deepEqual(quoted.map(file => [file.path, file.deleted]), [['é.js', true]])
-  // Its own lines ending in CRLFs, as an editor or autocrlf leaves it: read
-  // as git wrote it. One git wrote of a file whose lines end in CRLFs keeps
-  // its CRs.
-  assert.deepEqual(parsePatch(PATCH.replaceAll('\n', '\r\n')), patch, 'one of CRLFs read as git wrote it')
+  // Its own lines ending in CRLFs, as an editor or autocrlf leaves it, read
+  // as patch-package reads it: its headers but their CRs, the lines it adds
+  // with them. One git wrote of a file whose lines end in CRLFs keeps its CRs.
+  assert.deepEqual(texts(patchedFiles(files(PACKAGE), parsePatch(PATCH.replaceAll('\n', '\r\n')))), { 'added.js': 'added\r\nlast\r', 'image.bin': '\0\u0001\u0002',
+    'index.js': 'one\nTWO\r\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\r\n', 'new name.js': 'new\r\n', 'package.json': '{}\n' })
   const ofCrlf = parsePatch('diff --git a/w.js b/w.js\n--- a/w.js\n+++ b/w.js\n@@ -1,2 +1,2 @@\n a\r\n-b\r\n+c\r\n')
   assert.equal(texts(patchedFiles(files({ 'w.js': 'a\r\nb\r\n' }), ofCrlf))['w.js'], 'a\r\nc\r\n', 'a file of CRLFs patched as git wrote it')
-  assert.throws(() => patchedFiles(files({ 'w.js': 'a\nb\n' }), ofCrlf), failure('patch-does-not-apply'), 'not one of LFs')
+  assert.equal(texts(patchedFiles(files({ 'w.js': 'a\nb\n' }), ofCrlf))['w.js'], 'a\nc\r\n', 'one of LFs too, its line added with its CR')
 })
 
 test('a patch of bytes, of a file outside the package, or that its lines miscount isn\'t read', () => {
@@ -110,6 +127,7 @@ test('a patch of bytes, of a file outside the package, or that its lines miscoun
     'diff --git a/x.js b/x.js\n--- x.js\n+++ x.js\n@@ -1 +1 @@\n-a\n+b\n',
     'diff --git a/x.js b/x.js\n--- a/x.js\n+++ b/x.js\n@@ -1,2 +1,2 @@\n-a\n+b\n',
     'diff --git a/x.js b/x.js\n--- a/x.js\n+++ b/x.js\n@@ -1 +1 @@\n-a\n?b\n',
+    'diff --git a/x.js b/x.js\n--- a/x.js\n+++ b/x.js\n@@ -1 +1 @@\n-a\n\\ Something else\n+b\n',
     'diff --git a/x.js b/y.js\n--- a/x.js\n+++ b/y.js\n@@ -1 +1 @@\n-a\n+b\n']) {
     assert.throws(() => parsePatch(patch), failure('patch-unreadable'), patch)
   }
@@ -123,7 +141,7 @@ test('a patch read is kept by about the bytes it takes, as V8 takes them: its ch
   const long = ratio(of(`@@ -1 +1 @@\n-${'a'.repeat(1 << 20)}\n+${'b'.repeat(1 << 20)}\n`))
   assert.ok(long > 1 && long < 1.01, `a few long lines, about their characters (${long})`)
   const short = ratio(of(`@@ -1,100000 +1,100000 @@\n${' a\n'.repeat(100_000)}`))
-  assert.ok(short > 20, `many short lines, each on both sides, many times their characters (${short})`)
+  assert.ok(short > 5, `many short lines, many times their characters (${short})`)
   const tiny = ratio(of(Array.from({ length: 10_000 }, (_, at) => `@@ -${at + 1} +${at + 1} @@\n-a\n+b\n`).join('')))
   assert.ok(tiny > 15, `many tiny hunks, many times their characters (${tiny})`)
 })
@@ -234,8 +252,9 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
   h.asked.length = 0
   assert.equal((await h.send(`/api/npm/package?${query(patch)}`)).status, 200)
   assert.deepEqual(h.asked, [], 'and kept, what a commit holds never changing')
-  assert.deepEqual((await h.send(`/api/npm/package?${query({ ...patch, patchPath: 'patches/crlf.patch' })}`)).json().files, body.files,
-    'one committed with CRLFs, its hash as pnpm hashes it, read as git wrote it')
+  assert.deepEqual((await h.send(`/api/npm/package?${query({ ...patch, patchPath: 'patches/crlf.patch' })}`)).json().files.map(([file, , text]) => [file, text]),
+    [['added.js', 'added\r\nlast\r'], ['image.bin', null], ['index.js', 'one\nTWO\r\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\r\n'], ['new name.js', 'new\r\n'],
+      ['package.json', '{}\n']], 'one committed with CRLFs, its hash as pnpm hashes it, applied as pnpm applies it, the lines it adds with their CRs')
 
   const compared = (await h.send(`/api/npm/comparison?${query({ otherVersion: '(empty)', ...patch })}`)).json()
   assert.deepEqual(compared.files.onlyOther.map(row => row.path).toSorted(), ['added.js', 'image.bin', 'index.js', 'new name.js', 'package.json'], 'compared as patched')

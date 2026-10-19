@@ -61,7 +61,7 @@ The patch is read only where:
 - the file hashes to the lockfile's hash of it, as pnpm hashes it (a sha256 in hex, or pnpm 9's md5 in base32), its CRLFs read as LFs;
 - it is as git writes a diff, of no file's bytes (a binary patch) and of no file outside the package.
 
-It is applied as pnpm applies it: each file it deletes, creates, renames or changes, each hunk where it says its lines are, else as many as 20 lines either side, and the review page says why where it doesn't apply.
+It is applied as pnpm applies it (the patch-package code pnpm 9, 10 and 11 bundle): each file it deletes, creates, renames or changes, each hunk found in the file as it was, where its header says, else as many as 20 lines either side, its lines matched but for the whitespace they end in, the lines it keeps left as the file has them, and the lines it adds as the patch has them, CRs and all. The review page says why where it doesn't apply.
 What it changes of a file's mode isn't shown.
 
 The Dependencies tab and a pull request's popup link a patched version to its review where its lockfile names its patch's file, against the version it patches where that was one, and mark it **patched**; they count no lines it changes, as those would be npm's.
