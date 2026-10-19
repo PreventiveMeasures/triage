@@ -44,6 +44,9 @@ test('sections that would take the body past GitHub\'s limit start unselected', 
   assert.deepEqual(draft.sections.filter(s => !s.selected).map(s => s.id), ['evidence'])
   assert.ok(draft.body.length <= 65_536)
   assert.match(draft.body, /\*\*Confidence reason:\*\*\nThe route is reachable\.\n\nTriage: https:\/\/triage\.test\/f$/u)
+  const description = 'x'.repeat(65_530)
+  assert.deepEqual(createIssueDraft({ description, impact: 'Impact' }, { allSections: true, findingLink: link }),
+    { body: description, sections: [{ id: 'impact', label: 'Impact', text: '**Impact:**\nImpact', selected: false, start: 0, end: 0 }], footer: null })
 })
 
 test('the finding link ends a draft without other text and is released by edits across it', () => {

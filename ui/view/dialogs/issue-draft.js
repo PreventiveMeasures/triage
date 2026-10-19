@@ -51,9 +51,10 @@ export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevali
   const ordered = [...FIELDS.map(([id]) => content.get(id)).filter(Boolean), ...[...content.values()].filter(s => !FIELDS.some(([id]) => id === s.id))]
   let draft = { body: blocks.join('\n\n'), sections: ordered.map(({ id, label, parts }) => ({ id, label,
     text: `**${label}:**\n${parts.join('\n\n')}`, selected: false, start: 0, end: 0 })), footer: null }
-  const link = findingLink ? `Triage: ${findingLink}` : ''
-  // A section starts selected only while the body, link included, stays
-  // within what GitHub accepts; evidence alone can be far longer.
+  // The link, then each section, only while the body stays within what GitHub
+  // accepts; evidence alone can be far longer.
+  let link = findingLink ? `Triage: ${findingLink}` : ''
+  if (draft.body.length + 2 + link.length > MAX_BODY) link = ''
   for (const { id } of draft.sections) {
     const next = allSections || id === 'impact' ? toggleIssueDraftSection(draft, id, true) : draft
     if (next.body.length + (link ? link.length + 2 : 0) <= MAX_BODY) draft = next
