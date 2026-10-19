@@ -436,6 +436,14 @@ test('a year counts any bot\'s commits with agents, whichever GitHub App\'s: its
   assert.deepEqual([read.weeks[0].days[1], read.weeks[0].agentDays[1]], [5, 3])
 })
 
+test('a year counts a workflow\'s commits with agents by the names workflows are commonly given, GitHub naming no account for them; a person\'s account of that login, theirs', () => {
+  const first = Date.UTC(2025, 9, 19)
+  const commit = (sha, authorName, authorLogin = null, authorId = null) => ({ sha, parents: ['p'], subject: '', authorName, authorLogin, authorId, committedAt: first + DAY,
+    coauthors: [] })
+  const read = commitStats([commit('lowercase', 'github-actions'), commit('titled', 'GitHub Action'), commit('a person', 'github-actions', 'github-actions', 7)], first)
+  assert.deepEqual([read.weeks[0].days[1], read.weeks[0].agentDays[1]], [3, 2])
+})
+
 test('a year counts the commits that release the repository apart, none of them with agents whoever made them', () => {
   const first = Date.UTC(2025, 9, 19)
   const claude = { name: 'Claude', login: null, id: null, agent: 'claude' }

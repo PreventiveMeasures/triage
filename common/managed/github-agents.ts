@@ -20,7 +20,9 @@
 // in its address. GitHub's Agentic Workflows (gh-aw) post, and approve or
 // review pull requests, as GitHub Actions' bot, `github-actions` (41898282,
 // `[bot]` to the REST API), its mark the GitHub Actions App's avatar; other
-// workflows the bot runs are as much its own. Neo, its GitHub App (3115942),
+// workflows the bot runs are as much its own, and the commits workflows make
+// as the names they are commonly given, `github-actions` and `GitHub Action`,
+// GitHub naming no account for their addresses. Neo, its GitHub App (3115942),
 // as its account (274065190) and its App's bot (268952163), each known by
 // its id alone, whatever GitHub names it, and drawn by its App's avatar,
 // wherever either or its fingerprint names it. Cursor's agents commit as whoever ran them, with a
@@ -51,7 +53,8 @@ export const GITHUB_AGENTS = {
     { id: 175728472, logins: ['Copilot', 'copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]'] }], names: ['Copilot'], prefix: 'copilot/' },
   dependabot: { name: 'Dependabot', avatar: 'app-29110', accounts: [{ id: 49699333, logins: ['dependabot', 'dependabot[bot]'] }], names: ['dependabot[bot]'],
     prefix: 'dependabot/' },
-  actions: { name: 'GitHub Actions', avatar: 'app-15368', accounts: [{ id: 41898282, logins: ['github-actions', 'github-actions[bot]'] }], names: ['github-actions[bot]'] },
+  actions: { name: 'GitHub Actions', avatar: 'app-15368', accounts: [{ id: 41898282, logins: ['github-actions', 'github-actions[bot]'] }],
+    names: ['github-actions[bot]', 'github-actions', 'GitHub Action'] },
   cursor: { name: 'Cursor', accounts: [], names: ['Cursor Agent'], emails: ['cursoragent@cursor.com'] },
 } as const satisfies Record<string, GithubAgent>
 export type GithubAgentId = keyof typeof GITHUB_AGENTS
