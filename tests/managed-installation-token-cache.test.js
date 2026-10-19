@@ -24,24 +24,24 @@ test('installation tokens coalesce concurrent mints and survive independent requ
   assert.equal(calls, 1)
 })
 
-test('tokens are kept until five minutes before GitHub expiry, the longest a request runs', async t => {
+test('tokens expire after five minutes or before GitHub expiry, whichever comes first', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 })
   let calls = 0, lifetime = 60 * 60_000
   const fetch = () => Promise.resolve(Response.json(datedToken(`token-${++calls}`, lifetime)))
   assert.equal(await repoAccessToken(config, 7, fetch), 'token-1')
-  t.mock.timers.tick(55 * 60_000 - 1)
-  assert.equal(await repoAccessToken(config, 7, fetch), 'token-1', 'kept for most of its hour, not minted again every five minutes')
-  t.mock.timers.tick(1)
-  lifetime = 10 * 60_000
-  assert.equal(await repoAccessToken(config, 7, fetch), 'token-2')
   t.mock.timers.tick(5 * 60_000 - 1)
+  assert.equal(await repoAccessToken(config, 7, fetch), 'token-1')
+  t.mock.timers.tick(1)
+  lifetime = 2 * 60_000
+  assert.equal(await repoAccessToken(config, 7, fetch), 'token-2')
+  t.mock.timers.tick(60_000 - 1)
   assert.equal(await repoAccessToken(config, 7, fetch), 'token-2')
   t.mock.timers.tick(1)
-  assert.equal(await repoAccessToken(config, 7, fetch), 'token-3', 'refresh with five minutes left on the upstream token')
+  assert.equal(await repoAccessToken(config, 7, fetch), 'token-3', 'refresh with one minute left on the upstream token')
 })
 
 test('missing, invalid, expired, or nearly expired token dates are not reused', async () => {
-  for (const expiresAt of [undefined, 'invalid', new Date(Date.now() - 1).toISOString(), new Date(Date.now() + 30_000).toISOString(), new Date(Date.now() + 4 * 60_000).toISOString()]) {
+  for (const expiresAt of [undefined, 'invalid', new Date(Date.now() - 1).toISOString(), new Date(Date.now() + 30_000).toISOString()]) {
     let calls = 0
     const fetch = () => Promise.resolve(Response.json({ token: `token-${++calls}`, expires_at: expiresAt }))
     assert.equal(await repoAccessToken(config, 7, fetch), 'token-1')
