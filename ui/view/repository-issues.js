@@ -373,7 +373,7 @@ class RepositoryIssues extends StateElement {
   // reviews (pull-reviews.js) and package versions new to its lockfiles.
   renderTile(item, stateClass, stateName) {
     const pulls = this.kind === 'pulls'
-    const dependencies = pulls && item.state === 'open' && readsDependencies(item) ? pullDependencies(this.repository.repoId, item.number, true) : null
+    const dependencies = pulls && item.state === 'open' && readsDependencies(item) ? pullDependencies(this.repository.repoId, item.number, true, { listed: true }) : null
     const time = item.updatedAt == null ? null : new Date(item.updatedAt)
     const checks = pulls && item.checks ? CHECKS[item.checks] : null
     const review = pulls && item.state === 'open' && item.review ? REVIEWS[item.review] : null

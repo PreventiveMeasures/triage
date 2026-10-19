@@ -146,7 +146,7 @@ function readNext() {
     const jobs = [first]
     for (let at = 0; at < queue.length && jobs.length < together;) {
       const job = queue[at]
-      if (job.pull.repoId === first.pull.repoId && job.review === first.review) jobs.push(...queue.splice(at, 1))
+      if (job.pull.repoId === first.pull.repoId && job.review === first.review && job.listed === first.listed) jobs.push(...queue.splice(at, 1))
       else at++
     }
     for (const job of jobs) queued.delete(job.key)
@@ -162,9 +162,9 @@ function readDone(jobs) {
 // `jobs`, one alone, else several of a repository's together, each told
 // its answer or why it failed.
 function readOf(jobs) {
-  const [{ pull: { repoId, number }, review }] = jobs
-  if (jobs.length === 1) return fetchPullDependencies(repoId, number, { review }).then(jobs[0].settle, jobs[0].settle)
-  return fetchPullDependenciesOf(repoId, jobs.map(job => job.pull.number), { review }).then(answers => {
+  const [{ pull: { repoId, number }, review, listed }] = jobs
+  if (jobs.length === 1) return fetchPullDependencies(repoId, number, { review, listed }).then(jobs[0].settle, jobs[0].settle)
+  return fetchPullDependenciesOf(repoId, jobs.map(job => job.pull.number), { review, listed }).then(answers => {
     for (const job of jobs) job.settle(answers.get(job.pull.number) ?? new Error('The server answered with none of it.'))
     return null
   }, err => { for (const job of jobs) job.settle(err) })
@@ -175,8 +175,10 @@ function readOf(jobs) {
 // and with `review` (an open one's), its review's terms where in effect, or
 // 'error' with its `error`; asked again once old, shown as it was meanwhile
 // (`refreshing`), or once an error's retry is due. One asked in the
-// `background` is read after those asked otherwise.
-export function pullDependencies(repoId, number, review = false, { background = false } = {}) {
+// `background` is read after those asked otherwise; one `listed`, as its
+// tile on the Pull requests tab asks, by the commits its page names
+// (fetchPullDependencies).
+export function pullDependencies(repoId, number, review = false, { background = false, listed = false } = {}) {
   const data = sessionHeld()
   const key = `${repoId}\0${number}\0${review}`
   const entry = data.get(key)
@@ -198,7 +200,7 @@ export function pullDependencies(repoId, number, review = false, { background = 
     if (next) data.set(key, next)
     else data.delete(key)
   }
-  const job = { key, background, review, pull: { repoId, number }, settle }
+  const job = { key, background, review, listed, pull: { repoId, number }, settle }
   queued.set(key, job)
   ;(background ? behind : waiting).push(job)
   readNext()

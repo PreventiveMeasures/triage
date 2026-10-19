@@ -260,14 +260,17 @@ const PULL_DEPENDENCIES_ERRORS = {
 // its branch left its base, by directory, an update's with those it was; with
 // `review`, as an open one's are asked, each's review where its repository
 // reviews dependencies, and the other versions wanting reviews.
-export function fetchPullDependencies(repoId, number, { review = false, signal } = {}) {
-  return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number, ...review ? { review: '1' } : {} })}`,
+// With `listed`, as an open one's tile on the Pull requests tab asks: by the
+// commits the page it is of names.
+const pullDependencyFlags = ({ review, listed }) => ({ ...review ? { review: '1' } : {}, ...listed ? { listed: '1' } : {} })
+export function fetchPullDependencies(repoId, number, { review = false, listed = false, signal } = {}) {
+  return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number, ...pullDependencyFlags({ review, listed }) })}`,
     PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
 }
 // Those of several of a repository's pull requests at once, by number, each
 // its answer, else an error of why GitHub failed it.
-export async function fetchPullDependenciesOf(repoId, numbers, { review = false, signal } = {}) {
-  const { pulls } = await request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, numbers: numbers.join(','), ...review ? { review: '1' } : {} })}`,
+export async function fetchPullDependenciesOf(repoId, numbers, { review = false, listed = false, signal } = {}) {
+  const { pulls } = await request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, numbers: numbers.join(','), ...pullDependencyFlags({ review, listed }) })}`,
     PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
   return pullAnswers(pulls)
 }

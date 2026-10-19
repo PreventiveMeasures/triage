@@ -294,7 +294,7 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
   await setImmediate()
   templateText(view.render())
   await setImmediate()
-  assert.ok(dependencyOptions.every(options => options.review === true), 'an open one\'s asked with their review')
+  assert.ok(dependencyOptions.every(options => options.review === true && options.listed === true), 'an open one\'s asked with their review, by the commits its page names')
   const tiles = templateText(view.render()).split('<li ').slice(1)
   assert.match(tiles[0], /data-tooltip=New in its lockfiles: tool@1\.0\.0 \(new, 1\/2 reviews\), left-pad@1\.3\.0 \(new, needs no review\), vouched@1\.0\.0 \(new, reviewed\), patched@1\.0\.0, patched \(new, 0\/2 reviews\), ms@2\.1\.3 \(was 2\.1\.2, 2\/2 reviews\)\. 4 other versions in its lockfiles unreviewed>/u)
   assert.match(tiles[0], /<span class="issue-deps-review is-wanted">2 \+ 4 to review<\/span>/u, 'its own wanting reviews, a patched one with them, then the others its lockfiles lock')

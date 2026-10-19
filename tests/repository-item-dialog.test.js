@@ -191,7 +191,7 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   templateText(dialog.render())
   await setImmediate()
   const text = templateText(dialog.render())
-  assert.deepEqual(dependencyOptions, [[31, { review: true }]], 'an open one\'s asked with their review')
+  assert.deepEqual(dependencyOptions, [[31, { review: true, listed: false }]], 'an open one\'s asked with their review, by its number, not a page\'s commits')
   assert.match(text, /Each version needs 2 full, accepting reviews by as many reviewers; those the repository’s lockfiles locked at <code>ddddddd<\/code> need none\./u)
   assert.match(text, /role="alert">At that commit, <code>berry\/yarn\.lock<\/code> couldn’t be read, so the versions it locked want reviews\./u)
   assert.match(text, /<div class="repo-item-failed" role="alert">\s*<p>Its review fails: 3 versions its lockfiles lock can’t be reviewed, as only npm’s registry’s, locked with an integrity, are\.<\/p>/u)

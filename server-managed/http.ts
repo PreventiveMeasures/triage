@@ -2449,14 +2449,16 @@ const PULLS_AT_ONCE = 3
 async function handleRepositoryPullDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   const review = query.get('review') === '1'
+  // As an open one's tile on the Pull requests tab asks (`listed=1`): each
+  // by the commits the page it is of names, where one kept names them
+  // (keptPullCommits); else by its number, kept a while, as a popup's.
+  const tiles = query.get('listed') === '1'
   const listed = query.get('numbers')
   const numbers = listed === null ? [itemNumber(query)] : listed.split(',').map(text => itemNumber(new URLSearchParams({ number: text })))
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || numbers.length > MAX_ASKED_PULLS || numbers.some(number => number === null) || new Set(numbers).size < numbers.length
-    || !['1', null].includes(query.get('review'))) { sendJson(res, 400, { error: 'bad-request' }); return }
+    || !['1', null].includes(query.get('review')) || !['1', null].includes(query.get('listed'))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
-    // Each by the commits the Pull requests tab's page it is on names, where
-    // one kept names them, as its tile is of that page (keptPullCommits).
-    const commits = await keptPullCommits(deps, repoId, numbers as number[])
+    const commits = tiles ? await keptPullCommits(deps, repoId, numbers as number[]) : new Map<number, PullCommits>()
     if (listed === null) return pullDependencyAnswer(deps, fullName, token, user, repoId, numbers[0]!, review, commits.get(numbers[0]!))
     const answers = await eachOf(numbers as number[], PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, review, commits.get(number))
       .catch((err: unknown) => {
