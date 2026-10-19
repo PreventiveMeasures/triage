@@ -7,7 +7,7 @@ import { AGENT_MARKS_READ } from '../server-managed/app-agents.ts'
 import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
 import { historyPageStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
 import { AGENTS_READ_VERSION } from '../server-managed/repository-agents.ts'
-import { graphCommit } from '../server-managed/repository-history.ts'
+import { graphCommit, historyMarks } from '../server-managed/repository-history.ts'
 import { createSession } from '../server-managed/session.ts'
 
 test('the app agents are those of GITHUB_AGENTS with branches of their own, each told by its prefix and its fingerprint', () => {
@@ -223,7 +223,7 @@ test('the history the Commits tab and Pulse keep is the Agents tab\'s: a page ke
   const asked = github(t, graphql)
   const pages = historyPageStore(request.db)
   const kept = (top, commits) => pages.write(`1\0${COAUTHORS_READ}\0${top}`, commits, Date.now())
-  const commit = (sha, parent, more) => ({ sha, parents: [parent], subject: `Commit ${sha[0]}`, authorName: 'Ada', authorLogin: 'ada', authorId: 7, coauthors: [],
+  const commit = (sha, parent, more) => ({ sha, parents: [parent], subject: `Commit ${sha[0]}`, authorName: 'Ada', authorLogin: 'ada', authorId: 7, named: [],
     committedAt: Date.parse('2026-10-15T00:00:00Z'), additions: 1, deletions: 0, authoredAt: null, authorZone: null, marked: AGENT_MARKS_READ, ...more })
   const marks = { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true, codex: false, agents: [] }
   await kept(a, [commit(a, b, { marks }), commit(b, unlisted)])
@@ -246,7 +246,7 @@ test('a frontier however wide read on in turns, as many of it an answer as all b
   // Each kept a commit whose parent is unlisted, the first the newest.
   for (const [at, top] of tops.entries()) {
     await pages.write(`1\0${COAUTHORS_READ}\0${top}`, [{ sha: top, parents: [sha('b', at)], subject: 'Merge', authorName: 'Ada', authorLogin: 'ada', authorId: 7,
-      coauthors: [], committedAt: Date.parse('2026-10-15T00:00:00Z') - at * 60_000, additions: 1, deletions: 0, authoredAt: null, authorZone: null,
+      named: [], committedAt: Date.parse('2026-10-15T00:00:00Z') - at * 60_000, additions: 1, deletions: 0, authoredAt: null, authorZone: null,
       marked: AGENT_MARKS_READ }], Date.now())
   }
   const parents = Array.from({ length: 25 }, (_, at) => sha('b', at))
@@ -261,15 +261,19 @@ test('a frontier however wide read on in turns, as many of it an answer as all b
   assert.deepEqual(next.body.after.commits.split(','), [...parents.slice(20), ...Array.from({ length: 5 }, (_, at) => sha('b', 25 + at))])
 })
 
-test('a commit\'s marks kept with the history as it is read: its message\'s, Claude\'s address, an agent\'s account; none where none is', () => {
+test('a commit\'s message\'s marks kept with the history as it is read; Claude\'s address, an agent\'s account told of it as it is answered; none where none is', () => {
   const ada = { name: 'Ada', email: 'ada@example.com', user: { login: 'ada', databaseId: 7 } }
   const node = (message, author = ada) => ({ oid: a, message, committedDate: '2026-10-15T00:00:00Z', additions: 1, deletions: 0, author, authors: { nodes: [author] },
     parents: { nodes: [] } })
-  assert.deepEqual(graphCommit(node(`Fix it\n\nClaude-Session: ${session}`)).marks.sessions, ['session_01MamW9SFrduHwBFipxyjRnn'])
-  assert.equal(graphCommit(node('Tidy', { name: 'Claude', email: 'noreply@anthropic.com', user: null })).marks.claude, true)
-  assert.deepEqual(graphCommit(node('Move', { name: 'Copilot', email: '198982749+Copilot@users.noreply.github.com', user: null })).marks.agents, ['copilot'])
+  const linked = graphCommit(node(`Fix it\n\nClaude-Session: ${session}`))
+  assert.deepEqual([linked.marks.sessions, historyMarks(linked).sessions], [['session_01MamW9SFrduHwBFipxyjRnn'], ['session_01MamW9SFrduHwBFipxyjRnn']])
+  // Its author's, Claude's or an agent's, not kept: told by the agents the app knows as it is answered.
+  const [claude, copilot] = [graphCommit(node('Tidy', { name: 'Claude', email: 'noreply@anthropic.com', user: null })),
+    graphCommit(node('Move', { name: 'Copilot', email: '198982749+Copilot@users.noreply.github.com', user: null }))]
+  assert.deepEqual([claude.marks, copilot.marks, claude.authorEmail], [undefined, undefined, 'noreply@anthropic.com'])
+  assert.deepEqual([historyMarks(claude).claude, historyMarks(copilot).agents], [true, ['copilot']])
   const plain = graphCommit(node('By hand'))
-  assert.deepEqual(['marks' in plain, plain.marked], [false, AGENT_MARKS_READ])
+  assert.deepEqual(['marks' in plain, plain.marked, historyMarks(plain)], [false, AGENT_MARKS_READ, null])
 })
 
 test('an answer an older server kept, as it read and told agents then, is not sent: read again', async t => {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
-import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
+import { COAUTHORS_READ, coauthorsOf } from '../server-managed/commit-coauthors.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { GithubApiError } from '../server-managed/github-errors.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
@@ -200,8 +200,8 @@ test('a directory\'s history, as GitHub\'s REST API lists it, names a co-author 
     return Promise.resolve(String(url).endsWith('/graphql') ? Response.json({ data: { u0: { login: 'any-login', databaseId: 274065190 } } }) : Response.json(items))
   }
   const [linked, anonymous] = [await repositoryHistory('org/repo', 'token', a, 'src', 1, fetchImpl), await repositoryHistory('org/repo', null, a, 'src', 1, fetchImpl)]
-  assert.deepEqual([linked.commits[0].authorLogin, linked.commits[0].authorId, linked.commits[0].coauthors], ['any-login[bot]', 268952163, []], 'Neo, its author, once')
-  assert.deepEqual(anonymous.commits[0].coauthors, [{ name: 'any-login', login: null, id: null }], 'without a token, unlooked-up')
+  assert.deepEqual([linked.commits[0].authorLogin, linked.commits[0].authorId, coauthorsOf(linked.commits[0])], ['any-login[bot]', 268952163, []], 'Neo, its author, once')
+  assert.deepEqual(coauthorsOf(anonymous.commits[0]), [{ name: 'any-login', login: null, id: null }], 'without a token, unlooked-up')
   assert.equal(asked.filter(url => url.endsWith('/graphql')).length, 1)
 })
 
@@ -637,7 +637,7 @@ test('a commit\'s co-authors: its trailers\' (GitHub\'s GraphQL API\'s by the ac
     + 'Co-authored-by: Grace <12+grace@users.noreply.github.com>\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nco-authored-by: octo name <octo@example.com>')]))
   const [listed] = (await historyFrom('org/repo', null, [a], pages, rest)).commits
   assert.equal(listed.subject, 'Work')
-  assert.deepEqual(listed.coauthors, [{ name: 'Grace', login: 'grace', id: 12 }, { name: 'Claude Opus 5.5', login: null, id: null, agent: 'claude' }])
+  assert.deepEqual(coauthorsOf(listed), [{ name: 'Grace', login: 'grace', id: 12 }, { name: 'Claude Opus 5.5', login: null, id: null, agent: 'claude' }])
   // Its GraphQL API: its authors past the first, as GitHub knows them, and its whole message.
   const asked = []
   const node = { oid: a, message: 'Work\n\nhttps://chatgpt.com/codex/tasks/task_e_abcdef12\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>', committedDate: '2026-10-01T00:00:00Z',
@@ -650,8 +650,25 @@ test('a commit\'s co-authors: its trailers\' (GitHub\'s GraphQL API\'s by the ac
   }
   const [read] = (await historyFrom('org/repo', 'token', [a], pages, graph)).commits
   assert.match(asked[0], /\bmessage\b[^]*authors\(first: 4\) \{ nodes \{ name email user \{ login databaseId \} \} \}/u)
-  assert.deepEqual(read.coauthors, [{ name: 'Claude', login: 'claude', id: 81847, agent: 'claude' }, { name: 'Cursor Agent', login: null, id: null, agent: 'cursor' },
+  assert.deepEqual(coauthorsOf(read), [{ name: 'Claude', login: 'claude', id: 81847, agent: 'claude' }, { name: 'Cursor Agent', login: null, id: null, agent: 'cursor' },
     { name: 'Codex', login: null, id: null, agent: 'codex' }], 'Codex by its task\'s link')
+})
+
+test('a page kept is told by the agents the app knows as it is answered, its co-authors kept as named: an agent known since needs it read again none', async t => {
+  const graphql = ({ query }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: null } }, tags: { nodes: [] }, branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } }
+    : {} } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  await historyPageStore(request.db).write(`1\0${COAUTHORS_READ}\0${a}`, [{ sha: a, parents: [], subject: 'Work', authorName: 'GitHub Action', authorEmail: 'action@github.com',
+    authorLogin: null, authorId: null, named: [{ name: 'github-actions', email: 'github-actions@github.com', login: null, id: null },
+      { name: 'Any', email: 'any-login@users.noreply.github.com', login: 'any-login', id: 274065190 }, { name: 'Grace', email: 'grace@example.com', login: null, id: null }],
+    markedBy: ['claude', 'gone'], committedAt: 1, additions: 1, deletions: 0, authoredAt: null, authorZone: null }], Date.now())
+  const { body } = await request({ repoId: '1', ref: 'heads/main' })
+  assert.deepEqual(body.commits[0].coauthors, [{ name: 'Any', login: 'any-login', id: 274065190, agent: 'neo' }, { name: 'Grace', login: null, id: null },
+    { name: 'Claude', login: null, id: null, agent: 'claude' }], 'GitHub Actions its author too, once; an agent no longer known, none; three at most')
+  assert.equal('authorEmail' in body.commits[0] || 'named' in body.commits[0], false, 'its addresses kept, not sent')
+  assert.equal(historyQueries(asked).filter(entry => !entry.body.query.includes('refs/heads/')).length, 0, 'not read again')
 })
 
 test('pages kept before their commits\' co-authors were read are read again, then kept', async t => {
@@ -662,8 +679,8 @@ test('pages kept before their commits\' co-authors were read are read again, the
   const store = historyPageStore(request.db)
   const key = `1\0${COAUTHORS_READ}\0${chain(100)}`
   const kept = (await store.readMany([key])).get(key).value
-  assert.ok(kept.every(commit => Array.isArray(commit.coauthors)))
-  await store.write(key, kept.map(({ coauthors: _coauthors, ...commit }) => commit), Date.now())
+  assert.ok(kept.every(commit => Array.isArray(commit.named)))
+  await store.write(key, kept.map(({ named: _named, ...commit }) => commit), Date.now())
   await request({ repoId: '1', ref: chain(100) })
   await request({ repoId: '1', ref: chain(100) })
   assert.deepEqual(read, [100, 100], 'read again once')
@@ -691,7 +708,8 @@ test('with a token, pages kept as GitHub\'s REST API listed them, which tell no 
   const request = await fixture(t, { tokens: userTokens })
   const asked = github(t, { graphql })
   await historyPageStore(request.db).write(`1\0${COAUTHORS_READ}\0${a}`, [{ sha: a, parents: [], subject: 'Work', authorName: 'Ada', authorLogin: null, authorId: null,
-    coauthors: [{ name: 'Mona', login: null, id: null }], committedAt: 1, additions: null, deletions: null, authoredAt: null, authorZone: null }], Date.now())
+    named: [{ name: 'Mona', email: 'mona@example.com', login: null, id: null }], committedAt: 1, additions: null, deletions: null, authoredAt: null, authorZone: null }],
+    Date.now())
   const { body } = await request({ repoId: '1', ref: 'heads/main' })
   assert.deepEqual(body.commits[0].coauthors, [{ name: 'Mona', login: 'mona', id: 3 }], 'by the account GitHub knows her address by')
   await request({ repoId: '1', ref: 'heads/main' })
