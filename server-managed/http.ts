@@ -1743,7 +1743,7 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
     // its place among the active loads held till it is written or abandoned,
     // else given up before a read from GitHub asks for its own.
     const at = { repoId, repo, commit, path }, kept = repositoryCodeKeptOf(deps)
-    const atHead = kept !== null && await kept.at(repoId, ref, commit, reader.defaultBranch)
+    const atHead = kept !== null && await kept.at(at, ref, reader.defaultBranch)
     if (atHead) {
       const keptLoad = kept.read(at)
       res.once('close', keptLoad.release)

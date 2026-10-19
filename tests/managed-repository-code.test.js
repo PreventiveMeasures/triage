@@ -121,10 +121,12 @@ function github(t, { truncate = false, reads = Infinity, archives = tree => tree
   const asked = []
   t.mock.method(globalThis, 'fetch', async input => {
     const url = new URL(typeof input === 'string' ? input : input.url)
-    asked.push(url.pathname + url.search)
-    const path = url.pathname
+    // The repository renamed (`org/renamed`) answers as it, by its new name.
+    const renamed = url.pathname.startsWith('/repos/org/renamed')
+    const path = renamed ? url.pathname.replace('/repos/org/renamed', '/repos/org/repo') : url.pathname
+    asked.push(path + url.search)
     if (path === '/repos/org/repo' && asked.filter(entry => entry === '/repos/org/repo').length > reads) return Response.json({ message: 'Not Found' }, { status: 404 })
-    if (path === '/repos/org/repo') return Response.json(publicMetadata)
+    if (path === '/repos/org/repo') return Response.json(renamed ? { ...publicMetadata, full_name: 'org/renamed' } : publicMetadata)
     if (path === '/repos/org/repo/commits/heads%2Fmain') return Response.json({ sha: await head() })
     if (path === '/repos/org/repo/commits/heads%2Ffeature' || path === '/repos/org/repo/commits/tags%2Fv1') return Response.json({ sha: other })
     const at = /^\/repos\/org\/repo\/git\/commits\/([a-f\d]{40})$/u.exec(path)?.[1]
@@ -475,6 +477,30 @@ test('when the default branch moves, a read of it removes what was kept at the h
   assert.deepEqual(await keptCommits(request), [commit])
 })
 
+test('a repository renamed has what was kept under its name before removed as a read next names its head, as is one kept under it meanwhile', async t => {
+  const request = await fixture(t, { role: 'admin', storage: true })
+  const slow = Promise.withResolvers()
+  const asked = github(t, { hold: tree => tree === treeAt('src/linked') ? slow.promise : null })
+  for (const path of ['src/allowed', 'src']) assert.equal((await request({ repoId: '1', ref: '', path })).status, 200, path)
+  await request.settle()
+  assert.deepEqual(await keptCommits(request), [commit, commit])
+  // Another directory of its head, by its name before, its tarball coming as it is renamed.
+  const reading = request({ repoId: '1', ref: commit, path: 'src/linked' })
+  await tarballAsked(asked, treeAt('src/linked'))
+  await request.db.selectRepo({ ...repo, fullName: 'org/renamed' }, Date.now())
+  const read = await request({ repoId: '1', ref: '', path: 'src/allowed' })
+  assert.deepEqual([read.status, read.body.repo], [200, 'org/renamed'])
+  slow.resolve()
+  assert.equal((await reading).status, 409)
+  await request.settle()
+  // The directory read by its new name, kept unless the read by its name
+  // before removed its commit's as it found the name moved on.
+  const renamed = `cache/repository-code/1/${commit}/v1-${createHash('sha256').update(JSON.stringify(['org/renamed', 'src/allowed'])).digest('hex')}.json.br`
+  assert.deepEqual((await request.kept()).filter(key => key !== renamed), [], 'none kept under its name before')
+  assert.equal((await request({ repoId: '1', ref: commit, path: 'src/allowed' })).bytes.equals(read.bytes), true, 'read by its new name')
+  await request.settle()
+})
+
 test('a repository deactivated or removed has what was kept of its code removed, as is one kept for it meanwhile', async t => {
   for (const [path, body] of [['/api/admin/repositories/select', { repoId: 1, selected: false }],
     ['/api/admin/repositories/remove', { repoId: 1, fullName: 'org/repo', acknowledge: true, deleteTriage: false }]]) {
@@ -526,8 +552,8 @@ test('a body past MAX_KEPT_CODE_BYTES is not kept, nor one kept past it read', a
     delete: () => Promise.resolve(),
   }
   const kept = repositoryCodeKept(storage, codeHeadStore(db), () => Promise.resolve(true), job => { work.push(job) })
-  assert.equal(await kept.at(1, '', commit, 'main'), true)
   const at = { repoId: 1, repo: 'org/repo', commit, path: '' }
+  assert.equal(await kept.at(at, '', 'main'), true)
   // Bodies by their sizes alone, as neither keeping one nor this storage reads more of it.
   kept.keep(at, { byteLength: MAX_KEPT_CODE_BYTES + 1 })
   kept.keep({ ...at, path: 'src' }, { byteLength: MAX_KEPT_CODE_BYTES })

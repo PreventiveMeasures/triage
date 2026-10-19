@@ -178,11 +178,12 @@ export const historyTreeStore = <T>(db: UpstreamCacheStore, debug = false): Kept
 export const codeTreeStore = <T>(db: UpstreamCacheStore, type: 'trees' | 'tree-files', debug = false): KeptStore<T> =>
   keptStore<T>(db, `repository/code-${type}`, HISTORY_PAGE_KEPT_MS, debug)
 // The commit the code viewer keeps a repository's directories at in byte
-// storage, its default branch's head as last read (repository-code.ts
-// repositoryCodeKept), by the repository's id: kept until the head moves or
-// the repository is removed, one for each repository.
-export const codeHeadStore = (db: UpstreamCacheStore, debug = false): KeptStore<{ commit: string }> =>
-  keptStore<{ commit: string }>(db, 'repository/code-heads', Infinity, debug)
+// storage, its default branch's head as last read, and the repository's
+// name they are kept under (repository-code.ts repositoryCodeKept), by the
+// repository's id: kept until the head moves, the repository is renamed or
+// it is removed, one for each repository.
+export const codeHeadStore = (db: UpstreamCacheStore, debug = false): KeptStore<{ commit: string; repo: string }> =>
+  keptStore<{ commit: string; repo: string }>(db, 'repository/code-heads', Infinity, debug)
 // The packages a repository's pull request's lockfiles add
 // (pull-dependencies.ts), by the commits of its base and head, which never
 // change: kept as its history's pages are.

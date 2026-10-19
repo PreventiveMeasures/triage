@@ -94,6 +94,7 @@ It also keeps each directory of the default branch's head, as it was sent, in it
 A directory kept there opens again, by the branch or by its commit, without asking GitHub for its files.
 Directories of other branches, tags and commits are read from GitHub each time.
 A read of the default branch that finds it at a new commit removes what was kept at the old one.
+A repository renamed has what was kept under its old name removed the same way.
 Deactivating or removing a repository removes what was kept of its code, including what a read still in progress then would keep.
 A directory that comes to more than 64 MiB once compressed is not kept.
 A kept directory is read within the same load capacity as one read from GitHub, taking one place, so it too can be `429 repository-busy`.

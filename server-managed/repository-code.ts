@@ -89,8 +89,9 @@ export const MAX_KEPT_CODE_BYTES = 64 * 1024 * 1024
 const COMMIT = /^[a-f\d]{40}$/u
 
 // A directory as kept: the repository by its id and name, the commit and the
-// directory, as its body names them.
+// directory, as its body names them; and the head they are kept at.
 export type KeptCodeAt = Pick<RepositoryCodeInput, 'repoId' | 'repo' | 'commit' | 'path'>
+type KeptCodeHead = Pick<KeptCodeAt, 'commit' | 'repo'>
 // Under the repository, then the commit, so either goes by its prefix; the
 // repository's name and the directory hashed, as a key's parts are names.
 const keptKey = ({ repoId, repo, commit, path }: KeptCodeAt) =>
@@ -135,16 +136,18 @@ async function readKept(storage: CacheStorage, key: string): Promise<Buffer | nu
 // own access has named its commit. A body names what it was read of, so
 // instances disagreeing on the head meanwhile, as at a push, only cost a
 // directory read again: one kept for a head since moved on removes itself.
-// A head is written only for a repository still `active` after it, as one
-// removed meanwhile has its head removed after (remove). Byte storage, as
-// the database, is an optimization: its failures read as a directory kept
-// nowhere, and keep nothing.
-export function repositoryCodeKept(storage: CacheStorage, heads: KeptStore<{ commit: string }>, active: (repoId: number) => Promise<boolean>,
+// The head is kept with the repository's name, which each body's key holds,
+// so a repository renamed has what was kept under its name before removed
+// as a read next names its head. A head is written only for a repository
+// still `active` after it, as one removed meanwhile has its head removed
+// after (remove). Byte storage, as the database, is an optimization: its
+// failures read as a directory kept nowhere, and keep nothing.
+export function repositoryCodeKept(storage: CacheStorage, heads: KeptStore<KeptCodeHead>, active: (repoId: number) => Promise<boolean>,
   own: (work: Promise<unknown>) => void, debug = false) {
   const warn = (what: string) => (error: unknown) => { if (debug) console.warn(`managed: kept repository code ${what} failed:`, error) }
-  const headOf = async (repoId: number) => {
+  const headOf = async (repoId: number): Promise<KeptCodeHead | null> => {
     const kept: unknown = (await heads.read(String(repoId)))?.value
-    return plainObject(kept) && typeof kept['commit'] === 'string' ? kept['commit'] : null
+    return plainObject(kept) && typeof kept['commit'] === 'string' && typeof kept['repo'] === 'string' ? { commit: kept['commit'], repo: kept['repo'] } : null
   }
   // What is kept of repository `repoId`: its head first, so that a body being
   // kept meanwhile removes itself.
@@ -153,21 +156,25 @@ export function repositoryCodeKept(storage: CacheStorage, heads: KeptStore<{ com
     await storage.delete(String(repoId))
   }
   return {
-    // Whether a read of `ref` at repository `repoId`, resolved to `commit`
-    // with `defaultBranch` GitHub's, reads and keeps its directories.
-    async at(repoId: number, ref: string, commit: string, defaultBranch: string): Promise<boolean> {
+    // Whether a read of `ref` at repository `repoId`, by its name `repo`,
+    // resolved to `commit` with `defaultBranch` GitHub's, reads and keeps
+    // its directories.
+    async at({ repoId, repo, commit }: Omit<KeptCodeAt, 'path'>, ref: string, defaultBranch: string): Promise<boolean> {
       if (!COMMIT.test(commit)) return false
       const kept = await headOf(repoId)
-      if (ref !== '' && (defaultBranch === '' || ref !== `heads/${defaultBranch}`)) return kept === commit
-      if (kept !== commit) {
-        await heads.write(String(repoId), { commit }, Date.now())
+      const atKept = kept?.commit === commit && kept.repo === repo
+      if (ref !== '' && (defaultBranch === '' || ref !== `heads/${defaultBranch}`)) return atKept
+      if (!atKept) {
+        await heads.write(String(repoId), { commit, repo }, Date.now())
         // One removed as its commit was read, its head removed before this
         // wrote it again, keeps nothing, and has what is kept removed again.
         if (!await active(repoId).catch(() => false)) {
           await remove(repoId).catch(warn('removal'))
           return false
         }
-        own(storage.delete(String(repoId), commit).catch(warn('removal')))
+        // Those kept at the head before, or, renamed, every one kept under
+        // its name before.
+        own(storage.delete(String(repoId), kept?.repo === repo ? commit : undefined).catch(warn('removal')))
       }
       return true
     },
@@ -188,7 +195,7 @@ export function repositoryCodeKept(storage: CacheStorage, heads: KeptStore<{ com
     // The directory's body kept, behind its answer, where it is no larger
     // than MAX_KEPT_CODE_BYTES; and removed again, with the rest of its
     // commit's, where the head kept is another by then, as when it moved on
-    // or the repository was removed meanwhile.
+    // or the repository was renamed or removed meanwhile.
     keep(at: KeptCodeAt, body: Buffer): void {
       const key = keptKey(at)
       const kept = keeping.get(storage) ?? keeping.set(storage, new Set()).get(storage)!
@@ -196,7 +203,8 @@ export function repositoryCodeKept(storage: CacheStorage, heads: KeptStore<{ com
       kept.add(key)
       own((async () => {
         await storage.put(key, body)
-        if (await headOf(at.repoId) !== at.commit) await storage.delete(`${at.repoId}/${at.commit}`)
+        const head = await headOf(at.repoId)
+        if (head?.commit !== at.commit || head.repo !== at.repo) await storage.delete(`${at.repoId}/${at.commit}`)
       })().catch(warn('write')).finally(() => kept.delete(key)))
     },
     // What is kept of repository `repoId`, removed once the repository is
