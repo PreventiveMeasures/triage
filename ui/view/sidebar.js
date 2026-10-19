@@ -23,7 +23,7 @@ import { cleanupGraph2 } from './graph/state.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, canReadRepositoryCode, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
-import { setManagedTeamFeedRefresh, startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
+import { managedTeamFeedLive, setManagedTeamFeedRefresh, startManagedTeamFeed, stopManagedTeamFeed } from './managed-feed.js'
 import { announceManagedSession, heardManagedSessions, toldOtherThan, watchManagedSessions } from './managed-session-channel.js'
 import sidebarCSS from './sidebar.css'
 import fileIconCSS from '../styles/file-icon.css'
@@ -2460,7 +2460,9 @@ export async function navigateToAdminPage(view, options = {}) {
   renderSidebar()
   // Use the known role and CSRF token immediately; apply session changes when
   // the background check finishes. Rapid navigation shares the pending check.
-  void refreshManagedSession()
+  // A live feed tells of them itself, and of the teams as they change, so
+  // none is asked while it is; paused, reconnecting or gone, one is.
+  if (!managedTeamFeedLive()) void refreshManagedSession()
   // Manage pages share the main scroll container. Start each destination at its
   // header instead of carrying a long list's scroll position into the next page.
   document.querySelector('#main-content')?.scrollTo({ top: 0 })

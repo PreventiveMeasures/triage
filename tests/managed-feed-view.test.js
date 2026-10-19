@@ -24,7 +24,7 @@ mock.module('../ui/view/managed-triage.js', { namedExports: {
 mock.module('../ui/view/managed-comments.js', { namedExports: {
   loadManagedReportComments: id => { refreshes.push(['comments', id]); return Promise.resolve(true) },
 } })
-const { startManagedTeamFeed, stopManagedTeamFeed, setManagedTeamFeedRefresh } = await import('../ui/view/managed-feed.js')
+const { managedTeamFeedLive, startManagedTeamFeed, stopManagedTeamFeed, setManagedTeamFeedRefresh } = await import('../ui/view/managed-feed.js')
 const settle = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => { setImmediate(resolve) }) }
 function open(team, options) {
   state.currentManagedTeam = team
@@ -37,6 +37,7 @@ beforeEach(() => {
   calls.length = 0; refreshes.length = 0
   state.currentView = 'findings'; state.localMode = false
   state.managedSession = { id: 'user', role: 'triage' }
+  state.managedTeams = [{ id: 'one', reports: [] }, { id: 'two', reports: [] }]
   refresh = () => Promise.resolve(true)
   preview = false
   readRevision = null
@@ -60,9 +61,8 @@ test('one feed follows the focused team and reconnects only when its endpoint ch
   beginViewNavigation() // Home / bundle / Manage all begin navigation.
   state.currentManagedTeam = null
   startManagedTeamFeed()
-  assert.equal(calls[1].signal.aborted, true)
-  assert.equal(calls.length, 3)
-  assert.equal(calls[2].teamId, null)
+  assert.equal(calls[1].signal.aborted, false, 'a view wanting the catalog alone keeps the team\'s stream, which tells it')
+  assert.equal(calls.length, 2)
 })
 
 test('navigation during refresh drops the old continuation and refreshes only the new team', async () => {
@@ -128,8 +128,8 @@ test('sidebar renders keep one feed and do not subscribe to triage before hydrat
   assert.equal(calls[1].teamId, 'one')
   beginViewNavigation(); state.currentView = 'manage'
   startManagedTeamFeed({ catalogOnly: true })
-  assert.equal(calls[1].signal.aborted, true)
-  assert.equal(calls[2].teamId, null)
+  assert.equal(calls[1].signal.aborted, false)
+  assert.equal(calls.length, 2)
 })
 
 test('unapproved users and public-share landing never open a user catalog feed', () => {
@@ -471,4 +471,102 @@ test('hidden report navigation subscribes to its individual updates, then restor
   open('one')
   assert.equal(calls[1].signal.aborted, true)
   assert.equal(calls[2].reportId, null)
+})
+
+test('a view wanting the catalog alone keeps the team\'s stream, reading nothing for it; the team\'s view takes it back, an update meanwhile applied', async () => {
+  const catalogs = []
+  setManagedTeamFeedRefresh((current, signal, revision) => { catalogs.push(revision); return true })
+  open('one'); startManagedTeamFeed()
+  for (const view of ['bundles', 'manage', 'home', 'npm']) {
+    beginViewNavigation(); state.currentView = view
+    startManagedTeamFeed({ catalogOnly: true }); startManagedTeamFeed()
+  }
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].signal.aborted, false)
+  assert.equal(await calls[0].onTeams(calls[0].signal, 'v2'), true)
+  assert.deepEqual(catalogs, ['v2'], 'the catalog told as a catalog feed tells it')
+  assert.equal(await calls[0].onUpdate(calls[0].signal), true)
+  assert.deepEqual(refreshes, [], 'no annotations read for a view not the team\'s')
+  beginViewNavigation(); state.currentView = 'findings'
+  open('one')
+  await settle()
+  assert.equal(calls.length, 1)
+  assert.deepEqual(refreshes, [['triage', 'one-report'], ['comments', 'one-report']], 'the update meanwhile applied once the team\'s view is back')
+  beginViewNavigation(); state.currentView = 'manage'
+  startManagedTeamFeed({ catalogOnly: true })
+  state.managedTeams = [{ id: 'two', reports: [] }]
+  startManagedTeamFeed({ catalogOnly: true })
+  assert.equal(calls[0].signal.aborted, true, 'a team left or deleted is kept no more, lest a reconnect find it gone')
+  assert.equal(calls[1].teamId, null)
+})
+
+test('a kept stream gives way to another team, another session, role or token, local mode and no role; a view loading its own reports or a public share keeps none', () => {
+  const away = () => { beginViewNavigation(); state.currentView = 'bundles'; startManagedTeamFeed({ catalogOnly: true }) }
+  const back = team => { beginViewNavigation(); state.currentView = 'findings'; open(team) }
+  open('one'); away()
+  back('two')
+  assert.equal(calls[0].signal.aborted, true)
+  assert.equal(calls[1].teamId, 'two')
+  for (const session of [{ id: 'other', role: 'triage' }, { id: 'other', role: 'view' }, { id: 'other', role: 'view', csrfToken: 'new' }]) {
+    away()
+    const last = calls.at(-1)
+    state.managedSession = session
+    startManagedTeamFeed({ catalogOnly: true })
+    assert.equal(last.signal.aborted, true)
+    assert.equal(calls.at(-1).teamId, null, 'another session starts its own catalog feed')
+    back('two')
+  }
+  away(); state.managedSession = { id: 'other', role: 'none' }
+  startManagedTeamFeed({ catalogOnly: true })
+  assert.equal(calls.at(-1).signal.aborted, true)
+  state.managedSession = { id: 'other', role: 'view', csrfToken: 'new' }
+  back('two'); away(); state.localMode = true
+  startManagedTeamFeed({ catalogOnly: true })
+  assert.equal(calls.at(-1).signal.aborted, true)
+  state.localMode = false
+  // A view hydrating its own reports takes the stream for its team, none kept.
+  back('two'); away()
+  const before = calls.length
+  state.currentView = 'findings'; state.currentManagedTeam = null
+  startManagedTeamFeed({ hydrate: () => true })
+  assert.equal(calls.length, before + 1)
+  assert.equal(calls.at(-1).teamId, null)
+  state.managedSession = { id: 'share', role: 'view', publicShare: true }
+  back('one')
+  const shared = calls.at(-1)
+  away()
+  assert.equal(shared.signal.aborted, true, 'a public share\'s stream goes with its team')
+})
+
+test('the feed is live once a connection has told the catalog, and not before, once it drops, closes, pauses or the session changes', async () => {
+  state.currentView = 'home'; state.currentManagedTeam = null
+  assert.equal(managedTeamFeedLive(), false, 'none open')
+  startManagedTeamFeed({ catalogOnly: true })
+  assert.equal(managedTeamFeedLive(), false, 'connecting')
+  assert.equal(await calls[0].onTeams(calls[0].signal, 'v1'), true)
+  assert.equal(managedTeamFeedLive(), true)
+  calls[0].onDrop()
+  assert.equal(managedTeamFeedLive(), false, 'reconnecting')
+  await calls[0].onTeams(calls[0].signal, 'v1')
+  assert.equal(managedTeamFeedLive(), true, 'reconnected')
+  setManagedTeamFeedRefresh(() => Promise.resolve(false))
+  calls[0].onDrop()
+  assert.equal(await calls[0].onTeams(calls[0].signal, 'v2'), false)
+  assert.equal(managedTeamFeedLive(), false, 'a catalog it could not read tells nothing')
+  setManagedTeamFeedRefresh(() => Promise.resolve(true))
+  await calls[0].onTeams(calls[0].signal, 'v2')
+  state.managedSession = { id: 'user', role: 'view' }
+  assert.equal(managedTeamFeedLive(), false, 'another role')
+  state.managedSession = { id: 'user', role: 'triage' }
+  assert.equal(managedTeamFeedLive(), true)
+  globalThis.document = Object.assign(new EventTarget(), { hidden: false })
+  try {
+    calls[0].onClose()
+    assert.equal(managedTeamFeedLive(), false, 'closed')
+  } finally { delete globalThis.document }
+  startManagedTeamFeed({ catalogOnly: true })
+  await calls.at(-1).onTeams(calls.at(-1).signal)
+  assert.equal(managedTeamFeedLive(), true)
+  stopManagedTeamFeed()
+  assert.equal(managedTeamFeedLive(), false, 'stopped, as when paused hidden')
 })

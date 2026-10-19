@@ -12,8 +12,9 @@ function wait(ms, signal) {
 // Fetch preserves the public-share header and never puts a capability in a
 // URL. Reconnection confirms the catalog version and invalidates annotations,
 // so no replay cursor or instance affinity is needed. The caller owns the
-// subscription's lifetime.
-export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose, reportId = null }) {
+// subscription's lifetime; `onDrop` is told each connection ended, whatever
+// ended it, before any other is made.
+export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose, onDrop, reportId = null }) {
   if (getPreviewRole()) return
   let backoff = 1_000
   const eventReceived = async (event, data, requestSignal) => {
@@ -66,6 +67,7 @@ export async function watchTeamFeed(teamId, { signal, onUpdate, onTeams, onClose
       abort()
       await reader?.cancel().catch(() => {})
       signal.removeEventListener('abort', abort)
+      onDrop?.()
     }
     await wait(backoff, signal)
     backoff = Math.min(backoff * 2, 30_000)

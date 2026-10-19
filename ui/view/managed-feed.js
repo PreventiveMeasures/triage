@@ -12,6 +12,11 @@ export function stopManagedTeamFeed() {
   active?.controller.abort()
   active = null
 }
+// Whether the feed is connected and has told the catalog since, as each
+// connection first does: a session or role gone closes it
+// ('managed-feed-closed'), and the catalog comes as it changes, so neither
+// need be asked of the server meanwhile.
+export const managedTeamFeedLive = () => active?.live === true && active.current()
 
 // A tab hidden HIDDEN_PAUSE_MS lets its feed go: the server holds a stream
 // open, polling for it, for every tab, seen or not. Shown again, the tab
@@ -82,7 +87,9 @@ function waitForHydration(promise, signal) {
 
 // The connection belongs to the account and team, not to a page. Its annotation
 // consumer still belongs to the current view, so navigation cancels stale HTTP
-// reads without reconnecting the same stream. A team stream includes the catalog.
+// reads without reconnecting the same stream. A team stream includes the catalog,
+// so a view wanting the catalog alone keeps an open one rather than reconnect to
+// leave its team and again to come back; a public share's goes with its team.
 export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   // Let go while hidden: the feed the view wants starts when it is shown
   // again, though a view loading meanwhile still loads.
@@ -90,11 +97,18 @@ export function startManagedTeamFeed({ catalogOnly = false, hydrate } = {}) {
   const session = state.managedSession, view = currentViewSignal()
   const focused = ['findings', 'files', 'links'].includes(state.currentView)
   const contentList = ['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)
-  const teamId = (contentList || focused && (!catalogOnly || active?.teamId === state.currentManagedTeam && !active.signal.aborted))
+  const wanted = (contentList || focused && (!catalogOnly || active?.teamId === state.currentManagedTeam && !active.signal.aborted))
     ? state.currentManagedTeam : null
+  // Kept while its team is still one of the reader's: one left or deleted
+  // goes once the catalog says so, before a reconnect would find it gone.
+  const kept = !wanted && !hydrate && !session?.publicShare && active?.teamId && active.current()
+    && state.managedTeams?.some(team => team.id === active.teamId) ? active : null
+  const teamId = kept ? kept.teamId : wanted
   if (!isManagedUiMode() || !session || session.role === 'none' || session.publicShare && !teamId) {
     stopManagedTeamFeed(); return hydrate ? Promise.resolve(false) : undefined
   }
+  // Kept, the team's stream reads no annotations for a view not its own.
+  if (kept) return undefined
   const reportId = state.managedTeams?.find(team => team.id === teamId)?.reports
     .find(report => report.id === state.currentManagedReport && report.visible === false)?.id ?? null
   const key = JSON.stringify([teamId, reportId, session.id, session.role, session.csrfToken, !!session.publicShare])
@@ -163,7 +177,9 @@ function watchSubscription(subscription) {
     onTeams: async (requestSignal, revision) => {
       const isCurrent = () => current(requestSignal)
       if (!isCurrent()) return false
-      return await refreshTeams(isCurrent, requestSignal, revision) && isCurrent()
+      const told = await refreshTeams(isCurrent, requestSignal, revision) && isCurrent()
+      if (told) subscription.live = true
+      return told
     },
     onUpdate: (requestSignal, revision = null) => {
       if (!current(requestSignal)) return false
@@ -175,6 +191,7 @@ function watchSubscription(subscription) {
       if (current()) document.dispatchEvent(new Event('managed-feed-closed'))
       controller.abort()
     },
+    onDrop: () => { subscription.live = false },
   }).catch(error => { if (current()) console.warn('managed: team feed failed', error) })
     .finally(() => {
       subscription.finished = true
