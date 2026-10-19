@@ -135,8 +135,8 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore,
-  repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+import { REPOSITORY_READ_KEPT_MS, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, lockfileReadStore, npmDeltaStore, npmPublishTimeStore, npmVersionStore,
+  ownKeptPrunes, pullDependencyStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { type NpmDelta, keptNpmDeltas, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
@@ -219,8 +219,9 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
 import { type SquashedPull, type Squashes, squashedPulls } from './repository-squashes.ts'
 import { AGENTS_READ_VERSION, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
-import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
-import { type GithubAsked, lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
+import { type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits, type PullDependencies,
+  type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
+import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, type RepoDependencyReview, SINCE_COMMIT } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, heldTo, scopeOf } from './lockfile-scope.ts'
 import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
@@ -2115,7 +2116,9 @@ async function readWholeRepositoryOf<T>(deps: ManagedHttpDeps, access: WholeAcce
 // GET /api/admin/repositories/issues: what the code viewer's Issues and Pull
 // requests tabs show (repository-issues.ts): `kind`'s open or closed
 // (`state`), a page at a time, on from the cursor `after` names. They are
-// the whole repository's (readWholeRepository).
+// the whole repository's, read as readWholeRepository reads them, kept with
+// open pull requests' commits, which they never tell (teamOpenPulls reads
+// them).
 async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   const kind = query.get('kind')
@@ -2123,8 +2126,11 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
   const after = query.get('after')
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
     || (after !== null && !ISSUES_CURSOR.test(after))) { sendJson(res, 400, { error: 'bad-request' }); return }
-  await readWholeRepository(res, deps, cookie, repoId, async (fullName, token) => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }),
-    `issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}`, true)
+  await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
+    const { value: { commits: _commits, ...page }, kept, at } = await keptAnswer(deps, `${repoId}\0issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}`,
+      async () => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }))
+    return { value: { ...page, readAt: at }, kept }
+  })
 }
 
 // GET /api/admin/repositories/agents: what the code viewer's Agents tab
@@ -2195,19 +2201,23 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
 }
 
 // Pull request `number`'s answer, as the endpoint gives it, and whether all
-// of it was kept, GitHub asked for none of it.
-async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number, number: number, review: boolean) {
+// of it was kept, GitHub asked for none of it: its base's and head's commits
+// as a page of its repository's open pull requests read them (`commits`,
+// kept and read again as that page is), else as kept by its number.
+async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number, number: number, review: boolean,
+  commits?: PullCommits) {
   const kept = pullDependencyKept(deps, repoId)
   const reading: { told?: PullDependencies } = {}
-  const answered = await keptAnswer(deps, `${repoId}\0pull-commits\0${PULL_DEPENDENCIES_READ}\0${number}`, async () => {
-    const { commits, told } = await pullDependenciesAt(fullName, token, number, kept)
-    reading.told = told
-    return { commits }
-  })
+  const answered = commits ? { value: { commits: `${commits.base}...${commits.head}` }, kept: true }
+    : await keptAnswer(deps, `${repoId}\0pull-commits\0${PULL_DEPENDENCIES_READ}\0${number}`, async () => {
+      const read = await pullDependenciesAt(fullName, token, number, kept)
+      reading.told = read.told
+      return { commits: read.commits }
+    })
   // What its commits tell, as read, else as kept by them, else, no longer
-  // kept, read again.
+  // kept, read again: by those given, without asking GitHub for them.
   const held = reading.told ?? (typeof answered.value.commits === 'string' ? await kept.read(answered.value.commits) : null)
-  const pulled = { number, ...held ?? (await pullDependenciesAt(fullName, token, number, kept)).told }
+  const pulled = { number, ...held ?? (await pullDependenciesAt(fullName, token, number, kept, undefined, commits)).told }
   // Where its review is on, those of lockfiles it leaves out told to none,
   // whoever asks.
   const setting = await deps.db.repoDependencyReview(repoId)
@@ -2218,7 +2228,8 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   const state = now && setting?.enabled ? { ...now, lockfiles: setting.lockfiles } : now
   const told = review && !now && setting?.enabled && !(await deps.db.repoDependencyReview(repoId))?.enabled ? pulled : scoped
   const reviewed = deps.reviewedDependencies ?? null
-  const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps)) : { baseline: null, unread: [], error: null }
+  const { baseline, unread, error } = state && !reviewed ? await baselineFor(fullName, token, repoId, state, baselineKept(deps), lockfileKept(deps, repoId))
+    : { baseline: null, unread: [], error: null }
   // Its comments read for reviews, where the host reads them, while it is
   // open (pull-comment-reviews.ts reads whether it is with them).
   const parse = reviewed?.parseComments
@@ -2239,7 +2250,7 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
 // a pull request's others are (pull-dependency-reviews.ts), each left unread
 // a directory of its own failing the review, as a pull request's are. Kept,
 // its access not asked again, where its head was kept and its lockfiles and
-// baseline held, GitHub asked for none of them.
+// baseline held or kept (lockfileKept), GitHub asked for none of them.
 async function handleRepositoryBranchDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = Number(query.get('repoId'))
   if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
@@ -2259,7 +2270,8 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   // Those its review holds to alone read, as many as are read of them.
   const setting = known === undefined ? await deps.db.repoDependencyReview(repoId) : known
   if (!setting?.enabled) return { value: { head, review: null }, kept: false }
-  const read = await lockedAt(fullName, token, head, path => heldTo(setting.lockfiles, path), asked)
+  const reads = lockfileKept(deps, repoId)
+  const read = await lockedAt(fullName, token, head, reads, path => heldTo(setting.lockfiles, path), asked)
   const { packages, paths } = lockedIn(read)
   const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
     ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
@@ -2270,7 +2282,7 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   const state = { ...now, lockfiles: setting.lockfiles }
   const reviewed = deps.reviewedDependencies ?? null
   const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null }
-    : await baselineFor(fullName, token, repoId, state, baselineKept(deps), asked)
+    : await baselineFor(fullName, token, repoId, state, baselineKept(deps), reads, asked)
   return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: !asked.github }
 }
 
@@ -2283,7 +2295,7 @@ async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpD
   if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const head = (await keptAnswer(deps, `${repoId}\0pulse-head`, async () => ({ sha: await defaultHead(fullName, token) }))).value.sha
-    return { value: { head, lockfiles: head ? (await lockfilesAt(fullName, token, head)).map(({ path, format }) => ({ path, format })) : [] }, kept: false }
+    return { value: { head, lockfiles: head ? (await lockfilesAt(fullName, token, head, lockfileKept(deps, repoId))).map(({ path, format }) => ({ path, format })) : [] }, kept: false }
   })
 }
 
@@ -2372,21 +2384,25 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
 async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
   send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>): Promise<boolean> {
   const repoId = access.repo.repoId
-  const read = await readWholeRepositoryOf<{ branch: object | null; pulls?: { items: TeamPull[]; more: boolean } }>(deps, access, async (fullName, token, user) => {
+  type Read = { branch: object | null; pulls?: { items: TeamPull[]; more: boolean }; commits?: Map<number, PullCommits> }
+  const read = await readWholeRepositoryOf<Read>(deps, access, async (fullName, token, user) => {
     const branch = await branchDependencyAnswer(deps, fullName, token, user, repoId, setting)
     if (!(branch.value as { review?: unknown }).review) return { value: { branch: null }, kept: branch.kept }
     const pulls = await teamOpenPulls(deps, repoId, fullName, token)
-    return { value: { branch: branch.value, pulls: { items: pulls.items, more: pulls.more } }, kept: branch.kept && pulls.kept }
+    return { value: { branch: branch.value, pulls: { items: pulls.items, more: pulls.more }, commits: pulls.commits }, kept: branch.kept && pulls.kept }
   }, reauthorize)
   if ('error' in read) return send({ repoId, ...PARTIAL_ACCESS.has(read.error) ? { branch: null } : { error: read.error, status: read.status } })
-  if (!read.value.branch) return send({ repoId, branch: null })
-  if (!await send({ repoId, ...read.value, ...await withDeltas(deps, [read.value.branch]) })) return false
-  const numbers = read.value.pulls!.items.filter(item => item.touchesLockfile === true || item.touchesLockfile === null).map(item => item.number)
+  const { branch, pulls, commits } = read.value
+  if (!branch) return send({ repoId, branch: null })
+  if (!await send({ repoId, branch, pulls, ...await withDeltas(deps, [branch]) })) return false
+  // Each by the commits its page names, where it names them, GitHub not asked
+  // for them (pullDependencyAnswer); never told.
+  const numbers = pulls!.items.filter(item => item.touchesLockfile === true || item.touchesLockfile === null).map(item => item.number)
   for (let at = 0; at < numbers.length; at += TEAM_PULLS_TOGETHER) {
     if (Date.now() > deadline) return false
     const batch = numbers.slice(at, at + TEAM_PULLS_TOGETHER)
     const pulled = await readWholeRepositoryOf(deps, access, async (fullName, token, user) => {
-      const answers = await eachOf(batch, PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, true).catch((err: unknown) => {
+      const answers = await eachOf(batch, PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, true, commits?.get(number)).catch((err: unknown) => {
         // GitHub asked, though it failed: its access asked again after.
         if (err instanceof GithubApiError) return { value: { number, error: err.message }, kept: false }
         throw err
@@ -2403,23 +2419,34 @@ const withDeltas = async (deps: ManagedHttpDeps, answers: object[]) => {
   return deltas.length > 0 ? { deltas } : {}
 }
 
+// A commit's or a blob's id, as GitHub names one.
+const OBJECT_ID = /^[a-f\d]{40}$/u
+
 // A repository's open pull requests, as many pages of them as
-// TEAM_PULL_PAGES, each read and kept as GET issues reads it; whether it has
-// more, and whether all were kept.
+// TEAM_PULL_PAGES, each read and kept as GET issues reads it; each's base's
+// and head's commits as its page has them (`commits`, by its number), where
+// it has them; whether it has more, and whether all were kept.
 async function teamOpenPulls(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string) {
   const items: TeamPull[] = []
+  const commits = new Map<number, PullCommits>()
   let after: string | null = null, kept = true
   for (let page = 0; page < TEAM_PULL_PAGES; page++) {
     const cursor = after
     const answer = await keptAnswer(deps, `${repoId}\0issues\0${ISSUES_READ_VERSION}\0pulls\0open\0${cursor ?? ''}`,
       async () => ({ kind: 'pulls', state: 'open', ...await repositoryIssues(fullName, token, 'pulls', 'open', cursor) }))
     kept &&= answer.kept
-    const value = answer.value as { items?: unknown; more?: unknown; after?: unknown }
+    const value = answer.value as { items?: unknown; more?: unknown; after?: unknown; commits?: unknown }
     items.push(...(Array.isArray(value.items) ? value.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0))
-    if (value.more !== true || typeof value.after !== 'string') return { items, more: false, kept }
+    for (const pull of Array.isArray(value.commits) ? value.commits as { number?: unknown; base?: unknown; head?: unknown }[] : []) {
+      const { number, base, head } = pull ?? {}
+      if (Number.isSafeInteger(number) && typeof base === 'string' && OBJECT_ID.test(base) && typeof head === 'string' && OBJECT_ID.test(head)) {
+        commits.set(number as number, { base, head })
+      }
+    }
+    if (value.more !== true || typeof value.after !== 'string') return { items, commits, more: false, kept }
     after = value.after
   }
-  return { items, more: true, kept }
+  return { items, commits, more: true, kept }
 }
 
 // The lines the versions wanting reviews of `answers` change, as their rows
@@ -2494,6 +2521,34 @@ function pullDependencyKept(deps: ManagedHttpDeps, repoId: number): PullDependen
       return value && Array.isArray(value.lockfiles) ? value : null
     },
     write: (commits, told) => store.write(keyOf(commits), told, Date.now()),
+  }
+}
+
+// What reading repository `repoId`'s lockfiles for its dependency review
+// keeps, by the rules they were read by (PULL_DEPENDENCIES_READ,
+// lockfileReadStore): each commit's listing, and each lockfile's read, of
+// those GitHub gave (pull-dependencies.ts LockfileStore). One kept otherwise
+// is none.
+function lockfileKept(deps: ManagedHttpDeps, repoId: number): LockfileStore {
+  const listings = lockfileReadStore<ListedLockfile[]>(deps.db, 'listings', deps.config.debug)
+  const lockfiles = lockfileReadStore<LockfileRead>(deps.db, 'lockfiles', deps.config.debug)
+  const keyOf = (key: string) => `${repoId}\0${PULL_DEPENDENCIES_READ}\0${key}`
+  return {
+    listings: {
+      async read(commit) {
+        const value: unknown = (await listings.read(keyOf(commit)))?.value
+        return Array.isArray(value) && value.every(item => typeof item?.path === 'string' && typeof item.format === 'string' && lockfileFormat(item.path) === item.format
+          && typeof item.sha === 'string' && OBJECT_ID.test(item.sha)) ? value : null
+      },
+      write: (commit, listed) => listings.write(keyOf(commit), listed, Date.now()),
+    },
+    lockfiles: {
+      async read(key) {
+        const value = (await lockfiles.read(keyOf(key)))?.value as { packages?: unknown; error?: unknown } | null | undefined
+        return value && (Array.isArray(value.packages) || value.error === 'lockfile-unreadable') ? value as LockfileRead : null
+      },
+      write: (key, read) => lockfiles.write(keyOf(key), read, Date.now()),
+    },
   }
 }
 

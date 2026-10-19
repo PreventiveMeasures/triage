@@ -116,6 +116,9 @@ A version is listed under the first pull request that adds it, as one review pas
 The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
 A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.
 What the tab read is kept for two minutes; drawn after that, it is shown while it is read again.
+Each pull request's dependencies are found by the base and head commits that the page of open pull requests names, so the tab doesn't ask GitHub for those commits.
+The list of lockfiles at the default branch's head and at the baseline commit, and each lockfile's versions by its contents, are kept in the database for a month.
+Another server instance then reads none of them from GitHub again, and after a push that changes no lockfile only the list is read again.
 A pull request's popup, and its repository's tiles, reuse what the tab read.
 The line counts on its rows come with the tab's answer where they are already counted, and the rest are asked for 50 at a time.
 

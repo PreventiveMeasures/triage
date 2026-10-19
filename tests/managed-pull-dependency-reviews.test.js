@@ -10,14 +10,26 @@ import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import { mock, test } from 'node:test'
-import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { lockedPackages } from '../server-managed/locked-packages.ts'
-import { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages } from '../server-managed/pull-dependency-reviews.ts'
-import { MAX_ADDED } from '../server-managed/pull-dependencies.ts'
-import { checkRepositoryDependencyReviews, context, people, publish } from './_managed-repository-dependency-reviews.js'
-import { readLines } from './_managed-lines.js'
-import { npmDeltaStore, npmVersionStore } from '../server-managed/npm-kept.ts'
+import { lru } from '../server-managed/lru.ts'
+
+// The server's memory (lru.ts), all of it forgotten at once, as another
+// instance's, cold, holds none of it (`coldInstance`); the database kept.
+const memories = []
+mock.module('../server-managed/lru.ts', { exports: { lru: (...args) => {
+  const memory = { held: lru(...args) }
+  memories.push(() => { memory.held = lru(...args) })
+  return { get: key => memory.held.get(key), set: (key, value) => memory.held.set(key, value) }
+} } })
+const coldInstance = () => { for (const forget of memories) forget() }
+const { openSqliteManagedDb } = await import('../server-managed/db.ts')
+const { createManagedRequestHandler } = await import('../server-managed/http.ts')
+const { lockedAt } = await import('../server-managed/commit-lockfiles.ts')
+const { lockedPackages } = await import('../server-managed/locked-packages.ts')
+const { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages } = await import('../server-managed/pull-dependency-reviews.ts')
+const { MAX_ADDED } = await import('../server-managed/pull-dependencies.ts')
+const { checkRepositoryDependencyReviews, context, people, publish } = await import('./_managed-repository-dependency-reviews.js')
+const { readLines } = await import('./_managed-lines.js')
+const { npmDeltaStore, npmVersionStore } = await import('../server-managed/npm-kept.ts')
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000 }
 const publicMetadata = { id: 1, full_name: 'org/repo', private: false, visibility: 'public', default_branch: 'main' }
@@ -266,14 +278,16 @@ function contents(path, text) {
 // counted since are read of it: pull request 5's base at `tip` and head at
 // `head`, compared from `mergeBase`, changing `compared`; `files` by commit;
 // `asked` what was asked of it; `missing` the files listed it has none of;
+// `failing` what it fails to answer for a while (as asked), as it is down;
 // `graphql` the data its GraphQL API answers with.
-function github(t, { files, compared = [], missing = [], graphql = () => ({}) }) {
+function github(t, { files, compared = [], missing = [], failing = [], graphql = () => ({}) }) {
   const asked = []
   const commits = Object.fromEntries(Object.entries(files).map(([commit, tree]) => [commit, gitTrees(tree)]))
   t.mock.method(globalThis, 'fetch', (input, init) => {
     const url = new URL(typeof input === 'string' ? input : input.url)
     if (url.pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
     asked.push(`${url.pathname}${url.search}`)
+    if (failing.includes(asked.at(-1))) return Promise.resolve(Response.json({ message: 'Service Unavailable' }, { status: 503 }))
     if (url.pathname === '/repos/org/repo/pulls/5') {
       return Promise.resolve(Response.json({ number: 5, state: 'open', base: { sha: tip, repo: { full_name: 'org/repo' } }, head: { sha: head } }))
     }
@@ -315,12 +329,63 @@ test('the versions the repository\'s lockfiles locked at the commit reviews are 
   assert.deepEqual([...(await reviewBaseline('org/repo', 'token', 2, since, kept)).versions], [`x@1.0.0\0${sri('x@1.0.0')}\0`])
   assert.deepEqual(asked, [], 'kept beyond it')
 
-  // GitHub having none of a lockfile it lists there: the whole fails, kept nowhere.
+  // GitHub having none of a lockfile it lists there, of a blob read nowhere
+  // before: the whole fails, kept nowhere.
   t.mock.restoreAll()
   const gone = 'f'.repeat(40)
-  github(t, { files: { [gone]: BASELINE }, missing: ['web/yarn.lock'] })
+  github(t, { files: { [gone]: { ...BASELINE, 'web/yarn.lock': `${yarnLockfile}\n` } }, missing: ['web/yarn.lock'] })
   await assert.rejects(reviewBaseline('org/repo', 'token', 3, gone, kept), /github-not-found/u)
   assert.equal(kept.kept.has(`3\0${gone}`), false)
+})
+
+// A lockfile's read as a commit lists it, by its format and its blob.
+const blobOf = (format, text) => `blob\0${format}\0${objectId('blob', Buffer.from(text)).toString('hex')}`
+
+test('a commit\'s lockfiles, as it lists them and as each is read, are kept beyond the instance, by the commit and by each one\'s blob: a cold one asks GitHub for none of them, nor is told it did; what GitHub fails to give is kept nowhere', async t => {
+  coldInstance()
+  const kept = { listings: memory(), lockfiles: memory() }
+  const lock = async (commit = since) => {
+    const asked = { github: false }
+    return { ...await lockedAt('org/repo', 'token', commit, kept, () => true, asked), github: asked.github }
+  }
+  // GitHub down as the commit is listed, then as one of its lockfiles is read; then having none of that one.
+  github(t, { files: { [since]: BASELINE }, failing: [`/repos/org/repo/git/commits/${since}`] })
+  await assert.rejects(lock(), /github-status-503/u)
+  assert.equal(kept.listings.kept.size, 0, 'a listing GitHub failed to give, kept nowhere')
+  t.mock.restoreAll()
+  github(t, { files: { [since]: BASELINE }, failing: [`/repos/org/repo/contents/web/yarn.lock?ref=${since}`] })
+  await assert.rejects(lock(), /github-status-503/u)
+  assert.deepEqual(kept.listings.kept.get(since).map(({ path }) => path).toSorted(), ['berry/yarn.lock', 'bun.lock', 'package-lock.json', 'web/yarn.lock'], 'its listing kept, by the commit')
+  assert.equal(kept.lockfiles.kept.has(blobOf('yarn', yarnLockfile)), false, 'a lockfile GitHub failed to give for a while, kept nowhere')
+  t.mock.restoreAll()
+  github(t, { files: { [since]: BASELINE }, missing: ['web/yarn.lock'] })
+  await assert.rejects(lock(), /github-not-found/u)
+  assert.equal(kept.lockfiles.kept.has(blobOf('yarn', yarnLockfile)), false, 'nor one it has none of')
+
+  t.mock.restoreAll()
+  coldInstance()
+  const asked = github(t, { files: { [since]: BASELINE } })
+  const first = await lock()
+  assert.deepEqual(asked, [`/repos/org/repo/contents/web/yarn.lock?ref=${since}`], 'on a cold instance, its listing and the lockfiles read whole kept: the one GitHub failed alone asked for')
+  assert.deepEqual([first.github, first.unread, first.lockfiles.map(({ path }) => path).toSorted()], [true, ['berry/yarn.lock', 'bun.lock'], ['package-lock.json', 'web/yarn.lock']])
+  assert.deepEqual(kept.lockfiles.kept.get(blobOf('yarn', BASELINE['berry/yarn.lock'])), { error: 'lockfile-unreadable', detail: 'a yarn.lock of Yarn 2 or later, which is not read' },
+    'one its reader refuses kept, as it refuses it again')
+  assert.deepEqual([...kept.lockfiles.kept.keys()].toSorted(), [blobOf('npm', BASELINE['package-lock.json']), blobOf('yarn', BASELINE['berry/yarn.lock']), blobOf('yarn', yarnLockfile)].toSorted(),
+    'Bun\'s, never read, not')
+
+  coldInstance()
+  asked.length = 0
+  assert.deepEqual(await lock(), { ...first, github: false }, 'on another, all of it kept: GitHub asked for none of it, nor told it was')
+  assert.deepEqual(asked, [])
+
+  // A push changing none of its lockfiles: listed again, each lockfile kept by its blob.
+  t.mock.restoreAll()
+  coldInstance()
+  const pushed = '8'.repeat(40)
+  const listed = github(t, { files: { [pushed]: { ...BASELINE, 'src/index.js': 'export const pushed = true\n' } } })
+  const after = await lock(pushed)
+  assert.deepEqual([after.lockfiles, after.unread, after.github], [first.lockfiles, first.unread, true])
+  assert.ok(listed.length > 0 && listed.every(path => path.startsWith('/repos/org/repo/git/')), 'only its listing asked for, none of its lockfiles')
 })
 
 test('a repository\'s review is in effect once enabled and a team that reviews dependencies has it; its passing reviews are full, accepting, published to such a team and not revoked', async t => {
@@ -560,10 +625,29 @@ test('the default branch\'s dependencies, with their review, tell what its lockf
   assert.equal((await send('/api/admin/repositories/lockfiles?repoId=0')).status, 400)
 })
 
+test('the default branch\'s dependencies, read on a cold instance of what another kept, ask GitHub for none of its lockfiles nor its listing, nor its access again', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const send = api(db, await people(db))
+  const asked = github(t, { files: PULL.files, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {} })
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, since })
+  const ask = () => send(`/api/admin/repositories/branch-dependencies?${new URLSearchParams({ repoId: '1' })}`)
+  coldInstance()
+  const answer = (await ask()).body
+  assert.ok(answer.review && asked.some(path => path.startsWith('/repos/org/repo/contents/')), 'read of GitHub')
+  coldInstance()
+  asked.length = 0
+  const before = globalThis.fetch.mock.callCount()
+  assert.deepEqual((await ask()).body, answer)
+  assert.deepEqual(asked, [], 'its head, its lockfiles as listed and as read, and its baseline kept: GitHub asked for none of them')
+  assert.equal(globalThis.fetch.mock.callCount() - before, 1, 'its access asked before, not again after')
+})
+
 // A team's Dependencies in one request (GET /api/teams/:id/dependencies):
 // alice's team `one` has org/repo, which reviews its dependencies, org/other,
-// which reviews none, and src of org/part, which she may read only some of.
-async function teamFixture(t) {
+// which reviews none, and src of org/part, which she may read only some of;
+// org/repo's open pull request 5 with `pull` as its page reads it.
+async function teamFixture(t, pull = {}) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const users = await people(db)
@@ -575,7 +659,7 @@ async function teamFixture(t) {
   await db.setRepoDependencyReview(3, { enabled: true, required: 1, since })
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
   const node = { number: 5, title: 'Bump ms', state: 'OPEN', createdAt: null, updatedAt: null, closedAt: null, author: null, comments: { totalCount: 0 },
-    labels: { totalCount: 0, nodes: [] }, files: { totalCount: 1, nodes: [{ path: 'package-lock.json' }] } }
+    labels: { totalCount: 0, nodes: [] }, files: { totalCount: 1, nodes: [{ path: 'package-lock.json' }] }, ...pull }
   const asked = github(t, { ...PULL, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } }
     : body.query.includes('page: pullRequests') ? { repository: { open: { totalCount: 1 }, closed: { totalCount: 0 }, page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node] } } }
       : {} })
@@ -650,4 +734,32 @@ test('a team\'s Dependencies tell with each line of dependencies the lines its v
   const lines = (await read()).lines.filter(line => line.repoId === 1)
   assert.deepEqual(lines.map(line => line.deltas ?? null), [[['kept', '1.0.0', '(empty)', delta]], [['kept', '1.0.0', '(empty)', delta]]],
     'kept, wanting reviews on the default branch and locked before by the pull request')
+})
+
+test('a team\'s Dependencies read each open pull request\'s by the commits its page names, never asking GitHub for them; where it names none, or not a commit\'s, as GitHub has them now', async t => {
+  const named = { baseRefOid: tip, headRefOid: head }
+  const issues = '/api/admin/repositories/issues?repoId=1&kind=pulls&state=open'
+  // Told already by those commits, their pull request's number no longer kept with them.
+  const { db, asked, read, send } = await teamFixture(t, named)
+  const told = (await send('/api/admin/repositories/pull-dependencies?repoId=1&numbers=5&review=1', { who: 'alice' })).body.pulls
+  await db.deleteUpstreamCacheEntries('repository/reads/', Number.MAX_SAFE_INTEGER)
+  assert.equal(Object.hasOwn((await send(issues, { who: 'alice' })).body, 'commits'), false, 'its page tells none of them')
+  asked.length = 0
+  const lines = (await read()).lines
+  assert.deepEqual(lines.find(line => line.dependencies)?.dependencies, told, 'read by them')
+  assert.ok(!asked.includes('/repos/org/repo/pulls/5'), 'GitHub not asked for them')
+  assert.ok(!asked.some(path => path.includes('/compare/')), 'nor what they tell')
+  assert.ok(lines.every(line => !Object.hasOwn(line, 'commits') && (line.pulls?.items ?? []).every(item => !Object.hasOwn(item, 'commits'))), 'none told')
+
+  // Told by none yet: by those commits, GitHub not asked for them either.
+  const first = await teamFixture(t, named)
+  assert.deepEqual((await first.read()).lines.find(line => line.dependencies)?.dependencies, told)
+  assert.ok(first.asked.includes(`/repos/org/repo/compare/${tip}...${head}?per_page=1`) && !first.asked.includes('/repos/org/repo/pulls/5'))
+
+  // Its page naming none of them, or not commits: as GitHub has them now.
+  for (const page of [{}, { baseRefOid: 'main', headRefOid: head }, { baseRefOid: tip, headRefOid: head.toUpperCase() }]) {
+    const other = await teamFixture(t, page)
+    assert.deepEqual((await other.read()).lines.find(line => line.dependencies)?.dependencies, told, JSON.stringify(page))
+    assert.ok(other.asked.includes('/repos/org/repo/pulls/5'), JSON.stringify(page))
+  }
 })

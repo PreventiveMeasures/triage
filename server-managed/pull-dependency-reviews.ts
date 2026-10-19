@@ -24,12 +24,12 @@
 // changes: it is read once, every lockfile there of those read here
 // (pull-dependencies.ts), and kept by the commit (`baselines` in this
 // instance, `kept` beyond it), never stored as reviews.
-import { type GithubAsked, lockedAt, lockedIn } from './commit-lockfiles.ts'
+import { lockedAt, lockedIn } from './commit-lockfiles.ts'
 import { GithubApiError } from './github-app.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { EVERY_LOCKFILE, type LockfileScope, heldTo, isEvery, reviewedIn } from './lockfile-scope.ts'
 import { type Lru, lru } from './lru.ts'
-import { type DirectoryDependencies, MAX_ADDED, type PullDependencies, lockedAs, lockedWith } from './pull-dependencies.ts'
+import { type DirectoryDependencies, type GithubAsked, type LockfileStore, MAX_ADDED, type PullDependencies, lockedAs, lockedWith } from './pull-dependencies.ts'
 import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
 import { type ReviewedDependencies, type ReviewedDependency, askReviewed } from './reviewed-dependencies.ts'
 
@@ -64,17 +64,19 @@ const hashesOf = (pkg: LockedPackage) => (pkg.integrity ?? '').split(/\s+/u).fil
 const baselineKeys = (pkg: LockedPackage) => hashesOf(pkg).map(hash => `${pkg.name}@${pkg.version ?? ''}\0${hash}\0${pkg.patchHash ?? ''}`)
 
 // The versions the repository's lockfiles locked at commit `since` that are
-// reviewed (reviewedAs), as kept, else read of GitHub (commit-lockfiles.ts)
-// and kept; with the lockfiles there its reader refuses, isn't one of, or
-// past those read (`unread`). GitHub having none of a lockfile it lists
-// there is a failure of the whole, as of any file, never kept.
-export async function reviewBaseline(fullName: string, token: string, repoId: number, since: string, kept: ReviewBaselineStore, asked?: GithubAsked): Promise<Baseline> {
+// reviewed (reviewedAs), as kept, else read of GitHub (commit-lockfiles.ts,
+// its lockfiles as `reads` keeps them) and kept; with the lockfiles there its
+// reader refuses, isn't one of, or past those read (`unread`). GitHub having
+// none of a lockfile it lists there is a failure of the whole, as of any
+// file, never kept.
+export async function reviewBaseline(fullName: string, token: string, repoId: number, since: string, kept: ReviewBaselineStore, reads: LockfileStore | null = null,
+  asked?: GithubAsked): Promise<Baseline> {
   const key = `${repoId}\0${since}`
   const known = baselines.get(key)
   if (known) return known
   const stored = await kept.read(key)
   if (stored) { const baseline = { versions: new Set(stored.versions), unread: stored.unread }; baselines.set(key, baseline); return baseline }
-  const read = await lockedAt(fullName, token, since, () => true, asked)
+  const read = await lockedAt(fullName, token, since, reads, () => true, asked)
   const { packages } = lockedIn(read), { unread } = read
   const versions = new Set<string>()
   for (const pkg of packages) if (reviewedAs(pkg) === 'version') for (const held of baselineKeys(pkg)) versions.add(held)
@@ -306,10 +308,11 @@ export const reviewedPackages = (told: PullDependencies) => told.lockfiles
 // A repository's baseline as read for a pull request: its versions and the
 // lockfiles there left unread; none where it reviews since no commit; and
 // where GitHub doesn't read it, none and why.
-export async function baselineFor(fullName: string, token: string, repoId: number, state: RepoReviewState, kept: ReviewBaselineStore, asked?: GithubAsked) {
+export async function baselineFor(fullName: string, token: string, repoId: number, state: RepoReviewState, kept: ReviewBaselineStore, reads: LockfileStore | null,
+  asked?: GithubAsked) {
   if (!state.since) return { baseline: null, unread: [], error: null }
   try {
-    const { versions, unread } = await reviewBaseline(fullName, token, repoId, state.since, kept, asked)
+    const { versions, unread } = await reviewBaseline(fullName, token, repoId, state.since, kept, reads, asked)
     return { baseline: versions, unread, error: null }
   } catch (err) {
     if (err instanceof GithubApiError && err.status !== 429 && err.status !== 401) return { baseline: null, unread: [], error: err.message }

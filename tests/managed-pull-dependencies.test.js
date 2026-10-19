@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { MAX_ADDED, MAX_DIRECTORIES, lockfileFormat, pullDependencies, touchesLockfile } from '../server-managed/pull-dependencies.ts'
+import { MAX_ADDED, MAX_DIRECTORIES, lockfileFormat, pullDependencies, pullDependenciesAt, touchesLockfile } from '../server-managed/pull-dependencies.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -113,8 +113,9 @@ function contents(path, text) {
 }
 
 // GitHub, as the pull request's lockfiles are read of it: pull request 5's
-// base at `tip` and head at `head`, compared from `mergeBase`; `asked` what
-// was asked of it, and `compared` the files GitHub's comparison lists.
+// base at `tip` and head at `head`, compared from `mergeBase`, as any head
+// before it; `asked` what was asked of it, and `compared` the files GitHub's
+// comparison lists.
 function github(t, { compared = COMPARED, files = FILES, pullFiles = null, headAt = FILES_HEAD, baseAt = FILES_BASE } = {}) {
   const asked = []
   t.mock.method(globalThis, 'fetch', input => {
@@ -123,7 +124,7 @@ function github(t, { compared = COMPARED, files = FILES, pullFiles = null, headA
     if (url.pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
     asked.push(at)
     if (url.pathname === '/repos/org/repo/pulls/5') return Promise.resolve(Response.json({ number: 5, base: { sha: tip, repo: { full_name: 'org/repo' } }, head: { sha: headAt } }))
-    if (url.pathname === `/repos/org/repo/compare/${tip}...${headAt}`) {
+    if (url.pathname.startsWith(`/repos/org/repo/compare/${tip}...`)) {
       return Promise.resolve(Response.json({ merge_base_commit: { sha: baseAt }, files: compared }))
     }
     if (url.pathname === '/repos/org/repo/pulls/5/files' && pullFiles) {
@@ -249,6 +250,21 @@ test('of a lockfile adding more than are told, the first by name, the rest count
   assert.equal(dir.added.length, MAX_ADDED + 3, 'every one kept, for its review')
   assert.equal(dir.more, 3, 'those past MAX_ADDED, which aren\'t told, counted')
   assert.equal(dir.added[0].name, 'pkg-000')
+})
+
+test('given its commits, as a page of open pull requests names them, GitHub isn\'t asked for them; given those its own list of its files is no longer of, it is read by those it is of now', async t => {
+  const asked = github(t)
+  const given = await pullDependenciesAt('org/repo', 'token', 5, memory(), undefined, { base: tip, head })
+  assert.deepEqual([given.commits, given.told.lockfiles.length], [`${tip}...${head}`, 5])
+  assert.ok(!asked.includes('/repos/org/repo/pulls/5'), 'its commits not asked for')
+
+  t.mock.restoreAll()
+  const many = Array.from({ length: 300 }, (_, at) => ({ filename: `src/f${at}.js`, status: 'added' }))
+  const listed = github(t, { compared: many, pullFiles: [...many, { filename: 'package-lock.json', status: 'modified' }] })
+  const pushed = await pullDependenciesAt('org/repo', 'token', 5, memory(), undefined, { base: tip, head: '9'.repeat(40) })
+  assert.deepEqual([pushed.commits, pushed.told.head, pushed.told.lockfiles.map(dir => dir.paths)], [`${tip}...${head}`, head, [['package-lock.json']]],
+    'pushed to since its page was read: read by the commits its own list of its files is of')
+  assert.ok(listed.includes('/repos/org/repo/pulls/5'), 'its commits asked for, as its own list of its files is read')
 })
 
 test('GitHub naming another pull request, or failing, is the answer\'s failure, nothing kept', async t => {

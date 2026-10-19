@@ -11,8 +11,10 @@
 // of a repository's GitHub, its issues, pull requests and agents' work, for a
 // day (http.ts keptAnswer), and its history, a page from a commit at a time,
 // for a month (repository-history.ts historyFrom), as are the files each of
-// its commits changes and holds (repository-changes.ts), and the packages a
-// pull request's lockfiles add (pull-dependencies.ts). Each store removes its own rows kept longer
+// its commits changes and holds (repository-changes.ts), the packages a
+// pull request's lockfiles add (pull-dependencies.ts), and the lockfiles a
+// commit lists and each one's packages, as its dependency review reads them
+// (commit-lockfiles.ts). Each store removes its own rows kept longer
 // than that as it writes, at most once an hour a database (pruneKept), so
 // that rows no read will take again don't pile up.
 // The database is an optimization: a failure reads as a miss, and writes
@@ -178,3 +180,11 @@ export const pullDependencyStore = <T>(db: UpstreamCacheStore, debug = false): K
 export const npmDeltaStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'npm/deltas', HISTORY_PAGE_KEPT_MS, debug)
 export const reviewBaselineStore = (db: UpstreamCacheStore, debug = false): KeptStore<{ versions: string[]; unread: string[] }> =>
   keptStore<{ versions: string[]; unread: string[] }>(db, 'repository/review-baselines', HISTORY_PAGE_KEPT_MS, debug)
+// What a repository's dependency review read of GitHub (pull-dependencies.ts
+// LockfileStore): the lockfiles a commit lists (`listings`), by the commit,
+// and a lockfile's packages with what their reviews are held to
+// (`lockfiles`), by its blob, which never change: kept as its history's
+// pages are, apart from a scan's (scanReadStore), which reads them without
+// what their reviews are held to.
+export const lockfileReadStore = <T>(db: UpstreamCacheStore, type: 'listings' | 'lockfiles', debug = false): KeptStore<T> =>
+  keptStore<T>(db, `repository/review-${type}`, HISTORY_PAGE_KEPT_MS, debug)

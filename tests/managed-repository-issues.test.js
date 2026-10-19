@@ -130,12 +130,12 @@ test('pull requests name their branches, size, review and checks, a merged one a
   assert.equal('reviews' in body.items[0], false)
 })
 
-test('open pull requests are read with their reviews: each reviewer\'s latest, those requested, their threads and Codex\'s summary', async t => {
+test('open pull requests are read with their reviews: each reviewer\'s latest, those requested, their threads and Codex\'s summary; and their commits, never told', async t => {
   const request = await fixture(t)
   const head = 'd'.repeat(40)
   const codex = { login: 'chatgpt-codex-connector', databaseId: 199175422 }
   const asked = github(t, () => page([{ number: 8, title: 'Pull 8', state: 'OPEN', author: { login: 'grace', databaseId: 6 }, comments: { totalCount: 1 }, labels: labels(),
-    isDraft: false, additions: 1, deletions: 1, headRefName: 'feature/y', baseRefName: 'main', commits: { nodes: [] }, headRefOid: head,
+    isDraft: false, additions: 1, deletions: 1, headRefName: 'feature/y', baseRefName: 'main', commits: { nodes: [] }, baseRefOid: 'e'.repeat(40), headRefOid: head,
     latestReviews: { nodes: [{ author: { login: 'grace', databaseId: 6 }, state: 'COMMENTED', submittedAt: null, commit: { oid: head } }] },
     reviewRequests: { nodes: [{ requestedReviewer: { __typename: 'User', login: 'ada', databaseId: 5 } }] },
     reviewThreads: { totalCount: 1, nodes: [{ isResolved: false, isOutdated: false, comments: { nodes: [{ author: codex,
@@ -151,6 +151,8 @@ test('open pull requests are read with their reviews: each reviewer\'s latest, t
   assert.deepEqual(body.users['chatgpt-codex-connector'], { agent: 'codex' }, 'Codex, by its summary\'s account')
   assert.deepEqual(body.users.ada, undefined, 'a reviewer the app does not know is no user')
   assert.match(asked[0].query, /page: pullRequests\(states: \[OPEN\][^]*headRefOid[^]*latestReviews[^]*reviewThreads\(last: 50\)/u)
+  assert.match(asked[0].query, /baseRefOid headRefOid/u, 'their commits, by which what their lockfiles add is read')
+  assert.deepEqual([Object.hasOwn(body, 'commits'), Object.keys(body.items[0]).filter(key => /commit|oid/iu.test(key))], [false, []], 'never told')
 })
 
 test('issues are read only with a token, by a reader whose grants reach the whole repository, and of a repository GitHub has', async t => {

@@ -6,9 +6,11 @@
 // review and its checks, which GraphQL alone gives, so it needs a token; an
 // open one's, and its popup's, whether it changes a lockfile whose new
 // packages are told (pull-dependencies.ts touchesLockfile), and its reviews
-// (pull-reviews.ts), each reviewer's. A nonpublic repository's are read with
-// its GitHub App's installation, which reads pull requests only with their
-// own permission (doc/code-viewer.md).
+// (pull-reviews.ts), each reviewer's; and an open one's base's and head's
+// commits, kept with its page but never told, by which what its lockfiles
+// add is read (http.ts teamRepositoryDependencies). A nonpublic repository's
+// are read with its GitHub App's installation, which reads pull requests only
+// with their own permission (doc/code-viewer.md).
 import { GithubApiError } from './github-app.ts'
 import { touchesLockfile } from './pull-dependencies.ts'
 import { ACTOR, type GraphAccount, type GraphqlError, actorOf, githubGraphql } from './repository-history.ts'
@@ -16,11 +18,12 @@ import { ITEM_THREADS, type ReviewNode, TILE_THREADS, pullReviews, reviewFields,
 
 export const ISSUES_PAGE = 50
 // What a kept page or item was read as: kept ones read before differ.
-export const ISSUES_READ_VERSION = 3
+export const ISSUES_READ_VERSION = 4
 const MAX_LABELS = 20
 const MAX_TITLE = 1000
 const MAX_NAME = 256
 const COLOR = /^[a-f\d]{6}$/iu
+const SHA = /^[a-f\d]{40}$/u
 // A page's cursor as GitHub gives it, to read on from: opaque, base64 or
 // base64url as it is now (`…rOrK_u7Q==`), passed back to GitHub alone, so any
 // printable one is, but none with spaces or control characters.
@@ -43,21 +46,22 @@ const connection = { issues: 'issues', pulls: 'pullRequests' }
 const states = { issues: { open: '[OPEN]', closed: '[CLOSED]' }, pulls: { open: '[OPEN]', closed: '[CLOSED, MERGED]' } }
 
 // A page of `kind`, those in `state`, after the page `after` ends, and how
-// many of each state there are; open pull requests with their reviews.
+// many of each state there are; open pull requests with their commits and
+// their reviews.
 const pageQuery = (kind: IssuesKind, state: IssuesState) => `query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     open: ${connection[kind]}(states: ${states[kind].open}) { totalCount }
     closed: ${connection[kind]}(states: ${states[kind].closed}) { totalCount }
     page: ${connection[kind]}(states: ${states[kind][state]}, first: ${ISSUES_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
-      nodes { ${fields[kind]}${kind === 'pulls' && state === 'open' ? ` ${files} ${reviewFields(TILE_THREADS, false)}` : ''} }
+      nodes { ${fields[kind]}${kind === 'pulls' && state === 'open' ? ` baseRefOid headRefOid ${files} ${reviewFields(TILE_THREADS, false)}` : ''} }
     }
   }
 }`
 
 type Node = ReviewNode & { number?: unknown; title?: unknown; createdAt?: unknown; updatedAt?: unknown; closedAt?: unknown; mergedAt?: unknown; author?: GraphAccount
   comments?: { totalCount?: unknown }; labels?: { totalCount?: unknown; nodes?: { name?: unknown; color?: unknown }[] }; state?: unknown; stateReason?: unknown
-  isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown
+  isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown; baseRefOid?: unknown
   commits?: { nodes?: { commit?: { statusCheckRollup?: { state?: unknown } | null } | null }[] }
   files?: { totalCount?: unknown; nodes?: ({ path?: unknown } | null)[] } | null }
 type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }
@@ -159,9 +163,17 @@ export async function repositoryItem(fullName: string, token: string, number: nu
       mergedBy: merger.login, mergedById: merger.id, reviews: pullReviews(node, tile.author, true) }
 }
 
+// An open pull request's base's and head's commits, by its number, as GitHub
+// has them now: those its REST API names `base.sha` and `head.sha`
+// (pull-dependencies.ts pullCommits). None where either isn't a commit's id.
+const commitsOf = (number: number, { baseRefOid: base, headRefOid: head }: Node) =>
+  typeof base === 'string' && SHA.test(base) && typeof head === 'string' && SHA.test(head) ? [{ number, base, head }] : []
+
 // A page of the repository's issues or pull requests in `state`, after the
 // page `after` ended (null for the first): its `items`, how many are open and
-// closed (`counts`), and, where more follow, the cursor reading them (`after`).
+// closed (`counts`), and, where more follow, the cursor reading them
+// (`after`); open pull requests' commits (`commits`, commitsOf) too, which
+// the code viewer is never told (http.ts handleRepositoryIssues).
 export async function repositoryIssues(fullName: string, token: string, kind: IssuesKind, state: IssuesState, after: string | null, fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
   const data = await githubGraphql(pageQuery(kind, state), { owner, name, after }, token, fetchImpl, partRefused) as Page
@@ -169,13 +181,15 @@ export async function repositoryIssues(fullName: string, token: string, kind: Is
   if (!repository) throw new GithubApiError(404, 'github-not-found')
   const info = repository.page?.pageInfo
   const next = info?.hasNextPage === true && typeof info.endCursor === 'string' && ISSUES_CURSOR.test(info.endCursor) ? info.endCursor : null
+  const open = kind === 'pulls' && state === 'open'
+  const tiles = (repository.page?.nodes ?? []).flatMap(node => {
+    const tile = item(kind, node)
+    return tile && node ? [{ node, tile }] : []
+  })
   return {
-    items: (repository.page?.nodes ?? []).flatMap(node => {
-      const tile = item(kind, node)
-      if (!tile) return []
-      return kind === 'pulls' && state === 'open' && node ? [{ ...tile, reviews: pullReviews(node, tile.author) }] : [tile]
-    }),
+    items: tiles.map(({ node, tile }) => open ? { ...tile, reviews: pullReviews(node, tile.author) } : tile),
     counts: { open: count(repository.open?.totalCount), closed: count(repository.closed?.totalCount) },
     more: next !== null, after: next,
+    ...open ? { commits: tiles.flatMap(({ node, tile }) => commitsOf(tile.number, node)) } : {},
   }
 }
