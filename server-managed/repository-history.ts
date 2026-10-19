@@ -9,6 +9,8 @@
 // read a page from a commit at a time, each page kept by the commit it starts
 // at (historyFrom): a commit's history never changes, and where a commit read
 // starts a page kept, that page glues on, and those after it.
+import { type AgentSignals, agentSignals } from '../common/managed/agent-tasks.ts'
+import { AGENT_MARKS_READ, APP_AGENTS } from './app-agents.ts'
 import { type Coauthor, MAX_COAUTHORS, type Maker, coauthorTrailers, coauthorsOf } from './commit-coauthors.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
 import { type GraphActor, accountOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
@@ -38,15 +40,32 @@ const SHA = /^[a-f\d]{40}$/u
 // (coauthorsOf, absent from pages kept before they were read), with the lines
 // it adds and removes and when it was authored in its author's own time zone
 // (`authorZone`, minutes east of UTC), where GitHub's GraphQL API tells them
-// (null where its REST API lists it).
+// (null where its REST API lists it); and the marks an agent left on it,
+// where any (commitMarks), by the rules they were read by (`marked`,
+// AGENT_MARKS_READ; absent from pages kept before).
 export interface HistoryCommit { sha: string; parents: string[]; subject: string; authorName: string | null; authorLogin: string | null; authorId?: number | null
-  coauthors?: Coauthor[]; committedAt: number | null; additions?: number | null; deletions?: number | null; authoredAt?: number | null; authorZone?: number | null }
+  coauthors?: Coauthor[]; committedAt: number | null; additions?: number | null; deletions?: number | null; authoredAt?: number | null; authorZone?: number | null
+  marks?: AgentSignals; marked?: number }
 export interface HistoryRef { name: string; sha: string }
 
 const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 const timeOf = (value: unknown) => {
   const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
   return Number.isSafeInteger(at) ? at : null
+}
+
+// The address Claude's own commits are authored with.
+export const CLAUDE_EMAIL = 'noreply@anthropic.com'
+
+// The marks an agent left on a commit, as the Agents tab tells them: its
+// message's (agent-tasks.ts agentSignals: sessions' and tasks' links,
+// agents' lines and fingerprints), its author an agent's account, or
+// Claude's address; null for one none marked.
+export function commitMarks(message: unknown, { email, account }: Maker): AgentSignals | null {
+  const author = account.login !== null && account.id !== null ? { login: account.login, id: account.id } : null
+  const marks = agentSignals([message], APP_AGENTS, null, author)
+  if (email === CLAUDE_EMAIL) marks.claude = true
+  return marks.claude || marks.codex || marks.agents.length > 0 || marks.sessions.length > 0 || marks.tasks.length > 0 ? marks : null
 }
 
 const lineCount = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null
@@ -58,14 +77,16 @@ const zoneOf = (value: unknown) => {
 
 // A commit as the Commits tab reads it, its subject the message's first
 // line, as `--oneline` shows, its author by name and account, and its
-// co-authors (coauthorsOf, `listed` as GitHub's GraphQL API lists them); null
-// for one GitHub names no commit id for. With `stats`, the GraphQL API's, its
-// lines and its author's time.
+// co-authors (coauthorsOf, `listed` as GitHub's GraphQL API lists them), and
+// the marks an agent left on it, as the Agents tab reads them from the pages
+// kept (commitMarks); null for one GitHub names no commit id for. With
+// `stats`, the GraphQL API's, its lines and its author's time.
 function historyCommit(sha: unknown, parents: unknown[], message: unknown, author: Maker, committedAt: unknown,
   stats: { additions?: unknown; deletions?: unknown; authoredAt?: unknown } | null = null, listed: Maker[] | null = null): HistoryCommit | null {
   if (typeof sha !== 'string' || !SHA.test(sha)) return null
   const lines = stats ? { additions: lineCount(stats.additions), deletions: lineCount(stats.deletions), authoredAt: timeOf(stats.authoredAt),
     authorZone: zoneOf(stats.authoredAt) } : { additions: null, deletions: null, authoredAt: null, authorZone: null }
+  const marks = commitMarks(message, author)
   return {
     sha,
     parents: parents.filter((parent): parent is string => typeof parent === 'string' && SHA.test(parent)).slice(0, MAX_PARENTS),
@@ -76,6 +97,8 @@ function historyCommit(sha: unknown, parents: unknown[], message: unknown, autho
     coauthors: coauthorsOf(message, author, listed),
     committedAt: timeOf(committedAt),
     ...lines,
+    ...marks ? { marks } : {},
+    marked: AGENT_MARKS_READ,
   }
 }
 

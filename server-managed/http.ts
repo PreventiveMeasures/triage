@@ -135,7 +135,8 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
-import { type KeptStore, REPOSITORY_READ_KEPT_MS, codeHeadStore, codeTreeStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore, lockfileReadStore,
+import { type KeptStore, REPOSITORY_READ_KEPT_MS, codeHeadStore, codeTreeStore, commitPullStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
+  lockfileReadStore,
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { type NpmDelta, keptNpmDeltas, npmDelta } from './npm-delta.ts'
@@ -218,7 +219,7 @@ import { COAUTHORS_READ } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { type SquashedPull, type Squashes, squashedPulls } from './repository-squashes.ts'
-import { AGENTS_READ_VERSION, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
+import { AGENTS_READ_VERSION, COMMITS_CURSOR, type CommitPulls, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits, type PullDependencies,
   type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
@@ -232,6 +233,7 @@ import { commentReviews } from './pull-comment-reviews.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince, repositoryActivity, repositoryLines,
   repositoryStats, withLines, yearCommits } from './repository-pulse.ts'
 import { type AgentMerges, agentCommits, agentMerges, directCommits, sameMerges } from './agent-merges.ts'
+import { AGENT_MARKS_READ } from './app-agents.ts'
 import { releaseCommits } from './release-commits.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
 import type { ReviewChange, ReviewContext, ReviewInput, ReviewedTarballs } from './dependency-reviews.ts'
@@ -2074,14 +2076,16 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
 // telling each commit's co-authors (kept since they are read), and with
 // `graphql`, only those read with GraphQL, telling its lines and the accounts
 // its co-authors' addresses are (a page GitHub's REST API listed tells
-// neither); the rest read again.
-function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false): HistoryPages {
+// neither), and with `marks`, only those telling the marks agents left on
+// its commits by the rules they are read by now (app-agents.ts
+// AGENT_MARKS_READ), as the Agents tab reads them; the rest read again.
+function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false, marks = false): HistoryPages {
   const store = historyPageStore<HistoryCommit[]>(deps.db, deps.config.debug)
   const keyOf = (top: string) => `${repoId}\0${COAUTHORS_READ}\0${top}`
   const told = (tops: string[], kept: Map<string, { value: HistoryCommit[] }>) => new Map(tops.flatMap(top => {
     const page = kept.get(keyOf(top))?.value
     return Array.isArray(page) && page.every(commit => Array.isArray(commit.coauthors)) && (!graphql || page.every(commit => commit.additions != null))
-      ? [[top, page] as const] : []
+      && (!marks || page.every(commit => commit.marked === AGENT_MARKS_READ)) ? [[top, page] as const] : []
   }))
   return {
     read: async tops => told(tops, await store.readMany(tops.map(keyOf))),
@@ -2098,6 +2102,24 @@ function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false): H
 // (COAUTHORS_READ), null for one none was (repository-squashes.ts
 // squashedPulls); one kept before its commits' co-authors were read, read
 // again.
+// Whether a pull request brought each of repository `repoId`'s commits, as
+// the Agents tab looks it up of those an agent marked (repository-agents.ts
+// pulledCommits), kept by the commit.
+function commitPulls(deps: ManagedHttpDeps, repoId: number): CommitPulls {
+  const store = commitPullStore<{ pulled: boolean }>(deps.db, deps.config.debug)
+  const keyOf = (sha: string) => `${repoId}\0${sha}`
+  return {
+    async read(shas) {
+      const kept = await store.readMany(shas.map(keyOf))
+      return new Map(shas.flatMap(sha => {
+        const pulled = kept.get(keyOf(sha))?.value?.pulled
+        return typeof pulled === 'boolean' ? [[sha, pulled] as const] : []
+      }))
+    },
+    write: (sha, pulled) => store.write(keyOf(sha), { pulled }, Date.now()),
+  }
+}
+
 function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
   const store = historySquashStore<SquashedPull | null>(deps.db, deps.config.debug)
   const keyOf = (sha: string) => `${repoId}\0${COAUTHORS_READ}\0${sha}`
@@ -2223,7 +2245,8 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
     || (cursors.commits !== null && !COMMITS_CURSOR.test(cursors.commits))) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
-  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors),
+  await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryAgents(fullName, token, cursors, historyPages(deps, repoId, true, true),
+    commitPulls(deps, repoId)),
     `agents\0${AGENTS_READ_VERSION}\0${cursors.pulls ?? ''}\0${cursors.commits ?? ''}`)
 }
 

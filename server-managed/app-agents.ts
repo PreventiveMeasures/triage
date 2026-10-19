@@ -15,3 +15,7 @@ export const APP_AGENTS: readonly (AppAgent & AppAgentMarks)[] = Object.entries<
 // The prefixes of the branches agents work on: Claude Code's and Codex's,
 // and the app agents'.
 export const AGENT_BRANCH_PREFIXES = ['claude/', 'codex/', ...APP_AGENTS.map(agent => agent.prefix)]
+// What the marks agents leave on commits are read by, as the history keeps
+// them (repository-history.ts commitMarks): bumped as how they are told
+// changes, so that the Agents tab reads again the pages kept by older rules.
+export const AGENT_MARKS_READ = 1

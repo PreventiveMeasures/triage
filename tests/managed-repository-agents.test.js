@@ -3,7 +3,11 @@ import { test } from 'node:test'
 import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from '../server-managed/app-agents.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { repositoryReadStore } from '../server-managed/npm-kept.ts'
+import { AGENT_MARKS_READ } from '../server-managed/app-agents.ts'
+import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
+import { historyPageStore, repositoryReadStore } from '../server-managed/npm-kept.ts'
+import { AGENTS_READ_VERSION } from '../server-managed/repository-agents.ts'
+import { graphCommit } from '../server-managed/repository-history.ts'
 import { createSession } from '../server-managed/session.ts'
 
 test('the app agents are those of GITHUB_AGENTS with branches of their own, each told by its prefix and its fingerprint', () => {
@@ -84,8 +88,12 @@ const firstPage = () => ({ data: { repository: {
     pullNode(560, { headRefName: 'fix/review', labels: { nodes: [{ name: 'bug' }, { name: 'Codex' }, null] } }),
     null, { number: 'x' },
   ] },
-  // GitHub's cursor of a commit's history, `<oid> <offset>`.
-  defaultBranchRef: { target: { history: { pageInfo: { hasNextPage: true, endCursor: `${'c'.repeat(40)} 99` }, nodes: [
+  defaultBranchRef: { target: { oid: a } },
+  issues: { nodes: [{ number: 12, title: 'Chips', state: 'OPEN', createdAt: null, updatedAt: null, author: { login: 'ada', databaseId: 7 } },
+    { number: 13, title: 'History', state: 'CLOSED', createdAt: null, updatedAt: null, author: null }, null] },
+} } })
+// The default branch's commits, the newest first, from its head.
+const branchCommits = [
     commitNode(a, `Fix it\n\nClaude-Session: ${session}`),
     // A commit Claude authored, naming no session; one a pull request merged; one by hand.
     commitNode(b, 'Fix a flaky test', { author: { email: 'noreply@anthropic.com', user: null } }),
@@ -104,10 +112,17 @@ const firstPage = () => ({ data: { repository: {
     commitNode('0'.repeat(40), 'Not Copilot', { author: { email: 'copilot@example.com', user: null } }),
     commitNode('1'.repeat(40), 'Not Copilot', { author: { email: '1+Copilot@users.noreply.github.com', user: null } }),
     commitNode('2'.repeat(40), 'Not Copilot', { author: { email: '198982749+ada@users.noreply.github.com', user: null } }),
-  ] } } },
-  issues: { nodes: [{ number: 12, title: 'Chips', state: 'OPEN', createdAt: null, updatedAt: null, author: { login: 'ada', databaseId: 7 } },
-    { number: 13, title: 'History', state: 'CLOSED', createdAt: null, updatedAt: null, author: null }, null] },
-} } })
+]
+// Its history as the Commits tab reads it, a page from its head, each
+// commit's parent the next, the last's one unlisted.
+const unlisted = '8'.repeat(40)
+const historyPage = ({ o0 }) => ({ data: { repository: { b0: { history: { pageInfo: { hasNextPage: true }, nodes: o0 === a ? branchCommits.map((node, at) => ({
+  oid: node.oid, message: node.message, committedDate: node.committedDate, additions: node.additions, deletions: node.deletions,
+  author: { name: 'Someone', email: node.author.email, date: node.committedDate, user: node.author.user }, authors: { nodes: [{ name: 'Someone', ...node.author }] },
+  parents: { nodes: [{ oid: branchCommits[at + 1]?.oid ?? unlisted }] } })) : [] } } } } })
+// Whether a pull request brought each commit asked of: the third's alone.
+const pulledPage = variables => ({ data: { repository: Object.fromEntries(Object.entries(variables).flatMap(([key, sha]) => /^o\d+$/u.test(key)
+  ? [[`c${key.slice(1)}`, { associatedPullRequests: { totalCount: sha === c ? 1 : 0 } }]] : [])) } })
 // An agent's branches as GitHub lists them, by name, a page at a time; a
 // name whole under `refs/heads/`, or under the prefix listed.
 const ref = (prefix, name, at, message = 'Work') => ({ prefix, name, target: { committedDate: at, message, author: { user: { login: 'ChristopherTuring' } } } })
@@ -131,7 +146,8 @@ const authoredPage = () => ({ data: { repository: { defaultBranchRef: { target: 
 const graphql = ({ query, variables }) => query.includes('user(login:') ? { data: { u0: { login: 'any-login', databaseId: 274065190 } } }
   : query.includes('refs(refPrefix: $prefix')
   ? { data: { repository: { refs: refPages[variables.prefix][variables.after ?? 'null'] } } }
-  : query.includes('author: { emails: $emails }') ? authoredPage() : firstPage()
+  : query.includes('author: { emails: $emails }') ? authoredPage() : query.includes('nodes { ...historyCommit }') ? historyPage(variables)
+  : query.includes('... on Commit { associatedPullRequests') ? pulledPage(variables) : firstPage()
 
 test('the first page reads pull requests, the default branch\'s commits no pull request merged, issues and agents\' branches, and answers their agents\' marks, never their texts', async t => {
   const request = await fixture(t)
@@ -160,6 +176,9 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
     ['f'.repeat(40), 'Move the database (#50)', { sessions: [], tasks: [], claude: false, codex: false, agents: ['copilot'] }],
     ['9'.repeat(40), 'Fix the build (#7)', { sessions: [], tasks: [], claude: false, codex: false, agents: ['copilot'] }]],
   'those no agent marked, or a pull request merged, are not; those the app agents authored however far back, each once')
+  const pulled = asked.find(query => query.query.includes('... on Commit { associatedPullRequests'))
+  assert.deepEqual(Object.entries(pulled.variables).flatMap(([key, sha]) => /^o\d+$/u.test(key) ? [sha] : []).toSorted(),
+    [a, b, c, '3'.repeat(40), 'e'.repeat(40), '4'.repeat(40), 'f'.repeat(40)].toSorted(), 'whether a pull request brought one looked up of those marked alone')
   assert.deepEqual(asked.find(query => query.query.includes('author: { emails: $emails }')).variables.emails, ['198982749+Copilot@users.noreply.github.com',
     '198982749+copilot-swe-agent@users.noreply.github.com', '175728472+Copilot@users.noreply.github.com', '175728472+copilot-pull-request-reviewer@users.noreply.github.com',
     '175728472+copilot-pull-request-reviewer[bot]@users.noreply.github.com', '49699333+dependabot@users.noreply.github.com', '49699333+dependabot[bot]@users.noreply.github.com'])
@@ -178,12 +197,12 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   // The agents it knows by their apps or accounts, each by id, name and avatar, never how it tells them.
   assert.deepEqual(body.agents, [{ id: 'neo', name: 'Neo', avatar: 'app-3115942' }, { id: 'copilot', name: 'Copilot' },
     { id: 'dependabot', name: 'Dependabot', avatar: 'app-29110' }])
-  assert.deepEqual([body.more, body.after], [true, { pulls: cursor, commits: `${'c'.repeat(40)} 99` }], 'read on from GitHub\'s cursors, a commit\'s with its space')
+  assert.deepEqual([body.more, body.after], [true, { pulls: cursor, commits: unlisted }], 'read on from GitHub\'s cursor, and where the history listed stops')
   assert.doesNotMatch(JSON.stringify(body), /Generated with|Defaults/u, 'no text read is answered')
   const page = asked.find(query => query.query.includes('pullRequests('))
   // An agent links its session in its own texts: no comment is read, nor an issue's body.
   assert.doesNotMatch(page.query, /comments|issues\([^)]*\) [^]*body/u)
-  assert.deepEqual(page.variables, { owner: 'org', name: 'repo', pulls: null, commits: null, first: true, readPulls: true, readCommits: true })
+  assert.deepEqual(page.variables, { owner: 'org', name: 'repo', pulls: null, first: true })
   assert.match(page.query, /labels\(first: 100\) \{ nodes \{ name \} \}/u, 'a pull request\'s labels read, as many as GitHub gives a page')
   assert.deepEqual(asked.filter(query => query.query.includes('refs(refPrefix: $prefix')).map(query => [query.variables.prefix, query.variables.after]).toSorted(),
     [['refs/heads/claude/', null], ['refs/heads/claude/', 'b_2'], ['refs/heads/codex/', null], ['refs/heads/copilot/', null], ['refs/heads/dependabot/', null], ['refs/heads/neo/', null]])
@@ -192,6 +211,65 @@ test('the first page reads pull requests, the default branch\'s commits no pull 
   const reads = asked.length
   assert.deepEqual((await request({ repoId: '1' })).body, body)
   assert.equal(asked.length, reads)
+  // Kept no longer: the history read of its pages kept, whether a pull
+  // request brought each of what was looked up, neither read again.
+  await repositoryReadStore(request.db).remove('1\0agents\0' + AGENTS_READ_VERSION + '\0\0')
+  assert.deepEqual((await request({ repoId: '1' })).body.commits, body.commits)
+  assert.equal(asked.filter(query => query.query.includes('nodes { ...historyCommit }') || query.query.includes('... on Commit { associatedPullRequests')).length, 2)
+})
+
+test('the history the Commits tab and Pulse keep is the Agents tab\'s: a page kept with its commits\' marks not read again; one kept before they were, read again', async t => {
+  const request = await fixture(t)
+  const asked = github(t, graphql)
+  const pages = historyPageStore(request.db)
+  const kept = (top, commits) => pages.write(`1\0${COAUTHORS_READ}\0${top}`, commits, Date.now())
+  const commit = (sha, parent, more) => ({ sha, parents: [parent], subject: `Commit ${sha[0]}`, authorName: 'Ada', authorLogin: 'ada', authorId: 7, coauthors: [],
+    committedAt: Date.parse('2026-10-15T00:00:00Z'), additions: 1, deletions: 0, authoredAt: null, authorZone: null, marked: AGENT_MARKS_READ, ...more })
+  const marks = { sessions: ['session_01MamW9SFrduHwBFipxyjRnn'], tasks: [], claude: true, codex: false, agents: [] }
+  await kept(a, [commit(a, b, { marks }), commit(b, unlisted)])
+  const { body } = await request({ repoId: '1' })
+  assert.equal(asked.filter(query => query.query.includes('nodes { ...historyCommit }')).length, 0, 'the page kept read')
+  assert.deepEqual(body.commits.filter(item => item.oid === a).map(item => [item.title, item.author, item.signals]), [['Commit a', 'ada', marks]])
+  assert.equal(body.after.commits, unlisted)
+  // Kept before its commits' marks were: read again, and kept so.
+  await kept(b, [commit(b, unlisted, { marked: undefined })])
+  await request({ repoId: '1', commits: b })
+  assert.deepEqual(asked.filter(query => query.query.includes('nodes { ...historyCommit }')).map(query => query.variables.o0), [b])
+})
+
+test('a frontier however wide read on in turns, as many of it an answer as all branches are at first, none of it dropped', async t => {
+  const request = await fixture(t)
+  const asked = github(t, graphql)
+  const pages = historyPageStore(request.db)
+  const sha = (prefix, at) => `${prefix}${String(at).padStart(39, '0')}`
+  const tops = Array.from({ length: 30 }, (_, at) => sha('a', at))
+  // Each kept a commit whose parent is unlisted, the first the newest.
+  for (const [at, top] of tops.entries()) {
+    await pages.write(`1\0${COAUTHORS_READ}\0${top}`, [{ sha: top, parents: [sha('b', at)], subject: 'Merge', authorName: 'Ada', authorLogin: 'ada', authorId: 7,
+      coauthors: [], committedAt: Date.parse('2026-10-15T00:00:00Z') - at * 60_000, additions: 1, deletions: 0, authoredAt: null, authorZone: null,
+      marked: AGENT_MARKS_READ }], Date.now())
+  }
+  const parents = Array.from({ length: 25 }, (_, at) => sha('b', at))
+  const { body } = await request({ repoId: '1', commits: tops.join(',') })
+  assert.equal(asked.filter(query => query.query.includes('nodes { ...historyCommit }')).length, 0, 'the pages kept read')
+  // Those named past the first 25 left unread, read next, ahead of the
+  // parents of those read.
+  assert.deepEqual(body.after.commits.split(','), [...tops.slice(25), ...parents])
+  const next = await request({ repoId: '1', commits: body.after.commits })
+  assert.deepEqual(asked.flatMap(query => Object.entries(query.variables).flatMap(([key, value]) => /^o\d+$/u.test(key) ? [value] : [])).toSorted(),
+    parents.slice(0, 20), 'the first 25 named read, of GitHub where none is kept')
+  assert.deepEqual(next.body.after.commits.split(','), [...parents.slice(20), ...Array.from({ length: 5 }, (_, at) => sha('b', 25 + at))])
+})
+
+test('a commit\'s marks kept with the history as it is read: its message\'s, Claude\'s address, an agent\'s account; none where none is', () => {
+  const ada = { name: 'Ada', email: 'ada@example.com', user: { login: 'ada', databaseId: 7 } }
+  const node = (message, author = ada) => ({ oid: a, message, committedDate: '2026-10-15T00:00:00Z', additions: 1, deletions: 0, author, authors: { nodes: [author] },
+    parents: { nodes: [] } })
+  assert.deepEqual(graphCommit(node(`Fix it\n\nClaude-Session: ${session}`)).marks.sessions, ['session_01MamW9SFrduHwBFipxyjRnn'])
+  assert.equal(graphCommit(node('Tidy', { name: 'Claude', email: 'noreply@anthropic.com', user: null })).marks.claude, true)
+  assert.deepEqual(graphCommit(node('Move', { name: 'Copilot', email: '198982749+Copilot@users.noreply.github.com', user: null })).marks.agents, ['copilot'])
+  const plain = graphCommit(node('By hand'))
+  assert.deepEqual(['marks' in plain, plain.marked], [false, AGENT_MARKS_READ])
 })
 
 test('an answer an older server kept, as it read and told agents then, is not sent: read again', async t => {
@@ -211,11 +289,15 @@ test('a later page reads on from the cursors it names alone, without issues and 
   const asked = github(t, () => ({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [pullNode(800, {})] } } } }))
   const { body } = await request({ repoId: '1', pulls: cursor })
   assert.equal(asked.length, 1, 'no branches read again')
-  assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', pulls: cursor, commits: null, first: false, readPulls: true, readCommits: false })
+  assert.deepEqual(asked[0].variables, { owner: 'org', name: 'repo', pulls: cursor, first: false })
   assert.deepEqual([body.pulls.map(pull => pull.number), body.commits, body.issues, body.branches, body.more], [[800], [], undefined, undefined, false])
-  // The default branch's commits read on from GitHub's cursor, its space and all.
-  assert.equal((await request({ repoId: '1', commits: `${'c'.repeat(40)} 99` })).status, 200)
-  assert.deepEqual(asked.at(-1).variables, { owner: 'org', name: 'repo', pulls: null, commits: `${'c'.repeat(40)} 99`, first: false, readPulls: false, readCommits: true })
+  // The default branch's commits read on from where those listed stopped,
+  // its history alone read, from each commit named.
+  assert.equal((await request({ repoId: '1', commits: [b, c].join(',') })).status, 200)
+  assert.deepEqual([asked.length, asked.at(-1).variables], [2, { owner: 'org', name: 'repo', o0: b, o1: c }])
+  // One an older server gave, GitHub's, on from its commit.
+  assert.equal((await request({ repoId: '1', commits: `${'d'.repeat(40)} 99` })).status, 200)
+  assert.deepEqual(asked.at(-1).variables, { owner: 'org', name: 'repo', o0: 'd'.repeat(40) })
 })
 
 test('agents\' work is read only with a token by a reader whose grants reach the whole repository; a cursor that isn\'t one is a bad request', async t => {
@@ -224,6 +306,6 @@ test('agents\' work is read only with a token by a reader whose grants reach the
   assert.deepEqual(await (await fixture(t, { role: 'manage' }))({ repoId: '1' }), { status: 404, body: { error: 'no-directory' } })
   const request = await fixture(t)
   for (const query of [{ repoId: '0' }, { repoId: '1', pulls: 'a b' }, { repoId: '1', commits: '' }, { repoId: '1', commits: 'a b' },
-    { repoId: '1', pulls: `${'c'.repeat(40)} 99` }]) assert.equal((await request(query)).status, 400, JSON.stringify(query))
+    { repoId: '1', pulls: `${'c'.repeat(40)} 99` }, { repoId: '1', commits: Array.from({ length: 101 }, () => a).join(',') }]) assert.equal((await request(query)).status, 400, JSON.stringify(query))
   assert.equal((await request({ repoId: '1' }, { method: 'POST' })).status, 405)
 })
