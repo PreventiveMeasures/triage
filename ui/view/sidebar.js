@@ -2105,8 +2105,14 @@ async function revalidateManagedSession() {
   const isCurrent = () => generation === clientModeGeneration && request === managedSessionRequest && isManagedUiMode()
   try {
     const previous = state.managedSession
-    const session = await managedProbeSession({ fallback: previous, sent: takeStartupSession() })
+    const unanswered = {}
+    const probed = await managedProbeSession({ fallback: unanswered, sent: takeStartupSession() })
     if (!isCurrent()) return
+    // Unanswered while another tab tells of another session, which the cookie
+    // may now name: nothing is read for this one meanwhile, lest the other's
+    // be shown as its own (recheckManagedSession asks again).
+    if (probed === unanswered && previous && (await toldOtherThan(previous) || !isCurrent())) return
+    const session = probed === unanswered ? previous : probed
     state.managedSession = session
     managedSessionPending = false
     if (!previous || previous.id !== session?.id || previous.role !== session?.role) managedTeamsPending = true
@@ -2390,8 +2396,9 @@ document.addEventListener('managed-import-complete', () => { void refreshManaged
 // Another tab told of another session than this one's, its cookie changed
 // there: this one's asked again at once, superseding one in flight, which may
 // have read the cookie before; and, where a probe that failed kept the
-// session it had, again a few times later while that tab's still differs.
-const SESSION_RECHECKS_MS = [5_000, 15_000, 45_000]
+// session it had, again later while that tab's still differs, each wait
+// longer, to a minute.
+const SESSION_RECHECKS_MS = [5_000, 15_000, 45_000, 60_000]
 let sessionRecheck = null
 let sessionRechecks = 0
 async function recheckManagedSession(attempt = 0) {
@@ -2400,8 +2407,8 @@ async function recheckManagedSession(attempt = 0) {
   const chain = ++sessionRechecks
   if (!isManagedUiMode() || getPreviewRole()) return
   await refreshManagedSession({ again: true })
-  if (chain !== sessionRechecks || attempt >= SESSION_RECHECKS_MS.length || !await toldOtherThan(state.managedSession)) return
-  if (chain === sessionRechecks) sessionRecheck = setTimeout(() => { void recheckManagedSession(attempt + 1) }, SESSION_RECHECKS_MS[attempt])
+  if (chain !== sessionRechecks || !await toldOtherThan(state.managedSession)) return
+  if (chain === sessionRechecks) sessionRecheck = setTimeout(() => { void recheckManagedSession(attempt + 1) }, SESSION_RECHECKS_MS[Math.min(attempt, SESSION_RECHECKS_MS.length - 1)])
 }
 watchManagedSessions(() => { void recheckManagedSession() })
 
