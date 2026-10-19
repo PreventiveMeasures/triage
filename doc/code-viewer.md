@@ -168,7 +168,7 @@ Agents are recognised by what they leave on GitHub:
 | --- | --- |
 | Claude | `https://claude.ai/code/session_…` or a `Claude-Session:` trailer; `Co-Authored-By: Claude … <noreply@anthropic.com>`; `Generated with [Claude Code]`; a commit Claude authored; a `claude/…` branch |
 | Codex | `https://chatgpt.com/codex/tasks/task_…`; `Co-authored-by: Codex <codex@openai.com>`; a `codex/…` branch |
-| Neo | A line starting with U+1F916 then `Generated with [Neo](`; account 274065190; a `neo/…` branch |
+| Neo | A line starting with U+1F916 then `Generated with [Neo](`; account 274065190, or its GitHub App's (3115942) bot, 268952163; a `neo/…` branch |
 | Copilot | Account 198982749 (`Copilot`, `copilot-swe-agent`); a `copilot/…` branch |
 | Dependabot | Account 49699333 (`dependabot`, `dependabot[bot]`); a `dependabot/…` branch |
 | Cursor (commit lines only) | `Cursor Agent <cursoragent@cursor.com>` or a `cursor.com/agents?id=bc-…` link |

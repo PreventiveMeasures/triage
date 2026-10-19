@@ -78,6 +78,7 @@ An account is matched by its numeric GitHub ID where GitHub gives one, else by i
 So a renamed account still shows as its user, and its old login, if another account takes it, does not.
 A login that two users claim shows as the login alone.
 A commit with no GitHub user, such as a GitHub App bot's, is matched by the account its noreply address names.
+GitHub's older noreply address, `<login>@users.noreply.github.com`, names no ID, so the account of its login is looked up by that login, once per read (with a token).
 
 The known agents (Claude, Codex, Copilot, Dependabot, GitHub Actions, Neo and Cursor) show as agents, matched by their GitHub accounts, or by author name for commits GitHub names no account for.
 Pulse counts each agent as one contributor.

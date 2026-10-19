@@ -5,7 +5,7 @@ import { COAUTHORS_READ } from '../server-managed/commit-coauthors.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { historyPageStore } from '../server-managed/npm-kept.ts'
-import { HISTORY_GLUED, historyFrom } from '../server-managed/repository-history.ts'
+import { HISTORY_GLUED, historyFrom, repositoryHistory } from '../server-managed/repository-history.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -163,6 +163,44 @@ test('with a token, a revision\'s commits are named by every branch All branches
   const { body } = await request({ repoId: '1', ref: 'heads/main' })
   assert.deepEqual([body.branches, body.tags], [[{ name: 'main', sha: a }, { name: 'zz-past-the-first-hundred', sha: c }], [{ name: 'v2', sha: b }]])
   assert.equal(asked.some(entry => entry.path === '/repos/org/repo/branches' || entry.path === '/repos/org/repo/tags'), false)
+})
+
+test('an author by GitHub\'s older no-reply address, naming no id, is the account of its login, as GitHub links it, looked up once a read', async t => {
+  const actor = (name, login) => ({ name, email: `${login}@users.noreply.github.com`, user: null })
+  const graphql = ({ query, variables }) => query.includes('user(login:')
+    ? { data: { u0: variables.l0 === 'any-login' ? { login: 'any-login', databaseId: 274065190 } : null, u1: { login: 'Grace', databaseId: 12 }, u2: null },
+      errors: [{ type: 'NOT_FOUND', path: ['u2'], message: 'Could not resolve to a User with the login of \'gone\'.' }] }
+    : { data: { repository: query.includes('refs/heads/') ? { defaultBranchRef: { name: 'main', target: { oid: a, committedDate: null } }, tags: { nodes: [] },
+      branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } }
+      : { b0: { history: { nodes: [
+        { oid: a, message: 'Work\n\nCo-authored-by: Grace <grace@users.noreply.github.com>', committedDate: '2026-10-02T10:00:00Z', author: actor('Neo', 'Any-Login'),
+          authors: { nodes: [actor('Neo', 'Any-Login'), actor('Grace', 'grace')] }, parents: { nodes: [{ oid: b }] } },
+        { oid: b, message: 'Older', committedDate: '2026-10-01T10:00:00Z', author: actor('Gone', 'gone'), parents: { nodes: [] } },
+      ] } } } } }
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  const { body } = await request({ repoId: '1', ref: 'heads/main' })
+  assert.deepEqual(body.commits.map(commit => [commit.authorLogin, commit.authorId, commit.coauthors]), [
+    ['any-login', 274065190, [{ name: 'Grace', login: 'Grace', id: 12 }]],
+    [null, null, []],
+  ], 'one GitHub no longer knows, no one\'s')
+  assert.deepEqual(body.users, { 'any-login': { agent: 'neo' } }, 'Neo\'s account, by its id')
+  assert.deepEqual(asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('user(login:')).map(entry => entry.body.variables),
+    [{ l0: 'any-login', l1: 'grace', l2: 'gone' }], 'each login once, whatever its case')
+})
+
+test('a directory\'s history, as GitHub\'s REST API lists it, names a co-author by the older no-reply address the account of its login, with a token alone', async () => {
+  const items = [{ sha: a, parents: [], author: { login: 'any-login[bot]', id: 268952163 },
+    commit: { message: 'Work\n\nCo-authored-by: any-login <any-login@users.noreply.github.com>', author: { name: 'any-login[bot]', email: '268952163+any-login[bot]@users.noreply.github.com' } } }]
+  const asked = []
+  const fetchImpl = url => {
+    asked.push(String(url))
+    return Promise.resolve(String(url).endsWith('/graphql') ? Response.json({ data: { u0: { login: 'any-login', databaseId: 274065190 } } }) : Response.json(items))
+  }
+  const [linked, anonymous] = [await repositoryHistory('org/repo', 'token', a, 'src', 1, fetchImpl), await repositoryHistory('org/repo', null, a, 'src', 1, fetchImpl)]
+  assert.deepEqual([linked.commits[0].authorLogin, linked.commits[0].authorId, linked.commits[0].coauthors], ['any-login[bot]', 268952163, []], 'Neo, its author, once')
+  assert.deepEqual(anonymous.commits[0].coauthors, [{ name: 'any-login', login: null, id: null }], 'without a token, unlooked-up')
+  assert.equal(asked.filter(url => url.endsWith('/graphql')).length, 1)
 })
 
 test('a full page offers the next, but for the deepest page read', async t => {

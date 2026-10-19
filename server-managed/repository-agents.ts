@@ -14,7 +14,7 @@ import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, 
 import { GITHUB_AGENTS, type GithubAgentAccount, type GithubAgentId } from '../common/managed/github-agents.ts'
 import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
 import { GithubApiError } from './github-app.ts'
-import { ACTOR, type NamedAccount, actorOf, commitAccount, githubGraphql } from './repository-history.ts'
+import { ACTOR, type NamedAccount, actorOf, commitAccount, githubGraphql, linkNoreplyUsers } from './repository-history.ts'
 import { ISSUES_CURSOR } from './repository-issues.ts'
 
 export const AGENT_PULLS_PAGE = 50
@@ -164,6 +164,7 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
   for (let page = 0; page < MAX_BRANCH_PAGES; page++) {
     const refs: Connection<RefNode> | undefined = (await githubGraphql(BRANCHES_QUERY, { owner, name, prefix: `refs/heads/${prefix}`, after }, token, fetchImpl) as RefsPage)
       ?.repository?.refs
+    await linkNoreplyUsers((refs?.nodes ?? []).map(node => node?.target?.author), token, fetchImpl)
     found.push(...(refs?.nodes ?? []).flatMap(node => branch(prefix)(node) ?? []))
     const next: Connection<RefNode>['pageInfo'] = refs?.pageInfo
     if (next?.hasNextPage !== true || typeof next.endCursor !== 'string') break
@@ -175,7 +176,7 @@ async function agentBranches(owner: string, name: string, prefix: string, token:
 // What its answers are kept by, with their cursors (http.ts
 // handleRepositoryAgents): bumped as what a page reads, or how it tells an
 // agent, changes, so that no answer an older server kept is sent for a day.
-export const AGENTS_READ_VERSION = 6
+export const AGENTS_READ_VERSION = 7
 
 // A cursor of the default branch's commits: GitHub names one by a commit
 // and how many on from it, `<oid> <offset>`, a space between.
@@ -206,7 +207,9 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
   if (!repository) throw new GithubApiError(404, 'github-not-found')
   const history = repository.defaultBranchRef?.target?.history
   const after = { pulls: nextCursor(repository.pullRequests), commits: nextCursor(history, COMMITS_CURSOR) }
-  const commits = [...history?.nodes ?? [], ...authored?.repository?.defaultBranchRef?.target?.history?.nodes ?? []].flatMap(node => directCommit(node) ?? [])
+  const nodes = [...history?.nodes ?? [], ...authored?.repository?.defaultBranchRef?.target?.history?.nodes ?? []]
+  await linkNoreplyUsers(nodes.map(node => node?.author), token, fetchImpl)
+  const commits = nodes.flatMap(node => directCommit(node) ?? [])
   return {
     pulls: (repository.pullRequests?.nodes ?? []).flatMap(node => pull(node) ?? []),
     commits: commits.filter((commit, index) => commits.findIndex(other => other.oid === commit.oid) === index),
