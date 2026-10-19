@@ -494,7 +494,7 @@ function sendAvatar(req: IncomingMessage, res: ServerResponse, avatar: CachedAva
   const etag = `"${createHash('sha256').update(`${avatar.contentType}\0`).update(avatar.bytes).digest('base64url').slice(0, 22)}"`
   const headers = { 'etag': etag, 'cache-control': cacheControl, 'x-content-type-options': 'nosniff' }
   const asked = req.headers['if-none-match']
-  if (typeof asked === 'string' && asked.split(',').some(tag => [etag, `W/${etag}`].includes(tag.trim()))) { res.writeHead(304, headers); res.end(); return }
+  if (typeof asked === 'string' && asked.split(',').some(tag => ['*', etag, `W/${etag}`].includes(tag.trim()))) { res.writeHead(304, headers); res.end(); return }
   res.writeHead(200, { ...headers, 'content-type': avatar.contentType, 'content-length': String(avatar.bytes.length) })
   res.end(avatar.bytes)
 }

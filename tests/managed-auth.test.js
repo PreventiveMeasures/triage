@@ -397,6 +397,7 @@ test('GET /api/avatar/<id>: approved users may fetch avatars (401 unauth, 404 mi
   // Asked again by the image kept: unchanged, none sent; another, sent.
   const kept = await get(`/api/avatar/${s.user.id}`, ck, { 'if-none-match': `"other", W/${own.headers['etag']}` })
   assert.deepEqual([kept.statusCode, kept.body, kept.headers['etag'], kept.headers['cache-control']], [304, '', own.headers['etag'], own.headers['cache-control']])
+  assert.equal((await get(`/api/avatar/${s.user.id}`, ck, { 'if-none-match': '*' })).statusCode, 304, 'any image kept, by the wildcard')
   await avatarStore.put(s.user.id, 'image/png', Buffer.from([4, 5]))
   const changed = await get(`/api/avatar/${s.user.id}`, ck, { 'if-none-match': own.headers['etag'] })
   assert.equal(changed.statusCode, 200)
