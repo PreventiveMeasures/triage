@@ -393,6 +393,28 @@ test('the history tells the pull requests squashed into it by those the Pulse la
   assert.equal(asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('associatedPullRequests')).length, 0, 'no commit looked up')
 })
 
+test('what the Pulse read merged, where it can\'t be told, tells none: the pull requests squashed looked up as ever', async t => {
+  const [squash, direct, p1] = ['5', '7', '8'].map(char => char.repeat(40))
+  const at = new Date(Date.now() - 86_400_000).toISOString()
+  const node = (oid, parents, message) => ({ oid, message, committedDate: at, author: null, parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  const graphql = ({ query }) => ({ data: { repository: query.includes('refs/heads/')
+    ? { defaultBranchRef: { name: 'main', target: { oid: squash, committedDate: at } }, branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+      tags: { nodes: [] } }
+    : query.includes('associatedPullRequests') ? { c0: { associatedPullRequests: { nodes: [{ number: 2, mergeCommit: { oid: squash } }] } },
+      c1: { associatedPullRequests: { nodes: [] } } }
+    : query.includes('pullRequest(number') ? { p0: { headRefOid: p1, commits: { totalCount: 1, nodes: [{ commit: node(p1, [d], 'Start') }] } } }
+    : query.includes('pullRequests(states') ? { pullRequests: { nodes: [] } }
+    : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [node(squash, [direct], 'Feature (#2)'), node(direct, [d], 'Direct'), node(d, [], 'Root')] } } } } })
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  // Kept as no server writes it: its merges none to read.
+  await repositoryReadStore(request.db).write(`1\0pulse-merges\0${PULSE_YEAR_VERSION}`, { merges: [], rebases: [], through: Date.now(), next: null, pulls: [null],
+    pullRebases: [] }, Date.now())
+  const { body } = await request({ repoId: '1', all: 'true' })
+  assert.deepEqual(body.pulls.map(pull => [pull.merge, pull.number, pull.head]), [[squash, 2, p1]])
+  assert.equal(asked.filter(entry => entry.path === '/graphql' && entry.body.query.includes('associatedPullRequests')).length, 1)
+})
+
 test('a history is sent all the same where the pull requests squashed into it can\'t be read', async t => {
   const graphql = ({ query }) => query.includes('associatedPullRequests') || query.includes('pullRequests(') ? { errors: [{ type: 'FORBIDDEN' }] }
     : { data: { repository: query.includes('refs/heads/')

@@ -1884,7 +1884,7 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const listed = (body as { commits: HistoryCommit[] }).commits
     const none = { pulls: [] as SquashedPull[], pending: false }
     const [squashed, openPulls] = token && path === '' ? await Promise.all([
-      pulseMerges(deps, repoId).then(known => squashedPulls(repo, token, listed, historySquashes(deps, repoId), SQUASH_WAIT_MS, globalThis.fetch, known)).then(read => {
+      pulseMerges(deps, repoId).catch(quiet(null)).then(known => squashedPulls(repo, token, listed, historySquashes(deps, repoId), SQUASH_WAIT_MS, globalThis.fetch, known)).then(read => {
         if (read.behind) {
           const behind = read.behind.catch(quiet(null))
           deps.track(behind)
