@@ -84,3 +84,20 @@ test('a tab whose probe failed, keeping the session it had, is told the other ta
   assert.equal(await a.toldOtherThan(session('grace')), false, 'its probe found grace')
   assert.equal(await a.toldOtherThan(session('grace', { publicShare: true })), false, 'a public share is no cookie\'s')
 })
+
+test('of two tellings whose digests end out of order, the later alone is told', async t => {
+  const a = await tab('a4')
+  const listener = overheard()
+  const digest = crypto.subtle.digest.bind(crypto.subtle)
+  let calls = 0
+  t.mock.method(crypto.subtle, 'digest', async (...args) => {
+    if (++calls === 1) await delay(30)
+    return digest(...args)
+  })
+  await Promise.all([a.announceManagedSession(session('kate')), a.announceManagedSession(session('liam'))])
+  await settle()
+  listener.close()
+  const liam = [...new Uint8Array(await digest('SHA-256', new TextEncoder().encode(JSON.stringify(['liam', 'triage', null, 'csrf-liam']))))]
+    .map(byte => byte.toString(16).padStart(2, '0')).join('')
+  assert.deepEqual(listener.heard, [{ mark: liam }], 'kate\'s, overtaken, told nothing')
+})

@@ -10,6 +10,7 @@ const CHANNEL = 'deepview-managed-session'
 let channel = null
 let told = null
 let heard = null
+let announcing = 0
 const watchers = new Set()
 
 function opened() {
@@ -41,11 +42,13 @@ async function markOf(session) {
 // The session this tab found, told the others where it is another than the
 // one it last told. Another told before this tab had told its own, which
 // went unheeded (its probe then perhaps read the cookie before it changed),
-// is heeded now, once.
+// is heeded now, once. One a later call overtook, its digest done after,
+// tells nothing.
 export async function announceManagedSession(session) {
   if (session?.publicShare) return
+  const turn = ++announcing
   const mark = await markOf(session)
-  if (mark === null || !opened()) return
+  if (turn !== announcing || mark === null || !opened()) return
   const first = told === null
   if (mark !== told) {
     told = mark
