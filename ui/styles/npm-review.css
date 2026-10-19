@@ -162,6 +162,23 @@ npm-review .npm-review-dialog::backdrop { background: rgb(0 0 0 / .45); }
   border-bottom: 1px solid var(--border);
   }
 .npm-review-close { position: absolute; top: 6px; right: 6px; z-index: 1; }
+/* WCO PWA mode: the panel runs to the window's top-right corner, which
+   is where Windows / Linux paint their window controls — right over the
+   close button. Drop the panel's content below that strip, as
+   `.kanban-detail-side` does (findings.css explains the clamp): the
+   titlebar's height when the right-side strip has any width, otherwise
+   nothing, so macOS, with its controls top-left, keeps the corner. The
+   close button is placed from the padding box's outer edge, which the
+   padding doesn't move, so it takes the same inset itself. */
+/* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
+@media (display-mode: window-controls-overlay) {
+  npm-review .npm-review-dialog {
+    --npm-review-wco-top: clamp(0px, var(--wco-right-toolbar) * 1000, var(--wco-titlebar-height));
+    padding-top: var(--npm-review-wco-top);
+  }
+  .npm-review-close { top: calc(var(--npm-review-wco-top) + 6px); }
+}
+/* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 .npm-review-dialog-head h2 { margin: 0; font-size: 1rem; }
 .npm-review-dialog-head p { margin: .2rem 0 0; font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }
 .npm-review-dialog-body { gap: 1.1rem; padding: 1rem 1.25rem; }
