@@ -3,3 +3,4 @@
 export type TeamAppMetadata = { appMode: true; appFindings: number } | { appMode: false; appReports?: number; findings?: number }
 export function managedTeamAppMetadata(workspace: readonly { filename: string; data: unknown }[] & { links?: readonly (readonly string[])[] },
   options?: { countFindings?: boolean }): TeamAppMetadata
+export function managedTeamRevalidationConflicted(workspace: readonly { filename: string; data: unknown }[] & { links?: readonly (readonly string[])[] }): boolean

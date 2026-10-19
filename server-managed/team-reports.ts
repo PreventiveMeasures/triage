@@ -8,7 +8,7 @@ import { managedFindingSourcePaths, readManagedReport } from '../common/managed/
 import { filterReportData, projectFinding } from '../common/managed/report-filter.ts'
 import { revalidationLinks, securityLinks } from '../common/security-links.js'
 import { treeDependencyDirectory } from '../client/dependency-paths.js'
-import { liteReportData } from '../common/managed/finding-detail.js'
+import { liteWorkspace } from '../common/managed/finding-detail.js'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import { triageWireEntry } from './triage-response.ts'
@@ -158,13 +158,21 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   for (let i = 0; i < reports.length; i++) {
     const access = snapshot.reports[i]!, report = reports[i]!
     report.data = filterReportData(report.data, access.permissions, access.repo, securityIds)
+    if (report.data && typeof report.data === 'object' && 'think' in report.data) {
+      const { think: _think, ...data } = report.data as Finding
+      report.data = data
+    }
     const ids = new Set<string>()
     for (const finding of groupsOf(report.data).flat()) {
       // Preserve linked security classification for the UI lens, including a
       // linked component that a dependency permission will hide from the UI.
       finding['isSecurity'] = securityIds.has(String(finding['id']))
-      // The hash of its file's tree, which nothing a team view shows reads.
+      // The hash of its file's tree, the fingerprint its ID was derived from
+      // and whether its run thought, which nothing a team view reads, nor an
+      // export (@preventive/report write-md-finding.js) writes.
       delete finding['treeHash']
+      delete finding['_idBasis']
+      delete finding['think']
       if (typeof finding['id'] === 'string') { ids.add(finding['id']); allIds.add(finding['id']) }
     }
     visible.set(report.id, { ids, sourcePaths: managedFindingSourcePaths(groupsOf(report.data).flat()) })
@@ -177,11 +185,13 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   }
   const trees = Buffer.from(`{"trees":{${reports.map(withoutTree).filter(tree => tree !== null).join(',')}}}`)
   const links = mergeLinkGroups(globalLinks, allIds)
+  // The board's: its findings without their detail, and in App mode its rows
+  // as the App view shows them (common/managed/finding-detail.js).
+  const lite = liteWorkspace(reports, links)
   const encoded = {
     // Bounded together, as when the trees were sent with their reports.
     reports: encodeReports(reports, links, trees.length),
-    // The board's, its findings without their detail (common/managed/finding-detail.js).
-    lite: encodeReports(reports.map(report => ({ ...report, data: liteReportData(report.data) })), links, 0),
+    lite: encodeReports(lite.reports, links, 0, lite.folded),
     trees,
   }
   retainVisibility(db, workspaceKey(snapshot), visible)
@@ -189,8 +199,9 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   return { ...encoded, visible }
 }
 // `{ reports, links }` as a response sends them, `spent` bytes already
-// counted against the bound.
-function encodeReports(reports: readonly TeamReport[], links: readonly string[][], spent: number): Buffer {
+// counted against the bound; `folded` where the board's copy left out rows
+// App mode does not show (common/managed/finding-detail.js).
+function encodeReports(reports: readonly TeamReport[], links: readonly string[][], spent: number, folded = false): Buffer {
   let outputBytes = spent + 14
   const parts = [Buffer.from('{"reports":[')]
   for (const [index, report] of reports.entries()) {
@@ -200,7 +211,8 @@ function encodeReports(reports: readonly TeamReport[], links: readonly string[][
     if (index) parts.push(Buffer.from(','))
     parts.push(bytes)
   }
-  const suffix = Buffer.from(links.length > 0 ? `],"links":${JSON.stringify(links)}}` : ']}')
+  const tail = JSON.stringify({ ...links.length > 0 ? { links } : {}, ...folded ? { folded } : {} })
+  const suffix = Buffer.from(tail === '{}' ? ']}' : `],${tail.slice(1)}`)
   if (outputBytes + suffix.length > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   parts.push(suffix)
   return Buffer.concat(parts)

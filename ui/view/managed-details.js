@@ -11,37 +11,74 @@ import { showToast } from './toast.js'
 // (`lite`), the whole reports asked for beside them (ingest.js
 // switchToManagedTeam). Until they are in, a popup, a view mode other than
 // the board and an export wait for them (render.js, events.js); once in,
-// each finding is filled in where it is, and the team's finding index
+// each finding is filled in where it is, or, where the board's copy left
+// rows out (App mode's, common/managed/finding-detail.js), the whole reports
+// are ingested in its place; and the team's finding index
 // (client/managed/workspace.js) built again from them.
 let current = null
+
+// Whether the loaded reports are those the details are for, or are being
+// ingested in their place.
+const awaited = () => current !== null && (current.replacing || current.reports === store(state.reports))
 
 // What a view needing the loaded findings' detail shows in its place: null
 // once they have it, or need none; 'loading' while it comes; 'failed' where
 // it never will.
 export function managedDetailsWaiting() {
-  if (current === null || current.reports !== store(state.reports) || current.ok) return null
+  if (!awaited() || current.ok) return null
   return current.done ? 'failed' : 'loading'
+}
+
+// Whether the whole reports are being ingested in place of the board's copy:
+// the view is held as it was meanwhile (render.js).
+export function managedDetailsReplacing() {
+  return current?.replacing === true
 }
 
 // Whether the loaded reports' findings have their detail, once they have it
 // or never will: false for a team's whose request failed.
 export function managedDetailsReady() {
-  return current !== null && current.reports === store(state.reports) ? current.ready : Promise.resolve(true)
+  return awaited() ? current.ready : Promise.resolve(true)
+}
+
+// Whether the board's copy of the loaded reports left out rows (App mode's,
+// common/managed/finding-detail.js): a lens other than App's, its detail
+// stop or its upstream one, waits for the whole reports (render.js).
+export function managedDetailsFolded() {
+  return awaited() && current.folded && !current.ok
+}
+
+// Settles true once `shown`, the view standing, false once `signal` aborts.
+function standing(shown, signal) {
+  return new Promise(resolve => {
+    if (signal?.aborted) { resolve(false); return }
+    signal?.addEventListener('abort', () => resolve(false), { once: true })
+    shown.then(resolve, () => resolve(false))
+  })
 }
 
 // Fills the loaded reports' findings in from `request`'s whole reports, then
-// `loaded()`, as long as they are still loaded; whole reports that fail, or
-// do not hold the same findings, leave them as they are, telling so.
-export function awaitManagedDetails(teamId, request, loaded) {
-  const reports = store(state.reports)
-  const entry = current = { reports, done: false, ok: false, ready: null }
+// `loaded()`, as long as they are still loaded. Whole reports not holding the
+// same findings, as where the board's copy was `folded`, are ingested in
+// their place once the view is `shown`, by `replace(workspace)`, true once it
+// stands; ones that fail, or cannot be ingested, leave the board as it is,
+// telling so. A view left before then waits for nothing.
+export function awaitManagedDetails(teamId, request, loaded, { folded = false, shown = Promise.resolve(true), signal, replace } = {}) {
+  const entry = current = { reports: store(state.reports), folded, done: false, ok: false, replacing: false, ready: null }
+  const loadedStill = () => current === entry && store(state.reports) === entry.reports
   entry.ready = (async () => {
     const workspace = await Promise.resolve(request).catch(() => null)
+    const fill = loadedStill() && workspace && detailsFill(entry.reports, workspace)
+    if (fill) fill()
+    else if (loadedStill() && workspace && replace) {
+      if (!await standing(shown, signal) || !loadedStill()) { entry.done = true; return false }
+      entry.replacing = true
+      try { entry.ok = await replace(workspace) } catch { entry.ok = false } finally { entry.replacing = false }
+      if (entry.ok) entry.reports = store(state.reports)
+    }
     entry.done = true
-    if (store(state.reports) !== reports) return false
-    const fill = workspace && detailsFill(reports, workspace)
-    if (fill) {
-      fill()
+    if (!loadedStill()) return false
+    if (fill || entry.ok) {
       entry.ok = true
       setManagedWorkspace(teamId, workspace)
       // Merged rows are copies of their findings, built again with the

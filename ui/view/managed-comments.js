@@ -39,11 +39,12 @@ export function managedCommentScope(reportId) {
     && state.reports === reports && state.managedReports.some(report => report.id === reportId)
 }
 
-export async function loadManagedReportComments(reportId, { signal, readAnnotations } = {}) {
+export async function loadManagedReportComments(reportId, { signal, readAnnotations, except } = {}) {
   const current = managedCommentScope(reportId)
   if (!current()) return false
+  // Those `except` names are left as they are (managed-triage.js hydrateManagedReportTriage).
   const ids = new Set(state.reports.filter(report => report._managedReportId === reportId)
-    .flatMap(report => report.groups.flatMap(group => group.map(finding => finding.id))))
+    .flatMap(report => report.groups.flatMap(group => group.map(finding => finding.id))).filter(id => !except?.has(id)))
   const before = new Map([...ids].map(id => [id, state.managedComments.get(id)]))
   const comments = readAnnotations ? (await readAnnotations(reportId))?.comments : await fetchReportComments(reportId, state.currentManagedTeam, { signal })
   if (!current() || comments == null || signal?.aborted) return false

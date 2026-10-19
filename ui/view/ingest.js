@@ -802,9 +802,14 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   state.currentWorkspace = reportId === null ? `managed-team:${team.id}` : null
   state.currentManagedTeam = team.id
   state.currentManagedReport = reportId
-  // A report of findings is the one its annotations are read for; a link
-  // report's span the reports it links, known once they are in.
-  state.managedReports = opened && !deduplication && opened.analyzer !== LINKS_KIND ? [{ id: opened.id, filename: opened.filename }] : []
+  // What will load, as the catalog names it, so that a catalog telling the
+  // same as it loads finds nothing changed (managed-report-catalog.js): a
+  // team's published reports, or a report of findings, the one its
+  // annotations are read for; a link report's span the reports it links,
+  // known once they are in.
+  state.managedReports = deduplication ? []
+    : reportId === null ? team.reports.filter(r => r.visible !== false).map(r => ({ id: r.id, filename: r.filename }))
+      : opened.analyzer === LINKS_KIND ? [] : [{ id: opened.id, filename: opened.filename }]
   state.managedComments.clear()
   state.managedIssues.clear()
   state.managedReport = null
@@ -844,27 +849,36 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   resetGraph2()
   for (const entry of findings) {
     await ingestReport(entry.filename, entry.data, gen, {
-      renderView: false, managedReportId: entry.id, managedRepo: entry.repo,
+      renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepLens: workspace.folded === true,
     })
     if (isStaleLoad(gen)) return false
   }
-  if (details) awaitManagedDetails(team.id, details, () => render())
   // Hydrate every report before the merged view becomes interactive. The
   // managed triage layer routes later edits by the per-report ids stamped
   // above, so overlapping findings are sent to a report that actually owns
   // them instead of silently posting them to the first report only.
+  // With the team feed, its annotation read (managed-feed.js), which knows
+  // the revision it reads at; else one of its own.
+  // Those `except` names keep what they hold (replaceManagedReports).
+  const hydrate = async (signal, readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal), except = undefined) => {
+    const results = await Promise.all(findings.flatMap(entry => [
+      hydrateManagedReportTriage(entry.id, { renderView: false, signal, readAnnotations, except }),
+      loadManagedReportComments(entry.id, { signal, readAnnotations, except }),
+    ]))
+    return results.every(Boolean) && !signal.aborted && !isStaleLoad(gen)
+  }
+  // A link report read as one of findings is read again for those it links.
+  const annotations = selectedLink ? undefined : preload
+  // The board's copy leaving rows out is replaced by the whole reports once
+  // the view is shown (managed-details.js); details in sooner draw nothing
+  // until then, the view still loading.
+  const shown = Promise.withResolvers()
+  let opening = null
+  if (details) {
+    awaitManagedDetails(team.id, details, () => { void shown.promise.then(() => render()) }, { folded: workspace.folded === true, shown: shown.promise, signal: viewSignal,
+      replace: whole => replaceManagedReports(whole, findings, { gen, hydrate, annotations, opening }) })
+  }
   if (findings.length > 0) {
-    // With the team feed, its annotation read (managed-feed.js), which knows
-    // the revision it reads at; else one of its own.
-    const hydrate = async (signal, readAnnotations = createManagedAnnotationRead(state.currentManagedTeam, signal)) => {
-      const results = await Promise.all(findings.flatMap(entry => [
-        hydrateManagedReportTriage(entry.id, { renderView: false, signal, readAnnotations }),
-        loadManagedReportComments(entry.id, { signal, readAnnotations }),
-      ]))
-      return results.every(Boolean) && !signal.aborted && !isStaleLoad(gen)
-    }
-    // A link report read as one of findings is read again for those it links.
-    const annotations = selectedLink ? undefined : preload
     const hydrated = deduplication ? await hydrate(currentViewSignal()) : await startManagedTeamFeed({ hydrate, annotations })
     if (isStaleLoad(gen)) return false
     if (!hydrated) {
@@ -885,6 +899,56 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   }
   startManagedTeamFeed()
   await renderSidebar()
+  opening = OPENING_FIELDS.map(key => state[key])
+  shown.resolve(true)
+  return true
+}
+
+// What a view opens on (filters.js applyOpeningFilters), and the lens it is
+// read through: a later answer opens it again only while they are as it
+// opened.
+const OPENING_FIELDS = ['showRevalidation', 'upstreamOnly', 'revalidationDetailed', 'filterConfMin', 'filterConfMax', 'filterRevalidate', 'filterPartial', 'sortBy', 'severityMode']
+
+// The whole reports in place of a team board's copy of them, which left out
+// rows App mode does not show (common/managed/finding-detail.js `fold`):
+// ingested again as they are, the lens configured once they are all in, the
+// reader's filters left as they set them, or, while they leave the `opening`
+// ones alone throughout, those the whole reports open on. The findings the board's copy held keep the annotations kept for them
+// since, a reader's edits among them; those it left out are hydrated from the
+// annotations read as the team opened, any told since caught up with
+// (managed-feed.js). The board is held as it was meanwhile (render.js), and
+// takes nothing from its reader. One that fails once begun goes Home, as a
+// failed load does.
+async function replaceManagedReports(workspace, findings, { gen, hydrate, annotations, opening }) {
+  const whole = new Map(workspace.map(entry => [entry.id, entry]))
+  const entries = findings.map(entry => whole.get(entry.id))
+  if (isStaleLoad(gen) || entries.some(entry => !entry)) return false
+  const held = new Set(state.reports.flatMap(loaded => loaded.groups.flat().map(finding => finding.id)))
+  const board = document.querySelector('#findings-body-slot')
+  let settled = null, untouched = false
+  board?.setAttribute('inert', '')
+  try {
+    state.reports = []
+    clearMergedGroups()
+    for (const entry of entries) {
+      const ingested = await ingestReport(entry.filename, entry.data, gen, {
+        renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepFilters: true, keepLens: true,
+      })
+      if (isStaleLoad(gen)) return false
+      if (!ingested) { await failManagedTeamLoad('Could not load all team reports. Please try again.'); return false }
+    }
+    untouched = OPENING_FIELDS.every((key, index) => state[key] === opening[index])
+    configureReportRevalidation()
+    settled = OPENING_FIELDS.map(key => state[key])
+    if (!await startManagedTeamFeed({ hydrate: (signal, readAnnotations) => hydrate(signal, readAnnotations, held), annotations }) || isStaleLoad(gen)) {
+      if (!isStaleLoad(gen)) await failManagedTeamLoad('Could not load report annotations. Open the team or report again to retry.')
+      return false
+    }
+  } finally {
+    board?.removeAttribute('inert')
+  }
+  // Left alone throughout, but for what the lens took of the whole reports.
+  if (untouched && OPENING_FIELDS.every((key, index) => state[key] === settled[index])) applyOpeningFilters(getShownGroups())
   return true
 }
 
@@ -1012,15 +1076,14 @@ export async function switchToWorkspace(workspaceId) {
   // counts cache must never delay opening this workspace or a finding link.
   // Late promotion can update the opening defaults only while the user has
   // left them alone; metadata still updates if they choose a different lens.
-  const openingFields = ['showRevalidation', 'upstreamOnly', 'revalidationDetailed', 'filterConfMin', 'filterConfMax', 'filterRevalidate', 'filterPartial', 'sortBy', 'severityMode']
-  const opening = openingFields.map((key) => state[key])
+  const opening = OPENING_FIELDS.map((key) => state[key])
   void updateWorkspaceAppMetadata(ws, loadedReports, appToken, {
     complete,
     isCurrent: () => !isStaleLoad(gen),
     onReady: async (metadata) => {
       if (!metadata.appMode || state.currentWorkspace !== workspaceId
           || !['findings', 'files'].includes(state.currentView)
-          || openingFields.some((key, i) => state[key] !== opening[i])) return
+          || OPENING_FIELDS.some((key, i) => state[key] !== opening[i])) return
       state.showRevalidation = true
       state.upstreamOnly = false
       state.revalidationDetailed = false
@@ -1395,7 +1458,7 @@ export async function leaveWorkspace(workspaceId, mode = 'detach', { triage = 'k
 // push. The headless `window.__loadFile` path passes nothing, staying
 // unguarded so it keeps accumulating across calls (the print pipeline
 // relies on that).
-async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null, managedRepo = null } = {}) {
+async function ingestReport(name, content, gen = null, { renderView = true, managedReportId = null, managedRepo = null, keepFilters = false, keepLens = false } = {}) {
   const stale = () => gen !== null && isStaleLoad(gen)
   try {
     // Finish both hints before rendering the Link button. Copy remains
@@ -1572,9 +1635,13 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     if (stampUpstreamFindings(state.reports)) clearMergedGroups()
     state.revalidateConflicts = getRevalidationConflicts()
     // Restore/disable the lens before deriving opening filters, including when
-    // leaving a conflicted workspace for one of its individual reports.
-    configureReportRevalidation()
-    if (isFirst) {
+    // leaving a conflicted workspace for one of its individual reports. One
+    // to `keepLens` leaves it as it is: a team board's folded copy, whose rows
+    // left out might tell otherwise (render.js), and its whole reports
+    // ingested in its place, the lens configured once they are all in.
+    configureReportRevalidation({ held: keepLens })
+    // A view's reports ingested again, whole, keep the filters its reader set.
+    if (isFirst && !keepFilters) {
       resetFilters()
       // What this set opens on: an auto-tuned confidence floor, and
       // then — for a REVALIDATION report, one where every group that

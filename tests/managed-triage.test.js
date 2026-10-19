@@ -663,6 +663,23 @@ test('team hydration and refresh share one snapshot and preserve edits during th
   assert.equal(state.triage.get('y').color, 'red', 'the batch cannot undo an edit posted while it was in flight')
 })
 
+test('a team\'s whole reports hydrated from the snapshot its board\'s copy was leave the findings that copy held as they are, an edit since among them', async () => {
+  state.currentManagedTeam = 'team'
+  state.managedReports = [{ id: 'A' }]
+  state.reports = [{ _managedReportId: 'A', groups: [[{ id: 'x' }]] }]
+  annotationResult = { A: { entries: { x: { color: 'blue' }, u: { color: 'green' } }, comments: [] } }
+  const readAnnotations = createManagedAnnotationRead('team')
+  assert.equal(await hydrateManagedReportTriage('A', { readAnnotations, renderView: false }), true)
+  assert.equal(state.triage.has('u'), false, 'one the copy left out takes nothing')
+  await edit('x', { color: 'red' })
+  await drain()
+  // The whole report: the row beneath x's, which the copy left out, with it.
+  state.reports = [{ _managedReportId: 'A', groups: [[{ id: 'x' }, { id: 'u' }]] }]
+  assert.equal(await hydrateManagedReportTriage('A', { readAnnotations, renderView: false, except: new Set(['x']) }), true)
+  assert.equal(annotationCalls.length, 1, 'the one snapshot')
+  assert.deepEqual([state.triage.get('x').color, state.triage.get('u').color], ['red', 'green'])
+})
+
 test('management previews and focused links views retain individual annotation reads', () => {
   state.currentManagedReport = 'A'
   state.managedReports = [{ id: 'A' }]

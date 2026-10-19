@@ -56,7 +56,7 @@ import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, triage
 import './team-dependencies.js'
 import { createViewRenderer } from './render-transition.js'
 import { loadManagedTrees } from './managed-trees.js'
-import { managedDetailsWaiting } from './managed-details.js'
+import { managedDetailsFolded, managedDetailsReplacing, managedDetailsWaiting } from './managed-details.js'
 import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
@@ -1869,12 +1869,14 @@ function loadedUpstream() {
 }
 
 // The header's run-meta chips. Every field they read is the report's own,
-// copied onto its findings at ingest (@preventive/report inheritReportMeta).
-let analyzerTags = { reports: [], single: false, tags: [] }
+// copied onto its findings at ingest (@preventive/report inheritReportMeta),
+// a team report's filled in with its findings' detail (managed-details.js).
+let analyzerTags = { reports: [], single: false, details: null, tags: [] }
 function loadedAnalyzerTags(single) {
-  if (analyzerTags.single !== single || !sameReports(analyzerTags.reports, state.reports)) {
+  const details = managedDetailsWaiting()
+  if (analyzerTags.single !== single || analyzerTags.details !== details || !sameReports(analyzerTags.reports, state.reports)) {
     const findings = state.reports.flatMap((r) => r.groups.flat())
-    analyzerTags = { reports: [...state.reports], single,
+    analyzerTags = { reports: [...state.reports], single, details,
       tags: buildAnalyzerTags(findings, single ? COMBO_FIELDS.filter(f => f !== 'type') : COMBO_FIELDS) }
   }
   return analyzerTags.tags
@@ -1886,7 +1888,12 @@ function loadedAnalyzerTags(single) {
 // renders, not anything a view persists or a component reads.
 let modeBeforeConflict = null
 
-export function configureReportRevalidation() {
+// `held` where the loaded reports are a team board's copy leaving out rows
+// App mode does not show (managed-details.js managedDetailsFolded): the
+// rows that would tell whether the layer can come off, or an upstream lens
+// has ground, may be among them, so the reader's lens is left as they had it
+// until the whole reports tell.
+export function configureReportRevalidation({ held = false } = {}) {
   const conflicted = state.revalidateConflicts.size > 0
   const canDropLayer = !conflicted && loadedCanDropRevalidation()
   if (conflicted) {
@@ -1905,11 +1912,11 @@ export function configureReportRevalidation() {
       state.showRevalidation = modeBeforeConflict
       modeBeforeConflict = null
     }
-    if (!canDropLayer && state.showRevalidation === false) state.showRevalidation = true
+    if (!canDropLayer && state.showRevalidation === false && !held) state.showRevalidation = true
   }
   // Clear a lens left on by a previous report before configuring the display
   // and opening filters for a set without upstream findings.
-  if (state.upstreamOnly && (!canDropLayer || state.showRevalidation === false || !loadedUpstream())) {
+  if (state.upstreamOnly && !held && (!canDropLayer || state.showRevalidation === false || !loadedUpstream())) {
     state.upstreamOnly = false
   }
   configureRevalidation(state.showRevalidation, state.upstreamOnly)
@@ -1960,7 +1967,7 @@ function renderImpl() {
   // pass concluded — dedup keeps whichever loaded first, so the app
   // view would be one report's verdicts chosen by an accident of read
   // order. Show code mode and a conflict inspection button in that case.
-  const canDropLayer = configureReportRevalidation()
+  const canDropLayer = configureReportRevalidation({ held: managedDetailsFolded() })
   // The upstream lens is offered wherever the SET holds an upstream
   // finding. Read off the reports rather than the groups on screen, for
   // the same reason the layer above reads raw: answered from what the
@@ -2238,8 +2245,10 @@ function renderImpl() {
   // Sync/presence notifications can render between clearing the report state
   // and finishing a navigation load. Keep the current surface until navigation
   // replaces it; Home and mode transitions explicitly clear the active view.
-  if (state.reports.length === 0) {
-    if (state.currentWorkspace && document.querySelector('#empty-workspace-slot')) renderEmptyWorkspace()
+  // So can a team's whole reports being ingested in place of its board's copy
+  // (managed-details.js).
+  if (state.reports.length === 0 || managedDetailsReplacing()) {
+    if (state.reports.length === 0 && state.currentWorkspace && document.querySelector('#empty-workspace-slot')) renderEmptyWorkspace()
     return
   }
   // Merge across all loaded reports. Every entry is a Finding[] (a dedup
@@ -2534,9 +2543,11 @@ function renderImpl() {
     && loadManagedTrees(loaded => { if (!loaded) leaveTrees(); render() })
   const treeAvailable = treeFileCount > 1
   // A team's board is drawn before its findings have their detail; any other
-  // view mode waits for it, saying it is loading, or that it never came
-  // (managed-details.js).
-  const detailsWaiting = state.viewMode === 'kanban' ? null : managedDetailsWaiting()
+  // view mode waits for it, saying it is loading, or that it never came, as
+  // does a lens other than App's where the board's copy folded rows under
+  // their App row (managed-details.js).
+  const appLens = revalidationShown() && !underlyingFindingsShown()
+  const detailsWaiting = state.viewMode === 'kanban' && (appLens || !managedDetailsFolded()) ? null : managedDetailsWaiting()
   // Same shape as the sort-priority drop above — `graph` is only a
   // valid view-mode while a tree-bearing report is loaded; if the
   // user previously picked it and the underlying data went away

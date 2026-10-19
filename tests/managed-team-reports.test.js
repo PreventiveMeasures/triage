@@ -472,10 +472,14 @@ test('a team\'s reports tell their trees\' files and the dependency directory th
 test('a team\'s board reports send its findings without their detail, an untitled one named by its description\'s first line; neither sends a finding\'s tree hash', async t => {
   const h = await fixture(t)
   const detail = { evidence: [{ file: 'src/a.js', line: 1, text: 'x'.repeat(64) }], impact: 'i', reproduction: 'r', recommendation: 'fix it',
-    confidenceReason: 'c', revalidateVerdict: 'v', revalidateRecommendation: 'rr', fileHash: 'f', exportName: 'run', methodName: 'go' }
-  await h.seed('detailed', { findings: [
-    { id: 'titled', file: 'src/a.js', line: 3, severity: 'high', title: 'Titled', description: 'Long\nbody', treeHash: 't', revalidate: 'confirmed', ...detail },
-    [{ id: 'untitled', file: 'src/b.js', severity: 'low', description: '\nFirst line\nmore', treeHash: 't' }, { id: 'bare', file: 'src/c.js' }],
+    confidenceReason: 'c', revalidateVerdict: 'v', revalidateRecommendation: 'rr', fileHash: 'f', exportName: 'run', methodName: 'go',
+    commitHash: 'abc', auditedCommit: 'def', detectedAt: 'd', committedAt: 'c', dateCreated: '2026-08-21', status: 'Open', branch: 'master',
+    pocStatus: 'p', parent: 'v', slug: 's', reportPath: 'r.md', category: 'cat', discoveredIn: 'x', effort: 'xhigh', exportsMode: 'list' }
+  // Read by nothing: in neither.
+  const unread = { treeHash: 't', _idBasis: { row: 'raw' }, think: true }
+  await h.seed('detailed', { think: true, findings: [
+    { id: 'titled', file: 'src/a.js', line: 3, severity: 'high', title: 'Titled', description: 'Long\nbody', revalidate: 'confirmed', model: 'm', type: 'security', priority: 'P1', package: { npm: { name: 'x' } }, ...detail, ...unread },
+    [{ id: 'untitled', file: 'src/b.js', severity: 'low', description: '\nFirst line\nmore', ...unread }, { id: 'bare', file: 'src/c.js' }],
   ] })
   const reads = h.reads.length
   const [full, lite] = await Promise.all([h.request('/api/teams/broad/reports'), h.request('/api/teams/broad/reports?lite=1')])
@@ -483,16 +487,36 @@ test('a team\'s board reports send its findings without their detail, an untitle
   assert.deepEqual(h.reads.slice(reads).filter(id => id === 'detailed'), ['detailed'], 'both answered by one build of the workspace')
   const findings = response => response.body.reports.find(report => report.id === 'detailed').data.findings
   const [titled, [untitled, bare]] = findings(lite)
-  assert.deepEqual(titled, { id: 'titled', file: 'src/a.js', line: 3, severity: 'high', title: 'Titled', revalidate: 'confirmed', isSecurity: false })
+  assert.deepEqual(titled, { id: 'titled', file: 'src/a.js', line: 3, severity: 'high', title: 'Titled', revalidate: 'confirmed', model: 'm', type: 'security',
+    priority: 'P1', package: { npm: { name: 'x' } }, isSecurity: true }, 'what the board sorts, filters and draws by stays')
   assert.deepEqual(untitled, { id: 'untitled', file: 'src/b.js', severity: 'low', description: 'First line', isSecurity: false })
   assert.deepEqual(bare, { id: 'bare', file: 'src/c.js', isSecurity: false })
   const [wholeTitled, [wholeUntitled]] = findings(full)
-  assert.deepEqual(wholeTitled, { id: 'titled', file: 'src/a.js', line: 3, severity: 'high', title: 'Titled', description: 'Long\nbody', revalidate: 'confirmed', ...detail, isSecurity: false })
+  assert.deepEqual(wholeTitled, { id: 'titled', file: 'src/a.js', line: 3, severity: 'high', title: 'Titled', description: 'Long\nbody', revalidate: 'confirmed',
+    model: 'm', type: 'security', priority: 'P1', package: { npm: { name: 'x' } }, ...detail, isSecurity: true })
   assert.equal(wholeUntitled.description, '\nFirst line\nmore')
-  assert.equal(Object.hasOwn(wholeUntitled, 'treeHash'), false)
+  assert.deepEqual(Object.keys(unread).filter(key => Object.hasOwn(wholeUntitled, key)), [])
+  for (const response of [full, lite]) assert.equal(Object.hasOwn(response.body.reports.find(report => report.id === 'detailed').data, 'think'), false)
   assert.deepEqual(lite.body.links, full.body.links)
+  assert.equal(Object.hasOwn(lite.body, 'folded'), false, 'no row left out')
   assert.deepEqual(lite.body.reports.map(report => report.id), full.body.reports.map(report => report.id))
   for (const [path, role] of [['/api/teams/broad/reports?lite=1', 'none'], ['/api/teams/broad/reports?lite=1', 'missing'], ['/api/teams/missing/reports?lite=1', 'triage']]) {
     assert.equal((await h.request(path, role)).status, (await h.request(path.replace('?lite=1', ''), role)).status, `${role} ${path}`)
   }
+})
+
+test('a team opening in App mode sends its board of a row the revalidation pass speaks for its row alone, telling so; one where a copy contradicts the pass, every row', async t => {
+  const h = await fixture(t)
+  const pass = { id: 'pass', file: 'src/a.js', isApp: true, revalidate: 'revalidation', title: 'App', revalidateInputs: ['input'] }
+  await h.seed('revalidated', { findings: [[pass, { id: 'input', file: 'src/a.js', revalidate: 'partial', title: 'Source' }], { id: 'alone', file: 'src/b.js', revalidate: 'refuted' }] })
+  const rows = (response, id = 'revalidated') => response.body.reports.find(report => report.id === id).data.findings.map(entry => [entry].flat().map(f => f.id))
+  const [full, lite] = await Promise.all([h.request('/api/teams/broad/reports'), h.request('/api/teams/broad/reports?lite=1')])
+  assert.deepEqual([rows(lite), lite.body.folded], [[['pass'], ['alone']], true])
+  assert.deepEqual(rows(full), [['pass', 'input'], ['alone']], 'the whole reports keep the rows beneath it')
+  assert.equal(Object.hasOwn(full.body, 'folded'), false)
+  assert.deepEqual(lite.body.links, full.body.links)
+  await h.seed('contradicting', { findings: [[pass, { id: 'input', file: 'src/a.js', revalidate: 'refuted' }]] })
+  const contradicted = await h.request('/api/teams/broad/reports?lite=1')
+  assert.deepEqual([rows(contradicted), rows(contradicted, 'contradicting'), Object.hasOwn(contradicted.body, 'folded')],
+    [[['pass', 'input'], ['alone']], [['pass', 'input']], false])
 })
