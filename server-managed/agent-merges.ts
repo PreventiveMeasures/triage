@@ -152,7 +152,7 @@ const headed = (subject: string, headline: string) => headline.endsWith('…') ?
 // (`read`, agentMerges): those it names, and of one rebased, its commits'
 // copies, the last and those below it on their first parents, as long as
 // each one's subject is that of one of its commits older than the last
-// matched, as Commits tells a rebase (repository-history.ts squashedPulls),
+// matched, as Commits tells a rebase (repository-squashes.ts squashedPulls),
 // past those of its commits the rebase left none of (an empty one GitHub
 // counted no files of), and, past them all, as many more as it had before
 // its latest read; a squash merge's one commit alone, its subject the pull

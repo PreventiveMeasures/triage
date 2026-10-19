@@ -107,8 +107,12 @@ Clicking a line opens that commit.
 - **Unmerged** lists the commits the default branch does not reach, like `git log --all --not <default>`.
 - **Older commits** loads more, and loads on its own as the scroll nears the end.
 - A pull request squashed into a listed commit is drawn as the merge it was, with its own commits on a lane.
+  The commits are sent without waiting more than a second and a half for GitHub to look these up; the lookup goes on behind, and the tab asks again every 3 seconds to draw those found.
 - A directory below the root lists only the commits that touch it, without a graph.
 - Repositories with more than 5,000 branches leave the rest out, and the tab says so.
+
+Each page of history is read from GitHub once and kept, five branches or starting points to a query.
+A query GitHub stops at its ten-second limit is retried in halves, down to one, and each page is kept as its query answers, so a read that fails still leaves less for the next.
 
 A commit shows its author, then its co-authors from its `Co-authored-by:` trailers, then any agents its message marks (see [Agents](#agents)).
 The server reads each commit message for these and keeps and answers only the names, never the message.

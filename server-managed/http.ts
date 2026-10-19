@@ -214,8 +214,9 @@ import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts
 import { loadRepositoryCodeBody, repositoryCodeFits } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
 import { COAUTHORS_READ } from './commit-coauthors.ts'
-import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, type SquashedPull, type Squashes, historyFrom, historyStarts, openPullHeads,
-  repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips, squashedPulls } from './repository-history.ts'
+import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, openPullHeads,
+  repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
+import { type SquashedPull, type Squashes, squashedPulls } from './repository-squashes.ts'
 import { AGENTS_READ_VERSION, COMMITS_CURSOR, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullDependencies, type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
@@ -1790,12 +1791,24 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     // The pull requests squashed into a whole repository's commits, drawn as
     // the merges they were, and on its first page the open ones' heads,
     // naming commits: with a token, as far as GitHub answers them, the
-    // history sent all the same where it doesn't.
+    // history sent all the same where it doesn't. Those GitHub is still
+    // looking up SQUASH_WAIT_MS on are left to the lookup, kept alive behind
+    // the answer, as a kept answer's read is (`pullsPending`, for the client
+    // to ask again).
     const listed = (body as { commits: HistoryCommit[] }).commits
-    const [pulls, openPulls] = token && path === '' ? await Promise.all([
-      squashedPulls(repo, token, listed, historySquashes(deps, repoId)).catch(quiet<SquashedPull[]>([])),
+    const none = { pulls: [] as SquashedPull[], pending: false }
+    const [squashed, openPulls] = token && path === '' ? await Promise.all([
+      squashedPulls(repo, token, listed, historySquashes(deps, repoId), SQUASH_WAIT_MS).then(read => {
+        if (read.behind) {
+          const behind = read.behind.catch(quiet(null))
+          deps.track(behind)
+          deps.waitUntil?.(behind)
+        }
+        return read
+      }, quiet(none)),
       readingPulls,
-    ]) : [[], null]
+    ]) : [none, null]
+    const { pulls } = squashed
     await reader.recheckAccess()
     const current = await authorize()
     if (!current) return
@@ -1805,7 +1818,8 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const shown = ({ sha, parents, subject, authorName, authorLogin, authorId, coauthors, committedAt }: HistoryCommit) =>
       ({ sha, parents, subject, authorName, authorLogin, authorId: authorId ?? null, coauthors: coauthors ?? [], committedAt })
     sendJson(res, 200, await withAppUsers(deps.db, { ...body, commits: listed.map(shown),
-      ...pulls.length > 0 ? { pulls: pulls.map(pull => ({ ...pull, commits: pull.commits.map(shown) })) } : {}, ...openPulls?.length ? { openPulls } : {} }))
+      ...pulls.length > 0 ? { pulls: pulls.map(pull => ({ ...pull, commits: pull.commits.map(shown) })) } : {}, ...squashed.pending ? { pullsPending: true } : {},
+      ...openPulls?.length ? { openPulls } : {} }))
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
@@ -1901,6 +1915,9 @@ function historyChanges(deps: ManagedHttpDeps, repoId: number): ChangesStore {
 // and how long one read is answered as kept even where it is asked for afresh.
 const REPOSITORY_READ_FRESH_MS = 2 * 60_000
 const REPOSITORY_READ_FLOOR_MS = 10_000
+// How long a history's answer waits on GitHub looking up the pull requests
+// squashed into its commits (handleRepositoryHistory).
+const SQUASH_WAIT_MS = 1500
 // The repositories' reads being read again, behind a kept answer or as asked
 // for afresh, by key: one at a time, those asking meanwhile answered by it.
 const repositoryRereads = new Map<string, Promise<unknown>>()
@@ -1994,7 +2011,7 @@ function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false): H
 
 // The pull requests squashed into repository `repoId`'s commits, kept by
 // each commit and the rules their commits' co-authors were read by
-// (COAUTHORS_READ), null for one none was (repository-history.ts
+// (COAUTHORS_READ), null for one none was (repository-squashes.ts
 // squashedPulls); one kept before its commits' co-authors were read, read
 // again.
 function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {

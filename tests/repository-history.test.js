@@ -174,6 +174,42 @@ test('the tab draws the pull requests squashed into the history it reads, their 
     + 'rel="noopener noreferrer" tabindex="-1"\\s+aria-label=Pull request #2 on GitHub>[^]*<span>#2</span></a>[^]*>Started the feature</span>', 'u'))
 })
 
+test('the pull requests squashed into a page that GitHub was still looking up are asked for again a little later, of the same page, and drawn once found', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const [squash, other, p1, p2] = ['1', '3', '2', '4'].map(char => char.repeat(40))
+    const pulls = { 1: { merge: squash, number: 2, head: p1, commits: [commit(p1, [b], 20, 'Started the feature')] },
+      2: { merge: other, number: 3, head: p2, commits: [commit(p2, [d], 3, 'Other work')] } }
+    const pending = new Set([1, 2])
+    answer = (repoId, ref, path, { page }) => Promise.resolve({ all: true, page, more: page === 1, branches: [{ name: 'main', sha: squash }], tags: [], defaultBranch: 'main',
+      commits: page === 1 ? [commit(squash, [b], 30, 'Feature (#2)'), commit(b, [other], 10, 'First')] : [commit(other, [d], 5, 'Other (#3)'), commit(d, [], 1, 'Root')],
+      ...pending.has(page) ? { pullsPending: true } : { pulls: [pulls[page]] } })
+    const view = shownAt(squash)
+    view.pick('all')
+    view.render()
+    await setImmediate()
+    assert.doesNotMatch(templateText(view.render()), /Started the feature/u)
+    pending.delete(1)
+    mock.timers.tick(3000)
+    await setImmediate()
+    assert.deepEqual(requests.map(request => request[3]), [{ page: 1, all: true }, { page: 1, all: true }])
+    assert.match(templateText(view.render()), /Started the feature/u, 'drawn once found')
+    // An older page's, on from where it read on from.
+    view.history('all').more()
+    await setImmediate()
+    pending.delete(2)
+    mock.timers.tick(3000)
+    await setImmediate()
+    assert.deepEqual(requests.slice(2).map(request => request[3]), [{ page: 2, all: true, from: [other] }, { page: 2, all: true, from: [other] }])
+    const text = templateText(view.render())
+    assert.match(text, /Started the feature/u)
+    assert.match(text, /Other work/u)
+    mock.timers.tick(30_000)
+    await setImmediate()
+    assert.equal(requests.length, 4, 'none asked for again once found')
+  } finally { mock.timers.reset() }
+})
+
 const allAnswer = { all: true, commits: [commit(a, [b], 20, 'Merge work'), commit(b, [], 10, 'First')], branches: [{ name: 'main', sha: a }], tags: [{ name: 'v1', sha: b }],
   defaultBranch: 'main', more: false }
 function shownAt(sha, path = '') {

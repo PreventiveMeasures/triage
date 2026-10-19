@@ -343,6 +343,65 @@ test('a history is sent all the same where the pull requests squashed into it ca
   assert.deepEqual([body.commits.map(commit => commit.sha), body.pulls, body.openPulls], [[a], undefined, undefined])
 })
 
+test('histories are read five tips a query, one GitHub stops past its time read again in halves, those read kept where one alone fails', async t => {
+  t.mock.method(console, 'warn', () => {})
+  const tips = Array.from({ length: 12 }, (_, index) => (index + 1).toString(16).padStart(40, '0'))
+  const [main, slow] = [tips[0], tips[7]]
+  let stopping = true
+  const graphql = ({ query, variables }) => {
+    if (query.includes('refs/heads/')) {
+      return { data: { repository: { defaultBranchRef: { name: 'main', target: { oid: main, committedDate: '2026-10-02T00:00:00Z' } }, tags: { nodes: [] },
+        branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: tips.map((oid, index) => ({ name: index ? `b${index}` : 'main', target: { oid, committedDate: null } })) } } } }
+    }
+    if (/pullRequest|PullRequests/u.test(query)) return { data: { repository: {} } }
+    const asked = Object.entries(variables).filter(([key]) => /^o\d+$/u.test(key))
+    if (stopping && asked.some(([, oid]) => oid === slow)) return { errors: [{ message: 'Something went wrong while executing your query. This may be the result of a timeout.' }] }
+    return { data: { repository: Object.fromEntries(asked.map(([key, oid]) => [`b${key.slice(1)}`, { history: { pageInfo: { hasNextPage: false },
+      nodes: [{ oid, message: 'Work', committedDate: '2026-10-01T00:00:00Z', additions: 1, deletions: 0, author: null, parents: { nodes: [] } }] } }])) } }
+  }
+  const request = await fixture(t, { tokens: userTokens })
+  const asked = github(t, { graphql })
+  const pagesAsked = () => historyQueries(asked).filter(entry => 'o0' in entry.body.variables).map(entry => Object.keys(entry.body.variables).filter(key => /^o\d+$/u.test(key)).length)
+  assert.deepEqual((await request({ repoId: '1', all: 'true' })).body, { error: 'github-timeout' })
+  assert.deepEqual(pagesAsked(), [5, 5, 2, 3, 2, 2, 1], 'the slow one\'s five, then three, then it alone')
+  stopping = false
+  const { status, body } = await request({ repoId: '1', all: 'true' })
+  assert.equal(status, 200)
+  assert.equal(body.commits.length, tips.length)
+  const again = historyQueries(asked).filter(entry => 'o0' in entry.body.variables).slice(pagesAsked().length - 1)
+  assert.deepEqual(again.map(entry => entry.body.variables), [{ owner: 'org', name: 'repo', o0: slow }], 'only the one not read before')
+})
+
+test('the pull requests squashed into a history GitHub takes long to look up are looked up behind its answer, said pending, and come with the next', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const [squash, root, start] = ['5', '1', '8'].map(char => char.repeat(40))
+  const node = (oid, parents, message) => ({ oid, message, committedDate: '2026-10-01T00:00:00Z', additions: 1, deletions: 0, author: null,
+    parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  const gate = Promise.withResolvers(), looking = Promise.withResolvers()
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (new URL(url).pathname === '/repos/org/repo') return Response.json(publicMetadata)
+    const { query } = JSON.parse(options.body)
+    const repository = query.includes('refs/heads/') ? { defaultBranchRef: { name: 'main', target: { oid: squash, committedDate: '2026-10-01T00:00:00Z' } },
+      branches: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] }, tags: { nodes: [] } }
+      : query.includes('pullRequests(states') ? { pullRequests: { nodes: [] } }
+      : query.includes('associatedPullRequests') ? (looking.resolve(), await gate.promise, { c0: { associatedPullRequests: { nodes: [{ number: 2, mergeCommit: { oid: squash } }] } } })
+      : query.includes('pullRequest(number') ? { p0: { headRefOid: start, commits: { totalCount: 1, nodes: [{ commit: node(start, [root], 'Start') }] } } }
+      : { b0: { history: { pageInfo: { hasNextPage: false }, nodes: [node(squash, [root], 'Feature (#2)'), node(root, [], 'Root')] } } }
+    return Response.json({ data: { repository } })
+  })
+  const request = await fixture(t, { tokens: userTokens })
+  const reading = request({ repoId: '1', all: 'true' })
+  await looking.promise
+  t.mock.timers.tick(1500)
+  const { status, body } = await reading
+  assert.equal(status, 200)
+  assert.deepEqual([body.commits.map(commit => commit.sha), body.pulls, body.pullsPending], [[squash, root], undefined, true])
+  gate.resolve()
+  const later = (await request({ repoId: '1', all: 'true' })).body
+  assert.deepEqual(later.pulls.map(pull => [pull.merge, pull.number, pull.head]), [[squash, 2, start]])
+  assert.equal(later.pullsPending, undefined)
+})
+
 test('all branches names the branches it didn\'t read, newest first, and reads on from the commits a later page names, each commit once', async t => {
   const head = (name, oid, committedDate) => ({ name, target: { oid, committedDate } })
   // main and 24 others read; of those not, stale's tip isn't listed, older's is.
