@@ -34,11 +34,12 @@ The pool is registered with [`attachDatabasePool`](https://vercel.com/docs/funct
 Each release keeps the invocation alive until idle connections have closed, so none survives a suspended instance.
 A failed lease is discarded, never reused.
 
-Every managed response carries a `Server-Timing` header, which the browser's developer tools show beside the request.
-It gives the database's time and statement count (`db`), new connections' time (`conn`), GitHub's time and call count (`gh`), `cold` on an instance's first request, and the total time (`app`).
+Every response the managed app answers carries a `Server-Timing` header, which the browser's developer tools show beside the request.
+It gives the database's time and statement count (`db`), new connections' time (`conn`), GitHub's time and call count (`gh`), `cold` on an instance's first request, and the app's time from taking the request to answering it (`app`).
 It holds counts and durations alone, nothing of what was asked.
+Timing starts once the app has initialized, so a cold start's initialization is in none of these times, and the `503` of a failed initialization carries no header.
 A request's statements run one after another on its connection, so `db`'s time over its statements is about one round trip to the database; tens of milliseconds each point to the function running in another region than the database.
-A long `conn` with `cold` points to a cold start instead.
+Where a request marked `cold` takes the browser much longer than its `app`, most of the difference went to starting the instance.
 
 Ordinary managed requests start a due session/upload sweep alongside the normal response.
 The managed app registers maintenance with [`waitUntil`](https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#waituntil), so it can finish after the response ends.
