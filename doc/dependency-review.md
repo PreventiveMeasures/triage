@@ -94,7 +94,10 @@ A review is private until published, and **Finalize review** asks for a final ve
 Publishing needs at least one changed file with a verdict, and at least one team selected (a sole eligible team is selected at first).
 A published review is **Full** where every changed path, added, removed, renamed and binary files included, has a verdict (notes and the final verdict check no file), else **Partial**.
 
-Publication freezes the review, its changed paths, final verdict and comment included.
+A review is of the tarballs npm's registry serves for both versions: each change to it but a revocation loads their files again, from tarballs held to their integrity and to their shasum (the hex sha1 npm lists) where npm lists one, and is refused (`502 upstream-invalid`) where either doesn't match.
+The review keeps both versions' shasums as checked, and a review written before they were kept has none.
+
+Publication freezes the review, its changed paths, final verdict and comment included, and the shasums it was published with.
 Its author can publish it to more eligible teams, or **Revoke** it for good, and a revoked review stays visible, labeled revoked.
 **Continue in a new review** copies it into a new private review, and never edits the original.
 Each author has one unpublished review per comparison.
@@ -179,8 +182,8 @@ It receives `reviews`, each entry with:
 | Field | Value |
 | --- | --- |
 | `ecosystem` | `npm` |
-| `new` | The version reviewed, `{ name, version, integrity, shasum?, patchHash? }`, with `shasum` and `patchHash` where a pull request's lockfile has them |
-| `old` | The version it was compared with, in the same shape, or null where the package was read whole |
+| `new` | The version reviewed, `{ name, version, integrity, shasum?, patchHash? }`: the integrity and shasum the review keeps of the tarball it read (`shasum` where it keeps one), and `patchHash` where a pull request's lockfile has it |
+| `old` | The version it was compared with, `{ name, version, integrity, shasum? }` as the review keeps them, or null where the package was read whole |
 | `status` | `accept`, `accept-with-nits`, `request-changes` or `reject` |
 | `coverage` | `full` or `partial` |
 | `comment` | The final comment |

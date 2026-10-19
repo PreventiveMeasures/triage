@@ -10,8 +10,9 @@ import { test } from 'node:test'
 import { formattedPull, withFormatted } from '../server-managed/dependency-review-comments.ts'
 
 const sri = text => `sha512-${createHash('sha512').update(text).digest('base64')}`
+const sha1 = text => createHash('sha1').update(text).digest('hex')
 const review = (id, more = {}) => ({ id, user: 'me', userLogin: 'grace', ecosystem: 'npm', package: 'ms', version: '2.1.3', integrity: sri('ms@2.1.3'),
-  basePackage: 'ms', baseVersion: '2.1.2', baseIntegrity: sri('ms@2.1.2'), time: 1, revision: 1, publishedAt: 100, revokedAt: null, teams: [], files: ['index.js'],
+  basePackage: 'ms', baseVersion: '2.1.2', baseIntegrity: sri('ms@2.1.2'), shasum: sha1('ms@2.1.3'), baseShasum: sha1('ms@2.1.2'), time: 1, revision: 1, publishedAt: 100, revokedAt: null, teams: [], files: ['index.js'],
   nonTextFiles: [], coverage: 'full', checkedFiles: 1, totalFiles: 1, verdictLimit: 'accept', status: 'accept-with-nits', comment: 'Fine.',
   entries: [{ id: 'e1', file: 'index.js', status: 'accept-with-nits', comment: 'Rename it.', time: 1 }, { id: 'e2', file: 'old.js', status: null, comment: '', time: 1 }], ...more })
 
@@ -21,12 +22,15 @@ test('each of one\'s own published reviews is formatted alone, as the host forma
   const reviews = [review('mine'), review('theirs', { user: 'them' }), review('draft', { publishedAt: null, status: null }), review('revoked', { revokedAt: 200 })]
   const formatted = await withFormatted(reviewed, 'me', reviews)
   assert.deepEqual(formatted.map(one => [one.id, one.formatted ?? null]), [['mine', 'Reviewed ms'], ['theirs', null], ['draft', null], ['revoked', null]])
-  assert.deepEqual(given, [{ reviews: [{ ecosystem: 'npm', old: { name: 'ms', version: '2.1.2', integrity: sri('ms@2.1.2') },
-    new: { name: 'ms', version: '2.1.3', integrity: sri('ms@2.1.3') }, status: 'accept-with-nits', coverage: 'full', comment: 'Fine.',
+  assert.deepEqual(given, [{ reviews: [{ ecosystem: 'npm', old: { name: 'ms', version: '2.1.2', integrity: sri('ms@2.1.2'), shasum: sha1('ms@2.1.2') },
+    new: { name: 'ms', version: '2.1.3', integrity: sri('ms@2.1.3'), shasum: sha1('ms@2.1.3') }, status: 'accept-with-nits', coverage: 'full', comment: 'Fine.',
     files: [{ path: 'index.js', status: 'accept-with-nits', comment: 'Rename it.' }], reviewer: 'grace', publishedAt: 100 }] }],
-  'its versions, verdict, coverage and each file\'s, as given; a file neither checked nor commented on left out')
-  assert.equal((await withFormatted(reviewed, 'me', [review('whole', { basePackage: null, baseVersion: null, baseIntegrity: null, coverage: 'partial' })]))[0].formatted, 'Reviewed ms')
+  'its versions, with the integrity and shasum of each tarball reviewed, verdict, coverage and each file\'s, as given; a file neither checked nor commented on left out')
+  assert.equal((await withFormatted(reviewed, 'me', [review('whole', { basePackage: null, baseVersion: null, baseIntegrity: null, baseShasum: null, coverage: 'partial' })]))[0].formatted, 'Reviewed ms')
   assert.deepEqual([given.at(-1).reviews[0].old, given.at(-1).reviews[0].coverage], [null, 'partial'])
+  await withFormatted(reviewed, 'me', [review('unknown', { shasum: null, baseShasum: null })])
+  assert.deepEqual([given.at(-1).reviews[0].old, given.at(-1).reviews[0].new], [{ name: 'ms', version: '2.1.2', integrity: sri('ms@2.1.2') },
+    { name: 'ms', version: '2.1.3', integrity: sri('ms@2.1.3') }], 'no shasum where the review kept none')
 
   for (const answer of [() => Promise.resolve(''), () => Promise.resolve('  '), () => Promise.resolve(null), () => Promise.resolve(undefined), () => Promise.resolve(3),
     () => Promise.reject(new Error('down'))]) {
@@ -52,7 +56,8 @@ test('a pull request\'s, of one\'s own published reviews of the versions it adds
   const pullRequest = { repository: 'org/a', number: 5 }
   assert.equal(await formattedPull(reviewed, db, 'me', told, state, pullRequest), 'Reviewed in #5')
   assert.deepEqual(asked, [['me', ['mine']]], 'those of its versions, of their integrity, patch and a base they were, alone')
-  assert.deepEqual([given[0].pullRequest, given[0].reviews.map(one => [one.new.name, one.new.shasum, one.new.patchHash])], [pullRequest, [['ms', 'abc', 'patch']]])
+  assert.deepEqual([given[0].pullRequest, given[0].reviews.map(one => [one.new.name, one.new.shasum, one.old.shasum, one.new.patchHash])],
+    [pullRequest, [['ms', sha1('ms@2.1.3'), sha1('ms@2.1.2'), 'patch']]], 'the shasums the review kept of the tarballs it read, not the lockfile\'s')
   assert.equal(await formattedPull(reviewed, db, 'me', told, null, pullRequest), null, 'none where its review is not in effect')
   assert.equal(await formattedPull({ lookup: reviewed.lookup }, db, 'me', told, state, pullRequest), null, 'nor where none is registered')
   assert.equal(await formattedPull(reviewed, db, 'nobody', told, state, pullRequest), null, 'nor for one with no review of its versions')

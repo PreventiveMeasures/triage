@@ -130,7 +130,7 @@ The score is out of 100, with four levels:
 
 - Registry documents are kept only as npm answered them anonymously; none read with `NPM_TOKEN` is kept.
 - Tarballs, including those bundle builds and private reads fetch with the token, can be kept in upstream's tarball cache on disk (off Vercel).
-- A kept tarball is served only when it matches the sha512 named by the reader's own access-checked registry answer, which is the anonymous one for a public version.
+- A kept tarball is served only when it matches the sha512, and the shasum where npm lists one, named by the reader's own access-checked registry answer, which is the anonymous one for a public version; a downloaded one is held to them alike.
 - A private version's unpacked files, pretty-printed copies and rename diffs are never kept.
 - A private package's publish times and risk records never reach the database or any cache shared between instances; risk records stay in the instance's memory.
 - Compare's line counts are kept in the database for private versions too, keyed by the tarballs' integrities alone, with no name or content.

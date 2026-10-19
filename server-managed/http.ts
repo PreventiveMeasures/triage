@@ -232,7 +232,7 @@ import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseStats, StatsPending, commitS
 import { type AgentMerges, agentCommits, agentMerges, directCommits, sameMerges } from './agent-merges.ts'
 import { releaseCommits } from './release-commits.ts'
 import { computeBundleDiff } from '../common/bundle-compare-diff.js'
-import type { ReviewChange, ReviewContext, ReviewInput } from './dependency-reviews.ts'
+import type { ReviewChange, ReviewContext, ReviewInput, ReviewedTarballs } from './dependency-reviews.ts'
 import { allowedReviewVerdicts, isReviewableFile, npmReviewVerdictLimit, npmTakenDown } from '../common/dependency-reviews.js'
 import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, npmGithubStats, npmKnown, npmLatestRepo, npmSocketReport } from './npm-insights.ts'
 import { npmProvenance } from './npm-provenance.ts'
@@ -4102,8 +4102,11 @@ async function npmReviewPublicationLimit(deps: ManagedHttpDeps, reader: NpmReade
   return npmReviewVerdictLimit(doc, list, socket, risk)
 }
 
-// Reviews are scoped to the bytes actually displayed, including the base.
-// Access to both versions is rechecked before returning or saving annotations.
+// Reviews are scoped to the bytes actually displayed, including the base:
+// each change but a revocation loads both versions' files, of tarballs held
+// to their integrity and to their shasum where npm tells one (npm-loads.ts),
+// and the review keeps those shasums. Access to both versions is rechecked
+// before returning or saving annotations.
 async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, params: URLSearchParams): Promise<void> {
   const method = req.method ?? 'GET'
   if (!['GET', 'POST'].includes(method)) { send405(res, 'GET, POST'); return }
@@ -4183,10 +4186,14 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
       || (base && (base.version !== baseVersion || base.dist.integrity !== baseIntegrity))) {
       sendJson(res, 409, { error: 'review-content-changed' }); return
     }
-    if (change?.action === 'publish' || change?.action === 'save') {
-      const loads = [doc, ...base ? [base] : []].map(loadNpmFiles)
-      try {
-        const files = await Promise.all(loads.map(load => load.result))
+    // Each change but a revocation loads both versions' files; a save or a
+    // publication is held to them.
+    const loads = change && change.action !== 'revoke' ? [doc, ...base ? [base] : []].map(loadNpmFiles) : []
+    let tarballs: ReviewedTarballs | undefined
+    try {
+      const files = await Promise.all(loads.map(load => load.result))
+      if (loads.length > 0) tarballs = { shasum: doc.dist.shasum, baseShasum: base?.dist.shasum ?? null }
+      if (change?.action === 'publish' || change?.action === 'save') {
         const maps = files.map(list => new Map<string, unknown>(npmFileRows(list).map(([path, size, text, digest]) => [path, text ?? { format: 'digest', size, digest }])))
         const after = maps[0]!, before = maps[1] ?? new Map<string, unknown>()
         const diff = computeBundleDiff(before, after, () => '.')
@@ -4200,8 +4207,8 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
           change.files = changed.map(file => file.path)
           change.nonTextFiles = changed.filter(file => !reviewable(file)).map(file => file.path)
         }
-      } finally { loads.forEach(load => load.release()) }
-    }
+      }
+    } finally { loads.forEach(load => load.release()) }
     const limit = change?.action === 'publish' && change.final && change.final.status !== 'reject'
       ? await npmReviewPublicationLimit(deps, reader, doc, controller.signal) : 'accept'
     const current = await npmReader(deps, cookie, [doc, base].flatMap(item => item?.private ? [item.name] : []))
@@ -4220,7 +4227,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     if (change.action === 'publish' && change.final && !allowedReviewVerdicts([], limit).includes(change.final.status)) {
       sendJson(res, 400, { error: limit === 'reject' ? 'review-malware' : 'review-critical-vulnerability' }); return
     }
-    const review = await deps.db.changeDependencyReview(context, checked.session.id, change, Date.now())
+    const review = await deps.db.changeDependencyReview(context, checked.session.id, change, Date.now(), tarballs)
     sendJson(res, 200, { review: (await withFormatted(deps.reviewedDependencies ?? null, current.userId, [review]))[0] })
   } catch (err) {
     if (controller.signal.aborted) return
