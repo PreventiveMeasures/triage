@@ -39,15 +39,21 @@ async function markOf(session) {
 }
 
 // The session this tab found, told the others where it is another than the
-// one it last told.
+// one it last told. Another told before this tab had told its own, which
+// went unheeded (its probe then perhaps read the cookie before it changed),
+// is heeded now, once.
 export async function announceManagedSession(session) {
   if (session?.publicShare) return
   const mark = await markOf(session)
-  if (mark === null || mark === told || !opened()) return
-  told = mark
-  // A BroadcastChannel reaches its own origin's tabs alone; it takes no target origin.
-  // eslint-disable-next-line unicorn/require-post-message-target-origin
-  channel.postMessage({ mark })
+  if (mark === null || !opened()) return
+  const first = told === null
+  if (mark !== told) {
+    told = mark
+    // A BroadcastChannel reaches its own origin's tabs alone; it takes no target origin.
+    // eslint-disable-next-line unicorn/require-post-message-target-origin
+    channel.postMessage({ mark })
+  }
+  if (first && heard !== null && heard !== mark) for (const watcher of watchers) watcher()
 }
 
 // Whether the tab that told last told of another session than `session`, as
@@ -58,8 +64,10 @@ export async function toldOtherThan(session) {
 }
 
 // `onOther` called as another tab tells of another session than the one
-// this tab last told; never before it has told its own.
+// this tab last told, or told before it had told its own. Watched before a
+// tab's first probe, its channel opened then, no telling during it is missed.
 export function watchManagedSessions(onOther) {
+  opened()
   watchers.add(onOther)
   return () => { watchers.delete(onOther) }
 }

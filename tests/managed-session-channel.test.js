@@ -15,20 +15,20 @@ function overheard() {
   return { heard, close: () => { channel.close() } }
 }
 
-test('a tab told of another session than the one it told asks for its own again; one told of its own, or before telling any, asks nothing', async () => {
+test('a tab told of another session than the one it told asks for its own again; one told of its own, or again, asks nothing', async () => {
   const [a, b] = await Promise.all([tab('a1'), tab('b1')])
   let asked = 0
   const unwatch = a.watchManagedSessions(() => { asked++ })
-  await b.announceManagedSession(session('bob'))
-  await settle()
-  assert.equal(asked, 0, 'none told by this tab yet: its own read is still to come')
   await a.announceManagedSession(session('alice'))
   await b.announceManagedSession(session('bob'))
   await settle()
-  assert.equal(asked, 0, 'what b told again, the same, not told again')
+  assert.equal(asked, 1, 'another session')
+  await b.announceManagedSession(session('bob'))
+  await settle()
+  assert.equal(asked, 1, 'what b told again, the same, not told again')
   await b.announceManagedSession(session('alice'))
   await settle()
-  assert.equal(asked, 0, 'b now on this tab\'s own')
+  assert.equal(asked, 1, 'b now on this tab\'s own')
   for (const [other, why] of [[session('alice', { csrfToken: 'csrf-again' }), 'signed in again as the same user'],
     [session('alice', { role: 'manage' }), 'another role'], [session('bob', { viewer: { id: 'alice', login: 'alice' } }), 'a view as another user'],
     [null, 'signed out']]) {
@@ -40,7 +40,26 @@ test('a tab told of another session than the one it told asks for its own again;
   unwatch()
   await b.announceManagedSession(session('dave'))
   await settle()
-  assert.equal(asked, 4, 'no longer watched')
+  assert.equal(asked, 5, 'no longer watched')
+})
+
+test('another session told while a tab was finding its first is heeded once it tells its own, stale; once only, and not where it found the same', async () => {
+  const [c, d, e, f] = await Promise.all([tab('c1'), tab('d1'), tab('e1'), tab('f1')])
+  let asked = 0
+  c.watchManagedSessions(() => { asked++ })
+  await d.announceManagedSession(session('henry'))
+  await settle()
+  assert.equal(asked, 0, 'unheeded before c has told its own')
+  await c.announceManagedSession(session('ivy'))
+  assert.equal(asked, 1, 'its probe read the cookie before it changed: asked again')
+  await c.announceManagedSession(session('ivy'))
+  assert.equal(asked, 1, 'once only, lest a failing probe ask on and on')
+  let fresh = 0
+  e.watchManagedSessions(() => { fresh++ })
+  await f.announceManagedSession(session('jack'))
+  await settle()
+  await e.announceManagedSession(session('jack'))
+  assert.equal(fresh, 0, 'found the session told')
 })
 
 test('what a tab tells is a digest alone, no token; a public share, which no cookie names, tells nothing', async () => {
