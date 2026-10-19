@@ -4,7 +4,8 @@
 // pull request's branch alone naming it (app-agents.ts
 // AGENT_BRANCH_PREFIXES), or a label one who ran it gave it naming the agent
 // (agent-tasks.ts labelAgents), as the Agents tab tells an agent's work; or
-// its author, an account agents work as (github-agents.ts AGENT_OPERATED).
+// its author, an account agents work as (github-agents.ts AGENT_OPERATED),
+// or any GitHub App's bot.
 import { labelAgents } from '../common/managed/agent-tasks.ts'
 import { GITHUB_AGENTS, agentOperated } from '../common/managed/github-agents.ts'
 import { AGENT_BRANCH_PREFIXES } from './app-agents.ts'
@@ -53,14 +54,14 @@ const MERGED_QUERY = `query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: MERGED, first: ${MERGED_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
-      nodes { updatedAt mergedAt headRefName author { login ... on User { databaseId } } labels(first: ${MERGED_LABELS}) { nodes { name } }
+      nodes { updatedAt mergedAt headRefName author { __typename login ... on User { databaseId } } labels(first: ${MERGED_LABELS}) { nodes { name } }
         mergeCommit { oid parents { totalCount } }
         commits(last: ${MERGED_COMMITS}) { totalCount nodes { commit { oid messageHeadline changedFilesIfAvailable } } } }
     }
   }
 }`
 type MergedPage = { repository?: { pullRequests?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }
-  nodes?: ({ updatedAt?: unknown; mergedAt?: unknown; headRefName?: unknown; author?: { login?: unknown; databaseId?: unknown } | null
+  nodes?: ({ updatedAt?: unknown; mergedAt?: unknown; headRefName?: unknown; author?: { __typename?: unknown; login?: unknown; databaseId?: unknown } | null
     labels?: { nodes?: ({ name?: unknown } | null)[] } | null
     mergeCommit?: { oid?: unknown; parents?: { totalCount?: unknown } | null } | null
     commits?: { totalCount?: unknown; nodes?: ({ commit?: { oid?: unknown; messageHeadline?: unknown; changedFilesIfAvailable?: unknown } | null } | null)[] } | null
@@ -68,9 +69,10 @@ type MergedPage = { repository?: { pullRequests?: { pageInfo?: { hasNextPage?: u
 const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_PREFIXES.some(prefix => name.startsWith(prefix))
 type MergedNode = NonNullable<NonNullable<NonNullable<NonNullable<MergedPage['repository']>['pullRequests']>['nodes']>[number]>
 // Whether a pull request is an agent's: by its branch, a label naming one,
-// or its author, an account agents work as.
+// or its author, an account agents work as or a bot (GitHub's GraphQL API
+// naming a bot by its app's login alone, its type telling it).
 const agentPull = ({ headRefName, labels, author }: MergedNode) => agentBranch(headRefName)
-  || labelAgents((labels?.nodes ?? []).map(label => label?.name), LABEL_AGENTS).length > 0
+  || labelAgents((labels?.nodes ?? []).map(label => label?.name), LABEL_AGENTS).length > 0 || author?.__typename === 'Bot'
   || agentOperated(typeof author?.login === 'string' ? author.login : null, Number.isSafeInteger(author?.databaseId) ? author!.databaseId as number : null)
 
 // The commits the pull requests merged since `since` from an agent's branch,

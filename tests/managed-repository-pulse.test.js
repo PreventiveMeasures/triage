@@ -265,7 +265,19 @@ test('a pull request an account agents work as opened is an agent\'s, whatever i
   github(t, { graphql: body => { queries.push(body.query); return pulls(body) } })
   const read = await agentMerges('org/repo', 'token', since, null)
   assert.deepEqual(read.merges.map(([sha]) => sha).toSorted(), [1, 2].map(shaOf).toSorted(), 'by its id, else its login; another account by the login, not')
-  assert.match(queries[0], /author \{ login \.\.\. on User \{ databaseId \} \}/u)
+  assert.match(queries[0], /author \{ __typename login \.\.\. on User \{ databaseId \} \}/u)
+})
+
+test('a pull request a bot opened is an agent\'s, whichever GitHub App\'s, whatever its branch and labels', async t => {
+  const since = Date.UTC(2025, 9, 19)
+  const when = new Date(since + DAY).toISOString()
+  const pull = (merge, author) => ({ updatedAt: when, mergedAt: when, headRefName: 'renovate/lodash-4.x', author, labels: { nodes: [] },
+    mergeCommit: { oid: shaOf(merge), parents: { totalCount: 1 } }, commits: { nodes: [] } })
+  const queries = []
+  const pulls = mergedPulls([pull(1, { __typename: 'Bot', login: 'renovate' }), pull(2, { __typename: 'User', login: 'renovate', databaseId: 8 })])
+  github(t, { graphql: body => { queries.push(body.query); return pulls(body) } })
+  const read = await agentMerges('org/repo', 'token', since, null)
+  assert.deepEqual(read.merges.map(([sha]) => sha), [shaOf(1)], 'by its type, a user of the same login not')
 })
 
 test('a pull request whose agent\'s label is taken off is read again, none of what it brought an agent\'s', async t => {
@@ -387,6 +399,16 @@ test('a year counts a commit Neo\'s account made with agents, by its id whatever
   const commit = (sha, authorLogin, authorId) => ({ sha, parents: ['p'], subject: '', authorName: authorLogin, authorLogin, authorId, committedAt: first + DAY, coauthors: [] })
   const read = commitStats([commit('neo', 'any-login[bot]', 274065190), commit('someone', 'someone', 3115942)], first)
   assert.deepEqual([read.weeks[0].days[1], read.weeks[0].agentDays[1]], [2, 1])
+})
+
+test('a year counts any bot\'s commits with agents, whichever GitHub App\'s: its author\'s, by login, else name, or a co-author\'s', () => {
+  const first = Date.UTC(2025, 9, 19)
+  const commit = (sha, more) => ({ sha, parents: ['p'], subject: '', authorName: 'Ada', authorLogin: 'ada', authorId: 7, committedAt: first + DAY, coauthors: [], ...more })
+  const read = commitStats([commit('renovate', { authorName: 'renovate[bot]', authorLogin: 'renovate[bot]', authorId: 29139614 }),
+    commit('named', { authorName: 'pre-commit-ci[bot]', authorLogin: null, authorId: null }),
+    commit('with a bot', { coauthors: [{ name: 'Release Bot', login: 'release-please[bot]', id: 55107282 }] }), commit('alone'),
+    commit('a name', { authorName: 'Robot', authorLogin: null, authorId: null })], first)
+  assert.deepEqual([read.weeks[0].days[1], read.weeks[0].agentDays[1]], [5, 3])
 })
 
 test('a year counts the commits that release the repository apart, none of them with agents whoever made them', () => {
