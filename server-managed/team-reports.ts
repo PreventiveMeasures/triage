@@ -9,6 +9,7 @@ import { filterReportData, projectFinding } from '../common/managed/report-filte
 import { revalidationLinks, securityLinks } from '../common/security-links.js'
 import { treeDependencyDirectory } from '../client/dependency-paths.js'
 import { liteWorkspace } from '../common/managed/finding-detail.js'
+import { expandFindingValues, findingValueIndex } from '../common/managed/finding-values.js'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import { triageWireEntry } from './triage-response.ts'
@@ -158,8 +159,8 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   for (let i = 0; i < reports.length; i++) {
     const access = snapshot.reports[i]!, report = reports[i]!
     report.data = filterReportData(report.data, access.permissions, access.repo, securityIds)
-    if (report.data && typeof report.data === 'object' && 'think' in report.data) {
-      const { think: _think, ...data } = report.data as Finding
+    if (report.data && typeof report.data === 'object' && ('think' in report.data || 'reportRepo' in report.data)) {
+      const { think: _think, reportRepo: _reportRepo, ...data } = report.data as Finding
       report.data = data
     }
     const ids = new Set<string>()
@@ -167,12 +168,14 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
       // Preserve linked security classification for the UI lens, including a
       // linked component that a dependency permission will hide from the UI.
       finding['isSecurity'] = securityIds.has(String(finding['id']))
-      // The hash of its file's tree, the fingerprint its ID was derived from
-      // and whether its run thought, which nothing a team view reads, nor an
-      // export (@preventive/report write-md-finding.js) writes.
+      // The hash of its file's tree, the fingerprint its ID was derived from,
+      // whether its run thought and the repository its report named, which
+      // nothing a team view reads, nor an export (@preventive/report
+      // write-md-finding.js) writes.
       delete finding['treeHash']
       delete finding['_idBasis']
       delete finding['think']
+      delete finding['reportRepo']
       if (typeof finding['id'] === 'string') { ids.add(finding['id']); allIds.add(finding['id']) }
     }
     visible.set(report.id, { ids, sourcePaths: managedFindingSourcePaths(groupsOf(report.data).flat()) })
@@ -200,18 +203,21 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
 }
 // `{ reports, links }` as a response sends them, `spent` bytes already
 // counted against the bound; `folded` where the board's copy left out rows
-// App mode does not show (common/managed/finding-detail.js).
+// App mode does not show (common/managed/finding-detail.js). Its findings'
+// packages and repositories are sent once each, in `values`
+// (common/managed/finding-values.js).
 function encodeReports(reports: readonly TeamReport[], links: readonly string[][], spent: number, folded = false): Buffer {
   let outputBytes = spent + 14
   const parts = [Buffer.from('{"reports":[')]
+  const values = findingValueIndex()
   for (const [index, report] of reports.entries()) {
-    const bytes = Buffer.from(JSON.stringify(report))
+    const bytes = Buffer.from(JSON.stringify({ ...report, data: values.index(report.data) }))
     outputBytes += bytes.length + 1
     if (outputBytes > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
     if (index) parts.push(Buffer.from(','))
     parts.push(bytes)
   }
-  const tail = JSON.stringify({ ...links.length > 0 ? { links } : {}, ...folded ? { folded } : {} })
+  const tail = JSON.stringify({ ...links.length > 0 ? { links } : {}, ...folded ? { folded } : {}, ...values.values.length > 0 ? { values: values.values } : {} })
   const suffix = Buffer.from(tail === '{}' ? ']}' : `],${tail.slice(1)}`)
   if (outputBytes + suffix.length > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   parts.push(suffix)
@@ -239,8 +245,9 @@ export async function loadTeamReportsResponse(db: ManagedDb, store: BlobStore, s
 }
 export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
   // Object consumers get their own copy, including when sharing a cold load.
-  const body = await loadTeamReportsResponse(db, store, snapshot)
-  return (JSON.parse(body.toString('utf8')) as { reports: TeamReport[] }).reports
+  const body = JSON.parse((await loadTeamReportsResponse(db, store, snapshot)).toString('utf8')) as { reports: TeamReport[]; values?: unknown[] }
+  for (const report of body.reports) expandFindingValues(report.data, body.values)
+  return body.reports
 }
 async function teamVisibility(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Visibility> {
   let visible = caches.get(db)?.get(workspaceKey(snapshot))

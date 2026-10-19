@@ -2,6 +2,7 @@ import { getPreviewRole, managedFetch } from './request.js'
 import { getPublicShare, publicShareBootstrapPath } from './public-share.js'
 import { reportEntries } from '@preventive/report'
 import { MANAGED_PAGES } from '../../common/managed/routes.js'
+import { expandFindingValues } from '../../common/managed/finding-values.js'
 // Managed-mode client auth. Loaded lazily (see ui/view/client-managed.js) so
 // this managed-only code stays out of the main view bundle, mirroring
 // client/sync. For now it covers the session lifecycle against the managed
@@ -146,11 +147,13 @@ function responseLinks(body) {
   if (body?.links === undefined) return []
   return Array.isArray(body.links) && body.links.every(row => Array.isArray(row) && row.length >= 2 && row.every(id => typeof id === 'string')) ? body.links : null
 }
-function reportContent(body) {
+// A team's reports send their findings' packages and repositories once each,
+// in `values` (common/managed/finding-values.js).
+function reportContent(body, values = null) {
   if (reportEntries(body?.data) === null || typeof body.repo?.directory !== 'string') return null
   if (body.repo.github !== null && typeof body.repo.github !== 'string') return null
   if (responseLinks(body) === null) return null
-  return { data: body.data, repo: body.repo, ...(body.links ? { links: body.links } : {}) }
+  return { data: expandFindingValues(body.data, values), repo: body.repo, ...(body.links ? { links: body.links } : {}) }
 }
 
 export async function fetchReport(id, { signal } = {}) {
@@ -189,15 +192,14 @@ export async function fetchTeamReports(teamId, { signal, reportId = null, lite =
   if (!Array.isArray(body?.reports)) return null
   const reports = [], seen = new Set()
   for (const entry of body.reports) {
-    const content = reportContent(entry)
+    const content = reportContent(entry, body.values)
     if (!content || typeof entry.id !== 'string' || typeof entry.filename !== 'string' || seen.has(entry.id)) return null
     seen.add(entry.id)
     reports.push({ id: entry.id, filename: entry.filename, ...content })
   }
   const links = responseLinks(body)
   if (links === null) return null
-  Object.defineProperty(reports, 'links', { value: links })
-  if (body.folded === true) Object.defineProperty(reports, 'folded', { value: true })
+  Object.defineProperties(reports, { links: { value: links }, ...body.folded === true ? { folded: { value: true } } : {} })
   return reports
 }
 

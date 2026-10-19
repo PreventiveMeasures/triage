@@ -1,6 +1,7 @@
 import { fetchReport as requestReport, fetchReports as requestReports, fetchTeamReports as requestTeamReports } from '../../client/managed/session.js'
 import { fetchTeamTrees as requestTeamTrees } from '../../client/managed/team-trees.js'
 import { managedAppState } from './state.js'
+import { readLiteReportData } from '../../common/managed/lite-name.js'
 
 const keyFor = id => `reports:content:${id}`
 
@@ -44,7 +45,11 @@ export async function fetchReports(ids) {
 // entire response together, including links, in a team-specific memory entry.
 export function fetchTeamReports(teamId, { reportId = null, lite = false } = {}) {
   const suffix = `${reportId === null ? '' : `:${reportId}`}${lite ? ':lite' : ''}`
-  return cachedReport(`team:${teamId}${suffix}`, signal => requestTeamReports(teamId, { signal, reportId, lite }))
+  return cachedReport(`team:${teamId}${suffix}`, async signal => {
+    const reports = await requestTeamReports(teamId, { signal, reportId, lite })
+    if (lite) for (const report of reports ?? []) readLiteReportData(report.data)
+    return reports
+  })
 }
 
 // Their file trees, kept as their reports are: under the team, which a

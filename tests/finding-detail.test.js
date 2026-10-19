@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { FINDING_DETAIL_FIELDS, liteReportData, liteWorkspace } from '../common/managed/finding-detail.js'
+import { readLiteReportData } from '../common/managed/lite-name.js'
 
 test('a report\'s board copy leaves each finding\'s detail out, an untitled one keeping as much of its name as a card shows', () => {
   const detail = Object.fromEntries(FINDING_DETAIL_FIELDS.map(field => [field, field]))
@@ -12,12 +13,15 @@ test('a report\'s board copy leaves each finding\'s detail out, an untitled one 
   const lite = liteReportData(data)
   assert.deepEqual(lite, { source: 'codex-security', bundleHashes: ['b'], findings: [
     { id: 'a', title: 'Named', severity: 'high' },
-    [{ id: 'b', description: `${long.slice(0, 119)}…` }, { id: 'c' }, null],
+    [{ id: 'b', description: `${long.slice(0, 117)}...` }, { id: 'c' }, null],
   ] })
   assert.equal(data.findings[0].evidence, 'evidence', 'the report itself is left whole')
   assert.deepEqual(liteReportData({ groups: [[{ id: 'g', impact: 'i' }]] }), { groups: [[{ id: 'g' }]] })
   const links = { source: 'links', links: [['a', 'b']] }
   assert.strictEqual(liteReportData(links), links)
+  const read = readLiteReportData(structuredClone(lite))
+  assert.equal(read.findings[1][0].description, `${long.slice(0, 117)}…`, 'a name cut ends in an ellipsis once read')
+  assert.deepEqual(readLiteReportData({ findings: [{ id: 'd', description: 'Wait... then' }] }).findings[0].description, 'Wait... then', 'dots not at its end are its own')
 })
 
 const pass = (id, extra = {}) => ({ id, file: 'src/a.js', isApp: true, revalidate: 'revalidation', title: `App ${id}`, ...extra })
