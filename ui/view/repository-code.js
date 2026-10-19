@@ -36,13 +36,15 @@ export const repositoryCodeName = ({ repo, path }) => path ? `${repo}/${path}` :
 
 // What the header reads, for the session and role that read it: the
 // repositories the reader may browse, each repository's branches and tags,
-// read again as its code opens anew, those read before shown meanwhile, and
-// kept where that read fails, and the revision each commit was opened
-// by, to name it so again (`{ kind, name }`, `name` null for the default
-// branch), by repository and commit.
+// read again as its code opens anew where they were read HEADER_FRESH_MS
+// ago or longer (going between its views within it reads none), those read
+// before shown meanwhile, and kept where that read fails, and the revision
+// each commit was opened by, to name it so again (`{ kind, name }`, `name`
+// null for the default branch), by repository and commit.
 const headerData = new Map()
 const revisionNames = new Map()
 const DATA_RETRY_MS = 30_000
+const HEADER_FRESH_MS = 30_000
 let keptFor = null
 
 function sessionData() {
@@ -66,7 +68,7 @@ function headerRead(key, ask) {
   if (held && !held.stale && !(held.status === 'error' && Date.now() >= held.retryAt)) return held
   const reading = held?.stale ? { status: 'ready', value: held.value } : { status: 'loading' }
   data.set(key, reading)
-  ask().then(value => ({ status: 'ready', value }), err => err?.name === 'AbortError' ? null : { status: 'error', retryAt: Date.now() + DATA_RETRY_MS })
+  ask().then(value => ({ status: 'ready', value, at: Date.now() }), err => err?.name === 'AbortError' ? null : { status: 'error', retryAt: Date.now() + DATA_RETRY_MS })
     .then(answer => {
       if (data.get(key) !== reading) return null
       if (answer?.status === 'ready' || (answer && reading.status === 'loading')) data.set(key, answer)
@@ -79,9 +81,11 @@ function headerRead(key, ask) {
   return reading
 }
 
-// `key` read again when next asked for, what it holds shown meanwhile.
+// `key` read again when next asked for, what it holds shown meanwhile, unless
+// it was read less than HEADER_FRESH_MS ago.
 function rereadHeader(key) {
   const held = sessionData().get(key)
+  if (held?.status === 'ready' && Date.now() - held.at < HEADER_FRESH_MS) return
   if (held?.status === 'ready') sessionData().set(key, { ...held, stale: true })
   else sessionData().delete(key)
 }
@@ -218,12 +222,12 @@ async function listDirectories(opening, err) {
   } catch {}
 }
 
-// The commit a directory opening on its Treemap names none of, as listing
-// the repository's root reads it, for its Treemap to draw its files' sizes
+// The commit a directory opening on its Treemap names none of, as the
+// repository's root is read at, for its Treemap to draw its files' sizes
 // at while they are read (openRepositoryCodeRoute).
 async function sizeAt(opening) {
   try {
-    const listed = await fetchRepositoryContents(opening.repoId, routeRef(opening), '', { signal: currentViewSignal() })
+    const listed = await fetchRepositoryContents(opening.repoId, routeRef(opening), '', { signal: currentViewSignal(), commitOnly: true })
     if (state.repositoryCodeOpening === opening && COMMIT.test(listed?.commit ?? '')) {
       state.repositoryCodeOpening = { ...opening, commit: listed.commit.toLowerCase() }
       render({ animate: false })
@@ -262,7 +266,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   }
   // History, Issues and Pull requests read none of its files: a directory at
   // a commit shows them alone, its other tabs opening them; at a revision
-  // named, at the commit listing the repository's root reads it at, the
+  // named, at the commit the repository's root is read at, none listed, the
   // directory there or not, as its history lists the commits that touched it
   // all the same.
   if (!entry && REPOSITORY_FILELESS_TABS.has(tab)) {
@@ -277,7 +281,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
       managedHistory?.showing(route)
       renderSidebar()
       try {
-        const listed = await fetchRepositoryContents(repoId, routeRef(route), '', { signal: currentViewSignal() })
+        const listed = await fetchRepositoryContents(repoId, routeRef(route), '', { signal: currentViewSignal(), commitOnly: true })
         at = COMMIT.test(listed?.commit ?? '') ? listed.commit.toLowerCase() : null
       } catch (err) {
         if (err?.name === 'AbortError' || !isCurrent()) return false
@@ -304,7 +308,7 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     rereadHeader(`refs\0${repoId}`)
     // Its Treemap draws its files' sizes as its tree lists them while its
     // files are read, the sooner (repository-treemap.js), at its commit,
-    // which listing the repository's root reads where its route names none.
+    // which the repository's root is read at where its route names none.
     // Another directory, or revision, otherwise keeps the one shown, dimmed,
     // until it opens, its header naming it meanwhile (repositoryCodePending).
     const sizing = tab === 'treemap'

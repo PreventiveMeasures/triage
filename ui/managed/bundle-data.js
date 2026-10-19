@@ -146,8 +146,10 @@ export function fetchRepositoryRefs(repoId, { signal } = {}) {
   return requestRepository('refs', { repoId }, signal)
 }
 
-export function fetchRepositoryContents(repoId, ref, path, { signal } = {}) {
-  return requestRepository('contents', { repoId, ref, path }, signal)
+// With `commitOnly`, the commit alone, as a view reading none of the
+// directory's entries opens at: none listed.
+export function fetchRepositoryContents(repoId, ref, path, { signal, commitOnly = false } = {}) {
+  return requestRepository('contents', { repoId, ref, path, ...commitOnly ? { listing: 'none' } : {} }, signal)
 }
 
 const REPOSITORY_HISTORY_ERRORS = {

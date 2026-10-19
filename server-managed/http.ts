@@ -1527,18 +1527,24 @@ type RepositoryReader = Awaited<ReturnType<ReturnType<typeof createRepositoryBro
 type RepositoryContents = Awaited<ReturnType<typeof readRepositoryContents>>
 type RepositoryRefs = Awaited<ReturnType<RepositoryReader['refs']>> & { defaultContents?: RepositoryContents | null }
 
-async function readRepositoryContents(reader: RepositoryReader, ref: string, path: string, virtualEntries: RepositoryEntry[] | null) {
+// A directory's listing at a commit (`reader.directory`), which never changes,
+// as kept by them (repositoryTreesOf `listings`), else read.
+type DirectoryListing = Awaited<ReturnType<RepositoryReader['directory']>>
+type ListedAt = (commit: string, path: string, read: () => Promise<DirectoryListing>) => Promise<DirectoryListing>
+
+async function readRepositoryContents(reader: RepositoryReader, ref: string, path: string, virtualEntries: RepositoryEntry[] | null, listed: ListedAt) {
   const commit = await reader.commit(ref)
-  const contents = virtualEntries ? { entries: virtualEntries, limited: false } : await reader.directory(path, commit)
+  const contents = virtualEntries ? { entries: virtualEntries, limited: false } : await listed(commit, path, () => reader.directory(path, commit))
   return { ...contents, path, commit }
 }
 
-async function readRepositoryRefs(db: ManagedDb, reader: RepositoryReader, repo: SelectedRepo, withDefault: boolean, virtualEntries: RepositoryEntry[] | null): Promise<RepositoryRefs> {
+async function readRepositoryRefs(db: ManagedDb, reader: RepositoryReader, repo: SelectedRepo, withDefault: boolean, virtualEntries: RepositoryEntry[] | null,
+  listed: ListedAt): Promise<RepositoryRefs> {
   // Wait for both, including failures: a deleted cached branch must not prevent
   // a successful live default lookup from recovering the initial directory.
   const [refs, contents] = await Promise.allSettled([
     reader.refs(),
-    withDefault && repo.cachedDefaultBranch ? readRepositoryContents(reader, `heads/${repo.cachedDefaultBranch}`, '', virtualEntries) : Promise.resolve(null),
+    withDefault && repo.cachedDefaultBranch ? readRepositoryContents(reader, `heads/${repo.cachedDefaultBranch}`, '', virtualEntries, listed) : Promise.resolve(null),
   ])
   if (refs.status === 'rejected') throw refs.reason
   const defaultBranch = refs.value.defaultBranch || null
@@ -1546,7 +1552,7 @@ async function readRepositoryRefs(db: ManagedDb, reader: RepositoryReader, repo:
   if (changed) await db.cacheRepoDefaultBranch(repo, defaultBranch)
   if (!withDefault) return refs.value
   if (!defaultBranch) return { ...refs.value, defaultContents: null }
-  if (changed) return { ...refs.value, defaultContents: await readRepositoryContents(reader, `heads/${defaultBranch}`, '', virtualEntries) }
+  if (changed) return { ...refs.value, defaultContents: await readRepositoryContents(reader, `heads/${defaultBranch}`, '', virtualEntries, listed) }
   if (contents.status === 'rejected') throw contents.reason
   return { ...refs.value, defaultContents: contents.value }
 }
@@ -1615,6 +1621,9 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
   if (!asked) return
   const { repoId, ref } = asked
   const withDefault = refs && query.get('withDefault') === 'true'
+  // The commit alone (`listing=none`), as a view reading none of its entries
+  // opens at.
+  const commitOnly = !refs && query.get('listing') === 'none'
   const path = refs ? '' : asked.path
   const authorize = async (handed = false) => {
     const access = await authorizeRepository(res, deps, cookie, repoId, path, { handed })
@@ -1628,8 +1637,10 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     const reader = await browser.reader(access.repo)
     // Microseconds, so overlapping browses practically never share a listing time.
     const observedUs = Math.round((performance.timeOrigin + performance.now()) * 1000)
-    const revisions = refs ? await readRepositoryRefs(deps.db, reader, access.repo, withDefault, access.virtualEntries) : null
-    const contents = refs ? null : await readRepositoryContents(reader, ref, path, access.virtualEntries)
+    const trees = repositoryTreesOf(deps)
+    const listedAt: ListedAt = (commit, at, read) => trees.listing(`${repoId}\0${LISTING_READ}\0${commit}\0${at}`, read)
+    const revisions = refs ? await readRepositoryRefs(deps.db, reader, access.repo, withDefault, access.virtualEntries, listedAt) : null
+    const contents = refs ? null : commitOnly ? { path, commit: await reader.commit(ref) } : await readRepositoryContents(reader, ref, path, access.virtualEntries, listedAt)
     const { tagCommits, tagsComplete, ...listed } = revisions ?? { tagCommits: [], tagsComplete: false }
     // Every refs read (Create a bundle's, and the code viewer's) refreshes the
     // tags bundle catalogs show, and a tag read keeps the one its revision
@@ -1646,7 +1657,7 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
     sendJson(res, 200, refs ? { ...listed, tagCommits, ...(withDefault ? {
       defaultContents: scopeRepositoryContents(revisions?.defaultContents ?? null, current.virtualEntries),
-    } : {}) } : scopeRepositoryContents(contents, current.virtualEntries))
+    } : {}) } : commitOnly ? contents : scopeRepositoryContents(contents as RepositoryContents, current.virtualEntries))
   } catch (err) {
     if (err instanceof GithubApiError) { sendGithubError(res, err); return }
     throw err
@@ -1671,19 +1682,27 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
 // the reader's own access has named the commit, as GitHub would have
 // answered them; held by each instance a while, by the database it has, and
 // kept in that database for every instance (npm-kept.ts codeTreeStore).
+// And a directory's listing at a commit (readRepositoryContents), by the
+// repository's id, the rules it is read by (LISTING_READ), the commit and the
+// directory, fewer held, each the larger.
 const REPOSITORY_TREES_KEPT = 4096
+const REPOSITORY_LISTINGS_HELD = 256
+const LISTING_READ = 1
 type TreeFiles = Awaited<ReturnType<typeof repositoryTreeFiles>>
-const repositoryTrees = new WeakMap<ManagedDb, { ids: Lru<string>; files: Lru<TreeFiles> }>()
+const repositoryTrees = new WeakMap<ManagedDb, { ids: Lru<string>; files: Lru<TreeFiles>; listings: Lru<DirectoryListing> }>()
 const treeId = (value: unknown): value is string => typeof value === 'string' && /^[a-f\d]{40}$/u.test(value)
 const treeFiles = (value: unknown): value is TreeFiles => value === null || (plainObject(value)
   && Number.isSafeInteger(value['files']) && (value['files'] as number) >= 0 && Number.isSafeInteger(value['bytes']) && (value['bytes'] as number) >= 0)
+const directoryListing = (value: unknown): value is DirectoryListing => plainObject(value) && Array.isArray(value['entries']) && typeof value['limited'] === 'boolean'
 function repositoryTreesOf(deps: ManagedHttpDeps) {
   let held = repositoryTrees.get(deps.db)
-  if (!held) repositoryTrees.set(deps.db, held = { ids: lru(REPOSITORY_TREES_KEPT), files: lru(REPOSITORY_TREES_KEPT) })
-  const { ids, files } = held
+  if (!held) repositoryTrees.set(deps.db, held = { ids: lru(REPOSITORY_TREES_KEPT), files: lru(REPOSITORY_TREES_KEPT), listings: lru(REPOSITORY_LISTINGS_HELD) })
+  const { ids, files, listings } = held
   return {
     id: (key: string, read: () => Promise<string>) => keptTree(ids, codeTreeStore<string>(deps.db, 'trees', deps.config.debug), key, treeId, read),
     files: (key: string, read: () => Promise<TreeFiles>) => keptTree(files, codeTreeStore<TreeFiles>(deps.db, 'tree-files', deps.config.debug), key, treeFiles, read),
+    listing: (key: string, read: () => Promise<DirectoryListing>) =>
+      keptTree(listings, codeTreeStore<DirectoryListing>(deps.db, 'listings', deps.config.debug), key, directoryListing, read),
   }
 }
 // What `memory` holds by `key`, else what `store` keeps of it as `kept`
