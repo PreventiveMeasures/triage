@@ -16,7 +16,7 @@
 // an agent, and those alone are answered, never the texts. GraphQL alone
 // gives them, so it needs a token.
 import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AgentSignals, type AppAgent, agentSignals } from '../common/managed/agent-tasks.ts'
-import { GITHUB_AGENTS, type GithubAgentAccount, type GithubAgentId } from '../common/managed/github-agents.ts'
+import { GITHUB_AGENTS, type GithubAgentAccount, type GithubAgentId, githubAgent } from '../common/managed/github-agents.ts'
 import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
 import type { GraphqlError } from './github-graphql.ts'
 import { ACTOR, ALL_BRANCHES, type HistoryCommit, type HistoryPages, type NamedAccount, actorOf, commitAccount, commitMarks, githubGraphql, historyFrom, historyMarks,
@@ -27,7 +27,6 @@ export const AGENT_PULLS_PAGE = 50
 export const AGENT_COMMITS_PAGE = 100
 const AGENT_ISSUES = 100
 const AGENT_BRANCHES = 500
-const MAX_BRANCH_PAGES = 50
 const CLOSES = 5
 // A pull request's labels read, for one naming an agent: GitHub's most a
 // page.
@@ -45,25 +44,36 @@ const PULLED_PARALLEL = 4
 const AGENT_EMAILS = APP_AGENTS.flatMap(({ id }) => GITHUB_AGENTS[id as GithubAgentId].accounts
   .flatMap(({ id: account, logins }: GithubAgentAccount) => account === undefined ? [] : logins.map(login => `${account}+${login}@users.noreply.github.com`)))
 
-// An agent's branches, a page at a time, as GitHub lists them, by name;
-// each its tip commit's time, message and author.
+// Branches' tip commits, `c<n>` the `n`th's: each's message and author.
+const tipsQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('o', count, 'GitObjectID!')}) {
+  repository(owner: $owner, name: $name) {
+    ${Array.from({ length: count }, (_, at) => `c${at}: object(oid: $o${at}) { ... on Commit { message author { email user { login databaseId } } } }`).join('\n    ')}
+  }
+}`
+// Tips looked up a query, and queries at once.
+const TIPS = 100
+const TIPS_PARALLEL = 4
+// An agent's branches, a page at a time, as GitHub lists them by name, where
+// the repository's branches as kept stop short of them (`cut`): each its tip
+// and when that was committed; as many pages of each as MAX_BRANCH_PAGES.
 const BRANCHES_QUERY = `query($owner: String!, $name: String!, $prefix: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     refs(refPrefix: $prefix, first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
-      nodes { prefix name target { ... on Commit { committedDate message author { email user { login databaseId } } } } }
+      nodes { prefix name target { oid ... on Commit { committedDate } } }
     }
   }
 }`
+const MAX_BRANCH_PAGES = 50
 // What a commit of the default branch is read by.
 const COMMIT_FIELDS = 'oid messageHeadline message committedDate additions deletions author { email user { login databaseId } } associatedPullRequests(first: 1) { totalCount }'
-// The newest of the default branch's commits the app agents' accounts
-// authored, by their GitHub no-reply addresses, however far back: a bot's
-// commits pushed with no pull request here (as before a repository moved)
-// may lie deeper than pages are read on to.
-const AUTHORED_QUERY = `query($owner: String!, $name: String!, $emails: [String!]!) {
+// The newest of the commits from the default branch's head the app agents'
+// accounts authored, by their GitHub no-reply addresses, however far back: a
+// bot's commits pushed with no pull request here (as before a repository
+// moved) may lie deeper than pages are read on to.
+const AUTHORED_QUERY = `query($owner: String!, $name: String!, $head: GitObjectID!, $emails: [String!]!) {
   repository(owner: $owner, name: $name) {
-    defaultBranchRef { target { ... on Commit { history(first: ${AGENT_COMMITS_PAGE}, author: { emails: $emails }) { nodes { ${COMMIT_FIELDS} } } } } }
+    object(oid: $head) { ... on Commit { history(first: ${AGENT_COMMITS_PAGE}, author: { emails: $emails }) { nodes { ${COMMIT_FIELDS} } } } }
   }
 }`
 // What a pull request is read by, for its row (pull): its texts for the
@@ -98,7 +108,6 @@ type GitActor = { email?: unknown; user?: Login }
 type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
   author?: GitActor | null; associatedPullRequests?: { totalCount?: unknown } }
 export type IssueNode = { number?: unknown; title?: unknown; state?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login }
-type RefNode = { prefix?: unknown; name?: unknown; target?: { committedDate?: unknown; message?: unknown; author?: GitActor | null } | null }
 type Connection<T> = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (T | null)[] }
 // Whether a pull request brought each commit, `c<n>` the `n`th's.
 const pulledQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('o', count, 'GitObjectID!')}) {
@@ -107,10 +116,12 @@ const pulledQuery = (count: number) => `query($owner: String!, $name: String!, $
   }
 }`
 type Pulled = { repository?: Record<string, { associatedPullRequests?: { totalCount?: unknown } } | null> | null }
-type Page = { repository?: { defaultBranchRef?: { target?: { history?: Connection<CommitNode> } | null } | null } | null }
+type Authored = { repository?: { object?: { history?: Connection<CommitNode> } | null } | null }
 type Issues = { repository?: { issues?: Connection<IssueNode> } | null }
-type Found = { search?: { pageInfo?: { endCursor?: unknown }; nodes?: (PullNode | null)[] } | null } | null
+type Tips = { repository?: Record<string, { message?: unknown; author?: GitActor | null } | null> | null }
+type RefNode = { prefix?: unknown; name?: unknown; target?: { oid?: unknown; committedDate?: unknown } | null }
 type RefsPage = { repository?: { refs?: Connection<RefNode> } | null }
+type Found = { search?: { pageInfo?: { endCursor?: unknown }; nodes?: (PullNode | null)[] } | null } | null
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 const number = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0 ? value as number : null
@@ -145,12 +156,17 @@ const accountOf = (actor: Login) => both(actorOf(actor))
 // Dependabot's, is told by that alone (repository-history.ts commitAccount).
 const authorOf = (actor: GitActor | null | undefined) => both(commitAccount(actor))
 
+// A commit the app agents' accounts authored, as kept: as read, its
+// message's marks (messageMarks) in its place, never the message.
+export type AuthoredCommit = Omit<CommitNode, 'message'> & { marks: AgentSignals | null }
+const authoredOf = ({ message, ...node }: CommitNode): AuthoredCommit => ({ ...node, marks: messageMarks(message) })
+
 // A commit to the default branch no pull request merged, where an agent left
 // its marks on it, or Claude authored it (commitMarks).
-function directCommit(node: CommitNode | null): AgentCommit | null {
+function directCommit(node: AuthoredCommit | null): AgentCommit | null {
   if (!node || typeof node.oid !== 'string' || !SHA.test(node.oid) || count(node.associatedPullRequests?.totalCount) > 0) return null
   const author = authorOf(node.author)
-  const signals = commitMarks(messageMarks(node.message), { name: null, email: node.author?.email, account: commitAccount(node.author) })
+  const signals = commitMarks(node.marks, { name: null, email: node.author?.email, account: commitAccount(node.author) })
   if (!signals) return null
   return { oid: node.oid, title: nameOf(node.messageHeadline, MAX_TITLE) ?? '', at: timeOf(node.committedDate),
     author: author?.login ?? loginOf(node.author?.user), authorId: author?.id ?? null,
@@ -215,31 +231,88 @@ export function issue(node: IssueNode | null): AgentIssue | null {
     authorId: accountOf(node.author)?.id ?? null, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt) }
 }
 
-// A branch under `prefix`, an agent's, named in full however GitHub splits
-// its name from the prefix it was listed under.
-const branch = (prefix: string) => (node: RefNode | null): AgentBranch | null => {
-  const ref = typeof node?.prefix === 'string' && typeof node.name === 'string' ? `${node.prefix}${node.name}` : null
-  const name = ref?.startsWith('refs/heads/') ? nameOf(ref.slice('refs/heads/'.length)) : null
-  const author = authorOf(node?.target?.author)
-  return name?.startsWith(prefix) ? { name, at: timeOf(node?.target?.committedDate), author: author?.login ?? loginOf(node?.target?.author?.user),
-    authorId: author?.id ?? null, signals: agentSignals([node?.target?.message], APP_AGENTS, name, author) } : null
+// A branch's tip, as kept: its message's marks (messageMarks), never the
+// message, and its author as read.
+export interface BranchTip { marks: AgentSignals | null; author: GitActor | null }
+// The tips of branches, kept by their commits, which never change.
+export interface BranchTips {
+  read(shas: string[]): Promise<Map<string, BranchTip>>
+  write(sha: string, tip: BranchTip): Promise<void>
 }
 
-// The newest of an agent's branches, those under `prefix`: every one, as many
-// as MAX_BRANCH_PAGES of them list, kept by their tips' times.
-async function agentBranches(owner: string, name: string, prefix: string, token: string, fetchImpl: typeof fetch) {
-  const found: AgentBranch[] = []
+// A branch an agent's prefix names (`name`), its tip (`sha`) committed `at`,
+// as the Agents tab shows it: its tip's author, and the marks an agent left
+// on it, its tip's message's, its author's account an agent's, or its name
+// under an agent's prefix, as agent-tasks.ts agentSignals tells them.
+function agentBranch({ name, at }: { name: string; at: number | null }, tip: BranchTip | undefined): AgentBranch {
+  const author = authorOf(tip?.author)
+  const authored = author ? githubAgent(author.login, author.id) : null
+  const marks = tip?.marks
+  return { name, at, author: author?.login ?? loginOf(tip?.author?.user), authorId: author?.id ?? null, signals: { sessions: marks?.sessions ?? [],
+    tasks: marks?.tasks ?? [], claude: marks?.claude ?? false, codex: marks?.codex ?? false,
+    agents: APP_AGENTS.flatMap(({ id, prefix }) => marks?.agents.includes(id) || authored === id || name.startsWith(prefix) ? [id] : []) } }
+}
+
+// The branches under `prefix`, every one, as many as MAX_BRANCH_PAGES of
+// them list, named in full however GitHub splits its name from the prefix.
+async function prefixHeads(owner: string, name: string, prefix: string, token: string, fetchImpl: typeof fetch) {
+  const found: Head[] = []
   let after: string | null = null
   for (let page = 0; page < MAX_BRANCH_PAGES; page++) {
     const refs: Connection<RefNode> | undefined = (await githubGraphql(BRANCHES_QUERY, { owner, name, prefix: `refs/heads/${prefix}`, after }, token, fetchImpl) as RefsPage)
       ?.repository?.refs
-    await linkNoreplyUsers((refs?.nodes ?? []).map(node => node?.target?.author), token, fetchImpl)
-    found.push(...(refs?.nodes ?? []).flatMap(node => branch(prefix)(node) ?? []))
+    for (const node of refs?.nodes ?? []) {
+      const ref = typeof node?.prefix === 'string' && typeof node.name === 'string' ? `${node.prefix}${node.name}` : null
+      const branch = ref?.startsWith('refs/heads/') ? nameOf(ref.slice('refs/heads/'.length)) : null
+      const sha = node?.target?.oid
+      if (branch?.startsWith(prefix) && typeof sha === 'string' && SHA.test(sha)) found.push({ name: branch, sha, at: timeOf(node!.target!.committedDate) })
+    }
     const next: Connection<RefNode>['pageInfo'] = refs?.pageInfo
     if (next?.hasNextPage !== true || typeof next.endCursor !== 'string') break
     after = next.endCursor
   }
-  return found.toSorted((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, AGENT_BRANCHES)
+  return found
+}
+
+// The newest of the agents' branches, those each prefix names, as many as
+// AGENT_BRANCHES of each, of the repository's branches as kept (`heads`, as
+// the Commits tab reads them; those it stops short of, `cut`, listed by each
+// prefix), their tips as kept (`tips`), those not looked up, TIPS a query,
+// and kept.
+async function agentBranches(fullName: string, token: string, { heads, cut }: { heads: Head[]; cut: boolean }, tips: BranchTips, fetchImpl: typeof fetch) {
+  const [owner, name] = fullName.split('/') as [string, string]
+  const all = cut ? (await Promise.all(AGENT_BRANCH_PREFIXES.map(prefix => prefixHeads(owner, name, prefix, token, fetchImpl)))).flat() : heads
+  const named = AGENT_BRANCH_PREFIXES.flatMap(prefix => all.filter(head => head.name.startsWith(prefix))
+    .toSorted((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, AGENT_BRANCHES))
+  const shown = named.filter((head, index) => named.findIndex(other => other.name === head.name) === index)
+  const shas = [...new Set(shown.map(head => head.sha))]
+  const known = await tips.read(shas)
+  await inBatches(shas.filter(sha => !known.has(sha)), TIPS, TIPS_PARALLEL, async batch => {
+    const data = await githubGraphql(tipsQuery(batch.length), { owner, name, ...Object.fromEntries(batch.map((sha, at) => [`o${at}`, sha])) }, token, fetchImpl,
+      notFound) as Tips
+    await linkNoreplyUsers(batch.map((_, at) => data?.repository?.[`c${at}`]?.author), token, fetchImpl)
+    await Promise.all(batch.map((sha, at) => {
+      const node = data?.repository?.[`c${at}`]
+      if (!node) return Promise.resolve()
+      known.set(sha, { marks: messageMarks(node.message), author: node.author ?? null })
+      return tips.write(sha, known.get(sha)!)
+    }))
+  })
+  return shown.map(head => agentBranch(head, known.get(head.sha)))
+}
+
+// The commits from `head` the app agents' accounts authored (AUTHORED_QUERY),
+// as kept by it (`kept`), else read and kept.
+async function authoredCommits(fullName: string, token: string, head: string, kept: AuthoredCommits, fetchImpl: typeof fetch) {
+  const [owner, name] = fullName.split('/') as [string, string]
+  const key = `${head}\0${AGENT_EMAILS.join(',')}`
+  const known = await kept.read(key)
+  if (known) return known
+  const data = await githubGraphql(AUTHORED_QUERY, { owner, name, head, emails: AGENT_EMAILS }, token, fetchImpl) as Authored
+  const nodes = (data?.repository?.object?.history?.nodes ?? []).flatMap(node => node ? [authoredOf(node)] : [])
+  await linkNoreplyUsers(nodes.map(node => node.author), token, fetchImpl)
+  await kept.write(key, nodes)
+  return nodes
 }
 
 // What its answers are kept by, with their cursors (http.ts
@@ -268,12 +341,24 @@ const positionOf = (item: AgentPull) => `${item.updatedAt ?? 0}.${item.number}`
 // where it names none.
 const updatedBy = (at: number) => Number.isFinite(at) ? ` updated:<=${new Date(at).toISOString().replace(/\.\d{3}Z$/u, '+00:00')}` : ''
 
+// A branch: its name, its tip, and when that was committed.
+type Head = { name: string; sha: string; at: number | null }
+// The commits the app agents' accounts authored from a head (AUTHORED_QUERY),
+// kept by it and the addresses they were asked by (`key`).
+export interface AuthoredCommits {
+  read(key: string): Promise<AuthoredCommit[] | null>
+  write(key: string, commits: AuthoredCommit[]): Promise<void>
+}
 // What the repository's tabs read and keep together (http.ts): its pull
 // requests and its issues (repository-pulls.ts PullList, IssueList), each
 // read as far back as their first page where none are, and those updated
-// since read as they are (keptList), and its default branch's head
-// (defaultTip).
-export interface Kept { pulls(): Promise<PullList>; issues(): Promise<IssueList>; head(): Promise<string | null> }
+// since read as they are (keptList), its default branch's head (defaultTip),
+// its branches, as the Commits tab reads them (`heads`, whether they stop
+// short of some, `cut`), their tips (`tips`), and the commits its app
+// agents' accounts authored (`authored`).
+export interface Kept { pulls(): Promise<PullList>; issues(): Promise<IssueList>; head(): Promise<string | null>; heads(): Promise<{ heads: Head[]; cut: boolean }>
+  tips: BranchTips
+  authored: AuthoredCommits }
 
 // A page of the repository's pull requests, the most recently updated
 // first, below the one `cursor` names (none: from the newest): of those kept
@@ -334,22 +419,20 @@ async function latestIssues(fullName: string, token: string, kept: Kept['issues'
 // read whole.
 export async function repositoryAgents(fullName: string, token: string, cursors: { pulls: string | null; commits: string | null }, pages: HistoryPages,
   pulled: CommitPulls, kept: Kept, fetchImpl: typeof fetch = globalThis.fetch) {
-  const [owner, name] = fullName.split('/') as [string, string]
   const first = cursors.pulls === null && cursors.commits === null
-  const [head, issues, branches, authored, pulls] = await Promise.all([
-    first ? kept.head() : null,
+  const tip = first ? kept.head() : Promise.resolve(null)
+  const [head, issues, branches, nodes, pulls] = await Promise.all([
+    tip,
     first ? latestIssues(fullName, token, kept.issues, fetchImpl) : [],
-    first ? Promise.all(AGENT_BRANCH_PREFIXES.map(prefix => agentBranches(owner, name, prefix, token, fetchImpl))) : [],
-    first ? githubGraphql(AUTHORED_QUERY, { owner, name, emails: AGENT_EMAILS }, token, fetchImpl) as Promise<Page> : null,
+    first ? kept.heads().then(heads => agentBranches(fullName, token, heads, kept.tips, fetchImpl)) : [],
+    tip.then(sha => typeof sha === 'string' && SHA.test(sha) ? authoredCommits(fullName, token, sha, kept.authored, fetchImpl) : []),
     first || cursors.pulls !== null ? agentPulls(fullName, token, cursors.pulls, kept.pulls, fetchImpl) : { pulls: [], after: null },
   ])
   const named = cursors.commits === null ? first && typeof head === 'string' && SHA.test(head) ? [head] : [] : startsOf(cursors.commits)
   const starts = named.slice(0, ALL_BRANCHES)
   const history = starts.length > 0 ? (await historyFrom(fullName, token, starts, pages, fetchImpl)).commits : []
   const marked = history.flatMap(commit => { const signals = historyMarks(commit); return signals ? [{ commit, signals }] : [] })
-  const nodes = authored?.repository?.defaultBranchRef?.target?.history?.nodes ?? []
-  const [brought] = await Promise.all([pulledCommits(fullName, token, marked.map(({ commit }) => commit.sha), pulled, fetchImpl),
-    linkNoreplyUsers(nodes.map(node => node?.author), token, fetchImpl)])
+  const brought = await pulledCommits(fullName, token, marked.map(({ commit }) => commit.sha), pulled, fetchImpl)
   const commits = [...marked.flatMap(({ commit, signals }) => brought.has(commit.sha) ? [] : [keptCommit(commit, signals)]), ...nodes.flatMap(node => directCommit(node) ?? [])]
   const after = { pulls: pulls.after, commits: frontier(history, named.slice(ALL_BRANCHES)) }
   return {
@@ -357,7 +440,7 @@ export async function repositoryAgents(fullName: string, token: string, cursors:
     commits: commits.filter((commit, index) => commits.findIndex(other => other.oid === commit.oid) === index),
     ...first ? {
       issues,
-      branches: branches.flat(),
+      branches,
       agents: APP_AGENTS.map(({ id, name: agent, avatar }): AppAgent => ({ id, name: agent, ...avatar ? { avatar } : {} })),
     } : {},
     more: after.pulls !== null || after.commits !== null, after,
