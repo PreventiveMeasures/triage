@@ -53,6 +53,9 @@ export function managedIssueMethods(db: ManagedSql): ManagedIssueStore {
     issue_url AS issueUrl, auto_fix_url AS autoFixUrl, auto_fix_checked_at AS autoFixCheckedAt, created_by AS createdBy, created_at AS createdAt`
   const get = db.prepare(`SELECT ${fields} FROM managed_finding_issue WHERE finding_id = ?`)
   const list = db.prepare(`SELECT ${fields} FROM managed_finding_issue WHERE finding_id IN (SELECT value FROM json_each(?)) ORDER BY finding_id`)
+  // A lookup's derived Fix replaces the one it read, unless one started later
+  // changed it since: the check time, which only changes stamp
+  // (github-issue-links.ts issueUpdates), orders them.
   const autoFix = db.prepare(`UPDATE managed_finding_issue SET auto_fix_url = ?, auto_fix_checked_at = ?
     WHERE finding_id = ? AND issue_url = ? AND COALESCE(auto_fix_url, '') = COALESCE(?, '')
       AND (auto_fix_checked_at IS NULL OR auto_fix_checked_at <= ?)`)

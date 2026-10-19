@@ -171,9 +171,16 @@ async function askAccess(repo: SelectedRepo, start: string | null, userToken: st
       return githubJson(base, token, fetchImpl)
     }
   }
-  // A repository last known private asks who the user is as it asks for its
-  // metadata, not after: its permission is asked of them.
-  if (repo.private && userToken) getIdentity().catch(() => {})
+  // A repository last known private asks who the user is, and mints the
+  // installation token its permission is asked with, as it asks for its
+  // metadata, not after. Each is asked once a request (the token once for
+  // concurrent requests too, github-app.ts), so a failure is answered where
+  // it is awaited. One made public since mints a token it never waits for,
+  // kept for later requests.
+  if (repo.private && userToken) {
+    getIdentity().catch(() => {})
+    if (repo.installationId != null) installationToken().catch(() => {})
+  }
   // Stored visibility can be stale (or internal with private=false). Require
   // current, explicit public visibility or the caller's effective permission.
   const data = await metadata() as RepoMetadata
