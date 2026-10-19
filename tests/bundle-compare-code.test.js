@@ -513,6 +513,9 @@ test('names are hidden renamed in JavaScript alone: in CSS a short selector chan
 })
 
 test('a diff drawn again marks none of its lines again, as a long one takes a while to', t => {
+  // The clock stopped: the first render counts the whole tree, however busy
+  // the machine, so the next draws nothing new.
+  t.mock.method(performance, 'now', () => 0)
   const element = view('dist/app.css', [{ 'dist/app.css': '#foo{color:red}\n' }, { 'dist/app.css': '#bar{color:red}\n' }])
   const code = t.mock.method(element, '_code')
   const first = renderText(element.render())
