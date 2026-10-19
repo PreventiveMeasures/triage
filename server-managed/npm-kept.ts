@@ -161,6 +161,10 @@ export const historyPageStore = <T>(db: UpstreamCacheStore, debug = false): Kept
 // The pull requests squashed into a repository's commits, by the commit
 // (repository-squashes.ts squashedPulls): kept as its history's pages are.
 export const historySquashStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/squashes', HISTORY_PAGE_KEPT_MS, debug)
+// Whether a pull request brought a commit, by its repository and commit, as
+// the Agents tab looks it up of those an agent marked (repository-agents.ts
+// pulledCommits), kept as the history is.
+export const commitPullStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/commit-pulls', HISTORY_PAGE_KEPT_MS, debug)
 // The files each of a repository's commits changes (repository-changes.ts
 // repositoryChanges), by the commit, which never change: kept as its
 // history's pages are.
