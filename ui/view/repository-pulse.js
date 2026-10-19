@@ -31,7 +31,7 @@ import { fetchRepositoryPulse, fetchRepositoryPulseItems } from './client-manage
 import { compactTime } from './repository-history.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { STATE_ICONS, icon, issueState, plainClick } from './repository-tiles.js'
-import { activityPicker, activitySubtab, pickActivitySubtab, watchActivitySubtabs } from './repository-activity.js'
+import { PULSE_PERIODS, activityPicker, pickActivitySubtab, pulseWeeks, watchActivitySubtabs } from './repository-activity.js'
 import { appUser, commitAgent, commitAuthor, commitAuthorName, githubUser } from './github-users.js'
 import { heldRead } from './held-read.js'
 
@@ -51,7 +51,7 @@ const TOP_CONTRIBUTORS = 8
 // Who made a column's commits, as many as its figures name.
 const COLUMN_CONTRIBUTORS = 3
 // The periods, each its weeks, its name, and the same days a period earlier.
-export const PERIODS = [[1, 'Week', 'the week before'], [4, 'Month', 'the month before'], [13, 'Quarter', 'the quarter before'], [52, 'Year', 'the year before']]
+const PERIODS = PULSE_PERIODS
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 // The punch card's rows, Monday first, the weekend under the working week.
 const PUNCH_DAYS = [1, 2, 3, 4, 5, 6, 0]
@@ -68,7 +68,7 @@ let keptFor = null
 // The period shown, by its name, its route's sub-tab (repository-activity.js),
 // a month where it names none; and the pull requests and issues the reader
 // last picked.
-const shownWeeks = () => PERIODS.find(([, name]) => name.toLowerCase() === activitySubtab('pulse'))?.[0] ?? 4
+const shownWeeks = pulseWeeks
 const shownLists = { pulls: 'merged', issues: 'closed' }
 // Each list: its title, and its kinds, each its name and GitHub's search.
 const LISTS = {

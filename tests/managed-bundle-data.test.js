@@ -3,7 +3,8 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { constants, createGzip } from 'node:zlib'
 import { beforeEach, test } from 'node:test'
-import { fetchBundleContents, fetchBundleMetadata, fetchBundleOrigin, fetchManagedBundleCatalog } from '../ui/managed/bundle-data.js'
+import { fetchBundleContents, fetchBundleMetadata, fetchBundleOrigin, fetchManagedBundleCatalog, fetchRepositoryAgents, fetchRepositoryIssues, fetchRepositoryPulse, prefetchActivity }
+  from '../ui/managed/bundle-data.js'
 import { managedAppState } from '../ui/managed/state.js'
 import { beginViewNavigation, currentViewSignal } from '../ui/view/view-navigation.js'
 
@@ -209,4 +210,47 @@ test('advisory reason and team are encoded independently without sending invento
     '/api/bundles/bundle%2Fid/advisories?team=team%2Fid&reason=custom%20%26%20build&repoAdvisories=true',
     '/api/bundles/bundle%2Fid/advisories?team=team%2Fid&reason=custom%20%26%20build&repoAdvisories=true&details=true',
   ])
+})
+
+test('an Activity view\'s first read asked for ahead is taken by the first to read it, none read again; one failing read anew, another session\'s not taken', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const asked = []
+  let fail = false
+  t.mock.method(globalThis, 'fetch', url => {
+    asked.push(url)
+    if (fail) return Promise.reject(new TypeError('offline'))
+    return Promise.resolve(Response.json({ read: asked.length }))
+  })
+  prefetchActivity(7, 'pulse', { weeks: 52 })
+  prefetchActivity(7, 'pulse', { weeks: 52 })
+  prefetchActivity(7, 'pulls', { state: 'closed' })
+  prefetchActivity(7, 'agents')
+  assert.deepEqual(asked, ['/api/admin/repositories/pulse?repoId=7&weeks=52', '/api/admin/repositories/issues?repoId=7&kind=pulls&state=closed',
+    '/api/admin/repositories/agents?repoId=7'], 'each asked once')
+  assert.deepEqual(await fetchRepositoryPulse(7, 52), { read: 1 })
+  assert.deepEqual(await fetchRepositoryIssues(7, 'pulls', { state: 'closed' }), { read: 2 })
+  assert.equal(asked.length, 3, 'taken, none read again')
+  assert.deepEqual(await fetchRepositoryPulse(7, 52), { read: 4 }, 'taken once: the next read asks')
+  // One failing: read anew.
+  fail = true
+  prefetchActivity(7, 'pulse', { weeks: 4 })
+  fail = false
+  assert.deepEqual(await fetchRepositoryPulse(7, 4), { read: 6 })
+  // Another session's: not taken.
+  managedAppState.setSession({ id: 'bob', role: 'manage' })
+  assert.deepEqual(await fetchRepositoryAgents(7), { read: 7 })
+  assert.equal(asked.length, 7)
+})
+
+test('a read asked for ahead that none takes in time is called off', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const signals = []
+  t.mock.method(globalThis, 'fetch', (url, options) => { signals.push(options.signal); return new Promise(() => {}) })
+  prefetchActivity(8, 'agents')
+  t.mock.timers.tick(14_999)
+  assert.equal(signals[0].aborted, false)
+  t.mock.timers.tick(1)
+  assert.equal(signals[0].aborted, true, 'called off')
+  prefetchActivity(8, 'agents')
+  assert.equal(signals.length, 2, 'asked anew')
 })

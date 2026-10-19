@@ -93,6 +93,12 @@ export async function fetchRepositoryTree(repoId, path, commit, options) {
   return (await loadManagedBundle()).fetchRepositoryTree(repoId, path, commit, options)
 }
 
+// The first read an Activity view opening on `tab` makes, read ahead of it
+// (bundle-data.js prefetchActivity).
+export async function prefetchActivity(repoId, tab, options) {
+  (await loadManagedBundle()).prefetchActivity(repoId, tab, options)
+}
+
 export function fetchRepositoryAgents(repoId, options) {
   return knowingGithubUsers(async () => (await loadManagedBundle()).fetchRepositoryAgents(repoId, options))
 }

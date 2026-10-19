@@ -10,7 +10,7 @@ import { LitElement, html, nothing } from 'lit'
 import { appMarkup } from './markup.js'
 import { isManagedUiMode, state } from '#client/index.js'
 import { REPOSITORY_CODE_TABS, REPOSITORY_FILELESS_TABS, compareModeField, compareModeOf } from '../../common/managed/routes.js'
-import { fetchBrowsableRepositories, fetchRepositoryCode, fetchRepositoryContents, fetchRepositoryRefs } from './client-managed.js'
+import { fetchBrowsableRepositories, fetchRepositoryCode, fetchRepositoryContents, fetchRepositoryRefs, prefetchActivity } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
 import { fileRowDetails } from './bundle-sources.js'
 import { cleanupGraph2 } from './graph/state.js'
@@ -18,7 +18,8 @@ import { COMMIT_ICON_SVG } from './icons.js'
 import { managedTabLocation } from './managed-bundle-navigation.js'
 import { managedHistory } from './managed-history.js'
 import { render } from './render.js'
-import { activitySubtabField, showActivitySubtab } from './repository-activity.js'
+import { activitySubtab, activitySubtabField, pulseWeeks, showActivitySubtab } from './repository-activity.js'
+import { withRepositoryActivity } from './activity-load.js'
 import { sourceFolderIcon } from './source-file-icon.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { currentViewGeneration, currentViewSignal } from './view-navigation.js'
@@ -270,6 +271,9 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   // directory there or not, as its history lists the commits that touched it
   // all the same.
   if (!entry && REPOSITORY_FILELESS_TABS.has(tab)) {
+    // Its view's first read asked for as its bundle loads, the first time
+    // one opens, none of its reads held yet (prefetchActivity).
+    if (!withRepositoryActivity.loaded()) void prefetchActivity(repoId, tab, { state: activitySubtab(tab) === 'closed' ? 'closed' : 'open', weeks: pulseWeeks() })
     const revision = route.revision === undefined ? commit ? revisionNames.get(`${repoId}\0${commit}`) ?? null : route.ref ? null : { kind: 'branch', name: null } : route.revision
     // Its branches and tags as they are now, for its header and History.
     rereadHeader(`refs\0${repoId}`)

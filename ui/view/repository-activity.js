@@ -63,6 +63,12 @@ export function showActivitySubtab(tab, subtab) {
   for (const listener of subtabListeners) listener(tab)
 }
 
+// Pulse's periods, each its weeks, its name, its sub-tab's lowercased, and
+// the same days a period earlier; and the weeks of the one shown, a month
+// where its route names none.
+export const PULSE_PERIODS = [[1, 'Week', 'the week before'], [4, 'Month', 'the month before'], [13, 'Quarter', 'the quarter before'], [52, 'Year', 'the year before']]
+export const pulseWeeks = () => PULSE_PERIODS.find(([, name]) => name.toLowerCase() === activitySubtab('pulse'))?.[0] ?? 4
+
 // `subtab` of view `tab` picked for the directory shown (`repository`, an
 // entry's): shown, at its address, an entry of its own.
 export function pickActivitySubtab({ repoId, commit, path }, tab, subtab) {
