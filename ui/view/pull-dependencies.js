@@ -177,10 +177,11 @@ function readOf(jobs) {
 // (`refreshing`), or once an error's retry is due. One asked in the
 // `background` is read after those asked otherwise; one `listed`, as its
 // tile on the Pull requests tab asks, by the commits its page names
-// (fetchPullDependencies).
+// (fetchPullDependencies), held apart from those asked otherwise, as its
+// popup asks, which a page kept from before a push tells none of.
 export function pullDependencies(repoId, number, review = false, { background = false, listed = false } = {}) {
   const data = sessionHeld()
-  const key = `${repoId}\0${number}\0${review}`
+  const key = `${repoId}\0${number}\0${review}${listed ? '\0listed' : ''}`
   const entry = data.get(key)
   if (entry && Date.now() < entry.until) {
     const job = queued.get(key)
