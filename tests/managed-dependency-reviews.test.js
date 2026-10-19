@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
-import { checkDependencyReviews, checkTeamReviewList, reviewContext } from './_managed-dependency-reviews.js'
+import { checkDependencyReviews, checkReviewedTarballs, checkTeamReviewList, reviewContext } from './_managed-dependency-reviews.js'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
 
@@ -19,6 +19,37 @@ test('a team\'s reviews in one statement, each as it is read alone, and their re
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   await checkTeamReviewList(db)
+})
+
+test('a review keeps the shasums of the tarballs it reads, as its writer tells them (SQLite)', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  await checkReviewedTarballs(db)
+})
+
+test('reviews written before their tarballs\' shasums were kept read none, and those written since keep theirs', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'dependency-review-shasums-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const path = join(dir, 'db.sqlite')
+  const original = openSqliteManagedDb(path)
+  const session = await createSession({ sessionCookieName: 'sid', sessionTtlMs: 3600000 }, original,
+    { githubUserId: 100, login: 'author', name: null, avatarUrl: null }, Date.now())
+  await original.setUserRole(session.userId, 'admin')
+  const sid = hashToken(session.setCookie.split(';')[0].slice(4))
+  await original.createTeam('team', 'Team', 100)
+  await original.setTeamDependencyReview(sid, 'team', true)
+  const before = await original.changeDependencyReview(reviewContext, sid, { action: 'start', reviewId: null, revision: null }, 100)
+  await original.close()
+  const raw = new DatabaseSync(path)
+  raw.exec('ALTER TABLE managed_dependency_review DROP COLUMN shasum; ALTER TABLE managed_dependency_review DROP COLUMN base_shasum')
+  raw.close()
+  const db = openSqliteManagedDb(path)
+  t.after(() => db.close())
+  const [kept] = await db.listOwnDependencyReviewsById(session.userId, [before.id])
+  assert.deepEqual([kept.shasum, kept.baseShasum], [null, null])
+  const saved = await db.changeDependencyReview(reviewContext, sid, { action: 'save', reviewId: before.id, revision: before.revision, entryId: null,
+    entry: { file: 'index.js', status: 'accept', comment: '' } }, 200, { shasum: 'a'.repeat(40), baseShasum: 'b'.repeat(40) })
+  assert.deepEqual([saved.shasum, saved.baseShasum], ['a'.repeat(40), 'b'.repeat(40)])
 })
 
 test('legacy notes become one editable note when continuing, without rewriting frozen rows', async t => {

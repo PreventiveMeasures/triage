@@ -213,6 +213,46 @@ test('review API validates bytes and file scope, protects identity, and publishe
   assert.equal(edited.status, 409)
 })
 
+test('a review is written only of tarballs its versions\' integrity and shasum name, those shasums kept with it', async t => {
+  const h = await fixture(t)
+  const after = packageOf('hashed', '2.0.0', { 'index.js': 'new\n', 'package.json': '{"name":"hashed","version":"2.0.0"}' })
+  const before = packageOf('hashed', '1.0.0', { 'index.js': 'old\n' })
+  // Each named by its integrity, and by a shasum its bytes are not.
+  const misnamed = packageOf('misnamed', '1.0.0', { 'index.js': 'x\n' }), misnamedBase = packageOf('misnamed', '0.1.0', { 'index.js': 'y\n' })
+  for (const pkg of [misnamed, misnamedBase]) pkg.doc.dist.shasum = '0'.repeat(40)
+  registry(t, [after, before, misnamed, misnamedBase])
+  const context = { ecosystem: 'npm', package: 'hashed', version: '2.0.0', integrity: after.doc.dist.integrity,
+    basePackage: 'hashed', baseVersion: '1.0.0', baseIntegrity: before.doc.dist.integrity }
+  const send = (body, at = context) => h.send('/api/npm/reviews', { body: { ...at, ...body } })
+  const session = hashToken(h.sessions.triage.setCookie.split(';')[0].slice(4))
+  // A draft begun with none told of its tarballs keeps them once saved.
+  let review = await h.db.changeDependencyReview(context, session, { action: 'start', reviewId: null, revision: null }, Date.now())
+  assert.deepEqual([review.shasum, review.baseShasum], [null, null])
+  review = (await send({ action: 'save', reviewId: review.id, revision: review.revision, file: 'index.js', status: 'accept', comment: '' })).body.review
+  assert.deepEqual([review.shasum, review.baseShasum], [after.doc.dist.shasum, before.doc.dist.shasum])
+  review = (await send({ action: 'save', reviewId: review.id, revision: review.revision, file: 'package.json', status: 'accept', comment: '' })).body.review
+  const published = await send({ action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['reviewers'], finalStatus: 'accept' })
+  assert.equal(published.status, 200, JSON.stringify(published.body))
+  assert.deepEqual([published.body.review.shasum, published.body.review.baseShasum], [after.doc.dist.shasum, before.doc.dist.shasum])
+  const listed = (await h.send('/api/npm/reviews/mine')).body.reviews.find(row => row.id === review.id)
+  assert.deepEqual([listed.shasum, listed.baseShasum], [after.doc.dist.shasum, before.doc.dist.shasum], 'as listed')
+  const continued = await send({ action: 'continue', reviewId: review.id, revision: published.body.review.revision })
+  assert.deepEqual([continued.body.review.shasum, continued.body.review.baseShasum], [after.doc.dist.shasum, before.doc.dist.shasum], 'as continued')
+  const whole = { ...context, basePackage: null, baseVersion: null, baseIntegrity: null }
+  assert.deepEqual([(await send({ action: 'start' }, whole)).body.review.shasum, (await h.send(url(whole))).body.reviews[0].baseShasum], [after.doc.dist.shasum, null],
+    'none of a base where it reads its package whole')
+  // A tarball its shasum does not name, as the version's or as its base, is no review's, begun or saved.
+  const misnamedContext = { ecosystem: 'npm', package: 'misnamed', version: '1.0.0', integrity: misnamed.doc.dist.integrity, basePackage: null, baseVersion: null, baseIntegrity: null }
+  const misnamedBased = { ...context, basePackage: 'misnamed', baseVersion: '0.1.0', baseIntegrity: misnamedBase.doc.dist.integrity }
+  for (const at of [misnamedContext, misnamedBased]) {
+    for (const body of [{ action: 'start' }, { action: 'save', file: 'index.js', status: 'accept', comment: '' }]) {
+      const refused = await send(body, at)
+      assert.deepEqual([refused.status, refused.body.error], [502, 'upstream-invalid'], JSON.stringify([at, body]))
+    }
+    assert.deepEqual((await h.send(url(at))).body.reviews, [])
+  }
+})
+
 test('reviews recheck private access to both packages, including before publication', async t => {
   const h = await fixture(t)
   withToken(t)

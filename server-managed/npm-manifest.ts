@@ -102,7 +102,7 @@ export function npmManifest(json: Record<string, unknown>): Record<string, unkno
 // as they read npm's.
 const VERSION_FIELDS = ['name', 'version', 'description', 'license', 'homepage', 'main', 'module', 'types', 'type', 'deprecated', 'gitHead', 'author', '_npmUser',
   'maintainers', 'keywords', 'bin', 'dependencies', 'peerDependencies', 'optionalDependencies', 'engines', 'hasInstallScript', 'repository', 'bugs']
-const DIST_FIELDS = ['tarball', 'integrity', 'unpackedSize', 'fileCount']
+const DIST_FIELDS = ['tarball', 'integrity', 'shasum', 'unpackedSize', 'fileCount']
 const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall']
 const picked = (json: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter(key => Object.hasOwn(json, key)).map(key => [key, json[key]]))
 

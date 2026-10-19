@@ -1618,6 +1618,31 @@ test('dependency reviews publish, revoke and continue as frozen sets (Postgres)'
   await checkDependencyReviews(db)
 })
 
+test('a review keeps the shasums of the tarballs it reads, as its writer tells them (Postgres)', async t => {
+  const { db } = await database(t)
+  const { checkReviewedTarballs } = await import('./_managed-dependency-reviews.js')
+  await checkReviewedTarballs(db)
+})
+
+test('Postgres adds the shasums of the tarballs dependency reviews read to an existing installation, none known of those written before', async t => {
+  const { db, connect } = await database(t)
+  const users = await people(db)
+  const before = await publish(db, users.alice, context('pkg', '1.0.0', '0.9.0'), ['one'])
+  const legacy = await connect()
+  try {
+    await legacy.query(`ALTER TABLE managed_dependency_review DROP COLUMN shasum, DROP COLUMN base_shasum;
+      DELETE FROM managed_schema_version WHERE version = 32;`)
+  } finally { await legacy.release() }
+  await db.close()
+  const upgraded = await openPostgresManagedDb(connect)
+  t.after(() => upgraded.close())
+  const [kept] = await upgraded.listOwnDependencyReviewsById(users.alice.userId, [before.id])
+  assert.deepEqual([kept.shasum, kept.baseShasum], [null, null])
+  const tarballs = { shasum: 'a'.repeat(40), baseShasum: 'b'.repeat(40) }
+  const started = await upgraded.changeDependencyReview(context('pkg', '2.0.0', '1.0.0'), users.alice.sid, { action: 'start', reviewId: null, revision: null }, Date.now(), tarballs)
+  assert.deepEqual({ shasum: started.shasum, baseShasum: started.baseShasum }, tarballs)
+})
+
 test('a team\'s reviews in one statement, each as it is read alone, and their reader asked again in one (Postgres)', async t => {
   const { db } = await database(t)
   const { checkTeamReviewList } = await import('./_managed-dependency-reviews.js')

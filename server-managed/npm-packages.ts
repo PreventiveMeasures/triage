@@ -228,7 +228,9 @@ export interface NpmVersionDocument {
   name: string
   version: string
   private: boolean
-  dist: { tarball: string; integrity: string; unpackedSize: number | null; fileCount: number | null }
+  // `shasum`, the tarball's sha1 in hex, where npm tells it: held, with the
+  // integrity, to the tarball its files are read from (npm-loads.ts).
+  dist: { tarball: string; integrity: string; shasum: string | null; unpackedSize: number | null; fileCount: number | null }
   manifest: Record<string, unknown>
 }
 
@@ -238,10 +240,12 @@ const count = (value: unknown) => Number.isSafeInteger(value) && (value as numbe
 function versionDocument(name: string, json: Record<string, unknown>, isPrivate: boolean): NpmVersionDocument {
   const dist = json['dist']
   if (json['name'] !== name || typeof json['version'] !== 'string' || !isNpmPackageSpec(json['version']) || !plainObject(dist)
-      || typeof dist['tarball'] !== 'string' || typeof dist['integrity'] !== 'string') throw new NpmPackageError(502, 'upstream-invalid')
+      || typeof dist['tarball'] !== 'string' || typeof dist['integrity'] !== 'string'
+      || (dist['shasum'] !== undefined && typeof dist['shasum'] !== 'string')) throw new NpmPackageError(502, 'upstream-invalid')
   return {
     name, version: json['version'], private: isPrivate,
-    dist: { tarball: dist['tarball'], integrity: dist['integrity'], unpackedSize: count(dist['unpackedSize']), fileCount: count(dist['fileCount']) },
+    dist: { tarball: dist['tarball'], integrity: dist['integrity'], shasum: typeof dist['shasum'] === 'string' ? dist['shasum'] : null,
+      unpackedSize: count(dist['unpackedSize']), fileCount: count(dist['fileCount']) },
     manifest: npmManifest(json),
   }
 }
@@ -262,13 +266,18 @@ export interface NpmVersionStore {
 // changes a version's files, but its document can change: a deprecation, the
 // package made private (a scoped one can be), the version removed (which whoever
 // reads it from a store learns elsewhere too: risk does). A day bounds each.
+// One kept with no shasum, as none was before it was kept (npmVersionFields),
+// is asked of npm again, which tells one of each version.
 export const VERSION_KEPT_MS = 24 * 60 * 60_000
 export function readNpmVersion(name: string, spec: string, privileged: boolean, signal: AbortSignal, store?: NpmVersionStore): Promise<NpmVersionDocument | null> {
   if (!isNpmPackageName(name) || !isNpmPackageSpec(spec)) return Promise.reject(new NpmPackageError(400, 'bad-package'))
   // A kept one is read within the same budget as npm's answer.
   return withDocumentBudget(VERSION_DOCUMENT_BYTES, async () => {
     const kept = store && isExactVersion(spec) ? await store.read(name, spec) : null
-    if (kept && Date.now() - kept.at < VERSION_KEPT_MS) try { return versionDocument(name, kept.json, false) } catch {}
+    const keptDist = kept?.json['dist']
+    if (kept && Date.now() - kept.at < VERSION_KEPT_MS && plainObject(keptDist) && typeof keptDist['shasum'] === 'string') {
+      try { return versionDocument(name, kept.json, false) } catch {}
+    }
     const found = await readDocument(name, registryUrl(name, spec), privileged, { accept: 'application/json', limit: VERSION_DOCUMENT_BYTES, signal })
     if (!found) return null
     const doc = versionDocument(name, found.json, found.private)
