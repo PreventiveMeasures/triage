@@ -1475,10 +1475,10 @@ async function sendTeamReports(url: URL, res: ServerResponse, route: string, rep
   // The board's, without the findings' detail, as the managed server sends it.
   const whole = read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data,
     repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } }))
-  const lite = url.searchParams.get('lite') === '1' ? liteWorkspace(whole, []) : { reports: whole, folded: false }
+  const lite = url.searchParams.get('lite') === '1' ? liteWorkspace(whole, []) : { reports: whole, folded: false, lens: null }
   // Its findings' packages and repositories sent once each, as the managed server sends them.
   const values = findingValueIndex()
-  sendJson(res, 200, { reports: lite.reports.map(report => ({ ...report, data: values.index(report.data) })), ...lite.folded ? { folded: true } : {}, ...values.values.length > 0 ? { values: values.values } : {} })
+  sendJson(res, 200, { reports: lite.reports.map(report => ({ ...report, data: values.index(report.data) })), ...lite.folded ? { folded: lite.folded, lens: lite.lens } : {}, ...values.values.length > 0 ? { values: values.values } : {} })
 }
 
 const fixtureFeeds = new Set<ServerResponse>()

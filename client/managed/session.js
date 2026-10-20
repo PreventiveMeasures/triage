@@ -199,7 +199,7 @@ export async function fetchTeamReports(teamId, { signal, reportId = null, lite =
   }
   const links = responseLinks(body)
   if (links === null) return null
-  Object.defineProperties(reports, { links: { value: links }, ...body.folded === true ? { folded: { value: true } } : {} })
+  Object.defineProperties(reports, { links: { value: links }, ...['rows', 'app'].includes(body.folded) ? { folded: { value: body.folded }, lens: { value: body.lens ?? null } } : {} })
   return reports
 }
 

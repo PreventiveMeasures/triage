@@ -56,7 +56,7 @@ import { filesButtonTemplate, renderWorkspaceContent, teamHeaderTemplate, triage
 import './team-dependencies.js'
 import { createViewRenderer } from './render-transition.js'
 import { loadManagedTrees } from './managed-trees.js'
-import { managedDetailsFolded, managedDetailsReplacing, managedDetailsWaiting } from './managed-details.js'
+import { managedDetailsFolded, managedDetailsLens, managedDetailsReplacing, managedDetailsWaiting } from './managed-details.js'
 import { withCompare } from './compare-load.js'
 import { NEXT_ICON, PREV_ICON } from './lit-icons.js'
 
@@ -1846,8 +1846,15 @@ function detailLayerFacts(groups, workspace) {
 // finding on every draw.
 const sameReports = (kept, reports) => kept.length === reports.length && kept.every((r, i) => r === reports[i])
 
+// While a team's board is drawn from a copy leaving rows out, what those rows
+// tell the team's view offers beside its App view (managed-details.js
+// managedDetailsLens), in place of what its rows on hand would.
+const teamLens = () => state.currentWorkspace ? managedDetailsLens() : null
+
 let droppableLayer = { reports: [], value: false }
 function loadedCanDropRevalidation() {
+  const lens = teamLens()
+  if (lens) return lens.drop
   if (!sameReports(droppableLayer.reports, state.reports)) {
     droppableLayer = { reports: [...state.reports], value: canDropRevalidation(state.reports) }
   }
@@ -1865,7 +1872,7 @@ function loadedUpstream() {
     if (stampUpstreamFindings(state.reports)) clearMergedGroups()
     upstreamFacts = { reports: [...state.reports], depsDir, value: state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream))) }
   }
-  return upstreamFacts.value
+  return teamLens()?.upstream ?? upstreamFacts.value
 }
 
 // The header's run-meta chips. Every field they read is the report's own,
@@ -1967,7 +1974,7 @@ function renderImpl() {
   // pass concluded — dedup keeps whichever loaded first, so the app
   // view would be one report's verdicts chosen by an accident of read
   // order. Show code mode and a conflict inspection button in that case.
-  const canDropLayer = configureReportRevalidation({ held: managedDetailsFolded() })
+  const canDropLayer = configureReportRevalidation({ held: Boolean(managedDetailsFolded()) })
   // The upstream lens is offered wherever the SET holds an upstream
   // finding. Read off the reports rather than the groups on screen, for
   // the same reason the layer above reads raw: answered from what the
@@ -2353,7 +2360,9 @@ function renderImpl() {
   // coming and going under the reader's hand: gated, both answers
   // would go empty the moment the switch reached its code stop, and
   // the control would resize itself mid-click.
-  const { hasFoldedRows, hasPartialRow, hasRuledOutRow } = detailLayerFacts(getRevalidationGroups(), Boolean(state.currentWorkspace))
+  const lens = teamLens()
+  const { hasFoldedRows, hasPartialRow, hasRuledOutRow } = lens ? { hasFoldedRows: lens.detail, hasPartialRow: false, hasRuledOutRow: false }
+    : detailLayerFacts(getRevalidationGroups(), Boolean(state.currentWorkspace))
   // Preserve first-seen order for the type label so "security, correctness"
   // reads in load order rather than alphabetical.
   const types = [...new Set(state.reports.map((r) => r.type))]
@@ -2545,9 +2554,12 @@ function renderImpl() {
   // A team's board is drawn before its findings have their detail; any other
   // view mode waits for it, saying it is loading, or that it never came, as
   // does a lens other than App's where the board's copy folded rows under
-  // their App row (managed-details.js).
+  // their App row, and where it holds only the rows its App view shows, any
+  // view but that one: the whole team's, on Confirmed (managed-details.js).
   const appLens = revalidationShown() && !underlyingFindingsShown()
-  const detailsWaiting = state.viewMode === 'kanban' && (appLens || !managedDetailsFolded()) ? null : managedDetailsWaiting()
+  const folded = managedDetailsFolded()
+  const drawnFromCopy = !folded || appLens && (folded === 'rows' || Boolean(state.currentWorkspace) && state.filterRevalidate === 'confirmed')
+  const detailsWaiting = state.viewMode === 'kanban' && drawnFromCopy ? null : managedDetailsWaiting()
   // Same shape as the sort-priority drop above — `graph` is only a
   // valid view-mode while a tree-bearing report is loaded; if the
   // user previously picked it and the underlying data went away
