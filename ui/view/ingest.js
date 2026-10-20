@@ -849,7 +849,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   resetGraph2()
   for (const entry of findings) {
     await ingestReport(entry.filename, entry.data, gen, {
-      renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepLens: workspace.folded === true,
+      renderView: false, managedReportId: entry.id, managedRepo: entry.repo, keepLens: Boolean(workspace.folded),
     })
     if (isStaleLoad(gen)) return false
   }
@@ -875,7 +875,7 @@ export async function switchToManagedTeam(team, reportId = null, { history = tru
   const shown = Promise.withResolvers()
   let opening = null
   if (details) {
-    awaitManagedDetails(team.id, details, () => { void shown.promise.then(() => render()) }, { folded: workspace.folded === true, shown: shown.promise, signal: viewSignal,
+    awaitManagedDetails(team.id, details, () => { void shown.promise.then(() => render()) }, { folded: workspace.folded ?? false, lens: workspace.lens, shown: shown.promise, signal: viewSignal,
       replace: whole => replaceManagedReports(whole, findings, { gen, hydrate, annotations, opening }) })
   }
   if (findings.length > 0) {

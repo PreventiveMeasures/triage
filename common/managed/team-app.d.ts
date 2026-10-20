@@ -4,3 +4,5 @@ export type TeamAppMetadata = { appMode: true; appFindings: number } | { appMode
 export function managedTeamAppMetadata(workspace: readonly { filename: string; data: unknown }[] & { links?: readonly (readonly string[])[] },
   options?: { countFindings?: boolean }): TeamAppMetadata
 export function managedTeamRevalidationConflicted(workspace: readonly { filename: string; data: unknown }[] & { links?: readonly (readonly string[])[] }): boolean
+export function managedTeamAppRows(workspace: readonly { filename: string; data: unknown }[] & { links?: readonly (readonly string[])[] }): Set<string> | null
+export function managedTeamLens(workspace: readonly { filename: string; data: unknown }[] & { links?: readonly (readonly string[])[] }): { drop: boolean; detail: boolean; upstream: boolean }

@@ -41,11 +41,19 @@ export function managedDetailsReady() {
   return awaited() ? current.ready : Promise.resolve(true)
 }
 
-// Whether the board's copy of the loaded reports left out rows (App mode's,
-// common/managed/finding-detail.js): a lens other than App's, its detail
-// stop or its upstream one, waits for the whole reports (render.js).
+// How the board's copy of the loaded reports left out rows App mode does not
+// show (common/managed/finding-detail.js liteWorkspace), until the whole
+// reports are in: 'rows', those beneath App rows, which a lens other than
+// App's waits for (render.js); 'app', all but those its App view shows, which
+// any other view waits for; false where it left out none.
 export function managedDetailsFolded() {
-  return awaited() && current.folded && !current.ok
+  return awaited() && !current.ok && current.folded
+}
+
+// Meanwhile, what the rows left out tell the whole team's view offers beside
+// its App view (common/managed/team-app.js managedTeamLens), or null.
+export function managedDetailsLens() {
+  return managedDetailsFolded() ? current.lens ?? null : null
 }
 
 // Settles true once `shown`, the view standing, false once `signal` aborts.
@@ -63,8 +71,8 @@ function standing(shown, signal) {
 // their place once the view is `shown`, by `replace(workspace)`, true once it
 // stands; ones that fail, or cannot be ingested, leave the board as it is,
 // telling so. A view left before then waits for nothing.
-export function awaitManagedDetails(teamId, request, loaded, { folded = false, shown = Promise.resolve(true), signal, replace } = {}) {
-  const entry = current = { reports: store(state.reports), folded, done: false, ok: false, replacing: false, ready: null }
+export function awaitManagedDetails(teamId, request, loaded, { folded = false, lens = null, shown = Promise.resolve(true), signal, replace } = {}) {
+  const entry = current = { reports: store(state.reports), folded, lens, done: false, ok: false, replacing: false, ready: null }
   const loadedStill = () => current === entry && store(state.reports) === entry.reports
   entry.ready = (async () => {
     const workspace = await Promise.resolve(request).catch(() => null)

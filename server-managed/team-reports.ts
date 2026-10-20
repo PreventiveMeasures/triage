@@ -194,7 +194,7 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   const encoded = {
     // Bounded together, as when the trees were sent with their reports.
     reports: encodeReports(reports, links, trees.length),
-    lite: encodeReports(lite.reports, links, 0, lite.folded),
+    lite: encodeReports(lite.reports, links, 0, { folded: lite.folded, lens: lite.lens }),
     trees,
   }
   retainVisibility(db, workspaceKey(snapshot), visible)
@@ -202,11 +202,12 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   return { ...encoded, visible }
 }
 // `{ reports, links }` as a response sends them, `spent` bytes already
-// counted against the bound; `folded` where the board's copy left out rows
-// App mode does not show (common/managed/finding-detail.js). Its findings'
-// packages and repositories are sent once each, in `values`
+// counted against the bound; `folded` and its `lens` where the board's copy
+// left out rows App mode does not show (common/managed/finding-detail.js).
+// Its findings' packages and repositories are sent once each, in `values`
 // (common/managed/finding-values.js).
-function encodeReports(reports: readonly TeamReport[], links: readonly string[][], spent: number, folded = false): Buffer {
+function encodeReports(reports: readonly TeamReport[], links: readonly string[][], spent: number,
+  { folded = false, lens = null }: { folded?: false | 'rows' | 'app'; lens?: unknown } = {}): Buffer {
   let outputBytes = spent + 14
   const parts = [Buffer.from('{"reports":[')]
   const values = findingValueIndex()
@@ -217,7 +218,7 @@ function encodeReports(reports: readonly TeamReport[], links: readonly string[][
     if (index) parts.push(Buffer.from(','))
     parts.push(bytes)
   }
-  const tail = JSON.stringify({ ...links.length > 0 ? { links } : {}, ...folded ? { folded } : {}, ...values.values.length > 0 ? { values: values.values } : {} })
+  const tail = JSON.stringify({ ...links.length > 0 ? { links } : {}, ...folded ? { folded, lens } : {}, ...values.values.length > 0 ? { values: values.values } : {} })
   const suffix = Buffer.from(tail === '{}' ? ']}' : `],${tail.slice(1)}`)
   if (outputBytes + suffix.length > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
   parts.push(suffix)

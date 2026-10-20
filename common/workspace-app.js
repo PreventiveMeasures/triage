@@ -1,5 +1,5 @@
 import { revalidateKindOf } from '@preventive/report'
-import { canLockConfirmed } from './finding-filters.js'
+import { activeRevalidateKinds, canLockConfirmed } from './finding-filters.js'
 import { mergeReportGroups } from './workspace-groups.js'
 import { mergeLinkedWorkspaceGroups } from './linked-workspace-groups.js'
 
@@ -27,13 +27,33 @@ function onlyUnjudgedImports(groups) {
 // `countFindings` has a workspace that is not App count its rows too, after
 // the same merging, for a caller that shows it collapsed (managed teams).
 export function workspaceAppMetadata(reports, duplicatesOf = () => [], { countFindings = false } = {}) {
-  const { groups, conflicts } = mergeReportGroups(reports, { hideRuledOut: true })
-  const linked = mergeLinkedWorkspaceGroups(groups, duplicatesOf, appTabs)
-  const notApp = countFindings ? { appMode: false, findings: linked.length } : { appMode: false }
-  if (conflicts.size > 0) return notApp
-  if (!onlyUnjudgedImports(linked) && !canLockConfirmed(linked, { tabs: appTabs, kindOf: revalidateKindOf, severityMode: 'corrected' })) return notApp
+  const { linked, app } = appView(reports, duplicatesOf)
+  if (!app) return countFindings ? { appMode: false, findings: linked.length } : { appMode: false }
   return {
     appMode: true,
     appFindings: linked.filter((group) => appTabs(group).some((f) => f.isApp)).length,
   }
+}
+
+// The IDs of the findings a workspace's basic App view can show: of each row
+// its locked Confirmed shows (ui/view/filters.js filterRevalidateKind), the
+// App tabs, the rest folded under them; none the pass ruled out. Null where it
+// has no such view, or one with no outcome to lock, which shows every row.
+export function workspaceAppRows(reports, duplicatesOf = () => []) {
+  const { linked, app } = appView(reports, duplicatesOf)
+  if (!app || onlyUnjudgedImports(linked)) return null
+  const kinds = activeRevalidateKinds('confirmed', '')
+  const confirmed = (f) => kinds.includes(revalidateKindOf(f) || (f._source && !f._sourcePass ? 'revalidation' : ''))
+  const ids = new Set()
+  for (const group of linked) if (group.some(confirmed)) for (const f of appTabs(group)) ids.add(f.id)
+  return ids
+}
+
+// A workspace's rows as its basic App view merges them, and whether it has one.
+function appView(reports, duplicatesOf) {
+  const { groups, conflicts } = mergeReportGroups(reports, { hideRuledOut: true })
+  const linked = mergeLinkedWorkspaceGroups(groups, duplicatesOf, appTabs)
+  const app = conflicts.size === 0
+    && (onlyUnjudgedImports(linked) || canLockConfirmed(linked, { tabs: appTabs, kindOf: revalidateKindOf, severityMode: 'corrected' }))
+  return { linked, app }
 }

@@ -1,7 +1,8 @@
-import { inheritReportMeta, isAppFinding, reportEntries } from '@preventive/report'
+import { inheritReportMeta, isAppFinding, reportEntries, revalidateKindOf } from '@preventive/report'
 import { collectDuplicates } from '../../client/linked-findings.js'
+import { dependencyDirectory, isDependencyFile } from '../../client/dependency-paths.js'
 import { hasRevalidateStamp } from '../finding-filters.js'
-import { workspaceAppMetadata } from '../workspace-app.js'
+import { workspaceAppMetadata, workspaceAppRows } from '../workspace-app.js'
 import { mergeReportGroups } from '../workspace-groups.js'
 
 // The same classification as local workspaces, using only the complete,
@@ -20,6 +21,34 @@ export function managedTeamAppMetadata(workspace, options = {}) {
 // that a view of any of its reports holds none either.
 export function managedTeamRevalidationConflicted(workspace) {
   return mergeReportGroups(viewReports(workspace).reports).conflicts.size > 0
+}
+
+// The IDs of the findings the workspace's basic App view can show
+// (common/workspace-app.js workspaceAppRows), or null.
+export function managedTeamAppRows(workspace) {
+  const { reports, duplicates } = viewReports(workspace)
+  return workspaceAppRows(reports, id => [...duplicates.get(id) ?? []])
+}
+
+const RULED_OUT = new Set(['refuted', 'unreachable'])
+
+// What a view of the whole workspace offers beside the App view
+// (ui/view/render.js), told by all its rows: whether the revalidation layer
+// can come off (`drop`), whether its detail stop has rows to unfold
+// (`detail`), and whether an upstream lens has ground (`upstream`).
+export function managedTeamLens(workspace) {
+  const { reports } = viewReports(workspace)
+  const rows = reports.flatMap(report => report.groups.flat())
+  const directory = dependencyDirectory(reports)
+  const detail = mergeReportGroups(reports).groups.some(group => {
+    const kinds = group.map(revalidateKindOf)
+    return kinds.includes('partial') || kinds.includes('revalidation') && kinds.some(kind => kind !== 'revalidation' && !RULED_OUT.has(kind))
+  })
+  return {
+    drop: rows.some(hasRevalidateStamp),
+    detail,
+    upstream: rows.some(f => f.isUpstream === true || f.isApp === false && !('isUpstream' in f) && isDependencyFile(f.file, directory)),
+  }
 }
 
 // The workspace's reports as a view holds them (ui/view/ingest.js), with the
@@ -41,7 +70,7 @@ function viewReports(workspace) {
       finding._sourcePass = judged.has(finding._source)
       return finding
     }))
-    reports.push({ fileName: filename, groups })
+    reports.push({ fileName: filename, groups, treeDependencies: data.treeDependencies ?? null })
   }
   return { reports, duplicates }
 }

@@ -41,13 +41,28 @@ test('an App board\'s copy of an entry holding the revalidation pass\'s row is t
 test('a team\'s board copy folds only where nothing contradicts the pass, telling so where that left rows out', () => {
   const revalidated = { id: 'r', filename: 'app.json', data: { findings: [[pass('p', { revalidateInputs: ['u'] }), under('u')]] } }
   const folded = liteWorkspace([revalidated, { id: 'a', filename: 'analysis.json', data: { findings: [under('o', { revalidate: undefined })] } }], [])
-  assert.equal(folded.folded, true)
+  assert.equal(folded.folded, 'rows', 'an App view showing a row not answering Confirmed folds its entries alone')
   assert.deepEqual(folded.reports.map(report => report.data.findings.flat().map(f => f.id)), [['p'], ['o']])
+  assert.deepEqual(folded.lens, { drop: true, detail: true, upstream: false }, 'what the rows left out tell the toolbar')
   assert.equal(folded.reports[0].id, 'r', 'each report as it was, but for its findings')
-  // Another report's copy of the pass's row, telling otherwise of what it judged.
-  const contradicted = liteWorkspace([revalidated, { id: 'b', filename: 'other.json', data: { findings: [[pass('p'), under('u', { revalidate: 'refuted' })]] } }], [])
+  // Another report's copy of the pass's row, telling otherwise of what it
+  // judged; one ruling it out is dropped before rows merge, contradicting none.
+  const contradicted = liteWorkspace([revalidated, { id: 'b', filename: 'other.json', data: { findings: [[pass('p'), under('u', { revalidate: 'confirmed' })]] } }], [])
   assert.equal(contradicted.folded, false)
   assert.deepEqual(contradicted.reports[0].data.findings.flat().map(f => f.id), ['p', 'u'])
   const plain = liteWorkspace([{ id: 'c', filename: 'c.json', data: { findings: [[under('w'), under('x')]] } }], [])
-  assert.deepEqual([plain.folded, plain.reports[0].data.findings[0].length], [false, 2], 'nothing to leave out, nothing told')
+  assert.deepEqual([plain.folded, plain.lens, plain.reports[0].data.findings[0].length], [false, null, 2], 'nothing to leave out, nothing told')
+})
+
+test('a team whose App view locks Confirmed sends its board only the rows that view shows: no row under an App row, ruled out, or not answering Confirmed', () => {
+  const original = (id, file) => ({ id, file, severity: 'high', confidence: 8, title: `Original ${id}` })
+  const deepview = { id: 'r', filename: 'deepview.json', data: { source: 'deepview', findings: [
+    [pass('p', { severity: 'high', confidence: 9, revalidateInputs: ['u', 'o', 'q'] }), under('u', { severity: 'high', confidence: 8 })],
+    { id: 'gone', file: 'node_modules/x/a.js', severity: 'high', confidence: 8, revalidate: 'refuted' },
+    original('o', 'node_modules/x/b.js'), original('q', 'src/q.js'),
+  ] } }
+  const lite = liteWorkspace([deepview], [])
+  assert.deepEqual([lite.folded, lite.reports[0].data.findings], ['app', [[liteReportData({ findings: [deepview.data.findings[0][0]] }).findings[0]]]])
+  assert.deepEqual(lite.lens, { drop: true, detail: true, upstream: true }, 'the App switch, its detail stop and the upstream lens, offered as the whole reports would')
+  assert.deepEqual(liteReportData(deepview.data, { shown: new Set(['o']) }).findings, [[original('o', 'node_modules/x/b.js')]], 'an entry kept as the rows it holds that are shown')
 })
