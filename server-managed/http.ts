@@ -138,6 +138,7 @@ import { mergeLinkGroups } from './link-reports.ts'
 import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
+import { setTimeout as delay } from 'node:timers/promises'
 import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTipStore, codeHeadStore, codeTreeStore, commitPullStore, githubTagStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
   issueListStore, lockfileReadStore,
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
@@ -2905,13 +2906,52 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
   const weeks = Number(query.get('weeks') ?? '4')
   if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
-    const [period, year] = await Promise.all([
+    const year = pulseYearRead(deps, repoId, fullName, token, weeks)
+    const [period, counted] = await Promise.all([
       keptAnswer(deps, `${repoId}\0pulse\0${weeks}`, () => pulseActivity(deps, repoId, fullName, token, weeks), undefined, false, stampOf(deps, repoId, fullName, token, today())),
-      pulseCommits(deps, repoId, fullName, token, weeks),
+      Promise.race([year.reading, delay(PULSE_YEAR_WAIT_MS, null, { ref: false })]),
     ])
-    return { value: { weeks, ...period.value, stats: year.stats && periodStats(year.stats, weeks), reading: year.reading, pulls: year.pulls,
-      pending: year.pending }, kept: period.kept && year.kept }
+    const told = counted ?? { stats: await lastPulseYear(deps, repoId, pulseSince(52, Date.now())), reading: year.progress.commits, pulls: null, pending: false,
+      kept: false }
+    return { value: { weeks, ...period.value, stats: told.stats && periodStats(told.stats, weeks), reading: told.reading, pulls: told.pulls,
+      pending: told.pending }, kept: period.kept && told.kept }
   })
+}
+
+// How long a Pulse answer waits on its year (pulseCommits) before it is
+// sent without it: the period's pull requests and issues told, and how many
+// of the year's commits are read so far (`reading`, beside the year last
+// counted), the year read on behind it for the client asking again; those
+// asking meanwhile, by the database, the repository and the period, waiting
+// on that read, not one of their own, unless it began PULSE_YEAR_HELD_MS ago
+// or longer.
+const PULSE_YEAR_WAIT_MS = 1500
+const PULSE_YEAR_HELD_MS = 60_000
+type PulseYear = Awaited<ReturnType<typeof pulseCommits>>
+type PulseYearRead = { reading: Promise<PulseYear>; progress: { commits: number }; began: number }
+const pulseYearReads = new WeakMap<ManagedDb, Map<string, PulseYearRead>>()
+function pulseYearRead(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, weeks: number) {
+  let reads = pulseYearReads.get(deps.db)
+  if (!reads) pulseYearReads.set(deps.db, reads = new Map())
+  const key = `${repoId}\0${weeks}`
+  const held = reads.get(key)
+  if (held && Date.now() - held.began < PULSE_YEAR_HELD_MS) return held
+  const progress = { commits: 0 }
+  const year = { reading: pulseCommits(deps, repoId, fullName, token, weeks, progress), progress, began: Date.now() }
+  reads.set(key, year)
+  const settled = year.reading.catch((err: unknown) => { console.warn('managed: pulse year read failed:', err) })
+    .finally(() => { if (reads.get(key) === year) reads.delete(key) })
+  deps.track(settled)
+  deps.waitUntil?.(settled)
+  return year
+}
+
+// The year last counted of repository `repoId` (pulseCommits), where it is
+// no more than PULSE_LAST_MS behind the year from `first`; else none.
+const pulseLastKey = (repoId: number) => `${repoId}\0pulse-year-last`
+async function lastPulseYear(deps: ManagedHttpDeps, repoId: number, first: number) {
+  const kept = (await repositoryReadStore(deps.db, deps.config.debug).read(pulseLastKey(repoId)))?.value as { first: number; stats: PulseStats } | undefined
+  return kept && first - kept.first <= PULSE_LAST_MS ? kept.stats : null
 }
 
 // The default branch's year (repository-pulse.ts commitStats), counted from
@@ -2988,7 +3028,7 @@ async function handleRepositoryPulseItems(res: ServerResponse, deps: ManagedHttp
   })
 }
 
-async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, weeks = 52) {
+async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, weeks = 52, progress: { commits: number } | null = null) {
   const now = Date.now()
   const first = pulseSince(52, now)
   // As far back as a period of `weeks` weeks needs the year read whole: its
@@ -2999,22 +3039,21 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   if (!head.sha) return { stats: commitStats([], first), reading: null, pulls: null, pending: false, kept: head.kept }
   const store = repositoryReadStore(deps.db, deps.config.debug)
   const key = `${repoId}\0pulse-year\0${PULSE_YEAR_VERSION}\0${head.sha}\0${first}`
-  const lastKey = `${repoId}\0pulse-year-last`
+  const lastKey = pulseLastKey(repoId)
   const mergesKey = pulseMergesKey(repoId)
-  const last = async () => {
-    const kept = (await store.read(lastKey))?.value as { first: number; stats: PulseStats } | undefined
-    return kept && first - kept.first <= PULSE_LAST_MS ? kept.stats : null
-  }
+  const last = () => lastPulseYear(deps, repoId, first)
   const sha = head.sha
   // What tells whose the year's commits are, kept as read: the agents' pull
   // requests merged (agentMerges), as the pull requests kept tell, read as
   // far back as `whole` (keptPulls), and the commits that release the
-  // repository (`releases`, release-commits.ts releaseCommits).
+  // repository since then (`releases`, release-commits.ts releaseCommits),
+  // as far back as what is counted whole, not the year, a week's reading a
+  // week's releases' commits.
   type Attribution = AgentMerges & { releases?: string[] }
   const keptAttribution = async () => ((await store.read(mergesKey))?.value as Attribution | undefined) ?? null
   const attribution = async (whole: number): Promise<Attribution> => {
     const [pulls, releases] = await Promise.all([keptPulls(deps, repoId, fullName, token, whole),
-      releaseCommits(fullName, token, first, historyChanges(deps, repoId))])
+      releaseCommits(fullName, token, whole, historyChanges(deps, repoId))])
     return { ...agentMerges(pulls, first), releases }
   }
   // Since when every pull request merged is read (repository-pulls.ts
@@ -3055,21 +3094,28 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   }
   // A year kept, read whole as far back as the period needs, as it was;
   // else its commits and the pull requests merged read on together as far
-  // as it needs, and counted once both are.
-  const held = (await store.read(key))?.value as PulseStats | { tooMany: true } | undefined
+  // as it needs, and counted once both are, how many of its commits are read
+  // told as they are (`progress`); but where they are too many to read
+  // since no later than it needs (kept apart, `within`, one kept before
+  // with the year's own the year's), GitHub's statistics, a week's commits
+  // read where the year's are too many.
+  const tooManyKey = `${key}\0too-many`
+  const [held, tooMany] = await Promise.all([store.read(key), store.read(tooManyKey)]).then(([year, marked]) => [
+    year?.value as PulseStats | { tooMany: true } | undefined, marked?.value as { within?: unknown } | undefined] as const)
   if (held && !('tooMany' in held) && (held.from === undefined || held.from < need)) {
     return { stats: await relabelled(held), reading: null, pulls: null, pending: false, kept: head.kept }
   }
-  if (!held || !('tooMany' in held)) {
-    const [year, read] = await Promise.all([yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true), globalThis.fetch, need),
-      attribution(need)])
+  const tooManyWithin = typeof tooMany?.within === 'number' ? tooMany.within : held && 'tooMany' in held ? first : Number.NEGATIVE_INFINITY
+  if (need > tooManyWithin) {
+    const [year, read] = await Promise.all([yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true), globalThis.fetch, need,
+      commits => { if (progress) progress.commits = commits }), attribution(need)])
     await store.write(mergesKey, read, Date.now())
     if (year.complete) {
       if (readTo(read) >= need) return { stats: await last(), reading: null, pulls: read.next?.read ?? 0, pending: false, kept: false }
       return { stats: await count(year, read), reading: null, pulls: null, pending: false, kept: false }
     }
     if (!year.tooMany) return { stats: await last(), reading: year.read, pulls: null, pending: false, kept: false }
-    await store.write(key, { tooMany: true }, Date.now())
+    await store.write(tooManyKey, { within: need }, Date.now())
   }
   // Its commits and lines read together, kept as one: never the one GitHub
   // has counted since a push beside the other kept from before it.

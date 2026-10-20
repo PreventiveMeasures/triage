@@ -86,6 +86,19 @@ test('a GET GitHub refuses after answering it with an ETag is refused, its body 
   assert.deepEqual(await githubJson(`${url}/untagged`, 'alice', untagged), { name: 'two' })
 })
 
+test('a 202, GitHub still working out its answer, is never kept, though it comes with an ETag', async () => {
+  const asked = []
+  let computed = false
+  const fetch = (input, options) => {
+    asked.push(options.headers['if-none-match'] ?? null)
+    return Promise.resolve(computed ? Response.json([1, 2], { headers: { etag: '"rows"' } }) : Response.json({}, { status: 202, headers: { etag: '"empty"' } }))
+  }
+  assert.deepEqual(await githubJson(`${url}/stats/commit_activity`, 'alice', fetch), {})
+  computed = true
+  assert.deepEqual(await githubJson(`${url}/stats/commit_activity`, 'alice', fetch), [1, 2])
+  assert.deepEqual(asked, [null, null], 'asked whole again, none If-None-Match')
+})
+
 test('an installation\'s tokens, minted anew every few minutes, share the answers kept; a user\'s token its own', async () => {
   const asked = []
   const fetch = (input, options) => {

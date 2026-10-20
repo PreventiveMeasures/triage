@@ -150,7 +150,8 @@ export function githubJson(url: string, token: string | null, fetchImpl: typeof 
     // The answer's body is read within the same timeout: one not read whole is
     // GitHub not reached, as one not answered is; only one that isn't JSON is
     // malformed.
-    const etag = request === null ? null : res.headers?.get('etag') ?? null
+    // Kept only whole: never a 202's, GitHub still working out its answer.
+    const etag = request === null || res.status !== 200 ? null : res.headers?.get('etag') ?? null
     let text: string | null = null, value: unknown
     try {
       if (etag === null) return await res.json()
