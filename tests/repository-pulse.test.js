@@ -689,6 +689,41 @@ test('a year not read whole yet: the rest shown, how many commits are read, aske
   assert.match(templateText(view.render()), /class=pulse-column/u)
 })
 
+test('a year the server reads on behind its answers, however long a page of it takes: asked again a second apart, as many as sixty times in a row', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
+  answer = () => Promise.resolve(pulse({ stats: null, reading: 500, behind: true }))
+  const view = shown()
+  view.render()
+  await setImmediate()
+  // No more read, ten answers on: still asked again, the server reading on.
+  for (let at = 0; at < 10; at++) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  assert.equal(requests.length, 11)
+  answer = () => Promise.resolve(pulse())
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  assert.equal(requests.length, 12)
+  assert.match(templateText(view.render()), /class=pulse-column/u, 'read whole')
+  t.mock.timers.tick(5000)
+  await setImmediate()
+  assert.equal(requests.length, 12, 'not asked again')
+})
+
+test('a year the server reads on behind its answers no further, sixty times in a row, is left to the reader', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
+  answer = () => Promise.resolve(pulse({ stats: null, reading: 500, behind: true }))
+  const view = shown()
+  view.render()
+  await setImmediate()
+  for (let at = 0; at < 70; at++) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  assert.equal(requests.length, 1 + 60 + 5, 'sixty in a row, then five more reading no more')
+})
+
 test('a year read again for a head moved on: the year as it was shown meanwhile, the server\'s or the last read, asked again a second apart while each answer reads more', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
   let read = 500

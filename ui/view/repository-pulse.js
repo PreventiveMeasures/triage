@@ -43,6 +43,7 @@ const RETRY_MS = 30_000
 // long apart, this many times. Then left to the reader to ask again.
 const READING_MS = 1_000
 const READING_STALLS = 5
+const BEHIND_TRIES = 60
 const PENDING_MS = 5_000
 const PENDING_TRIES = 12
 const DAY_MS = 86_400_000
@@ -144,7 +145,7 @@ function checked(answer) {
   } : null
   return { weeks: answer.weeks, since: answer.since, merged: told('merged'), opened: told('opened'), closed: told('closed'), created: told('created'),
     stats, reading: Number.isSafeInteger(answer.reading) ? answer.reading : null, pulls: Number.isSafeInteger(answer.pulls) ? answer.pulls : null,
-    pending: answer.pending === true }
+    pending: answer.pending === true, behind: answer.behind === true }
 }
 
 // A period read, the last shown of its repository, and its year the last
@@ -180,15 +181,19 @@ function pulseRead(repoId, weeks) {
 }
 
 // The year, or GitHub's statistics, asked for again `wait` later, again and
-// again as waitFor says: each time more of the year is read, as many times
-// again; what else the pulse told shown meanwhile.
+// again as waitFor says: each time more of the year is read, or the server
+// is still reading it behind its answer (`behind`, as many as BEHIND_TRIES
+// times in a row, however long a page of it takes), as many times again;
+// what else the pulse told shown meanwhile.
 function askAgain(key, entry, repoId, weeks, wait) {
   entry.asking = true
   setTimeout(() => {
     if (sessionReads().get(key) !== entry) return
     fetchRepositoryPulse(repoId, weeks).then(checked).then(answer => {
       if (sessionReads().get(key) !== entry) return null
-      const further = progress(answer) !== null && progress(entry.answer) !== null && progress(answer) > progress(entry.answer)
+      entry.behind = answer.behind ? (entry.behind ?? 0) + 1 : 0
+      const further = (progress(answer) !== null && progress(entry.answer) !== null && progress(answer) > progress(entry.answer))
+        || (entry.behind > 0 && entry.behind <= BEHIND_TRIES)
       entry.answer = answer
       entry.until = Date.now() + KEEP_MS
       entry.tries = further ? 0 : entry.tries + 1

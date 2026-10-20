@@ -211,9 +211,10 @@ export async function defaultHead(fullName: string, token: string, fetchImpl: ty
 // before it, a clock behind, the branch's commits since beneath them. Read
 // no further than `need` asks, those since it read whole (`complete`, `from`
 // the newest of those read whose parents are not, every commit after it
-// read; null, the year read whole).
+// read; null, the year read whole). How many are read so far `told` as they
+// are.
 export async function yearCommits(fullName: string, token: string, head: string, since: number, pages: HistoryPages,
-  fetchImpl: typeof fetch = globalThis.fetch, need = since): Promise<YearCommits> {
+  fetchImpl: typeof fetch = globalThis.fetch, need = since, told: (read: number) => void = () => {}): Promise<YearCommits> {
   const found = new Map<string, HistoryCommit>()
   const tried = new Set<string>()
   const within = (commit: HistoryCommit) => commit.committedAt === null || commit.committedAt >= since - YEAR_SKEW_MS
@@ -236,6 +237,7 @@ export async function yearCommits(fullName: string, token: string, head: string,
     const got = await historyFrom(fullName, token, batch, pages, fetchImpl)
     if (got.read > 0) queries++
     for (const commit of got.commits) if (!found.has(commit.sha)) found.set(commit.sha, commit)
+    told(read())
     if (read() > YEAR_COMMITS) return { complete: false, read: read(), tooMany: true }
     starts = [...new Set([...found.values()].filter(within).flatMap(commit => commit.parents))].filter(sha => !found.has(sha) && !tried.has(sha))
   }
