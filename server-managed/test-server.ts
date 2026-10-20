@@ -16,6 +16,7 @@ import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/manag
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { acceptsReportMetadata } from './report-response.ts'
 import { liteWorkspace } from '../common/managed/finding-detail.js'
+import { findingValueIndex } from '../common/managed/finding-values.js'
 import { findingsRepository, readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { createHash, randomUUID } from 'node:crypto'
@@ -1474,9 +1475,10 @@ async function sendTeamReports(url: URL, res: ServerResponse, route: string, rep
   // The board's, without the findings' detail, as the managed server sends it.
   const whole = read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data,
     repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } }))
-  if (url.searchParams.get('lite') !== '1') { sendJson(res, 200, { reports: whole }); return }
-  const lite = liteWorkspace(whole, [])
-  sendJson(res, 200, { reports: lite.reports, ...lite.folded ? { folded: true } : {} })
+  const lite = url.searchParams.get('lite') === '1' ? liteWorkspace(whole, []) : { reports: whole, folded: false }
+  // Its findings' packages and repositories sent once each, as the managed server sends them.
+  const values = findingValueIndex()
+  sendJson(res, 200, { reports: lite.reports.map(report => ({ ...report, data: values.index(report.data) })), ...lite.folded ? { folded: true } : {}, ...values.values.length > 0 ? { values: values.values } : {} })
 }
 
 const fixtureFeeds = new Set<ServerResponse>()

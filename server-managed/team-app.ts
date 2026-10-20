@@ -17,6 +17,7 @@
 // findings, and only expanded does it show that they fail to combine.
 import { reportEntries } from '@preventive/report'
 import { type TeamAppMetadata, managedTeamAppMetadata } from '../common/managed/team-app.js'
+import { expandFindingValues } from '../common/managed/finding-values.js'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot, UserTeam } from './db.ts'
 import type { WorkspaceShareSnapshot } from './workspace-shares.ts'
@@ -86,8 +87,9 @@ async function classify(db: ManagedDb, store: BlobStore, key: string, team: User
     // A catalog read before a concurrent publication names another report set.
     if (!access?.teamId || access.reports.length !== ids.size || access.reports.some(report => !ids.has(report.id))) return null
     const body = JSON.parse((await loadTeamReportsResponse(db, store, access)).toString('utf8')) as {
-      reports: { id: string; filename: string; data: unknown }[]; links?: string[][]
+      reports: { id: string; filename: string; data: unknown }[]; links?: string[][]; values?: unknown[]
     }
+    for (const report of body.reports) expandFindingValues(report.data, body.values)
     const restricted = access.reports.some(report => !report.permissions.dependencies || !report.permissions.security)
     const empty = restricted ? body.reports.filter(report => !hasContent(report.data)).map(report => report.id) : []
     const links = body.links ?? []

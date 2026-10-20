@@ -1,5 +1,6 @@
 import { findingTitle, reportEntries, revalidateKindOf } from '@preventive/report'
 import { managedTeamRevalidationConflicted } from './team-app.js'
+import { liteName } from './lite-name.js'
 
 // A finding's detail: what its popup, the views besides the board and an
 // export read, and the board does not. Its narrative and evidence, the hash
@@ -14,14 +15,10 @@ import { managedTeamRevalidationConflicted } from './team-app.js'
 export const FINDING_DETAIL_FIELDS = Object.freeze([
   'description', 'evidence', 'impact', 'reproduction', 'recommendation', 'confidenceReason', 'revalidateVerdict', 'revalidateRecommendation',
   'fileHash', 'exportName', 'methodName',
-  'commitHash', 'auditedCommit', 'detectedAt', 'committedAt', 'dateCreated', 'status', 'branch', 'pocStatus', 'parent', 'slug', 'reportPath',
+  'severityReason', 'commitHash', 'auditedCommit', 'detectedAt', 'committedAt', 'dateCreated', 'status', 'branch', 'pocStatus', 'parent', 'slug', 'reportPath',
   'category', 'discoveredIn', 'effort', 'exportsMode',
 ])
 const DETAIL = new Set(FINDING_DETAIL_FIELDS)
-// As much of a name as a heading takes (@preventive/report write-md-finding.js
-// HEADING_MAX), about a board card's three lines.
-const NAME_CHARS = 120
-
 // A finding without its detail. One without a title of its own is named by its
 // description's first line (findingTitle), which it keeps as its description,
 // as much of it as a card shows.
@@ -30,7 +27,7 @@ function liteFinding(finding) {
   const lite = Object.fromEntries(Object.entries(finding).filter(([key]) => !DETAIL.has(key)))
   const titled = typeof finding.title === 'string' && finding.title.trim() !== ''
   const title = titled ? '' : findingTitle(finding)
-  if (title) lite.description = title.length > NAME_CHARS ? `${title.slice(0, NAME_CHARS - 1)}…` : title
+  if (title) lite.description = liteName(title)
   return lite
 }
 
