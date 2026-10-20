@@ -141,6 +141,7 @@
     "server-managed/github-oauth.ts",
     "server-managed/github-pulls.ts",
     "server-managed/github-requests.ts",
+    "server-managed/history-windows.ts",
     "server-managed/http-response.ts",
     "server-managed/http.ts",
     "server-managed/link-reports.ts",

@@ -662,7 +662,7 @@ test('a year not read whole yet: the rest shown, how many commits are read, aske
   view.render()
   await setImmediate()
   let text = templateText(view.render())
-  assert.match(text, /role="status">Reading this repository’s commits… 500 of the last year so far/u)
+  assert.match(text, /role="status">Reading this repository’s commits… 500 so far/u, 'a month, read only as far back as it needs')
   assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">–<\/span>\s*<span class="pulse-tile-note">Reading commits…/u)
   assert.match(text, /Pull requests merged<\/span>\s*<span class="pulse-tile-value">12</u, 'the period\'s pull requests and issues shown')
   // Each answer reading more, as many times as it takes.
@@ -672,7 +672,7 @@ test('a year not read whole yet: the rest shown, how many commits are read, aske
     await setImmediate()
   }
   assert.equal(requests.length, 9)
-  assert.match(templateText(view.render()), /4,500 of the last year so far/u)
+  assert.match(templateText(view.render()), /4,500 so far/u)
   // Then none more, five times, and it is left to the reader.
   for (let stalled = 0; stalled < 6; stalled++) {
     t.mock.timers.tick(1000)
@@ -680,7 +680,7 @@ test('a year not read whole yet: the rest shown, how many commits are read, aske
   }
   assert.equal(requests.length, 14, 'five answers reading no more')
   text = templateText(view.render())
-  assert.match(text, /4,500 of this repository’s commits of the last year read so far\. <button type="button" class="history-link" @click=\(\) => this\.askAgain\(\)>Read on</u)
+  assert.match(text, /4,500 of this repository’s commits read so far\. <button type="button" class="history-link" @click=\(\) => this\.askAgain\(\)>Read on</u)
   answer = () => Promise.resolve(pulse())
   view.askAgain()
   t.mock.timers.tick(0)
@@ -724,6 +724,17 @@ test('a year the server reads on behind its answers no further, sixty times in a
   assert.equal(requests.length, 1 + 60 + 5, 'sixty in a row, then five more reading no more')
 })
 
+test('the year read so far, so said: of the last year; a shorter period\'s, read only as far back as it needs, not', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
+  answer = (repoId, weeks) => Promise.resolve(pulse({ weeks, since: weeks === 52 ? FIRST : SINCE, stats: null, reading: 500 }))
+  const view = shown()
+  view.pick(52)
+  view.render()
+  await setImmediate()
+  assert.match(templateText(view.render()), /role="status">Reading this repository’s commits… 500 of the last year so far/u)
+  view.pick(4)
+})
+
 test('a year read again for a head moved on: the year as it was shown meanwhile, the server\'s or the last read, asked again a second apart while each answer reads more', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW })
   let read = 500
@@ -734,7 +745,7 @@ test('a year read again for a head moved on: the year as it was shown meanwhile,
   let text = templateText(view.render())
   // Said in the bar, at its end, the year shown under it.
   const bar = text.slice(0, text.indexOf('class=pulse-scroll'))
-  assert.match(bar, /class="pulse-range">[^<]*<\/span>\s*<span class="pulse-updating" role="status">Reading this repository’s latest commits… 500 of the last year so far<\/span>\s*<\/div>/u)
+  assert.match(bar, /class="pulse-range">[^<]*<\/span>\s*<span class="pulse-updating" role="status">Reading this repository’s latest commits… 500 so far<\/span>\s*<\/div>/u)
   assert.match(text, /Commits<\/span>\s*<span class="pulse-tile-value">26<\/span>\s*<span class="pulse-tile-note">↓ 21% from 33/u, 'the year as it was')
   assert.equal(text.split('class=pulse-column').length - 1, 56)
   // An answer telling no year, the last read shown.
@@ -743,7 +754,7 @@ test('a year read again for a head moved on: the year as it was shown meanwhile,
   await setImmediate()
   text = templateText(view.render())
   assert.equal(requests.length, 2)
-  assert.match(text, /latest commits… 1,000 of the last year so far/u)
+  assert.match(text, /latest commits… 1,000 so far/u)
   assert.equal(text.split('class=pulse-column').length - 1, 56)
   assert.doesNotMatch(text, /pulse-pending/u)
   answer = () => Promise.resolve(pulse())

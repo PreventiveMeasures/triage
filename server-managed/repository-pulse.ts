@@ -16,6 +16,7 @@ import { agentOperated, githubAgent } from '../common/managed/github-agents.ts'
 import { GithubApiError, githubJson } from './github-app.ts'
 import { shareGithubRead } from './github-requests.ts'
 import { coauthorsOf } from './commit-coauthors.ts'
+import { windowsOn } from './history-windows.ts'
 import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accountOf, actorOf, githubGraphql, historyFrom } from './repository-history.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
@@ -222,6 +223,7 @@ export async function yearCommits(fullName: string, token: string, head: string,
   const read = () => [...found.values()].filter(dated).length
   const passed = () => [...found.values()].filter(commit => !dated(commit) && within(commit))
   let queries = 0
+  let windowed = false
   let starts = [head]
   while (starts.length > 0) {
     // Those not read yet, the head before any, else the parents of those
@@ -232,9 +234,16 @@ export async function yearCommits(fullName: string, token: string, head: string,
       .filter(commit => commit.parents.some(sha => unread.has(sha))).map(commit => commit.committedAt ?? Number.POSITIVE_INFINITY))
     if (need > since && from < need) return { complete: true, commits: [...found.values()].filter(dated), passed: passed(), from }
     if (queries >= YEAR_QUERIES) return { complete: false, read: read(), tooMany: false }
-    const batch = starts.slice(0, YEAR_STARTS)
+    // The pages kept read first; once past them, the rest read at once by
+    // when its commits were made (history-windows.ts windowsOn), as far back
+    // as it needs, the year's as far as its commits are followed.
+    const next: Awaited<ReturnType<typeof windowsOn>> | null = windowed || found.size === 0 ? null
+      : await windowsOn(fullName, token, head, starts, found, need > since ? need : since - YEAR_SKEW_MS, from, pages, fetchImpl, queries)
+    windowed ||= next?.windowed === true
+    queries += next?.queries ?? 0
+    const batch = (next?.batch ?? starts).slice(0, YEAR_STARTS)
     for (const sha of batch) tried.add(sha)
-    const got = await historyFrom(fullName, token, batch, pages, fetchImpl)
+    const got = batch.length > 0 ? await historyFrom(fullName, token, batch, pages, fetchImpl) : { commits: [], read: 0 }
     if (got.read > 0) queries++
     for (const commit of got.commits) if (!found.has(commit.sha)) found.set(commit.sha, commit)
     told(read())
