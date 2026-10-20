@@ -260,6 +260,46 @@ test('a page read is kept for every reader: answered as kept a while, then at on
   assert.equal((await first({ repoId: '1', kind: 'pulls' })).body.items[0].title, 'After', 'the next to ask has what was read behind it')
 })
 
+test('a page of issues kept is read again behind its readers only where its repository\'s stamp moved since it was read whole, or an hour on; one of pull requests, their checks with them, each time', async t => {
+  let issueAt = '2026-10-19T00:00:00Z'
+  const stamp = () => ({ data: { repository: { pushedAt: '2026-10-19T00:00:00Z', defaultBranchRef: { name: 'main' }, heads: { totalCount: 3 }, tags: { totalCount: 1 },
+    pullRequests: { totalCount: 5, nodes: [{ updatedAt: '2026-10-18T00:00:00Z' }] }, issues: { totalCount: 9, nodes: [{ updatedAt: issueAt }] } } } })
+  const asked = github(t, body => body.query.includes('pushedAt') ? stamp()
+    : page([{ number: 2, title: 'Kept', state: 'OPEN', stateReason: null, createdAt: null, updatedAt: null, closedAt: null, author: null, comments: { totalCount: 0 },
+      labels: labels() }]))
+  const tracked = []
+  const request = await fixture(t, { tracked })
+  const count = () => [asked.filter(({ query }) => query.includes('pushedAt')).length, asked.filter(({ query }) => !query.includes('pushedAt')).length]
+  let now = Date.now()
+  t.mock.timers.enable({ apis: ['Date'], now })
+  const later = async (minutes, kind = 'issues') => {
+    t.mock.timers.setTime(now += minutes * 60_000)
+    const answer = await request({ repoId: '1', kind })
+    await Promise.all(tracked)
+    return answer
+  }
+  await later(0)
+  assert.deepEqual(count(), [0, 1], 'read the first time, none\'s stamp asked')
+  await later(3)
+  assert.deepEqual(count(), [1, 2], 'no longer fresh: read whole once more, its stamp asked before it')
+  await later(3)
+  assert.deepEqual(count(), [2, 2], 'its stamp where it was: kept as read now')
+  const touched = now
+  assert.equal((await later(1)).body.readAt, touched, 'fresh again, as read when its stamp was asked')
+  assert.deepEqual(count(), [2, 2])
+  issueAt = '2026-10-19T01:00:00Z'
+  await later(2)
+  assert.deepEqual(count(), [3, 3], 'an issue updated since: read whole again')
+  await later(3)
+  assert.deepEqual(count(), [4, 3])
+  await later(58)
+  assert.deepEqual(count(), [5, 4], 'an hour on from when it was read whole, read whole again, its stamp where it was')
+  // A page of pull requests, their checks moving none of the stamp, read again each time, none asked.
+  await later(0, 'pulls')
+  await later(3, 'pulls')
+  assert.deepEqual(count(), [5, 6])
+})
+
 test('a page none kept asked for by several readers at once is read once, with the first one\'s token, each answered by that read; once it is, the next asks again', async t => {
   let held = Promise.withResolvers()
   const asked = github(t, () => held.promise.then(() => page([{ number: 2, title: 'Shared', state: 'OPEN', stateReason: null, createdAt: null, updatedAt: null, closedAt: null,
@@ -334,7 +374,7 @@ test('a kept page GitHub refuses to read again is no longer kept: the next to as
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 3 * 60_000 })
   assert.equal((await request({ repoId: '1', kind: 'issues' })).body.items[0].title, 'Kept')
   await Promise.allSettled(tracked)
-  assert.equal(asked.length, 2)
+  assert.equal(asked.filter(({ query }) => !query.includes('pushedAt')).length, 2, 'read again behind it, its repository\'s stamp asked first')
   assert.deepEqual(await request({ repoId: '1', kind: 'issues' }), { status: 502, body: { error: 'github-status-403' } })
   // Read again once GitHub allows it, it is kept again.
   refused = false

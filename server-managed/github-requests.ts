@@ -44,15 +44,21 @@ export async function shareGithubRead<T>(fetchImpl: typeof fetch, request: strin
 }
 
 // GitHub's answers to GETs that came with an ETag, by the request (its URL
-// and credential, hashed as outstanding reads are): the next asked again
-// If-None-Match, GitHub checking the credential as ever, and a 304, which
-// it doesn't count against the rate limit, answered by the body kept. Each
-// transport's own, as many as MAX_TAGGED_READS and MAX_TAGGED_BYTES hold,
-// the least recently used first to go; none larger than MAX_TAGGED_READ_BYTES.
+// and credential, hashed as outstanding reads are; an installation's token,
+// which the App mints anew every few minutes on every instance, as the
+// installations' one credential, GitHub telling apart which may read what):
+// the next asked again If-None-Match, GitHub checking the credential as
+// ever, and a 304, which it doesn't count against the rate limit, answered
+// by the body kept. Each transport's own, as many as MAX_TAGGED_READS and
+// MAX_TAGGED_BYTES hold, the least recently used first to go; none larger
+// than MAX_TAGGED_READ_BYTES. Those one this process doesn't hold, read of
+// the store kept beyond it (keepTaggedReadsIn), as a serverless instance
+// starting anew holds none, as many as fit it (MAX_STORED_READ_BYTES).
 const MAX_TAGGED_READS = 1000
 const MAX_TAGGED_BYTES = 32 * 1024 * 1024
 const MAX_TAGGED_READ_BYTES = 1024 * 1024
-type TaggedRead = { etag: string; text: string }
+const MAX_STORED_READ_BYTES = 256 * 1024
+export type TaggedRead = { etag: string; text: string }
 const taggedReads = new WeakMap<typeof fetch, { reads: Map<string, TaggedRead>; bytes: number }>()
 const taggedOf = (fetchImpl: typeof fetch) => {
   let tagged = taggedReads.get(fetchImpl)
@@ -60,29 +66,50 @@ const taggedOf = (fetchImpl: typeof fetch) => {
   return tagged
 }
 const requestKey = (request: string) => createHash('sha256').update(request).digest('hex')
+// A GET's request as its answer is kept by: its URL and credential.
+const taggedRequest = (url: string, token: string | null) => JSON.stringify([url, token?.startsWith('ghs_') ? { installation: true } : token])
 
-// The answer kept to `request`, its ETag and body as GitHub wrote it.
-export function taggedRead(fetchImpl: typeof fetch, request: string): TaggedRead | undefined {
+// Where GitHub's tagged answers are kept beyond this process (http.ts
+// registers the database's), by the request's key; its failures are none
+// kept, or none written.
+export interface TaggedStore { read(key: string): Promise<TaggedRead | null>; write(key: string, read: TaggedRead): Promise<void> }
+let taggedStore: TaggedStore | null = null
+export function keepTaggedReadsIn(store: TaggedStore | null): void { taggedStore = store }
+
+// The answer kept to `request`, its ETag and body as GitHub wrote it: as
+// this process holds it, else, where a store is kept beyond it, as that
+// keeps it.
+export function taggedRead(fetchImpl: typeof fetch, request: string): TaggedRead | undefined | Promise<TaggedRead | undefined> {
   const { reads } = taggedOf(fetchImpl)
   const key = requestKey(request)
   const read = reads.get(key)
-  if (read) { reads.delete(key); reads.set(key, read) }
-  return read
+  if (read) { reads.delete(key); reads.set(key, read); return read }
+  return taggedStore ? storedTaggedRead(fetchImpl, key, taggedStore) : undefined
+}
+async function storedTaggedRead(fetchImpl: typeof fetch, key: string, store: TaggedStore) {
+  const stored = await store.read(key).catch(() => null)
+  if (!stored || typeof stored.etag !== 'string' || typeof stored.text !== 'string') return undefined
+  holdTaggedRead(fetchImpl, key, stored)
+  return stored
 }
 
 // `text` kept as GitHub's answer to `request`, by its ETag.
-export function keepTaggedRead(fetchImpl: typeof fetch, request: string, etag: string, text: string): void {
-  const tagged = taggedOf(fetchImpl)
+export async function keepTaggedRead(fetchImpl: typeof fetch, request: string, etag: string, text: string): Promise<void> {
   const key = requestKey(request)
+  holdTaggedRead(fetchImpl, key, { etag, text })
+  if (text.length <= MAX_STORED_READ_BYTES) await taggedStore?.write(key, { etag, text }).catch(() => {})
+}
+function holdTaggedRead(fetchImpl: typeof fetch, key: string, read: TaggedRead) {
+  const tagged = taggedOf(fetchImpl)
   const before = tagged.reads.get(key)
   if (before) { tagged.reads.delete(key); tagged.bytes -= before.text.length }
-  if (text.length > MAX_TAGGED_READ_BYTES) return
-  tagged.reads.set(key, { etag, text })
-  tagged.bytes += text.length
-  for (const [oldest, read] of tagged.reads) {
+  if (read.text.length > MAX_TAGGED_READ_BYTES) return
+  tagged.reads.set(key, read)
+  tagged.bytes += read.text.length
+  for (const [oldest, held] of tagged.reads) {
     if (tagged.reads.size <= MAX_TAGGED_READS && tagged.bytes <= MAX_TAGGED_BYTES) break
     tagged.reads.delete(oldest)
-    tagged.bytes -= read.text.length
+    tagged.bytes -= held.text.length
   }
 }
 
@@ -97,10 +124,11 @@ export function keepTaggedRead(fetchImpl: typeof fetch, request: string, etag: s
 export function githubJson(url: string, token: string | null, fetchImpl: typeof fetch, method: 'GET' | 'POST' = 'GET', body?: unknown,
   readOnly = method === 'GET'): Promise<unknown> {
   if (readOnly) return shareGithubRead(fetchImpl, JSON.stringify([url, token, method, body]), () => githubJson(url, token, fetchImpl, method, body, false))
-  const request = method === 'GET' && body === undefined ? JSON.stringify([url, token]) : null
-  const tagged = request === null ? undefined : taggedRead(fetchImpl, request)
+  const request = method === 'GET' && body === undefined ? taggedRequest(url, token) : null
   // Each call told in its request's Server-Timing (request-timing.ts).
   return timed('gh', async () => {
+    const held = request === null ? undefined : taggedRead(fetchImpl, request)
+    const tagged = held instanceof Promise ? await held : held
     let res: Response
     const started = Date.now()
     try {
@@ -123,14 +151,15 @@ export function githubJson(url: string, token: string | null, fetchImpl: typeof 
     // GitHub not reached, as one not answered is; only one that isn't JSON is
     // malformed.
     const etag = request === null ? null : res.headers?.get('etag') ?? null
+    let text: string | null = null, value: unknown
     try {
       if (etag === null) return await res.json()
-      const text = await res.text()
-      const value = JSON.parse(text) as unknown
-      keepTaggedRead(fetchImpl, request!, etag, text)
-      return value
+      text = await res.text()
+      value = JSON.parse(text)
     } catch (error) {
       throw error instanceof SyntaxError ? new GithubApiError(502, 'github-malformed') : githubUnreachable(error, started)
     }
+    await keepTaggedRead(fetchImpl, request!, etag, text)
+    return value
   })
 }
