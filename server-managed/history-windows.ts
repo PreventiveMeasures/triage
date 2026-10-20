@@ -14,10 +14,12 @@ import { COMMIT_FRAGMENT, type GraphCommit, HISTORY_PAGE, type HistoryCommit, ty
 // as WINDOW_COMMITS, a page's worth with room to spare, as often as the
 // commits read before it were made, as far back as they reach, the rest left
 // to the next read; pages read of them at most a read, those over going on
-// where a window holds more; and pages kept of what was read at most.
+// where a window holds more, as many times as MAX_WAVES, each waiting on the
+// last; and pages kept of what was read at most.
 const MAX_WINDOWS = 40
 const WINDOW_COMMITS = 70
 const WINDOW_PAGES = 50
+const MAX_WAVES = 5
 const MAX_KEPT = 500
 const KEPT_AT_ONCE = 10
 const WINDOWS_AFTER = 2
@@ -36,7 +38,7 @@ const windowsQuery = (count: number) => `query($owner: String!, $name: String!, 
 }
 ${COMMIT_FRAGMENT}`
 
-type Window = { since: number | null; until: number; after: string | null }
+type Window = { since: number | null; until: number; after: string | null; oldest?: number }
 type WindowPage = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: GraphCommit[] } | null
 type Windows = { repository?: { object?: Record<string, WindowPage> | null } | null } | null
 // A time as GitHub takes it, to the second: a window's start rounded down,
@@ -49,8 +51,10 @@ const stamp = (at: number, up: boolean) => new Date((up ? Math.ceil : Math.floor
 // as far as it goes, as many pages as WINDOW_PAGES; and, those reaching
 // `low`, a page of those made before it besides, where a walk reading them
 // goes on from. Since when every one is read (`through`: where the windows
-// reach, each read whole, else the end of the latest not), and how many
-// pages were read (`read`).
+// reach, each read whole, else, of the latest not, just after the earliest
+// made of those it read, as GitHub lists them the latest made first, those
+// made together left out; or its end, none read), and how many pages were
+// read (`read`).
 export async function readWindows(fullName: string, token: string, head: string, low: number, high: number, perMs: number, fetchImpl: typeof fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
   const bottom = Math.max(low, high - MAX_WINDOWS * WINDOW_COMMITS / perMs)
@@ -59,8 +63,8 @@ export async function readWindows(fullName: string, token: string, head: string,
   let open: Window[] = [...Array.from({ length: count }, (_, at) => ({ since: high - (at + 1) * width, until: high - at * width, after: null })),
     ...bottom > low ? [] : [{ since: null, until: low - 1000, after: null }]]
   const commits = new Map<string, HistoryCommit>()
-  let read = 0
-  while (open.length > 0 && read < WINDOW_PAGES) {
+  let [read, waves] = [0, 0]
+  while (open.length > 0 && read < WINDOW_PAGES && waves++ < MAX_WAVES) {
     const wave = open.slice(0, WINDOW_PAGES - read)
     const next: Window[] = []
     read += wave.length
@@ -70,14 +74,18 @@ export async function readWindows(fullName: string, token: string, head: string,
       const pages = batch.map((_, at) => data?.repository?.object?.[`w${at}`] ?? null)
       await linkNoreplyUsers(pages.flatMap(page => page?.nodes ?? []).flatMap(commitActors), token, fetchImpl)
       for (const [at, window] of batch.entries()) {
-        for (const commit of (pages[at]?.nodes ?? []).flatMap(node => graphCommit(node) ?? [])) if (!commits.has(commit.sha)) commits.set(commit.sha, commit)
+        let oldest = window.oldest ?? Number.POSITIVE_INFINITY
+        for (const commit of (pages[at]?.nodes ?? []).flatMap(node => graphCommit(node) ?? [])) {
+          if (!commits.has(commit.sha)) commits.set(commit.sha, commit)
+          oldest = Math.min(oldest, commit.committedAt ?? Number.POSITIVE_INFINITY)
+        }
         const info = pages[at]?.pageInfo
-        if (window.since !== null && info?.hasNextPage === true && typeof info.endCursor === 'string') next.push({ ...window, after: info.endCursor })
+        if (window.since !== null && info?.hasNextPage === true && typeof info.endCursor === 'string') next.push({ ...window, after: info.endCursor, oldest })
       }
     })
     open = [...next, ...open.slice(wave.length)]
   }
-  const through = Math.max(bottom, ...open.flatMap(window => window.since === null ? [] : [window.until]))
+  const through = Math.max(bottom, ...open.flatMap(window => window.since === null ? [] : [Number.isFinite(window.oldest) ? window.oldest! + 1 : window.until]))
   return { commits: [...commits.values()], through, read }
 }
 
@@ -152,11 +160,13 @@ export async function windowsOn(fullName: string, token: string, head: string, s
     if (committedAt === null) continue
     [newest, oldest, dated] = [Math.max(newest, committedAt), Math.min(oldest, committedAt), dated + 1]
   }
-  const read = await readWindows(fullName, token, head, low, high, dated / Math.max(newest - oldest, HOUR_MS), fetchImpl)
+  // From the one commit the walk goes on from, where there is one, none of
+  // those read listed again; else from the head.
+  const read = await readWindows(fullName, token, starts.length === 1 ? starts[0]! : head, low, high, dated / Math.max(newest - oldest, HOUR_MS), fetchImpl)
     .catch((err: unknown) => { console.warn('managed: history windows read failed:', err); return null })
   if (!read) return { batch: starts, queries: 0, windowed: true }
   const listed = new Set(found.keys())
   for (const commit of read.commits) if (!found.has(commit.sha)) found.set(commit.sha, commit)
-  if (read.through < high) await keepPages(starts, found, listed, read.through, pages)
+  await keepPages(starts, found, listed, read.through, pages)
   return { batch: [], queries: Math.ceil(read.read / (PAGES_PER_QUERY * PAGES_PARALLEL)), windowed: true }
 }

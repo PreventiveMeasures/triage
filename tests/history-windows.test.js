@@ -136,3 +136,26 @@ test('a fortnight of a busy branch of merges read at once by when its commits we
   const counted0 = new Set(moved.commits.map(commit => commit.sha))
   assert.deepEqual(now0.filter(sha => !counted0.has(sha)), [])
 })
+
+test('a burst of commits made together, more than the windows read at once: what was read kept, each read going on from it', async t => {
+  const now = Date.UTC(2026, 9, 15, 12)
+  const nodes = new Map()
+  const node = (oid, at, parents) => nodes.set(oid, { oid, message: oid, committedDate: new Date(at).toISOString(), additions: 1, deletions: 1,
+    author: { name: 'Ada', email: 'ada@example.com', date: new Date(at).toISOString(), user: { login: 'ada', databaseId: 7 } }, authors: { nodes: [] },
+    parents: { nodes: parents.map(parent => ({ oid: parent })) } })
+  // Six thousand rebased together an hour ago, on five hundred made a day apart.
+  const line = Array.from({ length: 6500 }, (_, at) => shaOf('c', at))
+  for (const [at, sha] of line.entries()) node(sha, at < 6000 ? now - HOUR : now - (at - 5999) * DAY, at + 1 < line.length ? [line[at + 1]] : [])
+  github(t, { nodes })
+  const pages = memoryPages()
+  const [since, need] = [pulseSince(52, now), pulseSince(2, now)]
+  const reads = []
+  let year = null
+  while (!year?.complete && reads.length < 12) {
+    year = await yearCommits('org/repo', 'token', line[0], since, pages, globalThis.fetch, need)
+    reads.push(year.complete ? year.commits.length : year.read)
+  }
+  assert.equal(year.complete, true)
+  assert.ok(reads.length <= 9, `read in ${reads.length}`)
+  for (const [at, count] of reads.entries()) assert.ok(count - (reads[at - 1] ?? 0) >= 500, `each read going on by more than a few pages: ${reads}`)
+})
