@@ -2914,14 +2914,15 @@ async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps,
     const told = counted ?? { stats: await lastPulseYear(deps, repoId, pulseSince(52, Date.now())), reading: year.progress.commits, pulls: null, pending: false,
       kept: false }
     return { value: { weeks, ...period.value, stats: told.stats && periodStats(told.stats, weeks), reading: told.reading, pulls: told.pulls,
-      pending: told.pending }, kept: period.kept && told.kept }
+      pending: told.pending, ...counted ? {} : { behind: true } }, kept: period.kept && told.kept }
   })
 }
 
 // How long a Pulse answer waits on its year (pulseCommits) before it is
 // sent without it: the period's pull requests and issues told, and how many
 // of the year's commits are read so far (`reading`, beside the year last
-// counted), the year read on behind it for the client asking again; those
+// counted), the year read on behind it (`behind`, for the client to ask
+// again till it is, however long a page of it takes to read); those
 // asking meanwhile, by the database, the repository and the period, waiting
 // on that read, not one of their own, unless it began PULSE_YEAR_HELD_MS ago
 // or longer.
@@ -3106,6 +3107,9 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
     return { stats: await relabelled(held), reading: null, pulls: null, pending: false, kept: head.kept }
   }
   const tooManyWithin = typeof tooMany?.within === 'number' ? tooMany.within : held && 'tooMany' in held ? first : Number.NEGATIVE_INFINITY
+  // One kept with the year's own before, kept apart now, before a shorter
+  // period's count takes its place.
+  if (!tooMany && held && 'tooMany' in held) await store.write(tooManyKey, { within: first }, Date.now())
   if (need > tooManyWithin) {
     const [year, read] = await Promise.all([yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true), globalThis.fetch, need,
       commits => { if (progress) progress.commits = commits }), attribution(need)])

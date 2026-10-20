@@ -884,7 +884,8 @@ test('a pulse answers its period\'s pull requests and issues without waiting on 
     return held.promise.then(() => answer(input, options))
   })
   const early = await request({ repoId: '1', weeks: '1' })
-  assert.deepEqual([early.status, early.body.merged.count, early.body.stats, early.body.reading], [200, 3, null, 0], 'the period told, the year reading')
+  assert.deepEqual([early.status, early.body.merged.count, early.body.stats, early.body.reading, early.body.behind], [200, 3, null, 0, true],
+    'the period told, the year reading behind it')
   assert.equal(histories, 1)
   const again = await request({ repoId: '1', weeks: '1' })
   assert.deepEqual([again.body.stats, again.body.reading], [null, 0])
@@ -892,7 +893,7 @@ test('a pulse answers its period\'s pull requests and issues without waiting on 
   held.resolve()
   await request.settled()
   const counted = await request({ repoId: '1', weeks: '1' })
-  assert.equal(counted.body.reading, null)
+  assert.deepEqual([counted.body.reading, counted.body.behind], [null, undefined])
   assert.ok(counted.body.stats.weeks.reduce((sum, week) => sum + week.commits, 0) > 0, 'the year read behind it, counted')
   assert.equal(histories, 1)
   assert.equal(graphQueries(asked), 1)
@@ -927,6 +928,8 @@ test('a head moved on past YEAR_COMMITS, GitHub still computing its statistics, 
   const statistics = asked.filter(item => typeof item === 'string' && !item.startsWith('files ')).length
   const week = await request({ repoId: '1', weeks: '1' })
   assert.deepEqual([week.body.pending, week.body.reading], [false, null])
+  assert.deepEqual((await store.read(`1\0pulse-year\0${PULSE_YEAR_VERSION}\0${head}\0${pulseSince(52, Date.now())}\0too-many`)).value,
+    { within: pulseSince(52, Date.now()) }, 'the year\'s too many, kept with it before, kept apart before the week took its place')
   assert.equal(asked.filter(item => typeof item === 'string' && !item.startsWith('files ')).length, statistics, 'none of GitHub\'s statistics asked')
   // Its year too many kept apart, a week counted beside it leaves it so.
   const next = 'e'.repeat(40)
