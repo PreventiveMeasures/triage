@@ -864,8 +864,8 @@ test('a month counted once its weeks and as many before are read, the rest of th
   const asked = github(t, { commits })
   const total = body => body.stats.weeks.reduce((sum, week) => sum + week.commits, 0)
   const month = await request({ repoId: '1' })
-  assert.deepEqual([month.body.reading, total(month.body), month.body.stats.from, graphQueries(asked)], [null, 100, Date.parse(commits[99].committedDate), 1],
-    'a page read, its last commit\'s parent the only one not, eight weeks before')
+  assert.deepEqual([month.body.reading, total(month.body), month.body.stats.from, graphQueries(asked)], [null, 100, pulseSince(8, Date.now()), 1],
+    'a page read, its last commit\'s parent the only one not, whole as far back as its releases are read, eight weeks')
   const year = await request({ repoId: '1', weeks: '52' })
   assert.deepEqual([year.body.reading, 'from' in year.body.stats, graphQueries(asked)], [null, false, 4], 'the rest read on from the page kept')
   assert.equal(total((await request({ repoId: '1' })).body), total(year.body), 'the year whole kept for every period')
@@ -910,6 +910,22 @@ test('a week\'s pulse reads the releases of what it counts, not the year\'s', as
   assert.equal((await request({ repoId: '1', weeks: '1' })).status, 200)
   await request.settled()
   assert.deepEqual(asked.filter(item => typeof item === 'string' && item.startsWith('files ')), [`files ${shaOf(1)}`], 'a release a hundred days ago not read')
+})
+
+test('a week whose page reads back past what it counts claims its year whole no further than its releases are read: a month after it reads its own', async t => {
+  const request = await fixture(t)
+  const commits = chain(150, Date.now(), DAY)
+  const tag = at => ({ target: { __typename: 'Commit', oid: commits[at].oid, committedDate: commits[at].committedDate } })
+  github(t, { commits, files: { [commits[30].oid]: ['package.json', 'CHANGELOG.md'] },
+    graphql: body => body.query.includes('refs/tags/')
+      ? { data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [tag(30)] } } } }
+      : { data: { merged: { issueCount: 0, nodes: [] } } } })
+  const releases = body => body.stats.weeks.flatMap(week => week.releaseDays).reduce((sum, count) => sum + count, 0)
+  await request({ repoId: '1', weeks: '1' })
+  await request.settled()
+  const week = await request({ repoId: '1', weeks: '1' })
+  assert.deepEqual([week.body.reading, week.body.stats.from], [null, pulseSince(2, Date.now())], 'a hundred days read, its releases two weeks\'')
+  assert.equal(releases((await request({ repoId: '1' })).body), 1, 'the month\'s release, a month back, read')
 })
 
 test('a head moved on past YEAR_COMMITS, GitHub still computing its statistics, the year last counted answered meanwhile; a period short of the year counting its own commits', async t => {

@@ -3062,12 +3062,13 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   const readTo = (read: Attribution) => pullsReadTo(read)
   // The year counted from its `commits` as `read` tells whose they are and
   // which were pushed directly, the branch followed through those it was
-  // read on past (`passed`, yearCommits) too, whole from when both the
-  // commits and the pull requests merged are read (`from`, none where all
-  // are); kept by its head and as the year last counted.
-  const count = async ({ commits, passed, from }: { commits: HistoryCommit[]; passed: HistoryCommit[]; from: number | null }, read: Attribution) => {
+  // read on past (`passed`, yearCommits) too, whole from when the commits,
+  // the pull requests merged and, where it read them since later than the
+  // year, the releases (`since`) are all read (`from`, none where all are);
+  // kept by its head and as the year last counted.
+  const count = async ({ commits, passed, from }: { commits: HistoryCommit[]; passed: HistoryCommit[]; from: number | null }, read: Attribution, since: number) => {
     const walked = [...commits, ...passed]
-    const whole = Math.max(from ?? Number.NEGATIVE_INFINITY, readTo(read))
+    const whole = Math.max(from ?? Number.NEGATIVE_INFINITY, readTo(read), since > first ? since : Number.NEGATIVE_INFINITY)
     const stats = { ...commitStats(commits, first, agentCommits(read, walked), new Set(read.releases), directCommits(read, walked, sha)),
       ...Number.isFinite(whole) ? { from: whole } : {} }
     await Promise.all([store.write(key, stats, Date.now()), store.write(lastKey, { first, stats }, Date.now())])
@@ -3088,7 +3089,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
       const same = kept && sameMerges(read, kept) && read.releases!.join() === (kept.releases ?? []).join() && readTo(kept) <= readTo(read)
       if (readTo(read) >= whole || same) return read
       const year = await yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true), globalThis.fetch, whole)
-      if (year.complete) recounted.stats = await count(year, read)
+      if (year.complete) recounted.stats = await count(year, read, whole)
       return read
     }, () => true, false, stampOf(deps, repoId, fullName, token, today())).catch((err: unknown) => { console.warn('managed: pulse attribution read failed:', err) })
     return recounted.stats ?? stats
@@ -3103,7 +3104,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   const tooManyKey = `${key}\0too-many`
   const [held, tooMany] = await Promise.all([store.read(key), store.read(tooManyKey)]).then(([year, marked]) => [
     year?.value as PulseStats | { tooMany: true } | undefined, marked?.value as { within?: unknown } | undefined] as const)
-  if (held && !('tooMany' in held) && (held.from === undefined || held.from < need)) {
+  if (held && !('tooMany' in held) && (held.from === undefined || held.from <= need)) {
     return { stats: await relabelled(held), reading: null, pulls: null, pending: false, kept: head.kept }
   }
   const tooManyWithin = typeof tooMany?.within === 'number' ? tooMany.within : held && 'tooMany' in held ? first : Number.NEGATIVE_INFINITY
@@ -3116,7 +3117,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
     await store.write(mergesKey, read, Date.now())
     if (year.complete) {
       if (readTo(read) >= need) return { stats: await last(), reading: null, pulls: read.next?.read ?? 0, pending: false, kept: false }
-      return { stats: await count(year, read), reading: null, pulls: null, pending: false, kept: false }
+      return { stats: await count(year, read, need), reading: null, pulls: null, pending: false, kept: false }
     }
     if (!year.tooMany) return { stats: await last(), reading: year.read, pulls: null, pending: false, kept: false }
     await store.write(tooManyKey, { within: need }, Date.now())
