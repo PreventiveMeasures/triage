@@ -50,10 +50,11 @@ const chain = (length, now, step = HOUR) => Array.from({ length }, (_, at) => ({
 
 // GitHub, as the pulse reads it: each statistic answered by `answer`, the
 // default branch's head and history from `commits` (as many as a hundred
-// from each commit asked), each commit's files by `files` (its paths, by
-// its id), and other GraphQL (the period's searches) by `graphql`; `asked`
-// the statistics and files asked and the GraphQL bodies.
-function github(t, { answer = kind => Response.json(stats[kind]), commits = [], graphql = () => ({ data: {} }), files = {} } = {}) {
+// from each commit asked, or of each window of time asked, unless not
+// `windows`, failed), each commit's files by `files` (its paths, by its id),
+// and other GraphQL (the period's searches) by `graphql`; `asked` the
+// statistics and files asked and the GraphQL bodies.
+function github(t, { answer = kind => Response.json(stats[kind]), commits = [], graphql = () => ({ data: {} }), files = {}, windows: readable = true } = {}) {
   const asked = []
   t.mock.method(globalThis, 'fetch', (input, options = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url)
@@ -63,6 +64,18 @@ function github(t, { answer = kind => Response.json(stats[kind]), commits = [], 
       asked.push(body)
       if (body.query.includes('defaultBranchRef { target { oid } }')) {
         return Promise.resolve(Response.json({ data: { repository: { defaultBranchRef: commits.length > 0 ? { target: { oid: commits[0].oid } } : null } } }))
+      }
+      // A window's commits, those made since its start (none, any time)
+      // and until its end, a hundred after its cursor (a position here).
+      if (body.query.includes('since: $s0')) {
+        if (!readable) return Promise.resolve(Response.json({ errors: [{ message: 'Something went wrong while executing your query.' }] }))
+        const windows = Object.keys(body.variables).filter(name => /^u\d+$/u.test(name)).map(name => name.slice(1))
+        return Promise.resolve(Response.json({ data: { repository: { object: Object.fromEntries(windows.map(at => {
+          const [since, until] = [Date.parse(body.variables[`s${at}`] ?? '1970-01-01T00:00:00Z'), Date.parse(body.variables[`u${at}`])]
+          const made = commits.filter(commit => Date.parse(commit.committedDate) >= since && Date.parse(commit.committedDate) <= until)
+          const from = Number(body.variables[`a${at}`] ?? 0)
+          return [`w${at}`, { pageInfo: { hasNextPage: from + 100 < made.length, endCursor: String(from + 100) }, nodes: made.slice(from, from + 100) }]
+        })) } } }))
       }
       if (body.query.includes('history(first:')) {
         const tops = Object.entries(body.variables).filter(([name]) => /^o\d+$/u.test(name))
@@ -96,7 +109,10 @@ const memoryPages = () => {
     write: (top, commits) => { kept.set(top, commits); return Promise.resolve() } }
 }
 const pages = () => memoryPages()
-const graphQueries = asked => asked.filter(item => typeof item === 'object' && item.query.includes('history(first:')).length
+const graphQueries = asked => asked.filter(item => typeof item === 'object' && item.query.includes('history(first:') && !item.query.includes('since: $s0')).length
+// The windows of time read (history-windows.ts readWindows), each a page.
+const windowPages = asked => asked.filter(item => typeof item === 'object' && item.query.includes('since: $s0'))
+  .reduce((sum, item) => sum + Object.keys(item.variables).filter(name => /^u\d+$/u.test(name)).length, 0)
 const PULLS_LISTED = 'pullRequests(first: $first, after: $after'
 const mergedQueries = asked => asked.filter(item => typeof item === 'object' && item.query.includes(PULLS_LISTED)).length
 // Each pull request's number: its own, else one of its merge commit's.
@@ -131,24 +147,19 @@ test('a commit read with GraphQL tells the lines it adds and removes, and when i
     [0, 1, now, 120], [1, 1, Date.UTC(2026, 9, 15, 11, 30), -330], [2, 1, Date.UTC(2026, 9, 15, 6), 0]])
 })
 
-test('the year is read from the head on through the pages kept, those not kept a few queries of GitHub an answer, the rest by the next; past YEAR_COMMITS, too many', async t => {
+test('the year is read from the head on through the pages kept, two pages of GitHub past them, then the rest at once by when its commits were made, kept as pages; past YEAR_COMMITS, too many', async t => {
   const now = Date.UTC(2026, 9, 15, 12)
   const asked = github(t, { commits: chain(1200, now, DAY) })
   const kept = pages()
-  // 301 commits since, a day apart: four pages, the last as far as thirty
-  // days before them.
+  // 301 commits since, a day apart: two pages, then the rest as far as
+  // thirty days before them in windows of time, and a page before those.
   const short = await yearCommits('org/repo', 'token', shaOf(0), now - 300 * DAY, kept)
-  assert.equal(short.complete, true)
-  assert.equal(short.commits.length, 301)
-  assert.equal(graphQueries(asked), 4)
+  assert.deepEqual([short.complete, short.commits.length, graphQueries(asked), windowPages(asked)], [true, 301, 2, 3])
   assert.equal((await yearCommits('org/repo', 'token', shaOf(0), now - 300 * DAY, kept)).complete, true)
-  assert.equal(graphQueries(asked), 4, 'all of it kept')
-  // 901 since: five queries an answer, the rest by the next, those read kept.
+  assert.deepEqual([graphQueries(asked), windowPages(asked)], [2, 3], 'all of it kept, the windows\' as pages from each commit')
+  // 901 since: those kept, two pages past them, the rest at once.
   const long = await yearCommits('org/repo', 'token', shaOf(0), now - 900 * DAY, kept)
-  assert.deepEqual(long, { complete: false, read: 900, tooMany: false }, 'four kept, then five read')
-  assert.equal(graphQueries(asked), 9)
-  const rest = await yearCommits('org/repo', 'token', shaOf(0), now - 900 * DAY, kept)
-  assert.deepEqual([rest.complete, rest.commits.length, graphQueries(asked)], [true, 901, 10])
+  assert.deepEqual([long.complete, long.commits.length, graphQueries(asked), windowPages(asked)], [true, 901, 4, 9])
   // A year past YEAR_COMMITS, its pages kept: too many to count.
   const many = memoryPages()
   const all = Array.from({ length: YEAR_COMMITS + 200 }, (_, at) => ({ sha: shaOf(at), parents: [shaOf(at + 1)], subject: '', authorName: null, authorLogin: null,
@@ -158,6 +169,16 @@ test('the year is read from the head on through the pages kept, those not kept a
   const none = github(t, { commits: [] })
   const counted = await yearCommits('org/repo', 'token', shaOf(0), 0, many)
   assert.deepEqual([counted.complete, counted.tooMany, counted.read > YEAR_COMMITS, graphQueries(none)], [false, true, true, 0])
+})
+
+test('windows of time GitHub fails to read, the year read a page at a time: a few queries an answer, the rest by the next', async t => {
+  const now = Date.UTC(2026, 9, 15, 12)
+  const asked = github(t, { commits: chain(1200, now, DAY), windows: false })
+  const kept = pages()
+  const first = await yearCommits('org/repo', 'token', shaOf(0), now - 900 * DAY, kept)
+  assert.deepEqual([first, graphQueries(asked), windowPages(asked) > 0], [{ complete: false, read: 500, tooMany: false }, 5, true], 'two pages, the windows tried, three more')
+  const rest = await yearCommits('org/repo', 'token', shaOf(0), now - 900 * DAY, kept)
+  assert.deepEqual([rest.complete, rest.commits.length], [true, 901])
 })
 
 test('a commit dated before the year whose parent is dated in it, its clock behind, is read on from all the same', async t => {
@@ -816,29 +837,29 @@ async function fixture(t, { role = 'admin', tokens = userTokens } = {}) {
   return Object.assign(request, { db, settled: () => Promise.all(tracked.splice(0)) })
 }
 
-test('the pulse counts the year from the default branch\'s commits as Commits keeps them, read a few queries an answer, kept by its head; the period\'s pull requests and issues apart', async t => {
+test('the pulse counts the year from the default branch\'s commits as Commits keeps them, two pages read, the rest at once by when they were made, kept by its head; the period\'s pull requests and issues apart', async t => {
   const request = await fixture(t)
   const asked = github(t, { commits: chain(700, Date.now()), graphql: () => ({ data: { merged: { issueCount: 3, nodes: [] } } }) })
   const first = await request({ repoId: '1', weeks: '13' })
   assert.equal(first.status, 200)
-  assert.deepEqual([first.body.weeks, first.body.merged.count, first.body.stats, first.body.reading, first.body.pending], [13, 3, null, 500, false], 'five pages read')
+  assert.deepEqual([first.body.weeks, first.body.merged.count, first.body.reading, first.body.pending], [13, 3, null, false])
   assert.equal(asked.filter(item => typeof item === 'string').length, 0, 'none of GitHub\'s statistics asked')
-  const second = await request({ repoId: '1', weeks: '13' })
-  assert.equal(second.body.reading, null)
-  assert.equal(second.body.stats.weeks.length, 52)
-  assert.equal(second.body.stats.weeks.reduce((sum, week) => sum + week.commits, 0), 700)
-  assert.equal(second.body.stats.weeks.reduce((sum, week) => sum + week.additions, 0), 1400, 'its lines, as each commit tells them')
-  assert.deepEqual(second.body.stats.contributors.map(person => [person.login, person.id, person.name]), [['ada', 7, 'Ada']])
-  assert.equal(second.body.stats.lines, true)
-  assert.equal(graphQueries(asked), 7, 'the rest read, those kept not again')
+  assert.equal(first.body.stats.weeks.length, 52)
+  assert.equal(first.body.stats.weeks.reduce((sum, week) => sum + week.commits, 0), 700)
+  assert.equal(first.body.stats.weeks.reduce((sum, week) => sum + week.additions, 0), 1400, 'its lines, as each commit tells them')
+  assert.deepEqual(first.body.stats.contributors.map(person => [person.login, person.id, person.name]), [['ada', 7, 'Ada']])
+  assert.equal(first.body.stats.lines, true)
+  assert.deepEqual([graphQueries(asked), windowPages(asked) > 0], [2, true], 'two pages read, the rest in windows of time')
   const reads = asked.length
+  assert.equal((await request({ repoId: '1', weeks: '13' })).body.reading, null)
+  assert.equal(asked.length, reads, 'kept by its head')
   const month = await request({ repoId: '1' })
   assert.equal(month.body.stats.weeks.length, 52, 'the year kept by its head, for every period')
   assert.equal(asked.length, reads, 'the month\'s pull requests and issues told of those kept, those read for the year, none searched for')
   // When each period's commits are made, its own, the others' not sent.
   const made = body => body.stats.punch.flat().reduce((sum, count) => sum + count, 0)
   const last = (body, weeks) => body.stats.weeks.slice(-weeks).reduce((sum, week) => sum + week.commits, 0)
-  assert.deepEqual([made(month.body), made(second.body)], [last(month.body, 4), last(second.body, 13)])
+  assert.deepEqual([made(month.body), made(first.body)], [last(month.body, 4), last(first.body, 13)])
   assert.deepEqual([month.body.stats.periodPunch, 'punches' in month.body.stats], [true, false])
 })
 
@@ -846,7 +867,8 @@ test('a head moved on, its year read anew, the year last counted answered meanwh
   const request = await fixture(t)
   const all = chain(1300, Date.now())
   const commits = all.slice(600)
-  github(t, { commits })
+  // Read a page at a time, as many as five an answer.
+  github(t, { commits, windows: false })
   const total = body => body.stats.weeks.reduce((sum, week) => sum + week.commits, 0)
   await request({ repoId: '1' })
   assert.equal(total((await request({ repoId: '1' })).body), 700)
@@ -867,7 +889,8 @@ test('a month counted once its weeks and as many before are read, the rest of th
   assert.deepEqual([month.body.reading, total(month.body), month.body.stats.from, graphQueries(asked)], [null, 100, pulseSince(8, Date.now()), 1],
     'a page read, its last commit\'s parent the only one not, whole as far back as its releases are read, eight weeks')
   const year = await request({ repoId: '1', weeks: '52' })
-  assert.deepEqual([year.body.reading, 'from' in year.body.stats, graphQueries(asked)], [null, false, 4], 'the rest read on from the page kept')
+  assert.deepEqual([year.body.reading, 'from' in year.body.stats, graphQueries(asked), windowPages(asked)], [null, false, 3, 3],
+    'two pages read on from the page kept, the rest at once')
   assert.equal(total((await request({ repoId: '1' })).body), total(year.body), 'the year whole kept for every period')
 })
 

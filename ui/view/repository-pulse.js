@@ -446,13 +446,16 @@ const versus = (count, previous, before) => previous === null || count === null 
 // `part` of `whole`, in whole percents: none and all alone 0 and 100.
 const share = (part, whole) => part === 0 ? 0 : part === whole ? 100 : Math.min(99, Math.max(1, Math.round(part / whole * 100)))
 // What a year being read, or counted by GitHub, says as it is asked again
-// and after: its commits read so far, or the pull requests updated in it;
-// `latest`, the year shown meanwhile as it was before.
+// and after: its commits read so far (of the last year, where the year is
+// what is asked for, a shorter period's read only as far back as it needs),
+// or the pull requests updated in it; `latest`, the year shown meanwhile as
+// it was before.
 function waitingTexts(answer, latest = false) {
   const [what, shown] = latest ? ['latest ', ': the year shown is as it was before.'] : ['', '.']
+  const year = answer.weeks === 52 ? ' of the last year' : ''
   if (answer.reading !== null) {
-    return [`Reading this repository’s ${what}commits… ${number(answer.reading)} of the last year so far`,
-      `${number(answer.reading)} of this repository’s commits of the last year read so far${shown}`, 'Read on']
+    return [`Reading this repository’s ${what}commits… ${number(answer.reading)}${year} so far`,
+      `${number(answer.reading)} of this repository’s commits${year} read so far${shown}`, 'Read on']
   }
   return answer.pulls === null
     ? [`GitHub is still counting this repository’s ${what}commits…`, `GitHub hasn’t counted this repository’s ${what}commits yet.`, 'Ask again']

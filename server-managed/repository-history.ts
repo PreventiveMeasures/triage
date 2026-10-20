@@ -242,8 +242,8 @@ async function repositoryHeads(owner: string, name: string, token: string, fetch
 // Histories read in a GraphQL query, and queries at once: each counts its
 // commits' lines, which GitHub works out as it answers, stopping a query
 // past ten seconds.
-const PAGES_PER_QUERY = 5
-const PAGES_PARALLEL = 5
+export const PAGES_PER_QUERY = 5
+export const PAGES_PARALLEL = 5
 
 // The first page of the history from each of `tops`, by its top, each told
 // to `keep` as it is read, so those read stay kept where another fails: with
