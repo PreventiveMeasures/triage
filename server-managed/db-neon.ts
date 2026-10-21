@@ -14,6 +14,7 @@ import { GITHUB_COMMIT_SCHEMA, GITHUB_METADATA_SCHEMA, GITHUB_STATE_REASON_COLUM
 import { MANAGED_ISSUE_SCHEMA } from './managed-issues.ts'
 import { BUNDLE_BUILD_LEASE_SCHEMA } from './bundle-build-leases.ts'
 import { UPSTREAM_CACHE_SCHEMA } from './upstream-cache.ts'
+import { TEAM_APP_SUMMARY_SCHEMA } from './team-app-summaries.ts'
 import { COMMENT_SCHEMA } from './comments.ts'
 import { ACTIVITY_SCHEMA, uploadAction } from './activity.ts'
 import { type ManagedSqlDriver, scopeManagedMethods } from './sql.ts'
@@ -39,7 +40,7 @@ const LOCK = 'SELECT pg_advisory_xact_lock(1937006964, 1835101793)'
 // Whether every version up to the latest is recorded, in one round trip at
 // a cold start: a database with no versions table yet (undefined_table) has
 // none. Outside a transaction, so the failed read aborts nothing.
-const SCHEMA_VERSIONS = 33
+const SCHEMA_VERSIONS = 34
 async function currentSchema(db: PgConnection): Promise<boolean> {
   try {
     const { rows } = await db.query(`SELECT count(*) AS n FROM managed_schema_version WHERE version BETWEEN 1 AND ${SCHEMA_VERSIONS}`)
@@ -202,6 +203,12 @@ async function migrateDependencyReviewPatches(db: PgConnection): Promise<void> {
   await db.query('INSERT INTO managed_schema_version VALUES (33)')
 }
 
+async function migrateTeamAppSummaries(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 34')).rows.length > 0) return
+  await db.query(postgresSchema(TEAM_APP_SUMMARY_SCHEMA))
+  await db.query('INSERT INTO managed_schema_version VALUES (34)')
+}
+
 async function initialize(db: PgConnection): Promise<void> {
   if (await currentSchema(db)) return
   await db.query('BEGIN')
@@ -276,7 +283,7 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
     for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes, migrateDependencyReviews, migrateGithubLinks, migrateRepositoryDependencyReviews,
-      migrateRepositoryDependencyReviewLockfiles, migrateRepoUploadIndexes, migrateDependencyReviewShasums, migrateDependencyReviewPatches]) await migrate(db)
+      migrateRepositoryDependencyReviewLockfiles, migrateRepoUploadIndexes, migrateDependencyReviewShasums, migrateDependencyReviewPatches, migrateTeamAppSummaries]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

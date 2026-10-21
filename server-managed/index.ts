@@ -9,6 +9,7 @@ import { runReapers, withReap } from '../server-common/reap.ts'
 import { startServer } from '../server-common/standalone.ts'
 import { initializeApp } from '../server-common/initialize.ts'
 import { type ManagedConfig, loadManagedConfig } from './config.ts'
+import type { ManagedDb } from './db.ts'
 import { type ManagedHttpDeps, createManagedRequestHandler } from './http.ts'
 import { setNpmTarballCache } from './npm-loads.ts'
 import { assembledReviewedDependencies } from './reviewed-dependencies.ts'
@@ -21,6 +22,17 @@ import { setCacheDir } from '@preventive/upstream/npm.js'
 // without a timer or cron. Failed sweeps retry on later traffic after a minute.
 const REAP_INTERVAL_MS = 3_600_000
 const REAP_RETRY_MS = 60_000
+// A team's stored catalog summary (team-app-summaries.ts) not stored again in
+// this long: one still asked for is worked out again once.
+const TEAM_APP_SUMMARY_KEPT_MS = 30 * 86_400_000
+
+// Rows kept past their time: expired sessions, how many, and teams' catalog
+// summaries stored too long ago.
+async function reapRows(db: Pick<ManagedDb, 'deleteExpiredSessions' | 'deleteTeamAppSummaries'>): Promise<number> {
+  const now = Date.now()
+  const [sessions] = await Promise.all([db.deleteExpiredSessions(now), db.deleteTeamAppSummaries(now - TEAM_APP_SUMMARY_KEPT_MS)])
+  return sessions
+}
 
 // `ui: false` serves only the API: `out/` is never read.
 type ManagedAppOptions = Partial<Pick<ManagedHttpDeps, 'next' | 'serverInfo' | 'isShuttingDown' | 'reviewedDependencies'>> & { ui?: boolean }
@@ -79,7 +91,7 @@ async function assembleManagedApp(config: ManagedConfig, { ui = true, ...options
       let succeeded = false
       try {
         await runReapers({
-          sessions: async () => { sessions = await db.deleteExpiredSessions(Date.now()) },
+          sessions: async () => { sessions = await reapRows(db) },
           ...(storage.reapUploads ? { uploads: async () => { uploads = await storage.reapUploads!(maintenance.signal) } } : {}),
           ...('reapPrettyCopies' in storage ? { prettyCopies: () => storage.reapPrettyCopies(maintenance.signal) } : {}),
           ...('reapStorage' in storage ? { storage: () => storage.reapStorage(maintenance.signal) } : {}),

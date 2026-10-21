@@ -6,6 +6,7 @@ mock.module('../server-managed/storage.ts', { namedExports: { openManagedStorage
   db: {
     close: () => Promise.resolve(),
     deleteExpiredSessions: () => Promise.resolve(0),
+    deleteTeamAppSummaries: () => Promise.resolve(0),
     claimMaintenanceLease: () => Promise.resolve(true),
     finishMaintenanceLease: () => { state.released = true; return Promise.resolve() },
   },

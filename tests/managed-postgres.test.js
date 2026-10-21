@@ -1404,7 +1404,7 @@ test('Postgres team routes take a statement per read, none for a transaction', a
   await db.setReportVisible(id, true)
   await send('/api/teams/team/reports', { session, method: 'GET' })
   for (const [path, budget, reads] of [
-    ['/api/teams', 4, 'the session seen, the catalog and its fence, and the classification\'s snapshot'],
+    ['/api/teams', 6, 'the session seen, the catalog and its fence, the classification looked for as stored, its snapshot, and it stored'],
     ['/api/teams/team/reports', 3, 'the session seen, and the team snapshot before and after the kept workspace'],
     [`/api/reports/${id}/triage?team=team`, 7, 'the session seen, the report view and the team snapshot, the three again, and the entries'],
   ]) {

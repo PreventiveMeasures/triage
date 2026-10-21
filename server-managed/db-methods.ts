@@ -17,6 +17,7 @@ import { type ManagedIssue, type ManagedIssueStore, managedIssueMethods } from '
 import type { IssueFixUpdate } from './github-issue-links.ts'
 import { type BundleBuildLeaseStore, bundleBuildLeaseMethods } from './bundle-build-leases.ts'
 import { type UpstreamCacheStore, upstreamCacheMethods } from './upstream-cache.ts'
+import { type TeamAppSummaryStore, teamAppSummaryMethods } from './team-app-summaries.ts'
 import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
@@ -368,7 +369,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyReviewStore, ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore, GithubLinkStore {
+export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyReviewStore, ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, TeamAppSummaryStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore, GithubLinkStore {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
@@ -1800,6 +1801,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...repositoryDependencyReviewMethods(db),
     ...bundleBuildLeaseMethods(db),
     ...upstreamCacheMethods(db),
+    ...teamAppSummaryMethods(db),
     async claimMaintenanceLease(owner, now, until, migration = false) {
       return !!await claimLeaseStmt.get(migration ? 2 : 1, owner, until, now)
     },

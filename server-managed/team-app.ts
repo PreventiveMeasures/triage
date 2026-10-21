@@ -15,13 +15,12 @@
 // reports stays expanded, and so does one whose reports each open as App but
 // whose combined workspace does not (contradicting verdicts, say): it has App
 // findings, and only expanded does it show that they fail to combine.
-import { reportEntries } from '@preventive/report'
-import { type TeamAppMetadata, managedTeamAppMetadata } from '../common/managed/team-app.js'
-import { expandFindingValues } from '../common/managed/finding-values.js'
+import type { TeamAppMetadata } from '../common/managed/team-app.js'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot, UserTeam } from './db.ts'
 import type { WorkspaceShareSnapshot } from './workspace-shares.ts'
-import { TeamReportsError, loadTeamReportsResponse } from './team-reports.ts'
+import { TeamReportsError, loadTeamSummary } from './team-reports.ts'
+import { teamAppSummaryKey } from './team-app-summaries.ts'
 
 export type { TeamAppMetadata }
 export interface TeamWorkspaceSummary { app: TeamAppMetadata; empty: readonly string[] }
@@ -56,28 +55,54 @@ function remember(db: ManagedDb, key: string, summary: TeamWorkspaceSummary): Te
   return summary
 }
 
-function isLinks(data: unknown): boolean {
-  const record = data as { source?: unknown; links?: unknown } | null
-  return record?.source === 'links' && Array.isArray(record.links)
+// Summaries kept in the database for every instance (team-app-summaries.ts),
+// by key; a failed read is a miss, never a failed catalog, and an unreadable
+// summary one to work out again.
+async function storedSummaries(db: ManagedDb, keys: readonly string[]): Promise<Map<string, TeamWorkspaceSummary>> {
+  const hashed = new Map(keys.map(key => [teamAppSummaryKey(key), key]))
+  let rows: Map<string, string>
+  try { rows = await db.getTeamAppSummaries([...hashed.keys()]) } catch (error) {
+    console.warn('managed: stored team App classification read failed:', error)
+    return new Map()
+  }
+  const summaries = new Map<string, TeamWorkspaceSummary>()
+  for (const [hash, text] of rows) {
+    const key = hashed.get(hash), summary = readSummary(text)
+    if (summary && key !== undefined) summaries.set(key, summary)
+  }
+  return summaries
 }
 
-// A links document counts by its links, every other report by its findings.
-function hasContent(data: unknown): boolean {
-  if (isLinks(data)) return (data as { links: unknown[] }).links.length > 0
-  return (reportEntries(data) ?? []).some(entry => !Array.isArray(entry) || entry.length > 0)
+function readSummary(text: string): TeamWorkspaceSummary | null {
+  try {
+    const summary = JSON.parse(text) as TeamWorkspaceSummary
+    return typeof summary?.app?.appMode === 'boolean' && Array.isArray(summary.empty) && summary.empty.every(id => typeof id === 'string') ? summary : null
+  } catch { return null }
+}
+
+// One worked out, remembered and stored for every instance.
+async function settle(db: ManagedDb, key: string, summary: TeamWorkspaceSummary): Promise<TeamWorkspaceSummary> {
+  remember(db, key, summary)
+  try { await db.setTeamAppSummary(teamAppSummaryKey(key), JSON.stringify(summary), Date.now()) } catch (error) {
+    console.warn('managed: storing team App classification failed:', error)
+  }
+  return summary
 }
 
 // Null when the team cannot be classified right now: its catalog went stale,
 // the access snapshot is gone, or storage failed. The sidebar then keeps the
 // team expanded and lists every report, and a later catalog asks again.
 // Oversized and unreadable workspaces never have an App view, so they are
-// remembered as such, hiding nothing.
+// remembered as such, hiding nothing. One kept in memory, or stored (`read`,
+// where the caller has not asked already), is not worked out again.
 async function classify(db: ManagedDb, store: BlobStore, key: string, team: UserTeam,
-  snapshot: () => Promise<TeamReportAccessSnapshot | null>): Promise<TeamWorkspaceSummary | null> {
+  snapshot: () => Promise<TeamReportAccessSnapshot | null>, read = true): Promise<TeamWorkspaceSummary | null> {
   const cached = caches.get(db)?.get(key)
   if (cached) return remember(db, key, cached)
   const ids = new Set(published(team).map(report => report.id))
   if (ids.size === 0) return remember(db, key, NO_APP)
+  const stored = read ? (await storedSummaries(db, [key])).get(key) : undefined
+  if (stored) return remember(db, key, stored)
   let jobs = pendingJobs.get(db)
   if (!jobs) { jobs = new Map(); pendingJobs.set(db, jobs) }
   const existing = jobs.get(key)
@@ -86,20 +111,10 @@ async function classify(db: ManagedDb, store: BlobStore, key: string, team: User
     const access = await snapshot()
     // A catalog read before a concurrent publication names another report set.
     if (!access?.teamId || access.reports.length !== ids.size || access.reports.some(report => !ids.has(report.id))) return null
-    const body = JSON.parse((await loadTeamReportsResponse(db, store, access)).toString('utf8')) as {
-      reports: { id: string; filename: string; data: unknown }[]; links?: string[][]; values?: unknown[]
-    }
-    for (const report of body.reports) expandFindingValues(report.data, body.values)
-    const restricted = access.reports.some(report => !report.permissions.dependencies || !report.permissions.security)
-    const empty = restricted ? body.reports.filter(report => !hasContent(report.data)).map(report => report.id) : []
-    const links = body.links ?? []
-    const app = managedTeamAppMetadata(Object.assign(body.reports, { links }), { countFindings: true })
-    if (app.appMode) return remember(db, key, { app, empty })
-    const appReports = body.reports.filter(report => !isLinks(report.data)
-      && managedTeamAppMetadata(Object.assign([report], { links })).appMode).length
-    return remember(db, key, { app: { ...app, appReports }, empty })
+    // Worked out as the workspace is built (team-reports.ts).
+    return settle(db, key, await loadTeamSummary(db, store, access))
   })().catch((error: unknown) => {
-    if (error instanceof TeamReportsError && [413, 422].includes(error.status)) return remember(db, key, NO_APP)
+    if (error instanceof TeamReportsError && [413, 422].includes(error.status)) return settle(db, key, NO_APP)
     if (!(error instanceof TeamReportsError)) console.warn('managed: team App classification failed:', error)
     return null
   })
@@ -120,11 +135,15 @@ export async function teamAppStates(db: ManagedDb, store: BlobStore, sessionId: 
   known: ReadonlyMap<string, TeamWorkspaceSummary | null> = new Map()): Promise<Map<string, TeamWorkspaceSummary | null>> {
   const states = new Map(known)
   const missing = [...new Map(teams.map(team => [teamAppKey(team), team])).entries()].filter(([key]) => !states.has(key))
+  // Those kept in no memory of this instance's are read of the database at
+  // once, in one statement.
+  const unknown = missing.filter(([key, team]) => !caches.get(db)?.has(key) && published(team).length > 0).map(([key]) => key)
+  for (const [key, summary] of unknown.length > 0 ? await storedSummaries(db, unknown) : []) remember(db, key, summary)
   let next = 0
   await Promise.all(Array.from({ length: Math.min(CLASSIFY_CONCURRENCY, missing.length) }, async () => {
     while (next < missing.length) {
       const [key, team] = missing[next++]!
-      states.set(key, await classify(db, store, key, team, () => db.getTeamReportAccessSnapshot(sessionId, Date.now(), team.id)))
+      states.set(key, await classify(db, store, key, team, () => db.getTeamReportAccessSnapshot(sessionId, Date.now(), team.id), false))
     }
   }))
   return states

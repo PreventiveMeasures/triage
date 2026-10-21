@@ -27,12 +27,7 @@ function onlyUnjudgedImports(groups) {
 // `countFindings` has a workspace that is not App count its rows too, after
 // the same merging, for a caller that shows it collapsed (managed teams).
 export function workspaceAppMetadata(reports, duplicatesOf = () => [], { countFindings = false } = {}) {
-  const { linked, app } = appView(reports, duplicatesOf)
-  if (!app) return countFindings ? { appMode: false, findings: linked.length } : { appMode: false }
-  return {
-    appMode: true,
-    appFindings: linked.filter((group) => appTabs(group).some((f) => f.isApp)).length,
-  }
+  return metadataOf(appView(reports, duplicatesOf), countFindings)
 }
 
 // The IDs of the findings a workspace's basic App view can show: of each row
@@ -40,7 +35,24 @@ export function workspaceAppMetadata(reports, duplicatesOf = () => [], { countFi
 // App tabs, the rest folded under them; none the pass ruled out. Null where it
 // has no such view, or one with no outcome to lock, which shows every row.
 export function workspaceAppRows(reports, duplicatesOf = () => []) {
-  const { linked, app } = appView(reports, duplicatesOf)
+  return rowsOf(appView(reports, duplicatesOf))
+}
+
+// Both, of one merge of its rows.
+export function workspaceApp(reports, duplicatesOf = () => [], { countFindings = false } = {}) {
+  const view = appView(reports, duplicatesOf)
+  return { metadata: metadataOf(view, countFindings), rows: rowsOf(view) }
+}
+
+function metadataOf({ linked, app }, countFindings) {
+  if (!app) return countFindings ? { appMode: false, findings: linked.length } : { appMode: false }
+  return {
+    appMode: true,
+    appFindings: linked.filter((group) => appTabs(group).some((f) => f.isApp)).length,
+  }
+}
+
+function rowsOf({ linked, app }) {
   if (!app || onlyUnjudgedImports(linked)) return null
   const kinds = activeRevalidateKinds('confirmed', '')
   const confirmed = (f) => kinds.includes(revalidateKindOf(f) || (f._source && !f._sourcePass ? 'revalidation' : ''))
