@@ -99,8 +99,8 @@ async function classify(db: ManagedDb, store: BlobStore, key: string, team: User
   snapshot: () => Promise<TeamReportAccessSnapshot | null>, read = true): Promise<TeamWorkspaceSummary | null> {
   const cached = caches.get(db)?.get(key)
   if (cached) return remember(db, key, cached)
-  const ids = new Set(published(team).map(report => report.id))
-  if (ids.size === 0) return remember(db, key, NO_APP)
+  const keys = new Map(published(team).map(report => [report.id, report.cacheKey]))
+  if (keys.size === 0) return remember(db, key, NO_APP)
   const stored = read ? (await storedSummaries(db, [key])).get(key) : undefined
   if (stored) return remember(db, key, stored)
   let jobs = pendingJobs.get(db)
@@ -109,8 +109,10 @@ async function classify(db: ManagedDb, store: BlobStore, key: string, team: User
   if (existing) return existing
   const job = (async () => {
     const access = await snapshot()
-    // A catalog read before a concurrent publication names another report set.
-    if (!access?.teamId || access.reports.length !== ids.size || access.reports.some(report => !ids.has(report.id))) return null
+    // A catalog read before a concurrent change names other reports, or
+    // other content or access of them: what is read now is no workspace of
+    // its key, so nothing is kept under it.
+    if (!access?.teamId || access.reports.length !== keys.size || access.reports.some(report => access.catalogKeys?.[report.id] !== keys.get(report.id))) return null
     // Worked out as the workspace is built (team-reports.ts).
     return settle(db, key, await loadTeamSummary(db, store, access))
   })().catch((error: unknown) => {

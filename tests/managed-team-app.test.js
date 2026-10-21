@@ -124,8 +124,8 @@ async function fixture(t) {
     }
     return { request, catalog }
   }
-  // Another instance over the same database.
-  const instance = () => serve(new Proxy(db, {}))
+  // Another instance over the same database, or over `managed` reading it.
+  const instance = (managed = new Proxy(db, {})) => serve(managed)
   return { db, sessions, store, reads, seed, instance, ...serve(db) }
 }
 
@@ -159,6 +159,26 @@ test('another instance answers a team\'s classification as stored, reading no re
   h.reads.length = 0
   await h.instance().catalog('reader')
   assert.deepEqual(h.reads, [], 'each stored for every instance')
+})
+
+test('a classification read across a change of access is kept for neither catalog', async t => {
+  const h = await fixture(t)
+  await h.seed('secret', 'app', { type: 'security', findings: [{ id: 'secret', severity: 'high', file: 'src/secret.js' }] })
+  const grant = security => h.db.setTeamMember('app', h.sessions.reader.userId, { dependencies: true, security })
+  // The reader loses security findings after their catalog is read, before
+  // the team's workspace is.
+  let racing = true
+  const racer = h.instance(new Proxy(h.db, { get(db, name, receiver) {
+    if (name !== 'getTeamReportAccessSnapshot') return Reflect.get(db, name, receiver)
+    return async (...args) => {
+      if (racing && args[2] === 'app') { racing = false; await grant(false) }
+      return db.getTeamReportAccessSnapshot(...args)
+    }
+  } }))
+  const listed = async server => (await server.request('/api/teams')).body.teams.find(team => team.id === 'app').reports.map(entry => entry.id).toSorted()
+  assert.deepEqual(await listed(racer), ['app-report'], 'answered as the catalog it reloads')
+  await grant(true)
+  assert.deepEqual(await listed(h.instance()), ['app-report', 'secret'], 'what the change read is not kept for the access before it')
 })
 
 test('catalog changes reclassify teams under a new revision', async t => {

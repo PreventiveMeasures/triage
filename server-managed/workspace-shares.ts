@@ -146,6 +146,7 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
       const bundleRows = (await q.bundles.all(team.id) as (Omit<ManagedBundle, 'buildConditions'> & { buildConditions: string | null; repoFullName: string })[])
         .map(row => ({ ...row, buildConditions: row.buildConditions == null ? null : JSON.parse(row.buildConditions) as BundleBuildConditions }))
       const repositories = await q.repositories.all(team.id) as WorkspaceShareSnapshot['repositories']
+      const keyOf = (row: typeof rows[number]) => JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions, links])
       return {
         user: { id: `share:${tokenHash}`, login: 'public', name: 'Public workspace', avatarUrl: null, role: 'view' },
         teamId: team.id,
@@ -154,11 +155,12 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
         repositories,
         reports: rows.map(row => ({ id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
           repo: { github: row.github, directory: row.directory }, permissions })),
+        catalogKeys: Object.fromEntries(rows.map(row => [row.id, keyOf(row)])),
         team: { ...team, permissions, cacheKey: links,
           repos: repositories.map(repo => ({ repoId: repo.repoId, fullName: repo.github, path: repo.path || null }))
             .toSorted((a, b) => a.fullName.localeCompare(b.fullName) || (a.path ?? '').localeCompare(b.path ?? '')),
           reports: rows.map(row => ({ id: row.id, slug: row.slug, filename: row.filename, visible: true, analyzer: row.analyzer, repoFullName: row.github, repoDirectory: row.directory,
-            cacheKey: JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions, links]) })),
+            cacheKey: keyOf(row) })),
           bundles: bundleRows.map(row => ({ id: row.id, slug: row.slug, integrity: row.integrity,
             filename: row.filename, visible: true, kind: row.kind, byteSize: row.byteSize, repoId: row.repoId!, repoDirectory: row.repoDirectory, repoFullName: row.repoFullName, provenance: row.provenance })),
         },
