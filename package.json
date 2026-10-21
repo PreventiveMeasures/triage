@@ -226,6 +226,7 @@
     "server-managed/team-feed.ts",
     "server-managed/team-npm-scopes.ts",
     "server-managed/team-app.ts",
+    "server-managed/team-app-summaries.ts",
     "server-managed/team-reports.ts",
     "server-managed/triage-response.ts",
     "server-managed/type-only.ts",

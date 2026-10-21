@@ -17,6 +17,7 @@ import { type ManagedIssue, type ManagedIssueStore, managedIssueMethods } from '
 import type { IssueFixUpdate } from './github-issue-links.ts'
 import { type BundleBuildLeaseStore, bundleBuildLeaseMethods } from './bundle-build-leases.ts'
 import { type UpstreamCacheStore, upstreamCacheMethods } from './upstream-cache.ts'
+import { type TeamAppSummaryStore, teamAppSummaryMethods } from './team-app-summaries.ts'
 import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
 import type { ManagedSql } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
@@ -147,6 +148,9 @@ export interface TeamReportAccessSnapshot extends ReportAccessSnapshot {
   reportId?: string | null
   hiddenReportId?: string | null
   repositories: { repoId: number; github: string; path: string | null }[]
+  // By report ID, the content key its catalog entry has (UserTeamReport
+  // cacheKey) as read with the rest.
+  catalogKeys?: Readonly<Record<string, string>>
 }
 export interface ReportAccessSnapshot {
   user: StoredUser
@@ -368,7 +372,7 @@ export interface UserTeam {
 }
 
 // Backend-agnostic store surface (SQLite + PostgreSQL implementations).
-export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyReviewStore, ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore, GithubLinkStore {
+export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyReviewStore, ActivityStore, CommentStore, GithubMetadataStore, GithubCommitStore, ManagedIssueStore, BundleBuildLeaseStore, UpstreamCacheStore, TeamAppSummaryStore, WorkspaceShareStore, ImportTriageStore, ManagementStore, ManagementCatalogStore, StorageDb, LinkReportStore, RepositoryAliasStore, TeamNpmScopeStore, GithubLinkStore {
   claimMaintenanceLease(owner: string, now: number, until: number, migration?: boolean): Promise<boolean>
   finishMaintenanceLease(owner: string, until: number): Promise<void>
   getFeedState(sessionId: string, now: number): Promise<{ user: Pick<StoredUser, 'id' | 'role'>; catalog: number; annotations: number } | null>
@@ -641,15 +645,23 @@ type UserTeamRows = {
   bundles: (Omit<UserTeamBundle, 'visible'> & { teamId: string; visible: number })[]
 }
 
+// A catalog report's content key: its content, where it is, and what its
+// reader may see of it (their grants and role) under the link reports'
+// revision `links`. A team snapshot names it of each report it reads.
+type CatalogReportRow = Pick<UserTeamRows['reports'][number], 'sha256' | 'bundleId' | 'filename' | 'repoId' | 'repoDirectory' | 'repoFullName' | 'dependencies' | 'security'>
+function reportCatalogKey(r: CatalogReportRow, role: string, links: string): string {
+  return createHash('sha256').update(JSON.stringify([
+    r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, role, links,
+  ])).digest('base64url')
+}
+
 // A user's team catalog from its rows, `links` the link reports' revision.
 function userTeams(teams: UserTeamRows['teams'], scopes: UserTeamRows['scopes'], links: string, reports: UserTeamRows['reports'], bundles: UserTeamRows['bundles']): UserTeam[] {
   const reportsByTeam = new Map<string, UserTeamReport[]>()
   for (const r of reports) {
     const list = reportsByTeam.get(r.teamId) ?? []
-    const cacheKey = createHash('sha256').update(JSON.stringify([
-      r.sha256, r.bundleId, r.filename, r.repoId, r.repoDirectory, r.repoFullName, r.dependencies, r.security, r.role, links,
-    ])).digest('base64url')
-    list.push({ id: r.id, slug: r.slug, filename: r.filename, visible: r.visible === 1, analyzer: r.analyzer, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory, cacheKey })
+    list.push({ id: r.id, slug: r.slug, filename: r.filename, visible: r.visible === 1, analyzer: r.analyzer, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory,
+      cacheKey: reportCatalogKey(r, r.role, links) })
     reportsByTeam.set(r.teamId, list)
   }
   const bundlesByTeam = new Map<string, UserTeamBundle[]>()
@@ -899,10 +911,10 @@ function prepareStatements(db: ManagedSql) {
               EXISTS(SELECT 1 FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
                       WHERE tu.user_id = v.uid AND tu.team_id = ? AND t.hidden = 0) AS member,
               (SELECT json_group_array(json_object('id', x.id, 'filename', x.filename, 'byteSize', x.byteSize, 'sha256', x.sha256,
-                        'visible', x.visible, 'repoDirectory', x.repoDirectory, 'repoFullName', x.repoFullName,
+                        'visible', x.visible, 'bundleId', x.bundleId, 'repoId', x.repoId, 'repoDirectory', x.repoDirectory, 'repoFullName', x.repoFullName,
                         'dependencies', x.dependencies, 'security', x.security) ORDER BY x.id)
                  FROM (SELECT DISTINCT r.id AS id, r.filename AS filename, r.byte_size AS byteSize, r.sha256 AS sha256, r.visible AS visible,
-                              r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
+                              r.bundle_id AS bundleId, r.repo_id AS repoId, r.repo_directory AS repoDirectory, sr.full_name AS repoFullName,
                               tu.view_dependencies AS dependencies, tu.view_security AS security
                          FROM managed_team_user tu
                          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
@@ -1368,21 +1380,19 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
       if (user.role === 'none' || !session.member) return { user, teamId: null, reports: [], repositories: [] }
       const whole = user.role === 'admin' || user.role === 'manage'
-      const rows = jsonRows<{
-        id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
-        repoFullName: string | null; dependencies: number; security: number; visible: number
-      }>(session.reports)
+      const rows = jsonRows<CatalogReportRow & { id: string; byteSize: number; visible: number }>(session.reports)
       // Only privileged callers can receive a hidden row from this query. Give
       // that individual preview its own capacity; published report selections
       // still use the complete workspace for cross-report classification.
       const hidden = rows.find(row => row.id === reportId && row.visible === 0)
       const selected = hidden ? [hidden] : rows
       const repositories = jsonRows<TeamReportAccessSnapshot['repositories'][number]>(session.repositories)
-      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, linkRevision: linkRevisionOf(jsonRows(session.links)), reports: selected.map(row => ({
+      const links = linkRevisionOf(jsonRows(session.links))
+      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, linkRevision: links, reports: selected.map(row => ({
         id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
         repo: { github: row.repoFullName, directory: row.repoDirectory },
         permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },
-      })) }
+      })), catalogKeys: Object.fromEntries(selected.map(row => [row.id, reportCatalogKey(row, user.role, links)])) }
     },
     async getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null> {
       const session = await stmts.selectReportSnapshotStmt.get(sessionId, now, JSON.stringify([...new Set(ids)])) as
@@ -1800,6 +1810,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     ...repositoryDependencyReviewMethods(db),
     ...bundleBuildLeaseMethods(db),
     ...upstreamCacheMethods(db),
+    ...teamAppSummaryMethods(db),
     async claimMaintenanceLease(owner, now, until, migration = false) {
       return !!await claimLeaseStmt.get(migration ? 2 : 1, owner, until, now)
     },

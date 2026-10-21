@@ -1,5 +1,5 @@
 import { findingTitle, reportEntries, revalidateKindOf } from '@preventive/report'
-import { managedTeamAppRows, managedTeamLens, managedTeamRevalidationConflicted } from './team-app.js'
+import { managedTeamView } from './team-app.js'
 import { liteName } from './lite-name.js'
 
 // A finding's detail: what its popup, the views besides the board and an
@@ -64,12 +64,12 @@ const rows = data => (reportEntries(data) ?? []).flat().length
 // contradicts the revalidation pass, which opens a view of it in App mode
 // (ui/view/render.js configureReportRevalidation), its entries folded under
 // their App rows (`folded: 'rows'`). Folded, the `lens` the rows left out
-// tell (team-app.js managedTeamLens).
-export function liteWorkspace(reports, links) {
-  const view = Object.assign(reports.map(({ filename, data }) => ({ filename, data })), { links })
-  const shown = managedTeamAppRows(view)
-  const fold = shown !== null || !managedTeamRevalidationConflicted(view)
+// tell (team-app.js managedTeamLens). All of it read from `view`, the
+// workspace's (team-app.js managedTeamView), where its builder has one.
+export function liteWorkspace(reports, links, view = managedTeamView(Object.assign(reports.map(({ filename, data }) => ({ filename, data })), { links }))) {
+  const shown = view.rows
+  const fold = shown !== null || !view.conflicted()
   const lite = reports.map(report => ({ ...report, data: liteReportData(report.data, { fold, shown }) }))
   if (!fold || !lite.some((report, index) => rows(report.data) < rows(reports[index].data))) return { reports: lite, folded: false, lens: null }
-  return { reports: lite, folded: shown ? 'app' : 'rows', lens: managedTeamLens(view) }
+  return { reports: lite, folded: shown ? 'app' : 'rows', lens: view.lens() }
 }

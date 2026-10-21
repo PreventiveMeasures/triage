@@ -104,23 +104,29 @@ async function fixture(t) {
   await seed('mixed-app', 'mixed', { findings: [app('C')] })
   await seed('mixed-source', 'mixed', { findings: [source('S')] })
   await seed('code-source', 'code', { findings: [source('T')] })
-  const handler = createManagedRequestHandler({ config, db, reportStore: store, originGate: { isOriginAllowed: () => true },
-    isShuttingDown: () => false, track() {} })
-  async function request(path, { login = 'reader', headers = {} } = {}) {
-    const req = Readable.from([])
-    Object.assign(req, { url: path, method: 'GET', headers: { cookie: sessions[login]?.setCookie.split(';', 1)[0], ...headers } })
-    const chunks = []
-    const res = new Writable({ write(chunk, _encoding, callback) { chunks.push(chunk); callback() } })
-    res.writeHead = (status, values) => { res.status = status; res.headers = values }
-    await handler(req, res)
-    return { status: res.status, body: JSON.parse(Buffer.concat(chunks).toString()) }
+  // An instance serving over `managed`, what it keeps in memory its own.
+  function serve(managed) {
+    const handler = createManagedRequestHandler({ config, db: managed, reportStore: store, originGate: { isOriginAllowed: () => true },
+      isShuttingDown: () => false, track() {} })
+    async function request(path, { login = 'reader', headers = {} } = {}) {
+      const req = Readable.from([])
+      Object.assign(req, { url: path, method: 'GET', headers: { cookie: sessions[login]?.setCookie.split(';', 1)[0], ...headers } })
+      const chunks = []
+      const res = new Writable({ write(chunk, _encoding, callback) { chunks.push(chunk); callback() } })
+      res.writeHead = (status, values) => { res.status = status; res.headers = values }
+      await handler(req, res)
+      return { status: res.status, body: JSON.parse(Buffer.concat(chunks).toString()) }
+    }
+    const catalog = async (login) => {
+      const response = await request('/api/teams', { login })
+      assert.equal(response.status, 200)
+      return { revision: response.body.revision, apps: Object.fromEntries(response.body.teams.map(team => [team.id, team.app])) }
+    }
+    return { request, catalog }
   }
-  const catalog = async (login) => {
-    const response = await request('/api/teams', { login })
-    assert.equal(response.status, 200)
-    return { revision: response.body.revision, apps: Object.fromEntries(response.body.teams.map(team => [team.id, team.app])) }
-  }
-  return { db, sessions, store, reads, seed, request, catalog }
+  // Another instance over the same database, or over `managed` reading it.
+  const instance = (managed = new Proxy(db, {})) => serve(managed)
+  return { db, sessions, store, reads, seed, instance, ...serve(db) }
 }
 
 test('the team catalog says which teams open as App teams before any team is opened', async t => {
@@ -133,6 +139,46 @@ test('the team catalog says which teams open as App teams before any team is ope
   assert.deepEqual((await h.catalog('reader')).apps, apps)
   assert.deepEqual((await h.catalog('peer')).apps, apps, 'the same access shares one classification')
   assert.deepEqual(h.reads, [], 'an unchanged catalog reuses its classification')
+})
+
+test('another instance answers a team\'s classification as stored, reading no report; a reader allowed otherwise is classified apart', async t => {
+  const h = await fixture(t)
+  const { apps } = await h.catalog('reader')
+  h.reads.length = 0
+  const other = h.instance()
+  assert.deepEqual((await other.catalog('reader')).apps, apps)
+  assert.deepEqual((await other.catalog('peer')).apps, apps, 'the same access shares one stored classification')
+  assert.deepEqual(h.reads, [], 'kept in the database, read of it')
+  await h.db.setTeamMember('app', h.sessions.reader.userId, { dependencies: true, security: false })
+  await other.catalog('reader')
+  assert.deepEqual(h.reads, ['app-report'], 'other permissions are another workspace')
+  h.reads.length = 0
+  await h.db.setUserRole(h.sessions.peer.userId, 'triage')
+  await other.catalog('peer')
+  assert.deepEqual(h.reads.toSorted(), ['app-report', 'code-source', 'mixed-app', 'mixed-source'], 'and another role')
+  h.reads.length = 0
+  await h.instance().catalog('reader')
+  assert.deepEqual(h.reads, [], 'each stored for every instance')
+})
+
+test('a classification read across a change of access is kept for neither catalog', async t => {
+  const h = await fixture(t)
+  await h.seed('secret', 'app', { type: 'security', findings: [{ id: 'secret', severity: 'high', file: 'src/secret.js' }] })
+  const grant = security => h.db.setTeamMember('app', h.sessions.reader.userId, { dependencies: true, security })
+  // The reader loses security findings after their catalog is read, before
+  // the team's workspace is.
+  let racing = true
+  const racer = h.instance(new Proxy(h.db, { get(db, name, receiver) {
+    if (name !== 'getTeamReportAccessSnapshot') return Reflect.get(db, name, receiver)
+    return async (...args) => {
+      if (racing && args[2] === 'app') { racing = false; await grant(false) }
+      return db.getTeamReportAccessSnapshot(...args)
+    }
+  } }))
+  const listed = async server => (await server.request('/api/teams')).body.teams.find(team => team.id === 'app').reports.map(entry => entry.id).toSorted()
+  assert.deepEqual(await listed(racer), ['app-report'], 'answered as the catalog it reloads')
+  await grant(true)
+  assert.deepEqual(await listed(h.instance()), ['app-report', 'secret'], 'what the change read is not kept for the access before it')
 })
 
 test('catalog changes reclassify teams under a new revision', async t => {

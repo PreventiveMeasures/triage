@@ -32,6 +32,7 @@ const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'g
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
   'getFeedState', 'getWorkspaceShareFeedState', 'claimMaintenanceLease', 'finishMaintenanceLease', 'cacheRepoDefaultBranch', 'releaseBundleBuildLease',
   'getUpstreamCacheEntry', 'getUpstreamCacheEntries', 'getFirstUpstreamCacheEntries', 'setUpstreamCacheEntry', 'setUpstreamCacheEntries', 'ensureSessionUploadKey',
+  'getTeamAppSummaries', 'setTeamAppSummary', 'deleteTeamAppSummaries',
   'listGithubCommits', 'listGithubCommitTags', 'setGithubCommits', 'getAvatarKey', 'listUsersByAccount'])
 // Session presence and upload keys change only their own rows.
 const UNLOCKED_WRITES = new Set(['sessionWithUser', 'viewSessionWithUser', 'ensureSessionUploadKey'])

@@ -9,9 +9,11 @@ import { filterReportData, projectFinding } from '../common/managed/report-filte
 import { revalidationLinks, securityLinks } from '../common/security-links.js'
 import { treeDependencyDirectory } from '../client/dependency-paths.js'
 import { liteWorkspace } from '../common/managed/finding-detail.js'
+import { managedTeamView } from '../common/managed/team-app.js'
 import { expandFindingValues, findingValueIndex } from '../common/managed/finding-values.js'
 import type { BlobStore } from './blob-store.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
+import type { TeamWorkspaceSummary } from './team-app.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { visibleManagedIssues } from './managed-issues.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
@@ -25,9 +27,10 @@ const VISIBILITY_CACHE_MAX_SNAPSHOTS = 32
 const caches = new WeakMap<ManagedDb, Map<string, Visibility>>()
 const REPORT_CACHE_BYTES = 16 * 1024 * 1024
 // A workspace's encoded reports, the same without their findings' detail for
-// the board (`lite`), and its reports' file trees apart.
-type EncodedWorkspace = { reports: Buffer; lite: Buffer; trees: Buffer }
-export type TeamResponsePart = keyof EncodedWorkspace
+// the board (`lite`), its reports' file trees apart, and its team's catalog
+// summary (team-app.ts).
+type EncodedWorkspace = { reports: Buffer; lite: Buffer; trees: Buffer; summary: TeamWorkspaceSummary }
+export type TeamResponsePart = 'reports' | 'lite' | 'trees'
 // The part a team's `reports` or `trees` route asks for.
 export const teamResponsePart = (route: string, url: URL): TeamResponsePart =>
   route === 'trees' ? 'trees' : url.searchParams.get('lite') === '1' ? 'lite' : 'reports'
@@ -97,6 +100,12 @@ function groupsOf(data: unknown): Finding[][] {
   return (reportEntries(data) ?? []).map(entry => (Array.isArray(entry) ? entry : [entry]).filter(
     (finding): finding is Finding => finding !== null && typeof finding === 'object' && !Array.isArray(finding),
   ))
+}
+// A links document counts by its links, every other report by its findings.
+function hasContent(data: unknown): boolean {
+  const links = linksOf(data)
+  if (links) return links.length > 0
+  return (reportEntries(data) ?? []).some(entry => !Array.isArray(entry) || entry.length > 0)
 }
 function linksOf(data: unknown): string[][] | null {
   const record = data as { source?: string; links?: string[][] }
@@ -188,14 +197,21 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   }
   const trees = Buffer.from(`{"trees":{${reports.map(withoutTree).filter(tree => tree !== null).join(',')}}}`)
   const links = mergeLinkGroups(globalLinks, allIds)
-  // The board's: its findings without their detail, and in App mode its rows
-  // as the App view shows them (common/managed/finding-detail.js).
-  const lite = liteWorkspace(reports, links)
+  // Its rows read once (common/managed/team-app.js managedTeamView) for both
+  // what its catalog entry tells and the board's copy: its findings without
+  // their detail, and in App mode its rows as the App view shows them
+  // (common/managed/finding-detail.js).
+  const view = managedTeamView(Object.assign(reports.map(({ filename, data }) => ({ filename, data })), { links }))
+  const lite = liteWorkspace(reports, links, view)
+  const restricted = snapshot.reports.some(report => !report.permissions.dependencies || !report.permissions.security)
   const encoded = {
     // Bounded together, as when the trees were sent with their reports.
     reports: encodeReports(reports, links, trees.length),
     lite: encodeReports(lite.reports, links, 0, { folded: lite.folded, lens: lite.lens }),
     trees,
+    // Its App classification, and the reports a restricted reader finds
+    // nothing in, which its catalog leaves out.
+    summary: { app: view.app, empty: restricted ? reports.filter(report => !hasContent(report.data)).map(report => report.id) : [] },
   }
   retainVisibility(db, workspaceKey(snapshot), visible)
   retainReports(db, workspaceKey(snapshot), encoded)
@@ -243,6 +259,10 @@ export async function loadTeamReportsResponse(db: ManagedDb, store: BlobStore, s
   part: TeamResponsePart = 'reports'): Promise<Buffer> {
   const cached = reportCaches.get(db)?.get(workspaceKey(snapshot))
   return cached?.[part] ?? (await loadTeamWorkspace(db, store, snapshot))[part]
+}
+// A team's catalog summary (team-app.ts), as its workspace was built.
+export async function loadTeamSummary(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamWorkspaceSummary> {
+  return reportCaches.get(db)?.get(workspaceKey(snapshot))?.summary ?? (await loadTeamWorkspace(db, store, snapshot)).summary
 }
 export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
   // Object consumers get their own copy, including when sharing a cold load.

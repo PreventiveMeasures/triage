@@ -85,6 +85,7 @@ The browser keeps report content, comments, history and GitHub metadata in memor
 
 The sidebar opens a team collapsed to its finding count when its workspace has a basic App view, or when none of its reports opens in App mode.
 Other teams open expanded, and the sidebar follows publication, grant, scope and link changes live.
+The server works this classification out as it builds the team's workspace and stores it in `managed_team_app_summary`. It is keyed by a hash of the catalog's content key, which covers the published reports and their content, and the reader's role, dependency and security permissions, scopes and links. Readers with the same access share a stored classification; any other change of access is a new key, as is a new deployment. The workspace is read with each report's catalog key, and a classification is stored only when those keys are the catalog's: one whose reports or access changed after its catalog was read is left unclassified, for a later catalog to ask again. A new server instance answers `/api/teams` from that table instead of building each team's workspace, and maintenance removes classifications stored more than 30 days ago.
 
 ## Deduplication reports
 
