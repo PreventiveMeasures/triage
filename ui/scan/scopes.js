@@ -1,7 +1,11 @@
+// Each runtime one beside what a static build names it (bundle:metro, bundle), and extra beside add.
 const KNOWN_SCOPES = [
   { key: 'metro', label: 'metro', subtitle: 'Metro bundle contents' },
+  { key: 'bundle:metro', label: 'bundle:metro', subtitle: 'Metro bundle contents (static)' },
   { key: 'run', label: 'run', subtitle: 'Node.js CLI' },
+  { key: 'bundle', label: 'bundle', subtitle: 'Static code bundle' },
   { key: 'add', label: 'add', subtitle: 'Manually added files' },
+  { key: 'extra', label: 'extra', subtitle: 'Extra files' },
 ]
 
 // Keep actual scope IDs and show only scopes present in the bundle. A custom

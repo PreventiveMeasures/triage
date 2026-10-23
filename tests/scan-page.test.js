@@ -30,6 +30,13 @@ describe('Scan scopes', () => {
     assert.equal(scanScopeOptions([{ id: 'all' }]), null)
     assert.equal(scanScopeOptions([{ id: 'reason:run' }, { id: 'reason:custom-build' }]), null)
     assert.equal(scanScopeOptions([{ id: 'metro' }, { id: 'reason:metro' }]), null)
+    assert.deepEqual(scanScopeOptions([{ id: 'reason:extra' }, { id: 'reason:bundle' }, { id: 'reason:bundle:metro' }]), [
+      { id: '', label: 'All files', subtitle: 'Everything' },
+      { id: 'reason:bundle:metro', label: 'bundle:metro', subtitle: 'Metro bundle contents (static)' },
+      { id: 'reason:bundle', label: 'bundle', subtitle: 'Static code bundle' },
+      { id: 'reason:extra', label: 'extra', subtitle: 'Extra files' },
+    ], 'a static build\'s, each beside the one a capture names')
+    assert.deepEqual(scanScopeOptions([{ id: 'reason:extra' }, { id: 'reason:run' }, { id: 'reason:metro' }]).map(option => option.label), ['All files', 'metro', 'run', 'extra'])
   })
 
   test('scope selection keeps exact file sets and clears old manual exclusions', () => {

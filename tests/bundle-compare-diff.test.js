@@ -873,6 +873,33 @@ describe('Compare inputs', () => {
     const map = { kind: 'sourcemap', json: { sources: ['cli.js'], sourcesContent: ['new'] } }
     assert.deepEqual(bundleCompareScopes(scoped, map).map(scope => scope.id), ['reason:metro', 'reason:run'])
   })
+  test('a capture\'s and a static build\'s names for the same trees are compared as one, labelled as the capture names them, with extra for add', () => {
+    const capture = details({ 'cli.js': 'old', 'app.js': 'app', 'manual.js': 'added' }, { run: ['cli.js'], metro: ['app.js'], add: ['manual.js'] })
+    const built = details({ 'cli.js': 'new', 'app.js': 'app', 'extra.js': 'extra' }, { bundle: ['cli.js'], 'bundle:metro': ['app.js'], extra: ['extra.js'] })
+    for (const [first, second] of [[capture, built], [built, capture]]) {
+      const scopes = bundleCompareScopes(first, second)
+      assert.deepEqual(scopes.map(scope => scope.id), ['reason:extra', 'reason:metro', 'reason:run'], 'whichever side is first')
+      assert.deepEqual(scanScopeOptions(scopes).map(option => [option.label, option.subtitle]),
+        [['All files', 'Everything'], ['metro', 'Metro bundle contents'], ['run', 'Bundler and Node.js CLI'], ['extra', 'Extra files']], 'the inline toggle')
+    }
+    assert.deepEqual(bundleCompareSideScopes(capture, built, 'reason:metro'), ['reason:metro', 'reason:bundle:metro'])
+    assert.deepEqual(bundleCompareSideScopes(built, capture, 'reason:run'), ['reason:bundle', 'reason:run'])
+    assert.deepEqual(bundleCompareSideScopes(capture, built, 'reason:extra'), ['reason:add', 'reason:extra'])
+    const run = prepareComparison(capture, built, 'reason:run')
+    assert.deepEqual(run.files.changed.map(row => row.path), ['cli.js'], 'the capture\'s run tree against the build\'s bundle tree')
+    assert.deepEqual([run.totals.baseFiles, run.totals.otherFiles], [1, 1])
+    assert.deepEqual([...prepareComparison(capture, built, 'reason:extra').files.onlyOther.map(row => row.path)], ['extra.js'])
+  })
+  test('names are compared as one only where each side names one of them alone', () => {
+    const tree = (reason) => details({ 'cli.js': 'cli', 'app.js': 'app', 'manual.js': 'added' }, reason)
+    const ids = (first, second) => bundleCompareScopes(tree(first), tree(second)).map(scope => scope.label)
+    assert.deepEqual(ids({ run: ['cli.js'], add: ['manual.js'] }, { run: ['cli.js'], extra: ['manual.js'] }), ['extra', 'run'], 'add as extra')
+    assert.deepEqual(ids({ run: ['cli.js'], add: ['manual.js'], extra: ['app.js'] }, { run: ['cli.js'], extra: ['manual.js'] }), ['add', 'extra', 'run'], 'not where one side names both')
+    assert.deepEqual(ids({ run: ['cli.js'], metro: ['app.js'] }, { run: ['cli.js'], 'bundle:metro': ['app.js'] }), ['metro', 'run'], 'bundle:metro as metro alone')
+    assert.deepEqual(ids({ run: ['cli.js'], add: ['manual.js'] }, { bundle: ['cli.js'], extra: ['manual.js'] }), ['extra', 'run → bundle'], 'bundle as run only where bundle:metro is metro: a pair of trees each names alone')
+    assert.deepEqual(ids({ run: ['cli.js'], metro: ['app.js'] }, { bundle: ['cli.js'], 'bundle:metro': ['app.js'], run: ['manual.js'] }), ['bundle', 'metro', 'run'], 'nor where the build names run too')
+    assert.deepEqual(ids({ metro: ['app.js'], add: ['manual.js'] }, { bundle: ['cli.js'], 'bundle:metro': ['app.js'] }), ['metro', 'add → bundle'], 'nor where the capture names no run')
+  })
   test('dependency versions follow the selected tree, including multiple installed versions', () => {
     const bundle = details({}, { run: ['node_modules/dep/a.js'] }, [
       ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'a.js': 'a' } }],
