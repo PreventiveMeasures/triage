@@ -10,6 +10,29 @@ function namedTrees(details) {
   return { stasis: details?.kind === 'stasis', files, trees }
 }
 
+// Trees two sides name apart for the same files: a side naming the second of
+// a pair and not the first, the other the first and not the second, has it
+// compared as the first. A static build names the Metro bundle's `bundle:metro`
+// and the rest `bundle`, as a capture names them `metro` and `run`: `bundle` is
+// `run` only where `bundle:metro` is `metro`, on the same side.
+const ALIASES = [['extra', 'add'], ['metro', 'bundle:metro']]
+function aliased(sides) {
+  if (sides.length !== 2) return sides
+  const apart = (name, alias) => sides.find((side, i) => side.trees.has(alias) && !side.trees.has(name)
+    && sides[1 - i].trees.has(name) && !sides[1 - i].trees.has(alias))
+  const renames = sides.map(() => new Map())
+  for (const [name, alias] of ALIASES) {
+    const side = apart(name, alias)
+    if (side) renames[sides.indexOf(side)].set(alias, name)
+  }
+  const built = apart('metro', 'bundle:metro')
+  if (built && apart('run', 'bundle') === built) renames[sides.indexOf(built)].set('bundle', 'run')
+  // `actual`: the name a side gives a tree it is compared as another by.
+  return sides.map((side, i) => renames[i].size === 0 ? side : { ...side,
+    trees: new Map([...side.trees].map(([name, paths]) => [renames[i].get(name) ?? name, paths])),
+    actual: new Map([...renames[i]].map(([alias, name]) => [name, alias])) })
+}
+
 // The one tree of a stasis side naming every file it has (its own selector
 // hidden, as common/bundle-reasons.js hides it), where no other side names it:
 // such a side is compared within that tree under any of the others' trees.
@@ -34,17 +57,18 @@ function pairOf(scope) {
   } catch { return null }
 }
 
-// Use the union of named trees. A tree absent from one stasis bundle contains
-// no files there; falling back to all files would invent additions/removals.
-// A bundle that names no trees (a sourcemap) is compared whole under any of
-// them, as is one whose sole tree holds all its files where the other names
-// none of it (soleTree), its tree left out. Where neither side is trivial and
-// each names a tree the other doesn't, the trees both name are offered, and
-// each of the first side's own paired with each of the second's (pairScope),
-// labelled from the first to the second. Unlike a single-bundle graph, retain
-// a scope that includes every file on one side.
+// Use the union of named trees, each as its side is compared (aliased). A tree
+// absent from one stasis bundle contains no files there; falling back to all
+// files would invent additions/removals. A bundle that names no trees (a
+// sourcemap) is compared whole under any of them, as is one whose sole tree
+// holds all its files where the other names none of it (soleTree), its tree
+// left out. Where neither side is trivial and each names a tree the other
+// doesn't, the trees both name are offered, and each of the first side's own
+// paired with each of the second's (pairScope), labelled from the first to the
+// second. Unlike a single-bundle graph, retain a scope that includes every file
+// on one side.
 export function bundleCompareScopes(...details) {
-  const sides = details.map(namedTrees)
+  const sides = aliased(details.map(namedTrees))
   if (sides.length === 2 && !sides.some(trivial)) {
     const [first, second] = sides.map(side => [...side.trees.keys()].toSorted())
     const shared = first.filter(name => second.includes(name))
@@ -66,13 +90,15 @@ export function bundleCompareScopes(...details) {
 
 // Each side's scope in a comparison within `scope`: within the tree of a pair
 // (pairScope) it names; a side whose sole tree holds all its files, the other
-// naming none of it (soleTree), within that tree.
+// naming none of it (soleTree), within that tree; each within the tree it
+// names as it is compared (aliased).
 export function bundleCompareSideScopes(base, other, scope = '') {
   if (!scope) return ['', '']
-  const pair = pairOf(scope), sides = [base, other].map(namedTrees)
+  const pair = pairOf(scope), sides = aliased([base, other].map(namedTrees))
+  const named = scope.startsWith('reason:') ? scope.slice('reason:'.length) : null
   return sides.map(side => {
-    const name = pair ? pair.find(tree => side.trees.has(tree)) : soleTree(side, sides)
-    return name == null ? scope : `reason:${name}`
+    const name = pair ? pair.find(tree => side.trees.has(tree)) : soleTree(side, sides) ?? named
+    return name == null ? scope : `reason:${side.actual?.get(name) ?? name}`
   })
 }
 
