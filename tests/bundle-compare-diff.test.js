@@ -16,6 +16,7 @@ import { layoutDir, layoutPackageDirs, treeLayout } from '@preventive/compare'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleCompareFiles, bundleCompareScopes, bundleCompareSideScopes } from '../ui/view/bundle-compare-inputs.js'
 import { prepareComparison } from '../ui/view/bundle-comparison-local.js'
+import { scanScopeOptions } from '../ui/scan/scopes.js'
 import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from '../ui/view/bundle-compare-code-model.js'
 import { bundlePackageVersions } from '../ui/view/bundle-sources.js'
 import { bundleFileMeta, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } from '../ui/view/bundle-compare-diff.js'
@@ -837,6 +838,40 @@ describe('Compare inputs', () => {
     assert.deepEqual(bundleCompareSideScopes(partial, app, 'reason:bundle'), ['reason:bundle', 'reason:app'])
     const both = details({ 'cli.js': 'old', 'lib.js': 'lib' }, { bundle: ['cli.js', 'lib.js'], lib: ['lib.js'] })
     assert.deepEqual(bundleCompareSideScopes(both, app, 'reason:lib'), ['reason:lib', 'reason:app'])
+  })
+  test('where neither side is trivial and each names a tree the other doesn\'t, the shared trees are offered and each own tree paired with each of the other\'s', () => {
+    const base = details({ 'cli.js': 'old', 'metro.js': 'metro', 'manual.js': 'added' }, { run: ['cli.js'], metro: ['metro.js'], add: ['manual.js'] })
+    const other = details({ 'cli.js': 'new', 'app.js': 'metro', 'tool.js': 'tool' }, { run: ['cli.js'], bundle: ['app.js'], build: ['tool.js'] })
+    const scopes = bundleCompareScopes(base, other)
+    assert.deepEqual(scopes.map(scope => scope.label), ['run', 'add → build', 'add → bundle', 'metro → build', 'metro → bundle'], 'from the first side\'s to the second\'s')
+    assert.deepEqual(scopes[0].id, 'reason:run')
+    const pair = scopes.find(scope => scope.label === 'metro → bundle').id
+    assert.deepEqual(bundleCompareScopes(other, base).map(scope => scope.label), ['run', 'build → add', 'build → metro', 'bundle → add', 'bundle → metro'])
+    assert.ok(bundleCompareScopes(other, base).some(scope => scope.id === pair), 'the same scope whichever side is first')
+    assert.deepEqual(bundleCompareSideScopes(base, other, pair), ['reason:metro', 'reason:bundle'])
+    assert.deepEqual(bundleCompareSideScopes(other, base, pair), ['reason:bundle', 'reason:metro'])
+    assert.deepEqual(bundleCompareSideScopes(base, other, 'reason:run'), ['reason:run', 'reason:run'], 'a shared tree on both sides')
+    const diff = prepareComparison(base, other, pair)
+    assert.deepEqual([diff.totals.baseFiles, diff.totals.otherFiles], [1, 1], 'metro.js against app.js')
+    assert.deepEqual(diff.files.changed.map(row => [row.renamedFrom, row.path]), [['metro.js', 'app.js']], 'paired as one renamed')
+    assert.equal(diff.scope, pair)
+    assert.deepEqual([...bundleCompareFiles(base, bundleCompareSideScopes(base, other, 'reasons:not json')[0])], [], 'a scope naming no pair names no tree')
+    const known = details({ 'cli.js': 'new', 'manual.js': 'added' }, { run: ['cli.js'], add: ['manual.js'] })
+    const metro = details({ 'cli.js': 'old', 'metro.js': 'metro' }, { run: ['cli.js'], metro: ['metro.js'] })
+    assert.deepEqual(bundleCompareScopes(metro, known).map(scope => scope.label), ['run', 'metro → add'])
+    assert.equal(scanScopeOptions(bundleCompareScopes(metro, known)), null, 'one dropdown, its trees all known as they are')
+    assert.notEqual(scanScopeOptions(bundleCompareScopes(metro, details({ 'cli.js': 'new' }, { run: ['cli.js'] }))), null, 'toggles where the trees are one union')
+  })
+  test('trees are offered as one union where a side is trivial or names none but the other\'s', () => {
+    const scoped = details({ 'cli.js': 'old', 'metro.js': 'metro' }, { run: ['cli.js'], metro: ['metro.js'] })
+    const subset = details({ 'cli.js': 'new', 'tool.js': 'tool' }, { run: ['cli.js'] })
+    assert.deepEqual(bundleCompareScopes(scoped, subset).map(scope => scope.id), ['reason:metro', 'reason:run'], 'one side\'s trees within the other\'s')
+    const whole = details({ 'cli.js': 'new' }, { run: ['cli.js'] })
+    assert.deepEqual(bundleCompareScopes(scoped, whole).map(scope => scope.id), ['reason:metro', 'reason:run'], 'its sole tree holding all its files, named by the other')
+    const none = details({ 'cli.js': 'new' })
+    assert.deepEqual(bundleCompareScopes(scoped, none).map(scope => scope.id), ['reason:metro', 'reason:run'], 'naming no tree')
+    const map = { kind: 'sourcemap', json: { sources: ['cli.js'], sourcesContent: ['new'] } }
+    assert.deepEqual(bundleCompareScopes(scoped, map).map(scope => scope.id), ['reason:metro', 'reason:run'])
   })
   test('dependency versions follow the selected tree, including multiple installed versions', () => {
     const bundle = details({}, { run: ['node_modules/dep/a.js'] }, [

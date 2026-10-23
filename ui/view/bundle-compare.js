@@ -177,7 +177,7 @@ class BundleCompare extends LitElement {
     // bundle's, which can run to thousands.
     if (changed.has('source') && this.source && !changed.get('source')) this._openSections = new Set([...this._openSections, 'files'])
     if ((changed.has('_otherDetails') || changed.has('details')) && this._status === 'ready'
-      && !bundleCompareScopes(this.details, this._otherDetails).some(scope => scope.id === this._scope)) this._scope = ''
+      && !bundleCompareScopes(this._otherDetails, this.details).some(scope => scope.id === this._scope)) this._scope = ''
     // Reset only when the BASE bundle itself changes (integrity). A
     // details object swapped in for the SAME integrity — the parse
     // landing after a navigation, or fileHashes attaching in place — is
@@ -744,7 +744,9 @@ class BundleCompare extends LitElement {
     // load says whether it exists.
     const hasTarget = Boolean(this._targetIntegrity)
       && (Boolean(this.source) || others.some((o) => o.integrity === this._targetIntegrity))
-    const scopes = this._baseReady ? bundleCompareScopes(this.details, hasTarget ? this._otherDetails : null) : []
+    // From the bundle picked to the open one, as the picker reads, a pair of
+    // trees one names and the other doesn't labelled so (bundleCompareScopes).
+    const scopes = this._baseReady ? bundleCompareScopes(hasTarget ? this._otherDetails : null, this.details) : []
     const scopeSelector = scopes.length > 0
       ? html`<bundle-scope-selector .reasons=${scopes} .value=${this._scope} label="Compare scope" @scope-change=${event => { this._scope = event.detail.value }}></bundle-scope-selector>`
       : nothing
