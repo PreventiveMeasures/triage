@@ -10,7 +10,7 @@ import { bundlePkgOf } from './bundle-pkg-of.js'
 import { bundlePackageDirs, bundlePackageVersions } from './bundle-sources.js'
 import { bundleFileMeta, computeBundleDiff, computeResolutionDiff } from './bundle-compare-diff.js'
 import { comparePackages, computeVersionUpdates } from './bundle-compare-versions.js'
-import { bundleCompareFiles, bundleCompareResolutions } from './bundle-compare-inputs.js'
+import { bundleCompareFiles, bundleCompareResolutions, bundleCompareSideScopes } from './bundle-compare-inputs.js'
 import { bundleLineCounts } from './bundle-metadata.js'
 
 export function prepareComparison(base, other, scope = null) {
@@ -19,8 +19,10 @@ export function prepareComparison(base, other, scope = null) {
   // images differ, and total less than the Overview does.
   // From the bundle picked to the open one.
   const [from, to] = [base, other]
-  const baseSources = bundleCompareFiles(from, scope)
-  const otherSources = bundleCompareFiles(to, scope)
+  // Each side within its scope (bundleCompareSideScopes).
+  const [baseScope, otherScope] = bundleCompareSideScopes(from, to, scope)
+  const baseSources = bundleCompareFiles(from, baseScope)
+  const otherSources = bundleCompareFiles(to, otherScope)
   // Classify original paths and preserve recorded Stasis package
   // boundaries from either side, as the open one lays its files out
   // where their roots differ. Own source has one identity.
@@ -37,8 +39,8 @@ export function prepareComparison(base, other, scope = null) {
   for (const row of diff.files.onlyOther) row.lines = otherLines.get(row.path) ?? 0
   for (const row of diff.files.changed) Object.assign(row, { baseLines: baseLines.get(row.basePath ?? row.path) ?? 0, otherLines: otherLines.get(row.path) ?? 0 })
   diff.resolutions = computeResolutionDiff(
-    bundleCompareResolutions(from, scope),
-    bundleCompareResolutions(to, scope),
+    bundleCompareResolutions(from, baseScope),
+    bundleCompareResolutions(to, otherScope),
     new Map(diff.files.changed.filter(row => row.renamedFrom != null).map(row => [row.basePath, row.path])),
     diff.files.basePaths,
     diff.files.root,
@@ -51,8 +53,8 @@ export function prepareComparison(base, other, scope = null) {
   // alone.
   // Keyed by install directory, as the sizes are (`bundlePkgOf`).
   const versionKey = dir => bundlePkgOf('', { packageDir: dir })
-  const baseVersions = bundlePackageVersions(from, scope ? baseSources.keys() : null, versionKey)
-  const otherVersions = bundlePackageVersions(to, scope ? otherSources.keys() : null, versionKey)
+  const baseVersions = bundlePackageVersions(from, baseScope ? baseSources.keys() : null, versionKey)
+  const otherVersions = bundlePackageVersions(to, otherScope ? otherSources.keys() : null, versionKey)
   diff.versionUpdates = computeVersionUpdates(baseVersions, otherVersions)
   diff.packageRows = comparePackages(diff.packages, baseVersions, otherVersions)
   // The reason scope its files are within, for what the server works out of

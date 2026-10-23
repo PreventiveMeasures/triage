@@ -13,7 +13,7 @@ import { brotliDecompress } from 'node:zlib'
 import { format } from '@preventive/compare/pretty.js'
 import { computeFileHash } from '@preventive/report'
 import { FILE_HASH, computeBundleFileHashes } from '../common/bundle-metadata.js'
-import { bundleCompareFiles } from '../common/bundle-compare-inputs.js'
+import { bundleCompareFiles, bundleCompareSideScopes } from '../common/bundle-compare-inputs.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { MAX_PRETTY_BYTES, needsPrettyPrint, prettyExtension } from '../common/pretty-print.js'
 import type { OpenedBlob } from './blob-store.ts'
@@ -413,12 +413,14 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
     // before this resolves: for the files that changed between them
     // pretty-printed (compared), and their diffs with renamed names hidden
     // (rename-diff.ts renamedPairs); a bundle's within a reason `scope`
-    // where one is asked for, as Compare reads it then.
-    bundleSides(base: ManagedBundle, other: ManagedBundle, scope = ''): Promise<[ComparedSide, ComparedSide]> {
-      const sideOf = async (record: ManagedBundle, side: Side): Promise<ComparedSide> => ({ side, ...await bundleSide(await bundleDetails(record), scope),
+    // where one is asked for, as Compare reads it then (bundleCompareSideScopes).
+    async bundleSides(base: ManagedBundle, other: ManagedBundle, scope = ''): Promise<[ComparedSide, ComparedSide]> {
+      const [baseDetails, otherDetails] = await Promise.all([bundleDetails(base), bundleDetails(other)])
+      const [baseScope, otherScope] = bundleCompareSideScopes(baseDetails, otherDetails, scope)
+      const sideOf = async (record: ManagedBundle, details: typeof baseDetails, side: Side, within: string): Promise<ComparedSide> => ({ side, ...await bundleSide(details, within),
         kept: request => kept(() => bundles.open(record.id, prettyFile(request))),
         made: async (request, text) => opened(await bundleCopy(record, request, () => Promise.resolve(text))) })
-      return Promise.all([sideOf(base, 'base'), sideOf(other, 'other')])
+      return Promise.all([sideOf(base, baseDetails, 'base', baseScope), sideOf(other, otherDetails, 'other', otherScope)])
     },
     // A bundle's details, read in its turn, as Compare pairs them (comparison.ts).
     bundleDetails,

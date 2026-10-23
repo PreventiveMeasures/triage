@@ -867,6 +867,22 @@ test('a comparison sends where the two sides\' roots differ how each base file r
   assert.equal((await h.send(bundleComparison(web, wider))).json().totals.identical, true, 'the whole bundles the same')
 })
 
+test('a scoped comparison with a bundle whose one tree holds all its files, the other naming none of it, reads that one within its tree', async t => {
+  const h = await setup(t)
+  // The minified file renamed in the web tree, the other's node tree apart.
+  const tree = { 'dist/a.js': long, 'types/w.d.ts': 'export type W = string;\n' }
+  const [whole, trees] = [await h.seedStasis(tree, { bundle: Object.keys(tree) }),
+    await h.seedStasis({ 'dist/b.js': renamedLong, 'types/w.d.ts': tree['types/w.d.ts'], 'cli.js': 'cli\n' }, { web: ['dist/b.js', 'types/w.d.ts'], node: ['cli.js'] })]
+  const scoped = (await h.send(bundleComparison(whole, trees, 'reason:web'))).json()
+  assert.deepEqual([scoped.totals.baseFiles, scoped.totals.otherFiles, scoped.totals.unchangedFiles], [2, 2, 1], 'its every file against the web tree')
+  assert.equal(scoped.scope, 'reason:web')
+  assert.deepEqual(scoped, sent(prepareComparison(await viewed(h, whole, 'stasis'), await viewed(h, trees, 'stasis'), 'reason:web')))
+  const web = path => `${path}&${new URLSearchParams({ scope: 'reason:web' })}`
+  const pairs = async path => linesOf(await h.send(path)).map(({ path: from, otherPath }) => [from, otherPath])
+  assert.deepEqual(await pairs(web(bundleRenameDiffs(whole, trees))), [['dist/a.js', 'dist/b.js']])
+  assert.deepEqual(await pairs(web(bundleRenameDiffs(trees, whole))), [['dist/b.js', 'dist/a.js']], 'on either side')
+})
+
 test('two npm versions\' files are paired by the server, against another package\'s or none, a private one\'s for its readers alone', async t => {
   const h = await setup(t)
   withToken(t)
