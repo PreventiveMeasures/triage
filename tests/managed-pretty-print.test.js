@@ -22,6 +22,7 @@ import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
 import { changeBlocks } from '../common/line-diff.js'
 import { parseBundleContents } from '../common/bundle-metadata.js'
 import { prepareComparison } from '../common/bundle-comparison.js'
+import { bundleCompareScopes } from '../common/bundle-compare-inputs.js'
 import { storageTestKey as key } from './_managed-storage-db.js'
 import { managedStores } from './_managed-storage.js'
 import { packageOf, registry, withToken } from './_managed-npm.js'
@@ -881,6 +882,23 @@ test('a scoped comparison with a bundle whose one tree holds all its files, the 
   const pairs = async path => linesOf(await h.send(path)).map(({ path: from, otherPath }) => [from, otherPath])
   assert.deepEqual(await pairs(web(bundleRenameDiffs(whole, trees))), [['dist/a.js', 'dist/b.js']])
   assert.deepEqual(await pairs(web(bundleRenameDiffs(trees, whole))), [['dist/b.js', 'dist/a.js']], 'on either side')
+})
+
+test('a comparison within a pair of trees, one named by each side alone, reads each side within its own of them', async t => {
+  const h = await setup(t)
+  // The minified file renamed from the one's metro tree to the other's bundle tree, both naming run.
+  const [metro, bundle] = [await h.seedStasis({ 'dist/a.js': long, 'cli.js': 'cli\n' }, { metro: ['dist/a.js'], run: ['cli.js'] }),
+    await h.seedStasis({ 'dist/b.js': renamedLong, 'cli.js': 'cli\n', 'tool.js': 'tool\n' }, { bundle: ['dist/b.js'], run: ['cli.js'], build: ['tool.js'] })]
+  const sides = await Promise.all([viewed(h, metro, 'stasis'), viewed(h, bundle, 'stasis')])
+  const pair = bundleCompareScopes(...sides).find(scope => scope.label === 'metro → bundle').id
+  const scoped = (await h.send(bundleComparison(metro, bundle, pair))).json()
+  assert.deepEqual([scoped.totals.baseFiles, scoped.totals.otherFiles], [1, 1], 'the metro tree against the bundle tree')
+  assert.equal(scoped.scope, pair)
+  assert.deepEqual(scoped, sent(prepareComparison(...sides, pair)))
+  const within = path => `${path}&${new URLSearchParams({ scope: pair })}`
+  const pairs = async path => linesOf(await h.send(path)).map(({ path: from, otherPath }) => [from, otherPath])
+  assert.deepEqual(await pairs(within(bundleRenameDiffs(metro, bundle))), [['dist/a.js', 'dist/b.js']])
+  assert.deepEqual(await pairs(within(bundleRenameDiffs(bundle, metro))), [['dist/b.js', 'dist/a.js']], 'the same pair whichever side is the base')
 })
 
 test('two npm versions\' files are paired by the server, against another package\'s or none, a private one\'s for its readers alone', async t => {

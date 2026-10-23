@@ -144,6 +144,23 @@ test('changing scope recomputes resolution changes and restores the identical st
   assert.equal(diffOf(view).resolutions.totalChanges, 1)
 })
 
+test('bundles each naming a tree the other doesn\'t are compared within a pair of them, picked from one list, labelled from the one picked to the open one', () => {
+  const trees = (integrity, reason) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'app.js': 'app', 'a.js': 'a', 'b.js': 'b' } }]]), reason, imports: new Map() }) })
+  const view = compare()
+  view.details = trees('base', { app: ['app.js'], deps: ['a.js'] })
+  view._otherDetails = trees('other', { app: ['app.js'], lib: ['b.js'] })
+  view._status = 'ready'
+  const selector = templates(view.render()).find(template => template.strings.some(part => part.includes('<bundle-scope-selector')))
+  const scopes = selector.values[0]
+  assert.deepEqual(scopes.map(scope => scope.label), ['app', 'lib → deps'])
+  view._scope = scopes[1].id
+  const diff = diffOf(view)
+  assert.deepEqual([diff.files.onlyBase.map(row => row.path), diff.files.onlyOther.map(row => row.path)], [['b.js'], ['a.js']], 'the picked one\'s lib tree against the open one\'s deps')
+  view.willUpdate(new Map([['_otherDetails', null]]))
+  assert.equal(view._scope, scopes[1].id, 'kept while both still name it')
+})
+
 test('resolution groups cap visible rows while preserving exact counts', () => {
   const view = compare()
   const row = diffOf(view).resolutions.changed[0]
