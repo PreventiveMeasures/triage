@@ -386,8 +386,10 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-row-delta.up { color: var(--green); }
 .bundle-compare-row-delta.down { color: var(--critical); }
 
-/* Repointed imports: File | Import | Before | After | Conditions, each
-   cell one line, ellipsized. */
+/* Import resolutions: File | Import | Before | After | Conditions, each
+   cell one line, ellipsized; a card for those removed, added and
+   repointed, one under the other. */
+.bundle-compare-resolutions + .bundle-compare-resolutions { margin-top: .5rem; }
 .bundle-compare-resolutions table {
   width: 100%;
   table-layout: fixed;
@@ -426,6 +428,8 @@ button.bundle-compare-row-link:hover { background: var(--surface-active); }
 .bundle-compare-resolution-context { color: var(--muted); font-size: .68rem; }
 .bundle-compare-resolution-before { color: var(--critical); }
 .bundle-compare-resolution-after { color: var(--green); }
+/* The side a removed or added resolution has none on. */
+.bundle-compare-resolution-none { color: var(--muted); }
 
 /* Dependency version updates (see view/bundle-compare.js
    _renderVersionUpdates). The "Updated" list is a neutral card: each
@@ -1134,6 +1138,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   & > span > span { flex: none; font-size: .62rem; text-transform: uppercase; letter-spacing: .04em; }
   & .before code { color: var(--critical); }
   & .after code { color: var(--green); }
+  & code.is-none { color: var(--muted); }
 }
 .bundle-compare-code-repointed-line.bundle-compare-diff-table {
   display: flex;

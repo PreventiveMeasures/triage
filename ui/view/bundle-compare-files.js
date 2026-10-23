@@ -26,6 +26,25 @@ export function fileContents(base, other, path, { kind, basePath = path }) {
   return { before, after }
 }
 
+// A comparison's import resolutions that differ (computeResolutionDiff) as
+// one list, as the Overview lists them: those one side records alone, each
+// of a file the two hold alike, then those repointed. The same list each time
+// it is asked of one comparison's, so a view handed it again draws as it was.
+const rowsOf = new WeakMap()
+const NO_ROWS = Object.freeze([])
+export function resolutionRows(resolutions) {
+  if (!resolutions) return NO_ROWS
+  let rows = rowsOf.get(resolutions)
+  if (!rows) rowsOf.set(resolutions, rows = [...resolutions.onlyBase, ...resolutions.onlyOther, ...resolutions.changed])
+  return rows
+}
+
+// How a row of resolutionRows differs: recorded by the open one alone
+// (`added`), by the one it is compared with alone (`removed`), or `repointed`.
+export function resolutionChange(row) {
+  return row.baseTarget === null ? 'added' : row.otherTarget === null ? 'removed' : 'repointed'
+}
+
 // Include import-only changes in the same file model every viewer consumes.
 export function comparisonEntries(base, other, files, resolutions = []) {
   const entries = fileEntries(files)
@@ -42,7 +61,7 @@ export function comparisonEntries(base, other, files, resolutions = []) {
 }
 
 export function comparisonFileList(base, other, diff) {
-  return [...comparisonEntries(base, other, diff.files, diff.resolutions?.changed)].map(([path, entry]) => ({
+  return [...comparisonEntries(base, other, diff.files, resolutionRows(diff.resolutions))].map(([path, entry]) => ({
     path, ...entry, ...fileContents(base, other, path, entry),
   }))
 }

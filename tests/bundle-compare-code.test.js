@@ -121,6 +121,7 @@ mock.module('../ui/view/prism-highlight.js', { namedExports: { ...prism, highlig
 const { bundleFileMeta, computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
 const { bundleCompareResolutions } = await import('../ui/view/bundle-compare-inputs.js')
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
+const { resolutionRows } = await import('../ui/view/bundle-compare-files.js')
 const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks.js')
 await import('../ui/view/bundle-compare-code.js')
 const CompareCode = customElements.get('bundle-compare-code')
@@ -288,6 +289,7 @@ test('a file whose import was repointed shows its imports and its whole source, 
   const markup = renderText(view('src/server.js').render())
   assert.match(markup, /bundle-compare-code-pill repointed>Repointed/u)
   assert.match(markup, /<code[^>]*>lodash\/pick<\/code>/u)
+  assert.match(markup, /<h4>Repointed import <b>1<\/b><\/h4>/u)
   assert.match(markup, /Before<\/span><code[^>]*>node_modules\/lodash\/pick\.cjs/u)
   assert.match(markup, /After<\/span><code[^>]*>node_modules\/lodash\/pick\.js/u)
   assert.match(markup, /aria-label=Go to line 1/u)
@@ -1862,6 +1864,26 @@ test('a specifier repointed under several conditions links and marks every line 
   assert.equal([...panel.matchAll(/aria-label=Go to line 3 @click/gu)].length, 2, 'and the second')
   const marked = [...markup.matchAll(/class=diff-row ctx is-import role="row" data-line=(\d+)>/gu)].map(m => m[1])
   assert.deepEqual(marked, ['1', '3'])
+})
+
+test('a file the two hold alike whose imports resolve on one side alone lists them, (none) on the other, its R counting each kind', () => {
+  const source = "import pick from 'lodash/pick'\nimport { a } from './a.js'\nimport 'polyfill'\n"
+  const side = (integrity, specifiers) => ({ integrity, kind: 'stasis', bundle: new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/server.js': source, 'src/a.js': 'export const a = 1\n' } }]]),
+    imports: new Map([['node, import', new Map([['src/server.js', new Map(specifiers)]])]]),
+  }) })
+  const base = side('base-alone', [['lodash/pick', 'node_modules/lodash/pick.cjs'], ['polyfill', 'node_modules/polyfill/index.js']])
+  const other = side('other-alone', [['lodash/pick', 'node_modules/lodash/pick.js'], ['./a.js', 'src/a.js']])
+  const resolutions = resolutionRows(computeResolutionDiff(bundleCompareResolutions(base), bundleCompareResolutions(other), new Map(), new Map(), null, () => true))
+  const { render } = compareOf(base, other, { resolutions })
+  const markup = render('src/server.js')
+  assert.deepEqual(fileMarks(markup), { 'src/server.js': ['repointed'] }, 'listed, though its contents are the same')
+  assert.match(markup, /data-tooltip=Import resolutions: 1 removed, 1 added, 1 repointed>R</u)
+  assert.match(markup, /aria-label=Import resolutions>\s*<h4>Import resolutions <b>3<\/b><\/h4>/u)
+  assert.match(markup, /<code[^>]*>polyfill<\/code>[^]*?Before<\/span><code[^>]*>node_modules\/polyfill\/index\.js<\/code>[^]*?After<\/span><code class="is-none">\(none\)<\/code>/u)
+  assert.match(markup, /<code[^>]*>\.\/a\.js<\/code>[^]*?Before<\/span><code class="is-none">\(none\)<\/code>[^]*?After<\/span><code[^>]*>src\/a\.js<\/code>/u)
+  const marked = [...markup.matchAll(/class=diff-row ctx is-import role="row" data-line=(\d+)>/gu)].map(m => m[1])
+  assert.deepEqual(marked, ['1', '2', '3'], 'each importing line marked')
 })
 
 test('an importer only one bundle carries is highlighted under that bundle', () => {

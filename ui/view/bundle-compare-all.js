@@ -5,12 +5,12 @@
 // file scrolls to it, and the file at the list's top is the tree's as it
 // scrolls. Each diff draws as a file's alone does there: unified or split,
 // unchanged runs folded and expandable, syntax colored, changed words
-// marked; an import that resolves elsewhere is listed over its importer's
-// diff, a file with no other change listing those alone. Compare shows it
-// for a comparison it can list in fewer than COMBINED_DIFF_MAX rows
-// (combinedDiffRows), and a file at a time beside the tree otherwise. Its
-// files are drawn FILE_BATCH at a time, more as the list nears its end, or
-// as one past them is opened.
+// marked; an import that resolves elsewhere, or on one side alone, is listed
+// over its importer's diff, a file with no other change listing those alone.
+// Compare shows it for a comparison it can list in fewer than
+// COMBINED_DIFF_MAX rows (combinedDiffRows), and a file at a time beside the
+// tree otherwise. Its files are drawn FILE_BATCH at a time, more as the list
+// nears its end, or as one past them is opened.
 import { html, nothing } from 'lit'
 import { repeat } from 'lit/directives/repeat.js'
 import { diffRows, lineDiff } from './bundle-compare-code-model.js'
@@ -26,11 +26,12 @@ const FILE_BATCH = 40
 const combinedEntries = entries => [...entries].toSorted(([a], [b]) => a.localeCompare(b))
 
 // The rows the list shows for a comparison, a head for each file and its
-// diff's rows as they first show, two for each repointed import (`resolutions`)
-// and a head for an importer with no other change, counted up to `max`; and
-// the line models found on the way, for the view to draw. Infinity where a
-// file is too large to diff without being asked to. Each file lists two rows
-// at least, so one with too many files for `max` is told without a diff.
+// diff's rows as they first show, two for each import resolution that
+// differs (`resolutions`) and a head for an importer with no other change,
+// counted up to `max`; and the line models found on the way, for the view to
+// draw. Infinity where a file is too large to diff without being asked to.
+// Each file lists two rows at least, so one with too many files for `max` is
+// told without a diff.
 export function combinedDiffRows(base, other, files, { resolutions = [], max = COMBINED_DIFF_MAX } = {}) {
   const models = new Map()
   const entries = fileEntries(files)
@@ -178,10 +179,10 @@ export class BundleCompareAll extends BundleCompareCode {
     })
   }
 
-  // A file's repointed imports, over its diff where its text changed too:
-  // one whose only change they are lists them alone, without its source, and
-  // one whose record changed too says how; over the package's package.json,
-  // its dependency changes.
+  // A file's import resolutions that differ, over its diff where its text
+  // changed too: one whose only change they are lists them alone, without its
+  // source, and one whose record changed too says how; over the package's
+  // package.json, its dependency changes.
   _fileBody(path, entry, file) {
     const repointed = entry.repointed
       ? this._renderRepointed(path, entry.repointed, [file.after, file.before].find(text => typeof text === 'string' && text !== '') ?? null, false) : nothing
