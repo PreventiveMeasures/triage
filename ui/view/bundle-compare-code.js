@@ -7,7 +7,8 @@
 //
 // `base` / `other` are the two parsed bundles (base is the open one, the
 // "before"), `files` the comparison's file lists from computeBundleDiff,
-// `resolutions` its repointed imports (computeResolutionDiff) — their
+// `resolutions` its import resolutions that differ (resolutionRows):
+// repointed, or one side's alone in a file the two hold alike — their
 // importers are listed too, with each import's old and new target — and
 // `path` the selected file, which the slide owns so the Overview's
 // file rows can open one here. A pick dispatches `compare-code-select`.
@@ -23,7 +24,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
 import { hidesMixedWhitespace, layoutDir, renameParts, rootLabel, wordRanges } from '@preventive/compare/view.js'
-import { comparisonEntries, fileContents } from './bundle-compare-files.js'
+import { comparisonEntries, fileContents, resolutionChange } from './bundle-compare-files.js'
 export { fileEntries, fileContents } from './bundle-compare-files.js'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
@@ -62,7 +63,7 @@ const KINDS = [
   { kind: 'renamed', label: 'Renamed', letter: '→' },
   { kind: 'added', label: 'Added', letter: 'A' },
   { kind: 'removed', label: 'Removed', letter: 'D' },
-  // Same contents, but some of its imports resolve elsewhere.
+  // Same contents, but some of its imports resolve elsewhere, or on one side alone.
   { kind: 'repointed', label: 'Repointed', letter: 'R' },
 ]
 export const KIND = Object.fromEntries(KINDS.map(entry => [entry.kind, entry]))
@@ -245,6 +246,16 @@ const hidesAnyWhitespace = (model, before, after) => (model.hideable ??= hidesWh
 
 // A diff too large to compute before it is asked for.
 export const isLargeDiff = (before, after) => before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES
+
+// A file's import resolutions that differ, as its R and their list over its
+// diff name them: so many repointed imports, or where one side records some
+// alone, the resolutions of each kind.
+function importsNote(rows) {
+  const kinds = Map.groupBy(rows, resolutionChange)
+  if (kinds.size === 1 && kinds.has('repointed')) return { title: `Repointed ${rows.length === 1 ? 'import' : 'imports'}`, note: `${rows.length} repointed ${rows.length === 1 ? 'import' : 'imports'}` }
+  const counts = ['removed', 'added', 'repointed'].filter(kind => kinds.has(kind)).map(kind => `${kinds.get(kind).length} ${kind}`)
+  return { title: 'Import resolutions', note: `Import resolutions: ${counts.join(', ')}` }
+}
 
 // Whether a file reads as its source in place of a diff, a file at a time:
 // its only change a repointed import, moved there by a rename or not, its
@@ -908,7 +919,7 @@ export class BundleCompareCode extends LitElement {
     const leaves = files.flatMap(([name, full]) => {
       if (!this._takeTreeRow(full === current)) return []
       const { kind, repointed, renamedFrom, modified } = this._entries.get(full)
-      const imports = repointed ? `${repointed.length} repointed ${repointed.length === 1 ? 'import' : 'imports'}` : ''
+      const imports = repointed ? importsNote(repointed).note : ''
       const content = html`<li class="bundle-code-tree-file">
         <button type="button" class=${classMap({ 'bundle-code-tree-link': true, current: full === current })}
           aria-label=${this.extensions?.fileLabel?.(full) ?? nothing} aria-current=${full === current ? 'true' : nothing} @click=${() => this._select(full)}>
@@ -1537,9 +1548,6 @@ export class BundleCompareCode extends LitElement {
     return bundleFilesAsMap(this.other).has(path) ? this.other : this.base
   }
 
-  // The file's repointed imports: the specifier and its conditions, the
-  // target it resolved to before and after, and the lines importing it —
-  // links to them when the source shows below.
   // Over the package's own package.json, where a source lists what its
   // dependencies changed (`dependencies`): plain, peer and optional ones (dev
   // ones aren't listed), under one head counting them, each a chip with its
@@ -1571,13 +1579,19 @@ export class BundleCompareCode extends LitElement {
     </section>`
   }
 
+  // The file's import resolutions that differ (importsNote): the specifier
+  // and its conditions, the target it resolved to before and after, (none)
+  // on a side that records none, and the lines importing it — links to them
+  // when the source shows below.
   _renderRepointed(path, rows, text, linked) {
     const lines = text ? text.split('\n') : []
     const markup = text ? this._highlighted(this._textSide(path), path, text) : null
     const importLines = this._importLines(rows, lines)
-    const target = value => value || '(empty target)'
-    return html`<section class="bundle-compare-code-repointed" aria-label="Repointed imports">
-      <h4>Repointed ${rows.length === 1 ? 'import' : 'imports'} <b>${rows.length}</b></h4>
+    // A side without one, (none): the import resolved on the other alone.
+    const target = value => value === null ? html`<code class="is-none">(none)</code>` : html`<code data-tooltip-truncated data-tooltip=${value || '(empty target)'}>${value || '(empty target)'}</code>`
+    const { title } = importsNote(rows)
+    return html`<section class="bundle-compare-code-repointed" aria-label=${title}>
+      <h4>${title} <b>${rows.length}</b></h4>
       <ul>${rows.map(row => {
         const at = importLines.get(row.specifier)
         const context = `${row.conditions}${row.platform === null ? '' : ` · Platform: ${row.platform}`}`
@@ -1587,9 +1601,9 @@ export class BundleCompareCode extends LitElement {
             <span data-tooltip-truncated data-tooltip=${context}>${context}</span>
           </div>
           <div class="bundle-compare-code-repointed-targets">
-            <span class="before"><span>Before</span><code data-tooltip-truncated data-tooltip=${target(row.baseTarget)}>${target(row.baseTarget)}</code></span>
+            <span class="before"><span>Before</span>${target(row.baseTarget)}</span>
             <span aria-hidden="true">→</span>
-            <span class="after"><span>After</span><code data-tooltip-truncated data-tooltip=${target(row.otherTarget)}>${target(row.otherTarget)}</code></span>
+            <span class="after"><span>After</span>${target(row.otherTarget)}</span>
           </div>
           ${at.slice(0, MAX_IMPORT_LINES).map(line => this._importLine(line, lines[line], markup?.[line], row.specifier, linked))}
           ${at.length > MAX_IMPORT_LINES ? html`<span class="bundle-compare-code-repointed-more">and ${at.length - MAX_IMPORT_LINES} more ${at.length - MAX_IMPORT_LINES === 1 ? 'line' : 'lines'}</span>` : nothing}

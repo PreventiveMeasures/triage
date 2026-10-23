@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleCompareFiles, bundleCompareResolutions } from '../ui/view/bundle-compare-inputs.js'
 import { computeBundleDiff, computeResolutionDiff } from '../ui/view/bundle-compare-diff.js'
+import { prepareComparison } from '../common/bundle-comparison.js'
 
 function details(imports, { files = { 'app.js': 'import "dep"', 'a.js': 'a', 'b.js': 'b' }, reason = {} } = {}) {
   return { kind: 'stasis', bundle: Bundle.parse(new Bundle({
@@ -30,12 +31,37 @@ test('detects a redirected import even when all file contents and sizes are iden
   assert.equal(diff(other, base).changed[0].otherTarget, 'a.js')
 })
 
-test('ignores added and removed resolutions, including specifiers sharing a target', () => {
-  const base = details(imports([['unchanged', 'a.js'], ['removed', 'a.js']]))
-  const other = details(imports([['unchanged', 'a.js'], ['added', 'a.js']]))
-  const result = diff(base, other)
-  assert.equal(result.totalChanges, 0)
-  assert.deepEqual(result.changed, [])
+test('reports added and removed resolutions only of an importer told identical, including specifiers sharing a target', () => {
+  const base = bundleCompareResolutions(details(imports([['unchanged', 'a.js'], ['removed', 'a.js']])))
+  const other = bundleCompareResolutions(details(imports([['unchanged', 'a.js'], ['added', 'a.js']])))
+  const unchanged = computeResolutionDiff(base, other)
+  assert.deepEqual([unchanged.changed, unchanged.onlyBase, unchanged.onlyOther, unchanged.totalChanges], [[], [], [], 0], 'no importer told identical')
+  const identical = computeResolutionDiff(base, other, new Map(), new Map(), null, path => path === 'app.js')
+  assert.equal(identical.totalChanges, 2)
+  assert.deepEqual(identical.changed, [])
+  assert.deepEqual(identical.onlyBase.map(({ key: _key, ...row }) => row), [{
+    parent: 'app.js', specifier: 'removed', conditions: 'node, import', platform: null, baseTarget: 'a.js', otherTarget: null,
+  }])
+  assert.deepEqual(identical.onlyOther.map(({ key: _key, ...row }) => row), [{
+    parent: 'app.js', specifier: 'added', conditions: 'node, import', platform: null, baseTarget: null, otherTarget: 'a.js',
+  }])
+  assert.equal(computeResolutionDiff(base, other, new Map(), new Map(), null, path => path === 'other.js').totalChanges, 0, 'another importer told identical')
+})
+
+test('the comparison tells resolutions one side records alone of an importer it holds alike, renamed or not, and of none whose contents changed', () => {
+  const side = (changed, specifier, target) => details([['node, import', [
+    ['app.js', [['dep', 'a.js'], [specifier, target]]],
+    ['lib.js', [['dep', 'a.js'], [specifier, target]]],
+    [changed ? 'new/mod.js' : 'old/mod.js', [['dep', 'a.js'], changed ? ['extra', 'b.js'] : ['was', 'a.js']]],
+  ]]], { files: { 'app.js': 'import "dep"', 'lib.js': changed ? 'lib 2' : 'lib 1', [changed ? 'new/mod.js' : 'old/mod.js']: 'import "dep"; import "extra"', 'a.js': 'a', 'b.js': 'b' } })
+  const { files, resolutions } = prepareComparison(side(false, 'gone', 'a.js'), side(true, 'new', 'b.js'))
+  assert.deepEqual(files.changed.filter(row => row.renamedFrom).map(row => [row.renamedFrom, row.path, row.modified]), [['old/mod.js', 'new/mod.js', false]])
+  assert.deepEqual(resolutions.changed, [])
+  assert.deepEqual(resolutions.onlyBase.map(row => [row.parent, row.specifier, row.baseTarget, row.otherTarget]),
+    [['app.js', 'gone', 'a.js', null], ['new/mod.js', 'was', 'a.js', null]], 'a renamed importer\'s under its new path')
+  assert.deepEqual(resolutions.onlyOther.map(row => [row.parent, row.specifier, row.baseTarget, row.otherTarget]),
+    [['app.js', 'new', null, 'b.js'], ['new/mod.js', 'extra', null, 'b.js']], 'lib.js, whose contents changed, left out')
+  assert.equal(resolutions.totalChanges, 4)
 })
 
 test('preserves importer, condition, and import-attribute identities', () => {

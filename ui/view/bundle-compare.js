@@ -76,7 +76,7 @@ import { byFlags } from './file-flags.js'
 import { renderComparisonViewer } from './bundle-compare-view.js'
 import { compareModeOf } from '../../common/managed/routes.js'
 
-// Cap the repointed-imports table's rendered rows so a pathological
+// Cap each import-resolutions table's rendered rows so a pathological
 // compare can't stamp out tens of thousands of DOM nodes. The counts are
 // always exact; only the listing is trimmed, with an "and N more" footer.
 // (File and package groups list every row in a scrolling list instead.)
@@ -635,23 +635,28 @@ class BundleCompare extends LitElement {
     this._openSections = sections
   }
 
-  // Repointed imports as a table, File | Import | Before | After |
-  // Conditions, one line a row, in a card like the groups'; a file opens
-  // in Code. Conditions drops out when every row reads `*`.
-  _renderResolutions(resolutions) {
+  // Import resolutions as tables, File | Import | Before | After |
+  // Conditions, one line a row, in cards like the groups': those only the
+  // one picked records and those only the open one does, each of a file the
+  // two hold alike, their other side reading (none), then those repointed. A
+  // file opens in Code. Conditions drops out when every row reads `*`.
+  _renderResolutions(resolutions, baseName, otherName) {
     if (resolutions.totalChanges === 0) return nothing
-    const rows = resolutions.changed
-    const shown = rows.slice(0, MAX_ROWS)
-    const hidden = rows.length - shown.length
+    const groups = [
+      { title: `Removed · only in ${baseName}`, rows: resolutions.onlyBase, kind: 'removed' },
+      { title: `Added · only in ${otherName}`, rows: resolutions.onlyOther, kind: 'added' },
+      { title: 'Repointed', rows: resolutions.changed, kind: 'changed' },
+    ].filter(({ rows }) => rows.length > 0).map(group => ({ ...group, shown: group.rows.slice(0, MAX_ROWS) }))
     const cell = (text, className = '') => html`<td class=${className}><code data-tooltip-truncated data-tooltip=${text}>${text}</code></td>`
+    const target = (text, className) => text === null ? html`<td class="bundle-compare-resolution-none"><span>(none)</span></td>` : cell(text || '(empty target)', className)
     const contextOf = r => `${r.conditions}${r.platform === null ? '' : ` · Platform: ${r.platform}`}`
     // `*` (any conditions, every platform) on every row tells nothing apart.
-    const showContext = shown.some(r => contextOf(r) !== '*')
-    return this._collapsible('resolutions', 'Import resolutions', rows.length, () => html`
-      <section class="bundle-compare-group bundle-compare-changed bundle-compare-resolutions">
+    const showContext = groups.some(({ shown }) => shown.some(r => contextOf(r) !== '*'))
+    return this._collapsible('resolutions', 'Import resolutions', resolutions.totalChanges, () => groups.map(({ title, rows, kind, shown }) => html`
+      <section class=${`bundle-compare-group bundle-compare-${kind} bundle-compare-resolutions`}>
         <header class="bundle-compare-group-head">
           <span class="bundle-compare-dot" aria-hidden="true"></span>
-          <span class="bundle-compare-group-title">Repointed</span>
+          <span class="bundle-compare-group-title">${title}</span>
           <span class="bundle-compare-group-count">${rows.length}</span>
         </header>
         <table class=${showContext ? '' : 'bundle-compare-resolutions--no-context'}>
@@ -661,14 +666,14 @@ class BundleCompare extends LitElement {
             return html`<tr>
               <td><button type="button" class="bundle-compare-resolution-parent" data-tooltip-truncated data-tooltip=${r.parent} @click=${() => this._openFile(r.parent)}>${r.parent}</button></td>
               ${cell(r.specifier)}
-              ${cell(r.baseTarget || '(empty target)', 'bundle-compare-resolution-before')}
-              ${cell(r.otherTarget || '(empty target)', 'bundle-compare-resolution-after')}
+              ${target(r.baseTarget, 'bundle-compare-resolution-before')}
+              ${target(r.otherTarget, 'bundle-compare-resolution-after')}
               ${showContext ? html`<td class="bundle-compare-resolution-context"><span data-tooltip-truncated data-tooltip=${context}>${context}</span></td>` : nothing}
             </tr>`
           })}</tbody>
         </table>
-        ${hidden > 0 ? html`<div class="bundle-compare-more">and ${hidden.toLocaleString()} more…</div>` : nothing}
-      </section>`)
+        ${rows.length > shown.length ? html`<div class="bundle-compare-more">and ${(rows.length - shown.length).toLocaleString()} more…</div>` : nothing}
+      </section>`))
   }
 
   // The comparison of the current pairing: loading, ready with its `diff`,
@@ -840,7 +845,7 @@ class BundleCompare extends LitElement {
             ${this._fileGroup(`Removed · only in ${baseName}`, files.removed, 'removed', displayOf, fileLanes)}
             ${this._fileGroup(`Added · only in ${otherName}`, files.added, 'added', displayOf, fileLanes)}
             ${this._fileGroup('Changed', files.changed, 'changed', displayOf, fileLanes)}`, 'files'), root.from ? `${root.from} → ${root.to}` : prefix)}
-      ${this._renderResolutions(diff.resolutions)}
+      ${this._renderResolutions(diff.resolutions, baseName, otherName)}
     `
   }
 }

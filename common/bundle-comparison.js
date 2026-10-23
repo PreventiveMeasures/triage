@@ -38,12 +38,17 @@ export function prepareComparison(base, other, scope = null) {
   for (const row of diff.files.onlyBase) row.lines = baseLines.get(row.basePath ?? row.path) ?? 0
   for (const row of diff.files.onlyOther) row.lines = otherLines.get(row.path) ?? 0
   for (const row of diff.files.changed) Object.assign(row, { baseLines: baseLines.get(row.basePath ?? row.path) ?? 0, otherLines: otherLines.get(row.path) ?? 0 })
+  // A file both sides hold with the same contents, renamed or recorded
+  // otherwise or not: an import resolution one side records alone is told
+  // only of these.
+  const differs = new Set([...diff.files.onlyOther, ...diff.files.changed.filter(row => row.modified !== false)].map(row => row.path))
   diff.resolutions = computeResolutionDiff(
     bundleCompareResolutions(from, baseScope),
     bundleCompareResolutions(to, otherScope),
     new Map(diff.files.changed.filter(row => row.renamedFrom != null).map(row => [row.basePath, row.path])),
     diff.files.basePaths,
     diff.files.root,
+    path => otherSources.has(path) && !differs.has(path),
   )
   // Dependency versions come from the stasis per-module `{ name,
   // version }` metadata, not the path/byte walk above, so they're

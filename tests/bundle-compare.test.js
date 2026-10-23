@@ -29,9 +29,9 @@ const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks
 const Compare = customElements.get('bundle-compare')
 const { state: compareState } = await import('../client/index.js')
 
-function details(integrity, target, conditions = 'node, import') {
+function details(integrity, target, conditions = 'node, import', app = 'import "dep"') {
   return { integrity, kind: 'stasis', bundle: new Bundle({
-    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'app.js': 'import "dep"', 'a.js': 'a', 'b.js': 'b' } }]]),
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'app.js': app, 'a.js': 'a', 'b.js': 'b' } }]]),
     reason: { deps: ['a.js', 'b.js'] },
     imports: new Map([[conditions, new Map([['app.js', new Map([['dep', target]])]])]]),
   }) }
@@ -149,27 +149,42 @@ test('resolution groups cap visible rows while preserving exact counts', () => {
   const row = diffOf(view).resolutions.changed[0]
   const rows = Array.from({ length: 405 }, (_, i) => ({ ...row, key: String(i), parent: `file-${i}.js` }))
   view._openSections = new Set(['resolutions'])
-  const markup = renderText(view._renderResolutions({ changed: rows, totalChanges: rows.length }))
+  const markup = renderText(view._renderResolutions({ changed: rows, onlyBase: rows.slice(0, 2), onlyOther: [], totalChanges: rows.length + 2 }, 'a', 'b'))
   assert.match(markup, /bundle-compare-group-count">405/u)
   assert.match(markup, /file-399\.js/u)
   assert.doesNotMatch(markup, /file-400\.js/u)
-  assert.match(markup, /and 5 more/u)
+  assert.equal([...markup.matchAll(/and 5 more/gu)].length, 1, 'each group capped apart')
 })
 
-test('added and removed resolutions never appear or contribute to the summary', () => {
+test('Import resolutions lists those one side records alone, Removed and Added, from a file the two hold alike, and the summary counts them', () => {
   const view = compare()
-  view.details.bundle.imports.get('node, import').get('app.js').set('removed-only', 'a.js')
-  view._otherDetails.bundle.imports.get('node, import').get('app.js').set('added-only', 'b.js')
+  // Recorded by the one picked alone, then by the open one alone.
+  view._otherDetails.bundle.imports.get('node, import').get('app.js').set('gone-only', 'a.js')
+  view.details.bundle.imports.get('node, import').get('app.js').set('new-only', 'b.js')
   view._openSections = new Set(['resolutions'])
   const markup = renderText(view._renderDiff(diffOf(view)))
-  assert.match(markup, /Repointed/u)
-  assert.doesNotMatch(markup, /removed-only|added-only/u)
+  assert.match(markup, /Import resolutions <span class="bundle-compare-section-count">3/u)
+  // The one picked is the fixture's `After`, the open one its `Before`.
+  assert.deepEqual([...markup.matchAll(/bundle-compare-group-title">([^<]*)</gu)].map(m => m[1]), ['Removed · only in After', 'Added · only in Before', 'Repointed'])
+  const cells = [...markup.slice(markup.indexOf('<tbody>')).matchAll(/<td[^>]*>\s*<(?:button|code|span)[^]*?>([^<>]*)</gu)].map(m => m[1])
+  assert.deepEqual(cells, [
+    'app.js', 'gone-only', 'a.js', '(none)', 'node, import',
+    'app.js', 'new-only', '(none)', 'b.js', 'node, import',
+    'app.js', 'dep', 'b.js', 'a.js', 'node, import',
+  ])
+  const summary = renderText(view._renderSummary(diffOf(view)))
+  assert.match(summary, /−1 removed resolution</u)
+  assert.match(summary, /\+1 added resolution</u)
+  assert.match(summary, /1 repointed resolution</u)
+  // The open one's app.js changed: what either records alone isn't told, its repointed import still is.
+  const changed = details('base', 'a.js', 'node, import', 'import "dep" // changed')
+  changed.bundle.imports.get('node, import').get('app.js').set('new-only', 'b.js')
+  view.details = changed
+  const after = renderText(view._renderDiff(diffOf(view)))
+  assert.doesNotMatch(after, /gone-only|new-only|only in After|only in Before/u)
+  assert.match(after, /Import resolutions <span class="bundle-compare-section-count">1/u)
+  assert.doesNotMatch(renderText(view._renderSummary(diffOf(view))), /removed resolution|added resolution/u)
   assert.match(renderText(view._renderSummary(diffOf(view))), /1 repointed resolution/u)
-  view._otherDetails.bundle.imports.get('node, import').get('app.js').set('dep', 'a.js')
-  // Read anew, as a bundle that changed is.
-  view._otherDetails = { ...view._otherDetails }
-  assert.doesNotMatch(renderText(view._renderDiff(diffOf(view))), /Import resolutions|Repointed/u)
-  assert.doesNotMatch(renderText(view._renderSummary(diffOf(view))), /repointed resolution/u)
 })
 
 test('file groups default to name order and sort independently by displayed size', () => {

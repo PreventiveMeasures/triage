@@ -24,6 +24,13 @@ export function dirClass(n) {
   return n > 0 ? 'up' : n < 0 ? 'down' : ''
 }
 
+// The import resolutions the open one drops, adds and repoints
+// (computeResolutionDiff), a chip for each kind it has.
+function resolutionChips({ onlyBase, onlyOther, changed }) {
+  return [['removed', '−', onlyBase], ['added', '+', onlyOther], ['repointed', '', changed]].filter(([, , rows]) => rows.length > 0)
+    .map(([kind, sign, rows]) => html`<span class=${`bundle-compare-chip ${kind === 'repointed' ? 'changed' : kind}`}>${sign}${rows.length.toLocaleString()} ${kind} ${rows.length === 1 ? 'resolution' : 'resolutions'}</span>`)
+}
+
 // Percent change of a byte delta against the base total. Empty when
 // the base is zero (every byte is new, so a percentage is meaningless).
 function formatPct(delta, baseBytes) {
@@ -69,7 +76,7 @@ export function renderCompareStats(diff) {
         ${totals.onlyOtherFiles > 0 ? html`<span class="bundle-compare-chip added">+${totals.onlyOtherFiles.toLocaleString()} added</span>` : nothing}
         ${totals.changedFiles > 0 ? html`<span class="bundle-compare-chip changed">${totals.changedFiles.toLocaleString()} changed${totals.renamedFiles > 0 ? ` (${totals.renamedFiles.toLocaleString()} renamed)` : ''}</span>` : nothing}
         <span class="bundle-compare-chip unchanged">${totals.unchangedFiles.toLocaleString()} unchanged</span>
-        ${diff.resolutions?.totalChanges > 0 ? html`<span class="bundle-compare-chip changed">${diff.resolutions.totalChanges.toLocaleString()} repointed ${diff.resolutions.totalChanges === 1 ? 'resolution' : 'resolutions'}</span>` : nothing}
+        ${diff.resolutions ? resolutionChips(diff.resolutions) : nothing}
       </div>
     </div></div>`
 }

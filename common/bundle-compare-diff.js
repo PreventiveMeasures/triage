@@ -25,8 +25,12 @@ import { resolutionKey } from './bundle-compare-inputs.js'
 
 // Resolutions compare independently from file bytes: identical files can be
 // wired together differently. Inputs are keyed by importer, specifier,
-// conditions (including import attributes), and platform. Only existing
-// resolutions whose targets changed are reported; additions/removals are omitted.
+// conditions (including import attributes), and platform. Resolutions whose
+// targets changed are reported (`changed`, repointed); one recorded on a side
+// alone (`onlyBase`, `onlyOther`) only where its importer holds the same
+// contents on both sides (`identical`, of its path as the other bundle lays
+// it out), as a file whose code changed gains and drops imports with it.
+// Each row names its target on either side, null on the side without one.
 // `renames` (base path → other path, see renamesOf) names base files as
 // the other bundle does: a renamed importer's resolutions pair with its new
 // path's, reported under it, and a target renamed is the same target.
@@ -34,21 +38,36 @@ import { resolutionKey } from './bundle-compare-inputs.js'
 // the bundles' roots differ, a base target shown as the other bundle would
 // lay it out; a path no file has (an importer the bundle didn't capture, a
 // builtin) may read either as it is or through the root.
-export function computeResolutionDiff(base, other, renames = new Map(), basePaths = new Map(), root = null) {
+export function computeResolutionDiff(base, other, renames = new Map(), basePaths = new Map(), root = null, identical = () => false) {
   const names = path => {
     const known = renames.get(path) ?? basePaths.get(path)
     return known === undefined ? [...new Set([path, through(root, path) ?? path])] : [known]
   }
-  const changed = []
+  const changed = [], onlyBase = [], onlyOther = []
+  const paired = new Set()
   for (const before of base.values()) {
     const after = names(before.parent).map(parent => other.get(resolutionKey(parent, before.specifier, before.conditions, before.platform))).find(Boolean)
-    if (after && !names(before.target).includes(after.target)) {
-      const { target: otherTarget, ...identity } = after
-      changed.push({ ...identity, baseTarget: basePaths.get(before.target) ?? before.target, otherTarget })
+    const baseTarget = basePaths.get(before.target) ?? before.target
+    if (after) {
+      paired.add(after.key)
+      if (!names(before.target).includes(after.target)) {
+        const { target: otherTarget, ...identity } = after
+        changed.push({ ...identity, baseTarget, otherTarget })
+      }
+      continue
     }
+    const parent = names(before.parent).find(identical)
+    if (parent === undefined) continue
+    const { specifier, conditions, platform } = before
+    onlyBase.push({ key: resolutionKey(parent, specifier, conditions, platform), parent, specifier, conditions, platform, baseTarget, otherTarget: null })
   }
-  changed.sort((a, b) => a.key.localeCompare(b.key))
-  return { changed, totalChanges: changed.length }
+  for (const after of other.values()) {
+    if (paired.has(after.key) || !identical(after.parent)) continue
+    const { target: otherTarget, ...identity } = after
+    onlyOther.push({ ...identity, baseTarget: null, otherTarget })
+  }
+  for (const rows of [changed, onlyBase, onlyOther]) rows.sort((a, b) => a.key.localeCompare(b.key))
+  return { changed, onlyBase, onlyOther, totalChanges: changed.length + onlyBase.length + onlyOther.length }
 }
 
 // A file's size, by the measure the Overview and Treemap use: text by the
