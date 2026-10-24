@@ -148,15 +148,42 @@ test('findings arriving after a manual selection keep the selected file', () => 
   assert.equal(state.bundleSourceFile, 'node_modules/dep/index.js')
 })
 
-test('sourcemaps open their top-most package.json outside node_modules, else their largest source', () => {
-  findings('src/main.js', ['critical'])
+test('sourcemaps open their top-most package.json outside node_modules, else their top-most index.js or main.js, else their largest source', () => {
+  findings('src/app.js', ['critical'])
+  openBundle({ kind: 'sourcemap', json: {
+    version: 3, sources: ['src/app.js', 'node_modules/dep/index.js'], sourcesContent: ['own', 'x'.repeat(100)],
+  } })
+  assert.equal(state.bundleSourceFile, 'node_modules/dep/index.js', 'a dependency\'s index.js only as the largest')
+  state.bundleSourceFile = null
   openBundle({ kind: 'sourcemap', json: {
     version: 3, sources: ['src/main.js', 'node_modules/dep/index.js'], sourcesContent: ['own', 'x'.repeat(100)],
   } })
-  assert.equal(state.bundleSourceFile, 'node_modules/dep/index.js')
+  assert.equal(state.bundleSourceFile, 'src/main.js')
   state.bundleSourceFile = null
   openBundle({ kind: 'sourcemap', json: {
     version: 3, sources: ['webpack:///./package.json', 'webpack:///./node_modules/dep/package.json', 'webpack:///./src/main.js'], sourcesContent: ['{}', '{}', 'x'.repeat(100)],
   } })
   assert.equal(state.bundleSourceFile, 'webpack:///./package.json')
+})
+
+test('without an entry point or a package.json, a bundle opens its top-most index.ts, index.js, main.ts or main.js outside node_modules, in that order where several are as high', () => {
+  const own = files => stasis({ ...files, 'src/large.js': 'x'.repeat(1000) }, { 'index.js': 'dep', 'main.js': 'dep' })
+  const order = ['src/index.ts', 'src/index.js', 'src/main.ts', 'src/main.js']
+  for (const [at, expected] of order.entries()) {
+    state.bundleSourceFile = null
+    openBundle(own({ ...Object.fromEntries(order.slice(at).map(file => [file, file])), 'lib/deep/index.ts': 'deep' }))
+    assert.equal(state.bundleSourceFile, expected)
+  }
+  state.bundleSourceFile = null
+  openBundle(own({ 'src/main.js': 'main', 'src/components/button/index.ts': 'deep' }))
+  assert.equal(state.bundleSourceFile, 'src/main.js', 'a main.js nearer the top before a deeper index.ts')
+  state.bundleSourceFile = null
+  openBundle(own({ 'b/index.js': 'b', 'a/index.js': 'a' }))
+  assert.equal(state.bundleSourceFile, 'a/index.js', 'the first in path order among those as high')
+  state.bundleSourceFile = null
+  openBundle(own({ 'app/package.json': '{}', 'index.js': 'root' }))
+  assert.equal(state.bundleSourceFile, 'app/package.json', 'a package.json however deep before them')
+  state.bundleSourceFile = null
+  openBundle(stasis({ 'src/app.js': 'app', 'src/large.js': 'x'.repeat(1000) }, { 'index.js': 'x'.repeat(5000) }))
+  assert.equal(state.bundleSourceFile, 'src/large.js', 'never a dependency\'s: the largest own file else')
 })

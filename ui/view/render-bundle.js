@@ -32,7 +32,7 @@ import { LONG_LINE, TEXT_NODE_MAX, sourceText } from './source-text.js'
 import { controlMarkup, hasControls } from './control-chars.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import { bundlePackageSourceStats } from './bundle-source-package.js'
-import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, defaultOpenDirectories, filterBundleSourceTree, navigateBundleSourceTree, shallowestPackageJson, sourceDirectoryLabel } from './bundle-source-tree.js'
+import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, defaultOpenDirectories, filterBundleSourceTree, navigateBundleSourceTree, shallowestNamed, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
@@ -1528,8 +1528,10 @@ function bundleCodeTree(details, sources, allPaths) {
 //   2. the stasis entry point — the bundle's natural root (v0
 //      stasis has an empty entries set and falls through);
 //   3. a bundle's (not a version's or a repository's) top-most
-//      package.json outside node_modules (shallowestPackageJson);
-//   4. the largest source — the main chunk is the most informative
+//      package.json outside node_modules (shallowestNamed);
+//   4. a bundle's top-most index.ts, index.js, main.ts or main.js
+//      outside node_modules, in that order where several are as high;
+//   5. the largest source — the main chunk is the most informative
 //      default left.
 // Findings play no part: the file shown doesn't change as they arrive.
 // `sources` has already been restricted to own files when applicable.
@@ -1545,8 +1547,11 @@ function pickDefaultBundleCodeFile(details, sources) {
       if (typeof sources.get(entry) === 'string') return entry
     }
   }
-  const manifest = details.npmEntries ? null : shallowestPackageJson([...sources].flatMap(([file, content]) => typeof content === 'string' ? [file] : []))
-  if (manifest) return manifest
+  if (!details.npmEntries) {
+    const texts = [...sources].flatMap(([file, content]) => typeof content === 'string' ? [file] : [])
+    const named = shallowestNamed(texts, ['package.json']) ?? shallowestNamed(texts, ['index.ts', 'index.js', 'main.ts', 'main.js'])
+    if (named) return named
+  }
   let largest = null
   let largestLen = -1
   for (const [file, content] of sources) {
