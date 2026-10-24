@@ -890,7 +890,8 @@ const fixtureSize = (path: string) => 200 + createHash('sha1').update(path).dige
 // The files the code viewer's directories hold, as its reads below give them.
 const codeFixtureFiles = (repoId: number) => repoId === 102 ? ['src/main.rs', 'src/lib.rs', 'Cargo.toml', 'README.md']
   : ['src/index.ts', 'src/app.tsx', 'src/utils/format.js', 'src/utils/types.d.ts', 'contracts/Token.sol', 'contracts/vault/Vault.sol', 'contracts/test/Token.t.sol',
-    'native/src/lib.rs', 'test/index.test.ts', 'vendor/lib/huge.js', 'package.json', 'package-lock.json', 'README.md']
+    'native/src/lib.rs', 'test/index.test.ts', 'vendor/lib/huge.js', 'package.json', 'package-lock.json', 'README.md',
+    'app/package.json', 'app/stasis.config.json', 'app/index.js', 'app/cli.js']
 
 // A commit of History's its files as Replay plays them; any other, the code
 // viewer's, those its directories hold.
@@ -978,7 +979,9 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
     entries.set(name, { name, path: prefix + name, type: rest.includes('/') ? 'dir' : 'file' })
   }
   const contents = { path, commit, entries: [...entries.values()], limited: false,
-    ...(entries.has('package.json') ? { packageEntryPoints: ['src/index.ts', 'src/app.tsx', 'src/utils/format.js'] } : {}),
+    // `app`'s stasis.config.json lists its entries, suggested before any guess.
+    ...(path === 'app' ? { configEntryPoints: ['app/index.js', 'app/cli.js'] }
+      : entries.has('package.json') ? { packageEntryPoints: ['src/index.ts', 'src/app.tsx', 'src/utils/format.js'] } : {}),
     ...(repo.id !== 102 && (path === '' || path === 'contracts') ? { solidityEntryPoints: ['contracts/Token.sol', ...(path === '' ? ['contracts/vault/Vault.sol'] : [])], soliditySuggestionsLimited: false } : {}),
   }
   sendJson(res, 200, refs ? { ...refs, defaultContents: contents } : contents)

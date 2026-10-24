@@ -12,6 +12,7 @@
 .package-suggestions .btn { flex: none; font-size: .72rem; }
 .selection { flex: 1; min-width: 0; }
 .selection .note { margin: .5rem 0 0; }
+.selection .note.error { color: var(--critical); }
 .selection-head { display: flex; align-items: center; gap: .75rem; }
 .btn.clear-selection { min-height: 1.65rem; padding: .2rem .5rem; font-size: .72rem; }
 h2 { margin: 0; font-size: .8rem; font-weight: 500; }

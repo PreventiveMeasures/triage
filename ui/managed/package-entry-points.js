@@ -1,5 +1,9 @@
 import { html, nothing } from 'lit'
 
+export function configEntryPointSuggestions(paths, selected, apply) {
+  return entryPointSuggestions(paths, selected, apply, html`Entry points listed in <code>stasis.config.json</code>`, 'Configured entry points')
+}
+
 export function packageEntryPointSuggestions(paths, selected, apply) {
   return entryPointSuggestions(paths, selected, apply, html`Entry points declared in <code>package.json</code>`, 'Suggested entry points')
 }

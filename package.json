@@ -214,6 +214,7 @@
     "server-managed/solidity-entry-points.ts",
     "server-managed/sql-postgres.ts",
     "server-managed/sql.ts",
+    "server-managed/stasis-config.ts",
     "server-managed/static.ts",
     "server-managed/storage.ts",
     "server-managed/storage-command.ts",
@@ -416,8 +417,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@exodus/stasis": "1.0.0-beta.11",
-    "@exodus/stasis-core": "1.0.0-beta.11",
+    "@exodus/stasis": "1.0.0-beta.12",
+    "@exodus/stasis-core": "1.0.0-beta.12",
     "@preventive/archive": "^1.2.0",
     "@preventive/compare": "^1.2.11",
     "@preventive/diff": "^1.1.0",

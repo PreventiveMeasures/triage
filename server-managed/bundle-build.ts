@@ -18,13 +18,22 @@ export interface BundleBuildInput {
   entries: string[]
   directory: string
   options: { conditions?: string[]; mainFields?: string[]; metro?: boolean; platforms?: string[]; jsx?: boolean; packageManager?: 'soldeer' }
-  // What the stored bundle records; null for Solidity, which takes no conditions.
+  // What the stored bundle records; null for Solidity, which takes no
+  // conditions, and for entries given none, which stasis.config.json must
+  // then list (the build checks: bundle-build-worker.js).
   conditions: BundleBuildConditions | null
 }
 
 function path(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 1024 && !/[\\\p{Cc}]/u.test(value)
     && value.split('/').every(part => part !== '' && part !== '.' && part !== '..')
+}
+
+const isScript = (entry: string) => /\.[cm]?[tj]sx?$/iu.test(entry)
+
+// Whether a build takes `value` as an entry point, with others in its language.
+export function buildableEntry(value: unknown): value is string {
+  return path(value) && (isScript(value) || value.endsWith('.sol'))
 }
 
 export function parseBundleBuild(value: unknown): BundleBuildInput {
@@ -35,7 +44,7 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
     || typeof commit !== 'string' || !/^[a-f\d]{40}$/u.test(commit)
     || !Array.isArray(entries) || entries.length === 0 || entries.length > 100 || !entries.every(path)) return fail()
   const selected = [...new Set(entries as string[])]
-  const scripts = selected.every(entry => /\.[cm]?[tj]sx?$/iu.test(entry))
+  const scripts = selected.every(isScript)
   if (!scripts && !selected.every(entry => entry.endsWith('.sol'))) return fail('unsupported-entries')
   const parts = posix.dirname(selected[0]!).split('/').filter(part => part !== '.')
   for (const entry of selected) {
@@ -46,8 +55,8 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
   // above the project no longer leaves it unable to tell which one installs it.
   const options: BundleBuildInput['options'] = scripts ? {} : { packageManager: 'soldeer' }
   let recorded: BundleBuildConditions | null = null
-  if (scripts) {
-    if (conditions == null || typeof conditions !== 'object' || Array.isArray(conditions)) return fail('bad-conditions')
+  if (scripts && conditions != null) {
+    if (typeof conditions !== 'object' || Array.isArray(conditions)) return fail('bad-conditions')
     const { preset, conditions: names, platforms } = conditions as Record<string, unknown>
     if (typeof preset !== 'string' || !['node', 'browser', 'metro'].includes(preset) || !Array.isArray(names) || names.length > 16
       || !names.every(name => typeof name === 'string' && name.length > 0 && name.length <= 64

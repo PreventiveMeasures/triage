@@ -303,3 +303,23 @@ test('Stasis honors Browser conditions and Metro platform-specific imports', asy
   assert.ok(mobileBundle.sources.has('value.ios.ts'))
   assert.ok(mobileBundle.sources.has('value.android.ts'))
 })
+
+test('real Stasis builds the entries stasis.config.json lists with their options there, into one bundle', async () => {
+  const project = { ...files, 'index.ts': 'export { value } from "#value";', 'worker.ts': 'export { value } from "#value";',
+    'package.json': JSON.stringify({ name: 'fixture', version: '1.0.0', type: 'module',
+      imports: { '#value': { browser: './browser.ts', default: './value.ts' } } }),
+    'browser.ts': 'export const value = "browser"',
+    'stasis.config.json': JSON.stringify({ entries: { 'index.ts': { conditions: ['browser'] }, './worker.ts': {} } }),
+  }
+  const request = { input: parseBundleBuild({ repoId: 1, commit, entries: ['index.ts', 'worker.ts'] }), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }
+  assert.equal(request.input.conditions, null)
+  const built = await buildStasisBundle(request, projectClient(project))
+  const bundle = Bundle.parse(brotliDecompressSync(built.bytes).toString())
+  assert.equal(built.directory, '')
+  assert.deepEqual([...bundle.entries].toSorted(), ['index.ts', 'worker.ts'])
+  assert.ok(bundle.sources.has('browser.ts'), 'index.ts resolves with its browser condition')
+  assert.ok(bundle.sources.has('value.ts'), 'worker.ts resolves without it')
+  project['stasis.config.json'] = JSON.stringify({ entries: { 'index.ts': { conditions: ['browser'], flow: true }, './worker.ts': {} } })
+  await assert.rejects(buildStasisBundle(request, projectClient(project)), { message: 'config-runs-code' })
+  await assert.rejects(buildStasisBundle({ ...request, input: input(['index.ts']) }, projectClient(project)), { message: 'config-conditions' })
+})

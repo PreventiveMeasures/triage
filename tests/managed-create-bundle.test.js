@@ -685,3 +685,95 @@ for (const [code, status, message] of [
     assert.equal(page._entries, null)
   })
 }
+
+test('entries stasis.config.json lists are selected alone, take no conditions, and never mix with others', async t => {
+  t.mock.method(globalThis, 'fetch', url => {
+    const path = new URL(url, 'https://test.invalid').searchParams.get('path')
+    return Promise.resolve(Response.json({ commit, entries, ...(path === '' ? { configEntryPoints: ['src/main.ts', 'bin/cli.js'] }
+      : path === 'other' ? { packageEntryPoints: ['other/index.js'] } : { configEntryPoints: ['app/main.ts'] }) }))
+  })
+  const page = new ManagedCreateBundle()
+  const calls = []
+  page.createBundle = input => { calls.push(input); return Promise.resolve({ id: 'stored' }) }
+  page.dispatchEvent = () => true
+  page._repoId = 1
+  page.changeRevision('branch', 'main')
+  await page.loadDirectory('')
+  assert.deepEqual([...page._selected], ['src/main.ts', 'bin/cli.js'])
+  assert.equal(page.configOf(), '')
+  const value = (view, part) => view.values[view.strings.findIndex(string => string.includes(part))]
+  const text = view => templates(view).map(template => template.strings.join('')).join('')
+  let view = page.render()
+  assert.equal(value(view, '.showConditions='), false, 'the conditions chooser is hidden for them alone')
+  assert.equal(value(view, 'slot="actions"'), false)
+  assert.match(text(view), /Built with the options <code>stasis\.config\.json<\/code> sets for them/u)
+  assert.equal(templates(view).some(template => template.values.includes('Configured entry points')), false, 'nothing left to suggest once they are selected')
+  page.toggleFile('bin/cli.js')
+  assert.ok(templates(page.render()).some(template => template.values.includes('Configured entry points')), 'one removed is suggested again')
+  page.toggleFile('bin/cli.js')
+  await page.loadDirectory('other')
+  assert.deepEqual([...page._selected], ['src/main.ts', 'bin/cli.js'], 'guesses are not selected beside them')
+  page._selected = new Set([...page._selected, 'other/index.js'])
+  assert.equal(page.configOf(), undefined)
+  view = page.render()
+  assert.match(text(view), /class="note error" role="alert">Entry points listed in a <code>stasis\.config\.json<\/code> are built with its options, alone/u)
+  assert.equal(value(view, 'slot="actions"'), true, 'a mixed selection can’t be created')
+  assert.equal(value(view, '.showConditions='), true)
+  await page.buildBundle()
+  assert.equal(calls.length, 0)
+  page.toggleFile('other/index.js')
+  await page.buildBundle()
+  assert.deepEqual(calls, [{ repoId: 1, commit, entries: ['src/main.ts', 'bin/cli.js'] }], 'no conditions for them')
+})
+
+test('an entry is the nearest listing stasis.config.json’s, and two files’ entries mix', async t => {
+  t.mock.method(globalThis, 'fetch', url => {
+    const path = new URL(url, 'https://test.invalid').searchParams.get('path')
+    return Promise.resolve(Response.json({ commit, entries,
+      configEntryPoints: path === '' ? ['app/main.ts', 'tool.ts'] : ['app/main.ts', 'app/worker.ts'] }))
+  })
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page.changeRevision('branch', 'main')
+  await page.loadDirectory('')
+  assert.deepEqual([...page._selected], ['app/main.ts', 'tool.ts'])
+  await page.loadDirectory('app')
+  assert.deepEqual([...page._selected], ['app/main.ts', 'app/worker.ts'], 'the nearer file’s take the place of those selected for the user')
+  assert.equal(page._configs.get('app/main.ts'), 'app')
+  assert.equal(page._configs.get('tool.ts'), '')
+  assert.equal(page.configOf(), 'app')
+  page.toggleFile('tool.ts')
+  assert.equal(page.configOf(), undefined, 'two files’ entries mix')
+  page.toggleFile('tool.ts')
+  assert.ok(templates(page.render()).some(template => template.values.includes('app/')), 'names the file whose options they take')
+  await page.loadDirectory('')
+  assert.equal(page._configs.get('app/main.ts'), 'app', 'a cached listing above keeps the nearer one')
+  page.changeRevision('tag', 'v1')
+  assert.equal(page._configs.size, 0, 'a new revision forgets them')
+})
+
+test('entries stasis.config.json lists take the place of guesses selected for the user, never of files picked', async t => {
+  t.mock.method(globalThis, 'fetch', url => {
+    const path = new URL(url, 'https://test.invalid').searchParams.get('path')
+    return Promise.resolve(Response.json({ commit, entries, ...(path === '' ? { packageEntryPoints: ['src/index.ts'], solidityEntryPoints: ['contracts/Token.sol'] }
+      : path === 'app' ? { configEntryPoints: ['app/index.js', 'app/cli.js'] } : { packageEntryPoints: [`${path}/main.js`] }) }))
+  })
+  const page = new ManagedCreateBundle()
+  page._repoId = 1
+  page.changeRevision('branch', 'main')
+  await page.loadDirectory('')
+  assert.deepEqual([...page._selected], ['src/index.ts', 'contracts/Token.sol'])
+  await page.loadDirectory('app')
+  assert.deepEqual([...page._selected], ['app/index.js', 'app/cli.js'], 'the guesses give way')
+  assert.equal(page.configOf(), 'app')
+  await page.loadDirectory('lib')
+  assert.deepEqual([...page._selected], ['app/index.js', 'app/cli.js'], 'and none is selected beside them')
+  page.changeRevision('tag', 'v1')
+  await page.loadDirectory('')
+  page.toggleFile('manual.ts')
+  page.toggleFile('contracts/Token.sol')
+  page.toggleFile('contracts/Token.sol')
+  await page.loadDirectory('app')
+  assert.deepEqual([...page._selected], ['src/index.ts', 'manual.ts', 'contracts/Token.sol'], 'files the user picked stay, and the config’s wait as suggestions')
+  assert.ok(templates(page.render()).some(template => template.values.includes('Configured entry points')))
+})
