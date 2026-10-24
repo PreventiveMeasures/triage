@@ -1308,13 +1308,14 @@ export class BundleCompareCode extends LitElement {
     </div>`
   }
 
-  // A file's kind, icon and path, `prefix` left off, and how it reads.
-  _fileName(path, entry, prefix) {
+  // A file's kind, icon and path, `prefix` left off, `copy` right after it as
+  // in Code, and how it reads.
+  _fileName(path, entry, prefix, copy = nothing) {
     const strip = file => prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
-      ${this._fileTags(path, entry)}${this._githubLink(path, entry)}`
+      ${copy}${this._fileTags(path, entry)}${this._githubLink(path, entry)}`
   }
 
   // All comparison file chips, shared by Compare and Review in headers and trees.
@@ -1499,10 +1500,9 @@ export class BundleCompareCode extends LitElement {
             ${NEXT_ICON}
           </button>
         </span>
-        ${this._fileName(path, entry, prefix)}
-        <button type="button" class="bundle-code-copy-path" data-copy-path=${path} aria-label="Copy file path">
+        ${this._fileName(path, entry, prefix, html`<button type="button" class="bundle-code-copy-path" data-copy-path=${path} aria-label="Copy file path">
           ${COPY_ICON}
-        </button>
+        </button>`)}
         <span class="bundle-code-main-spacer"></span>
         ${this._fileFigures(entry, model)}
         ${this._toggles(diffable, prettyToggle(file), file.renamed, file.whitespace === 'hideable', file.types)}

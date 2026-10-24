@@ -5,6 +5,7 @@ import { bundleCommitHash } from '../../common/bundle-commit.js'
 import { bundleCommitTooltip } from './bundle-origin-links.js'
 import { bundleSourcePackageInfo } from './bundle-source-package.js'
 import { moduleEcosystem } from './bundle-source-tree.js'
+import { isOwnSourcePath } from './bundle-pkg-of.js'
 import { GITHUB_ICON_SVG } from './icons.js'
 import { sourcePackageIcon } from './source-file-icon.js'
 
@@ -50,8 +51,10 @@ export function bundleFileGithub(details, path, assigned = null) {
   if (!owner) return null
   const { dir, info, rel } = owner
   // The root module is own source whatever ecosystem it records, as the
-  // file tree and advisory inventory read it.
-  const ecosystem = dir === '.' ? undefined : moduleEcosystem(dir, info, null) ?? (dir.split('/').includes('node_modules') ? 'npm' : undefined)
+  // file tree and advisory inventory read it; so is a workspace package
+  // recording one, outside where dependencies install (isOwnSourcePath).
+  const recorded = dir === '.' ? undefined : moduleEcosystem(dir, info, null) ?? (dir.split('/').includes('node_modules') ? 'npm' : undefined)
+  const ecosystem = recorded !== undefined && isOwnSourcePath(path, dir) ? undefined : recorded
   if (ecosystem === undefined) {
     const stamped = reportRepoGithub(bundle)
     const stored = reportRepoGithub({ repo: { github: assigned?.github } })

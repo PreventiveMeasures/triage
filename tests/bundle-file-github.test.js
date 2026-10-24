@@ -85,6 +85,17 @@ test('a root module recording an ecosystem is own source, stamped or stored', ()
   }
 })
 
+test('a workspace package recording its ecosystem is own source, linked by the bundle stamp; a dependency\'s never', () => {
+  const recorded = ['packages/lib', { ecosystem: 'npm', name: 'lib', version: '1.0.0', files: { 'x.js': 'lib', 'package.json': JSON.stringify({ repository: 'org/lib' }) } }]
+  const dep = ['node_modules/dep', { ecosystem: 'npm', name: 'dep', version: '1.0.0', files: { 'i.js': 'dep' } }]
+  const bundle = details([app, recorded, dep], { github: 'org/app', commit })
+  assert.deepEqual(bundleFileGithub(bundle, 'packages/lib/x.js'), {
+    href: `https://github.com/org/app/blob/${commit}/packages/lib/x.js`, github: 'org/app', path: 'packages/lib/x.js', commit, package: null,
+  }, 'at the stamp\'s commit, never its manifest\'s repository')
+  assert.equal(bundleFileGithub(bundle, 'node_modules/dep/i.js'), null, 'a dependency naming no repository never takes the app')
+  assert.equal(bundleFileGithub(details([app, recorded]), 'packages/lib/x.js'), null, 'no stamp places nothing')
+})
+
 test('an npm version\'s files link into its repository, at the commit it was published from, only where npm recorded both', () => {
   const version = fields => ({ kind: 'sourcemap', npm: { name: 'pkg', version: '1.0.0', manifest: fields } })
   assert.deepEqual(bundleFileGithub(version({ github: { github: 'org/pkg', directory: 'packages/pkg' }, gitHead: commit }), 'lib/a b.js'), {
