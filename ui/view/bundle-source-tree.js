@@ -205,16 +205,18 @@ export function compactSourceDirectory(name, node, depth) {
   return { names, node }
 }
 
-// The top-most package.json of `paths` outside node_modules, the first in
-// path order among those as high: a project's own manifest, its app's or
-// workspace's where its root holds none, as Code opens one by default. Null
-// where there is none.
-export function shallowestPackageJson(paths) {
-  let depth = Infinity, found = null
+// The top-most file of `paths` outside node_modules named one of `names`,
+// as high the one named first in `names`, then the first in path order: a
+// project's own package.json, its app's or workspace's where its root holds
+// none, or its index or main script, as Code opens one by default. Null where
+// there is none.
+export function shallowestNamed(paths, names) {
+  let depth = Infinity, found = null, rank = Infinity
   for (const path of paths) {
-    if (!/(?:^|\/)package\.json$/u.test(path) || /(?:^|\/)node_modules\//u.test(path)) continue
+    const named = names.indexOf(path.slice(path.lastIndexOf('/') + 1))
+    if (named === -1 || /(?:^|\/)node_modules\//u.test(path)) continue
     const at = path.split('/').length
-    if (at < depth || (at === depth && path.localeCompare(found) < 0)) [depth, found] = [at, path]
+    if (at < depth || (at === depth && (named < rank || (named === rank && path.localeCompare(found) < 0)))) [depth, found, rank] = [at, path, named]
   }
   return found
 }
