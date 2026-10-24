@@ -137,7 +137,20 @@ function presentDependencyDirectories(node, packageModules, sourcePaths) {
       for (const [index, pkg] of installs.entries()) pkg.package.variant = index + 1
     }
   }
+  const installs = dependencyRootEcosystem(node)
+  if (installs) node.dependencyRoot = installs
   return node
+}
+
+// The ecosystem a directory dependencies install in holds, for its icon:
+// npm's for node_modules; for vendor or dependencies, the one its packages
+// are all of (Composer's, Cargo's, Soldeer's), none where they are of none or
+// several.
+function dependencyRootEcosystem(node) {
+  if (/(?:^|\/)node_modules$/u.test(node.path)) return 'npm'
+  if (!/(?:^|\/)(?:vendor|dependencies)$/u.test(node.path)) return null
+  const ecosystems = new Set([...node.dirs.values()].map(child => child.package?.ecosystem).filter(Boolean))
+  return ecosystems.size === 1 ? [...ecosystems][0] : null
 }
 
 export function sourceDirectoryLabel(name, node) {
@@ -190,6 +203,41 @@ export function compactSourceDirectory(name, node, depth) {
     node = nextNode
   }
   return { names, node }
+}
+
+// Rows a file tree shows before its directories stop opening by default.
+export const DEFAULT_OPEN_ROWS = 40
+// Where dependencies install, as isOwnSourcePath (bundle-pkg-of.js) reads it.
+const DEPENDENCY_ROOT = /^(?:node_modules|dependencies|vendor)$/u
+
+// The directories a file tree (Code's, Compare's) opens by default, by path:
+// from its root's rows, each next level of directories as long as the rows
+// it shows then stay within `rows`. Where a level holds dependencies (under
+// node_modules, dependencies or vendor) that would take it past them, its
+// own directories alone open, the dependencies staying shut from then on.
+// Rows are counted as the tree draws them, a compact row as one
+// (compactSourceDirectory). The directories above the file shown open as
+// well, whatever these are. Kept for the tree.
+const defaultsByTree = new WeakMap()
+export function defaultOpenDirectories(tree, rows = DEFAULT_OPEN_ROWS) {
+  const kept = defaultsByTree.get(tree)
+  if (kept?.rows === rows) return kept.open
+  const open = new Set()
+  const rowsOf = node => node.dirs.size + node.files.size
+  const below = (node, depth, deps) => [...node.dirs].map(([name, child]) => ({ child, depth, deps: deps || DEPENDENCY_ROOT.test(name), name }))
+  let level = below(tree, 0, false), shown = rowsOf(tree)
+  while (level.length > 0) {
+    const opened = level.map(entry => ({ ...entry, inner: compactSourceDirectory(entry.name, entry.child, entry.depth).node }))
+    const cost = entries => entries.reduce((sum, { inner }) => sum + rowsOf(inner), 0)
+    const own = opened.filter(entry => !entry.deps)
+    const chosen = shown + cost(opened) <= rows ? opened : own.length < opened.length && shown + cost(own) <= rows ? own : null
+    if (!chosen) break
+    shown += cost(chosen)
+    for (const { child } of chosen) open.add(child.path)
+    level = chosen.flatMap(({ inner, depth, deps }) => below(inner, depth + 1, deps))
+  }
+  defaultsByTree.set(tree, { rows, open })
+  return open
 }
 
 // Native summary/button semantics keep Enter, Space, and Tab working.
