@@ -74,6 +74,7 @@ import { railHitText, renderSearchMarks, sliceSearchLine } from './search-marks.
 import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
 import { bundleWhyQuery } from './bundle-why.js'
 import { openWhyDialog } from './lazy-dialogs.js'
+import { renderBundleCodeImporters } from './bundle-code-importers.js'
 import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from './bundle-graph-inputs.js'
 import { tabKey } from './group.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
@@ -1777,7 +1778,8 @@ function textStats(text) {
 }
 
 // Main pane of the Code slide — header bar (path + copy button + GitHub
-// link where the file's location is known + issue stepper + wrap toggle +
+// link where the file's location is known + Imported by menu where the
+// bundle records its imports (bundle-code-importers.js) + issue stepper + wrap toggle +
 // pretty-print toggle on a minified file + file stats) over the shared
 // source-viewer body. The stepper cycles the side panel through the open
 // file's findings in line order; its (idx, line) pairs ride in a JSON
@@ -1814,6 +1816,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
         aria-label="Copy file path"
       >${COPY_ICON}</button>
       ${github ? githubFileLink(github, entry?.commitInfo) : nothing}
+      ${renderBundleCodeImporters(details, path)}
       <span class="bundle-code-main-spacer"></span>
       ${fileFindings.length > 0 && !graphed ? html`<span
         class="bundle-code-main-issues"

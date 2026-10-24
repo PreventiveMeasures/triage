@@ -583,6 +583,30 @@ test('Code file header links a file to GitHub after copy where its package or bu
   assert.ok(!header('node_modules/no-repo/index.js').includes('bundle-code-github-link'), 'no repository shows no link')
 })
 
+test('Code file header offers the files importing the open one after copy and GitHub, each opening on its import\'s line', () => {
+  const entry = { name: 'importers.stasis', integrity: 'sha512-code-importers' }
+  const bundle = new Bundle({ repo: { github: 'org/app', commit: 'c'.repeat(40) },
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: { 'src/a.js': '// a\nimport "./lib.js"\n', 'src/lib.js': 'export {}\n', 'src/entry.js': 'import "./a.js"\n' } }]]),
+    entries: new Set(['src/entry.js']),
+    imports: new Map([['node, import', new Map([['src/a.js', new Map([['./lib.js', 'src/lib.js']])], ['src/entry.js', new Map([['./a.js', 'src/a.js']])],
+      ['outside.js', new Map([['./src/lib.js', 'src/lib.js']])]])]]) })
+  Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry],
+    bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '', bundleDetails: { kind: 'stasis', integrity: entry.integrity, size: 123, bundle } })
+  const header = file => {
+    state.bundleSourceFile = file
+    return renderText(renderBundlesList([entry])).match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1]
+  }
+  const lib = header('src/lib.js')
+  assert.match(lib, /data-copy-path=src\/lib\.js.*?class="bundle-code-github-link".*?<\/a>\s*<button type="button" class="bundle-code-importers-toggle" popovertarget="bundle-code-importers"/su,
+    'after the copy button and the GitHub link')
+  assert.match(lib, /aria-label=Imported by 2 files data-tooltip=Imported by 2 files>.*?<span class="bundle-code-importers-count">2<\/span>/su)
+  assert.match(lib, /data-bundle-view-source=src\/a\.js data-bundle-view-line=2>.*?src\/a\.js.*?\.\/lib\.js/su, 'opens on the line it imports it on')
+  assert.match(lib, /<span class="bundle-code-importers-item is-absent"[^>]*data-tooltip=outside\.js · not in this bundle>/u, 'one the bundle doesn\'t hold, listed')
+  assert.match(header('src/entry.js'), /aria-label=Imported by no file · an entry point /u)
+  state.bundleDetails = { kind: 'sourcemap', integrity: entry.integrity, size: 123, json: { version: 3, sources: ['src/lib.js'], sourcesContent: ['x'] } }
+  assert.ok(!header('src/lib.js').includes('bundle-code-importers'), 'none where nothing records imports')
+})
+
 test('Code offers a managed bundle\'s minified code pretty-printed, after the wrap toggle, before the stats, which keep room for its copy\'s', () => {
   const minified = `${'var a=1;'.repeat(200)}\n`
   const sources = { 'dist/app.min.js': minified, 'src/index.js': 'export const a = 1\n' }

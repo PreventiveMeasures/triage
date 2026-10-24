@@ -1493,6 +1493,8 @@ test('a file is labelled where a package starts from it, a package.json with its
   const labels = (markup, kind) => [...markup.matchAll(new RegExp(`class="?bundle-compare-code-${kind}[^>]*>([^<]+)<`, 'gu'))].map(m => m[1])
   assert.match(head('index.js'), new RegExp(`class="bundle-code-github-link" href=https://github\\.com/org/pkg/blob/${'b'.repeat(40)}/index\\.js `, 'u'),
     'on GitHub at the commit the open version was published from')
+  assert.match(head('index.js'), /<span class="bundle-code-main-path mono"[^>]*>index\.js<\/span>\s*<button type="button" class="bundle-code-copy-path" data-copy-path=index\.js[^]*?<\/button>\s*<a class="bundle-code-github-link"[^]*?<\/a>[^]*?bundle-compare-code-entry/u,
+    'as in Code, copy right after the file name, then its GitHub link, then its tags')
   assert.deepEqual(labels(head('index.js'), 'entry'), ['main'], 'as require finds it')
   assert.deepEqual(labels(head('bin/cli.js'), 'entry'), ['bin'])
   assert.deepEqual(labels(head('package.json'), 'entry'), [])

@@ -482,7 +482,7 @@
       &:active { box-shadow: var(--w95-pressed); }
     }
     & .bundle-source-body { box-shadow: var(--w95-sunken); }
-    & :is(.bundle-code-copy-path, .bundle-code-github-link, .bundle-source-pretty-toggle,
+    & :is(.bundle-code-copy-path, .bundle-code-github-link, .bundle-code-importers-toggle, .bundle-source-pretty-toggle,
       .bundle-source-lockfile-toggle, .bundle-source-wrap-toggle) {
       width: 23px; height: 22px;
       background: var(--w95-face); color: #000;
@@ -491,6 +491,8 @@
       &:hover { background: var(--w95-face); color: #000; }
       &:active, &[aria-pressed='true'] { background: var(--w95-dither); box-shadow: var(--w95-pressed); color: #000; }
     }
+    /* Its count beside its icon. */
+    & .bundle-code-importers-toggle { width: auto; min-width: 23px; }
 
     /* The finding's column is a side panel of the finding's window, as
        a wizard's picture is of its own: the window widens to take it
