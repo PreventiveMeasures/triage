@@ -32,7 +32,7 @@ import { LONG_LINE, TEXT_NODE_MAX, sourceText } from './source-text.js'
 import { controlMarkup, hasControls } from './control-chars.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import { bundlePackageSourceStats } from './bundle-source-package.js'
-import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
+import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, defaultOpenDirectories, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
@@ -1141,11 +1141,13 @@ function dirIssueStats(node, issueIndex) {
 }
 
 // Recursive directory + file rendering for the Code slide's tree
-// rail. Open the first level by default; deeper levels collapse
-// so the user can drill in. Selected file gets a `current` class
+// rail. By default, levels open while the rail stays short and the
+// directories holding the selected file (`opened`,
+// defaultOpenDirectories); deeper ones collapse so the user can drill
+// in. Selected file gets a `current` class
 // for its background; the click target is the data-bundle-
 // view-source delegate (same one the Files tab uses).
-function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, expandAll = false, formats = null, sources = null) {
+function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, expandAll = false, formats = null, sources = null, opened = null) {
   const dirs = [...node.dirs.entries()].toSorted(([a, an], [b, bn]) => sourceDirectoryLabel(a, an).localeCompare(sourceDirectoryLabel(b, bn)) || an.path.localeCompare(bn.path))
   const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
   // Auto-open dirs that contain the currently selected file so
@@ -1157,12 +1159,13 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
     return false
   }
   // Search opens every matching branch. Otherwise preserve manual toggles,
-  // defaulting to the first level and ancestors of the selected source.
-  // live(.open) also reconciles native summary toggles on the next render.
+  // defaulting to the levels that keep the rail short and the ancestors of
+  // the selected source. live(.open) also reconciles native summary toggles
+  // on the next render.
   const computeOpen = (childPath, child) => {
     if (expandAll) return true
     if (_bundleTreeUserOpen.has(childPath)) return _bundleTreeUserOpen.get(childPath)
-    return depth === 0 || containsCurrent(child)
+    return Boolean(opened?.has(childPath)) || containsCurrent(child)
   }
   // Click precedes the browser's native toggle, including Enter/Space.
   // Listening to toggle would also record programmatic search expansion.
@@ -1178,7 +1181,8 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
       const compact = compactSourceDirectory(name, child, depth)
       const pkg = child.package
       const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer' || pkg?.ecosystem === 'soldeer'
-      const packageIcon = packageIconFor(pkg?.ecosystem)
+      // A package's ecosystem, or the one a dependency root holds (node_modules).
+      const packageIcon = pkg || child.dependencyRoot ? packageIconFor(pkg?.ecosystem ?? child.dependencyRoot) : nothing
       const tooltip = pkg?.variant ? `${compact.node.sourcePath}\nVariant ${pkg.variant}` : compact.node.sourcePath
       const info = child.packageInfo
       const hasDetails = !!info || !!pkg?.variant
@@ -1206,7 +1210,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
             data-tooltip=${hasDetails ? tooltip : nothing}
             data-tooltip-placement=${hasDetails ? 'right-start' : nothing}>
             <span class="bundle-code-tree-chevron" aria-hidden="true"></span>
-            ${pkg ? packageIcon : nothing}
+            ${packageIcon}
             <span class=${classMap({ 'bundle-code-tree-dirname': true, 'bundle-code-tree-package': !!pkg, 'bundle-code-tree-package-vendored': vendored })}
               data-tooltip-truncated data-tooltip=${hasDetails ? nothing : tooltip}>
               ${pkg ? html`<span class="bundle-code-tree-package-name">${pkg.name}</span>${pkg.version ? html`<span class="bundle-code-tree-package-version">${vendored ? '- ' : '@'}${pkg.version}</span>` : nothing}` : compact.names.map((part, index) => html`${index > 0 ? html`<span class="bundle-code-tree-separator">/</span>` : nothing}${part}`)}
@@ -1214,7 +1218,7 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
             ${pkg?.variant ? html`<span class="bundle-code-tree-variant">variant ${pkg.variant}</span>` : nothing}
             ${stats.count > 0 ? html`<span class=${`bundle-code-tree-count sev-${stats.worst}`} data-tooltip=${`${stats.count} ${stats.count === 1 ? 'issue' : 'issues'} inside`}>${stats.count}</span>` : nothing}
           </summary>
-          ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, expandAll, formats, sources)}
+          ${renderBundleSourceTree(compact.node, currentPath, depth + 1, issueIndex, expandAll, formats, sources, opened)}
         </details>
       </li>`
     })}
@@ -1271,7 +1275,7 @@ function renderBundleCodeFilesPanel(tree, currentPath, query, issueIndex, prefix
     // exists because something inside it matched, so opening them
     // all means the user sees every hit at a glance instead of
     // having to click every level open after typing.
-    return renderBundleSourceTree(shown, currentPath, 0, issueIndex, Boolean(query), formats, sources)
+    return renderBundleSourceTree(shown, currentPath, 0, issueIndex, Boolean(query), formats, sources, query ? null : defaultOpenDirectories(tree))
   })
 }
 

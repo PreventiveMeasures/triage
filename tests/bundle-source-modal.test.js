@@ -380,10 +380,11 @@ test('Code renders Composer and Soldeer package rows with physical tooltips alon
   state.bundleDetails = { kind: 'stasis', integrity: entry.integrity, size: 123, bundle }
   const markup = renderText(renderBundlesList([entry]))
   const rail = markup.match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
-  assert.equal(rail.match(/class="bundle-code-tree-composer"/gu).length, 3)
+  assert.equal(rail.match(/class="bundle-code-tree-composer"/gu).length, 3, 'vendor, of Composer and Cargo packages, takes neither\'s icon')
   assert.equal(rail.match(/class="bundle-code-tree-cargo"/gu).length, 1)
-  assert.equal(rail.match(/class="bundle-code-tree-npm"/gu).length, 1)
-  const soldeerRows = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).filter(row => row.includes('class="bundle-code-tree-soldeer"'))
+  assert.equal(rail.match(/class="bundle-code-tree-npm"/gu).length, 2, 'node_modules and its package')
+  const soldeerRows = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).filter(row => row.includes('class="bundle-code-tree-soldeer"') && row.includes('bundle-code-tree-package-name'))
+  assert.equal(rail.match(/class="bundle-code-tree-soldeer"/gu).length, 2, 'dependencies and its package')
   assert.equal(soldeerRows.length, 1)
   assert.match(soldeerRows[0], /class="bundle-code-tree-package-name">@openzeppelin-contracts<\/span><span class="bundle-code-tree-package-version">- 5\.2\.0<\/span>/u)
   assert.match(soldeerRows[0], /data-tooltip=dependencies\/@openzeppelin-contracts-5\.2\.0\s+data-tooltip-placement=right-start>/u)
@@ -416,7 +417,7 @@ test('Code retains the dependencies row for bundles containing only multiple Sol
     state.bundleDetails = { kind: 'stasis', integrity: entry.integrity, size: 123, bundle }
     const rail = renderText(renderBundlesList([entry])).match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
     assert.ok(rail.includes(`data-tooltip=${checkout}dependencies>`), 'keep the shared container visible in the tree')
-    assert.equal(rail.match(/class="bundle-code-tree-soldeer"/gu).length, 2)
+    assert.equal(rail.match(/class="bundle-code-tree-soldeer"/gu).length, 3, 'dependencies and its two packages')
     assert.ok(rail.includes(`data-bundle-view-source=${checkout}dependencies/foo-1.0.0/src/Foo.sol`))
     assert.ok(rail.includes(`data-bundle-view-source=${checkout}dependencies/bar-2.0.0/src/Bar.sol`))
   }
@@ -529,7 +530,7 @@ test('Code package tooltips include recorded identities and counts even while fi
   for (const query of ['', 'index.js']) {
     state.bundleCodeSearchQuery = query
     const rail = renderText(renderBundlesList([entry])).match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
-    const pkg = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).find(row => row.includes('class="bundle-code-tree-npm"'))
+    const pkg = rail.match(/<summary\b[^>]*>.*?<\/summary>/gsu).find(row => row.includes('class="bundle-code-tree-npm"') && row.includes('bundle-code-tree-package-name'))
     for (const attr of ['data-tooltip-package=actual-package', 'data-tooltip-version=1.2.3', 'data-tooltip-files=3', 'data-tooltip-repo=org/actual-package']) assert.ok(pkg.includes(attr), attr)
     assert.match(pkg, /data-tooltip=node_modules\/alias\s+data-tooltip-placement=right-start>/u)
   }
@@ -554,6 +555,9 @@ test('Code package tooltips show the commit a recorded repository pins, as its f
   assert.doesNotMatch(row('manifest'), /data-tooltip-commit=\S/u, 'a captured package.json pins no commit')
   const header = html.match(/<header class="bundle-code-main-bar">(.*?)<\/header>/su)[1]
   assert.ok(header.includes(`data-tooltip-commit=${commit}`), 'its file links at the same commit')
+  const rail = html.match(/<aside class="bundle-code-rail">(.*?)<\/aside>/su)[1]
+  const root = rail.match(/<summary\b(?:(?!<\/summary>).)*?node_modules\s*<\/span>/su)?.[0] ?? ''
+  assert.match(root, /<svg class="bundle-code-tree-npm"/u, 'node_modules itself has npm\'s icon, as each package in it does')
 })
 
 test('Code file header links a file to GitHub after copy where its package or bundle names a repository', () => {

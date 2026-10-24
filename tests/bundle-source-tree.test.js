@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
-import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, filterBundleSourceTree, sourceDirectoryLabel } from '../ui/view/bundle-source-tree.js'
+import { DEFAULT_OPEN_ROWS, buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, defaultOpenDirectories, filterBundleSourceTree, sourceDirectoryLabel } from '../ui/view/bundle-source-tree.js'
 
 test('display paths retain original source keys, including special directory names', () => {
   const tree = buildBundleSourceTree(['src/a.js', 'src/b.ts', '__proto__/c.js'], ['/repo/src/a.js', '/repo/src/b.ts', '/repo/__proto__/c.js'])
@@ -544,4 +544,45 @@ test('PHP inference requires a matching vendor identity, only PHP source files, 
     assert.equal(node?.package, undefined, `${dir}: ${info.name}, ${info.ecosystem}`)
     assert.deepEqual(leaves(tree), paths.toSorted())
   }
+})
+
+test('a tree opens level by level while its rows stay within the budget, none past its root where the first level would overflow it', () => {
+  const files = (dir, count) => Array.from({ length: count }, (_, i) => `${dir}/f${i}.js`)
+  const opened = paths => [...defaultOpenDirectories(buildBundleSourceTree(paths))].toSorted()
+  assert.equal(DEFAULT_OPEN_ROWS, 40)
+  assert.deepEqual(opened([...files('a', 3), ...files('a/x', 3), ...files('b', 3)]), ['a', 'a/x', 'b'], 'a short tree opens whole')
+  // 2 rows, then a's 10 files and x and b's 10: 23; x's 30 more would make 53.
+  assert.deepEqual(opened([...files('a', 10), ...files('a/x', 30), ...files('b', 10)]), ['a', 'b'])
+  assert.deepEqual(opened([...files('a', 60), 'b/f.js']), [], 'level 0 at least: its root\'s rows alone')
+  // A compact row is one, opened by its first directory's path.
+  assert.deepEqual(opened([...files('a/b/c', 3), 'top.js']), ['a'])
+})
+
+test('where a level\'s dependencies would take a tree past the budget, its own directories open alone, the dependencies staying shut', () => {
+  const packages = Array.from({ length: 100 }, (_, i) => `node_modules/p${i}/index.js`)
+  const own = ['src/a.js', 'src/b.js', 'src/lib/c.js', 'src/lib/d.js']
+  const tree = buildBundleSourceTree([...own, ...packages])
+  assert.deepEqual([...defaultOpenDirectories(tree)].toSorted(), ['src', 'src/lib'], 'own code deeper, node_modules shut')
+  const few = buildBundleSourceTree([...own, 'node_modules/p/index.js', 'vendor/v/x.php'])
+  assert.deepEqual([...defaultOpenDirectories(few)].toSorted(), ['node_modules', 'node_modules/p', 'src', 'src/lib', 'vendor'], 'with all of it in the budget, vendor/v one row')
+  // Nested under own code too, as packages/app/node_modules.
+  const nested = buildBundleSourceTree(['packages/app/a.js', ...packages.map(path => `packages/app/${path}`)])
+  assert.deepEqual([...defaultOpenDirectories(nested)].toSorted(), ['packages'])
+})
+
+test('a directory dependencies install in names the ecosystem of its packages, for its icon', () => {
+  const bundle = Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', files: { 'index.js': 'own', 'vendor/plain.js': 'vendored by hand' } }],
+    ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'dep' } }],
+    ['packages/php/vendor/org/one', { name: 'org/one', version: '1.2.3', ecosystem: 'composer', files: { 'a.php': 'one' } }],
+    ['lib/dependencies/forge-std', { name: 'forge-std', version: '1.9.0', ecosystem: 'soldeer', files: { 'src/Test.sol': 'test' } }],
+  ]) }).serialize())
+  const paths = [...bundle.sources.keys()]
+  const tree = buildBundleSourceTree(paths, paths, bundle.modules)
+  const at = path => path.split('/').reduce((node, name) => node.dirs.get(name), tree)
+  assert.equal(at('node_modules').dependencyRoot, 'npm')
+  assert.equal(at('packages/php/vendor').dependencyRoot, 'composer')
+  assert.equal(at('lib/dependencies').dependencyRoot, 'soldeer')
+  assert.equal(at('vendor').dependencyRoot, undefined, 'a vendor directory of no packages')
+  assert.equal(at('node_modules/dep').dependencyRoot, undefined, 'a package is no root')
 })
