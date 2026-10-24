@@ -1296,14 +1296,17 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper)
 .bundle-code-importers-head,
 .bundle-code-importers-more { padding: .25rem .5rem; color: var(--muted); font-size: .7rem; }
 .bundle-code-importers-item {
-  display: flex; align-items: baseline; gap: .6rem;
+  display: flex; align-items: center; gap: .6rem;
   min-width: 0;
-  padding: .3rem .5rem;
+  padding: .25rem .5rem;
   border: 0; border-radius: var(--ui-radius, 3px);
   background: transparent; color: var(--text);
   font: inherit; font-size: .76rem; text-align: left;
-  cursor: default;
 }
+/* A menu item, its mono path and specifier too (theme.css gives .mono a text cursor). */
+.bundle-code-importers-item,
+.bundle-code-importers-item * { cursor: default; }
+.bundle-code-importers-item > .source-file-icon { width: 14px; height: 14px; margin-right: -.3rem; }
 button.bundle-code-importers-item:hover { background: var(--surface); }
 .bundle-code-importers-item.is-absent { color: var(--muted); }
 .bundle-code-importers-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

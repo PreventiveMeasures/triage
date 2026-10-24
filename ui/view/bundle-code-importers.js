@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit'
 import { bundleSourcemapEdges } from '../../common/bundle-sourcemap.js'
 import { bundleSourcesAsMap } from './bundle-sources.js'
+import { fileIconFormat, sourceFileIcon } from './source-file-icon.js'
 
 // The Code tab's Imported by button, beside the open file's Copy and GitHub
 // buttons: the files that import it, as the bundle records its imports, in a
@@ -116,7 +117,7 @@ export function renderBundleCodeImporters(details, path) {
       @click=${e => { if (e.target.closest('[data-bundle-view-source]')) e.currentTarget.hidePopover() }}>
       <div class="bundle-code-importers-head">${importers.length === 0 ? label : `Imported by ${files(importers.length)}`}</div>
       ${importers.slice(0, IMPORTERS_SHOWN).map(importer => {
-        const row = html`<span class="bundle-code-importers-path mono">${importer.path}</span>${importer.specifiers.length > 0
+        const row = html`${sourceFileIcon(importer.path, fileIconFormat(details, importer.path))}<span class="bundle-code-importers-path mono">${importer.path}</span>${importer.specifiers.length > 0
           ? html`<span class="bundle-code-importers-specifier mono">${importer.specifiers.join(', ')}</span>` : nothing}`
         return importer.held
           ? html`<button type="button" class="bundle-code-importers-item" role="menuitem" data-tooltip-truncated data-tooltip=${importer.path}

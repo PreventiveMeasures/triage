@@ -600,7 +600,8 @@ test('Code file header offers the files importing the open one after copy and Gi
   assert.match(lib, /data-copy-path=src\/lib\.js.*?class="bundle-code-github-link".*?<\/a>\s*<button type="button" class="bundle-code-importers-toggle" popovertarget="bundle-code-importers"/su,
     'after the copy button and the GitHub link')
   assert.match(lib, /aria-label=Imported by 2 files data-tooltip=Imported by 2 files>.*?<span class="bundle-code-importers-count">2<\/span>/su)
-  assert.match(lib, /data-bundle-view-source=src\/a\.js data-bundle-view-line=2>.*?src\/a\.js.*?\.\/lib\.js/su, 'opens on the line it imports it on')
+  assert.match(lib, /data-bundle-view-source=src\/a\.js data-bundle-view-line=2><svg class="source-file-icon" data-file-type=js[^]*?<\/svg><span class="bundle-code-importers-path mono">src\/a\.js<\/span>.*?\.\/lib\.js/su,
+    'its file\'s icon and path, opening on the line it imports it on')
   assert.match(lib, /<span class="bundle-code-importers-item is-absent"[^>]*data-tooltip=outside\.js · not in this bundle>/u, 'one the bundle doesn\'t hold, listed')
   assert.match(header('src/entry.js'), /aria-label=Imported by no file · an entry point /u)
   state.bundleDetails = { kind: 'sourcemap', integrity: entry.integrity, size: 123, json: { version: 3, sources: ['src/lib.js'], sourcesContent: ['x'] } }
