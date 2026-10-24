@@ -205,6 +205,20 @@ export function compactSourceDirectory(name, node, depth) {
   return { names, node }
 }
 
+// The top-most package.json of `paths` outside node_modules, the first in
+// path order among those as high: a project's own manifest, its app's or
+// workspace's where its root holds none, as Code opens one by default. Null
+// where there is none.
+export function shallowestPackageJson(paths) {
+  let depth = Infinity, found = null
+  for (const path of paths) {
+    if (!/(?:^|\/)package\.json$/u.test(path) || /(?:^|\/)node_modules\//u.test(path)) continue
+    const at = path.split('/').length
+    if (at < depth || (at === depth && path.localeCompare(found) < 0)) [depth, found] = [at, path]
+  }
+  return found
+}
+
 // Rows a file tree shows before its directories stop opening by default.
 export const DEFAULT_OPEN_ROWS = 40
 // Where dependencies install, as isOwnSourcePath (bundle-pkg-of.js) reads it.

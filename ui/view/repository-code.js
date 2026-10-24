@@ -21,6 +21,7 @@ import { render } from './render.js'
 import { activitySubtabField, showActivitySubtab } from './repository-activity.js'
 import { prefetchActivityView } from './activity-load.js'
 import { sourceFolderIcon } from './source-file-icon.js'
+import { shallowestPackageJson } from './bundle-source-tree.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { currentViewGeneration, currentViewSignal } from './view-navigation.js'
 import './repository-selector.js'
@@ -118,7 +119,8 @@ export function repositoryCodeEntry(data, revision = null) {
 }
 
 // The text files Code opens on, in the order it tries them: the directory's
-// readme, else its package.json, else its largest file at its top, else the
+// readme, else its top-most package.json outside node_modules
+// (shallowestPackageJson), else its largest file at its top, else the
 // largest a level down, and so on, so a fixture deep in it never opens over
 // a file nearer its top.
 const README = /^readme(?:\.[^/]*)?$/iu
@@ -127,7 +129,8 @@ export function repositoryCodeEntries(paths, sizes = new Map()) {
     .toSorted((a, b) => Number(!/\.md$/iu.test(a)) - Number(!/\.md$/iu.test(b)) || a.localeCompare(b))
   const nearest = paths.map(path => ({ path, depth: path.split('/').length, size: sizes.get(path) ?? 0 }))
     .toSorted((a, b) => a.depth - b.depth || b.size - a.size || a.path.localeCompare(b.path)).map(({ path }) => path)
-  return [...new Set([...readmes, ...paths.filter(path => path === 'package.json'), ...nearest])]
+  const manifest = shallowestPackageJson(paths)
+  return [...new Set([...readmes, ...manifest ? [manifest] : [], ...nearest])]
 }
 
 // Its files, as the server read them, in the shape an npm version's take
