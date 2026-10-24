@@ -769,8 +769,7 @@ report.addEventListener('click', (e) => {
       render()
       // The Code slide auto-opens a default file on entry (see
       // pickDefaultBundleCodeFile); bring its tree row into view —
-      // the worst-issue file can live deep in a long node_modules
-      // subtree the rail opens scrolled past.
+      // it can live deep in a subtree the rail opens scrolled past.
       if (tab === 'code') {
         ensureBundleSources().then(() => {
           if (state.bundleDetailsTab === 'code') revealBundleCodeCurrent()

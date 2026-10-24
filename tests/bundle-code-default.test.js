@@ -66,102 +66,71 @@ function openBundle(fields) {
   return render
 }
 
-test('Stasis opens an own file with issues even when a dependency has worse issues', () => {
+test('findings never pick the file shown, nor change it as they arrive', () => {
+  findings('src/issue.js', ['critical'])
+  const render = openBundle(stasis({ 'src/main.js': 'entry', 'src/issue.js': 'issue' }, { 'index.js': 'dep' }, ['src/main.js']))
+  assert.equal(state.bundleSourceFile, 'src/main.js')
   findings('src/main.js', ['low'])
-  findings('node_modules/dep/index.js', ['critical', 'critical'])
-  openBundle(stasis({ 'src/main.js': 'own' }, { 'index.js': 'dep' }, ['src/main.js']))
+  findings('src/other.js', ['high'])
+  render()
   assert.equal(state.bundleSourceFile, 'src/main.js')
 })
 
-test('Stasis selects the first entry point when only dependencies have issues', () => {
-  findings('node_modules/dep/index.js', ['critical'])
+test('a bundle opens its first entry point, else its top-most package.json outside its dependencies, the first in path order among those as high', () => {
+  // app/…, app/package.json, node_modules/…, packages/…/…, and no file at its root.
+  const workspace = entries => ({ kind: 'stasis', bundle: new Bundle({
+    entries: new Set(entries),
+    modules: new Map([
+      ['app', { name: 'app', version: '1', files: { 'package.json': '{}', 'src/index.js': 'entry', 'src/large.js': 'x'.repeat(100) } }],
+      ['packages/shared', { name: 'shared', version: '1', files: { 'package.json': '{}', 'index.js': 'shared' } }],
+      ['node_modules/dep', { name: 'dep', version: '1', files: { 'package.json': '{}', 'index.js': 'dep' } }],
+    ]),
+  }) })
+  openBundle(workspace(['app/src/index.js']))
+  assert.equal(state.bundleSourceFile, 'app/src/index.js', 'its entry point first')
+  state.bundleSourceFile = null
+  openBundle(workspace([]))
+  assert.equal(state.bundleSourceFile, 'app/package.json')
+  state.bundleSourceFile = null
+  openBundle(stasis({ 'package.json': '{}', 'app/package.json': '{}', 'src/main.js': 'x'.repeat(100) }, { 'package.json': '{}' }))
+  assert.equal(state.bundleSourceFile, 'package.json', 'its root\'s, where it has one')
+  state.bundleSourceFile = null
+  openBundle(stasis({ 'web/package.json': '{}', 'api/package.json': '{}', 'src/main.js': 'x'.repeat(100) }, {}))
+  assert.equal(state.bundleSourceFile, 'api/package.json')
+})
+
+test('a dependency\'s package.json is never the default, nor in a flat capture', () => {
+  openBundle(stasis({ 'src/main.js': 'x'.repeat(100), 'node_modules/dep/package.json': '{}', 'node_modules/dep/index.js': 'dep' }, {}))
+  assert.equal(state.bundleSourceFile, 'src/main.js')
+  state.bundleSourceFile = null
+  openBundle(stasis({}, { 'package.json': '{}', 'entry.js': 'entry', 'large.js': 'x'.repeat(100) }, ['node_modules/dep/entry.js']))
+  assert.equal(state.bundleSourceFile, 'node_modules/dep/entry.js', 'a dependency-only bundle\'s entry point')
+  state.bundleSourceFile = null
+  openBundle(stasis({}, { 'package.json': '{}', 'small.js': 'small', 'large.js': 'x'.repeat(100) }))
+  assert.equal(state.bundleSourceFile, 'node_modules/dep/large.js', 'else its largest file')
+})
+
+test('without a package.json, Stasis selects the first entry point, else the largest own file within recorded own-package boundaries', () => {
   openBundle(stasis({ 'src/z.js': 'entry', 'src/a.js': 'other entry', 'src/large.js': 'x'.repeat(100) },
     { 'index.js': 'x'.repeat(1000) }, ['src/z.js', 'src/a.js']))
   assert.equal(state.bundleSourceFile, 'src/z.js')
+  state.bundleSourceFile = null
+  openBundle(stasis({ 'dependencies/internal.js': 'x'.repeat(200), 'src/large.js': 'x'.repeat(100) }, { 'index.js': 'x'.repeat(1000) }))
+  assert.equal(state.bundleSourceFile, 'dependencies/internal.js', 'an app\'s own dependencies/ folder is its own')
 })
 
-test('named app and workspace modules are own source even without a dot-root module', () => {
-  findings('app/src/issue.js', ['low'])
-  findings('packages/shared/index.js', ['high'])
-  findings('app/node_modules/dep/index.js', ['critical'])
-  const render = openBundle({ kind: 'stasis', bundle: new Bundle({
-    entries: new Set(['app/src/entry.js']),
-    modules: new Map([
-      ['app', { name: 'app', version: '1', files: { 'src/entry.js': 'entry', 'src/issue.js': 'issue' } }],
-      ['packages/shared', { name: 'shared', version: '1', files: { 'index.js': 'shared' } }],
-      ['app/node_modules/dep', { name: 'dep', version: '1', files: { 'index.js': 'dep' } }],
-    ]),
-  }) })
-  assert.equal(state.bundleSourceFile, 'packages/shared/index.js')
-  findingsByHash.delete('hash:packages/shared/index.js')
+test('an npm version opens its main, else its largest file rather than its package.json', () => {
+  const version = npmEntries => ({ kind: 'sourcemap', npmEntries, json: {
+    version: 3, sources: ['package.json', 'lib/index.js', 'lib/large.js'], sourcesContent: ['{}', 'main', 'x'.repeat(100)],
+  } })
+  openBundle(version(['lib/index.js']))
+  assert.equal(state.bundleSourceFile, 'lib/index.js')
   state.bundleSourceFile = null
-  render()
-  assert.equal(state.bundleSourceFile, 'app/src/issue.js')
-  findingsByHash.delete('hash:app/src/issue.js')
-  state.bundleSourceFile = null
-  render()
-  assert.equal(state.bundleSourceFile, 'app/src/entry.js')
-  findings('app/src/issue.js', ['low'])
-  render()
-  assert.equal(state.bundleSourceFile, 'app/src/issue.js')
-})
-
-test('node_modules files in a flat root capture are still dependencies', () => {
-  findings('node_modules/dep/index.js', ['critical'])
-  openBundle(stasis({ 'src/main.js': 'own', 'node_modules/dep/index.js': 'dep' }, {}, ['src/main.js']))
-  assert.equal(state.bundleSourceFile, 'src/main.js')
-})
-
-test('Stasis preserves severity, count, and path ordering among own files', () => {
-  findings('src/high.js', ['high'])
-  findings('src/a.js', ['low', 'low'])
-  findings('src/b.js', ['low', 'low'])
-  findings('node_modules/dep/index.js', ['critical'])
-  const render = openBundle(stasis({ 'src/high.js': 'high', 'src/a.js': 'a', 'src/b.js': 'b' }, { 'index.js': 'dep' }))
-  assert.equal(state.bundleSourceFile, 'src/high.js')
-  findingsByHash.delete('hash:src/high.js')
-  state.bundleSourceFile = null
-  render()
-  assert.equal(state.bundleSourceFile, 'src/a.js')
-})
-
-test('Stasis respects recorded own-package boundaries and falls back to the largest own file without entries', () => {
-  findings('dependencies/internal.js', ['low'])
-  findings('node_modules/dep/index.js', ['critical'])
-  const render = openBundle(stasis({ 'dependencies/internal.js': 'own', 'src/large.js': 'x'.repeat(100) }, { 'index.js': 'x'.repeat(1000) }))
-  assert.equal(state.bundleSourceFile, 'dependencies/internal.js')
-  findingsByHash.clear()
-  state.bundleSourceFile = null
-  render()
-  assert.equal(state.bundleSourceFile, 'src/large.js')
-})
-
-test('dependency-only Stasis bundles retain issue, entry-point, and largest-file defaults', () => {
-  findings('node_modules/dep/issue.js', ['high'])
-  const render = openBundle(stasis({}, { 'entry.js': 'entry', 'issue.js': 'issue', 'large.js': 'x'.repeat(100) }, ['node_modules/dep/entry.js']))
-  assert.equal(state.bundleSourceFile, 'node_modules/dep/issue.js')
-  findingsByHash.clear()
-  state.bundleSourceFile = null
-  render()
-  assert.equal(state.bundleSourceFile, 'node_modules/dep/entry.js')
-  state.bundleSourceFile = null
-  openBundle(stasis({}, { 'small.js': 'small', 'large.js': 'x'.repeat(100) }))
-  assert.equal(state.bundleSourceFile, 'node_modules/dep/large.js')
-})
-
-test('dependency findings do not block a later automatic update to own-file findings', () => {
-  findings('node_modules/dep/index.js', ['critical'])
-  const render = openBundle(stasis({ 'src/entry.js': 'entry', 'src/issue.js': 'issue' }, { 'index.js': 'dep' }, ['src/entry.js']))
-  assert.equal(state.bundleSourceFile, 'src/entry.js')
-  render()
-  assert.equal(state.bundleSourceFile, 'src/entry.js')
-  findings('src/issue.js', ['low'])
-  render()
-  assert.equal(state.bundleSourceFile, 'src/issue.js')
+  openBundle(version([]))
+  assert.equal(state.bundleSourceFile, 'lib/large.js')
 })
 
 test('a file open in the last bundle opens where this one has the same path, or the usual pick does', () => {
-  findings('src/main.js', ['low'])
   for (const [carried, opened] of [['node_modules/dep/index.js', 'node_modules/dep/index.js'], ['src/gone.js', 'src/main.js']]) {
     state.bundleSourceFile = null
     state.bundleCodeFileRequest = { bundle: `sha512-code-${bundleId + 1}`, path: carried }
@@ -169,14 +138,6 @@ test('a file open in the last bundle opens where this one has the same path, or 
     assert.equal(state.bundleSourceFile, opened)
     assert.equal(state.bundleCodeFileRequest, null)
   }
-  // Findings arriving later don't swap it for theirs, as they would the usual pick.
-  findingsByHash.clear()
-  state.bundleSourceFile = null
-  state.bundleCodeFileRequest = { bundle: `sha512-code-${bundleId + 1}`, path: 'node_modules/dep/index.js' }
-  const render = openBundle(stasis({ 'src/main.js': 'own' }, { 'index.js': 'dep' }, ['src/main.js']))
-  findings('src/main.js', ['high'])
-  render()
-  assert.equal(state.bundleSourceFile, 'node_modules/dep/index.js')
 })
 
 test('findings arriving after a manual selection keep the selected file', () => {
@@ -187,15 +148,15 @@ test('findings arriving after a manual selection keep the selected file', () => 
   assert.equal(state.bundleSourceFile, 'node_modules/dep/index.js')
 })
 
-test('sourcemaps keep choosing the worst issue across all sources or the largest source', () => {
-  findings('src/main.js', ['low'])
-  findings('node_modules/dep/index.js', ['critical'])
-  const render = openBundle({ kind: 'sourcemap', json: {
+test('sourcemaps open their top-most package.json outside node_modules, else their largest source', () => {
+  findings('src/main.js', ['critical'])
+  openBundle({ kind: 'sourcemap', json: {
     version: 3, sources: ['src/main.js', 'node_modules/dep/index.js'], sourcesContent: ['own', 'x'.repeat(100)],
   } })
   assert.equal(state.bundleSourceFile, 'node_modules/dep/index.js')
-  findingsByHash.clear()
   state.bundleSourceFile = null
-  render()
-  assert.equal(state.bundleSourceFile, 'node_modules/dep/index.js')
+  openBundle({ kind: 'sourcemap', json: {
+    version: 3, sources: ['webpack:///./package.json', 'webpack:///./node_modules/dep/package.json', 'webpack:///./src/main.js'], sourcesContent: ['{}', '{}', 'x'.repeat(100)],
+  } })
+  assert.equal(state.bundleSourceFile, 'webpack:///./package.json')
 })

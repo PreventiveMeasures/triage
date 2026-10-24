@@ -32,7 +32,7 @@ import { LONG_LINE, TEXT_NODE_MAX, sourceText } from './source-text.js'
 import { controlMarkup, hasControls } from './control-chars.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import { bundlePackageSourceStats } from './bundle-source-package.js'
-import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, defaultOpenDirectories, filterBundleSourceTree, navigateBundleSourceTree, sourceDirectoryLabel } from './bundle-source-tree.js'
+import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, defaultOpenDirectories, filterBundleSourceTree, navigateBundleSourceTree, shallowestPackageJson, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
 import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
@@ -743,16 +743,6 @@ function renderLockfileToggle(read) {
     data-bundle-source-lockfile aria-pressed=${state.bundleSourceLockfile ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
     aria-label="View lockfile" data-tooltip=${lockfileTooltip(read)}>${appMarkup(DEPENDENCIES_ICON_SVG)}</button>`
 }
-
-// Auto-pick bookkeeping for the Code slide. When the pick ran
-// before any findings were indexed (page refresh straight into the
-// Code tab: the hash pass and the OPFS finding index both land
-// AFTER the first parsed render), the fallback file (entry /
-// largest) is remembered here so a later render — once findings
-// arrive — can upgrade the selection to the worst-issue file. The
-// upgrade fires at most once, and only while the selection still IS
-// the untouched fallback; any manual navigation drops the tracking.
-let _bundleCodeAutoPick = null
 
 // Bring the Code rail's selected file row into view. Deferred a
 // microtask so it runs after Lit commits the pass that's currently
@@ -1532,44 +1522,31 @@ function bundleCodeTree(details, sources, allPaths) {
 // Default file for the Code slide when nothing is selected yet —
 // the tab used to open on a "pick a file" placeholder, making the
 // first paint useless. Preference order:
-//   1. the file carrying the worst matched finding (severity, then
-//      match count, then path order for determinism) — opening on
-//      the hottest file matches the triage intent of the app;
+//   1. an npm version's `main`, a repository directory's readme,
+//      package.json or file nearest its top (npmEntries:
+//      npmPackageEntries, repositoryCodeEntries);
 //   2. the stasis entry point — the bundle's natural root (v0
 //      stasis has an empty entries set and falls through);
-//   3. the largest source — for bundles without findings, the main
-//      chunk is the most informative default.
+//   3. a bundle's (not a version's or a repository's) top-most
+//      package.json outside node_modules (shallowestPackageJson);
+//   4. the largest source — the main chunk is the most informative
+//      default left.
+// Findings play no part: the file shown doesn't change as they arrive.
 // `sources` has already been restricted to own files when applicable.
 // Only files with actual string content qualify (a sourcemap can
 // list sources without carrying their text). Returns null when
 // nothing qualifies; the caller keeps the placeholder for that.
-function pickDefaultBundleCodeFile(details, sources, issueIndex) {
-  let bestFile = null
-  let bestSev = -1
-  let bestCount = 0
-  for (const [file, findings] of issueIndex) {
-    if (typeof sources.get(file) !== 'string') continue
-    const sev = SEVERITY_ORDER[_topSeverityOf(findings)] ?? 0
-    if (sev > bestSev
-        || (sev === bestSev && findings.length > bestCount)
-        || (sev === bestSev && findings.length === bestCount
-            && (bestFile === null || file.localeCompare(bestFile) < 0))) {
-      bestFile = file
-      bestSev = sev
-      bestCount = findings.length
-    }
+function pickDefaultBundleCodeFile(details, sources) {
+  for (const entry of details.npmEntries ?? []) {
+    if (typeof sources.get(entry) === 'string') return entry
   }
-  if (bestFile) return bestFile
   if (details.kind === 'stasis' && details.bundle) {
     for (const entry of details.bundle.entries) {
       if (typeof sources.get(entry) === 'string') return entry
     }
   }
-  // An npm package's `main` (see npmPackageEntries), a repository
-  // directory's readme or file nearest its top (repositoryCodeEntries).
-  for (const entry of details.npmEntries ?? []) {
-    if (typeof sources.get(entry) === 'string') return entry
-  }
+  const manifest = details.npmEntries ? null : shallowestPackageJson([...sources].flatMap(([file, content]) => typeof content === 'string' ? [file] : []))
+  if (manifest) return manifest
   let largest = null
   let largestLen = -1
   for (const [file, content] of sources) {
@@ -1609,18 +1586,13 @@ function renderBundleCodeView(details, entry = null) {
   const codeFiles = bundleSourceOrder(sources)
   const allPaths = codeFiles.paths
   const { prefix, tree } = bundleCodeTree(details, sources, allPaths)
-  // Per-file finding index for the tree's count chips, the default-
-  // file pick, the open file's dots, and the Issues-mode
-  // hidden-when-empty gate. Computed once and reused — the tree walk
-  // reads it as Map<originalPath, Finding[]>.
+  // Per-file finding index for the tree's count chips, the open
+  // file's dots, and the Issues-mode hidden-when-empty gate. Computed
+  // once and reused — the tree walk reads it as
+  // Map<originalPath, Finding[]>.
   const issueIndex = details.fileHashes
     ? bundleFindingsByFile(details.fileHashes, 'issues')
     : new Map()
-  // The default pick's, found only where a file is to be picked.
-  const defaultSources = bundleCodeDefaultSources(details, sources)
-  const defaultIssues = () => details.kind === 'stasis'
-    ? new Map([...issueIndex].filter(([file]) => defaultSources.has(file)))
-    : issueIndex
   let path = state.bundleSourceFile
   // A managed link's file and lines, now that the sources it numbers have
   // loaded, or the file open in the bundle before. A number past the last
@@ -1641,43 +1613,16 @@ function renderBundleCodeView(details, entry = null) {
       if (state.bundleSourceTargetLine) revealBundleSourceLine(request.line)
     }
   }
-  // Any selection that isn't the untouched auto-pick (the user
-  // clicked a file, came in via an Issues click, or switched
-  // bundles) ends the auto-pick's lifecycle — the upgrade below
-  // must never swap a file the user chose.
-  if (_bundleCodeAutoPick
-      && (_bundleCodeAutoPick.bundle !== state.selectedBundle || (path && path !== _bundleCodeAutoPick.path))) {
-    _bundleCodeAutoPick = null
-  }
   if (!path) {
     // Render-time selection write — same pattern as the slide's tab
     // coercions. The tab-switch handler nulls the pointer on entry,
     // so this runs once per visit and the pick stays sticky across
-    // re-renders, EXCEPT the one-time findings upgrade below.
-    const defaultIssueIndex = defaultIssues()
-    path = pickDefaultBundleCodeFile(details, defaultSources, defaultIssueIndex)
+    // re-renders.
+    path = pickDefaultBundleCodeFile(details, bundleCodeDefaultSources(details, sources))
     if (path) {
       state.bundleSourceFile = path
-      _bundleCodeAutoPick = { bundle: state.selectedBundle, path, hadIssues: defaultIssueIndex.size > 0 }
       // No tab-click fires on a boot restore straight into the Code
       // tab, so the reveal has to ride the pick itself.
-      revealBundleCodeCurrent()
-    }
-  } else if (_bundleCodeAutoPick && !_bundleCodeAutoPick.hadIssues && issueIndex.size > 0 && defaultIssues().size > 0) {
-    // Findings upgrade. A page refresh lands here before the hash
-    // pass and the OPFS finding index finish, so the original pick
-    // could only fall back to the entry / largest file — a file
-    // with zero issues, while the bundle does have matches. Once
-    // findings arrive (the finding-index subscription re-renders),
-    // re-pick ONCE and follow it; the guard above ensures this only
-    // happens while the fallback is still what's on screen.
-    _bundleCodeAutoPick.hadIssues = true
-    const upgraded = pickDefaultBundleCodeFile(details, defaultSources, defaultIssues())
-    if (upgraded && upgraded !== path) {
-      path = upgraded
-      state.bundleSourceFile = upgraded
-      state.bundleSourceFindingIdx = null
-      _bundleCodeAutoPick.path = upgraded
       revealBundleCodeCurrent()
     }
   }

@@ -111,6 +111,9 @@ test('a directory shows as a bundle of its files, text alone as source, opening 
     ['tsconfig.json', 500], ['package.json', 300]])
   const paths = [...sizes.keys()]
   assert.equal(repositoryCodeEntries(paths, sizes)[0], 'package.json', 'its package.json, where it has no readme')
+  const workspace = ['tsconfig.json', 'node_modules/dep/package.json', 'packages/lib/package.json', 'app/package.json', 'app/src/index.js']
+  assert.equal(repositoryCodeEntries(workspace)[0], 'app/package.json', 'else its top-most package.json outside node_modules, first in path order')
+  assert.equal(repositoryCodeEntries(['README.md', ...workspace])[0], 'README.md', 'a readme before it')
   assert.equal(repositoryCodeEntries(paths.filter(path => path !== 'package.json'), sizes)[0], 'tsconfig.json', 'its largest file at its top')
   assert.equal(repositoryCodeEntries(paths.filter(path => path.includes('/')), sizes)[0], 'libraries/README.md', 'else the largest a level down')
   assert.equal(repositoryCodeEntries(paths.filter(path => path.startsWith('libraries/abc/')), sizes)[0], 'libraries/abc/index.js', 'never a fixture deeper')
