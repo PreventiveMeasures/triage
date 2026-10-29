@@ -132,9 +132,11 @@ describe('default scan models', () => {
     }
     assert.equal(defaultScanModels('openai').defaultModel, 'openai/gpt-6-astra')
     assert.equal(defaultScanModels('moonshot').defaultModel, 'moonshotai/kimi-k3')
+    assert.deepEqual(defaultScanModels('moonshot').models.map(model => model.id), ['moonshotai/kimi-k3', 'moonshotai/kimi-k3.1-pro'])
     assert.deepEqual(modelRows(defaultScanModels('openai').models).map(model => [model.id, model.pro?.id]), [
       ['openai/gpt-6-astra', 'openai/gpt-6-astra-pro'],
       ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol-pro'],
+      ['openai/gpt-6.1-terra', 'openai/gpt-6.1-terra-pro'],
       ['openai/gpt-6-luna', 'openai/gpt-6-luna-pro'],
     ])
   })
