@@ -1661,6 +1661,9 @@ function renderBundleCodeView(details, entry = null) {
     ? state.bundleCodeSearchMode
     : 'files'
   const query = state.bundleCodeSearchQuery
+  // Files and Largest find a file by its path, which a copy can bring with
+  // spaces at either end; Code and Issues search the query as typed.
+  const pathQuery = query.trim()
   return html`<div class="bundle-code-view">
     <aside class="bundle-code-rail">
       <div class="bundle-code-rail-head">
@@ -1676,7 +1679,7 @@ function renderBundleCodeView(details, entry = null) {
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><circle cx="8" cy="8" r="1.5"/><path d="M8 0v3m0 10v3M0 8h3m10 0h3"/></svg>
           </button>
           <button type="button" class="bundle-code-rail-action" aria-label="Collapse directories" data-tooltip="Collapse directories"
-            ?disabled=${searchMode !== 'files' || !!query || tree.dirs.size === 0} @click=${() => collapseBundleTree(tree)}>
+            ?disabled=${searchMode !== 'files' || !!pathQuery || tree.dirs.size === 0} @click=${() => collapseBundleTree(tree)}>
             ${COLLAPSE_DIRS_ICON}
           </button>
         </span>
@@ -1685,10 +1688,10 @@ function renderBundleCodeView(details, entry = null) {
       <bundle-code-search .modes=${searchModes}></bundle-code-search>
       <div class="bundle-code-rail-body">
         ${choose(searchMode, [
-          ['files', () => renderBundleCodeFilesPanel(tree, path, query, issueIndex, prefix, details.kind === 'stasis' ? details.bundle.formats : null, sources)],
+          ['files', () => renderBundleCodeFilesPanel(tree, path, pathQuery, issueIndex, prefix, details.kind === 'stasis' ? details.bundle.formats : null, sources)],
           ['code', () => renderBundleCodeContentResults(details, sources, query, path, prefix)],
           ['issues', () => renderBundleCodeIssuesResults(details, query, path, prefix)],
-          ['largest', () => renderBundleCodeLargestResults(details, sources, query, path, prefix)],
+          ['largest', () => renderBundleCodeLargestResults(details, sources, pathQuery, path, prefix)],
         ])}
       </div>
     </aside>
