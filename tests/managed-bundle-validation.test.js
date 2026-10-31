@@ -34,7 +34,7 @@ index 1111111..2222222 100644
 `
 // The bundle, built in `web`: its own code; ms patched; left with a file
 // changed and one its package hasn't; gone, published nowhere; a Composer
-// package; and Stasis's stub.
+// package; and Stasis's empty placeholder, which is allowed.
 function details(modules = {}) {
   const bundle = new Bundle({
     repo: { github: 'org/repo', directory: 'web', commit },
@@ -70,15 +70,16 @@ const upstream = (packages = PACKAGES) => async (ecosystem, name, version) => {
   return new Map(Object.entries(files).map(([path, text]) => [path, Buffer.from(text)]))
 }
 
-test('a bundle\'s files are its own code, each package version\'s, and Stasis\'s stub; no directory; the patches it holds', () => {
+test('a bundle\'s files are its own code and each package version\'s; no directory, nor Stasis\'s empty placeholder; the patches it holds', () => {
   const plan = validationPlan(details())
   assert.deepEqual(plan.own.map(file => file.path), ['icon.png', 'patches/ms@2.1.3.patch', 'src/changed.js', 'src/crlf.js', 'src/extra.js', 'src/link.js', 'src/main.js',
     'vendor/sub/x.js'])
-  assert.deepEqual(plan.synthetic, ['.stasis/empty-module.js'])
   assert.deepEqual(plan.packages.map(pkg => [pkg.ecosystem, pkg.name, pkg.version, pkg.files.map(file => file.rel)]), [['npm', 'gone', '1.0.0', ['index.js']],
     ['npm', 'left', '1.0.0', ['index.js', 'injected.js']], ['npm', 'ms', '2.1.3', ['index.js', 'package.json']], ['composer', 'org/php', '1.0.0', ['a.php']]])
   assert.deepEqual([...plan.patches.keys()], ['patches/ms@2.1.3.patch'])
-  assert.equal(plan.files, 15)
+  assert.equal(plan.files, 14, 'its placeholder left out, allowed')
+  const filled = validationPlan(details({ '.': { name: 'app', version: '1.0.0', files: { '.stasis/empty-module.js': 'not empty\n' } } }))
+  assert.deepEqual(filled.own.map(file => file.path), ['.stasis/empty-module.js'], 'a file there that isn\'t empty is no placeholder: own code')
   assert.deepEqual([...plan.own.find(file => file.path === 'icon.png').bytes()], [0, 255], 'a resource\'s bytes as its base64 spells them')
   assert.equal(validationPlan({ kind: 'sourcemap' }), null)
 })
@@ -101,8 +102,8 @@ test('own code is held to GitHub\'s blobs at the commit; each dependency\'s file
     { ecosystem: 'npm', name: 'left', version: '1.0.0', files: 2, status: 'invalid' },
     { ecosystem: 'npm', name: 'ms', version: '2.1.3', files: 2, status: 'valid', patch: { path: 'patches/ms@2.1.3.patch', from: 'bundle', applied: true } },
   ], 'ms as the patch the bundle holds named for it changes it, no lockfile read; its readme left out; left\'s other.js too')
-  assert.deepEqual(validation.counts, { files: 15, own: 8, dependencies: 6, synthetic: 1, matched: 7, eol: 1, differs: 3, unexpected: 3, unverified: 2, packages: 4, validPackages: 1 },
-    'main, crlf (its line endings a checkout\'s), the patch and the icon; ms\'s two; the stub')
+  assert.deepEqual(validation.counts, { files: 14, own: 8, dependencies: 6, matched: 6, eol: 1, differs: 3, unexpected: 3, unverified: 2, packages: 4, validPackages: 1 },
+    'main, crlf (its line endings a checkout\'s), the patch and the icon; ms\'s two')
   assert.equal(validation.validatedAt, 1)
 })
 
@@ -214,7 +215,7 @@ test('a bundle validated on request: its own code too for a reader of all of its
   assert.equal(run.status, 200)
   const { validation } = run.body
   assert.deepEqual([validation.status, validation.own.checked, validation.counts.matched, validation.counts.differs, validation.counts.unexpected, validation.counts.unverified],
-    ['invalid', true, 7, 3, 3, 2])
+    ['invalid', true, 6, 3, 3, 2])
   assert.ok(asked.includes(`registry.npmjs.org/ms/2.1.3`) && asked.includes(`api.github.com/repos/org/repo/git/trees/${commit}?recursive=1`), 'npm and GitHub asked')
   asked.length = 0
   assert.deepEqual((await send('alice')).body, { validation }, 'kept')

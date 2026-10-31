@@ -215,7 +215,7 @@ const BUNDLE_DEPENDENCY_REVIEW = {
 let fixtureValidatedAt: number | null = null
 const bundleValidationFixture = () => ({
   validatedAt: fixtureValidatedAt, status: 'invalid', own: { checked: true, repository: 'example/managed-fixtures', commit: 'f'.repeat(40), directory: '' },
-  counts: { files: 128, own: 40, dependencies: 87, synthetic: 1, matched: 123, eol: 0, differs: 2, unexpected: 1, unverified: 2, packages: 24, validPackages: 22 },
+  counts: { files: 127, own: 40, dependencies: 87, matched: 122, eol: 0, differs: 2, unexpected: 1, unverified: 2, packages: 24, validPackages: 22 },
   problems: [{ path: 'node_modules/left-pad/index.js', kind: 'differs', of: 'npm:left-pad@1.3.0' }, { path: 'src/generated.js', kind: 'unexpected', of: 'own' },
     { path: 'src/link.js', kind: 'differs', of: 'own', reason: 'symlink' }], moreProblems: 0,
   packages: [{ ecosystem: 'composer', name: 'example/php', version: '1.0.0', files: 2, status: 'unverified', reason: 'unsupported' },
