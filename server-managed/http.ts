@@ -1566,7 +1566,7 @@ async function readRepositoryRefs(db: ManagedDb, reader: RepositoryReader, repo:
 
 function scopeRepositoryContents(contents: RepositoryContents | null, virtualEntries: RepositoryEntry[] | null) {
   return contents && { ...contents, ...(virtualEntries ? {
-    entries: virtualEntries, limited: false, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false,
+    entries: virtualEntries, limited: false, configEntryPoints: [], packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false,
   } : {}) }
 }
 

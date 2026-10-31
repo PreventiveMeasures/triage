@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -389,7 +389,7 @@ test('combined refs honors virtual root scopes and rechecks managed and GitHub a
   const result = await request(query, { route: 'refs' })
   assert.equal(result.status, 200)
   assert.deepEqual(result.body.defaultContents, { entries: [{ name: 'src', path: 'src', type: 'dir' }], limited: false,
-    path: '', commit, packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false })
+    path: '', commit, configEntryPoints: [], packageEntryPoints: [], solidityEntryPoints: [], soliditySuggestionsLimited: false })
   duringRead = () => db.removeTeamMember('team', userId)
   assert.equal((await request(query, { route: 'refs' })).status, 404)
   await db.setTeamMember('team', userId, { dependencies: true, security: true })
@@ -533,6 +533,40 @@ test('package reads recheck membership, narrowed path grants, and live GitHub vi
   state.duringBlob = () => { state.metadata = { ...publicMetadata, private: true, visibility: 'private' } }
   state.commit = 'd'.repeat(40)
   assert.equal((await request(params())).status, 404)
+})
+
+test('a stasis.config.json listing entries suggests them alone, before any guess', async t => {
+  const { request } = await fixture(t, { tokens: userTokens })
+  const blobs = new Map()
+  const listed = (name, text) => {
+    const sha = createHash('sha1').update(name).digest('hex')
+    blobs.set(sha, { encoding: 'base64', size: Buffer.byteLength(text), content: Buffer.from(text).toString('base64') })
+    return { name, path: `src/allowed/${name}`, type: 'file', size: Buffer.byteLength(text), sha }
+  }
+  const pkg = listed('package.json', JSON.stringify({ main: './index.js' }))
+  const calls = []
+  let listing
+  t.mock.method(globalThis, 'fetch', url => {
+    const parsed = new URL(url)
+    calls.push(parsed.pathname)
+    if (parsed.pathname === '/repos/org/repo') return Response.json(publicMetadata)
+    if (parsed.pathname === '/repos/org/repo/contents/src/allowed') return Response.json(listing)
+    return Response.json(blobs.get(parsed.pathname.split('/').at(-1)))
+  })
+  listing = [listed('stasis.config.json', JSON.stringify({ entries: { 'src/main.ts': { conditions: 'node' }, 'tool.rs': {} } })), pkg,
+    { name: 'contracts', path: 'src/allowed/contracts', type: 'dir', sha: 'c'.repeat(40) }]
+  const configured = await request({ repoId: '1', ref: commit, path: 'src/allowed' })
+  assert.equal(configured.status, 200)
+  assert.deepEqual(configured.body.configEntryPoints, ['src/allowed/src/main.ts'])
+  assert.equal(configured.body.packageEntryPoints, undefined)
+  assert.equal(configured.body.solidityEntryPoints, undefined)
+  assert.deepEqual(calls.filter(path => path.includes('/git/')), [`/repos/org/repo/git/blobs/${listing[0].sha}`], 'no guess is read')
+  calls.length = 0
+  listing = [listed('stasis.config.json', JSON.stringify({ scope: 'full' })), pkg]
+  const unlisted = await request({ repoId: '1', ref: 'b'.repeat(40), path: 'src/allowed' })
+  assert.equal(unlisted.body.configEntryPoints, undefined)
+  assert.deepEqual(unlisted.body.packageEntryPoints, ['src/allowed/index.js'], 'a config listing no entries leaves the guesses')
+  assert.deepEqual(calls.filter(path => path.includes('/git/')), [`/repos/org/repo/git/blobs/${listing[0].sha}`, `/repos/org/repo/git/blobs/${pkg.sha}`])
 })
 
 test('invalid package JSON leaves the authorized file listing usable', async t => {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { MAX_PACKAGE_BYTES, packageEntryPoints, readPackageEntryPoints } from '../server-managed/package-entry-points.ts'
+import { MAX_PACKAGE_BYTES, configEntryPoints, packageEntryPoints, readConfigEntryPoints, readPackageEntryPoints } from '../server-managed/package-entry-points.ts'
+import { MAX_STASIS_CONFIG_BYTES } from '../server-managed/stasis-config.ts'
 
 test('package declarations support main, nested conditional exports, arrays, and binary maps', () => {
   assert.deepEqual(packageEntryPoints({
@@ -34,4 +35,33 @@ test('manifest reads use the listed immutable blob and ignore malformed or overs
     assert.deepEqual(await readPackageEntryPoints(sha, '', () => Promise.resolve(invalid)), [])
   }
   assert.deepEqual(await readPackageEntryPoints(sha, '', () => Promise.reject(new Error('unavailable'))), [])
+})
+
+test('stasis.config.json suggests the entries it lists that a build takes, as repository paths', () => {
+  const text = JSON.stringify({ scope: 'full', entries: {
+    './src/index.ts': {}, 'bin/../cli.js': { conditions: ['node'] }, 'contracts/Token.sol': {}, 'Token.SOL': {}, 'main.rs': {}, 'run.sh': {},
+    'src/view.TSX': { jsx: true }, '.': {}, 'contracts': {}, 'odd\\name.js': {}, 'app.js': { babel: true },
+  } })
+  assert.deepEqual(configEntryPoints(text, 'packages/app'), ['packages/app/src/index.ts', 'packages/app/cli.js', 'packages/app/contracts/Token.sol',
+    'packages/app/src/view.TSX', 'packages/app/app.js'])
+  assert.deepEqual(configEntryPoints(JSON.stringify({ entries: { 'index.js': {} } }), ''), ['index.js'])
+  assert.deepEqual(configEntryPoints(JSON.stringify({ scope: 'full' }), ''), [])
+  assert.deepEqual(configEntryPoints(JSON.stringify({ entries: { 'index.js': { unknown: true } } }), ''), ['index.js'], 'their options are Stasis’s to check')
+  assert.throws(() => configEntryPoints(JSON.stringify({ entries: { '../index.js': {} } }), ''), /within it/u)
+  const many = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`src/${i}.js`, {}]))
+  assert.equal(configEntryPoints(JSON.stringify({ entries: many }), '').length, 100)
+})
+
+test('config reads use the listed immutable blob and list none where Stasis can’t tell its entries', async () => {
+  const sha = 'c'.repeat(40)
+  const bytes = Buffer.from(JSON.stringify({ entries: { 'index.js': {} } }))
+  const blob = { encoding: 'base64', size: bytes.length, content: bytes.toString('base64') }
+  const read = suffix => { assert.equal(suffix, `/git/blobs/${sha}`); return Promise.resolve(blob) }
+  assert.deepEqual(await readConfigEntryPoints(sha, 'pkg', read), ['pkg/index.js'])
+  const refused = Buffer.from(JSON.stringify({ entries: ['index.js'] }))
+  for (const invalid of [null, { ...blob, size: MAX_STASIS_CONFIG_BYTES + 1 }, { ...blob, size: 1 }, { encoding: 'base64', size: 1, content: 'ew==' },
+    { encoding: 'base64', size: refused.length, content: refused.toString('base64') }]) {
+    assert.deepEqual(await readConfigEntryPoints(sha, '', () => Promise.resolve(invalid)), [])
+  }
+  assert.deepEqual(await readConfigEntryPoints(sha, '', () => Promise.reject(new Error('unavailable'))), [])
 })

@@ -54,6 +54,19 @@ The revision list suggests up to 100 branches and tags, and accepts any other na
 - The build runs from the nearest directory, at or above the entry points' common parent, that holds a `package.json` (or `foundry.toml`, `soldeer.toml` or `soldeer.lock`).
 - The build never runs repository code or install scripts.
 
+### Entries in `stasis.config.json`
+
+A directory whose `stasis.config.json` lists `entries` suggests those, and selects them by default, instead of the entry points its `package.json` or Solidity layout would suggest.
+They are built as `stasis bundle` builds them:
+
+- An entry point is listed when the nearest `stasis.config.json` at or above it that lists it in `entries` does.
+- Listed entry points are built from that file's directory, where Stasis builds each with its options there (see Stasis's [github-bundle Entries](https://github.com/PreventiveMeasures/stasis/blob/main/doc/github-bundle.md#entries)).
+  They take no conditions, so the conditions chooser is hidden while only they are selected (`422 config-conditions` if a request gives some).
+- Listed entry points are never combined with others, or with another file's (`422 config-mixed`).
+- An entry setting an option that runs a program (`babel`, `metro-resolver`, `cargo`, `cargo-target`) fails the build (`422 config-runs-code`).
+  `stasis bundle` takes these only with the same flag given as consent; a server build has none to give.
+- A `stasis.config.json` whose entries can't be read, or whose options Stasis refuses, fails the build (`422 config-invalid`).
+
 Creating a bundle requires:
 
 - the manager or admin role, a same-origin request and a valid CSRF token;

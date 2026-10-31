@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
 import { GithubApiError, type GithubIdentity, READ_PERMISSIONS, githubJson, githubRepoPermission, githubUserIdentity, onTokenRejected, repoAccessToken } from './github-app.ts'
-import { MAX_PACKAGE_BYTES, readPackageEntryPoints } from './package-entry-points.ts'
+import { MAX_PACKAGE_BYTES, readConfigEntryPoints, readPackageEntryPoints } from './package-entry-points.ts'
+import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG } from './stasis-config.ts'
 import { readSolidityEntryPoints } from './solidity-entry-points.ts'
 import { parseGithubCommit } from './bundle-commits.ts'
 import { appDependabotAlerts } from './dependabot-access.ts'
@@ -279,9 +280,15 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
         const type = item.submodule_git_url ? 'submodule' : item.type
         if (['dir', 'file', 'symlink', 'submodule'].includes(type)) entries.push({ name: item.name, path: expectedPath, type })
       }
-      const manifestPath = path ? `${path}/package.json` : 'package.json'
-      const manifest = data.find(item => item?.path === manifestPath && item.name === 'package.json' && item.type === 'file' && !item.submodule_git_url
-        && typeof item.size === 'number' && item.size >= 0 && item.size <= MAX_PACKAGE_BYTES && typeof item.sha === 'string' && /^[a-f\d]{40}$/iu.test(item.sha))
+      const listed = (name: string, maxBytes: number) => data.find(item => item?.path === (path ? `${path}/${name}` : name) && item.name === name
+        && item.type === 'file' && !item.submodule_git_url && typeof item.size === 'number' && item.size >= 0 && item.size <= maxBytes
+        && typeof item.sha === 'string' && /^[a-f\d]{40}$/iu.test(item.sha))
+      // The entries stasis.config.json lists are suggested before any guess:
+      // a build takes them alone, with their options there.
+      const config = listed(STASIS_CONFIG, MAX_STASIS_CONFIG_BYTES)
+      const configEntryPoints = config ? await readConfigEntryPoints(config.sha, path, read) : []
+      if (configEntryPoints.length > 0) return { entries, limited: data.length >= 1000, configEntryPoints }
+      const manifest = listed('package.json', MAX_PACKAGE_BYTES)
       // Both optional suggestions, read together: neither fails, each
       // answering none where its reads do.
       const [packageEntryPoints, solidity] = await Promise.all([manifest ? readPackageEntryPoints(manifest.sha, path, read) : undefined,

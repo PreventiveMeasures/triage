@@ -263,6 +263,12 @@ test('missing, ambiguous and named-but-missing lockfiles are reported as the loc
     'no soldeer.lock found in /, where / is installed from',
   ]) assert.equal(buildErrorCode(new Error(message), message), 'build-lockfile', message)
   assert.equal(buildErrorCode(new Error('x'), 'something else'), 'build-failed')
+  for (const [message, code] of [
+    ['buildVfsBundle: stasis.config.json: entries "index.js" sets babel, which runs the project\'s Babel config, and nothing of the project runs here', 'config-runs-code'],
+    ['buildVfsBundle: stasis.config.json\'s entries name index.js but not main.js: bundle either the entries it names or others, not both', 'config-mixed'],
+    ['buildVfsBundle: stasis.config.json is not valid JSON', 'config-invalid'],
+    ['buildVfsBundle: stasis.config.json: entries "index.js": unknown option "x"', 'config-invalid'],
+  ]) assert.equal(buildErrorCode(new Error(message), message), code, message)
   assert.equal(buildErrorCode(new Error('too-large'), 'too-large'), 'too-large')
 })
 
@@ -302,4 +308,43 @@ test('Stasis honors Browser conditions and Metro platform-specific imports', asy
   const mobileBundle = Bundle.parse(brotliDecompressSync(mobile.bytes).toString())
   assert.ok(mobileBundle.sources.has('value.ios.ts'))
   assert.ok(mobileBundle.sources.has('value.android.ts'))
+})
+
+test('real Stasis builds the entries stasis.config.json lists with their options there, into one bundle', async () => {
+  const project = { ...files, 'index.ts': 'export { value } from "#value";', 'worker.ts': 'export { value } from "#value";',
+    'package.json': JSON.stringify({ name: 'fixture', version: '1.0.0', type: 'module',
+      imports: { '#value': { browser: './browser.ts', default: './value.ts' } } }),
+    'browser.ts': 'export const value = "browser"',
+    'stasis.config.json': JSON.stringify({ entries: { 'index.ts': { conditions: ['browser'] }, './worker.ts': {} } }),
+  }
+  const request = { input: parseBundleBuild({ repoId: 1, commit, entries: ['index.ts', 'worker.ts'] }), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }
+  assert.equal(request.input.conditions, null)
+  const built = await buildStasisBundle(request, projectClient(project))
+  const bundle = Bundle.parse(brotliDecompressSync(built.bytes).toString())
+  assert.equal(built.directory, '')
+  assert.deepEqual([...bundle.entries].toSorted(), ['index.ts', 'worker.ts'])
+  assert.ok(bundle.sources.has('browser.ts'), 'index.ts resolves with its browser condition')
+  assert.ok(bundle.sources.has('value.ts'), 'worker.ts resolves without it')
+  await assert.rejects(buildStasisBundle({ ...request, input: input(['index.ts']) }, projectClient(project)), { message: 'config-conditions' })
+})
+
+test('real Stasis refuses stasis.config.json entries that run code, or that it can’t build with their options', async () => {
+  const project = { ...files, 'index.js': '// @flow\nconst value: number = 1\nexport default value\n' }
+  const build = async options => {
+    project['stasis.config.json'] = JSON.stringify({ entries: { 'index.js': options } })
+    return await buildStasisBundle({ input: parseBundleBuild({ repoId: 1, commit, entries: ['index.js'] }), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, projectClient(project))
+  }
+  const refused = async options => {
+    const error = await build(options).then(() => null, failure => failure)
+    assert.ok(error, JSON.stringify(options))
+    return buildErrorCode(error, error.message)
+  }
+  const flow = Bundle.parse(brotliDecompressSync((await build({ flow: true })).bytes).toString())
+  assert.deepEqual([...flow.entries], ['index.js'], 'Stasis strips Flow with its own flow-remove-types, running nothing of the repo')
+  for (const options of [{ metro: true, platforms: ['ios'], babel: true }, { metro: true, platforms: ['ios'], 'metro-resolver': true }]) {
+    assert.equal(await refused(options), 'config-runs-code', JSON.stringify(options))
+  }
+  for (const options of [{ unknown: true }, { output: 'x.br' }, { metro: true }, { conditions: [] }]) {
+    assert.equal(await refused(options), 'config-invalid', JSON.stringify(options))
+  }
 })
