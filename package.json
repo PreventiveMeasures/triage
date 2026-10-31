@@ -424,7 +424,7 @@
     "@preventive/diff": "^1.1.0",
     "@preventive/lockfile": "^1.2.0",
     "@preventive/publishers": "^1.1.0",
-    "@preventive/report": "^1.0.0",
+    "@preventive/report": "^1.0.1",
     "@preventive/sourcemap": "1.0.0-alpha.1",
     "@preventive/upstream": "^1.3.0",
     "css-tree": "^3.2.1",
