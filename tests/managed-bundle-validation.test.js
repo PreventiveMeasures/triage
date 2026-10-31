@@ -181,6 +181,18 @@ test('a bundle validated on request: its own code too for a reader of all of its
 
   // Her team narrowed as her new one is kept, after her run checked her access: refused it.
   await db.setTeamRepo('one', 1, null)
+
+  // The bundle moved as the kept one is read: refused, as one of another place.
+  const moving = db.getFirstUpstreamCacheEntries.bind(db)
+  t.mock.method(db, 'getFirstUpstreamCacheEntries', async (...keys) => {
+    const found = await moving(...keys)
+    await db.setBundleRepo('00000000-0000-4000-8000-000000000002', 1, 'other')
+    return found
+  }, { times: 1 })
+  const moved = await send('alice')
+  assert.deepEqual([moved.status, moved.body], [409, { error: 'repository-changed' }])
+  await db.setBundleRepo('00000000-0000-4000-8000-000000000002', 1, 'web')
+
   const write = db.setUpstreamCacheEntry.bind(db)
   let narrowed = false
   t.mock.method(db, 'setUpstreamCacheEntry', async (key, ...rest) => {
