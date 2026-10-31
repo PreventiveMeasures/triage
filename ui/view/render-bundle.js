@@ -85,6 +85,7 @@ import { loadedGraphMod } from './graph-attach.js'
 import { hideTooltip, showTooltip } from './tooltip.js'
 import { ensureBundleAdvisories, renderBundleAdvisoriesTab, showAdvisoriesTab } from './render-bundle-advisories.js'
 import { bundleDependencyReviewFact } from './bundle-dependency-review.js'
+import { bundleValidationFact } from './bundle-validation.js'
 // Inline `` `code` `` / "quote" highlighting shared with the finding
 // card so bundle-side descriptions read the same as the findings tab.
 // Module-level circular import (render-finding → render → this
@@ -2795,7 +2796,8 @@ function bundleUnpackedSize(sizes) {
 // both through `renderBundleSourcesPanel`; a parse error, or a stasis
 // bundle with no parsed `bundle`, gets the metadata row plus a
 // placeholder line. A managed bundle's facts tell its dependency review
-// too, where its repository's is in effect (bundle-dependency-review.js).
+// too, where its repository's is in effect (bundle-dependency-review.js), and
+// its validation, with its Validate button (bundle-validation.js).
 function renderBundleDetails(entry, details) {
   if (entry.npm) return renderNpmPackageOverview(entry, details)
   const loaded = details?.integrity === entry.integrity
@@ -2814,6 +2816,7 @@ function renderBundleDetails(entry, details) {
       ${link.commit?.tags ? html`<span class="bundle-origin-tags">${link.commit.tags.map(tag => html`<a class="bundle-origin-link bundle-tag-link" href=${tag.href} target="_blank" rel="noopener noreferrer">${appMarkup(TAG_ICON_SVG)}<span>${tag.name}</span></a>`)}</span>` : nothing}
     </dd>`)}
     ${bundleDependencyReviewFact(entry, render)}
+    ${bundleValidationFact(entry, render)}
     <dt>Integrity</dt><dd class="mono bundle-integrity">${entry.integrity}</dd>
     ${prefix ? html`<dt>Prefix</dt><dd class="mono">${prefix}</dd>` : nothing}
     ${origin?.entries?.size > 0 ? html`<dt>${origin.entries.size === 1 ? 'Entry' : 'Entries'}</dt><dd class="mono"><ul class="bundles-entry-points">
