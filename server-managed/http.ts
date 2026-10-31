@@ -3464,6 +3464,14 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   }
 }
 
+// Bundle `id` as `session` may read it now, else null, its refusal sent.
+async function readableBundle(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string) {
+  const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
+  if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+  if (!access.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
+  return access.bundle
+}
+
 // GET /api/bundles/:id/dependency-review: what the npm package versions a
 // Stasis bundle holds (its advisory inventory's, bundle-advisory-inventory.ts)
 // want of review, where the repository it is attached to reviews
@@ -3475,12 +3483,7 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
 // of it, as a team's Dependencies tab leaves such a one out; the bundle's
 // access checked again before it is told, and its repository not moved.
 async function handleBundleDependencyReview(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, session: ManagedSession, id: string) {
-  const readable = async () => {
-    const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
-    if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
-    if (!access.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
-    return access.bundle
-  }
+  const readable = () => readableBundle(res, deps, session, id)
   const record = await readable()
   if (!record) return
   const none = () => { sendJson(res, 200, { review: null }) }
@@ -3538,42 +3541,23 @@ async function bundleDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   return { value: { ...answer, ...bundle }, kept: !asked.github }
 }
 
-// GET /api/bundles/:id/validation: the Stasis bundle's last validation
-// (bundle-validation.ts) its reader may see, `{ validation }`, null for none;
-// POST (`run`) validates it anew, keeps it and answers it. Own code is checked
-// only for a reader of all of the repository the bundle is attached to, at
-// the commit its stamp names, with their own GitHub access, as the code
-// viewer reads it, checked again after; for others, or a bundle of no
-// repository or commit, its dependencies alone, and its own code told
-// unverified, and why. Each is kept apart (bundleValidationStore), by the
-// bundle, where it is and whether its own code was checked: a reader of all
-// of it is told the one that checked it, else the other; one of only part
-// of it, the other alone, never a word of the repository. As many run at
-// once as VALIDATIONS_AT_ONCE, those of one bundle asked meanwhile sharing
-// one, one checking own code its reader's alone, as it reads the repository
-// with their access and checks theirs again after; each given VALIDATION_MS
-// for its packages, those left told unverified. The bundle's access, and
-// where own code is told the reader's of all of its repository, checked
-// again once it is read, before it is told.
+// GET /api/bundles/:id/validation: the Stasis bundle's last validation its
+// reader may see, `{ validation }`; POST (`run`) validates it anew and keeps
+// it. Own code is checked only for a reader of all of its repository, and
+// told only while they still are; see doc/bundles.md#validation.
 const VALIDATIONS_AT_ONCE = 2
 const VALIDATION_MS = 240_000
 const validating = new Map<string, Promise<BundleValidation | Refusal>>()
 async function handleBundleValidation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, session: ManagedSession, id: string,
   run: boolean) {
   if (run && !await checkMutation(req, res, deps, cookie, { handed: true })) return
-  const readable = async () => {
-    const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
-    if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
-    if (!access.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
-    return access.bundle
-  }
+  const readable = () => readableBundle(res, deps, session, id)
   const record = await readable()
   if (!record) return
   if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
   const whole = record.repoId === null ? null : await wholeRepositoryAccess(deps, cookie, record.repoId)
   if (whole && 'error' in whole && !PARTIAL_ACCESS.has(whole.error)) { sendRefusal(res, whole); return }
   const access = whole && !('error' in whole) ? whole : null
-  const reason = whole ? 'no-access' : 'no-repository'
   const store = bundleValidationStore<BundleValidation>(deps.db, deps.config.debug)
   const keyOf = (own: boolean) => `${record.id}\0${record.integrity}\0${record.repoId ?? ''}\0${record.repoDirectory}\0${own ? 'own' : 'dependencies'}\0${BUNDLE_VALIDATION_READ}`
   // Why the reader of all of the repository may no longer be told its own
@@ -3584,8 +3568,10 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
     return 'error' in current ? current : sameRepository(current.repo, access.repo) ? null : refusal(409, 'repository-changed')
   }
   if (!run) {
-    let kept = access ? [...(await store.readFirst([keyOf(true)], [keyOf(false)])).found.values()][0]?.value : (await store.read(keyOf(false)))?.value
-    if (await lostWhole()) kept = (await store.read(keyOf(false)))?.value
+    const read = access ? await store.readFirst([keyOf(true)], [keyOf(false)]) : null
+    let kept = read ? [...read.found.values()][0]?.value : (await store.read(keyOf(false)))?.value
+    // The one that checked own code told only while its reader still reads all of the repository.
+    if (read?.first && await lostWhole()) kept = (await store.read(keyOf(false)))?.value
     if (await readable()) sendJson(res, 200, { validation: plainObject(kept) && typeof kept.status === 'string' ? kept : null })
     return
   }
@@ -3595,13 +3581,11 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
   if (!job) {
     if (validating.size >= VALIDATIONS_AT_ONCE) { sendJson(res, 429, { error: 'validation-busy' }); return }
     // Kept before it is told, for a reader asking next.
-    const started: Promise<BundleValidation | Refusal> = bundleValidation(deps, cookie, record, access, reason).then(async validation => {
+    job = bundleValidation(deps, cookie, record, access).then(async validation => {
       if (!('error' in validation)) await store.write(key, validation, validation.validatedAt)
       return validation
-    })
-    job = started
-    validating.set(shared, started)
-    started.finally(() => { if (validating.get(shared) === started) validating.delete(shared) }).catch(() => {})
+    }).finally(() => validating.delete(shared))
+    validating.set(shared, job)
   }
   let validation: BundleValidation | Refusal
   try { validation = await job } catch (err) {
@@ -3617,16 +3601,13 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { validation })
 }
 
-// Bundle `record` validated (bundle-validation.ts, Stasis's validation): its
-// own code too where `access` lets its reader read all of its repository and
-// its stamp names a commit, the repository read with their GitHub access,
-// which is checked again after (readWholeRepositoryOf), its dependencies held
-// to the lockfiles that install it there; else its dependencies alone, held to
-// their registry, its own code unverified for `reason`.
-async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefined, record: ManagedBundle, access: WholeAccess | null, reason: string) {
+// Bundle `record` validated (bundle-validation.ts): at the commit its stamp
+// names, with the GitHub access of `access`'s reader of all of its repository,
+// checked again after; else its dependencies alone, and why.
+async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefined, record: ManagedBundle, access: WholeAccess | null) {
   let details
   try { details = await readBundleDetails(record, deps.bundleStore) } catch { return refusal(422, 'bundle-unavailable') }
-  const plan = details && validationPlan(details)
+  const plan = details?.bundle ? validationPlan(details.bundle) : null
   if (!plan) return refusal(422, 'bundle-unavailable')
   const stamp = (details!.bundle as { repo?: { commit?: unknown; directory?: unknown } } | undefined)?.repo
   const commit = typeof stamp?.commit === 'string' && /^[a-f\d]{40}$/u.test(stamp.commit) ? stamp.commit : null
@@ -3634,10 +3615,9 @@ async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefine
   const directory = stampedDirectory(typeof stamp?.directory === 'string' ? stamp : { directory: record.repoDirectory })
   const options = { deadline: Date.now() + VALIDATION_MS, fetch: (ecosystem: string, name: string, version: string, integrity?: string) => fetchPackage(ecosystem, name, version, integrity)
     .catch((err: unknown) => { if (deps.config.debug) console.warn(`managed: validation fetching ${ecosystem}:${name}@${version} failed:`, err); throw err }) }
-  if (!access || !commit) return validateDependencies(plan, access ? 'no-commit' : reason, options)
-  const repoId = access.repo.repoId
+  if (!access || !commit) return validateDependencies(plan, access ? 'no-commit' : record.repoId === null ? 'no-repository' : 'no-access', options)
   const read = await readWholeRepositoryOf(deps, access, async (fullName, token) => ({ value: await validateAtCommit(plan, { fullName, token, commit, directory }, options), kept: false }),
-    () => wholeRepositoryAccess(deps, cookie, repoId))
+    () => wholeRepositoryAccess(deps, cookie, access.repo.repoId))
   return 'error' in read ? read : read.value
 }
 
