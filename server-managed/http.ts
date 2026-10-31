@@ -154,8 +154,7 @@ import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
 import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES, readBundleDetails } from './bundle-cache.ts'
-import { BUNDLE_VALIDATION_READ, type BundleValidation, type LockedPatches, commitBlobs, fetchUpstreamPackage, validateBundle,
-  validationPlan } from './bundle-validation.ts'
+import { BUNDLE_VALIDATION_READ, type BundleValidation, fetchPackage, validateAtCommit, validateDependencies, validationPlan } from './bundle-validation.ts'
 import type { CacheStorage } from './cache-storage.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { type CatalogCommit, backfillBundleCommits, bundleCommits, cacheCommitDetails } from './bundle-commits.ts'
@@ -3618,13 +3617,12 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
   sendJson(res, 200, { validation })
 }
 
-// Bundle `record` validated (bundle-validation.ts): its own code too where
-// `access` lets its reader read all of its repository and its stamp names a
-// commit, read with their GitHub access, which is checked again after
-// (readWholeRepositoryOf), and its npm versions held to the patches the
-// lockfiles installing it lock them with, those they lock from git alone
-// left unverified (lockedPatchesOf), the tree and the lockfiles read at
-// once; else its dependencies alone, its own code unverified for `reason`.
+// Bundle `record` validated (bundle-validation.ts, Stasis's validation): its
+// own code too where `access` lets its reader read all of its repository and
+// its stamp names a commit, the repository read with their GitHub access,
+// which is checked again after (readWholeRepositoryOf), its dependencies held
+// to the lockfiles that install it there; else its dependencies alone, held to
+// their registry, its own code unverified for `reason`.
 async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefined, record: ManagedBundle, access: WholeAccess | null, reason: string) {
   let details
   try { details = await readBundleDetails(record, deps.bundleStore) } catch { return refusal(422, 'bundle-unavailable') }
@@ -3634,50 +3632,13 @@ async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefine
   const commit = typeof stamp?.commit === 'string' && /^[a-f\d]{40}$/u.test(stamp.commit) ? stamp.commit : null
   // Where it was built, as its stamp says, else where it is kept.
   const directory = stampedDirectory(typeof stamp?.directory === 'string' ? stamp : { directory: record.repoDirectory })
-  const options = { deadline: Date.now() + VALIDATION_MS, fetch: (ecosystem: string, name: string, version: string) => fetchUpstreamPackage(ecosystem, name, version)
+  const options = { deadline: Date.now() + VALIDATION_MS, fetch: (ecosystem: string, name: string, version: string, integrity?: string) => fetchPackage(ecosystem, name, version, integrity)
     .catch((err: unknown) => { if (deps.config.debug) console.warn(`managed: validation fetching ${ecosystem}:${name}@${version} failed:`, err); throw err }) }
-  if (!access || !commit) return validateBundle(plan, { reason: access ? 'no-commit' : reason }, options)
+  if (!access || !commit) return validateDependencies(plan, access ? 'no-commit' : reason, options)
   const repoId = access.repo.repoId
-  const read = await readWholeRepositoryOf(deps, access, async (fullName, token) => {
-    const listing = commitBlobs(fullName, token, commit, plan.own.map(file => directory ? `${directory}/${file.path}` : file.path))
-      .then(blobs => ({ ...blobs, repository: fullName, commit, directory }), (err: unknown) => {
-        if (!(err instanceof GithubApiError) || (err.message !== 'github-not-found' && err.message !== 'github-status-422')) throw err
-        return { reason: 'commit-not-found' }
-      })
-    const [own, locked] = await Promise.all([listing, lockedPatchesOf(deps, fullName, token, repoId, commit, directory, plan.packages)])
-    return { value: await validateBundle(plan, own, { ...options, locked: 'reason' in own ? null : locked }), kept: false }
-  }, () => wholeRepositoryAccess(deps, cookie, repoId))
+  const read = await readWholeRepositoryOf(deps, access, async (fullName, token) => ({ value: await validateAtCommit(plan, { fullName, token, commit, directory }, options), kept: false }),
+    () => wholeRepositoryAccess(deps, cookie, repoId))
   return 'error' in read ? read : read.value
-}
-
-// The patches the lockfiles installing a bundle in `directory` at `commit`
-// lock its npm versions `packages` with (bundle-dependency-reviews.ts), each
-// as the nearest of them locking it does, and each patch's file read of the
-// repository, held to its hash (npm-patch.ts); and the versions they lock
-// from git alone (`source`, a git repository or a git host's tarball); null
-// where none was read.
-async function lockedPatchesOf(deps: ManagedHttpDeps, fullName: string, token: string, repoId: number, commit: string, directory: string,
-  packages: { ecosystem: string; name: string; version: string }[]): Promise<LockedPatches | null> {
-  const versions = packages.filter(pkg => pkg.ecosystem === 'npm' && pkg.name && pkg.version).map(({ name, version }) => ({ name, version }))
-  if (versions.length === 0) return null
-  let read
-  try { read = await lockedAt(fullName, token, commit, lockfileKept(deps, repoId), path => installsBundle(path, directory)) } catch (err) {
-    if (err instanceof GithubApiError && err.status !== 429 && err.status !== 401) return null
-    throw err
-  }
-  if (read.lockfiles.length === 0) return null
-  const [installing] = bundleDependencies(versions, read, commit).told.lockfiles
-  const by = Map.groupBy(installing && 'locked' in installing ? installing.locked : [], pkg => `${pkg.name}@${pkg.version}`)
-  return {
-    of(name, version) {
-      const variants = by.get(`${name}@${version}`)
-      if (variants === undefined) return undefined
-      const patched = variants.find(variant => variant.patchHash)
-      return patched ? { hash: patched.patchHash!, ...patched.patchPath ? { path: patched.patchPath } : {} } : null
-    },
-    read: (hash, path) => readPatch(fullName, token, { hash, repoId, commit, path }),
-    git: (name, version) => by.get(`${name}@${version}`)?.every(variant => variant.source === 'git') ?? false,
-  }
 }
 
 // GET /api/admin/bundles — the uploaded bundles for the "Manage bundles" page.
