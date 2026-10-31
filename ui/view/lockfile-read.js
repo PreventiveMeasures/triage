@@ -14,11 +14,40 @@ const targets = (...lists) => lists.flatMap(list => Object.values(list))
 const unique = list => [...new Set(list)]
 
 // The project, where a lockfile names nothing it asks for itself: it asks for
-// what nothing else does.
+// what nothing else does, and of a cycle nothing outside it asks for, for each
+// package in it, so that every package locked is reached from the project.
+// Cycles are found as strongly connected components (Kosaraju's): the finish
+// order of a walk along dependencies, then what reaches each package back,
+// in reverse of that order.
 function inferredProject(packages) {
+  const keys = Object.keys(packages)
+  const depsOf = key => packages[key].dependencies.filter(dep => dep !== key && Object.hasOwn(packages, dep))
+  const finished = [], seen = new Set()
+  for (const start of keys) {
+    if (seen.has(start)) continue
+    seen.add(start)
+    const stack = [[start, depsOf(start).values()]]
+    while (stack.length > 0) {
+      const [key, deps] = stack.at(-1), step = deps.next()
+      if (step.done) { finished.push(key); stack.pop() } else if (!seen.has(step.value)) {
+        seen.add(step.value)
+        stack.push([step.value, depsOf(step.value).values()])
+      }
+    }
+  }
+  const askedBy = new Map(keys.map(key => [key, []]))
+  for (const key of keys) for (const dep of depsOf(key)) askedBy.get(dep).push(key)
+  const component = new Map()
+  for (const start of finished.toReversed()) {
+    if (component.has(start)) continue
+    component.set(start, start)
+    for (const stack = [start]; stack.length > 0;) {
+      for (const from of askedBy.get(stack.pop())) if (!component.has(from)) { component.set(from, start); stack.push(from) }
+    }
+  }
   const asked = new Set()
-  for (const [key, pkg] of Object.entries(packages)) for (const dep of pkg.dependencies) if (dep !== key) asked.add(dep)
-  return { '.': { dependencies: Object.keys(packages).filter(key => !asked.has(key)) } }
+  for (const key of keys) for (const dep of depsOf(key)) if (component.get(dep) !== component.get(key)) asked.add(component.get(dep))
+  return { '.': { dependencies: keys.filter(key => !asked.has(component.get(key))) } }
 }
 
 // What each package depends on where extras turn on more of it: the extras
