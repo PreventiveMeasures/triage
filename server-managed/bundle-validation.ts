@@ -50,7 +50,7 @@ const PACKAGES_AT_ONCE = 6
 const MAX_TREE_READS = 500
 const TREES_AT_ONCE = 6
 // The file Stasis records for an import a package disables, never on disk:
-// empty.
+// empty, and allowed, as no repository or package has it.
 const EMPTY_MODULE = '.stasis/empty-module.js'
 const SHA = /^[\da-f]{40}$/u
 
@@ -58,17 +58,17 @@ interface BundleModule { ecosystem?: string; name?: string; version?: string; fi
 // A file the bundle holds: its path in it, its path in its module, and its bytes.
 interface BundledFile { path: string; rel: string; bytes: () => Uint8Array }
 interface PlannedPackage { ecosystem: string; name: string; version: string; files: BundledFile[] }
-export interface ValidationPlan { files: number; own: BundledFile[]; synthetic: string[]; packages: PlannedPackage[]; patches: Map<string, string> }
+export interface ValidationPlan { files: number; own: BundledFile[]; packages: PlannedPackage[]; patches: Map<string, string> }
 
-// What a bundle's files are, as validation checks them: of its own code, of
-// each package version, or Stasis's own stub; and the patches it holds, by
-// their paths. Directories and stat records, which are no files, are left
-// out. Null for a bundle with no modules.
+// What a bundle's files are, as validation checks them: of its own code, or
+// of each package version; and the patches it holds, by their paths.
+// Directories and stat records, which are no files, are left out, as is
+// Stasis's empty stub, which is allowed. Null for a bundle with no modules.
 export function validationPlan(details: { kind: string | null; bundle?: unknown }): ValidationPlan | null {
   const bundle = details.bundle as { modules?: ReadonlyMap<string, BundleModule>; formats?: ReadonlyMap<string, string> } | undefined
   if (details.kind !== 'stasis' || !bundle?.modules) return null
   const formats = bundle.formats ?? new Map<string, string>()
-  const own: BundledFile[] = [], patches = new Map<string, string>(), synthetic: string[] = []
+  const own: BundledFile[] = [], patches = new Map<string, string>()
   const packages = new Map<string, PlannedPackage>()
   let files = 0
   for (const [dir, info] of bundle.modules) {
@@ -77,11 +77,11 @@ export function validationPlan(details: { kind: string | null; bundle?: unknown 
       const path = dir === '.' ? rel : `${dir}/${rel}`
       const format = formats.get(path)
       if (typeof content !== 'string' || format === 'directory' || format?.startsWith('stat:')) continue
+      if (ecosystem === undefined && path === EMPTY_MODULE && content === '') continue
       files++
       const file = { path, rel, bytes: () => Buffer.from(content, format === 'resource:base64' ? 'base64' : 'utf8') }
       if (ecosystem === undefined && (format === 'patch' || path.endsWith('.patch'))) patches.set(path, content)
-      if (ecosystem === undefined && path === EMPTY_MODULE && content === '') synthetic.push(path)
-      else if (ecosystem === undefined) own.push(file)
+      if (ecosystem === undefined) own.push(file)
       else {
         const [name, version] = [info.name ?? '', info.version ?? '']
         const key = `${ecosystem}\0${name}\0${version}`
@@ -90,7 +90,7 @@ export function validationPlan(details: { kind: string | null; bundle?: unknown 
       }
     }
   }
-  return { files, own, synthetic, packages: [...packages.values()], patches }
+  return { files, own, packages: [...packages.values()], patches }
 }
 
 // Git's id of a blob of `bytes`.
@@ -186,7 +186,7 @@ export interface PackageTold { ecosystem: string; name: string; version: string;
   patch?: ToldPatch }
 export interface BundleValidation {
   validatedAt: number; status: 'valid' | 'invalid' | 'incomplete'; own: OwnChecked
-  counts: { files: number; own: number; dependencies: number; synthetic: number; matched: number; eol: number; differs: number; unexpected: number; unverified: number
+  counts: { files: number; own: number; dependencies: number; matched: number; eol: number; differs: number; unexpected: number; unverified: number
     packages: number; validPackages: number }
   problems: Problem[]; moreProblems: number; packages: PackageTold[]
 }
@@ -205,7 +205,7 @@ export async function validateBundle(plan: ValidationPlan, own: { entries: Map<s
   | { reason: string }, { fetch = fetchUpstreamPackage, locked = null, deadline = Number.POSITIVE_INFINITY, now = Date.now }: { fetch?: FetchPackage
   locked?: LockedPatches | null; deadline?: number; now?: () => number } = {}): Promise<BundleValidation> {
   const problems: Problem[] = []
-  const counts = { files: plan.files, own: plan.own.length, dependencies: 0, synthetic: plan.synthetic.length, matched: plan.synthetic.length, eol: 0, differs: 0,
+  const counts = { files: plan.files, own: plan.own.length, dependencies: 0, matched: 0, eol: 0, differs: 0,
     unexpected: 0, unverified: 0, packages: plan.packages.length, validPackages: 0 }
   const tell = (problem: Problem) => { counts[problem.kind]++; problems.push(problem) }
 
