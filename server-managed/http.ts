@@ -3552,8 +3552,9 @@ async function bundleDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
 // once as VALIDATIONS_AT_ONCE, those of one bundle asked meanwhile sharing
 // one, one checking own code its reader's alone, as it reads the repository
 // with their access and checks theirs again after; each given VALIDATION_MS
-// for its packages, those left told unverified. The bundle's access checked
-// again before it is told.
+// for its packages, those left told unverified. The bundle's access, and
+// where own code is told the reader's of all of its repository, checked
+// again once it is read, before it is told.
 const VALIDATIONS_AT_ONCE = 2
 const VALIDATION_MS = 240_000
 const validating = new Map<string, Promise<BundleValidation | Refusal>>()
@@ -3575,8 +3576,16 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
   const reason = whole ? 'no-access' : 'no-repository'
   const store = bundleValidationStore<BundleValidation>(deps.db, deps.config.debug)
   const keyOf = (own: boolean) => `${record.id}\0${record.integrity}\0${record.repoId ?? ''}\0${record.repoDirectory}\0${own ? 'own' : 'dependencies'}\0${BUNDLE_VALIDATION_READ}`
+  // Why the reader of all of the repository may no longer be told its own
+  // code, asked once that is read; null where they still may.
+  const lostWhole = async () => {
+    if (!access) return null
+    const current = await wholeRepositoryAccess(deps, cookie, access.repo.repoId)
+    return 'error' in current ? current : sameRepository(current.repo, access.repo) ? null : refusal(409, 'repository-changed')
+  }
   if (!run) {
-    const kept = access ? [...(await store.readFirst([keyOf(true)], [keyOf(false)])).found.values()][0]?.value : (await store.read(keyOf(false)))?.value
+    let kept = access ? [...(await store.readFirst([keyOf(true)], [keyOf(false)])).found.values()][0]?.value : (await store.read(keyOf(false)))?.value
+    if (await lostWhole()) kept = (await store.read(keyOf(false)))?.value
     if (await readable()) sendJson(res, 200, { validation: plainObject(kept) && typeof kept.status === 'string' ? kept : null })
     return
   }
@@ -3600,6 +3609,8 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
     sendJson(res, 502, { error: 'validation-failed' }); return
   }
   if ('error' in validation) { sendRefusal(res, validation); return }
+  const lost = validation.own.checked ? await lostWhole() : null
+  if (lost) { sendRefusal(res, lost); return }
   const now = await readable()
   if (!now) return
   if (now.repoId !== record.repoId || now.repoDirectory !== record.repoDirectory) { sendJson(res, 409, { error: 'repository-changed' }); return }

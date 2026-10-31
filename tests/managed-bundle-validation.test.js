@@ -233,6 +233,30 @@ test('a bundle validated on request: its own code too for a reader of all of its
   assert.deepEqual((await send('manager')).body.validation, theirs)
   assert.deepEqual((await send('alice')).body.validation, validation, 'hers still the one checking its own code')
   assert.equal((await send('carol', 'POST')).status, 404, 'one of no bundle')
+
+  // Her team narrowed to the bundle's directory as the kept one is read: told the one that didn't check own code.
+  const read = db.getFirstUpstreamCacheEntries.bind(db)
+  t.mock.method(db, 'getFirstUpstreamCacheEntries', async (...keys) => {
+    const found = await read(...keys)
+    await db.removeTeamRepo('one', 1)
+    await db.setTeamRepo('one', 1, 'web')
+    return found
+  }, { times: 1 })
+  assert.deepEqual((await send('alice')).body.validation, theirs, 'none of own code told her')
+
+  // Her team narrowed as her new one is kept, after her run checked her access: refused it.
+  await db.setTeamRepo('one', 1, null)
+  const write = db.setUpstreamCacheEntry.bind(db)
+  let narrowed = false
+  t.mock.method(db, 'setUpstreamCacheEntry', async (key, ...rest) => {
+    await write(key, ...rest)
+    if (narrowed || !key.startsWith('bundles/validations')) return
+    narrowed = true
+    await db.removeTeamRepo('one', 1)
+    await db.setTeamRepo('one', 1, 'web')
+  })
+  const refused = await send('alice', 'POST')
+  assert.deepEqual([narrowed, refused.status, refused.body], [true, 404, { error: 'no-directory' }])
 })
 
 test('a validation of own code is shared by its reader\'s requests alone, each reader\'s access checked again after their own run', async t => {
