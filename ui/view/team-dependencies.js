@@ -219,7 +219,8 @@ const pullName = ({ repo, item }) => `${repo.name}#${item.number}`
 // patched; its badge's label, tint, heading and what it says, in a line or
 // as rows (`rows`), none where it wants no review.
 const WHY = { git: 'From git, which isn’t reviewed', tarball: 'A tarball not npm’s registry’s of its version, which isn’t reviewed',
-  integrity: 'Locked with no integrity, which its reviews are held to' }
+  integrity: 'Locked with no integrity, which its reviews are held to',
+  unlocked: 'Locked by none of the lockfiles installing the bundle at its commit, so nothing holds its reviews to an integrity' }
 function reviewState(pkg, review) {
   const shown = reviewOf(pkg, review)
   if (shown === 'unsupported') return { label: 'can’t review', tint: 'is-failed', head: 'Can’t be reviewed', said: WHY[pkg.unsupported] }
@@ -298,8 +299,9 @@ function versionTip(pkg, review, { added, above, involved, here }) {
 // for them alone; the pull request above it is listed under (`above`), where
 // it is one, its tag blue where it reviews it so, told by that alone; and
 // the pull requests adding it besides, or, `adders`, all those adding it,
-// those reviewing it in their comments named by that alone.
-function versionRow(pkg, review, { others = [], adders = false, elsewhere = [], above = null, added = false, involved = [], here = null, repoId = null, head = null } = {}) {
+// those reviewing it in their comments named by that alone. A bundle's
+// Overview lists its versions so too (bundle-dependency-review.js).
+export function versionRow(pkg, review, { others = [], adders = false, elsewhere = [], above = null, added = false, involved = [], here = null, repoId = null, head = null } = {}) {
   const npm = pkg.source === 'registry' && pkg.version
   const before = pkg.patch && pkg.was?.includes(pkg.version) ? pkg.version : pkg.was?.find(prior => prior !== pkg.version)
   const patch = pkg.patch?.path && repoId && head ? { hash: pkg.patch.hash, repoId, commit: head, path: pkg.patch.path } : null

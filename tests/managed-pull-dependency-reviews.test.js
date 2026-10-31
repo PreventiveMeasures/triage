@@ -807,3 +807,101 @@ test('a team\'s Dependencies read each open pull request\'s by the commits its p
     assert.ok(other.asked.includes('/repos/org/repo/pulls/5'), JSON.stringify(page))
   }
 })
+
+// A bundle's npm versions (bundle-dependency-reviews.ts), as the lockfiles
+// installing it lock them at the commit it was built from.
+const { bundleDependencies, installsBundle } = await import('../server-managed/bundle-dependency-reviews.ts')
+
+test('a bundle\'s versions are those the nearest lockfile at or above its directory locks, each integrity and patch it locks; one none locks unlocked', () => {
+  assert.deepEqual(['package-lock.json', 'web/yarn.lock', 'web/app/pnpm-lock.yaml', 'webapp/yarn.lock', 'other/package-lock.json'].map(path => installsBundle(path, '/web/app/')),
+    [true, true, true, false, false], 'at its root, above it and in it, not a sibling\'s nor one named alike')
+  const patched = at('patched', '1.0.0', { patchHash: PATCH, patchPath: 'patches/patched.patch', lockfile: 'pnpm' })
+  const read = { unread: ['web/bun.lock', 'web/berry/yarn.lock'], lockfiles: [
+    { path: 'package-lock.json', packages: [at('ms', '2.1.3', { lockfile: 'npm' }), at('root-only', '1.0.0', { lockfile: 'npm' }), at('patched', '1.0.0', { lockfile: 'npm' })] },
+    { path: 'web/pnpm-lock.yaml', packages: [patched, { ...patched, integrity: sri('patched again'), patchHash: undefined, patchPath: undefined },
+      at('ms', '2.1.3', { lockfile: 'pnpm', integrity: sri('ms from pnpm') })] },
+  ] }
+  const bundled = [{ name: 'ms', version: '2.1.3' }, { name: 'patched', version: '1.0.0' }, { name: 'root-only', version: '1.0.0' }, { name: 'absent', version: '1.0.0' },
+    { name: 'ms', version: '2.1.3' }]
+  const { told, versions, unlocked, moreUnlocked } = bundleDependencies(bundled, read, head)
+  assert.deepEqual([versions, unlocked, moreUnlocked], [4, [{ name: 'absent', version: '1.0.0' }], 0], 'each once')
+  assert.deepEqual(told.lockfiles[0].paths, ['web/pnpm-lock.yaml', 'package-lock.json'], 'the nearest first')
+  assert.deepEqual(told.lockfiles[0].locked.map(pkg => [pkg.name, pkg.integrity, pkg.patchHash ?? null, pkg.patchPath ?? null]), [
+    ['ms', sri('ms from pnpm'), null, null],
+    ['patched', sri('patched@1.0.0'), PATCH, 'web/patches/patched.patch'],
+    ['patched', sri('patched again'), null, null],
+    ['root-only', sri('root-only@1.0.0'), null, null],
+  ], 'as the nearest locking each locks it, its patch\'s file from the repository\'s root; the root\'s where it alone does')
+  assert.deepEqual(told.lockfiles.slice(1), [{ paths: ['web/bun.lock'], error: 'lockfile-unsupported' }, { paths: ['web/berry/yarn.lock'], error: 'lockfile-unreadable' }])
+  assert.deepEqual([told.base, told.head, told.cut, told.lockfiles[0].added, told.lockfiles[0].moreLocked], [head, head, false, [], 0])
+})
+
+// The repository's lockfiles at the commit a bundle in `web` was built from:
+// its root's, web's, and a sibling's, which doesn't install it.
+const built = '7'.repeat(40)
+const BUILT = { [since]: BASELINE, [built]: {
+  'package-lock.json': npmLockfile({ ms: registry('ms', '2.1.3'), mine: gitDependency, kept: registry('kept', '1.0.0'), 'left-pad': registry('left-pad', '1.3.0') }),
+  'web/yarn.lock': yarnLockfile,
+  'other/package-lock.json': npmLockfile({ stray: registry('stray', '1.0.0') }),
+} }
+// A bundle stored at repository 1's `web`, of `versions` by package, built
+// from `commit`, its summary and inventory as its cache tells them.
+async function bundleFixture(t, { commit = built, packages = { absent: ['1.0.0'], 'left-pad': ['1.3.0'], mine: ['1.0.0'], ms: ['2.1.3'], stray: ['1.0.0'] }, directory = 'web' } = {}) {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  const id = '00000000-0000-4000-8000-000000000001'
+  await db.insertBundle({ id, integrity: sri('bundle'), filename: 'web.stasis.code.br', kind: 'stasis', byteSize: 1, uploadedBy: users.admin.userId, uploadedByLogin: 'admin',
+    repoId: 1, repoDirectory: directory }, Date.now())
+  const bundleCache = {
+    summary: () => Promise.resolve({ files: 1, codeFiles: 1, lines: 1, ...commit ? { commit } : {} }),
+    advisoryInventory: () => Promise.resolve({ packages: Object.entries(packages).map(([name, versions]) => ({ ecosystem: 'npm', name, versions })), skipped: [] }),
+  }
+  const send = api(db, users, { bundleCache })
+  return { db, users, ask: (who = 'alice') => send(`/api/bundles/${id}/dependency-review`, { who }) }
+}
+
+test('a bundle\'s npm versions, where its repository\'s review is in effect, are told their review as the lockfiles installing it lock them at its commit; one none locks failing it', async t => {
+  const { db, users, ask } = await bundleFixture(t)
+  github(t, { files: BUILT })
+  assert.deepEqual((await ask()).body, { review: null }, 'not enabled')
+  assert.equal(globalThis.fetch.mock.callCount(), 0, 'GitHub not asked where it reviews none')
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, since })
+  await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
+  const answer = await ask()
+  assert.equal(answer.status, 200)
+  assert.deepEqual(answer.body, { head: built, cut: false, versions: 5, unlocked: [{ name: 'absent', version: '1.0.0' }, { name: 'stray', version: '1.0.0' }], moreUnlocked: 0,
+    review: { required: 1, since, canReview: true, toReview: 0, unreviewed: 0, unsupported: 1, baselineUnread: ['berry/yarn.lock', 'bun.lock'] },
+    lockfiles: [{ paths: ['web/yarn.lock', 'package-lock.json'], added: [], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0,
+      unsupported: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }], moreUnsupported: 0 }] },
+  'ms reviewed compared with another version, left-pad as web\'s yarn.lock locks it at the commit reviewed since; mine from git, kept not bundled, absent locked nowhere,'
+    + ' stray by a sibling\'s alone')
+  await publish(db, users.alice, context('ms', '2.1.3'), ['one'], { status: 'reject' })
+  assert.deepEqual((await ask()).body.lockfiles[0].unreviewed, [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0, rejected: true,
+    reviewers: [{ login: 'alice', status: 'reject' }] }], 'its reviewer\'s latest rejecting it')
+  const before = globalThis.fetch.mock.callCount()
+  await ask()
+  assert.equal(globalThis.fetch.mock.callCount() - before, 1, 'its lockfiles and baseline kept: its access asked once, not again')
+
+  // Its review holding to none of the lockfiles installing it: not reviewed.
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'include', paths: ['other/'] } })
+  assert.deepEqual((await ask()).body, { review: null })
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'exclude', paths: ['web/'] } })
+  assert.deepEqual((await ask()).body.lockfiles[0].paths, ['package-lock.json'], 'those it holds to alone')
+
+  // A reader of only part of the repository is told none, as is one of no bundle.
+  await db.setTeamRepo('two', 1, 'web')
+  assert.deepEqual([(await ask('manager')).status, (await ask('manager')).body], [200, { review: null }])
+  assert.equal((await ask('carol')).status, 404)
+})
+
+test('a bundle of no commit, or of no npm versions, is told no review, GitHub not asked', async t => {
+  for (const options of [{ commit: null }, { packages: {} }]) {
+    const { db, ask } = await bundleFixture(t, options)
+    await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
+    github(t, { files: BUILT })
+    assert.deepEqual((await ask()).body, { review: null }, JSON.stringify(options))
+    assert.equal(globalThis.fetch.mock.callCount(), 0)
+    t.mock.restoreAll()
+  }
+})

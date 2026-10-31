@@ -148,6 +148,24 @@ Another server instance then reads none of them from GitHub again, and after a p
 A pull request's popup, and its repository's tiles, reuse what the tab read.
 The line counts on its rows come with the tab's answer where they are already counted, and the rest are asked for 50 at a time.
 
+## A bundle's dependencies
+
+A Stasis bundle attached to a repository whose review is in effect for the reader shows a **Dependency review** line among its Overview's facts.
+It checks the npm package versions the bundle holds, those it has code of as `stasis audit` counts them, as they are locked at the commit its stamp names.
+They are read from the lockfiles in the bundle's directory and the directories above it, as an install there reads a workspace's root lockfile; a sibling directory's are not.
+Each version is checked as the nearest of those directories that locks it locks it, every integrity and patch it locks it with.
+
+They are held to the rules a pull request's other versions are: each needs the required number of counting reviews, of it whole or compared with any version of its package, unless the [baseline commit](#repository-settings) or the [host](#host-reviewed-dependencies) passes it.
+The review fails for a version that [can't be reviewed](#what-cant-be-reviewed), for one none of those lockfiles locks (`not locked at its commit`), as nothing holds its reviews to an integrity, and for one of those lockfiles that can't be read.
+
+The line says **Passes**, how many versions want reviews (`3 to review`, of the versions the bundle holds), or **Fails** and why.
+**Details** tells the review's terms and the lockfiles read, and lists the versions failing the review, then those wanting reviews, each opening its review page for one who publishes to a counting team.
+While only some lockfiles are held to, only those are read, and a bundle none of whose lockfiles are held to shows no line, as a pull request's directory with none of them shows nothing.
+
+No line shows for a bundle of no repository, no commit or no npm versions, nor for a reader who may read only part of its repository; nor is GitHub asked then, or where its repository reviews no dependencies.
+What the line reads is kept for two minutes, or till the bundle moves to another repository or directory, and its lockfiles as the Dependencies tab keeps them.
+It is read with the reader's own GitHub access as a default branch's dependencies are (`GET /api/bundles/:id/dependency-review`), and the bundle's access and location are checked again before it is shown.
+
 ## Host reviewed dependencies
 
 A host that keeps reviewed dependencies of its own registers them once, before `init()`.
@@ -240,6 +258,7 @@ It is given only the asker's own published, unrevoked reviews, however it is ask
 - Dependencies, of a pull request or the default branch, are read and checked as the pull request itself is (see [code-viewer.md](./code-viewer.md)), and access is checked again after GitHub answers, unless the whole answer came from kept data.
 - A repository that reviews no dependencies answers so without asking GitHub, but only once the reader's access in the app is checked.
 - The team Dependencies tab leaves out any repository the reader may read only part of.
+- A bundle's **Dependency review** line needs read access to the bundle and to all of its repository, and the bundle's access is checked again before it is answered.
 - While the tab's request runs, the reader's session is checked before each repository's answer.
 - Before each answer showing a repository's dependencies, the request also checks that the team is still the reader's and still holds the repository, and that the reader may still read all of it; where not, the answer stops there.
 - The review page and its list check private npm access for both versions of a comparison (see [npm-viewer.md](./npm-viewer.md) for who reads private packages).
