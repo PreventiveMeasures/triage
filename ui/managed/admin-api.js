@@ -152,7 +152,7 @@ export async function createBundle(input, csrfToken, signal) {
       'unsupported-entries': 'Select JavaScript/TypeScript files (including JSX/TSX) or Solidity files. Stasis cannot mix languages or use JSON or Rust as remote entry points.',
       'bad-conditions': 'Check the export conditions and selected platforms.',
       'metro-conditions': 'Stasis’s Metro preset requires the react-native condition without manual changes.',
-      'config-invalid': 'Stasis can’t read the stasis.config.json these entry points are under. Check its entries at this revision.',
+      'config-invalid': 'Stasis can’t read the stasis.config.json these entry points are under, or build them with the options it sets. Check its entries at this revision.',
       'config-mixed': 'Entry points listed in a stasis.config.json are built with its options, alone. Select only those it lists, or only other files.',
       'config-conditions': 'These entry points are listed in stasis.config.json, which sets their options, so they take no conditions. Reload the directory and try again.',
       'config-runs-code': 'stasis.config.json sets an option for these entry points that runs the repository’s code, such as babel. Bundles built here never run it.',

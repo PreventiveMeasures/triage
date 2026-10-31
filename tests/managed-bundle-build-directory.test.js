@@ -33,8 +33,7 @@ function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, mod
     // Exercise the same repeated directory reads as Stasis's lockfile discovery.
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
-    const bundle = { repo: { directory: bundleDirectory ?? options.directory }, modules: new Map(Object.entries(modules)), serialize: () => '{}', merge: () => bundle }
-    return { bundle }
+    return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, modules: new Map(Object.entries(modules)), serialize: () => '{}' } }
   }
   const run = () => buildStasisBundle({ input, github: 'org/repo', token: null, maxBytes: 1000, scopes }, client)
   return { run, reads, builds, fileReads }
@@ -180,17 +179,16 @@ test('Solidity builds never read package.json for Prisma', async () => {
 
 const config = entries => JSON.stringify({ scope: 'full', entries })
 
-test('entries a stasis.config.json lists build from its directory with their options there, those alike together', async () => {
+test('entries a stasis.config.json lists build from its directory, with no options but its own there', async () => {
   const contents = { 'packages/app/stasis.config.json': config({
     './src/main.ts': { conditions: 'browser', mainFields: ['browser', 'main'] }, 'src/worker.ts': {}, 'bin/cli.js': {}, 'src/other.ts': { metro: true, platforms: 'ios' },
   }) }
   const files = [file('package.json'), file('packages/app/package.json'), file('packages/app/stasis.config.json')]
   const f = await fixture(['packages/app/src/main.ts', 'packages/app/src/worker.ts', 'packages/app/bin/cli.js'], files, { contents, conditions: null })
   const result = await f.run()
-  assert.deepEqual(f.builds.map(({ directory, entries, conditions, mainFields }) => ({ directory, entries, conditions, mainFields })), [
-    { directory: 'packages/app', entries: ['src/main.ts'], conditions: ['browser'], mainFields: ['browser', 'main'] },
-    { directory: 'packages/app', entries: ['src/worker.ts', 'bin/cli.js'], conditions: undefined, mainFields: undefined },
-  ])
+  assert.equal(f.builds.length, 1)
+  const { github: _github, sha: _sha, client: _client, cache: _cache, ...options } = f.builds[0]
+  assert.deepEqual(options, { directory: 'packages/app', entries: ['src/main.ts', 'src/worker.ts', 'bin/cli.js'] }, 'Stasis takes each one’s from the file')
   assert.equal(result.directory, 'packages/app')
   assert.deepEqual(f.fileReads, ['packages/app/stasis.config.json', 'packages/app/package.json'], 'each stasis.config.json is read once')
 })
@@ -203,12 +201,11 @@ test('a stasis.config.json above the entries’ package builds them from there, 
   await f.run()
   assert.equal(f.builds[0].directory, undefined)
   assert.deepEqual(f.builds[0].entries, ['packages/app/src/main.ts'])
-  assert.equal(f.builds[0].jsx, true)
   const inner = await fixture(['packages/app/src/main.ts'], files, { conditions: null,
     contents: { ...outer, 'packages/app/stasis.config.json': config({ 'src/main.ts': {} }) } })
   await inner.run()
   assert.equal(inner.builds[0].directory, 'packages/app')
-  assert.equal(inner.builds[0].jsx, undefined)
+  assert.deepEqual(inner.builds[0].entries, ['src/main.ts'])
 })
 
 test('entries a stasis.config.json lists are never built with others, nor with conditions', async () => {
@@ -230,21 +227,8 @@ test('entries a stasis.config.json lists are never built with others, nor with c
   assert.deepEqual(solidity.builds[0].entries, ['contracts/Token.sol'], 'Solidity takes no conditions either way')
 })
 
-test('an entry option that runs code fails the build, which nothing can consent to', async () => {
-  for (const options of [{ metro: true, platforms: 'ios', babel: true }, { metro: true, platforms: 'ios', 'metro-resolver': true }, { flow: true }, { 'cargo-target': 'host' }]) {
-    const contents = { 'stasis.config.json': config({ 'index.js': options, 'safe.js': {} }) }
-    const f = await fixture(['index.js', 'safe.js'], [file('package.json'), file('stasis.config.json')], { contents, conditions: null })
-    await assert.rejects(f.run(), error => error.message === 'config-runs-code' && /stasis\.config\.json sets \S+ for index\.js/u.test(error.cause.message))
-    assert.equal(f.builds.length, 0)
-  }
-  const safe = await fixture(['safe.js'], [file('package.json'), file('stasis.config.json')],
-    { contents: { 'stasis.config.json': config({ 'index.js': { babel: true }, 'safe.js': { babel: false } }) }, conditions: null })
-  await safe.run()
-  assert.equal(safe.builds.length, 1, 'only the entries built are held to it')
-})
-
-test('a stasis.config.json Stasis would refuse fails builds below it, whose entries it may list', async () => {
-  for (const text of ['{', config({ 'index.js': { output: 'x.br' } }), config({ 'index.js': { unknown: true } }), 'x'.repeat(256 * 1024 + 1)]) {
+test('a stasis.config.json whose entries Stasis can’t tell fails builds below it, which it may list', async () => {
+  for (const text of ['{', JSON.stringify({ entries: [] }), config({ '../index.js': {} }), config({ 'index.js': {}, './index.js': {} }), 'x'.repeat(256 * 1024 + 1)]) {
     const f = await fixture(['app/other.js'], [file('stasis.config.json'), file('app/package.json')], { contents: { 'stasis.config.json': text } })
     await assert.rejects(f.run(), { message: 'config-invalid' })
     assert.equal(f.builds.length, 0)

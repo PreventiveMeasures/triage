@@ -39,7 +39,7 @@ export function packageEntryPoints(manifest: unknown, directory: string): string
 // the ones a server build takes, which it builds with their options there.
 export function configEntryPoints(text: string, directory: string): string[] {
   const paths: string[] = []
-  for (const key of parseStasisConfig(text, directory)?.keys() ?? []) {
+  for (const key of parseStasisConfig(text, directory) ?? []) {
     const path = directory ? `${directory}/${key}` : key
     if (buildableEntry(path) && paths.length < MAX_ENTRY_POINTS) paths.push(path)
   }
@@ -67,8 +67,8 @@ export async function readPackageEntryPoints(sha: string, directory: string, rea
   }
 }
 
-// A stasis.config.json Stasis would refuse lists none here; building its
-// entries reports why (config-invalid).
+// A stasis.config.json whose entries Stasis can't tell lists none here;
+// building them reports why (config-invalid), as it does options Stasis refuses.
 export async function readConfigEntryPoints(sha: string, directory: string, read: (suffix: string) => Promise<unknown>): Promise<string[]> {
   try {
     const text = await readBlobText(sha, read, MAX_STASIS_CONFIG_BYTES)

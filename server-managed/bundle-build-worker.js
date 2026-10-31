@@ -12,8 +12,8 @@ import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG, parseStasisConfig } from './sta
 const regularFile = entry => entry.type === 'blob' && ['100644', '100755'].includes(entry.mode)
 const parentOf = path => posix.dirname(path).replace(/^\.$/u, '')
 
-// The `entries` of the stasis.config.json in `directory` (parseStasisConfig's),
-// null where it has none. One Stasis would refuse to read is config-invalid.
+// The entries the stasis.config.json in `directory` names (parseStasisConfig's),
+// null where it has none. One whose entries Stasis can't tell is config-invalid.
 async function directoryConfig(input, github, directory, client) {
   const listing = await client.listRepoDir({ repo: github, sha: input.commit, directory: directory || undefined })
   if (!listing.some(entry => entry.path === STASIS_CONFIG && regularFile(entry))) return null
@@ -27,11 +27,11 @@ async function directoryConfig(input, github, directory, client) {
   }
 }
 
-// The stasis.config.json listing the selected entries, as `{ directory,
-// config }`: for each entry, the nearest one at or above it whose `entries`
-// names it. null where none lists any. Entries it lists are built with their
-// options there alone, as `stasis bundle` builds them: with others, or with
-// another file's, they are config-mixed.
+// The directory of the stasis.config.json listing the selected entries: for
+// each entry, the nearest one at or above it whose `entries` names it. null
+// where none lists any. Stasis reads the one in the directory it builds from
+// alone, and builds the entries it lists alone: with others, or with another
+// file's, they are config-mixed.
 async function listingConfig(input, github, client) {
   const configs = new Map()
   const configAt = directory => {
@@ -41,7 +41,7 @@ async function listingConfig(input, github, client) {
   const found = await Promise.all(input.entries.map(async entry => {
     for (let directory = parentOf(entry); ; directory = parentOf(directory)) {
       const config = await configAt(directory)
-      if (config?.has(posix.relative(`/${directory}`, `/${entry}`))) return { entry, directory, config }
+      if (config?.has(posix.relative(`/${directory}`, `/${entry}`))) return { entry, directory }
       if (!directory) return { entry, directory: null }
     }
   }))
@@ -52,23 +52,7 @@ async function listingConfig(input, github, client) {
     const where = at => at.directory === null ? 'none' : posix.join(at.directory, STASIS_CONFIG)
     throw new Error('config-mixed', { cause: new Error(`${listed.entry} is listed in ${where(listed)}, ${other.entry} in ${where(other)}`) })
   }
-  return { directory: listed.directory, config: listed.config }
-}
-
-// The builds of the entries `listed` (listingConfig's) lists, as `stasis
-// bundle` makes them: the ones with the same options together. An entry
-// setting an option that runs code is config-runs-code: nothing consents.
-function configBuilds(input, { directory, config }) {
-  const builds = new Map()
-  for (const entry of input.entries) {
-    const path = posix.relative(`/${directory}`, `/${entry}`)
-    const { runs, options } = config.get(path)
-    if (runs !== null) throw new Error('config-runs-code', { cause: new Error(`${posix.join(directory, STASIS_CONFIG)} sets ${runs} for ${path}`) })
-    const id = JSON.stringify(options)
-    if (builds.has(id)) builds.get(id).entries.push(path)
-    else builds.set(id, { entries: [path], options })
-  }
-  return [...builds.values()]
+  return listed.directory
 }
 
 async function projectDirectory(input, github, client) {
@@ -122,29 +106,20 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   // disk. This fresh worker inherits no application credentials but NPM_TOKEN.
   setCacheDir(cacheDir ?? false)
   progress('build')
-  // Entries stasis.config.json lists are built from its directory with their
-  // options there, taking no conditions; others, from their project with the
-  // conditions chosen.
-  const listed = await listingConfig(input, github, buildClient)
-  if (listed && input.conditions !== null) throw new Error('config-conditions')
-  if (!listed && input.conditions === null && !input.entries[0].endsWith('.sol')) throw new Error('bad-conditions')
-  const project = listed ? listed.directory : await projectDirectory(input, github, buildClient)
+  // Entries stasis.config.json lists are built from its directory, where
+  // Stasis builds each with its options there, taking no conditions; others,
+  // from their project with the conditions chosen.
+  const configured = await listingConfig(input, github, buildClient)
+  if (configured !== null && input.conditions !== null) throw new Error('config-conditions')
+  if (configured === null && input.conditions === null && !input.entries[0].endsWith('.sol')) throw new Error('bad-conditions')
+  const project = configured ?? await projectDirectory(input, github, buildClient)
   if (!allowed(project)) throw new Error('build-scope')
-  const builds = listed ? configBuilds(input, listed) : [{ entries: input.entries.map(entry => posix.relative(project || '.', entry)), options: {} }]
   const generate = await prismaGenerate(input, github, project, buildClient)
-  let bundle
-  for (const build of builds) {
-    // One at a time, as `stasis bundle` builds them, into one bundle.
-    const built = (await buildGitHubBundle({
-      github, sha: input.commit, directory: project || undefined, entries: build.entries,
-      ...input.options, ...build.options, client: buildClient, ...(cacheDir === null && { cache: false }), ...(generate.length > 0 && { generate }),
-    })).bundle
-    // Merged, the bundles' repo would drop a directory they don't agree on.
-    if (bundle && (bundle.repo?.directory ?? '') !== (built.repo?.directory ?? '')) {
-      throw new Error(`${builds[0].entries[0]} and ${build.entries[0]} can't be bundled together: their bundles' paths are relative to different directories`)
-    }
-    bundle = bundle ? bundle.merge(built) : built
-  }
+  const { bundle } = await buildGitHubBundle({
+    github, sha: input.commit, directory: project || undefined,
+    entries: input.entries.map(entry => posix.relative(project || '.', entry)),
+    ...input.options, client: buildClient, ...(cacheDir === null && { cache: false }), ...(generate.length > 0 && { generate }),
+  })
   const directory = bundle.repo?.directory ?? ''
   progress('scope')
   // Imports outside the selected package may widen the root. Never publish it under a
@@ -162,10 +137,16 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
 
 // The code a failed build answers with. Never upstream bodies or paths outside
 // the caller's grants: those stay in the diagnostic. A missing or ambiguous
-// lockfile, or the named one missing, is the lockfile's.
+// lockfile, or the named one missing, is the lockfile's. Stasis refuses a
+// stasis.config.json entry setting an option that runs a program, whatever
+// is given (nothing of the repo runs); one it can't build with its options
+// is the config's.
 export function buildErrorCode(error, message) {
-  if (['build-scope', 'too-large', 'bad-conditions', 'config-invalid', 'config-mixed', 'config-conditions', 'config-runs-code'].includes(message)) return message
+  if (['build-scope', 'too-large', 'bad-conditions', 'config-invalid', 'config-mixed', 'config-conditions'].includes(message)) return message
   if (error instanceof HttpError) return error.status === 429 ? 'github-rate-limited' : 'github-build-failed'
+  if (/, which runs .+, and nothing of the project runs here$/u.test(message)) return 'config-runs-code'
+  if (message.endsWith(': bundle either the entries it names or others, not both')) return 'config-mixed'
+  if (/\bstasis\.config\.json(?: is not valid JSON|: entries)/u.test(message)) return 'config-invalid'
   return /no packageManager given|lockfile installs|no (?:pnpm-lock\.yaml|yarn\.lock|package-lock\.json|soldeer\.lock) found in /u.test(message) ? 'build-lockfile' : 'build-failed'
 }
 
