@@ -217,7 +217,8 @@ A Stasis bundle's Overview has a **Validation** line with a **Validate** button,
 2. **Dependencies** are fetched with upstream (npm's registry, and crates.io for Cargo crates), which holds each tarball to its integrity, and each file the bundle holds of a package must match the file at its path there.
    Files of a package the bundle leaves out are expected.
    A version pnpm patches is held to its files patched, as pnpm applies the patch: the patch the lockfiles installing the bundle at its commit lock it with, read of the bundle where it holds a file of that hash, else of the repository; without those lockfiles, the patch the bundle holds named for the version, pnpm's way (`patches/name@version.patch`).
-   Each patched version is listed with its patch, where it was read, and whether the bundle holds its files as patched.
+   Each installed copy of a version is held to its files patched or as published apart, as a nested copy may be unpatched, and the version is fetched once.
+   Each patched version is listed with its patch, where it was read, and, valid, whether a copy of it holds its files as patched.
 3. **Coverage**: every file the bundle holds must be one or the other. Stasis's empty placeholder (`.stasis/empty-module.js`, for an import a package disables) is allowed.
 
 The line says **Valid** where every file was checked and matches, **Invalid** where any file differs (`differs`) or is neither on GitHub nor in its package (`unexpected`), and **Incomplete** where nothing failed but some files weren't checked: those of ecosystems upstream fetches no package of by name and version (Composer, Soldeer, crates from git), of versions it couldn't fetch, or not reached within 4 minutes.

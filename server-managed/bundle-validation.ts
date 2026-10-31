@@ -55,8 +55,9 @@ const EMPTY_MODULE = '.stasis/empty-module.js'
 const SHA = /^[\da-f]{40}$/u
 
 interface BundleModule { ecosystem?: string; name?: string; version?: string; files: Record<string, unknown> }
-// A file the bundle holds: its path in it, its path in its module, and its bytes.
-interface BundledFile { path: string; rel: string; bytes: () => Uint8Array }
+// A file the bundle holds: its path in it, the module (`dir`, an installed
+// copy of its package) and its path there, and its bytes.
+interface BundledFile { path: string; dir: string; rel: string; bytes: () => Uint8Array }
 interface PlannedPackage { ecosystem: string; name: string; version: string; files: BundledFile[] }
 export interface ValidationPlan { files: number; own: BundledFile[]; packages: PlannedPackage[]; patches: Map<string, string> }
 
@@ -79,7 +80,7 @@ export function validationPlan(details: { kind: string | null; bundle?: unknown 
       if (typeof content !== 'string' || format === 'directory' || format?.startsWith('stat:')) continue
       if (ecosystem === undefined && path === EMPTY_MODULE && content === '') continue
       files++
-      const file = { path, rel, bytes: () => Buffer.from(content, format === 'resource:base64' ? 'base64' : 'utf8') }
+      const file = { path, dir, rel, bytes: () => Buffer.from(content, format === 'resource:base64' ? 'base64' : 'utf8') }
       if (ecosystem === undefined && (format === 'patch' || path.endsWith('.patch'))) patches.set(path, content)
       if (ecosystem === undefined) own.push(file)
       else {
@@ -246,19 +247,26 @@ export async function validateBundle(plan: ValidationPlan, own: { entries: Map<s
     const { patch, patched } = pkg.ecosystem === 'npm' ? await patchOf(plan, pkg, files, locked) : { patch: undefined, patched: null }
     // Held to its files patched where it is, else as published; to
     // whichever it wholly matches.
+    // Each installed copy of it (its module) apart, as one may be patched
+    // and another not, the version fetched once for them all.
     const candidates = [...patched ? [patched] : [], files]
-    const misses = candidates.map(candidate => pkg.files.filter(file => { const there = candidate.get(file.rel); return !there || !equal(file.bytes(), there) }))
-    const best = misses.findIndex(missed => missed.length === 0)
-    const missed = misses[best === -1 ? 0 : best]!
-    const held = candidates[best === -1 ? 0 : best]!
-    for (const file of missed) tell({ path: file.path, kind: held.has(file.rel) ? 'differs' : 'unexpected', of })
-    counts.matched += pkg.files.length - missed.length
-    const valid = missed.length === 0
+    const copies = Map.groupBy(pkg.files, file => file.dir)
+    let asPatched = 0, missed = 0
+    for (const copy of copies.values()) {
+      const misses = candidates.map(candidate => copy.filter(file => { const there = candidate.get(file.rel); return !there || !equal(file.bytes(), there) }))
+      const best = misses.findIndex(missing => missing.length === 0)
+      const held = candidates[best === -1 ? 0 : best]!
+      for (const file of misses[best === -1 ? 0 : best]!) tell({ path: file.path, kind: held.has(file.rel) ? 'differs' : 'unexpected', of })
+      missed += misses[best === -1 ? 0 : best]!.length
+      if (best !== -1 && held === patched) asPatched++
+    }
+    counts.matched += pkg.files.length - missed
+    const valid = missed === 0
     if (valid) counts.validPackages++
-    // Each patched one told, and whether its files are as patched.
+    // Each patched one told, and, valid, whether any copy of it is as patched.
     if (!valid || patch) {
       told.push({ ecosystem: pkg.ecosystem, name: pkg.name, version: pkg.version, files: pkg.files.length, status: valid ? 'valid' : 'invalid',
-        ...patch ? { patch: { ...patch, ...patched ? { applied: held === patched } : {} } } : {} })
+        ...patch ? { patch: { ...patch, ...patched && valid ? { applied: asPatched > 0 } : {} } } : {} })
     }
   })
 
