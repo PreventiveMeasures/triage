@@ -111,3 +111,30 @@ test('where its own code wasn\'t checked, the line warns why; a patched package 
   const failed = templateText(bundleValidationFact(entry('patched'), render))
   assert.match(failed, /is-passed">Valid[^]*role="alert">Couldn’t validate it: Other bundles are being validated/u)
 })
+
+test('as Stasis\'s validation tells it: the ref holding its commit and the lockfiles held to; a version failing its lockfile or misplaced, and why; none read, the line warns why', async () => {
+  const held = { ...INVALID, own: { ...VALID.own, ref: { branch: 'main' } }, lockfiles: ['pnpm-lock.yaml'], counts: counts({ matched: 9, unverified: 2, validPackages: 1, lockFailures: 1, misplaced: 1 }),
+    problems: [], moreProblems: 0, packages: [
+      { ecosystem: 'npm', name: 'gone', version: '1.0.0', files: 1, status: 'invalid', reason: 'not-locked' },
+      { ecosystem: 'npm', name: 'ms', version: '2.0.0', files: 1, status: 'invalid', reason: 'misplaced', at: 'node_modules/helmet' },
+      { ecosystem: 'npm', name: 'patched', version: '1.0.0', files: 1, status: 'valid', patch: { path: 'patches/patched@1.0.0.patch', from: 'bundle', verified: true, applied: true } }] }
+  const unlocked = { ...VALID, own: { ...VALID.own, ref: { tag: 'v1.0.0' } }, lockfiles: null, lockfileError: 'no-lockfile' }
+  const fork = { ...UNCHECKED, own: { checked: false, reason: 'commit-not-in-history' }, lockfiles: null, lockfileError: 'commit-not-in-history' }
+  kept = { held, unlocked, fork }
+  const line = await shown(entry('held'))
+  assert.match(line, /2 unverified, of 11 files; 1 package failing its lockfile; 1 package installed where another is/u)
+  click(entry('held'), 'Details')
+  const details = templateText(bundleValidationFact(entry('held'), render))
+  assert.match(details, /at <code>fffffff<\/code> of <code>main<\/code> under <code>web<\/code>/u)
+  assert.match(details, /Dependencies held to <code>pnpm-lock\.yaml<\/code>\./u)
+  assert.match(details, /gone[^]*invalid[^]*not locked by the lockfile/u)
+  assert.match(details, /ms[^]*invalid[^]*installed where its path or its lockfile names another package or version: <code>node_modules\/helmet<\/code>/u)
+  assert.match(details, /patched by <code>patches\/patched@1\.0\.0\.patch<\/code> \(the bundle’s, as the repository has it\)/u)
+  const warned = await shown(entry('unlocked'))
+  assert.match(warned, /role="alert">Dependencies held to no lockfile,\s+each to its registry’s integrity alone: no lockfile of its repository locks them\./u)
+  click(entry('unlocked'), 'Details')
+  assert.match(templateText(bundleValidationFact(entry('unlocked'), render)), /, tag <code>v1\.0\.0<\/code> under/u)
+  const forked = await shown(entry('fork'))
+  assert.match(forked, /Own code couldn’t be verified: its commit is in no branch or tag of its repository \(a fork’s, say\)\./u)
+  assert.doesNotMatch(forked, /held to no lockfile/u, 'told once, as own code\'s')
+})
