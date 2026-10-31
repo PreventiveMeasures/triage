@@ -3472,6 +3472,15 @@ async function readableBundle(res: ServerResponse, deps: ManagedHttpDeps, sessio
   return access.bundle
 }
 
+// `body` told of bundle `record` where `session` may still read it, and it is
+// still where it was read: else refused, as one of another repository.
+async function tellOfBundle(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, record: ManagedBundle, body: unknown) {
+  const now = await readableBundle(res, deps, session, id)
+  if (!now) return
+  if (now.repoId !== record.repoId || now.repoDirectory !== record.repoDirectory) sendJson(res, 409, { error: 'repository-changed' })
+  else sendJson(res, 200, body)
+}
+
 // GET /api/bundles/:id/dependency-review: what the npm package versions a
 // Stasis bundle holds (its advisory inventory's, bundle-advisory-inventory.ts)
 // want of review, where the repository it is attached to reviews
@@ -3483,8 +3492,7 @@ async function readableBundle(res: ServerResponse, deps: ManagedHttpDeps, sessio
 // of it, as a team's Dependencies tab leaves such a one out; the bundle's
 // access checked again before it is told, and its repository not moved.
 async function handleBundleDependencyReview(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, session: ManagedSession, id: string) {
-  const readable = () => readableBundle(res, deps, session, id)
-  const record = await readable()
+  const record = await readableBundle(res, deps, session, id)
   if (!record) return
   const none = () => { sendJson(res, 200, { review: null }) }
   const repoId = record.repoId
@@ -3510,10 +3518,7 @@ async function handleBundleDependencyReview(res: ServerResponse, deps: ManagedHt
   const read = await readWholeRepositoryOf(deps, access, (fullName, token, user) => bundleDependencyAnswer(deps, fullName, token, user, repoId, setting,
     { commit: commit!, directory: record.repoDirectory, bundled }), () => wholeRepositoryAccess(deps, cookie, repoId))
   if ('error' in read) { sendRefusal(res, read); return }
-  const now = await readable()
-  if (!now) return
-  if (now.repoId !== repoId || now.repoDirectory !== record.repoDirectory) { sendJson(res, 409, { error: 'repository-changed' }); return }
-  sendJson(res, 200, read.value)
+  await tellOfBundle(res, deps, session, id, record, read.value)
 }
 
 // A bundle's answer, as GET /api/bundles/:id/dependency-review gives it, and
@@ -3551,8 +3556,7 @@ const validating = new Map<string, Promise<BundleValidation | Refusal>>()
 async function handleBundleValidation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, session: ManagedSession, id: string,
   run: boolean) {
   if (run && !await checkMutation(req, res, deps, cookie, { handed: true })) return
-  const readable = () => readableBundle(res, deps, session, id)
-  const record = await readable()
+  const record = await readableBundle(res, deps, session, id)
   if (!record) return
   if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
   const whole = record.repoId === null ? null : await wholeRepositoryAccess(deps, cookie, record.repoId)
@@ -3572,7 +3576,7 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
     let kept = read ? [...read.found.values()][0]?.value : (await store.read(keyOf(false)))?.value
     // The one that checked own code told only while its reader still reads all of the repository.
     if (read?.first && await lostWhole()) kept = (await store.read(keyOf(false)))?.value
-    if (await readable()) sendJson(res, 200, { validation: plainObject(kept) && typeof kept.status === 'string' ? kept : null })
+    await tellOfBundle(res, deps, session, id, record, { validation: plainObject(kept) && typeof kept.status === 'string' ? kept : null })
     return
   }
   const key = keyOf(access !== null)
@@ -3595,10 +3599,7 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
   if ('error' in validation) { sendRefusal(res, validation); return }
   const lost = validation.own.checked ? await lostWhole() : null
   if (lost) { sendRefusal(res, lost); return }
-  const now = await readable()
-  if (!now) return
-  if (now.repoId !== record.repoId || now.repoDirectory !== record.repoDirectory) { sendJson(res, 409, { error: 'repository-changed' }); return }
-  sendJson(res, 200, { validation })
+  await tellOfBundle(res, deps, session, id, record, { validation })
 }
 
 // Bundle `record` validated (bundle-validation.ts): at the commit its stamp
