@@ -112,11 +112,18 @@
           </ul>
         </section>
         <!-- Not saved: a lockfile dropped opens alone, its packages
-             graphed, and is gone once its view is (view/lockfile-drop.js). -->
+             graphed, and is gone once its view is (view/lockfile-drop.js).
+             One row per ecosystem, with the icon the Code tab's tree gives
+             its packages or files (view/lockfile-view.js reads them). -->
         <section class="drop-supported-section">
           <h2>Lockfiles</h2>
           <ul>
-            <li><span class="drop-supported-icon" data-icon="lockfile" aria-hidden="true"></span><span class="drop-supported-label">pnpm, npm, Yarn 1</span></li>
+            <li><span class="drop-supported-icon" data-icon="lockfile-npm" aria-hidden="true"></span><span class="drop-supported-label">pnpm, npm, Yarn</span></li>
+            <li><span class="drop-supported-icon" data-icon="lockfile-ruby" aria-hidden="true"></span><span class="drop-supported-label">Bundler, CocoaPods</span></li>
+            <li><span class="drop-supported-icon" data-icon="lockfile-python" aria-hidden="true"></span><span class="drop-supported-label">uv, Poetry, pylock</span></li>
+            <li><span class="drop-supported-icon" data-icon="lockfile-cargo" aria-hidden="true"></span><span class="drop-supported-label">Cargo</span></li>
+            <li><span class="drop-supported-icon" data-icon="lockfile-composer" aria-hidden="true"></span><span class="drop-supported-label">Composer</span></li>
+            <li><span class="drop-supported-icon" data-icon="lockfile-soldeer" aria-hidden="true"></span><span class="drop-supported-label">Soldeer, Foundry</span></li>
           </ul>
         </section>
       </div>
