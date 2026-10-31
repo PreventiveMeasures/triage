@@ -202,6 +202,11 @@ Formatted copies are encrypted like the bundle where storage is encrypted (see [
 Compare's **Hide renamed names** and **Hide type-only changes** are worked out on the server; reviewed code is only parsed, never compiled or run.
 These requests check access before they work and again before they answer.
 
+## Dependency review
+
+Where the repository a Stasis bundle is attached to reviews dependencies, its Overview shows a **Dependency review** line: whether the npm versions the bundle holds pass their reviews, as the lockfiles installing it lock them at the commit it was built from.
+See [A bundle's dependencies](./dependency-review.md#a-bundles-dependencies).
+
 ## Bundle advisories
 
 The bundle view's **Advisories** tab audits the bundle's dependencies:

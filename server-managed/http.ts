@@ -76,6 +76,8 @@
 //   GET  /api/admin/reports/<id>/location → admin|manage live location suggestion | 401/403/404/503
 //   GET  /api/bundles/<id>/{metadata,contents} → authorized encoded bytes | 401/404/422
 //   GET  /api/bundles/<id>/advisories → published dependency advisories (security access) | 401/403/404
+//   GET  /api/bundles/<id>/dependency-review → what the npm versions it bundles want of review, as the lockfiles installing it lock
+//        them at the commit it was built from, where its repository's review is in effect for a reader of all of it | 401/404/409/413/422/429/502
 //   GET  /api/bundles/<id>/download → authorized original upload | 401/404
 //   GET  /api/bundles/<id>/pretty?path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429
 //   GET  /api/bundles/<id>/pretty?other= → the files that changed between it and another bundle, both sides' pretty-printed,
@@ -231,7 +233,8 @@ import { type GithubAsked, type ListedLockfile, type LockfileRead, type Lockfile
   type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, type RepoDependencyReview, SINCE_COMMIT } from './repository-dependency-reviews.ts'
-import { EVERY_LOCKFILE, heldTo, scopeOf } from './lockfile-scope.ts'
+import { EVERY_LOCKFILE, heldTo, reviewedIn, scopeOf } from './lockfile-scope.ts'
+import { type BundledVersion, bundleDependencies, installsBundle } from './bundle-dependency-reviews.ts'
 import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import { formattedPull, withFormatted } from './dependency-review-comments.ts'
 import type { ReviewedDependencies } from './reviewed-dependencies.ts'
@@ -3457,6 +3460,80 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   }
 }
 
+// GET /api/bundles/:id/dependency-review: what the npm package versions a
+// Stasis bundle holds (its advisory inventory's, bundle-advisory-inventory.ts)
+// want of review, where the repository it is attached to reviews
+// dependencies, as its Overview tells it (bundle-dependency-reviews.ts):
+// read as a default branch's are (branchDependencyAnswer), at the commit its
+// stamp names, of the lockfiles installing it there. None (`review: null`),
+// GitHub not asked, for a bundle of no repository, commit or npm versions,
+// one whose repository reviews none, and for a reader who may read only some
+// of it, as a team's Dependencies tab leaves such a one out; the bundle's
+// access checked again before it is told, and its repository not moved.
+async function handleBundleDependencyReview(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, session: ManagedSession, id: string) {
+  const readable = async () => {
+    const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
+    if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    if (!access.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
+    return access.bundle
+  }
+  const record = await readable()
+  if (!record) return
+  const none = () => { sendJson(res, 200, { review: null }) }
+  const repoId = record.repoId
+  if (record.kind !== 'stasis' || repoId === null || !deps.bundleCache) { none(); return }
+  const setting = await deps.db.repoDependencyReview(repoId)
+  if (!setting?.enabled) { none(); return }
+  const access = await wholeRepositoryAccess(deps, cookie, repoId)
+  if ('error' in access) {
+    if (PARTIAL_ACCESS.has(access.error)) none()
+    else sendRefusal(res, access)
+    return
+  }
+  // Its inventory first: building it, where it isn't yet, keeps its summary too.
+  let commit: string | undefined, inventory: BundleAdvisoryInventory | null | undefined
+  try {
+    inventory = await deps.bundleCache.advisoryInventory(record)
+    commit = (await deps.bundleCache.summary(record))?.commit
+  } catch { sendJson(res, 422, { error: 'bundle-unavailable' }); return }
+  if (inventory === null) { sendJson(res, 413, { error: 'payload-too-large' }); return }
+  const bundled = (inventory?.packages ?? []).filter(pkg => pkg.ecosystem === 'npm').flatMap(pkg => pkg.versions.map(version => ({ name: pkg.name, version })))
+  // Its commit as GitHub names one, of SHA-1.
+  if (!commit || !/^[a-f\d]{40}$/u.test(commit) || bundled.length === 0) { none(); return }
+  const read = await readWholeRepositoryOf(deps, access, (fullName, token, user) => bundleDependencyAnswer(deps, fullName, token, user, repoId, setting,
+    { commit: commit!, directory: record.repoDirectory, bundled }), () => wholeRepositoryAccess(deps, cookie, repoId))
+  if ('error' in read) { sendRefusal(res, read); return }
+  const now = await readable()
+  if (!now) return
+  if (now.repoId !== repoId || now.repoDirectory !== record.repoDirectory) { sendJson(res, 409, { error: 'repository-changed' }); return }
+  sendJson(res, 200, read.value)
+}
+
+// A bundle's answer, as GET /api/bundles/:id/dependency-review gives it, and
+// whether all of it was kept, GitHub asked for none of it: the versions
+// `bundled` (those of the bundle in `directory`, built from `commit`), as the
+// lockfiles there its review holds to lock them, judged by its review
+// (pull-dependency-reviews.ts), with how many it bundles (`versions`) and
+// those none of them lock (`unlocked`); none where its review holds to none
+// of the lockfiles installing it, there being some.
+async function bundleDependencyAnswer(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number, setting: RepoDependencyReview,
+  { commit, directory, bundled }: { commit: string; directory: string; bundled: BundledVersion[] }): Promise<{ value: object; kept: boolean }> {
+  const asked: GithubAsked = { github: false }
+  const reads = lockfileKept(deps, repoId)
+  const installing = (await lockfilesAt(fullName, token, commit, reads, asked)).map(({ path }) => path).filter(path => installsBundle(path, directory))
+  if (!reviewedIn(setting.lockfiles, installing)) return { value: { review: null }, kept: !asked.github }
+  const read = await lockedAt(fullName, token, commit, reads, path => installsBundle(path, directory) && heldTo(setting.lockfiles, path), asked)
+  const { told, ...bundle } = bundleDependencies(bundled, read, commit)
+  const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told), setting)
+  if (!now) return { value: { review: null }, kept: !asked.github }
+  const state = { ...now, lockfiles: setting.lockfiles }
+  const reviewed = deps.reviewedDependencies ?? null
+  const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null }
+    : await baselineFor(fullName, token, repoId, state, baselineKept(deps), reads, asked)
+  const { base: _base, ...answer } = await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed })
+  return { value: { ...answer, ...bundle }, kept: !asked.github }
+}
+
 // GET /api/admin/bundles — the uploaded bundles for the "Manage bundles" page.
 // admin|manage, read-only (no CSRF). `maxBytes` is the upload cap; `repos` feeds
 // the upload repo picker.
@@ -5395,6 +5472,12 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (bundleAdvisories) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
+      return
+    }
+    const bundleReview = /^\/api\/bundles\/([a-f\d-]{36})\/dependency-review$/iu.exec(path)
+    if (bundleReview) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleBundleDependencyReview(res, deps, cookie, workspaceSession!.session, bundleReview[1]!)
       return
     }
     const bundleRead = /^\/api\/bundles\/([a-f\d-]{36})\/(metadata|contents|download|pretty|rename-diff|type-only|comparison)$/iu.exec(path)

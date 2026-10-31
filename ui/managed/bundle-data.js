@@ -326,6 +326,23 @@ const BRANCH_DEPENDENCIES_ERRORS = {
   'github-status-403': 'GitHub refused to read its lockfiles. The GitHub App reading this repository needs Contents: read, which an owner of its installation approves.',
   400: 'Not a repository.',
 }
+// What the npm versions a bundle holds want of review, as the lockfiles
+// installing it lock them at the commit it was built from, where its
+// repository reviews dependencies (GET /api/bundles/:id/dependency-review),
+// `{ review: null }` where none is in effect for the reader.
+const BUNDLE_DEPENDENCY_REVIEW_ERRORS = {
+  ...BRANCH_DEPENDENCIES_ERRORS,
+  'no-bundle': 'This bundle is not available to you.',
+  'bundle-unavailable': 'This bundle’s packages couldn’t be read.',
+  'payload-too-large': 'This bundle holds too many packages to check here.',
+  'repository-changed': 'The bundle or its repository changed while it was read. Try again.',
+  'github-not-found': 'GitHub has none of the commit this bundle was built from, or of a lockfile it lists there.',
+  400: 'Not a bundle.',
+}
+export function fetchBundleDependencyReview(id, { signal } = {}) {
+  return request(`/api/bundles/${encodeURIComponent(id)}/dependency-review`, BUNDLE_DEPENDENCY_REVIEW_ERRORS, response => response.json(), signal)
+}
+
 // A team's Dependencies tab's, of those of its repositories `repoIds` names,
 // else all, in one request (GET /api/teams/:id/dependencies): `onLine`
 // called with each line as it comes, as the server tells them

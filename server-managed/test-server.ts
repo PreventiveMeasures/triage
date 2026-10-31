@@ -197,6 +197,25 @@ const bundles = [
   },
 ]
 
+// The first fixture bundle's dependency review (GET /api/bundles/:id/dependency-review,
+// bundle-dependency-reviews.ts): some of its npm versions wanting reviews, one
+// from git, one its lockfiles lock nowhere, failing it.
+const BUNDLE_DEPENDENCY_REVIEW = {
+  head: 'f'.repeat(40), cut: false, versions: 42, unlocked: [{ name: 'left-behind', version: '0.3.1' }], moreUnlocked: 0,
+  review: { required: 2, since: 'd'.repeat(40), canReview: true, toReview: 0, unreviewed: 3, unsupported: 1 },
+  lockfiles: [{ paths: ['package-lock.json'], added: [], more: 0, moreLocked: 0, moreUnreviewed: 0, moreUnsupported: 0,
+    unreviewed: [{ name: 'lodash', version: '4.17.21', source: 'registry', reviews: 1, reviewers: [{ login: 'alex-security', status: 'accept', passes: true }] },
+      { name: 'ms', version: '2.1.3', source: 'registry', reviews: 0 }, { name: 'debug', version: '4.3.7', source: 'registry', reviews: 0 }],
+    unsupported: [{ name: 'internal-tools', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-tools.git', unsupported: 'git' }] }],
+}
+
+function serveBundleDependencyReview(path: string, res: ServerResponse): boolean {
+  const id = /^\/api\/bundles\/([^/]+)\/dependency-review$/u.exec(path)?.[1]
+  if (id === undefined) return false
+  sendJson(res, 200, id === 'fixture-bundle-1' ? BUNDLE_DEPENDENCY_REVIEW : { review: null })
+  return true
+}
+
 const teamFixtures = [
   {
     id: 'fixture-team', slug: 'fixture-team', name: 'Security fixtures',
@@ -278,7 +297,7 @@ const currentTeams = () => teamFixtures.map((team) => ({
   permissions: { dependencies: true, security: true },
   repos: team.repoLinks.map(link => ({ repoId: link.repoId, fullName: repoById(link.repoId)?.fullName ?? `repository-${link.repoId}`, path: link.path || null })),
   reports: teamReportRefs(team),
-  bundles: bundles.filter(bundle => bundle.visible || role === 'admin' || role === 'manage').filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId && (!link.path || bundle.repoDirectory === link.path || bundle.repoDirectory.startsWith(link.path + '/')))).map((bundle) => ({ id: bundle.id, slug: bundle.slug, visible: bundle.visible, integrity: bundle.integrity, byteSize: bundle.byteSize, repoId: bundle.repoId!, repoDirectory: bundle.repoDirectory, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
+  bundles: bundles.filter(bundle => bundle.visible || role === 'admin' || role === 'manage').filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId && (!link.path || bundle.repoDirectory === link.path || bundle.repoDirectory.startsWith(link.path + '/')))).map((bundle) => ({ id: bundle.id, slug: bundle.slug, kind: bundle.kind, visible: bundle.visible, integrity: bundle.integrity, byteSize: bundle.byteSize, repoId: bundle.repoId!, repoDirectory: bundle.repoDirectory, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
 }))
 
 function adminTeams() {
@@ -1542,7 +1561,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     const teams = currentTeams()
     sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) }); return
   }
-  if (serveFixtureFeed(url.pathname, res) || serveTeamReports(url, res) || serveNpmFixture(req, url, method, res) || appAvatarFixture(url, method, res)) return
+  if (serveFixtureFeed(url.pathname, res) || serveBundleDependencyReview(url.pathname, res) || serveTeamReports(url, res) || serveNpmFixture(req, url, method, res) || appAvatarFixture(url, method, res)) return
   if (url.pathname === '/api/reports/query') {
     if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     void handleReportQuery(req, res).catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-body' }) })
