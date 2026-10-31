@@ -95,3 +95,15 @@ test('native mobile code wears its language\'s icon by name, a .h a header\'s wh
   assert.equal(sourceFileType('ios/Podfile', 'podfile'), 'ruby', 'a Podfile by the format Stasis records')
   assert.equal(sourceFileType('ios/Podfile'), 'generic', 'and only by it: the name alone says nothing')
 })
+
+test('Bundler\'s Gemfile and its lock, and .ruby-version, wear Ruby\'s gem by name', () => {
+  for (const path of ['Gemfile', 'Gemfile.lock', '.ruby-version', 'apps/api/Gemfile', 'apps/api/Gemfile.lock', 'gemfile']) assert.equal(sourceFileType(path), 'ruby', path)
+  for (const [path, icon] of [['Gemfile.json', 'json'], ['my-Gemfile', 'generic'], ['Gemfile.lock.bak', 'generic'], ['.ruby-version.txt', 'generic'], ['Gemfile/README.md', 'markdown']]) {
+    assert.equal(sourceFileType(path), icon, path)
+  }
+})
+
+test('CODEOWNERS wears its owners\' icon by name, wherever GitHub reads it from', () => {
+  for (const path of ['CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS']) assert.equal(sourceFileType(path), 'owners', path)
+  for (const path of ['CODEOWNERS.md', 'MY_CODEOWNERS', 'CODEOWNERS/notes.txt']) assert.notEqual(sourceFileType(path), 'owners', path)
+})

@@ -59,12 +59,17 @@ export function fileIconFormat(details, path) {
   return (details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined) ?? (details?.npmBinaries?.has(path) ? 'binary' : undefined)
 }
 
-// A path's extension, lowercased, read from its name alone as langForPath does.
+// A path's file name, and its extension, lowercased, read from the name alone
+// as langForPath does.
+const nameOf = path => path.slice(path.lastIndexOf('/') + 1)
 const extensionOf = path => {
-  const name = path.slice(path.lastIndexOf('/') + 1)
+  const name = nameOf(path)
   const dot = name.lastIndexOf('.')
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
 }
+// Ruby's files told by name alone: Bundler's Gemfile and its lock, and the
+// Ruby version rbenv and its kin pin.
+const RUBY_NAMES = new Set(['gemfile', 'gemfile.lock', '.ruby-version'])
 // Compiled code a package ships: Node's native addons and the shared
 // libraries they load.
 const NATIVE = new Set(['node', 'so', 'dylib', 'dll'])
@@ -83,6 +88,8 @@ export function sourceFileType(path, format) {
   if (['solidity', 'rust', 'php', 'python', 'json', 'markdown', 'css', 'yaml', 'markup', 'java', 'ruby', 'c', 'cpp'].includes(lang)) return lang
   if (lang === 'bash') return 'shell'
   if (lang === 'objectivec') return 'objc'
+  if (lang === null && RUBY_NAMES.has(nameOf(path).toLowerCase())) return 'ruby'
+  if (lang === null && nameOf(path).toLowerCase() === 'codeowners') return 'owners'
   if (extension === 'wasm') return 'wasm'
   if (NATIVE.has(extension)) return 'native'
   return 'generic'
@@ -137,7 +144,9 @@ const MARKS = {
   c: badge('#3949ab', 'C'),
   cpp: badge('#00599c', 'C++'),
   header: badge('#607d8b', 'H'),
-  // Ruby's: a cut gem, Podfiles, podspecs and Fastfiles too.
+  // CODEOWNERS's: two people, the owners it names.
+  owners: svg`<circle cx="11" cy="4.7" r="2" fill="currentColor" opacity=".55"/><path d="M11.3 8.3c2.1.2 3.5 1.9 3.5 4.2h-3.4c-.2-1.7-1-3-2.2-3.8.6-.3 1.3-.4 2.1-.4Z" fill="currentColor" opacity=".55"/><circle cx="6" cy="5.3" r="2.4" fill="currentColor"/><path d="M1.6 13.5c0-2.6 2-4.5 4.4-4.5s4.4 1.9 4.4 4.5Z" fill="currentColor"/>`,
+  // Ruby's: a cut gem, Gemfiles, Podfiles, podspecs and Fastfiles too.
   ruby: svg`<path d="M4.5 2.5h7L14.5 6 8 14 1.5 6Z" fill="#cc342d"/><path d="M1.5 6h13M4.5 2.5 6 6l2 8 2-8 1.5-3.5M6 6l2-3.5L10 6" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width=".7" stroke-linejoin="round"/>`,
 }
 const pageMark = svg`<path d="M4 1.5h5l3 3v10H4Zm5 0v3h3M6 8h4M6 10.5h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>`
