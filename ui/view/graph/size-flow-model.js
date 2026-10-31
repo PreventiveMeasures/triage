@@ -2,6 +2,7 @@ import { pkgLabel } from '../bundle-pkg-of.js'
 import { countsTowardsCycles } from './cycle-imports.js'
 import { stronglyConnected } from './matrix-model.js'
 import { removalSizes } from './size-flow-removal.js'
+import { packageCounts } from './count-flow.js'
 import { filterSizes } from './size-flow-filter.js'
 import { MAX_FILE_EDGES, MAX_PACKAGE_EDGES, crowdedPackages } from './crowded-packages.js'
 import { batchedReachability } from './size-flow-reachability.js'
@@ -14,9 +15,10 @@ export const sizeFlowConnector = (node, minSize) => Math.max(node.removable, nod
 // Aim for at most 100 nodes, but don't take a step that would leave fewer
 // than 50. Count both size-qualified nodes and their required entry-point
 // paths. Filtering does not change the displayed bundle removal totals.
+// Package flow steps by packages: every package weighs at least one.
 export function sizeFlowLargeThreshold(model) {
   if (model.byId.size <= 100) return 0
-  const steps = [0, 1, 4, 10, 20, 50, 100, 200].map(n => n * 1024)
+  const steps = model.metric === 'count' ? [0, 2, 5, 10, 20, 50, 100, 200] : [0, 1, 4, 10, 20, 50, 100, 200].map(n => n * 1024)
   const counts = steps.map(() => 0)
   for (const node of model.byId.values()) { for (let i = 0; i < steps.length; i++) {
     if (sizeFlowFilterSize(node) < steps[i]) break
@@ -91,26 +93,36 @@ function fileGraph(graph) {
     const target = files.get(to)
     if (!target || links.get(id).has(to)) continue
     const own = n => n.virtual ? n.pkg === '__own__' : graph.ownSourceFiles?.has(n.file)
-    if (!countsTowardsCycles(node.origFile ?? id, target.origFile ?? to, own(target), own(node))) { weakEdges++; continue }
+    // A lockfile's copies load no files: every dependency of theirs counts.
+    if (!graph.packagesOnly && !countsTowardsCycles(node.origFile ?? id, target.origFile ?? to, own(target), own(node))) { weakEdges++; continue }
     links.get(id).add(to)
   }}
   return { files, links, entries: entries.filter(n => n.entry !== false).map(n => n.file).filter(id => files.has(id)), weakEdges }
 }
 
+// A bundle's members record the directory they are installed in; a lockfile's
+// are each a copy, at the key the lockfile names it by. A lockfile's importer
+// recording no version (the project itself, often) has no copy to list.
 function packageInstances(ids, files) {
   const installs = new Map()
   for (const id of ids) {
     const file = files.get(id), info = file.packageInfo
-    if (!info) continue
-    if (!installs.has(info.directory)) installs.set(info.directory, { ...info, size: 0, missing: 0 })
-    const install = installs.get(info.directory)
+    if (!info || info.directory === undefined && info.version === undefined) continue
+    const directory = info.directory ?? id
+    if (!installs.has(directory)) installs.set(directory, { ...info, directory, size: 0, missing: 0 })
+    const install = installs.get(directory)
     install.size += bytes(file.size)
     if (!file.virtual && file.size == null) install.missing++
   }
   return [...installs.values()].toSorted((a, b) => b.size - a.size || a.directory.localeCompare(b.directory))
 }
 
-export function buildSizeFlow(graph, { packages = false } = {}) {
+// `metric`: 'size' weighs files and packages by their bytes; 'count' (Package
+// flow) weighs packages alone, each once (count-flow.js), so it implies
+// `packages`.
+export function buildSizeFlow(graph, { packages = false, metric = 'size' } = {}) {
+  const counts = metric === 'count'
+  if (counts) packages = true
   const { files, links, entries, weakEdges } = fileGraph(graph)
   const reach = reachability(files, links)
   const roots = entries.length > 0 ? [...new Set(entries)] : reach.inferred
@@ -126,12 +138,6 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
     const row = byId.get(id)
     row.files.push(file); row.own += bytes(n.size); row.virtual &&= !!n.virtual
   }
-  for (const row of byId.values()) {
-    Object.assign(row, reach.sum(row.files))
-    if (packages) row.instances = packageInstances(row.files, files)
-  }
-  removalSizes(files, links, roots, byId)
-  filterSizes(byId, parents, idOf)
   const pairs = new Map()
   for (const from of active) {for (const to of links.get(from)) {
     const a = idOf(from), b = idOf(to)
@@ -142,15 +148,22 @@ export function buildSizeFlow(graph, { packages = false } = {}) {
     edge.targets.add(to); edge.count++
   }}
   const edges = [...pairs.values()]
-  for (const edge of edges) {
+  for (const row of byId.values()) if (packages) row.instances = packageInstances(row.files, files)
+  if (counts) packageCounts(links, roots, byId, edges)
+  else {
+    for (const row of byId.values()) Object.assign(row, reach.sum(row.files))
+    removalSizes(files, links, roots, byId)
     // Package edges carry the union of the actual imported files' closures,
     // not every file in the destination package or a package-level closure.
-    Object.assign(edge, reach.sum([...edge.targets]))
-    byId.get(edge.from).outgoing.push(edge); byId.get(edge.to).incoming.push(edge)
+    for (const edge of edges) Object.assign(edge, reach.sum([...edge.targets]))
   }
+  filterSizes(byId, parents, idOf)
+  for (const edge of edges) { byId.get(edge.from).outgoing.push(edge); byId.get(edge.to).incoming.push(edge) }
   const rootIds = [...new Set(roots.map(idOf))]
-  return { byId, edges, edgeById: pairs, roots: rootIds, files, packages, weakEdges, inferred: entries.length === 0,
-    total: reach.sum(roots), omittedFiles: files.size - active.size }
+  // Package flow says how many packages no root reaches, of all the graph's.
+  const omittedPackages = counts ? new Set([...files.values()].map(n => n.pkg)).size - byId.size : 0
+  return { byId, edges, edgeById: pairs, roots: rootIds, files, packages, metric: counts ? 'count' : 'size', weakEdges, inferred: entries.length === 0,
+    total: counts ? { size: byId.size, missing: 0 } : reach.sum(roots), omittedFiles: files.size - active.size, omittedPackages }
 }
 
 // Longest-path ranks keep ordinary imports flowing down, including diamonds

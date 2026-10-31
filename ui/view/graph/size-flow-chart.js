@@ -9,9 +9,18 @@ import { flowEdgeBounds, flowHitCandidates, flowHitIndex, flowOutside, flowVisib
 
 export const shortSize = formatBytes
 
-function versionTooltip(n) {
+// What a flow's bars and ribbons weigh: bytes in Size flow, packages in
+// Package flow (buildSizeFlow's `metric`).
+export const flowAmount = (metric, n) => metric === 'count' ? String(n) : formatBytes(n)
+export const packageCount = n => `${n} ${n === 1 ? 'package' : 'packages'}`
+
+function versionTooltip(n, metric) {
   if (!n.instances?.length) return n.version ? `\nVersion: ${n.version}` : ''
   if (n.instances.length === 1) return `\nVersion: ${n.instances[0].version || 'Unknown'}`
+  if (metric === 'count') {
+    const versions = [...new Set(n.instances.map(instance => instance.version || 'Unknown version'))]
+    return `\nVersions: ${versions.toSorted((a, b) => a.localeCompare(b, 'en', { numeric: true })).join(', ')}`
+  }
   const versions = new Map()
   for (const instance of n.instances) {
     const version = instance.version || 'Unknown version'
@@ -23,12 +32,15 @@ function versionTooltip(n) {
     .map(row => `${row.version} · ${formatBytes(row.size)}${row.missing ? '+' : ''} · ${row.count} ${row.count === 1 ? 'copy' : 'copies'}`).join('\n')
 }
 
-export function flowNodeTooltip(n, minSize) {
-  return `${n.label}\n${formatBytes(n.removable)} unique · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}${versionTooltip(n)}${sizeFlowConnector(n, minSize) ? '\nKept by Large to preserve an entry-point path' : ''}`
+export function flowNodeTooltip(n, minSize, metric = 'size') {
+  const kept = sizeFlowConnector(n, minSize) ? '\nKept by Large to preserve an entry-point path' : ''
+  if (metric === 'count') return `${n.label}\n${packageCount(n.removable)} unique · ${n.size} reachable${versionTooltip(n, metric)}${kept}`
+  return `${n.label}\n${formatBytes(n.removable)} unique · ${formatBytes(n.size)} reachable · ${formatBytes(n.own)} own${n.removableMissing ? ` · ${n.removableMissing} removed file sizes unknown` : ''}${versionTooltip(n, metric)}${kept}`
 }
 
 function flowEdgeTooltip(e, model) {
-  return `${model.byId.get(e.from).label} → ${model.byId.get(e.to).label}\n${formatBytes(e.size)} reachable${e.returning ? ' · return / cycle edge' : ''}`
+  const size = model.metric === 'count' ? packageCount(e.size) : formatBytes(e.size)
+  return `${model.byId.get(e.from).label} → ${model.byId.get(e.to).label}\n${size} reachable${e.returning ? ' · return / cycle edge' : ''}`
 }
 
 // Inset bar borders use no layout space and stay at most half a bar high.
@@ -51,7 +63,9 @@ function flowBarSides(node, full) {
 // Ribbons, bars and highlights are separate canvas layers over the full
 // geometry, so graphs of any size pan, zoom and hover without DOM per element.
 // The overlay carries keyboard navigation and the hovered element's tooltip.
-const canvasLabel = 'Import paths. Use arrow keys to explore bars, Enter to select, or the sidebar search to find a file or package.'
+const canvasLabel = metric => metric === 'count'
+  ? 'Dependency paths. Use arrow keys to explore bars, Enter to select, or the sidebar search to find a package.'
+  : 'Import paths. Use arrow keys to explore bars, Enter to select, or the sidebar search to find a file or package.'
 const liveRibbonLimit = 1500
 
 export class SizeFlowChart {
@@ -61,7 +75,7 @@ export class SizeFlowChart {
     return html`<canvas class="flow-canvas flow-base" aria-hidden="true"></canvas>
       <canvas class="flow-canvas flow-bars" aria-hidden="true"></canvas>
       <canvas class="flow-canvas flow-overlay" tabindex="0" role="group"
-        aria-label=${canvasLabel}
+        aria-label=${canvasLabel(this.host.metric)}
         @pointermove=${e => this.pointer(e)} @pointerleave=${() => this.clearHover()}
         @click=${e => this.click(e)} @dblclick=${e => this.click(e, true)} @keydown=${e => this.key(e)}></canvas>`
   }
@@ -289,7 +303,7 @@ export class SizeFlowChart {
       ctx.save(); ctx.beginPath(); ctx.rect(node.x + 5, node.y, Math.max(0, node.width - 10), 26); ctx.clip()
       ctx.font = "14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
       ctx.fillStyle = textOnPackage(color)
-      ctx.fillText(`${node.label.replace(/^node_modules\//u, '')} · ${shortSize(node.removable)}`, node.x + 5, node.y + 18)
+      ctx.fillText(`${node.label.replace(/^node_modules\//u, '')} · ${flowAmount(this.model.metric, node.removable)}`, node.x + 5, node.y + 18)
       ctx.restore()
     }
   }
@@ -361,7 +375,7 @@ export class SizeFlowChart {
       this.clearHover(); this.hoverId = id; this.focused = hit?.node?.id ?? null
       this.host.hover = hit?.edge?.id ?? null
       if (hit) {
-        this.overlay.dataset.tooltip = hit.node ? flowNodeTooltip(hit.node, this.host.minSize) : flowEdgeTooltip(hit.edge, this.model)
+        this.overlay.dataset.tooltip = hit.node ? flowNodeTooltip(hit.node, this.host.minSize, this.model.metric) : flowEdgeTooltip(hit.edge, this.model)
         this.overlay.setAttribute('aria-label', this.overlay.dataset.tooltip)
         this.overlay.style.cursor = 'default'
       }
@@ -375,7 +389,7 @@ export class SizeFlowChart {
     this.hoverId = null; this.focused = null; this.host.hover = null
     if (this.overlay) {
       delete this.overlay.dataset.tooltip; this.overlay.style.cursor = 'default'
-      this.overlay.setAttribute('aria-label', canvasLabel)
+      this.overlay.setAttribute('aria-label', canvasLabel(this.host.metric))
     }
     this.requestDraw()
   }
@@ -407,6 +421,6 @@ export class SizeFlowChart {
       this.host.pan = { x: width / 2 - (node.x + node.width / 2) * zoom, y: height / 2 - (node.y + 13) * zoom }
       this.host.fitted = false; this.host.drawViewport()
     }
-    this.focused = node.id; this.overlay.setAttribute('aria-label', flowNodeTooltip(node, this.host.minSize)); this.requestDraw()
+    this.focused = node.id; this.overlay.setAttribute('aria-label', flowNodeTooltip(node, this.host.minSize, this.model.metric)); this.requestDraw()
   }
 }

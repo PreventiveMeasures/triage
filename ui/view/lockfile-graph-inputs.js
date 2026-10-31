@@ -43,9 +43,11 @@ export function lockfileGraphPrep(lockfile) {
     // package's members are its copies (see `packagesOnly` in graph.js).
     packagesOnly: true,
     // The bundle layouts, of which a lockfile's view offers those it can
-    // fill (LOCKFILE_LAYOUTS). Its importers lead Dependencies and Matrix.
+    // fill (LOCKFILE_LAYOUTS). Its importers lead Dependencies and Matrix,
+    // and Package flow flows from every one of them, depended on or not.
     supportsLayers: true,
     layerRoots: { roots, appImports: [] },
+    flowEntries: importers.map(([dir]) => ({ file: importerNode(dir) })),
     ownSourcePackages: new Set(roots),
     entryPackages: new Set(roots),
     ownSourceFiles: new Set(importers.map(([dir]) => importerNode(dir))),

@@ -1206,7 +1206,7 @@ report.addEventListener('click', (e) => {
   const g2Layout = pathClosest(e, '[data-g2-layout]')
   if (g2Layout) {
     const next = g2Layout.dataset.g2Layout
-    if (!['graph', 'layers', 'matrix', 'dependencies', 'flow'].includes(next)) return
+    if (!['graph', 'layers', 'matrix', 'dependencies', 'flow', 'package-flow'].includes(next)) return
     if (graph2.bundleLayout === next && !graph2.focusedPkg) return
     graph2.bundleLayout = next
     if (next === 'dependencies') graph2.dependencyPackagesView = false

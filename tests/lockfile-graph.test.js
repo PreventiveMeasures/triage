@@ -107,13 +107,13 @@ describe('a graph of packages alone in the bundle graph viewer', () => {
     for (const layout of LOCKFILE_LAYOUTS) {
       graph2.bundleLayout = layout
       const bar = text(renderTopBar(graph, options))
-      assert.deepEqual([...bar.matchAll(/data-g2-layout=(\w+)/gu)].map(m => m[1]), LOCKFILE_LAYOUTS)
-      assert.match(bar, new RegExp(`data-g2-layout=${layout} aria-label=\\w+ aria-pressed=true`, 'u'))
+      assert.deepEqual([...bar.matchAll(/data-g2-layout=([\w-]+)/gu)].map(m => m[1]), LOCKFILE_LAYOUTS)
+      assert.match(bar, new RegExp(`data-g2-layout=${layout} aria-label=[\\w ]+ aria-pressed=true`, 'u'))
       assert.doesNotMatch(bar, /data-g2-packages-view|data-g2-bundle-issues/u)
     }
     graph2.bundleLayout = 'graph'
-    assert.deepEqual([...text(renderTopBar(graph, { showBundleLayouts: true })).matchAll(/data-g2-layout=(\w+)/gu)].map(m => m[1]),
-      ['graph', 'layers', 'matrix', 'dependencies', 'flow'], 'a bundle offers them all')
+    assert.deepEqual([...text(renderTopBar(graph, { showBundleLayouts: true })).matchAll(/data-g2-layout=([\w-]+)/gu)].map(m => m[1]),
+      ['graph', 'layers', 'matrix', 'dependencies', 'flow', 'package-flow'], 'a bundle offers them all')
   })
 
   it('stays at package altitude, with no file level to draw', () => {

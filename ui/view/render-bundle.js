@@ -283,9 +283,10 @@ export function buildBundleGraphData(details) {
     colorSets.set(file, cols)
     fileFindings.set(file, ff)
   }
-  // Matrix and flow highlight direct findings. The flow model computes byte
+  // Matrix and the flows highlight direct findings. The flow model computes
   // reachability separately, without transitive finding counts.
-  const transitiveCounts = ['matrix', 'flow'].includes(graph2.bundleLayout) || ownCounts.size === 0
+  const flowLayout = ['flow', 'package-flow'].includes(graph2.bundleLayout)
+  const transitiveCounts = graph2.bundleLayout === 'matrix' || flowLayout || ownCounts.size === 0
     ? null : computeTransitiveCounts(tree, ownCounts)
   // Stripped→original mapping the lazy `buildGraphFromPrep` applies
   // to each node's `origFile` field — the selection card's "View
@@ -354,7 +355,7 @@ export function buildBundleGraphData(details) {
     viewId: details.integrity ?? null,
     supportsLayers: true,
     layerRoots,
-    flowEntries: graph2.bundleLayout === 'flow' ? bundleFlowEntries(details, origToStripped, full.origToStripped, origPackageDirs) : undefined,
+    flowEntries: flowLayout ? bundleFlowEntries(details, origToStripped, full.origToStripped, origPackageDirs) : undefined,
     // Entry packages are traversal roots too, but are not necessarily own source.
     ownSourcePackages: bundleOwnSourcePackages(origToStripped, pkgOf, origPackageDirs),
     entryPackages: bundleEntryPackages(details, origToStripped, pkgOf),

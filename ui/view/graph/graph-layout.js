@@ -42,6 +42,9 @@ import './dependency-matrix.js'
 import './size-flow.js'
 import '../mode-switch.js'
 
+// The layouts `<size-flow>` draws: Size flow and Package flow.
+const FLOW_LAYOUTS = new Set(['flow', 'package-flow'])
+
 class GraphLayout extends LitElement {
   static properties = {
     graph:   { attribute: false },
@@ -85,7 +88,7 @@ class GraphLayout extends LitElement {
 
   willUpdate(changed) {
     if (!this.options.showBundleLayouts || graph2.bundleLayout !== 'matrix') this.matrixControls = null
-    if (!this.options.showBundleLayouts || graph2.bundleLayout !== 'flow') this.flowControls = null
+    if (!this.options.showBundleLayouts || !FLOW_LAYOUTS.has(graph2.bundleLayout)) this.flowControls = null
     // New first-row contents may make room for the Issues switch again.
     if (changed.has('graph') || changed.has('options') || changed.has('matrixControls') || changed.has('flowControls')) this._issuesWrapWidth = 0
   }
@@ -127,10 +130,14 @@ class GraphLayout extends LitElement {
 
   render() {
     if (!this.graph) return html``
-    if (this.options.showBundleLayouts && graph2.bundleLayout === 'flow') {
+    if (this.options.showBundleLayouts && FLOW_LAYOUTS.has(graph2.bundleLayout)) {
+      // Package flow is Size flow's chart weighed in packages, always at
+      // package altitude.
+      const counts = graph2.bundleLayout === 'package-flow'
       return html`<div class="graph2-layout">
         ${renderTopBar(this.graph, this.options, this.flowControls, { issuesWrapped: this.issuesWrapped })}
-        <size-flow .graph=${this.graph} .packages=${graph2.flowPackagesView} @flow-controls-change=${e => { this.flowControls = e.detail }}></size-flow>
+        <size-flow .graph=${this.graph} .packages=${counts || graph2.flowPackagesView} .metric=${counts ? 'count' : 'size'}
+          @flow-controls-change=${e => { this.flowControls = e.detail }}></size-flow>
       </div>`
     }
     if (this.options.showBundleLayouts && graph2.bundleLayout === 'matrix') {

@@ -14,8 +14,8 @@ import { cleanupGraph2, graph2 } from './graph/state.js'
 import { lockfileGraphPrep } from './lockfile-graph-inputs.js'
 
 // The bundle layouts a lockfile offers: Layers and Size flow weigh packages
-// by their bytes, which a lockfile doesn't record.
-export const LOCKFILE_LAYOUTS = ['graph', 'matrix', 'dependencies']
+// by their bytes, which a lockfile doesn't record; Package flow counts them.
+export const LOCKFILE_LAYOUTS = ['graph', 'matrix', 'dependencies', 'package-flow']
 
 class LockfileGraph extends LitElement {
   static properties = { lockfile: { attribute: false } }
