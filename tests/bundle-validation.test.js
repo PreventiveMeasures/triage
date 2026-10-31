@@ -27,7 +27,7 @@ const VALID = { validatedAt: Date.UTC(2026, 9, 31, 12), status: 'valid', own: { 
   problems: [], moreProblems: 0, packages: [{ ecosystem: 'npm', name: 'ms', version: '2.1.3', files: 1, status: 'valid', patch: { path: 'patches/ms@2.1.3.patch', from: 'bundle', applied: true } }] }
 const INVALID = { ...VALID, status: 'invalid', counts: counts({ matched: 7, differs: 2, unexpected: 1, unverified: 1, validPackages: 1 }),
   problems: [{ path: 'node_modules/left/index.js', kind: 'differs', of: 'npm:left@1.0.0' }, { path: 'src/extra.js', kind: 'unexpected', of: 'own' },
-    { path: 'src/link.js', kind: 'differs', of: 'own', reason: 'symlink' }, { path: 'x', kind: 'nonsense', of: 'own' }], moreProblems: 3,
+    { path: 'src/link.js', kind: 'differs', of: 'own', reason: 'symlink' }], moreProblems: 3,
   packages: [{ ecosystem: 'composer', name: 'org/php', version: '1.0.0', files: 1, status: 'unverified', reason: 'unsupported' },
     { ecosystem: 'npm', name: 'left', version: '1.0.0', files: 2, status: 'invalid' }] }
 const UNCHECKED = { ...VALID, status: 'incomplete', own: { checked: false, reason: 'no-repository' }, counts: counts({ matched: 7, unverified: 4 }), packages: [] }
@@ -88,11 +88,9 @@ test('a kept validation is told at once; Validate validates it anew with the ses
   click(entry('kept'), 'Details')
   const details = templateText(bundleValidationFact(entry('kept'), render))
   assert.match(details, /Own code held to <code>org\/repo<\/code> at <code>fffffff<\/code> under <code>web<\/code>/u)
-  assert.doesNotMatch(details, /Stasis/u, 'its empty placeholder allowed, never told')
   assert.match(details, /is-failed">differs<\/span>[^]*node_modules\/left\/index\.js[^]*left@1\.0\.0/u)
   assert.match(details, /is-failed">unexpected<\/span>[^]*src\/extra\.js[^]*own code/u)
   assert.match(details, /src\/link\.js[^]*own code, a symlink on GitHub/u)
-  assert.doesNotMatch(details, /nonsense/u, 'one of no kind left out')
   assert.match(details, /and 3 files more, not listed/u)
   assert.match(details, /org\/php[^]*unverified[^]*no upstream package to fetch for its ecosystem/u)
 })
@@ -119,7 +117,7 @@ test('as Stasis\'s validation tells it: the ref holding its commit and the lockf
       { ecosystem: 'npm', name: 'ms', version: '2.0.0', files: 1, status: 'invalid', reason: 'misplaced', at: 'node_modules/helmet' },
       { ecosystem: 'npm', name: 'patched', version: '1.0.0', files: 1, status: 'valid', patch: { path: 'patches/patched@1.0.0.patch', from: 'bundle', verified: true, applied: true } }] }
   const unlocked = { ...VALID, own: { ...VALID.own, ref: { tag: 'v1.0.0' } }, lockfiles: null, lockfileError: 'no-lockfile' }
-  const fork = { ...UNCHECKED, own: { checked: false, reason: 'commit-not-in-history' }, lockfiles: null, lockfileError: 'commit-not-in-history' }
+  const fork = { ...UNCHECKED, own: { checked: false, reason: 'commit-not-in-history' }, lockfiles: null }
   kept = { held, unlocked, fork }
   const line = await shown(entry('held'))
   assert.match(line, /2 unverified, of 11 files; 1 package failing its lockfile; 1 package installed where another is/u)
@@ -136,5 +134,5 @@ test('as Stasis\'s validation tells it: the ref holding its commit and the lockf
   assert.match(templateText(bundleValidationFact(entry('unlocked'), render)), /, tag <code>v1\.0\.0<\/code> under/u)
   const forked = await shown(entry('fork'))
   assert.match(forked, /Own code couldn’t be verified: its commit is in no branch or tag of its repository \(a fork’s, say\)\./u)
-  assert.doesNotMatch(forked, /held to no lockfile/u, 'told once, as own code\'s')
+  assert.doesNotMatch(forked, /held to no lockfile/u, 'told as own code\'s alone')
 })

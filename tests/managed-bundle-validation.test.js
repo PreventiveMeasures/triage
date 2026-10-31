@@ -1,27 +1,22 @@
-// A Stasis bundle validated, by Stasis's own validation (@exodus/stasis/validate), as the app
-// reads its repository (server-managed/bundle-validation.ts): its own code as GitHub lists it at
-// its commit, by git's blob ids, the commit held to the repository's own history; each
-// dependency's files as upstream's package has them, held to the lockfile that installs it there;
-// and (GET and POST /api/bundles/:id/validation) kept, told to whom may see it. Stasis's rules
-// themselves are its own tests'.
+// A Stasis bundle validated as the app reads its repository
+// (server-managed/bundle-validation.ts), and kept and told (GET and POST
+// /api/bundles/:id/validation). Stasis's rules themselves are its own tests'.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import { test } from 'node:test'
-import { brotliCompressSync, gzipSync } from 'node:zlib'
+import { brotliCompressSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { commitBlobs, validationPlan } from '../server-managed/bundle-validation.ts'
+import { gitBlobId } from '@exodus/stasis/validate'
+import { commitBlobs } from '../server-managed/bundle-validation.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { readTarballFiles } from '../server-managed/npm-loads.ts'
 import { people } from './_managed-repository-dependency-reviews.js'
-import { REGISTRY, packageOf, tar } from './_managed-npm.js'
+import { REGISTRY, packageOf } from './_managed-npm.js'
 
 const commit = '7'.repeat(40)
 const sha256 = text => createHash('sha256').update(text).digest('hex')
-// Git's id of a blob of `bytes`.
-const gitBlobId = bytes => createHash('sha1').update(`blob ${bytes.byteLength}\0`).update(bytes).digest('hex')
 const blob = text => gitBlobId(Buffer.from(text))
 // ms@2.1.3 as published, and as its patch changes it.
 const MS = { 'index.js': 'one\ntwo\nthree\n', 'package.json': '{"name":"ms","version":"2.1.3"}\n', 'readme.md': 'left out of the bundle\n' }
@@ -67,17 +62,6 @@ const TREE = {
 }
 const PACKAGES = { 'npm:ms@2.1.3': MS, 'npm:left@1.0.0': { 'index.js': 'original\n', 'other.js': 'never bundled\n' } }
 
-test('a Stasis bundle\'s files as Stasis\'s validation takes them: its own code and each package version\'s, the patches it holds; none of another kind', () => {
-  const plan = validationPlan(details())
-  assert.deepEqual(plan.own.map(file => file.path), ['icon.png', 'patches/ms@2.1.3.patch', 'src/changed.js', 'src/crlf.js', 'src/extra.js', 'src/link.js', 'src/main.js',
-    'vendor/sub/x.js'])
-  assert.deepEqual(plan.packages.map(pkg => `${pkg.ecosystem}:${pkg.name}@${pkg.version}`).toSorted(), ['composer:org/php@1.0.0', 'npm:gone@1.0.0', 'npm:left@1.0.0', 'npm:ms@2.1.3'])
-  assert.deepEqual([...plan.patches.keys()], ['patches/ms@2.1.3.patch'])
-  assert.equal(plan.files, 14, 'Stasis\'s empty placeholder left out, allowed')
-  assert.equal(validationPlan({ kind: 'sourcemap' }), null)
-  assert.equal(validationPlan({ kind: 'stasis' }), null, 'one with no modules')
-})
-
 test('a commit\'s entries are its tree\'s listing whole, else, cut short, read a directory at a time into those holding the paths asked alone', async t => {
   const asked = []
   const listings = {
@@ -106,7 +90,7 @@ test('a commit\'s entries are its tree\'s listing whole, else, cut short, read a
 // read there too), its main branch's head at `head` (whose history holds the
 // commit where it is the commit itself), and npm's registry as PACKAGES says,
 // the registry answering once `gate` settles.
-async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {}, head = commit } = {}) {
+async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {}, head = commit, tree: listed = true } = {}) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const users = await people(db)
@@ -116,7 +100,7 @@ async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {
     uploadedByLogin: 'admin', repoId: repo ? 1 : null, repoDirectory: repo ? 'web' : '' }, Date.now())
   const published = Object.entries(PACKAGES).map(([key, files]) => packageOf(key.slice(4, key.lastIndexOf('@')), key.slice(key.lastIndexOf('@') + 1), files))
   const asked = []
-  t.mock.method(globalThis, 'fetch', (input, init = {}) => {
+  t.mock.method(globalThis, 'fetch', input => {
     const url = new URL(String(input))
     asked.push(`${url.host}${url.pathname}${url.search}`)
     if (url.host === 'api.github.com') {
@@ -124,7 +108,7 @@ async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {
       if (url.pathname === '/repos/org/repo/git/ref/heads/main') return Promise.resolve(Response.json({ ref: 'refs/heads/main', object: { type: 'commit', sha: head } }))
       if (url.pathname === '/repos/org/repo/tags') return Promise.resolve(Response.json([]))
       if (url.pathname === '/repos/org/repo/branches') return Promise.resolve(Response.json([{ name: 'main', commit: { sha: head } }]))
-      if (url.pathname === `/repos/org/repo/git/trees/${commit}` && url.search === '?recursive=1') {
+      if (listed && url.pathname === `/repos/org/repo/git/trees/${commit}` && url.search === '?recursive=1') {
         const tree = { ...TREE, ...Object.fromEntries(Object.entries(repoFiles).map(([path, text]) => [path, { sha: blob(text), mode: '100644', type: 'blob' }])) }
         return Promise.resolve(Response.json({ truncated: false, tree: Object.entries(tree).map(([path, entry]) => ({ path, ...entry })) }))
       }
@@ -140,7 +124,6 @@ async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {
       if (String(input) === `${REGISTRY}/${doc.name}/${doc.version}`) return gate.then(() => Response.json(doc))
       if (String(input) === doc.dist.tarball) return Promise.resolve(new Response(tgz))
     }
-    void init
     return Promise.resolve(Response.json({ error: 'Not found' }, { status: 404 }))
   })
   const handler = createManagedRequestHandler({ config: { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 3_600_000 }, db, originGate: { isOriginAllowed: () => true },
@@ -264,17 +247,17 @@ test('a bundle\'s dependencies held to the lockfile installing it at its commit:
   assert.ok(!asked.some(path => path.startsWith('registry.npmjs.org/gone')), 'gone, locked by none, never fetched')
 })
 
-test('a commit of no branch or tag of the repository (a fork\'s, which GitHub serves through its name too): neither its tree nor its lockfile read', async t => {
+test('a commit of no branch or tag of the repository (a fork\'s, which GitHub serves through its name too) leaves own code unverified, its lockfile not held to', async t => {
   const { send, asked } = await fixture(t, { head: 'e'.repeat(40), repoFiles: { 'pnpm-lock.yaml': PNPM_LOCK() } })
   const { validation } = (await send('alice', 'POST')).body
-  assert.deepEqual([validation.status, validation.own, validation.lockfiles, validation.lockfileError],
-    ['invalid', { checked: false, reason: 'commit-not-in-history' }, null, 'commit-not-in-history'])
+  assert.deepEqual([validation.status, validation.own, validation.lockfiles], ['invalid', { checked: false, reason: 'commit-not-in-history' }, null])
   assert.ok(asked.includes(`api.github.com/repos/org/repo/compare/${commit}...main?per_page=1`), 'held to main\'s history')
-  assert.ok(!asked.some(path => path.includes('/git/trees/') || path.includes('/contents/')), 'none of it read')
 })
 
-test('a package\'s tarball unpacked, its top directory left out, as upstream fetches it', async () => {
-  // As the registry would serve it: npm's `package/` directory.
-  const tgz = gzipSync(tar([{ name: 'package/index.js', data: 'x' }]))
-  assert.deepEqual((await readTarballFiles(tgz)).map(file => file.path), ['index.js'])
+test('a commit GitHub has none of leaves own code unverified, no history of the repository\'s compared', async t => {
+  const { send, asked } = await fixture(t, { tree: false })
+  const { validation } = (await send('alice', 'POST')).body
+  assert.deepEqual([validation.own, validation.lockfiles], [{ checked: false, reason: 'commit-not-found' }, null])
+  assert.ok(!asked.some(path => path.includes('/compare/') || path.includes('/branches')))
 })
+

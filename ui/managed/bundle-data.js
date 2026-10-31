@@ -136,12 +136,13 @@ const abortable = (promise, signal) => new Promise((resolve, reject) => {
 })
 
 // A read that a session change aborts, its failures named by `errors`, by
-// their error code or else their status; one read ahead (prefetch) taken.
-export async function request(url, errors, read, signal) {
+// their error code or else their status; one read ahead (prefetch) taken, but
+// for a request of another method (`init`).
+export async function request(url, errors, read, signal, init = {}) {
   signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
   const generation = managedAppState.generation
-  const ask = () => managedFetch(url, { credentials: 'same-origin', signal })
-  const ahead = takePrefetched(url, generation)
+  const ask = () => managedFetch(url, { credentials: 'same-origin', ...init, signal })
+  const ahead = init.method ? null : takePrefetched(url, generation)
   const taken = ahead && await abortable(ahead, signal).then(answer => answer.ok ? answer : null, err => { if (signal.aborted) throw err; return null })
   const response = taken || await ask()
   signal.throwIfAborted()
@@ -360,18 +361,8 @@ const validationUrl = id => `/api/bundles/${encodeURIComponent(id)}/validation`
 export function fetchBundleValidation(id, { signal } = {}) {
   return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json(), signal)
 }
-export async function runBundleValidation(id, csrfToken, { signal } = {}) {
-  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
-  const generation = managedAppState.generation
-  const response = await managedFetch(validationUrl(id), { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken }, signal })
-  signal.throwIfAborted()
-  const body = await response.json().catch(() => null)
-  if (!response.ok) {
-    const message = BUNDLE_VALIDATION_ERRORS[body?.error] ?? BUNDLE_VALIDATION_ERRORS[response.status] ?? `Request failed (${response.status})`
-    throw Object.assign(new Error(message), { status: response.status, code: body?.error ?? null })
-  }
-  if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
-  return body
+export function runBundleValidation(id, csrfToken, { signal } = {}) {
+  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json().catch(() => null), signal, { method: 'POST', headers: { 'x-csrf-token': csrfToken } })
 }
 
 // A team's Dependencies tab's, of those of its repositories `repoIds` names,
