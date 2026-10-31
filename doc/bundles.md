@@ -216,6 +216,7 @@ A Stasis bundle's Overview has a **Validation** line with a **Validate** button,
    A file whose only difference is a checkout's CRLF line endings passes, and is counted.
 2. **Dependencies** are fetched with upstream (npm's registry, and crates.io for Cargo crates), which holds each tarball to its integrity, and each file the bundle holds of a package must match the file at its path there.
    Files of a package the bundle leaves out are expected.
+   A vendored crate's `.cargo-checksum.json`, which `cargo vendor` writes and no crate holds, is held to the crate instead: its package checksum, and the sha256 of each file it lists.
    A version pnpm patches is held to its files patched, as pnpm applies the patch: the patch the lockfiles installing the bundle at its commit lock it with, read of the bundle where it holds a file of that hash, else of the repository; without those lockfiles, the patch the bundle holds named for the version, pnpm's way (`patches/name@version.patch`).
    Each installed copy of a version is held to its files patched or as published apart, as a nested copy may be unpatched, and the version is fetched once.
    Each patched version is listed with its patch, where it was read, and, valid, whether a copy of it holds its files as patched.
