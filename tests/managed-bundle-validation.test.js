@@ -263,3 +263,19 @@ test('each installed copy of a version is held to its files patched or as publis
     [{ path: 'node_modules/tool/node_modules/ms/index.js', kind: 'differs', of: 'npm:ms@2.1.3' }], { path: 'patches/ms@2.1.3.patch', from: 'bundle' }],
   'a copy matching neither told alone; whether it is as patched, told of a valid one alone')
 })
+
+test('a vendored crate\'s .cargo-checksum.json, which no crate holds, is held to the crate: its package checksum and each file it lists', async () => {
+  const lib = 'pub fn x() {}\n'
+  const crate = Object.assign(new Map([['src/lib.rs', Buffer.from(lib)], ['Cargo.toml', Buffer.from('[package]\n')]]), { checksum: 'c'.repeat(64) })
+  const json = (files, pkg = 'c'.repeat(64)) => JSON.stringify({ files, package: pkg })
+  const run = async text => (await validateBundle(validationPlan({ kind: 'stasis', bundle: Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { name: 'app', version: '1.0.0', files: { 'src/main.rs': 'fn main() {}\n' } }],
+    ['vendor/dep', { ecosystem: 'cargo', name: 'dep', version: '1.0.0', files: { 'src/lib.rs': lib, '.cargo-checksum.json': text } }],
+  ]) }).serialize()) }), { reason: 'no-repository' }, { fetch: () => Promise.resolve(crate) })).problems
+  const listed = { 'src/lib.rs': createHash('sha256').update(lib).digest('hex') }
+  const differs = [{ path: 'vendor/dep/.cargo-checksum.json', kind: 'differs', of: 'cargo:dep@1.0.0' }]
+  assert.deepEqual(await run(json(listed)), [])
+  assert.deepEqual(await run(json({ 'src/lib.rs': 'd'.repeat(64) })), differs, 'a file it lists not the crate\'s')
+  assert.deepEqual(await run(json(listed, 'e'.repeat(64))), differs, 'another crate\'s')
+  assert.deepEqual(await run('not json'), differs)
+})
