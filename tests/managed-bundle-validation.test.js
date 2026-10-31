@@ -279,3 +279,15 @@ test('a vendored crate\'s .cargo-checksum.json, which no crate holds, is held to
   assert.deepEqual(await run(json(listed, 'e'.repeat(64))), differs, 'another crate\'s')
   assert.deepEqual(await run('not json'), differs)
 })
+
+test('an npm package installed from git, its commit recorded, is held apart from the registry\'s of its name and version, unverified', async () => {
+  const fetched = []
+  const fork = { github: 'someone/ms', commit: 'a'.repeat(40) }
+  const plan = validationPlan(details({ 'node_modules/tool/node_modules/ms': { name: 'ms', version: '2.1.3', repo: fork, files: { 'index.js': 'forked\n' } } }))
+  plan.own = []
+  plan.packages = plan.packages.filter(pkg => pkg.name === 'ms')
+  const report = await validateBundle(plan, own(), { fetch: (...asked) => { fetched.push(asked.join(':')); return upstream()(...asked) } })
+  assert.deepEqual([report.status, report.problems, report.packages.map(pkg => [pkg.status, pkg.reason ?? null, pkg.git ?? null])],
+    ['incomplete', [], [['valid', null, null], ['unverified', 'git', fork]]], 'the registry\'s copy valid, the fork never held to it')
+  assert.deepEqual(fetched, ['npm:ms:2.1.3'])
+})
