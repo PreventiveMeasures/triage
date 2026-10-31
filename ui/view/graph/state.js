@@ -30,7 +30,7 @@ export const graph2 = {
   // findings. Off by default: the bundle graph opens as a plain map of
   // the code, and issue markers, counts and filters appear when on.
   bundleIssues: false,
-  bundleLayout: 'graph', // 'graph' | 'layers' | 'matrix' | 'dependencies' | 'flow'; bundle-only
+  bundleLayout: 'graph', // 'graph' | 'layers' | 'matrix' | 'dependencies' | 'flow' | 'package-flow'; bundle-only
   // The layout lockfiles open on (lockfile-graph.js), apart from the bundle
   // graph's: Dependencies, then the last one picked. The lockfile viewer
   // draws by bundleLayout while it is on the page, and gives it back after.

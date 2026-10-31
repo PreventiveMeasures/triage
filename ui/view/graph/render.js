@@ -3,7 +3,7 @@ import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from '../style-map.js'
 import { appMarkup } from '../markup.js'
-import { DEPENDENCIES_ICON_SVG, GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG } from '../icons.js'
+import { DEPENDENCIES_ICON_SVG, GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG, PACKAGE_FLOW_ICON_SVG } from '../icons.js'
 import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
@@ -23,6 +23,8 @@ const BUNDLE_LAYOUTS = [
   ['matrix', 'Matrix', appMarkup(MATRIX_ICON_SVG)],
   ['dependencies', 'Dependencies', appMarkup(DEPENDENCIES_ICON_SVG)],
   ['flow', 'Size flow', html`<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3h18M3 10h7m4 0h7M3 20h6m3 0h9M5 3v7m13-7v7M6 10c0 5 10 5 10 10m2-10c0 5-12 5-12 10"/></svg>`],
+  // Size flow's chart, of packages weighed by how many packages they bring.
+  ['package-flow', 'Package flow', appMarkup(PACKAGE_FLOW_ICON_SVG)],
 ]
 
 // Per-section Lit templates for the v2 layout (left panel, stage,
@@ -47,13 +49,15 @@ const BUNDLE_LAYOUTS = [
 // moves the Issues switch from the end of the first row to the start of
 // the issue row when it would otherwise wrap onto a line of its own.
 // `options.layouts` narrows the bundle layouts offered (all by default): a
-// lockfile's graph has no bytes for Layers and Size flow.
+// lockfile's graph has no bytes for Layers and Size flow, but counts packages
+// for Package flow.
 export function renderTopBar(graph, options, extraControls = null, placement = {}) {
   const layers = options.showBundleLayouts && graph2.bundleLayout === 'layers'
   const matrix = options.showBundleLayouts && graph2.bundleLayout === 'matrix'
   const dependencies = options.showBundleLayouts && graph2.bundleLayout === 'dependencies'
   const flow = options.showBundleLayouts && graph2.bundleLayout === 'flow'
-  const layout = layers ? 'layers' : matrix ? 'matrix' : dependencies ? 'dependencies' : flow ? 'flow' : 'graph'
+  const packageFlow = options.showBundleLayouts && graph2.bundleLayout === 'package-flow'
+  const layout = layers ? 'layers' : matrix ? 'matrix' : dependencies ? 'dependencies' : flow ? 'flow' : packageFlow ? 'package-flow' : 'graph'
   const layoutSelector = options.showBundleLayouts ? html`<div class="g2-layout-tabs" role="group" aria-label="Bundle layout">
     ${BUNDLE_LAYOUTS.filter(([id]) => options.layouts?.includes(id) ?? true).map(([id, label, icon]) =>
       html`<button type="button" data-g2-layout=${id} aria-label=${label} aria-pressed=${String(id === layout)}>${icon}</button>`)}
@@ -115,8 +119,8 @@ export function renderTopBar(graph, options, extraControls = null, placement = {
   // grouping). On: the canvas collapses to one node per package
   // with aggregated import edges. Same rebuild-on-flip contract as above —
   // the layout and hit-testing operate on a different node set. A graph
-  // of packages alone has nothing to flip to.
-  const showPackagesView = !graph.packagesOnly
+  // of packages alone has nothing to flip to, nor has Package flow.
+  const showPackagesView = !graph.packagesOnly && !packageFlow
     && (flow || (dependencies ? graph.nodes.length <= 100 : !layers && !matrix && (options.showPackagesView ?? false)))
   const packagesViewBtn = showPackagesView ? html`<mode-switch
     label="Packages" .checked=${flow ? graph2.flowPackagesView : dependencies ? graph2.dependencyPackagesView : graph2.packagesView}
