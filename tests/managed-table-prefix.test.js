@@ -220,3 +220,16 @@ for (const backend of ['sqlite', 'postgres']) {
     }
   })
 }
+
+test('sqlite: the bootstrap commits without an fsync apiece, then the connection commits at synchronous FULL', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'managed-prefix-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const exec = t.mock.method(DatabaseSync.prototype, 'exec')
+  const db = openSqliteManagedDb(join(dir, 'data.db'))
+  t.after(() => db.close())
+  const sql = exec.mock.calls.map(call => call.arguments[0])
+  const sync = sql.flatMap((statement, index) => /^PRAGMA synchronous\b/u.test(statement) ? [[index, statement]] : [])
+  assert.deepEqual(sync.map(([, statement]) => statement), ['PRAGMA synchronous = NORMAL;', 'PRAGMA synchronous = FULL;'])
+  assert.ok(sync[0][0] < sql.findIndex(statement => /CREATE TABLE/u.test(statement)), 'NORMAL precedes the schema')
+  assert.equal(sync[1][0], sql.length - 1, 'FULL follows the whole bootstrap')
+})
