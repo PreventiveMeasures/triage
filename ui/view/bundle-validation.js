@@ -34,6 +34,15 @@ function sessionHeld() {
 // A bundle as what is held of it is named: by where it is too, as its own
 // code is checked there.
 const keyOf = bundle => `${bundle.managedId}\0${bundle.repoId ?? ''}\0${bundle.repoDirectory ?? ''}`
+// `next` held for `key` in place of `was`, none for null, unless something
+// else has been since; told where it is.
+function settle(data, key, was, next) {
+  if (data.get(key) !== was) return false
+  if (next) data.set(key, next)
+  else data.delete(key)
+  changed()
+  return true
+}
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0
 const STATUSES = new Set(['valid', 'invalid', 'incomplete'])
 const KINDS = new Set(['differs', 'unexpected', 'unverified'])
@@ -64,13 +73,7 @@ export function bundleValidation(bundle) {
   data.set(key, loading)
   fetchBundleValidation(bundle.managedId).then(told => ({ status: 'ready', until: Date.now() + KEEP_MS, validation: checkedValidation(told?.validation) }))
     .catch(err => err?.name === 'AbortError' ? null : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'It couldn’t be read.' })
-    .then(next => {
-      if (data.get(key) !== loading) return false
-      if (next) data.set(key, next)
-      else data.delete(key)
-      changed()
-      return true
-    })
+    .then(next => settle(data, key, loading, next))
   return loading
 }
 
@@ -90,10 +93,7 @@ export async function validate(bundle) {
   } catch (err) {
     next = err?.name === 'AbortError' ? null : { ...running, running: false, until: Date.now() + KEEP_MS, runError: err?.message || 'It couldn’t be validated.' }
   }
-  if (data.get(key) !== running) return
-  if (next) data.set(key, next)
-  else data.delete(key)
-  changed()
+  settle(data, key, running, next)
 }
 
 const plural = (value, noun) => `${value.toLocaleString('en-US')} ${noun}${value === 1 ? '' : 's'}`
@@ -101,18 +101,19 @@ const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
 // Why own code wasn't checked, a package wasn't, or a file is as it is.
 const OWN_UNCHECKED = { 'no-repository': 'the bundle is attached to no repository', 'no-commit': 'its stamp names no commit',
   'no-access': 'you may read only part of its repository', 'commit-not-found': 'GitHub has no such commit in its repository' }
-const UNVERIFIED = { git: 'installed from git, not a registry', unsupported: 'no upstream package to fetch for its ecosystem', unnamed: 'no name or version recorded', 'not-published': 'not published',
+const UNVERIFIED = { git: 'locked from git, not a registry', unsupported: 'no upstream package to fetch for its ecosystem', unnamed: 'no name or version recorded', 'not-published': 'not published',
   unreadable: 'its registry refused it', 'too-large': 'too large to unpack', timeout: 'not reached in time', failed: 'couldn’t be fetched' }
 const FILE_REASONS = { symlink: 'a symlink on GitHub', submodule: 'in a submodule', 'tree-cut': 'GitHub’s tree too large to list whole' }
-const KIND_LABELS = { differs: 'differs', unexpected: 'unexpected', unverified: 'unverified' }
 const STATUS_LABELS = { valid: 'Valid', invalid: 'Invalid', incomplete: 'Incomplete' }
+// The tone a validation's, a package's or a file's state is shown in.
+const TONE = { valid: 'passed', invalid: 'failed', incomplete: 'wanted', unverified: 'wanted', differs: 'failed', unexpected: 'failed' }
+const SAID = [['differs', 'differ'], ['unexpected', 'unexpected'], ['unverified', 'unverified']]
 
 const when = time => time === null ? '' : new Date(time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 // What a validation says beside its state: what fails it and what it left
 // unverified, of how many files.
 function said({ counts, own }) {
-  const told = [counts.differs ? `${counts.differs.toLocaleString('en-US')} differ` : null, counts.unexpected ? `${counts.unexpected.toLocaleString('en-US')} unexpected` : null,
-    counts.unverified ? `${counts.unverified.toLocaleString('en-US')} unverified` : null].filter(Boolean)
+  const told = SAID.filter(([kind]) => counts[kind]).map(([kind, word]) => `${counts[kind].toLocaleString('en-US')} ${word}`)
   return `${told.length > 0 ? `${told.join(', ')}, of ` : 'every one of '}${plural(counts.files, 'file')}${own.checked ? '' : '; own code not checked'}`
 }
 
@@ -124,7 +125,7 @@ function packageRow(pkg) {
   const note = pkg.status === 'unverified' ? UNVERIFIED[pkg.reason] ?? 'not checked'
     : patch ? html`${how}${patch.path ? html` by <code>${patch.path}</code>${patch.from === 'bundle' ? ' (the bundle’s)' : ''}` : nothing}` : nothing
   return html`<li class="bundle-validation-row"><span class="team-deps-name">${pkg.name}<span class="team-deps-version">@${pkg.version}</span></span>
-    <span class="team-deps-review is-${pkg.status === 'valid' ? 'passed' : pkg.status === 'invalid' ? 'failed' : 'wanted'}">${pkg.status}</span>
+    <span class="team-deps-review is-${TONE[pkg.status]}">${pkg.status}</span>
     <span class="bundle-validation-note">${note}</span></li>`
 }
 
@@ -136,7 +137,7 @@ function details(validation) {
       ? '; its tree was too large to list whole' : ''}.` : nothing}
     ${counts.packages ? ` ${plural(counts.validPackages, 'package')} of ${counts.packages.toLocaleString('en-US')} as published.` : ''}</p>
     ${problems.length > 0 ? html`<ul class="bundle-validation-list">${problems.map(problem => html`<li class="bundle-validation-row">
-      <span class="team-deps-review is-${problem.kind === 'unverified' ? 'wanted' : 'failed'}">${KIND_LABELS[problem.kind]}</span>
+      <span class="team-deps-review is-${TONE[problem.kind]}">${problem.kind}</span>
       <span class="team-deps-name">${problem.path}</span>
       <span class="bundle-validation-note">${problem.of === 'own' ? 'own code' : problem.of.replace(/^[a-z-]+:/u, '')}${problem.reason ? `, ${FILE_REASONS[problem.reason] ?? problem.reason}` : ''}</span>
     </li>`)}</ul>` : nothing}
@@ -154,7 +155,7 @@ export function bundleValidationFact(entry, onChange) {
   changed = onChange
   const read = bundleValidation(entry)
   if (read.status === 'loading') return nothing
-  const validation = read.validation ?? null
+  const { validation } = read
   const id = keyOf(entry), open = opened.has(id)
   const toggle = () => {
     if (opened.has(id)) opened.delete(id)
@@ -162,7 +163,7 @@ export function bundleValidationFact(entry, onChange) {
     onChange()
   }
   const chip = read.running ? html`<span class="bundle-review-state" role="status">Validating…</span>`
-    : validation ? html`<span class="bundle-review-state is-${validation.status === 'valid' ? 'passed' : validation.status === 'invalid' ? 'failed' : 'wanted'}">${STATUS_LABELS[validation.status]}</span>`
+    : validation ? html`<span class="bundle-review-state is-${TONE[validation.status]}">${STATUS_LABELS[validation.status]}</span>`
     : html`<span class="bundle-review-state">Not validated</span>`
   return html`<dt>Validation</dt><dd class="bundle-review bundle-validation">
     <div class="bundle-review-line">${chip}

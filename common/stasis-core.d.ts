@@ -8,3 +8,15 @@ declare module '@exodus/stasis-core/bundle-util' {
   // builds record a dependency's by; undefined where it names no GitHub one.
   export function packageRepo(json: unknown, rel?: string): { github: string, directory?: string } | undefined
 }
+
+declare module '@exodus/stasis-core/util' {
+  // The file Stasis records for an import a package disables, never on disk.
+  export const EMPTY_MODULE_PATH: string
+  // A module's ecosystem: the one it records, else npm's under node_modules.
+  export function dependencyEcosystem(dir: string, ecosystem: string | undefined): string | undefined
+  export function hasNodeModulesSegment(path: string): boolean
+  // A stat record's format, `stat:*`, which is no file.
+  export function isStatFormat(format: string | undefined): boolean
+  // A module's file's path in the bundle: `rel` under `dir`, `dir` itself for ''.
+  export function moduleFileKey(dir: string, rel: string): string
+}
