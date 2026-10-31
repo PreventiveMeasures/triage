@@ -22,15 +22,15 @@ mock.module('../ui/view/client-managed.js', { exports: {
 const { bundleValidationFact } = await import('../ui/view/bundle-validation.js')
 
 const commit = 'f'.repeat(40)
-const counts = (more = {}) => ({ files: 12, own: 4, dependencies: 7, synthetic: 1, matched: 12, eol: 0, differs: 0, unexpected: 0, unverified: 0, packages: 3, validPackages: 3, ...more })
+const counts = (more = {}) => ({ files: 11, own: 4, dependencies: 7, matched: 11, eol: 0, differs: 0, unexpected: 0, unverified: 0, packages: 3, validPackages: 3, ...more })
 const VALID = { validatedAt: Date.UTC(2026, 9, 31, 12), status: 'valid', own: { checked: true, repository: 'org/repo', commit, directory: 'web' }, counts: counts(),
   problems: [], moreProblems: 0, packages: [{ ecosystem: 'npm', name: 'ms', version: '2.1.3', files: 1, status: 'valid', patch: { path: 'patches/ms@2.1.3.patch', from: 'bundle', applied: true } }] }
-const INVALID = { ...VALID, status: 'invalid', counts: counts({ matched: 8, differs: 2, unexpected: 1, unverified: 1, validPackages: 1 }),
+const INVALID = { ...VALID, status: 'invalid', counts: counts({ matched: 7, differs: 2, unexpected: 1, unverified: 1, validPackages: 1 }),
   problems: [{ path: 'node_modules/left/index.js', kind: 'differs', of: 'npm:left@1.0.0' }, { path: 'src/extra.js', kind: 'unexpected', of: 'own' },
     { path: 'src/link.js', kind: 'differs', of: 'own', reason: 'symlink' }, { path: 'x', kind: 'nonsense', of: 'own' }], moreProblems: 3,
   packages: [{ ecosystem: 'composer', name: 'org/php', version: '1.0.0', files: 1, status: 'unverified', reason: 'unsupported' },
     { ecosystem: 'npm', name: 'left', version: '1.0.0', files: 2, status: 'invalid' }] }
-const UNCHECKED = { ...VALID, status: 'incomplete', own: { checked: false, reason: 'no-repository' }, counts: counts({ matched: 8, unverified: 4 }), packages: [] }
+const UNCHECKED = { ...VALID, status: 'incomplete', own: { checked: false, reason: 'no-repository' }, counts: counts({ matched: 7, unverified: 4 }), packages: [] }
 const entry = (managedId, more = {}) => ({ managedId, kind: 'stasis', repoId: 7, repoDirectory: 'web', ...more })
 let renders = 0
 const render = () => { renders++ }
@@ -70,7 +70,7 @@ test('nothing while first read, nor for a sourcemap or a public link; a bundle n
 test('a kept validation is told at once; Validate validates it anew with the session\'s token, the line saying so meanwhile', async () => {
   kept = { kept: VALID }
   const valid = await shown(entry('kept'))
-  assert.match(valid, /is-passed">Valid<\/span>[^]*every one of 12 files · /u)
+  assert.match(valid, /is-passed">Valid<\/span>[^]*every one of 11 files · /u)
   assert.match(valid, />Validate again<\/button>/u)
   const before = asked.length
   await shown(entry('kept'))
@@ -84,10 +84,11 @@ test('a kept validation is told at once; Validate validates it anew with the ses
   assert.deepEqual(ran, [['kept', 'token']])
   const invalid = templateText(bundleValidationFact(entry('kept'), render))
   assert.match(invalid, /is-failed">Invalid<\/span>/u)
-  assert.match(invalid, /2 differ, 1 unexpected, 1 unverified, of 12 files/u)
+  assert.match(invalid, /2 differ, 1 unexpected, 1 unverified, of 11 files/u)
   click(entry('kept'), 'Details')
   const details = templateText(bundleValidationFact(entry('kept'), render))
   assert.match(details, /Own code held to <code>org\/repo<\/code> at <code>fffffff<\/code> under <code>web<\/code>/u)
+  assert.doesNotMatch(details, /Stasis/u, 'its empty placeholder allowed, never told')
   assert.match(details, /is-failed">differs<\/span>[^]*node_modules\/left\/index\.js[^]*left@1\.0\.0/u)
   assert.match(details, /is-failed">unexpected<\/span>[^]*src\/extra\.js[^]*own code/u)
   assert.match(details, /src\/link\.js[^]*own code, a symlink on GitHub/u)
@@ -99,7 +100,7 @@ test('a kept validation is told at once; Validate validates it anew with the ses
 test('where its own code wasn\'t checked, the line warns why; a patched package is noted; a failed run says why, the last validation kept', async () => {
   kept = { unchecked: UNCHECKED, patched: VALID }
   const unchecked = await shown(entry('unchecked'))
-  assert.match(unchecked, /is-wanted">Incomplete[^]*4 unverified, of 12 files; own code not checked/u)
+  assert.match(unchecked, /is-wanted">Incomplete[^]*4 unverified, of 11 files; own code not checked/u)
   assert.match(unchecked, /role="alert">Own code couldn’t be verified: the bundle is attached to no repository\./u)
   await shown(entry('patched'))
   click(entry('patched'), 'Details')
