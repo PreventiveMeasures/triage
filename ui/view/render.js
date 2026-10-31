@@ -40,6 +40,7 @@ import {
   refreshBundleGraphTopPkgs,
   renderBundleSourceModal,
   renderBundlesList,
+  renderDroppedLockfile,
   renderNpmOpening,
   renderRepositoryCodeOpening,
   setCurrentBundleGraphPrep,
@@ -1991,6 +1992,19 @@ function renderImpl() {
   // Lives before the reports-gate below because the bundles list is
   // independent of any loaded report; the user can browse OPFS
   // bundles even without a finding-bearing JSON open.
+  // A lockfile dropped in local or e2e mode, open alone in an editor of its
+  // own and never saved (lockfile-drop.js). Gone, as no view keeps it, it
+  // leaves for the findings as an emptied bundles view does.
+  if (state.currentView === 'lockfile') {
+    if (state.droppedLockfile) {
+      const slot = ensureReportSlot('dropped-lockfile-slot')
+      if (slot) litRender(renderDroppedLockfile(state.droppedLockfile), slot)
+      showReport()
+      document.title = `DeepView — ${state.droppedLockfile.name}`
+      return
+    }
+    state.currentView = 'findings'
+  }
   if (['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies'].includes(state.currentView)) {
     const kind = state.currentView.slice(10)
     const context = workspaceContent(state, listWorkspaces(), getKind)

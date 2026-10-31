@@ -66,7 +66,7 @@
        scrolls its list of links the same way. */
     &:has(
       .bundles-view, .packages-view, .links-view,
-      .findings-content, team-dependencies
+      .findings-content, team-dependencies, .bundle-code-view.is-single-file
     ) { flex-shrink: 1; }
     &:has(> .managed-page-slot) { flex: 1; min-height: 0; }
   }
@@ -1401,6 +1401,30 @@ button.bundle-code-importers-item:hover { background: var(--surface); }
   flex: 1; min-width: 0;
   -webkit-app-region: no-drag; app-region: no-drag;
 }
+/* A dropped lockfile's editor (render-bundle.js renderDroppedLockfile): the
+   Code tab's pane alone, framed as a bundle slide's body is, filling the
+   page; its bar ends in a close. */
+#dropped-lockfile-slot { display: contents; }
+.bundle-code-view.is-single-file {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 6px);
+  box-shadow: var(--shadow-glass);
+  overflow: hidden;
+}
+.bundle-code-close {
+  flex-shrink: 0;
+  display: grid; place-items: center;
+  width: 1.35rem; height: 1.35rem;
+  border: 0; border-radius: var(--ui-radius, 4px);
+  background: transparent;
+  color: var(--muted);
+  font-size: 1rem; line-height: 1;
+}
+.bundle-code-close:hover { color: var(--text); background: var(--surface-active); }
 .bundle-code-placeholder,
 .bundle-code-empty {
   flex: 1;

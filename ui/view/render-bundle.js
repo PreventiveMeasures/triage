@@ -706,6 +706,12 @@ const BUNDLE_HIGHLIGHTS_KEPT = 16
 const _bundleHighlightCache = new Map()
 const _bundleHighlightPending = new Set()
 
+// Whether a source viewer shows `path`: the open bundle's file, or a dropped
+// lockfile, open alone (lockfile-drop.js). Its read or highlight, once ended,
+// re-renders only while it does.
+const shownSource = path => state.bundleSourceFile === path
+  || state.currentView === 'lockfile' && state.droppedLockfile?.name === path
+
 // Wrap toggle for a source viewer's bar. Hidden until source-wrap.js finds
 // wrapping makes a difference to the open file at the viewer's width.
 const renderSourceWrapToggle = () => html`<button type="button" class="bundle-source-wrap-toggle" data-bundle-source-wrap hidden
@@ -849,7 +855,7 @@ function renderBundleSourceLines(content, path, details, lineFindings, matchLine
       _bundleHighlightPending.delete(cacheKey)
       // Cheap re-render — Lit only patches what changed, so the cost
       // is just the highlighted string injected via appMarkup.
-      if (state.bundleSourceFile === path) render()
+      if (shownSource(path)) render()
     })()
   }
   const highlighted = _bundleHighlightCache.get(cacheKey)
@@ -1749,13 +1755,14 @@ function textStats(text) {
 // moves neither toggle. The stepper comes first, as a copy has no findings.
 // A lockfile has a View lockfile toggle last: once read, its packages show in
 // the lockfile viewer in place of its text, with the file's own stats and
-// none of the toggles and stepper that are of the text.
-function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null) {
-  const history = bundleFileHistory(state.bundleCodeHistory, details.integrity, path)
+// none of the toggles and stepper that are of the text. `single`: the file is
+// open alone (renderDroppedLockfile), with no history to step through and a
+// close at the end of the bar.
+function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null, { single = false } = {}) {
   const viewed = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
   const { pretty, toggle, fileFindings, lineFindings } = viewed
   const lockfile = typeof sourceContent === 'string' && lockfileFormat(path) !== null
-  const read = lockfile ? viewedLockfile(details, path, sourceContent, bundleSourcesAsMap(details), () => { if (state.bundleSourceFile === path) render() }) : null
+  const read = lockfile ? viewedLockfile(details, path, sourceContent, bundleSourcesAsMap(details), () => { if (shownSource(path)) render() }) : null
   const graphed = read?.status === 'ready'
   const content = graphed ? sourceContent : viewed.content
   const issueOrder = fileFindings
@@ -1764,7 +1771,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
   // A managed bundle's stored repository fills in what its own stamp leaves out.
   const github = bundleFileGithub(details, path, entry?.managedId && entry.repoId != null ? { github: entry.repoFullName, directory: entry.repoDirectory } : null)
   return html`<header class="bundle-code-main-bar">
-      ${renderBundleCodeFileNav(history)}
+      ${single ? nothing : renderBundleCodeFileNav(bundleFileHistory(state.bundleCodeHistory, details.integrity, path))}
       ${sourceFileIcon(path, fileIconFormat(details, path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${path}>${path}</span>
       <button
@@ -1802,12 +1809,23 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       ${lockfile ? renderLockfileToggle(read) : nothing}
       ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${toggle === nothing ? nothing
         : html`<span class="bundle-code-main-stats-room" aria-hidden="true">${textStats(sourceContent)}</span>`}<span>${textStats(content)}</span></span>` : nothing}
+      ${single ? html`<button type="button" class="bundle-code-close" data-dropped-lockfile-close aria-label="Close" data-tooltip="Close">×</button>` : nothing}
     </header>
     <div class="bundle-code-main-body">
       ${graphed ? html`<lockfile-graph .lockfile=${read.lockfile}></lockfile-graph>`
         : renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
           !pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare(), pretty)}
     </div>`
+}
+
+// A lockfile dropped in local or e2e mode (lockfile-drop.js): an editor of
+// it alone, the Code tab's pane with no file tree. It opens on its packages,
+// as View lockfile shows them, and its text is a toggle away.
+export function renderDroppedLockfile({ name, details }) {
+  const content = bundleSourcesAsMap(details).get(name)
+  return html`<div class="bundle-code-view is-single-file">
+    <div class="bundle-code-main">${renderBundleCodeMain(details, name, content, [], new Map(), null, { single: true })}</div>
+  </div>`
 }
 
 // ── Search tab — github-style full-bundle code search ────────────

@@ -11,11 +11,12 @@
 // boot is enough.
 
 import { FILE_ICONS } from './file-display.js'
-import { BUNDLE_ICON_SVG, GITHUB_ICON_SVG, LINKS_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
+import { BUNDLE_ICON_SVG, DEPENDENCIES_ICON_SVG, GITHUB_ICON_SVG, LINKS_ICON_SVG, WORKSPACE_ICON_SVG } from './icons.js'
 import { trustedHTML } from './trusted-types.js'
 
 // `data-icon` value → raw SVG string. Sourcemaps keep the generic
-// bundle glyph shared with the sidebar.
+// bundle glyph shared with the sidebar; lockfiles the Code tab's View
+// lockfile glyph.
 const ICONS = {
   'default': FILE_ICONS.default,
   'claude-security': FILE_ICONS['claude-security'],
@@ -26,6 +27,7 @@ const ICONS = {
   'bundle': BUNDLE_ICON_SVG,
   'workspace': WORKSPACE_ICON_SVG,
   'links': LINKS_ICON_SVG,
+  'lockfile': DEPENDENCIES_ICON_SVG,
   'github': GITHUB_ICON_SVG,
 }
 

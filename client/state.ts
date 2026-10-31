@@ -37,7 +37,15 @@ export type FocusCodePos = {
 // count / sort preference — never alters report data. See ui/view/format.js
 // (displayedSeverity) and <severity-mode-switch>.
 export type SeverityMode = 'corrected' | 'original'
-export type CurrentView = 'findings' | 'files' | 'bundles' | 'workspace-reports' | 'workspace-bundles' | 'workspace-repositories' | 'links' | 'scan' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams' | 'npm' | 'reviews' | 'profile'
+export type CurrentView = 'findings' | 'files' | 'bundles' | 'lockfile' | 'workspace-reports' | 'workspace-bundles' | 'workspace-repositories' | 'links' | 'scan' | 'manage' | 'admin-users' | 'manage-repos' | 'manage-reports' | 'manage-bundles' | 'manage-history' | 'manage-scans' | 'manage-teams' | 'npm' | 'reviews' | 'profile'
+
+// The lockfile the 'lockfile' view shows, dropped in local or e2e mode and
+// never saved (ui/view/lockfile-drop.js): its name, as the Code tab's pane
+// takes a bundle's file, in a bundle of it alone.
+export type DroppedLockfile = {
+  name: string
+  details: { kind: 'sourcemap'; integrity: string; size: number; json: { version: 3; sources: string[]; sourcesContent: string[] } }
+}
 
 // The links file the 'links' view is showing: its OPFS name and the
 // links it declares, one `string[]` of finding ids per link (see
@@ -138,6 +146,7 @@ export interface State {
   bundleSourcePretty: boolean
   bundleCodeTerminal: boolean
   bundleSourceLockfile: boolean
+  droppedLockfile: DroppedLockfile | null
   // A file for the Code tab to open once its sources load: a link's, by
   // number, or the one open in the bundle before, by path.
   bundleCodeFileRequest: { bundle: string; file: number; line?: number; endLine?: number } | { bundle: string; path: string } | null
@@ -681,6 +690,9 @@ export const state: State = store<State>({
   // Whether the Code tab shows a lockfile's packages in the lockfile viewer
   // rather than its text (lockfile-view.js).
   bundleSourceLockfile: false,
+  // A lockfile dropped in local or e2e mode, for the 'lockfile' view: kept in
+  // memory only, while that view is up (ui/view/lockfile-drop.js).
+  droppedLockfile: null,
   // The file a managed link opens the Code tab on, by its 1-based number in
   // the bundle's sorted sources, and the lines it marks. Kept until the tab
   // has the sources to read it from, and dropped with any other bundle or
