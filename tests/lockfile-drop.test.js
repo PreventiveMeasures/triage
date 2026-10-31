@@ -5,7 +5,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import './_polyfills.js'
 
-const { droppedLockfile, readDroppedLockfile } = await import('../ui/view/lockfile-drop.js')
+const { droppedLockfile, openDroppedLockfile, readDroppedLockfile } = await import('../ui/view/lockfile-drop.js')
+const { beginViewNavigation } = await import('../ui/view/view-navigation.js')
 const { viewedLockfile } = await import('../ui/view/lockfile-view.js')
 const { bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
 const { state } = await import('../client/state.ts')
@@ -61,5 +62,50 @@ describe('readDroppedLockfile', () => {
     })
     assert.equal(read.status, 'ready', read.message)
     assert.deepEqual(read.lockfile.importers['.'], { version: '1.2.3', dependencies: ['ms@^2.0.0'] })
+  })
+})
+
+describe('openDroppedLockfile', () => {
+  // A dropped file whose read ends when the test says.
+  const slow = name => {
+    let done
+    const read = new Promise(resolve => { done = resolve })
+    return { lockfile: { name, size: 1, text: () => read }, manifest: null, end: (text = '{}\n') => done(text) }
+  }
+  const failing = name => ({ lockfile: { name, size: 1, text: () => Promise.reject(new Error('gone')) }, manifest: null })
+
+  it('shows the lockfile read, unless the page went elsewhere meanwhile', async () => {
+    const failed = [], shown = []
+    const fail = err => { failed.push(err.message) }, show = lockfile => { shown.push(lockfile.name) }
+    const kept = slow('package-lock.json')
+    const opened = openDroppedLockfile(kept, nameOf, show, fail)
+    kept.end()
+    assert.equal(await opened, true)
+    assert.deepEqual(shown, ['package-lock.json'])
+    const left = slow('pnpm-lock.yaml')
+    const leaving = openDroppedLockfile(left, nameOf, show, fail)
+    beginViewNavigation()
+    left.end()
+    assert.equal(await leaving, false, 'Home or the sidebar keeps the screen')
+    assert.deepEqual(shown, ['package-lock.json'])
+    const unread = openDroppedLockfile(failing('yarn.lock'), nameOf, show, fail)
+    beginViewNavigation()
+    assert.equal(await unread, false)
+    assert.deepEqual(failed, [], 'nor tells of a read it no longer waits for')
+    assert.equal(await openDroppedLockfile(failing('yarn.lock'), nameOf, show, fail), false)
+    assert.deepEqual(failed, ['gone'])
+  })
+
+  it('shows the later of two drops, whichever read ends first', async () => {
+    const shown = []
+    const show = lockfile => { shown.push(lockfile.name) }
+    const earlier = slow('package-lock.json'), later = slow('pnpm-lock.yaml')
+    const first = openDroppedLockfile(earlier, nameOf, show, () => {})
+    const second = openDroppedLockfile(later, nameOf, show, () => {})
+    later.end()
+    assert.equal(await second, true)
+    earlier.end()
+    assert.equal(await first, false)
+    assert.deepEqual(shown, ['pnpm-lock.yaml'])
   })
 })

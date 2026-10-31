@@ -5,6 +5,7 @@
 // only, while its view is up (state.droppedLockfile); the next lockfile
 // dropped, or Home, replaces it.
 import { lockfileFormat } from './lockfile-view.js'
+import { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 
 // Each drop's bundle of its own, so a lockfile read or highlighted for an
 // earlier drop is never taken for this one's (lockfile-view.js reads, keyed
@@ -22,6 +23,25 @@ export function droppedLockfile(files, nameOf) {
   if (!lockfile) return null
   const manifest = lockfileFormat(nameOf(lockfile)) === 'yarn' ? files.findLast(file => nameOf(file) === 'package.json') ?? null : null
   return { lockfile, manifest, taken: new Set(manifest ? [...lockfiles, manifest] : lockfiles) }
+}
+
+// Read a dropped lockfile and `show` it, as the page's latest navigation from
+// the drop on: whatever the page goes to while it is read (Home, the sidebar,
+// a later drop, however soon its own read ends) keeps the screen, and `fail`
+// tells of a read that failed only while the drop is still the latest.
+export async function openDroppedLockfile(dropped, nameOf, show, fail) {
+  const navigation = beginViewNavigation()
+  const latest = () => navigation === currentViewGeneration()
+  let lockfile
+  try {
+    lockfile = await readDroppedLockfile(dropped, nameOf)
+  } catch (err) {
+    if (latest()) fail(err)
+    return false
+  }
+  if (!latest()) return false
+  await show(lockfile)
+  return true
 }
 
 // The dropped lockfile as the Code tab's pane takes a bundle's file: a bundle

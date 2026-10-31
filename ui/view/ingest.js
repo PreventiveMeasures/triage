@@ -27,7 +27,7 @@ import { openBundle, prefetchBundleHashesAfterPaint, selectBundle } from './bund
 import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
-import { droppedLockfile, readDroppedLockfile } from './lockfile-drop.js'
+import { droppedLockfile, openDroppedLockfile as readAndShowLockfile } from './lockfile-drop.js'
 import { clearReportSources, fetchTeamReports, loadManagedBundle, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
@@ -567,23 +567,18 @@ async function addFiles(files) {
 
 // Open a dropped lockfile alone in an editor of its own, on its packages
 // (lockfile-drop.js), in place of whatever view was up, as Home leaves it:
-// nothing saved, nothing to reopen on the next visit.
-async function openDroppedLockfile(dropped) {
-  let lockfile
-  try {
-    lockfile = await readDroppedLockfile(dropped, file => stripDownloadDup(file.name))
-  } catch (err) {
-    alert(`Failed to load ${dropped.lockfile.name}: ${err.message}`)
-    return
-  }
-  beginViewNavigation()
-  closeSessionsExcept(new Set())
-  clearActiveView()
-  state.droppedLockfile = lockfile
-  state.bundleSourceLockfile = true
-  state.currentView = 'lockfile'
-  render()
-  await renderSidebar()
+// nothing saved, nothing to reopen on the next visit. The drop navigates
+// before its read, so a page left meanwhile, or a later drop, keeps the screen.
+function openDroppedLockfile(dropped) {
+  return readAndShowLockfile(dropped, file => stripDownloadDup(file.name), (lockfile) => {
+    closeSessionsExcept(new Set())
+    clearActiveView()
+    state.droppedLockfile = lockfile
+    state.bundleSourceLockfile = true
+    state.currentView = 'lockfile'
+    render()
+    return renderSidebar()
+  }, err => alert(`Failed to load ${dropped.lockfile.name}: ${err.message}`))
 }
 
 // Replace the active view with the named OPFS file. Pre-fetched
