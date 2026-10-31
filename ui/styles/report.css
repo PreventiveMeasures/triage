@@ -4793,7 +4793,6 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) repository-replay {
 }
 .bundle-validation-row {
   display: flex; align-items: center; gap: .5rem; min-width: 0; font-size: .75rem;
-  & .team-deps-review { flex: none; }
   & .team-deps-name { flex: 0 1 auto; }
   & .team-deps-review.is-passed { color: var(--green); }
 }

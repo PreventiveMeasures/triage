@@ -11,9 +11,12 @@ import { Readable } from 'node:stream'
 import { test } from 'node:test'
 import { brotliCompressSync, gzipSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { HttpError } from '@preventive/upstream/npm.js'
 import { commitBlobs, gitBlobId, validateBundle, validationPlan } from '../server-managed/bundle-validation.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
+import { readTarballFiles } from '../server-managed/npm-loads.ts'
+import { parsePatch } from '../server-managed/npm-patch.ts'
 import { people } from './_managed-repository-dependency-reviews.js'
 import { REGISTRY, packageOf, tar } from './_managed-npm.js'
 
@@ -64,10 +67,10 @@ const TREE = {
 }
 const own = (entries = TREE, more = {}) => ({ entries: new Map(Object.entries(entries)), cut: false, repository: 'org/repo', commit, directory: 'web', ...more })
 const PACKAGES = { 'npm:ms@2.1.3': MS, 'npm:left@1.0.0': { 'index.js': 'original\n', 'other.js': 'never bundled\n' } }
-const upstream = (packages = PACKAGES) => async (ecosystem, name, version) => {
+const upstream = (packages = PACKAGES) => (ecosystem, name, version) => {
   const files = packages[`${ecosystem}:${name}@${version}`]
-  if (!files) throw Object.assign(new (await import('@preventive/upstream/npm.js')).HttpError('Not found'), { status: 404 })
-  return new Map(Object.entries(files).map(([path, text]) => [path, Buffer.from(text)]))
+  if (!files) return Promise.reject(Object.assign(new HttpError('Not found'), { status: 404 }))
+  return Promise.resolve(new Map(Object.entries(files).map(([path, text]) => [path, Buffer.from(text)])))
 }
 
 test('a bundle\'s files are its own code and each package version\'s; no directory, nor Stasis\'s empty placeholder; the patches it holds', () => {
@@ -112,7 +115,7 @@ test('a version its lockfile patches is held to that patch, of the bundle\'s fil
   plan.packages = plan.packages.filter(pkg => pkg.name === 'ms')
   const read = []
   const locked = (lock, text = MS_PATCH) => ({ of: (name, version) => name === 'ms' && version === '2.1.3' ? lock : undefined,
-    read: async (hash, path) => { read.push([hash, path]); return (await import('../server-managed/npm-patch.ts')).parsePatch(text) } })
+    read: (hash, path) => { read.push([hash, path]); return Promise.resolve(parsePatch(text)) }, git: () => false })
   const told = async (lock, more) => (await validateBundle(plan, own(), { fetch: upstream(), locked: locked(lock, more) })).packages
   assert.deepEqual(await told({ hash: sha256(MS_PATCH), path: 'patches/elsewhere.patch' }), [{ ecosystem: 'npm', name: 'ms', version: '2.1.3', files: 2, status: 'valid',
     patch: { hash: sha256(MS_PATCH), path: 'patches/ms@2.1.3.patch', from: 'bundle', applied: true } }], 'the bundle\'s file of its hash')
@@ -242,7 +245,6 @@ test('a bundle of no repository has its dependencies validated, its own code tol
 test('a package\'s tarball unpacked, its top directory left out, as upstream fetches it', async () => {
   // As the registry would serve it: npm's `package/` directory.
   const tgz = gzipSync(tar([{ name: 'package/index.js', data: 'x' }]))
-  const { readTarballFiles } = await import('../server-managed/npm-loads.ts')
   assert.deepEqual((await readTarballFiles(tgz)).map(file => file.path), ['index.js'])
 })
 
@@ -280,16 +282,24 @@ test('a vendored crate\'s .cargo-checksum.json, which no crate holds, is held to
   assert.deepEqual(await run('not json'), differs)
 })
 
-test('an npm package installed from git, its commit recorded, is held apart from the registry\'s of its name and version, unverified', async () => {
+test('an npm version its lockfiles lock from git alone is left unverified; one recording a commit (a registry package\'s gitHead) held to the registry\'s', async () => {
   const fetched = []
-  const fork = { github: 'someone/ms', commit: 'a'.repeat(40) }
-  const plan = validationPlan(details({ 'node_modules/tool/node_modules/ms': { name: 'ms', version: '2.1.3', repo: fork, files: { 'index.js': 'forked\n' } } }))
+  const gitHead = { github: 'vercel/ms', commit: 'a'.repeat(40) }
+  const plan = validationPlan(details({ 'node_modules/ms': { name: 'ms', version: '2.1.3', repo: gitHead, files: { 'index.js': MS['index.js'] } }, 'node_modules/left': undefined }))
   plan.own = []
-  plan.packages = plan.packages.filter(pkg => pkg.name === 'ms')
-  const report = await validateBundle(plan, own(), { fetch: (...asked) => { fetched.push(asked.join(':')); return upstream()(...asked) } })
-  assert.deepEqual([report.status, report.problems, report.packages.map(pkg => [pkg.status, pkg.reason ?? null, pkg.git ?? null])],
-    ['incomplete', [], [['valid', null, null], ['unverified', 'git', fork]]], 'the registry\'s copy valid, the fork never held to it')
-  assert.deepEqual(fetched, ['npm:ms:2.1.3'])
+  plan.packages = plan.packages.filter(pkg => pkg.name !== 'org/php')
+  const fetch = (...asked) => { fetched.push(asked.join(':')); return upstream()(...asked) }
+  const registry = await validateBundle(plan, own(), { fetch })
+  assert.deepEqual(registry.packages.map(pkg => [pkg.name, pkg.status, pkg.reason ?? null]), [['gone', 'unverified', 'not-published'], ['ms', 'valid', null]],
+    'ms valid (told for the bundle\'s patch it is not patched with), its gitHead no sign of git')
+  assert.deepEqual(fetched.toSorted(), ['npm:gone:1.0.0', 'npm:ms:2.1.3'])
+
+  fetched.length = 0
+  const locked = { of: () => undefined, read: () => Promise.resolve([]), git: (name, version) => name === 'ms' && version === '2.1.3' }
+  const report = await validateBundle(plan, own(), { fetch, locked })
+  assert.deepEqual([report.status, report.problems, report.packages.map(pkg => [pkg.name, pkg.status, pkg.reason ?? null])],
+    ['incomplete', [], [['gone', 'unverified', 'not-published'], ['ms', 'unverified', 'git']]], 'locked from git: never held to the registry\'s')
+  assert.deepEqual(fetched, ['npm:gone:1.0.0'])
 })
 
 test('the root module, and an npm-tagged one outside node_modules (a workspace package), are own code whatever ecosystem they record', () => {
