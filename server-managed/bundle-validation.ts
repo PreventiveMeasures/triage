@@ -55,11 +55,14 @@ const TREES_AT_ONCE = 6
 const EMPTY_MODULE = '.stasis/empty-module.js'
 const SHA = /^[\da-f]{40}$/u
 
-interface BundleModule { ecosystem?: string; name?: string; version?: string; files: Record<string, unknown> }
+interface BundleModule { ecosystem?: string; name?: string; version?: string; repo?: { github?: string; commit?: string }; files: Record<string, unknown> }
 // A file the bundle holds: its path in it, the module (`dir`, an installed
 // copy of its package) and its path there, and its bytes.
 interface BundledFile { path: string; dir: string; rel: string; bytes: () => Uint8Array }
-interface PlannedPackage { ecosystem: string; name: string; version: string; files: BundledFile[] }
+// A package version's files; an npm one installed from git, whose module
+// records the commit (no registry package's does), apart, with its `git`.
+interface GitSource { github: string; commit: string }
+interface PlannedPackage { ecosystem: string; name: string; version: string; git?: GitSource; files: BundledFile[] }
 export interface ValidationPlan { files: number; own: BundledFile[]; packages: PlannedPackage[]; patches: Map<string, string> }
 
 // What a bundle's files are, as validation checks them: of its own code, or
@@ -86,8 +89,9 @@ export function validationPlan(details: { kind: string | null; bundle?: unknown 
       if (ecosystem === undefined) own.push(file)
       else {
         const [name, version] = [info.name ?? '', info.version ?? '']
-        const key = `${ecosystem}\0${name}\0${version}`
-        const known = packages.get(key) ?? packages.set(key, { ecosystem, name, version, files: [] }).get(key)!
+        const git = ecosystem === 'npm' && info.repo?.commit !== undefined ? { github: info.repo.github ?? '', commit: info.repo.commit } : undefined
+        const key = `${ecosystem}\0${name}\0${version}\0${git ? `${git.github}@${git.commit}` : ''}`
+        const known = packages.get(key) ?? packages.set(key, { ecosystem, name, version, ...git ? { git } : {}, files: [] }).get(key)!
         known.files.push(file)
       }
     }
@@ -201,8 +205,8 @@ export interface LockedPatches {
 // one's patch with whether its files are as patched (`applied`).
 export type OwnChecked = { checked: true; repository: string; commit: string; directory: string; cut?: true } | { checked: false; reason: string }
 export interface Problem { path: string; kind: 'differs' | 'unexpected' | 'unverified'; of: 'own' | string; reason?: string }
-export interface PackageTold { ecosystem: string; name: string; version: string; files: number; status: 'valid' | 'invalid' | 'unverified'; reason?: string
-  patch?: ToldPatch }
+export interface PackageTold { ecosystem: string; name: string; version: string; git?: GitSource; files: number; status: 'valid' | 'invalid' | 'unverified'
+  reason?: string; patch?: ToldPatch }
 export interface BundleValidation {
   validatedAt: number; status: 'valid' | 'invalid' | 'incomplete'; own: OwnChecked
   counts: { files: number; own: number; dependencies: number; matched: number; eol: number; differs: number; unexpected: number; unverified: number
@@ -212,6 +216,8 @@ export interface BundleValidation {
 
 const equal = (a: Uint8Array, b: Uint8Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).equals(b)
 const packageKey = ({ ecosystem, name, version }: { ecosystem: string; name: string; version: string }) => `${ecosystem}:${name}@${version}`
+// A package told's place: by its key, the registry's before one from git.
+const toldKey = (pkg: PackageTold) => `${packageKey(pkg)}\0${pkg.git ? `${pkg.git.github}@${pkg.git.commit}` : ''}`
 // The name pnpm gives a version's patch file, `@scope__name@1.0.0.patch`.
 const pnpmPatchName = (name: string, version: string) => `${name.replace('/', '__')}@${version}.patch`
 
@@ -255,9 +261,13 @@ export async function validateBundle(plan: ValidationPlan, own: { entries: Map<s
     const of = packageKey(pkg)
     const unverified = (reason: string, patch?: ToldPatch) => {
       counts.unverified += pkg.files.length
-      told.push({ ecosystem: pkg.ecosystem, name: pkg.name, version: pkg.version, files: pkg.files.length, status: 'unverified', reason, ...patch ? { patch } : {} })
+      told.push({ ecosystem: pkg.ecosystem, name: pkg.name, version: pkg.version, ...pkg.git ? { git: pkg.git } : {}, files: pkg.files.length, status: 'unverified', reason,
+        ...patch ? { patch } : {} })
     }
     if (!pkg.name || !pkg.version) { unverified('unnamed'); return }
+    // Installed from git: the registry's release of its name and version is
+    // another package, and npm may build one as it installs it.
+    if (pkg.git) { unverified('git'); return }
     if (!FETCHED.has(pkg.ecosystem)) { unverified('unsupported'); return }
     if (now() > deadline) { unverified('timeout'); return }
     let files: PackageFiles
@@ -302,7 +312,7 @@ export async function validateBundle(plan: ValidationPlan, own: { entries: Map<s
     own: 'reason' in own ? { checked: false, reason: own.reason }
       : { checked: true, repository: own.repository, commit: own.commit, directory: own.directory, ...own.cut ? { cut: true as const } : {} },
     counts, problems: listed.slice(0, MAX_TOLD), moreProblems: Math.max(0, listed.length - MAX_TOLD),
-    packages: told.toSorted((a, b) => packageKey(a) < packageKey(b) ? -1 : 1).slice(0, MAX_TOLD) }
+    packages: told.toSorted((a, b) => toldKey(a) < toldKey(b) ? -1 : toldKey(a) > toldKey(b) ? 1 : 0).slice(0, MAX_TOLD) }
 }
 
 // The patch an npm version `pkg` is held to, and its files patched with it:
