@@ -831,6 +831,16 @@ test('the rail\'s Code mode searches the code the diffs show, each hit signed an
   assert.match(renderText(element.render()), /No matches\./u)
 })
 
+test('the rail\'s Files mode finds a file by a path pasted with spaces at either end, and blanks alone filter none', () => {
+  const element = view()
+  element._query = ' \tsrc/api.js\n'
+  assert.deepEqual(element._railState().order, ['src/api.js'])
+  assert.deepEqual(Object.keys(fileMarks(renderText(element.render()))), ['src/api.js'])
+  element._query = '   '
+  assert.equal(element._railState().order.length, 7)
+  assert.doesNotMatch(renderText(element.render()), /No changed files match\./u)
+})
+
 test('the search diffs a changed file as the view does: a long one\'s removed lines found, a large one\'s once its diff is asked for', () => {
   const text = (lines, line) => Array.from({ length: lines }, (_, i) => i === 7 ? line : `line ${i}`).join('\n') + '\n'
   const hits = (element, path) => element._searchResults(element._railState().order).files.find(file => file.path === path)?.hits.map(hit => `${hit.sign ?? '?'}${hit.side}${hit.line}`)

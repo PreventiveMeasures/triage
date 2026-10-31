@@ -545,11 +545,17 @@ export class BundleCompareCode extends LitElement {
     for (let i = 1; i < parts.length; i++) this._open.set(parts.slice(0, i).join('/'), true)
   }
 
+  // The query Files mode filters the tree's paths by: as typed, without the
+  // spaces a copy can bring at either end. Code mode searches it as typed.
+  _pathQuery() {
+    return this._query.trim()
+  }
+
   // The rail's tree as its path and kind filters leave it, and its files in
   // the order it lists them.
   _railState() {
     const { prefix, root, tree, shown, allOrder } = this._tree()
-    const filtered = filterBundleSourceTree(tree, this._mode === 'files' ? this._query : '', prefix, this.extensions?.fileFilter)
+    const filtered = filterBundleSourceTree(tree, this._mode === 'files' ? this._pathQuery() : '', prefix, this.extensions?.fileFilter)
     return { prefix, root, tree, shown, filtered, order: filtered === tree ? allOrder : filtered ? orderedComparisonFiles(filtered) : [], allOrder }
   }
 
@@ -559,7 +565,7 @@ export class BundleCompareCode extends LitElement {
     this._countUntil = null
     this._treeRemaining = this.extensions?.treePageSize ? this._treeLimit : Infinity
     this._treeTruncated = false
-    const openAll = !!this._query || shown <= (this.extensions?.openAllMax ?? OPEN_ALL_MAX)
+    const openAll = !!this._pathQuery() || shown <= (this.extensions?.openAllMax ?? OPEN_ALL_MAX)
     const treeContent = this._mode === 'code' ? nothing : filtered ? this._renderTree(filtered, current, 0, openAll, openAll ? null : defaultOpenDirectories(filtered)) : html`<div class="bundle-code-search-empty">No changed files match.</div>`
     const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
     for (const entry of this._entries.values()) {
@@ -574,7 +580,7 @@ export class BundleCompareCode extends LitElement {
           <span class="bundle-code-rail-count">${this._entries.size.toLocaleString()}</span>
           <span class="bundle-code-rail-actions">
             <button type="button" class="bundle-code-rail-action" aria-label=${this.extensions?.collapseLabel ?? 'Collapse directories'} data-tooltip="Collapse directories"
-              ?disabled=${this._mode !== 'files' || !!this._query && !this.extensions?.collapseClearsSearch || tree.dirs.size === 0} @click=${() => this._collapseAll(tree)}>
+              ?disabled=${this._mode !== 'files' || !!this._pathQuery() && !this.extensions?.collapseClearsSearch || tree.dirs.size === 0} @click=${() => this._collapseAll(tree)}>
               ${COLLAPSE_DIRS_ICON}
             </button>
           </span>
@@ -889,7 +895,7 @@ export class BundleCompareCode extends LitElement {
       const compact = compactSourceDirectory(name, child, depth)
       const pkg = child.package
       const vendored = pkg?.ecosystem === 'cargo' || pkg?.ecosystem === 'composer' || pkg?.ecosystem === 'soldeer'
-      const open = this._query ? true : this._open.get(child.path) ?? (openAll || Boolean(opened?.has(child.path)) || containsFile(child, current))
+      const open = this._pathQuery() ? true : this._open.get(child.path) ?? (openAll || Boolean(opened?.has(child.path)) || containsFile(child, current))
       // The row's top directory is new or gone as a whole, package or not.
       const dirKind = this._baseDirs().has(child.sourcePath)
         ? bundleDirs(this.other).has(child.sourcePath) ? null : 'removed'

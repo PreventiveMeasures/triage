@@ -3,8 +3,10 @@ import { beforeEach, mock, test } from 'node:test'
 import './_polyfills.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleSourcesAsMap } from '../common/bundle-sources.js'
+import { templateText } from './_lit.js'
 
-// Exercise the Code view's initial selection and later indexing updates.
+// Exercise the Code view's initial selection and later indexing updates,
+// and its rail's search for a file by path.
 const findingsByHash = new Map()
 const findingIndex = await import('../client/bundle-finding-index.js')
 mock.module('../client/bundle-finding-index.js', { exports: {
@@ -186,4 +188,20 @@ test('without an entry point or a package.json, a bundle opens its top-most inde
   state.bundleSourceFile = null
   openBundle(stasis({ 'src/app.js': 'app', 'src/large.js': 'x'.repeat(1000) }, { 'index.js': 'x'.repeat(5000) }))
   assert.equal(state.bundleSourceFile, 'src/large.js', 'never a dependency\'s: the largest own file else')
+})
+
+test('Files and Largest find a file by a path pasted with spaces at either end, and blanks alone filter none', () => {
+  const render = openBundle(stasis({ 'src/main.js': 'entry', 'src/other.js': 'other' }, { 'index.js': 'dep' }, ['src/main.js']))
+  const listed = () => [...(/bundle-code-rail-body">([^]*?)<\/aside>/u.exec(templateText(render()))[1])
+    .matchAll(/data-bundle-view-source=(\S+)/gu)].map(([, path]) => path)
+  for (const mode of ['files', 'largest']) {
+    state.bundleCodeSearchMode = mode
+    state.bundleCodeSearchQuery = ''
+    const all = listed()
+    assert.equal(all.length, 3, mode)
+    state.bundleCodeSearchQuery = ' \tsrc/main.js\n'
+    assert.deepEqual(listed(), ['src/main.js'], mode)
+    state.bundleCodeSearchQuery = '   '
+    assert.deepEqual(listed(), all, mode)
+  }
 })
