@@ -209,27 +209,27 @@ See [A bundle's dependencies](./dependency-review.md#a-bundles-dependencies).
 
 ## Validation
 
-A Stasis bundle's Overview has a **Validation** line with a **Validate** button, which checks that the bundle holds what it says it does:
+A Stasis bundle's Overview has a **Validation** line with a **Validate** button, which checks that the bundle holds what it says it does, by Stasis's own validation (`@exodus/stasis/validate`, as [`stasis validate`](https://github.com/PreventiveMeasures/stasis/blob/main/doc/validate.md) checks a bundle; its rules are Stasis's):
 
-1. **Own code** (the files of modules naming no ecosystem: the project's own and its workspace's packages, and the root's and an `npm` one's outside `node_modules` whatever they record) must be on GitHub, byte for byte, at the commit the bundle's stamp names, under the directory it was built in (the stamp's, else the bundle's location).
+1. **The commit** the bundle's stamp names must be in the repository's own history: its default branch's, a tag or a branch at it, or another branch's. GitHub serves a commit pushed to any fork of a repository through the repository's name too, so one in none of them (a fork's, say) is no commit of the repository: own code is left unverified, and the dependencies held to their registry alone.
+2. **Own code** (the files of modules naming no ecosystem: the project's own and its workspace's packages, and the root's and an `npm` one's outside `node_modules` whatever they record) must be on GitHub, byte for byte, at that commit, under the directory it was built in (the stamp's, else the bundle's location).
    Each file is compared by git's blob id with GitHub's listing of the commit's tree, so no file is downloaded; the listing is read a directory at a time, into those holding the bundle's files alone, where GitHub cuts it short.
-   A file whose only difference is a checkout's CRLF line endings passes, and is counted.
-2. **Dependencies** are fetched with upstream (npm's registry, and crates.io for Cargo crates), which holds each tarball to the integrity its registry publishes for it (not the lockfile's), and each file the bundle holds of a package must match the file at its path there.
-   Files of a package the bundle leaves out are expected.
-   A vendored crate's `.cargo-checksum.json`, which `cargo vendor` writes and no crate holds, is held to the crate instead: its package checksum, and the sha256 of each file it lists.
-   An npm version the lockfiles installing the bundle lock from git alone (a git repository, or a git host's tarball) is left unverified: npm may build one as it installs it, and the registry's release of its name and version is another package.
-   A module's recorded commit is no sign of one, as a registry package's `gitHead` is recorded too; without those lockfiles, such a version is held to the registry's.
-   A version pnpm patches is held to its files patched, as pnpm applies the patch: the patch the lockfiles installing the bundle at its commit lock it with, read of the bundle where it holds a file of that hash, else of the repository; without those lockfiles, the patch the bundle holds named for the version, pnpm's way (`patches/name@version.patch`).
-   Each installed copy of a version is held to its files patched or as published apart, as a nested copy may be unpatched, and the version is fetched once.
-   Each patched version is listed with its patch, where it was read, and, valid, whether a copy of it holds its files as patched.
-3. **Coverage**: every file the bundle holds must be one or the other. Stasis's empty placeholder (`.stasis/empty-module.js`, for an import a package disables) is allowed.
+   A text file whose only difference is a checkout's CRLF line endings, every line's, passes, and is counted.
+3. **Dependencies** are fetched with upstream (npm's registry, and crates.io for Cargo crates), each held to the lockfile that installs the bundle there at that commit, found as Stasis's build finds it, and each file the bundle holds of a package must match the file at its path there:
+   - a version the lockfile locks of its registry is fetched with the integrity it locks, and fails where the tarball isn't of it; one it locks none of fails (`not locked by the lockfile`);
+   - an npm copy must be installed where its path, pnpm's store directory, or npm's lockfile says (`installed where another is`);
+   - a version locked from git, or from elsewhere than its registry, is left unverified; one from a directory of the repository (`file:`) is held to that directory's files there;
+   - a version pnpm patches is held to its files patched, as pnpm applies the patch its lockfile locks it with; a patch the bundle holds is own code, held to the repository's.
+   Files of a package the bundle leaves out are expected. Each installed copy of a version is held apart, and the version fetched once.
+4. **Coverage**: every file the bundle holds must be one or the other. Stasis's empty placeholder (`.stasis/empty-module.js`, for an import a package disables) is allowed.
 
-The line says **Valid** where every file was checked and matches, **Invalid** where any file differs (`differs`) or is neither on GitHub nor in its package (`unexpected`), and **Incomplete** where nothing failed but some files weren't checked: those of ecosystems upstream fetches no package of by name and version (Composer, Soldeer, crates from git), of versions it couldn't fetch, or not reached within 4 minutes.
-**Details** lists the files failing or left unverified, up to 500, and the packages failing, unverified or patched.
+The line says **Valid** where every file was checked and matches, **Invalid** where any file differs (`differs`) or is neither on GitHub nor in its package (`unexpected`), or a version fails its lockfile or is installed where another is, and **Incomplete** where nothing failed but some files weren't checked: those of ecosystems upstream fetches no package of by name and version (Composer, Soldeer, crates from git), of versions it couldn't fetch, or not reached within 4 minutes.
+**Details** names the ref holding the commit and the lockfiles held to, and lists the files failing or left unverified, up to 500, and the packages failing, unverified or patched, and why.
+Where no lockfile of the repository locks the dependencies, or one can't be read, they are held to their registry's integrity alone, and the line warns why.
 
 Own code is checked only for a reader who may read all of the bundle's repository, with their own GitHub access, which is checked again after it is read.
 A validation that checked own code, kept or new, is shown only to a reader who still may read all of the repository once it is read; a reader who no longer may is shown the one that didn't check own code instead, or refused a new one.
-For a bundle of no repository or commit, or a reader of only part of its repository, the dependencies are still validated, without the lockfiles (so without their patches, and with no version told apart as from git), and the line warns that own code couldn't be verified, and why.
+For a bundle of no repository or commit, or a reader of only part of its repository, the dependencies are still validated, without the lockfiles (each held to its registry's integrity alone, without their patches, and with no version told apart as from git), and the line warns that own code couldn't be verified, and why.
 
 Validations are kept for a month, by the bundle, its location and whether own code was checked, and shown to the next reader of the Overview without fetching anything: a reader of all of the repository sees the one that checked own code (else the other), and any other reader only one that didn't.
 **Validate again** replaces it.

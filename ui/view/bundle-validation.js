@@ -2,7 +2,7 @@
 // (render-bundle.js), with its Validate button: whether its own code is as
 // GitHub has it at its commit and every dependency's file as upstream's
 // package has it, those two covering every file it holds
-// (server-managed/bundle-validation.ts); its last one, as the server keeps
+// (server-managed/bundle-validation.ts, Stasis's validation); its last one, as the server keeps
 // it, asked once its Overview shows and kept for the session that asked a
 // while; Validate validates it anew. Where its own code wasn't checked, the
 // line warns why. Its details, opened, list the files that differ, those
@@ -50,15 +50,19 @@ const KINDS = new Set(['differs', 'unexpected', 'unverified'])
 // A server's validation as it is shown, none where it isn't one.
 export function checkedValidation(told) {
   if (!told || !STATUSES.has(told.status)) return null
-  const counts = Object.fromEntries(['files', 'own', 'dependencies', 'matched', 'eol', 'differs', 'unexpected', 'unverified', 'packages', 'validPackages']
-    .map(name => [name, count(told.counts?.[name])]))
+  const counts = Object.fromEntries(['files', 'own', 'dependencies', 'matched', 'eol', 'differs', 'unexpected', 'unverified', 'packages', 'validPackages', 'lockFailures',
+    'misplaced'].map(name => [name, count(told.counts?.[name])]))
+  // The ref of its repository that has the commit read in its history.
+  const ref = typeof told.own?.ref?.branch === 'string' ? { branch: told.own.ref.branch } : typeof told.own?.ref?.tag === 'string' ? { tag: told.own.ref.tag } : null
   const own = told.own?.checked === true && typeof told.own.repository === 'string' && /^[\da-f]{40}$/u.test(told.own.commit ?? '')
-    ? { checked: true, repository: told.own.repository, commit: told.own.commit, directory: typeof told.own.directory === 'string' ? told.own.directory : '', cut: told.own.cut === true }
+    ? { checked: true, repository: told.own.repository, commit: told.own.commit, directory: typeof told.own.directory === 'string' ? told.own.directory : '', cut: told.own.cut === true, ref }
     : { checked: false, reason: typeof told.own?.reason === 'string' ? told.own.reason : 'unknown' }
+  const lockfiles = Array.isArray(told.lockfiles) ? told.lockfiles.filter(path => typeof path === 'string') : null
   const problems = Array.isArray(told.problems) ? told.problems.filter(one => typeof one?.path === 'string' && KINDS.has(one.kind) && typeof one.of === 'string') : []
   const packages = Array.isArray(told.packages) ? told.packages.filter(one => typeof one?.name === 'string' && typeof one.version === 'string'
     && ['valid', 'invalid', 'unverified'].includes(one.status)) : []
-  return { status: told.status, validatedAt: Number.isSafeInteger(told.validatedAt) ? told.validatedAt : null, own, counts, problems, moreProblems: count(told.moreProblems), packages }
+  return { status: told.status, validatedAt: Number.isSafeInteger(told.validatedAt) ? told.validatedAt : null, own, counts, problems, moreProblems: count(told.moreProblems), packages,
+    lockfiles, lockfileError: typeof told.lockfileError === 'string' ? told.lockfileError : null }
 }
 
 // Bundle `bundle`'s validation as held, else asked: 'loading', then 'ready'
@@ -100,42 +104,66 @@ const plural = (value, noun) => `${value.toLocaleString('en-US')} ${noun}${value
 const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
 // Why own code wasn't checked, a package wasn't, or a file is as it is.
 const OWN_UNCHECKED = { 'no-repository': 'the bundle is attached to no repository', 'no-commit': 'its stamp names no commit',
-  'no-access': 'you may read only part of its repository', 'commit-not-found': 'GitHub has no such commit in its repository' }
+  'no-access': 'you may read only part of its repository', 'commit-not-found': 'GitHub has no such commit in its repository',
+  'commit-not-in-history': 'its commit is in no branch or tag of its repository (a fork’s, say)' }
 const UNVERIFIED = { git: 'locked from git, not a registry', unsupported: 'no upstream package to fetch for its ecosystem', unnamed: 'no name or version recorded', 'not-published': 'not published',
-  unreadable: 'its registry refused it', 'too-large': 'too large to unpack', timeout: 'not reached in time', failed: 'couldn’t be fetched' }
+  unreadable: 'its registry refused it', 'too-large': 'too large to unpack', timeout: 'not reached in time', failed: 'couldn’t be fetched',
+  'not-registry': 'locked from elsewhere than its registry', 'no-integrity': 'locked with no sha512 to hold its tarball to',
+  local: 'installed from a directory of the repository, which isn’t read', 'patch-unverified': 'as patched by the bundle’s patch, which isn’t verified against the repository',
+  'alias-unverified': 'installed under another name, an alias no lockfile read tells of' }
+// Why a version fails, beside its files: its lockfile, or where it is installed.
+const FAILING = { 'not-locked': 'not locked by the lockfile', 'integrity-mismatch': 'its registry’s tarball isn’t the one the lockfile locks',
+  'integrity-conflict': 'locked with two integrities', misplaced: 'installed where its path or its lockfile names another package or version' }
+const PATCH_ERRORS = { 'patch-not-in-repository': 'is the bundle’s, not the repository’s', 'patch-not-found': 'is in no file of its hash',
+  'patch-mismatch': 'isn’t of the hash its lockfile locks' }
+// Why its dependencies were held to no lockfile.
+const LOCKFILE_ERRORS = { 'no-lockfile': 'no lockfile of its repository locks them', 'lockfile-ambiguous': 'two package managers’ lockfiles install it',
+  'lockfile-unreadable': 'its lockfile couldn’t be read', 'lockfile-unsupported': 'its lockfile is of a kind Stasis doesn’t read' }
 const FILE_REASONS = { symlink: 'a symlink on GitHub', submodule: 'in a submodule', 'tree-cut': 'GitHub’s tree too large to list whole' }
 const STATUS_LABELS = { valid: 'Valid', invalid: 'Invalid', incomplete: 'Incomplete' }
 // The tone a validation's, a package's or a file's state is shown in.
 const TONE = { valid: 'passed', invalid: 'failed', incomplete: 'wanted', unverified: 'wanted', differs: 'failed', unexpected: 'failed' }
 const SAID = [['differs', 'differ'], ['unexpected', 'unexpected'], ['unverified', 'unverified']]
+// What fails packages apart from their files.
+const PACKAGES_SAID = [['lockFailures', 'failing its lockfile', 'failing their lockfile'], ['misplaced', 'installed where another is', 'installed where others are']]
 
 const when = time => time === null ? '' : new Date(time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 // What a validation says beside its state: what fails it and what it left
 // unverified, of how many files.
 function said({ counts, own }) {
   const told = SAID.filter(([kind]) => counts[kind]).map(([kind, word]) => `${counts[kind].toLocaleString('en-US')} ${word}`)
-  return `${told.length > 0 ? `${told.join(', ')}, of ` : 'every one of '}${plural(counts.files, 'file')}${own.checked ? '' : '; own code not checked'}`
+  const packages = PACKAGES_SAID.filter(([kind]) => counts[kind]).map(([kind, one, more]) => `${plural(counts[kind], 'package')} ${counts[kind] === 1 ? one : more}`)
+  return `${told.length > 0 ? `${told.join(', ')}, of ` : 'every one of '}${plural(counts.files, 'file')}${packages.map(text => `; ${text}`).join('')}${own.checked ? '' : '; own code not checked'}`
 }
 
 // A package as its row tells it: its name and version, its state, and its
 // patch or why it wasn't checked.
 function packageRow(pkg) {
   const patch = pkg.patch
-  const how = patch?.error ? `its patch couldn’t be applied (${patch.error})` : patch?.applied === false ? 'locked patched, bundled as published' : 'patched'
-  const note = pkg.status === 'unverified' ? UNVERIFIED[pkg.reason] ?? 'not checked'
-    : patch ? html`${how}${patch.path ? html` by <code>${patch.path}</code>${patch.from === 'bundle' ? ' (the bundle’s)' : ''}` : nothing}` : nothing
+  const how = patch?.applied === false ? 'locked patched, bundled as published' : 'patched'
+  // Where a copy of it is installed, where that is why.
+  const at = pkg.at ? html`: <code>${pkg.at}</code>` : nothing
+  const verified = patch?.verified ? ', as the repository has it' : patch?.verified === false ? ', not verified against the repository' : ''
+  const whose = patch?.from === 'bundle' ? ` (the bundle’s${verified})` : ''
+  const note = pkg.status === 'unverified' ? html`${UNVERIFIED[pkg.reason] ?? 'not checked'}${at}`
+    : FAILING[pkg.reason] ? html`${FAILING[pkg.reason]}${at}`
+    : patch?.error ? html`its patch${patch.path ? html` <code>${patch.path}</code>` : nothing} ${PATCH_ERRORS[patch.error] ?? `couldn’t be applied (${patch.error})`}`
+    : patch ? html`${how}${patch.path ? html` by <code>${patch.path}</code>${whose}` : nothing}`
+    : pkg.directory ? html`held to <code>${pkg.directory}</code> of the repository` : nothing
   return html`<li class="bundle-validation-row"><span class="team-deps-name">${pkg.name}<span class="team-deps-version">@${pkg.version}</span></span>
     <span class="team-deps-review is-${TONE[pkg.status]}">${pkg.status}</span>
     <span class="bundle-validation-note">${note}</span></li>`
 }
 
 function details(validation) {
-  const { own, problems, moreProblems, packages, counts } = validation
+  const { own, problems, moreProblems, packages, counts, lockfiles } = validation
+  const ref = own.checked && own.ref ? own.ref.tag ? html`, tag <code>${own.ref.tag}</code>` : html` of <code>${own.ref.branch}</code>` : nothing
   return html`<div class="bundle-review-details">
-    <p class="team-deps-quiet">${own.checked ? html`Own code held to <code>${own.repository}</code> at <code>${own.commit.slice(0, 7)}</code>${own.directory
+    <p class="team-deps-quiet">${own.checked ? html`Own code held to <code>${own.repository}</code> at <code>${own.commit.slice(0, 7)}</code>${ref}${own.directory
       ? html` under <code>${own.directory}</code>` : nothing}${counts.eol ? `, ${plural(counts.eol, 'file')} with a checkout’s CRLF line endings` : ''}${own.cut
       ? '; its tree was too large to list whole' : ''}.` : nothing}
-    ${counts.packages ? ` ${plural(counts.validPackages, 'package')} of ${counts.packages.toLocaleString('en-US')} as published.` : ''}</p>
+    ${counts.packages ? ` ${plural(counts.validPackages, 'package')} of ${counts.packages.toLocaleString('en-US')} as published.` : ''}
+    ${lockfiles?.length ? html` Dependencies held to ${lockfiles.map((path, at) => html`${at ? ', ' : ''}<code>${path}</code>`)}.` : nothing}</p>
     ${problems.length > 0 ? html`<ul class="bundle-validation-list">${problems.map(problem => html`<li class="bundle-validation-row">
       <span class="team-deps-review is-${TONE[problem.kind]}">${problem.kind}</span>
       <span class="team-deps-name">${problem.path}</span>
@@ -171,6 +199,8 @@ export function bundleValidationFact(entry, onChange) {
       <button type="button" class="bundles-download-btn bundle-validate-btn" ?disabled=${Boolean(read.running)} @click=${() => void validate(entry)}>${validation ? 'Validate again' : 'Validate'}</button>
       ${validation ? html`<button type="button" class="team-deps-more" aria-expanded=${String(open)} @click=${toggle}>${CHEVRON}<span>Details</span></button>` : nothing}</div>
     ${validation && !validation.own.checked ? html`<p class="bundle-validation-warning" role="alert">Own code couldn’t be verified: ${OWN_UNCHECKED[validation.own.reason] ?? validation.own.reason}.</p>` : nothing}
+    ${validation?.lockfileError && validation.counts.packages && !OWN_UNCHECKED[validation.lockfileError] ? html`<p class="bundle-validation-warning" role="alert">Dependencies held to no lockfile,
+      each to its registry’s integrity alone: ${LOCKFILE_ERRORS[validation.lockfileError] ?? validation.lockfileError}.</p>` : nothing}
     ${read.status === 'error' ? html`<p class="bundle-validation-warning" role="alert">Couldn’t read its validation: ${read.error}</p>` : nothing}
     ${read.runError ? html`<p class="bundle-validation-warning" role="alert">Couldn’t validate it: ${read.runError}</p>` : nothing}
     ${validation && open ? details(validation) : nothing}

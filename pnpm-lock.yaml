@@ -17,11 +17,11 @@ importers:
   .:
     dependencies:
       '@exodus/stasis':
-        specifier: 1.0.0-beta.13
-        version: 1.0.0-beta.13(css-tree@3.2.1)(esbuild@0.28.2)(oxc-minify@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)
+        specifier: 1.0.0-beta.14
+        version: 1.0.0-beta.14(css-tree@3.2.1)(esbuild@0.28.2)(oxc-minify@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)
       '@exodus/stasis-core':
-        specifier: 1.0.0-beta.13
-        version: 1.0.0-beta.13
+        specifier: 1.0.0-beta.14
+        version: 1.0.0-beta.14
       '@preventive/archive':
         specifier: ^1.2.2
         version: 1.2.2
@@ -348,17 +348,17 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@exodus/stasis-core@1.0.0-beta.13':
-    resolution: {integrity: sha512-RLNimei9Z4U20qHRXui+byY924eO23zR5KOxSSPwMvy1Ues+bfZvzANc2gqPnlf39rn8X/TsulZhck3sW9G/sw==, tarball: https://registry.npmjs.org/@exodus/stasis-core/-/stasis-core-1.0.0-beta.13.tgz}
+  '@exodus/stasis-core@1.0.0-beta.14':
+    resolution: {integrity: sha512-hQ6qhViRRb5MR/SSYtk5DLO8PKJ9HIHpEuaI17qwCREJJoDKh3rnpneDeoxMsHxXel1bNpilyqastU8aZGIC6g==, tarball: https://registry.npmjs.org/@exodus/stasis-core/-/stasis-core-1.0.0-beta.14.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
 
-  '@exodus/stasis-plugins@1.0.0-beta.13':
-    resolution: {integrity: sha512-XkzTzSQnLOh4zdOL6uq/7u5JXguIieRpUr7RR9wvI0rR8fIfKLpzjEVnSY+zYUQ2eRqYzbZcxLTqnCG/ugfNhA==, tarball: https://registry.npmjs.org/@exodus/stasis-plugins/-/stasis-plugins-1.0.0-beta.13.tgz}
+  '@exodus/stasis-plugins@1.0.0-beta.14':
+    resolution: {integrity: sha512-Pj10hsCxZsAQtaPl7Okw35a/k2vkVoVucKTon2yqBZpqlhuCvQK5jh8ql785QpXUEigs1nbgS1YA+ujOSwXsQA==, tarball: https://registry.npmjs.org/@exodus/stasis-plugins/-/stasis-plugins-1.0.0-beta.14.tgz}
     engines: {node: '>=24.14.0'}
 
-  '@exodus/stasis@1.0.0-beta.13':
-    resolution: {integrity: sha512-mORaYiEX8Kms0hJ6Puf3wMl+iamc0SKTCqVwMWTfE11O5HMkJvgle9tpkuhqdm3LO7MDBwr0op8ccQdYrR3ELw==, tarball: https://registry.npmjs.org/@exodus/stasis/-/stasis-1.0.0-beta.13.tgz}
+  '@exodus/stasis@1.0.0-beta.14':
+    resolution: {integrity: sha512-AuZsoLnXoZsIJoq41i3kosxN3vjWHKVf9zmSvsIRiPPeMdyqo9Y72P2ysRulrugOcCkpX3FqXlGpTizqmRvIBA==, tarball: https://registry.npmjs.org/@exodus/stasis/-/stasis-1.0.0-beta.14.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
     peerDependencies:
@@ -960,10 +960,6 @@ packages:
       semver:
         optional: true
 
-  '@preventive/vfs@1.0.0-beta.4':
-    resolution: {integrity: sha512-yqx/I33WLZO7+efWJHsE2w8iazwAcIKTUiGYfWfidW09uxRSNUS4tJ9+7e7BhJgC6UsTck1bLbUhKN6a1Rwdqg==, tarball: https://registry.npmjs.org/@preventive/vfs/-/vfs-1.0.0-beta.4.tgz}
-    engines: {node: '>=24.14.0'}
-
   '@preventive/vfs@1.1.0':
     resolution: {integrity: sha512-tJSrYMkw5bRYicIm446SL2S+OA0VM+pIlCgPTbNHeft3qMJt1VnFKcbtPRDR+MlsTngeyRmippDUPmoFqxU6YA==, tarball: https://registry.npmjs.org/@preventive/vfs/-/vfs-1.1.0.tgz}
     engines: {node: '>=24.14.0'}
@@ -1165,6 +1161,14 @@ packages:
   astral-regex@2.0.0:
     resolution: {integrity: sha512-Z7tMw1ytTXt5jqMcOP+OQteU1VuNK9Y02uuJtKQ1Sv69jXQKKg5cibLwGJow8yzZP+eAc18EmLGPal0bp36rvQ==, tarball: https://registry.npmjs.org/astral-regex/-/astral-regex-2.0.0.tgz}
     engines: {node: '>=8'}
+
+  balanced-match@4.0.4:
+    resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==, tarball: https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz}
+    engines: {node: 18 || 20 || >=22}
+
+  brace-expansion@5.0.12:
+    resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==, tarball: https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz}
+    engines: {node: 20 || >=22}
 
   braces@3.0.3:
     resolution: {integrity: sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==, tarball: https://registry.npmjs.org/braces/-/braces-3.0.3.tgz}
@@ -1476,6 +1480,10 @@ packages:
 
   minify-html-literals@1.3.5:
     resolution: {integrity: sha512-p8T8ryePRR8FVfJZLVFmM53WY25FL0moCCTycUDuAu6rf9GMLwy0gNjXBGNin3Yun7Y+tIWd28axOf0t2EpAlQ==, tarball: https://registry.npmjs.org/minify-html-literals/-/minify-html-literals-1.3.5.tgz}
+
+  minimatch@10.2.6:
+    resolution: {integrity: sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==, tarball: https://registry.npmjs.org/minimatch/-/minimatch-10.2.6.tgz}
+    engines: {node: 18 || 20 || >=22}
 
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==, tarball: https://registry.npmjs.org/ms/-/ms-2.1.3.tgz}
@@ -1919,26 +1927,27 @@ snapshots:
 
   '@exodus/bytes@1.16.0': {}
 
-  '@exodus/stasis-core@1.0.0-beta.13': {}
+  '@exodus/stasis-core@1.0.0-beta.14': {}
 
-  '@exodus/stasis-plugins@1.0.0-beta.13':
+  '@exodus/stasis-plugins@1.0.0-beta.14':
     dependencies:
-      '@exodus/stasis-core': 1.0.0-beta.13
+      '@exodus/stasis-core': 1.0.0-beta.14
 
-  '@exodus/stasis@1.0.0-beta.13(css-tree@3.2.1)(esbuild@0.28.2)(oxc-minify@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)':
+  '@exodus/stasis@1.0.0-beta.14(css-tree@3.2.1)(esbuild@0.28.2)(oxc-minify@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)':
     dependencies:
       '@exodus/bytes': 1.16.0
-      '@exodus/stasis-core': 1.0.0-beta.13
-      '@exodus/stasis-plugins': 1.0.0-beta.13
+      '@exodus/stasis-core': 1.0.0-beta.14
+      '@exodus/stasis-plugins': 1.0.0-beta.14
       '@preventive/archive': 1.2.2
       '@preventive/deptree': 1.3.3(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)
       '@preventive/lockfile': 1.2.0
       '@preventive/upstream': 1.5.0(semver@7.8.5)
-      '@preventive/vfs': 1.0.0-beta.4
+      '@preventive/vfs': 1.1.0
       flow-remove-types: 2.338.0
       oxc-parser: 0.152.0
     optionalDependencies:
       esbuild: 0.28.2
+      minimatch: 10.2.6
     transitivePeerDependencies:
       - '@noble/hashes'
       - css-tree
@@ -2275,8 +2284,6 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/vfs@1.0.0-beta.4': {}
-
   '@preventive/vfs@1.1.0': {}
 
   '@rray/frontend@1.0.0':
@@ -2423,6 +2430,14 @@ snapshots:
   argparse@2.0.1: {}
 
   astral-regex@2.0.0: {}
+
+  balanced-match@4.0.4:
+    optional: true
+
+  brace-expansion@5.0.12:
+    dependencies:
+      balanced-match: 4.0.4
+    optional: true
 
   braces@3.0.3:
     dependencies:
@@ -2741,6 +2756,11 @@ snapshots:
       html-minifier: 4.0.0
       magic-string: 0.25.9
       parse-literals: 1.2.1
+
+  minimatch@10.2.6:
+    dependencies:
+      brace-expansion: 5.0.12
+    optional: true
 
   ms@2.1.3: {}
 

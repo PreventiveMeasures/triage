@@ -214,13 +214,16 @@ const BUNDLE_DEPENDENCY_REVIEW = {
 // one unexpected, a patched package and one not checked.
 let fixtureValidatedAt: number | null = null
 const bundleValidationFixture = () => ({
-  validatedAt: fixtureValidatedAt, status: 'invalid', own: { checked: true, repository: 'example/managed-fixtures', commit: 'f'.repeat(40), directory: '' },
-  counts: { files: 127, own: 40, dependencies: 87, matched: 122, eol: 0, differs: 2, unexpected: 1, unverified: 2, packages: 24, validPackages: 22 },
+  validatedAt: fixtureValidatedAt, status: 'invalid', own: { checked: true, repository: 'example/managed-fixtures', commit: 'f'.repeat(40), ref: { branch: 'main' }, directory: '' },
+  lockfiles: ['pnpm-lock.yaml'],
+  counts: { files: 127, own: 40, dependencies: 87, matched: 122, eol: 0, differs: 2, unexpected: 1, unverified: 2, skipped: 0, packages: 24, validPackages: 22, lockFailures: 0,
+    misplaced: 0 },
   problems: [{ path: 'node_modules/left-pad/index.js', kind: 'differs', of: 'npm:left-pad@1.3.0' }, { path: 'src/generated.js', kind: 'unexpected', of: 'own' },
     { path: 'src/link.js', kind: 'differs', of: 'own', reason: 'symlink' }], moreProblems: 0,
   packages: [{ ecosystem: 'composer', name: 'example/php', version: '1.0.0', files: 2, status: 'unverified', reason: 'unsupported' },
     { ecosystem: 'npm', name: 'left-pad', version: '1.3.0', files: 1, status: 'invalid' },
-    { ecosystem: 'npm', name: 'ms', version: '2.1.3', files: 2, status: 'valid', patch: { hash: 'ab'.repeat(32), path: 'patches/ms@2.1.3.patch', from: 'bundle', applied: true } }],
+    { ecosystem: 'npm', name: 'ms', version: '2.1.3', files: 2, status: 'valid', patch: { hash: 'ab'.repeat(32), path: 'patches/ms@2.1.3.patch', from: 'bundle', verified: true,
+      applied: true } }],
 })
 function serveBundleValidation(path: string, method: string, res: ServerResponse): boolean {
   const id = /^\/api\/bundles\/([^/]+)\/validation$/u.exec(path)?.[1]
