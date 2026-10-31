@@ -77,7 +77,11 @@ export function validationPlan(details: { kind: string | null; bundle?: unknown 
   const packages = new Map<string, PlannedPackage>()
   let files = 0
   for (const [dir, info] of bundle.modules) {
-    const ecosystem = info.ecosystem ?? (/(?:^|\/)node_modules\//u.test(dir) ? 'npm' : undefined)
+    // The root's, and an npm-tagged module's outside node_modules (a
+    // workspace package's), are own code whatever they record, as the file
+    // tree and its GitHub links read them (bundle-file-github.js).
+    const inNodeModules = /(?:^|\/)node_modules(?:\/|$)/u.test(dir)
+    const ecosystem = dir === '.' || (info.ecosystem === 'npm' && !inNodeModules) ? undefined : info.ecosystem ?? (inNodeModules ? 'npm' : undefined)
     for (const [rel, content] of Object.entries(info.files)) {
       const path = dir === '.' ? rel : `${dir}/${rel}`
       const format = formats.get(path)

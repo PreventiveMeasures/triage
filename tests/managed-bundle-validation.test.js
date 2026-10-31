@@ -291,3 +291,13 @@ test('an npm package installed from git, its commit recorded, is held apart from
     ['incomplete', [], [['valid', null, null], ['unverified', 'git', fork]]], 'the registry\'s copy valid, the fork never held to it')
   assert.deepEqual(fetched, ['npm:ms:2.1.3'])
 })
+
+test('the root module, and an npm-tagged one outside node_modules (a workspace package), are own code whatever ecosystem they record', () => {
+  const plan = validationPlan({ kind: 'stasis', bundle: Bundle.parse(new Bundle({ modules: new Map([
+    ['.', { ecosystem: 'composer', name: 'org/app', version: '1.0.0', files: { 'index.php': '<?php\n' } }],
+    ['packages/lib', { ecosystem: 'npm', name: 'lib', version: '1.0.0', files: { 'index.js': 'lib\n' } }],
+    ['vendor/org/php', { ecosystem: 'composer', name: 'org/php', version: '1.0.0', files: { 'a.php': '<?php\n' } }],
+  ]) }).serialize()) })
+  assert.deepEqual(plan.own.map(file => file.path), ['index.php', 'packages/lib/index.js'])
+  assert.deepEqual(plan.packages.map(pkg => `${pkg.ecosystem}:${pkg.name}`), ['composer:org/php'], 'a vendored Composer package a dependency still')
+})

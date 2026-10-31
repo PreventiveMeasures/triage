@@ -211,7 +211,7 @@ See [A bundle's dependencies](./dependency-review.md#a-bundles-dependencies).
 
 A Stasis bundle's Overview has a **Validation** line with a **Validate** button, which checks that the bundle holds what it says it does:
 
-1. **Own code** (the files of modules naming no ecosystem: the project's own and its workspace's packages) must be on GitHub, byte for byte, at the commit the bundle's stamp names, under the directory it was built in (the stamp's, else the bundle's location).
+1. **Own code** (the files of modules naming no ecosystem: the project's own and its workspace's packages, and the root's and an `npm` one's outside `node_modules` whatever they record) must be on GitHub, byte for byte, at the commit the bundle's stamp names, under the directory it was built in (the stamp's, else the bundle's location).
    Each file is compared by git's blob id with GitHub's listing of the commit's tree, so no file is downloaded; the listing is read a directory at a time, into those holding the bundle's files alone, where GitHub cuts it short.
    A file whose only difference is a checkout's CRLF line endings passes, and is counted.
 2. **Dependencies** are fetched with upstream (npm's registry, and crates.io for Cargo crates), which holds each tarball to its integrity, and each file the bundle holds of a package must match the file at its path there.
