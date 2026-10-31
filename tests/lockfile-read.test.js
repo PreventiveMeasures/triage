@@ -236,11 +236,12 @@ PODFILE CHECKSUM: 0123456789abcdef0123456789abcdef01234567
 
 COCOAPODS: 1.15.2
 `
-const composerPackage = (name, version, require, sha) => ({
+// Its fields in the order Composer writes them, provide and replace after require.
+const composerPackage = (name, version, require, sha, links = {}) => ({
   name, version,
   source: { type: 'git', url: `https://github.com/${name}.git`, reference: sha },
   dist: { type: 'zip', url: `https://api.github.com/repos/${name}/zipball/${sha}`, reference: sha, shasum: '' },
-  require, type: 'library', 'notification-url': 'https://packagist.org/downloads/', license: ['MIT'],
+  require, ...links, type: 'library', 'notification-url': 'https://packagist.org/downloads/', license: ['MIT'],
 })
 // As json_encode writes it: an empty object as `[]`.
 const composerLock = `${JSON.stringify({
@@ -252,6 +253,8 @@ const composerLock = `${JSON.stringify({
     composerPackage('symfony/deprecation-contracts', 'v3.6.0', { php: '>=8.1' }, '63afe740e99a13ba87ec199bb07bbdee937a5b62'),
     composerPackage('symfony/service-contracts', 'v3.6.0', { php: '>=8.1', 'psr/container': '^1.1|^2.0', 'symfony/deprecation-contracts': '^2.5|^3' },
       'f021b05a130d35510bd6b25fe9053c2a8a15d5d4'),
+    composerPackage('vendor/framework', 'v1.0.0', { php: '>=8.2' }, '1111111111111111111111111111111111111111',
+      { provide: { 'psr/log-implementation': '1.0' }, replace: { 'vendor/support': 'self.version' } }),
   ],
   'packages-dev': [], aliases: [], 'minimum-stability': 'stable', 'stability-flags': {}, 'prefer-stable': false, 'prefer-lowest': false,
   platform: { php: '>=8.2' }, 'platform-dev': {}, 'plugin-api-version': '2.6.0',
@@ -428,12 +431,15 @@ describe('readLockfile, of the other ecosystems', () => {
   it('reads what a composer.lock\'s project requires from its composer.json, else what nothing else requires', async () => {
     const service = { name: 'symfony/service-contracts', version: 'v3.6.0', dependencies: ['psr/container', 'symfony/deprecation-contracts'] }
     const inferred = await readLockfile('composer', composerLock)
-    assert.deepEqual(inferred.importers, { '.': { dependencies: ['symfony/service-contracts'] } })
+    assert.deepEqual(inferred.importers, { '.': { dependencies: ['symfony/service-contracts', 'vendor/framework'] } })
     assert.deepEqual(inferred.packages['symfony/service-contracts'], service, 'PHP is the platform\'s, no package')
     const composerJson = JSON.stringify({ require: { 'php': '>=8.2', 'PSR/Container': '^2.0', 'symfony/service-contracts': '^3.6' }, 'require-dev': { 'vendor/gone': '*' } })
     assert.deepEqual((await readLockfile('composer', composerLock, { manifest: composerJson })).importers,
       { '.': { dependencies: ['psr/container', 'symfony/service-contracts'] } })
     assert.deepEqual((await readLockfile('composer', composerLock, { manifest: '{' })).importers, inferred.importers, 'one that doesn\'t read, as none')
+    const virtual = JSON.stringify({ require: { 'psr/log-implementation': '^1.0', 'vendor/support': '^1.0', 'psr/container': '^2.0' } })
+    assert.deepEqual((await readLockfile('composer', composerLock, { manifest: virtual })).importers, { '.': { dependencies: ['vendor/framework', 'psr/container'] } },
+      'a virtual package by what provides it, a replaced one by what replaces it')
   })
 
   it('reads a poetry.lock\'s optional dependencies only where a dependent asks for their extra', async () => {

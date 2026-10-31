@@ -68,15 +68,16 @@ function yarnProject(manifest) {
   }
 }
 
-// What composer.json requires, dev included, of the packages locked, by the
-// lowercase names Composer goes by; null without one that reads.
-function composerRequires(manifest, packages) {
+// What composer.json requires, dev included: the packages locked that meet
+// each requirement (`meeting`, by the lowercase name Composer goes by); null
+// without one that reads.
+function composerRequires(manifest, meeting) {
   if (typeof manifest !== 'string') return null
   try {
     const json = JSON.parse(manifest)
     const names = [json?.require, json?.['require-dev']].flatMap(requires =>
       requires && typeof requires === 'object' && !Array.isArray(requires) ? Object.keys(requires) : [])
-    return unique(names.map(name => name.toLowerCase()).filter(name => Object.hasOwn(packages, name)))
+    return unique(names.flatMap(name => meeting(name.toLowerCase())))
   } catch {
     return null
   }
@@ -188,9 +189,18 @@ const READERS = {
   // requirement (PHP, an extension) is met by no package.
   async composer(text, manifest) {
     const { parseComposerLock } = await import('@preventive/lockfile/composer.js')
-    const packages = mapValues(parseComposerLock(text).packages, pkg => ({ name: pkg.name, version: pkg.version,
+    const locked = parseComposerLock(text).packages
+    const packages = mapValues(locked, pkg => ({ name: pkg.name, version: pkg.version,
       dependencies: unique(Object.values(pkg.require).flatMap(require => require.targets)) }))
-    const required = composerRequires(manifest, packages)
+    // As Composer meets one of the project's requirements: by the package of
+    // its name, else by each that provides it (a virtual package, such as
+    // psr/log-implementation) or replaces it (laravel/framework its
+    // illuminate/* packages).
+    const providers = new Map()
+    for (const [key, pkg] of Object.entries(locked)) {
+      for (const name of [...Object.keys(pkg.provide), ...Object.keys(pkg.replace)]) providers.set(name, [...providers.get(name) ?? [], key])
+    }
+    const required = composerRequires(manifest, name => Object.hasOwn(packages, name) ? [name] : providers.get(name) ?? [])
     return { importers: required ? { '.': { dependencies: required } } : inferredProject(packages), packages }
   },
 
