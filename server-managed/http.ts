@@ -3550,8 +3550,10 @@ async function bundleDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
 // of it is told the one that checked it, else the other; one of only part
 // of it, the other alone, never a word of the repository. As many run at
 // once as VALIDATIONS_AT_ONCE, those of one bundle asked meanwhile sharing
-// one; each given VALIDATION_MS for its packages, those left told
-// unverified. The bundle's access checked again before it is told.
+// one, one checking own code its reader's alone, as it reads the repository
+// with their access and checks theirs again after; each given VALIDATION_MS
+// for its packages, those left told unverified. The bundle's access checked
+// again before it is told.
 const VALIDATIONS_AT_ONCE = 2
 const VALIDATION_MS = 240_000
 const validating = new Map<string, Promise<BundleValidation | Refusal>>()
@@ -3579,7 +3581,8 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
     return
   }
   const key = keyOf(access !== null)
-  let job = validating.get(key)
+  const shared = access ? `${key}\0${access.user.id}` : key
+  let job = validating.get(shared)
   if (!job) {
     if (validating.size >= VALIDATIONS_AT_ONCE) { sendJson(res, 429, { error: 'validation-busy' }); return }
     // Kept before it is told, for a reader asking next.
@@ -3588,8 +3591,8 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
       return validation
     })
     job = started
-    validating.set(key, started)
-    started.finally(() => { if (validating.get(key) === started) validating.delete(key) }).catch(() => {})
+    validating.set(shared, started)
+    started.finally(() => { if (validating.get(shared) === started) validating.delete(shared) }).catch(() => {})
   }
   let validation: BundleValidation | Refusal
   try { validation = await job } catch (err) {

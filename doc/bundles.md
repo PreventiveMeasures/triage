@@ -232,7 +232,7 @@ For a bundle of no repository or commit, or a reader of only part of its reposit
 
 Validations are kept for a month, by the bundle, its location and whether own code was checked, and shown to the next reader of the Overview without fetching anything: a reader of all of the repository sees the one that checked own code (else the other), and any other reader only one that didn't.
 **Validate again** replaces it.
-A validation needs the CSRF token; two run at once per server instance (`429 validation-busy`), and readers asking for the same one meanwhile share it.
+A validation needs the CSRF token; two run at once per server instance (`429 validation-busy`), and requests for the same one meanwhile share it: for one checking own code, only the same reader's, as it reads the repository with their GitHub access and checks theirs again after.
 Private scoped npm packages are fetched with the server's `NPM_TOKEN`, as builds fetch them.
 
 ## Bundle advisories

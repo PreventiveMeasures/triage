@@ -168,8 +168,8 @@ test('a commit\'s blobs are its tree\'s listing whole, else, cut short, read a d
 
 // The app's API as `who` asks it, over a bundle stored at org/repo's `web`,
 // GitHub's tree at its commit and npm's registry as `files` and `packages`
-// say.
-async function fixture(t, { repo = true } = {}) {
+// say, the registry answering once `gate` settles.
+async function fixture(t, { repo = true, gate = Promise.resolve() } = {}) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const users = await people(db)
@@ -190,7 +190,7 @@ async function fixture(t, { repo = true } = {}) {
       return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
     }
     for (const { doc, tgz } of published) {
-      if (String(input) === `${REGISTRY}/${doc.name}/${doc.version}`) return Promise.resolve(Response.json(doc))
+      if (String(input) === `${REGISTRY}/${doc.name}/${doc.version}`) return gate.then(() => Response.json(doc))
       if (String(input) === doc.dist.tarball) return Promise.resolve(new Response(tgz))
     }
     void init
@@ -233,6 +233,30 @@ test('a bundle validated on request: its own code too for a reader of all of its
   assert.deepEqual((await send('manager')).body.validation, theirs)
   assert.deepEqual((await send('alice')).body.validation, validation, 'hers still the one checking its own code')
   assert.equal((await send('carol', 'POST')).status, 404, 'one of no bundle')
+})
+
+test('a validation of own code is shared by its reader\'s requests alone, each reader\'s access checked again after their own run', async t => {
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const { db, send, asked } = await fixture(t, { gate })
+  await db.setTeamRepo('two', 1, null) // his team reads all of the repository, as hers does
+  const runs = () => asked.filter(path => path === 'registry.npmjs.org/ms/2.1.3').length
+  const until = async (done, what) => {
+    for (const started = Date.now(); !done(); await new Promise(resolve => { setTimeout(resolve, 5) })) {
+      if (Date.now() - started > 10_000) throw new Error(`never ${what}`)
+    }
+  }
+  const hers = send('alice', 'POST')
+  await until(() => runs() === 1, 'started')
+  const his = send('manager', 'POST')
+  await until(() => runs() === 2, 'ran apart: his request shared hers')
+  // His access narrowed to the bundle's directory while his run reads the repository.
+  await db.removeTeamRepo('two', 1)
+  await db.setTeamRepo('two', 1, 'web')
+  release()
+  const [her, him] = await Promise.all([hers, his])
+  assert.deepEqual([her.status, her.body.validation.own.checked], [200, true])
+  assert.deepEqual([him.status, him.body], [404, { error: 'no-directory' }], 'none of own code told him')
 })
 
 test('a bundle of no repository has its dependencies validated, its own code told unverified', async t => {
