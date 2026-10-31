@@ -228,6 +228,7 @@ The line says **Valid** where every file was checked and matches, **Invalid** wh
 **Details** lists the files failing or left unverified, up to 500, and the packages failing, unverified or patched.
 
 Own code is checked only for a reader who may read all of the bundle's repository, with their own GitHub access, which is checked again after it is read.
+A validation that checked own code, kept or new, is shown only to a reader who still may read all of the repository once it is read; a reader who no longer may is shown the one that didn't check own code instead, or refused a new one.
 For a bundle of no repository or commit, or a reader of only part of its repository, the dependencies are still validated, without the lockfiles (so without their patches, and with no version told apart as from git), and the line warns that own code couldn't be verified, and why.
 
 Validations are kept for a month, by the bundle, its location and whether own code was checked, and shown to the next reader of the Overview without fetching anything: a reader of all of the repository sees the one that checked own code (else the other), and any other reader only one that didn't.
