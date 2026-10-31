@@ -245,3 +245,21 @@ test('a package\'s tarball unpacked, its top directory left out, as upstream fet
   const { readTarballFiles } = await import('../server-managed/npm-loads.ts')
   assert.deepEqual((await readTarballFiles(tgz)).map(file => file.path), ['index.js'])
 })
+
+test('each installed copy of a version is held to its files patched or as published apart, the version fetched once', async () => {
+  const fetched = []
+  const plan = validationPlan(details({ 'node_modules/tool/node_modules/ms': { name: 'ms', version: '2.1.3', files: { 'index.js': MS['index.js'] } } }))
+  plan.own = []
+  plan.packages = plan.packages.filter(pkg => pkg.name === 'ms')
+  const fetch = (...asked) => { fetched.push(asked.join(':')); return upstream()(...asked) }
+  const both = await validateBundle(plan, own(), { fetch })
+  assert.deepEqual([both.status, both.problems, both.packages], ['valid', [], [{ ecosystem: 'npm', name: 'ms', version: '2.1.3', files: 3, status: 'valid',
+    patch: { path: 'patches/ms@2.1.3.patch', from: 'bundle', applied: true } }]], 'the direct copy patched, the nested one as published')
+  assert.deepEqual(fetched, ['npm:ms:2.1.3'])
+  const nested = plan.packages[0].files.find(file => file.dir === 'node_modules/tool/node_modules/ms')
+  nested.bytes = () => Buffer.from('neither\n')
+  const broken = await validateBundle(plan, own(), { fetch })
+  assert.deepEqual([broken.status, broken.problems, broken.packages[0].patch], ['invalid',
+    [{ path: 'node_modules/tool/node_modules/ms/index.js', kind: 'differs', of: 'npm:ms@2.1.3' }], { path: 'patches/ms@2.1.3.patch', from: 'bundle' }],
+  'a copy matching neither told alone; whether it is as patched, told of a valid one alone')
+})
