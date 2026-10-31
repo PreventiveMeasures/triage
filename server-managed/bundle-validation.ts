@@ -32,6 +32,7 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { getCrate } from '@preventive/upstream/cargo.js'
 import { HttpError, getTarball } from '@preventive/upstream/npm.js'
+import { parseCargoChecksum } from '@preventive/lockfile/cargo.js'
 import { GithubApiError } from './github-app.ts'
 import { githubJson } from './github-requests.ts'
 import { readTarballFiles } from './npm-loads.ts'
@@ -138,13 +139,30 @@ export async function commitBlobs(fullName: string, token: string, commit: strin
 }
 
 // A package version's files as upstream fetches its tarball, by their paths
-// in it; throws where it can't.
-export type FetchPackage = (ecosystem: string, name: string, version: string) => Promise<Map<string, Uint8Array>>
+// in it, a crate's with its sha256 in hex (`checksum`), which a vendored
+// copy's `.cargo-checksum.json` names; throws where it can't.
+export type PackageFiles = Map<string, Uint8Array> & { checksum?: string }
+export type FetchPackage = (ecosystem: string, name: string, version: string) => Promise<PackageFiles>
 // Ecosystems upstream fetches a version of by its name and version alone.
 export const FETCHED = new Set(['npm', 'cargo'])
+const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 export const fetchUpstreamPackage: FetchPackage = async (ecosystem, name, version) => {
   const tarball = ecosystem === 'npm' ? await getTarball(name, version) : await getCrate(name, version)
-  return new Map((await readTarballFiles(tarball)).map(file => [file.path, file.bytes]))
+  const files: PackageFiles = new Map((await readTarballFiles(tarball)).map(file => [file.path, file.bytes]))
+  if (ecosystem === 'cargo') files.checksum = sha256(tarball)
+  return files
+}
+
+// Whether a vendored crate's `.cargo-checksum.json`, which `cargo vendor`
+// writes and no crate holds (its `bytes`), is of `crate`, its files as
+// fetched: each file it lists the crate's, by its sha256, and its package
+// checksum the crate's where the fetch tells it.
+const CARGO_CHECKSUM = '.cargo-checksum.json'
+function checksumOf(bytes: Uint8Array, crate: PackageFiles): boolean {
+  let parsed
+  try { parsed = parseCargoChecksum(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)) } catch { return false }
+  return (crate.checksum === undefined || parsed.checksum === crate.checksum)
+    && Object.entries(parsed.files).every(([path, listed]) => { const there = crate.get(path); return there !== undefined && sha256(there) === listed })
 }
 
 // Why a version wasn't checked: its ecosystem's packages fetched by none
@@ -242,21 +260,28 @@ export async function validateBundle(plan: ValidationPlan, own: { entries: Map<s
     if (!pkg.name || !pkg.version) { unverified('unnamed'); return }
     if (!FETCHED.has(pkg.ecosystem)) { unverified('unsupported'); return }
     if (now() > deadline) { unverified('timeout'); return }
-    let files: Map<string, Uint8Array>
+    let files: PackageFiles
     try { files = await fetch(pkg.ecosystem, pkg.name, pkg.version) } catch (err) { unverified(fetchFailure(err)); return }
     const { patch, patched } = pkg.ecosystem === 'npm' ? await patchOf(plan, pkg, files, locked) : { patch: undefined, patched: null }
     // Held to its files patched where it is, else as published; to
     // whichever it wholly matches.
     // Each installed copy of it (its module) apart, as one may be patched
     // and another not, the version fetched once for them all.
-    const candidates = [...patched ? [patched] : [], files]
+    const candidates: PackageFiles[] = [...patched ? [patched] : [], files]
+    // A crate's `.cargo-checksum.json` held to the crate, as no crate holds one.
+    const checksum = (file: BundledFile) => pkg.ecosystem === 'cargo' && file.rel === CARGO_CHECKSUM
+    const matches = (file: BundledFile, candidate: PackageFiles) => {
+      if (checksum(file)) return checksumOf(file.bytes(), candidate)
+      const there = candidate.get(file.rel)
+      return there !== undefined && equal(file.bytes(), there)
+    }
     const copies = Map.groupBy(pkg.files, file => file.dir)
     let asPatched = 0, missed = 0
     for (const copy of copies.values()) {
-      const misses = candidates.map(candidate => copy.filter(file => { const there = candidate.get(file.rel); return !there || !equal(file.bytes(), there) }))
+      const misses = candidates.map(candidate => copy.filter(file => !matches(file, candidate)))
       const best = misses.findIndex(missing => missing.length === 0)
       const held = candidates[best === -1 ? 0 : best]!
-      for (const file of misses[best === -1 ? 0 : best]!) tell({ path: file.path, kind: held.has(file.rel) ? 'differs' : 'unexpected', of })
+      for (const file of misses[best === -1 ? 0 : best]!) tell({ path: file.path, kind: checksum(file) || held.has(file.rel) ? 'differs' : 'unexpected', of })
       missed += misses[best === -1 ? 0 : best]!.length
       if (best !== -1 && held === patched) asPatched++
     }
