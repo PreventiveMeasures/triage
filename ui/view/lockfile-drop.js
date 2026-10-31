@@ -4,7 +4,7 @@
 // in the lockfile viewer, as View lockfile shows them. It is kept in memory
 // only, while its view is up (state.droppedLockfile); the next lockfile
 // dropped, or Home, replaces it.
-import { lockfileFormat } from './lockfile-view.js'
+import { lockfileFormat, lockfileManifest } from './lockfile-view.js'
 import { beginViewNavigation, currentViewGeneration } from './view-navigation.js'
 
 // Each drop's bundle of its own, so a lockfile read or highlighted for an
@@ -13,15 +13,17 @@ import { beginViewNavigation, currentViewGeneration } from './view-navigation.js
 let drops = 0
 
 // The lockfiles among a drop's files, which no report reader takes: the one
-// to show is the last, with the package.json dropped beside a yarn.lock, as
-// only that names a Yarn 1 project's importers (lockfile-read.js). Null when
-// the drop has none. `nameOf` names a file as it was saved, a download's
-// ` (1)` left out; `taken` holds every file this answers for.
+// to show is the last, with the manifest dropped beside it that names its
+// project's dependencies where the lockfile doesn't, a yarn.lock's
+// package.json or a composer.lock's composer.json (lockfileManifest). Null
+// when the drop has none. `nameOf` names a file as it was saved, a
+// download's ` (1)` left out; `taken` holds every file this answers for.
 export function droppedLockfile(files, nameOf) {
   const lockfiles = files.filter(file => lockfileFormat(nameOf(file)) !== null)
   const lockfile = lockfiles.at(-1)
   if (!lockfile) return null
-  const manifest = lockfileFormat(nameOf(lockfile)) === 'yarn' ? files.findLast(file => nameOf(file) === 'package.json') ?? null : null
+  const manifestName = lockfileManifest(lockfileFormat(nameOf(lockfile)))
+  const manifest = manifestName === null ? null : files.findLast(file => nameOf(file) === manifestName) ?? null
   return { lockfile, manifest, taken: new Set(manifest ? [...lockfiles, manifest] : lockfiles) }
 }
 
@@ -45,11 +47,11 @@ export async function openDroppedLockfile(dropped, nameOf, show, fail) {
 }
 
 // The dropped lockfile as the Code tab's pane takes a bundle's file: a bundle
-// of it alone, holding beside it the package.json a yarn.lock reads.
+// of it alone, holding beside it the manifest its reader takes.
 export async function readDroppedLockfile({ lockfile, manifest }, nameOf) {
   const name = nameOf(lockfile)
   const sources = [[name, await lockfile.text()]]
-  if (manifest) sources.push(['package.json', await manifest.text()])
+  if (manifest) sources.push([lockfileManifest(lockfileFormat(name)), await manifest.text()])
   return {
     name,
     details: {

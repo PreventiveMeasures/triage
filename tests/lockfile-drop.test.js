@@ -30,6 +30,20 @@ describe('droppedLockfile', () => {
     assert.deepEqual(droppedLockfile([pnpm, manifest], nameOf), { lockfile: pnpm, manifest: null, taken: new Set([pnpm]) })
   })
 
+  it('reads a composer.lock with the composer.json dropped beside it, and only that one', async () => {
+    const lock = file('composer.lock', '{}'), manifest = file('composer.json', '{"require": {}}'), other = file('package.json')
+    const dropped = droppedLockfile([manifest, other, lock], nameOf)
+    assert.deepEqual(dropped, { lockfile: lock, manifest, taken: new Set([lock, manifest]) })
+    const { details } = await readDroppedLockfile(dropped, nameOf)
+    assert.deepEqual([...bundleSourcesAsMap(details).keys()], ['composer.lock', 'composer.json'], 'where its reader finds it')
+    assert.equal(droppedLockfile([file('Gemfile.lock'), manifest], nameOf).manifest, null, 'no other format takes one')
+  })
+
+  it('takes every lockfile the viewer reads', () => {
+    for (const name of ['Gemfile.lock', 'gems.locked', 'Cargo.lock', 'Podfile.lock', 'composer.lock', 'poetry.lock', 'uv.lock', 'pylock.toml',
+      'pylock.web.toml', 'soldeer.lock', 'foundry.lock']) assert.ok(droppedLockfile([file(name)], nameOf), name)
+  })
+
   it('names lockfiles by their names alone, as the code viewer does', () => {
     assert.equal(droppedLockfile([file('report.json'), file('package.json'), file('my-lock.yaml'), file('yarn.lock.bak')], nameOf), null)
     assert.ok(droppedLockfile([file('npm-shrinkwrap.json')], nameOf))

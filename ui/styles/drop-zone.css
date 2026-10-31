@@ -416,11 +416,13 @@ body:is(.theme-green, .theme-pink) .managed-content-card .managed-content-icon {
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 }
 
-/* Explicit four / two / one-column layouts keep the format groups
-   together even with a collapsed sidebar or a narrow split preview. */
+/* Explicit five / two / one-column layouts keep the format groups
+   together even with a collapsed sidebar or a narrow split preview. The
+   five columns are weighed by their widest rows, so none wraps at the
+   prompt's full width. */
 .drop-supported {
   display: grid;
-  grid-template-columns: 1.3fr 1fr 1.35fr 1fr 1.1fr;
+  grid-template-columns: 1.25fr .95fr 1.2fr 1fr 1.25fr;
   gap: .875rem 1.5rem;
   margin-top: 1.25rem;
   text-align: left;
@@ -448,7 +450,7 @@ body:is(.theme-green, .theme-pink) .managed-content-card .managed-content-icon {
 }
 
 .drop-supported-icon {
-  display: inline-flex;
+  display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; flex-shrink: 0;
 
   & .file-icon { width: 16px; height: 16px; color: var(--muted); }

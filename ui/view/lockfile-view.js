@@ -4,16 +4,30 @@
 // readers load the first time a lockfile is viewed (lockfile-read.js).
 import { state } from '#client/index.js'
 
-// The lockfiles the viewer reads, by name, as @preventive/upstream names
-// them (src/lockfiles.js): npm's, pnpm's, of a git branch too, and Yarn's,
-// of which the reader tells Yarn 1's from a later one by its text.
+// The lockfiles the viewer reads, by name (lockfile-read.js): npm's; pnpm's,
+// of a git branch too; Yarn's, of which the reader tells Yarn 1's from a
+// later one by its text; and each other @preventive/lockfile reads: Bundler's,
+// Cargo's, CocoaPods', Composer's, Poetry's, uv's, PEP 751's (named or not),
+// Soldeer's and forge's.
+const LOCKFILES = new Map([
+  ['package-lock.json', 'npm'], ['npm-shrinkwrap.json', 'npm'], ['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'],
+  ['Gemfile.lock', 'bundler'], ['gems.locked', 'bundler'], ['Cargo.lock', 'cargo'], ['Podfile.lock', 'cocoapods'],
+  ['composer.lock', 'composer'], ['poetry.lock', 'poetry'], ['uv.lock', 'uv'], ['pylock.toml', 'pylock'],
+  ['soldeer.lock', 'soldeer'], ['foundry.lock', 'foundry'],
+])
 export function lockfileFormat(path) {
   const name = path.slice(path.lastIndexOf('/') + 1)
-  if (name === 'package-lock.json' || name === 'npm-shrinkwrap.json') return 'npm'
-  if (name === 'pnpm-lock.yaml' || /^pnpm-lock\..+\.yaml$/u.test(name)) return 'pnpm'
-  if (name === 'yarn.lock') return 'yarn'
+  if (LOCKFILES.has(name)) return LOCKFILES.get(name)
+  if (/^pnpm-lock\..+\.yaml$/u.test(name)) return 'pnpm'
+  if (/^pylock\.[^.]+\.toml$/u.test(name)) return 'pylock'
   return null
 }
+
+// The manifest beside a lockfile its reader takes, where the lockfile alone
+// doesn't say what the project asks for: Yarn's package.json, Composer's
+// composer.json.
+const MANIFESTS = new Map([['yarn', 'package.json'], ['composer', 'composer.json']])
+export const lockfileManifest = format => MANIFESTS.get(format) ?? null
 
 // Lockfiles read, by bundle and path, the most recent last; a few kept, as a
 // large one's graph is large.
@@ -22,7 +36,7 @@ const reads = new Map()
 
 // A lockfile's read while the toggle is on, begun the first time it is
 // wanted, `notify` called once it ends; null while it is off. `sources` are
-// the bundle's files, where Yarn's finds its project's package.json.
+// the bundle's files, where a lockfile finds its manifest (lockfileManifest).
 export function viewedLockfile(details, path, content, sources, notify) {
   if (!state.bundleSourceLockfile) return null
   const format = lockfileFormat(path)
@@ -34,9 +48,11 @@ export function viewedLockfile(details, path, content, sources, notify) {
   for (const old of reads.keys()) if (reads.size > KEPT_READS) reads.delete(old)
   if (read.status === 'loading' && !read.started) {
     read.started = true
-    const manifest = sources.get(`${path.slice(0, path.lastIndexOf('/') + 1)}package.json`)
+    const manifestName = lockfileManifest(format)
+    const manifest = manifestName === null ? undefined : sources.get(`${path.slice(0, path.lastIndexOf('/') + 1)}${manifestName}`)
     import('./lockfile-read.js')
-      .then(({ readLockfile }) => Object.assign(read, { status: 'ready', lockfile: { id: key, ...readLockfile(format, content, { manifest }) } }))
+      .then(({ readLockfile }) => readLockfile(format, content, { manifest }))
+      .then(lockfile => Object.assign(read, { status: 'ready', lockfile: { id: key, ...lockfile } }))
       .catch(err => Object.assign(read, { status: 'error', message: err instanceof Error ? err.message : String(err) }))
       .finally(notify)
   }

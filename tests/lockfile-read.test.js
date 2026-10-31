@@ -13,6 +13,7 @@ const { lockfileGraphPrep } = await import('../ui/view/lockfile-graph-inputs.js'
 const { buildGraphFromPrep } = await import('../ui/graph.js')
 const { packageVersions } = await import('../ui/view/graph/data.js')
 const { packageNetwork } = await import('../ui/view/graph/package-network.js')
+const { buildSizeFlow } = await import('../ui/view/graph/size-flow-model.js')
 
 const manifest = JSON.stringify({ name: 'app', version: '1.0.0', dependencies: { debug: '4.3.4' }, devDependencies: { ms: '2.0.0' } })
 const integrity = {
@@ -97,17 +98,22 @@ ms@2.1.2:
 describe('lockfileFormat', () => {
   it('names the lockfiles the viewer reads, wherever they are', () => {
     for (const [path, format] of [['package-lock.json', 'npm'], ['apps/web/npm-shrinkwrap.json', 'npm'], ['pnpm-lock.yaml', 'pnpm'],
-      ['pnpm-lock.feature.yaml', 'pnpm'], ['packages/a/yarn.lock', 'yarn']]) assert.equal(lockfileFormat(path), format, path)
-    for (const path of ['package.json', 'Cargo.lock', 'bun.lock', 'yarn.lock.bak', 'pnpm-lock.yml', 'docs/package-lock.json.md']) assert.equal(lockfileFormat(path), null, path)
+      ['pnpm-lock.feature.yaml', 'pnpm'], ['packages/a/yarn.lock', 'yarn'], ['Gemfile.lock', 'bundler'], ['gems.locked', 'bundler'],
+      ['crates/Cargo.lock', 'cargo'], ['ios/Podfile.lock', 'cocoapods'], ['composer.lock', 'composer'], ['poetry.lock', 'poetry'],
+      ['uv.lock', 'uv'], ['pylock.toml', 'pylock'], ['pylock.dev.toml', 'pylock'], ['soldeer.lock', 'soldeer'], ['foundry.lock', 'foundry']]) {
+      assert.equal(lockfileFormat(path), format, path)
+    }
+    for (const path of ['package.json', 'bun.lock', 'yarn.lock.bak', 'pnpm-lock.yml', 'docs/package-lock.json.md', 'gemfile.lock', 'Gemfile',
+      'cargo.lock', 'pylock.a.b.toml', 'pylock.toml.bak', 'composer.json']) assert.equal(lockfileFormat(path), null, path)
   })
 })
 
 describe('readLockfile', () => {
-  const graphOf = (format, text) => buildGraphFromPrep(lockfileGraphPrep(readLockfile(format, text, { manifest })))
+  const graphOf = async (format, text) => buildGraphFromPrep(lockfileGraphPrep(await readLockfile(format, text, { manifest })))
 
-  it('reads npm\'s, pnpm\'s and Yarn 1\'s lockfile of one project as the same packages, linked alike', () => {
+  it('reads npm\'s, pnpm\'s and Yarn 1\'s lockfile of one project as the same packages, linked alike', async () => {
     for (const [format, text] of [['npm', npmLockfile], ['pnpm', pnpmLockfile], ['yarn', yarnLockfile]]) {
-      const graph = graphOf(format, text)
+      const graph = await graphOf(format, text)
       assert.deepEqual(new Set(graph.packages), new Set(['__own__', 'debug', 'ms']), format)
       assert.deepEqual(packageVersions(graph, 'ms'), ['2.0.0', '2.1.2'], format)
       const pg = packageNetwork(graph)
@@ -116,21 +122,21 @@ describe('readLockfile', () => {
     }
   })
 
-  it('keeps npm\'s copies at their locations, and tells a project\'s version where its lockfile has it', () => {
-    const { importers, packages } = readLockfile('npm', npmLockfile)
+  it('keeps npm\'s copies at their locations, and tells a project\'s version where its lockfile has it', async () => {
+    const { importers, packages } = await readLockfile('npm', npmLockfile)
     assert.deepEqual(importers['.'], { version: '1.0.0', dependencies: ['node_modules/debug', 'node_modules/ms'] })
     assert.deepEqual(packages['node_modules/debug'].dependencies, ['node_modules/debug/node_modules/ms'])
   })
 
-  it('reads a yarn.lock with no importers where no package.json of a single project is beside it', () => {
+  it('reads a yarn.lock with no importers where no package.json of a single project is beside it', async () => {
     const packages = { 'debug@4.3.4': { name: 'debug', version: '4.3.4', dependencies: ['ms@2.1.2'] },
       'ms@2.0.0': { name: 'ms', version: '2.0.0', dependencies: [] }, 'ms@2.1.2': { name: 'ms', version: '2.1.2', dependencies: [] } }
     for (const beside of [undefined, '{', JSON.stringify({ name: 'mono', private: true, workspaces: ['packages/*'] })]) {
-      assert.deepEqual(readLockfile('yarn', yarnLockfile, { manifest: beside }), { importers: {}, packages }, String(beside))
+      assert.deepEqual(await readLockfile('yarn', yarnLockfile, { manifest: beside }), { importers: {}, packages }, String(beside))
     }
   })
 
-  it('takes the patterns of one Yarn entry as one package, and an alias by the name it is published under', () => {
+  it('takes the patterns of one Yarn entry as one package, and an alias by the name it is published under', async () => {
     const text = `${YARN_HEADER}debug@^4.0.0, debug@^4.3.0:
   version "4.3.4"
   resolved "https://registry.yarnpkg.com/debug/-/debug-4.3.4.tgz"
@@ -143,15 +149,355 @@ describe('readLockfile', () => {
   resolved "https://registry.yarnpkg.com/ms/-/ms-2.1.2.tgz"
   integrity ${integrity.ms212}
 `
-    assert.deepEqual(readLockfile('yarn', text).packages, {
+    assert.deepEqual((await readLockfile('yarn', text)).packages, {
       'debug@^4.0.0': { name: 'debug', version: '4.3.4', dependencies: ['tiny@npm:ms@2.1.2'] },
       'tiny@npm:ms@2.1.2': { name: 'ms', version: '2.1.2', dependencies: [] },
     })
   })
 
-  it('refuses what its readers refuse, and a later Yarn\'s', () => {
-    assert.throws(() => readLockfile('yarn', '__metadata:\n  version: 8\n'), /Yarn 2 or later/u)
-    assert.throws(() => readLockfile('npm', '{"lockfileVersion": 1}'))
-    assert.throws(() => readLockfile('cargo', ''), TypeError)
+  it('refuses what its readers refuse, and a later Yarn\'s', async () => {
+    await assert.rejects(readLockfile('yarn', '__metadata:\n  version: 8\n'), /Yarn 2 or later/u)
+    await assert.rejects(readLockfile('npm', '{"lockfileVersion": 1}'))
+    await assert.rejects(readLockfile('bun', ''), TypeError)
+    await assert.rejects(readLockfile('toString', ''), TypeError, 'nor a name every object has')
+  })
+})
+
+// Each other lockfile @preventive/lockfile reads, as its tool writes it.
+const gemfileLock = `GEM
+  remote: https://rubygems.org/
+  specs:
+    mini_portile2 (2.8.7)
+    nokogiri (1.16.7)
+      mini_portile2 (~> 2.8.2)
+      racc (~> 1.4)
+    nokogiri (1.16.7-arm64-darwin)
+      racc (~> 1.4)
+    racc (1.8.1)
+
+PLATFORMS
+  arm64-darwin
+  ruby
+
+DEPENDENCIES
+  nokogiri
+
+BUNDLED WITH
+   2.5.22
+`
+const cargoLock = `# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+ "util",
+]
+
+[[package]]
+name = "itoa"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b"
+
+[[package]]
+name = "util"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+]
+`
+const podfileLock = `PODS:
+  - Alamofire (5.9.1)
+  - Kingfisher (7.12.0)
+  - Moya (15.0.0):
+    - Moya/Core (= 15.0.0)
+  - Moya/Core (15.0.0):
+    - Alamofire (~> 5.0)
+
+DEPENDENCIES:
+  - Kingfisher (~> 7.0)
+  - Moya (~> 15.0)
+
+SPEC REPOS:
+  trunk:
+    - Alamofire
+    - Kingfisher
+    - Moya
+
+SPEC CHECKSUMS:
+  Alamofire: f36a35757af4587d8e4f4bfa223ad10be2422b8c
+  Kingfisher: 53a10ea35051a436b5fb626ca2dd8f3144d755e9
+  Moya: 138f0573e53411fb3dc17016add0b748dfbd78ee
+
+PODFILE CHECKSUM: 0123456789abcdef0123456789abcdef01234567
+
+COCOAPODS: 1.15.2
+`
+// Its fields in the order Composer writes them, provide and replace after require.
+const composerPackage = (name, version, require, sha, links = {}) => ({
+  name, version,
+  source: { type: 'git', url: `https://github.com/${name}.git`, reference: sha },
+  dist: { type: 'zip', url: `https://api.github.com/repos/${name}/zipball/${sha}`, reference: sha, shasum: '' },
+  require, ...links, type: 'library', 'notification-url': 'https://packagist.org/downloads/', license: ['MIT'],
+})
+// As json_encode writes it: an empty object as `[]`.
+const composerLock = `${JSON.stringify({
+  _readme: ['This file locks the dependencies of your project to a known state',
+    'Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies', 'This file is @generated automatically'],
+  'content-hash': '0123456789abcdef0123456789abcdef',
+  packages: [
+    composerPackage('psr/container', '2.0.2', { php: '>=7.4.0' }, 'c71ecc56dfe541dbd90c5360474fbc405f8d5963'),
+    composerPackage('symfony/deprecation-contracts', 'v3.6.0', { php: '>=8.1' }, '63afe740e99a13ba87ec199bb07bbdee937a5b62'),
+    composerPackage('symfony/service-contracts', 'v3.6.0', { php: '>=8.1', 'psr/container': '^1.1|^2.0', 'symfony/deprecation-contracts': '^2.5|^3' },
+      'f021b05a130d35510bd6b25fe9053c2a8a15d5d4'),
+    composerPackage('vendor/framework', 'v1.0.0', { php: '>=8.2' }, '1111111111111111111111111111111111111111',
+      { provide: { 'psr/log-implementation': '1.0' }, replace: { 'vendor/support': 'self.version' } }),
+  ],
+  'packages-dev': [], aliases: [], 'minimum-stability': 'stable', 'stability-flags': {}, 'prefer-stable': false, 'prefer-lowest': false,
+  platform: { php: '>=8.2' }, 'platform-dev': {}, 'plugin-api-version': '2.6.0',
+}, null, 4).replaceAll('{}', '[]')}\n`
+const poetryPackage = (name, version, extra = '') => `[[package]]
+name = "${name}"
+version = "${version}"
+description = "${name}"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "${name}-${version}-py3-none-any.whl", hash = "sha256:${'0'.repeat(64)}"},
+]
+${extra}`
+const poetryLockOf = packages => `# This file is automatically @generated by Poetry 2.1.1 and should not be changed by hand.
+
+${packages.join('\n')}
+[metadata]
+lock-version = "2.1"
+python-versions = ">=3.9"
+content-hash = "${'0'.repeat(64)}"
+`
+// requests turns PySocks on only for its socks extra, which service asks for.
+const poetryLock = (withService = true) => poetryLockOf([
+    poetryPackage('pysocks', '1.7.1'),
+    poetryPackage('requests', '2.32.3', `
+[package.dependencies]
+urllib3 = ">=1.21.1,<3"
+PySocks = {version = ">=1.5.6,<1.5.7 || >1.5.7", optional = true}
+
+[package.extras]
+socks = ["PySocks (>=1.5.6,!=1.5.7)"]
+`),
+    ...withService ? [poetryPackage('service', '1.0.0', `
+[package.dependencies]
+requests = {version = ">=2", extras = ["socks"]}
+`)] : [],
+  poetryPackage('urllib3', '2.2.3'),
+])
+// What uv 0.11 locks for a project of markdown-it-py[linkify] and a dev group
+// of iniconfig.
+const uvLock = `version = 1
+revision = 3
+requires-python = ">=3.12"
+
+[[package]]
+name = "app"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "markdown-it-py", extra = ["linkify"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "iniconfig" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "markdown-it-py", extras = ["linkify"] }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "iniconfig" }]
+
+[[package]]
+name = "iniconfig"
+version = "2.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/e1/2069291243c926a2ff1cd706c7f3eeb9b62144bf60f77c9fb9ff2fb26bd3/iniconfig-2.3.1.tar.gz", hash = "sha256:67f4b9c50da0dedf52af349e7749a80a9057a5031199791b906c3bb3ae878960", size = 21209, upload-time = "2026-10-06T22:48:38.076Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/43/4ca9e49d27a1fcf6bece6f6aec0ea46bb9112489b93d4b688fb415457bdb/iniconfig-2.3.1-py3-none-any.whl", hash = "sha256:9121e2c1fdb355232495be3194c8dfe87ccc2d5dee45947b78e68f499790d7a7", size = 7552, upload-time = "2026-10-06T22:48:36.959Z" },
+]
+
+[[package]]
+name = "linkify-it-py"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/45/98/7a1a5f31fd5c7ba93e963b168e244b8e3dd705b3d2a718e3c3307583bf57/linkify_it_py-2.2.0.tar.gz", hash = "sha256:907acd2d17ac1fbb9ddb62c8957ccbd6158cac602231a15c3b0cd1e215f03cee", size = 32939, upload-time = "2026-08-29T07:07:08.305Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/d4/1152d1c7ab42d8b908be64fd200ddc870dc9d4925e951198702084aa1a7d/linkify_it_py-2.2.0-py3-none-any.whl", hash = "sha256:3adc40eb5af300b2605fcfdb968c24e1d780a90f1f2221af7c15e5111e94d443", size = 21971, upload-time = "2026-08-29T07:07:07.164Z" },
+]
+
+[[package]]
+name = "markdown-it-py"
+version = "4.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mdurl" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/ff/7841249c247aa650a76b9ee4bbaeae59370dc8bfd2f6c01f3630c35eb134/markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49", size = 82454, upload-time = "2026-05-07T12:08:28.36Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/81/4da04ced5a082363ecfa159c010d200ecbd959ae410c10c0264a38cac0f5/markdown_it_py-4.2.0-py3-none-any.whl", hash = "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a", size = 91687, upload-time = "2026-05-07T12:08:27.182Z" },
+]
+
+[package.optional-dependencies]
+linkify = [
+    { name = "linkify-it-py" },
+]
+
+[[package]]
+name = "mdurl"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+`
+const pylock = `lock-version = "1.0"
+created-by = "test"
+
+[[packages]]
+name = "idna"
+version = "3.10"
+wheels = [{ url = "https://files.pythonhosted.org/packages/76/c6/c88e154df9c4e1a2a66ccf0005a88dfb2650c1dffb6f5ce603dfbd452ce3/idna-3.10-py3-none-any.whl", hashes = { sha256 = "946d195a0d259cbba61165e88e65941f16e9b36ea6ddb97f00452bae8b1287d3" } }]
+
+[[packages]]
+name = "requests"
+version = "2.32.3"
+dependencies = [{ name = "idna" }]
+wheels = [{ url = "https://files.pythonhosted.org/packages/f9/9b/335f9764261e915ed497fcdeb11df5dfd6f7bf257d4a6a2a686d80da4d54/requests-2.32.3-py3-none-any.whl", hashes = { sha256 = "70761cfe03c773ceb22aa2f671b4757976145175cdfca038c02654d061d6dcc6" } }]
+`
+const soldeerLock = `[[dependencies]]
+name = "@openzeppelin-contracts"
+version = "5.1.0"
+url = "https://soldeer-revisions.s3.amazonaws.com/@openzeppelin-contracts/5_1_0_19-10-2024_10:28:52_contracts.zip"
+checksum = "fd3d1ea561cb27897008aee18ada6e85f248eb161c86e4435272fc2b5777574f"
+integrity = "cb6cf6e878f2943b2291d5636a9d72ac51d43d8135896ceb6cf88d36c386f212"
+
+[[dependencies]]
+name = "forge-std"
+version = "1.9.4"
+url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_9_4_25-10-2024_14:36:59_forge-std-1.9.zip"
+checksum = "b5be24beeed4fdc78d5b2af2bcb1f3cbc9a71ce7d4e6e8d5d5c0fbd8c7c4b0f1"
+integrity = "e2a0d3a5e7e6f7e1c2b3a4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70819"
+`
+const foundryLock = `${JSON.stringify({
+  'lib/forge-std': { tag: { name: 'v1.9.7', rev: '77876f8a5b44b770a935621bb331660c90ad928e' } },
+  'lib/solady': { branch: { name: 'main', rev: 'c9e079c0ca836dcc52777a1fa7227ef28e3537b3' } },
+}, null, 2)}\n`
+
+describe('readLockfile, of the other ecosystems', () => {
+  const graphOf = async (format, text) => buildGraphFromPrep(lockfileGraphPrep(await readLockfile(format, text)))
+  const named = (packages, name) => Object.keys(packages).filter(key => packages[key].name === name)
+
+  it('reads a Gemfile.lock\'s gems, a copy for each platform one is locked for', async () => {
+    const { importers, packages } = await readLockfile('bundler', gemfileLock)
+    assert.deepEqual(importers, { '.': { dependencies: ['nokogiri-1.16.7', 'nokogiri-1.16.7-arm64-darwin'] } })
+    assert.deepEqual(packages['nokogiri-1.16.7'], { name: 'nokogiri', version: '1.16.7', dependencies: ['mini_portile2-2.8.7', 'racc-1.8.1'] })
+    assert.deepEqual(packages['nokogiri-1.16.7-arm64-darwin'], { name: 'nokogiri', version: '1.16.7-arm64-darwin', dependencies: ['racc-1.8.1'] },
+      'a platform\'s gem builds no extension, so needs no mini_portile2')
+    assert.deepEqual(packageVersions(await graphOf('bundler', gemfileLock), 'nokogiri'), ['1.16.7', '1.16.7-arm64-darwin'])
+  })
+
+  it('reads a Cargo.lock\'s crates of no source as the workspace\'s own', async () => {
+    const itoa = 'itoa 1.0.11 (registry+https://github.com/rust-lang/crates.io-index)'
+    const { importers, packages } = await readLockfile('cargo', cargoLock)
+    assert.deepEqual(importers, { app: { version: '0.1.0', dependencies: [itoa, 'link:util'] }, util: { version: '0.1.0', dependencies: [itoa] } })
+    assert.deepEqual(packages, { [itoa]: { name: 'itoa', version: '1.0.11', dependencies: [] } })
+    const graph = await graphOf('cargo', cargoLock)
+    assert.deepEqual(graph.ownSourcePackages, new Set(['app', 'util']))
+    assert.deepEqual(packageNetwork(graph).importsOf.get('app').toSorted(), ['itoa', 'util'])
+  })
+
+  it('reads a Podfile.lock\'s subspecs as copies of their root\'s package', async () => {
+    const { importers, packages } = await readLockfile('cocoapods', podfileLock)
+    assert.deepEqual(importers, { '.': { dependencies: ['Kingfisher', 'Moya'] } })
+    assert.deepEqual(packages['Moya/Core'], { name: 'Moya', version: '15.0.0', dependencies: ['Alamofire'] })
+    const graph = await graphOf('cocoapods', podfileLock)
+    assert.deepEqual(graph.byPkg.get('Moya').map(n => n.file).toSorted(), ['Moya', 'Moya/Core'])
+    assert.deepEqual(packageNetwork(graph).importsOf.get('Moya'), ['Alamofire'])
+  })
+
+  it('reads what a composer.lock\'s project requires from its composer.json, else what nothing else requires', async () => {
+    const service = { name: 'symfony/service-contracts', version: 'v3.6.0', dependencies: ['psr/container', 'symfony/deprecation-contracts'] }
+    const inferred = await readLockfile('composer', composerLock)
+    assert.deepEqual(inferred.importers, { '.': { dependencies: ['symfony/service-contracts', 'vendor/framework'] } })
+    assert.deepEqual(inferred.packages['symfony/service-contracts'], service, 'PHP is the platform\'s, no package')
+    const composerJson = JSON.stringify({ require: { 'php': '>=8.2', 'PSR/Container': '^2.0', 'symfony/service-contracts': '^3.6' }, 'require-dev': { 'vendor/gone': '*' } })
+    assert.deepEqual((await readLockfile('composer', composerLock, { manifest: composerJson })).importers,
+      { '.': { dependencies: ['psr/container', 'symfony/service-contracts'] } })
+    assert.deepEqual((await readLockfile('composer', composerLock, { manifest: '{' })).importers, inferred.importers, 'one that doesn\'t read, as none')
+    const virtual = JSON.stringify({ require: { 'psr/log-implementation': '^1.0', 'vendor/support': '^1.0', 'psr/container': '^2.0' } })
+    assert.deepEqual((await readLockfile('composer', composerLock, { manifest: virtual })).importers, { '.': { dependencies: ['vendor/framework', 'psr/container'] } },
+      'a virtual package by what provides it, a replaced one by what replaces it')
+  })
+
+  it('reads a poetry.lock\'s optional dependencies only where a dependent asks for their extra', async () => {
+    const { importers, packages } = await readLockfile('poetry', poetryLock())
+    assert.deepEqual(importers, { '.': { dependencies: ['service==1.0.0'] } })
+    assert.deepEqual(packages['requests==2.32.3'].dependencies, ['urllib3==2.2.3', 'pysocks==1.7.1'], 'service asks requests[socks]')
+    const alone = await readLockfile('poetry', poetryLock(false))
+    assert.deepEqual(alone.packages['requests==2.32.3'].dependencies, ['urllib3==2.2.3'])
+    assert.deepEqual(alone.importers, { '.': { dependencies: ['pysocks==1.7.1', 'requests==2.32.3'] } }, 'the project asks for what nothing else does')
+  })
+
+  it('takes, of a cycle nothing outside it depends on, each package as one the project asks for', async () => {
+    // alpha and beta depend on each other, and alpha on gamma: none is asked
+    // for by anything outside the cycle, and gamma only from within.
+    const text = poetryLockOf([
+      poetryPackage('alpha', '1.0.0', '\n[package.dependencies]\nbeta = ">=1"\ngamma = ">=1"\n'),
+      poetryPackage('beta', '1.0.0', '\n[package.dependencies]\nalpha = ">=1"\n'),
+      poetryPackage('gamma', '1.0.0'),
+    ])
+    assert.deepEqual((await readLockfile('poetry', text)).importers, { '.': { dependencies: ['alpha==1.0.0', 'beta==1.0.0'] } })
+    const flow = buildSizeFlow(await graphOf('poetry', text), { metric: 'count' })
+    assert.deepEqual([flow.total.size, flow.omittedPackages], [4, 0], 'Package flow reaches all three from the project')
+  })
+
+  it('reads a uv.lock\'s workspace members as its importers, with their extras and groups, and others\' extras as asked', async () => {
+    const { importers, packages } = await readLockfile('uv', uvLock)
+    const [markdown] = named(packages, 'markdown-it-py'), [linkify] = named(packages, 'linkify-it-py')
+    assert.deepEqual(Object.keys(importers), ['.'])
+    assert.deepEqual(importers['.'], { version: '0.1.0', dependencies: [markdown, ...named(packages, 'iniconfig')] }, 'its dev group too')
+    assert.deepEqual(packages[markdown].dependencies, [...named(packages, 'mdurl'), linkify], 'the linkify extra the project asks for')
+    const unasked = await readLockfile('uv', uvLock.replace('{ name = "markdown-it-py", extra = ["linkify"] }', '{ name = "markdown-it-py" }'))
+    assert.deepEqual(unasked.packages[markdown].dependencies, named(packages, 'mdurl'), 'no extra, no linkify')
+    assert.equal((await graphOf('uv', uvLock)).packages.includes('app'), false, 'the project is own source')
+  })
+
+  it('reads a pylock.toml\'s dependencies where it has them', async () => {
+    const { importers, packages } = await readLockfile('pylock', pylock)
+    assert.deepEqual(importers, { '.': { dependencies: ['requests==2.32.3'] } })
+    assert.deepEqual(packages['requests==2.32.3'], { name: 'requests', version: '2.32.3', dependencies: ['idna==3.10'] })
+  })
+
+  it('reads Soldeer\'s and forge\'s lockfiles as the project\'s dependencies alone', async () => {
+    const soldeer = await readLockfile('soldeer', soldeerLock)
+    assert.deepEqual(soldeer.importers, { '.': { dependencies: ['@openzeppelin-contracts@5.1.0', 'forge-std@1.9.4'] } })
+    assert.deepEqual(soldeer.packages['forge-std@1.9.4'], { name: 'forge-std', version: '1.9.4', dependencies: [] })
+    const foundry = await readLockfile('foundry', foundryLock)
+    assert.deepEqual(foundry.importers, { '.': { dependencies: ['lib/forge-std', 'lib/solady'] } })
+    assert.deepEqual(foundry.packages, {
+      'lib/forge-std': { name: 'forge-std', version: 'v1.9.7', dependencies: [] },
+      'lib/solady': { name: 'solady', version: 'main@c9e079c', dependencies: [] },
+    })
+  })
+
+  it('refuses what each reader refuses', async () => {
+    for (const format of ['bundler', 'cargo', 'cocoapods', 'composer', 'poetry', 'uv', 'pylock', 'soldeer', 'foundry']) {
+      await assert.rejects(readLockfile(format, 'not a lockfile'), format)
+    }
   })
 })
