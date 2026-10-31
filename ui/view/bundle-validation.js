@@ -101,7 +101,7 @@ const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
 // Why own code wasn't checked, a package wasn't, or a file is as it is.
 const OWN_UNCHECKED = { 'no-repository': 'the bundle is attached to no repository', 'no-commit': 'its stamp names no commit',
   'no-access': 'you may read only part of its repository', 'commit-not-found': 'GitHub has no such commit in its repository' }
-const UNVERIFIED = { unsupported: 'no upstream package to fetch for its ecosystem', unnamed: 'no name or version recorded', 'not-published': 'not published',
+const UNVERIFIED = { git: 'installed from git, not a registry', unsupported: 'no upstream package to fetch for its ecosystem', unnamed: 'no name or version recorded', 'not-published': 'not published',
   unreadable: 'its registry refused it', 'too-large': 'too large to unpack', timeout: 'not reached in time', failed: 'couldn’t be fetched' }
 const FILE_REASONS = { symlink: 'a symlink on GitHub', submodule: 'in a submodule', 'tree-cut': 'GitHub’s tree too large to list whole' }
 const KIND_LABELS = { differs: 'differs', unexpected: 'unexpected', unverified: 'unverified' }
