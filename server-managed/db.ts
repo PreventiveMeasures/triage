@@ -70,7 +70,13 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
   const db = new DatabaseSync(path)
   try {
     db.exec('PRAGMA journal_mode = WAL;')
-    db.exec('PRAGMA synchronous = FULL;')
+    // The bootstrap below commits each schema statement on its own: under
+    // FULL, ~120 fsyncs on a new file. Each step checks the schema before
+    // changing it and only reads outside the database, so a step lost to a
+    // power failure reruns on the next open, and WAL stays consistent under
+    // NORMAL. FULL is restored after it; the next commit's fsync of the WAL
+    // persists the bootstrap's frames too.
+    db.exec('PRAGMA synchronous = NORMAL;')
     db.exec('PRAGMA foreign_keys = ON;')
     migrateManagedTableNames(db)
     db.exec(MANAGED_SCHEMA + GITHUB_METADATA_SCHEMA + GITHUB_COMMIT_SCHEMA + MANAGED_ISSUE_SCHEMA + STORAGE_SCHEMA + BUNDLE_BUILD_LEASE_SCHEMA + UPSTREAM_CACHE_SCHEMA + TEAM_APP_SUMMARY_SCHEMA)
@@ -134,6 +140,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     initCommentMethods(db)
     initActivityMethods(db)
     db.exec(revisionSchema())
+    db.exec('PRAGMA synchronous = FULL;')
   } catch (err) {
     try { db.close() } catch {}
     throw err
