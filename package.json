@@ -108,6 +108,7 @@
     "server-managed/bundle-dependency-reviews.ts",
     "server-managed/bundle-store.ts",
     "server-managed/bundle-summary-cache.ts",
+    "server-managed/bundle-validation.ts",
     "server-managed/bundle.ts",
     "server-managed/cache-storage.ts",
     "server-managed/cli.js",

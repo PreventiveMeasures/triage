@@ -227,3 +227,7 @@ export const reviewBaselineStore = (db: UpstreamCacheStore, debug = false): Kept
 // what their reviews are held to.
 export const lockfileReadStore = <T>(db: UpstreamCacheStore, type: 'listings' | 'lockfiles', debug = false): KeptStore<T> =>
   keptStore<T>(db, `repository/review-${type}`, HISTORY_PAGE_KEPT_MS, debug)
+// A bundle's validations (bundle-validation.ts), by the bundle, where it is,
+// what its reader could check and the rules they were made by: kept a month
+// after they were made, as what they check never changes.
+export const bundleValidationStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'bundles/validations', HISTORY_PAGE_KEPT_MS, debug)

@@ -209,6 +209,27 @@ const BUNDLE_DEPENDENCY_REVIEW = {
     unsupported: [{ name: 'internal-tools', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/example/internal-tools.git', unsupported: 'git' }] }],
 }
 
+// The first fixture bundle's validation (GET and POST /api/bundles/:id/validation,
+// bundle-validation.ts): none till it is validated, then two files differing,
+// one unexpected, a patched package and one not checked.
+let fixtureValidatedAt: number | null = null
+const bundleValidationFixture = () => ({
+  validatedAt: fixtureValidatedAt, status: 'invalid', own: { checked: true, repository: 'example/managed-fixtures', commit: 'f'.repeat(40), directory: '' },
+  counts: { files: 128, own: 40, dependencies: 87, synthetic: 1, matched: 123, eol: 0, differs: 2, unexpected: 1, unverified: 2, packages: 24, validPackages: 22 },
+  problems: [{ path: 'node_modules/left-pad/index.js', kind: 'differs', of: 'npm:left-pad@1.3.0' }, { path: 'src/generated.js', kind: 'unexpected', of: 'own' },
+    { path: 'src/link.js', kind: 'differs', of: 'own', reason: 'symlink' }], moreProblems: 0,
+  packages: [{ ecosystem: 'composer', name: 'example/php', version: '1.0.0', files: 2, status: 'unverified', reason: 'unsupported' },
+    { ecosystem: 'npm', name: 'left-pad', version: '1.3.0', files: 1, status: 'invalid' },
+    { ecosystem: 'npm', name: 'ms', version: '2.1.3', files: 2, status: 'valid', patch: { hash: 'ab'.repeat(32), path: 'patches/ms@2.1.3.patch', from: 'bundle', applied: true } }],
+})
+function serveBundleValidation(path: string, method: string, res: ServerResponse): boolean {
+  const id = /^\/api\/bundles\/([^/]+)\/validation$/u.exec(path)?.[1]
+  if (id === undefined) return false
+  if (method === 'POST' && id === 'fixture-bundle-1') fixtureValidatedAt = Date.now()
+  sendJson(res, 200, { validation: id === 'fixture-bundle-1' && fixtureValidatedAt !== null ? bundleValidationFixture() : null })
+  return true
+}
+
 function serveBundleDependencyReview(path: string, res: ServerResponse): boolean {
   const id = /^\/api\/bundles\/([^/]+)\/dependency-review$/u.exec(path)?.[1]
   if (id === undefined) return false
@@ -1561,7 +1582,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     const teams = currentTeams()
     sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) }); return
   }
-  if (serveFixtureFeed(url.pathname, res) || serveBundleDependencyReview(url.pathname, res) || serveTeamReports(url, res) || serveNpmFixture(req, url, method, res) || appAvatarFixture(url, method, res)) return
+  if (serveFixtureFeed(url.pathname, res) || serveBundleDependencyReview(url.pathname, res) || serveBundleValidation(url.pathname, method, res) || serveTeamReports(url, res) || serveNpmFixture(req, url, method, res) || appAvatarFixture(url, method, res)) return
   if (url.pathname === '/api/reports/query') {
     if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
     void handleReportQuery(req, res).catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-body' }) })
