@@ -62,7 +62,7 @@
           </svg>
         </div>
         <h2>Start with a report</h2>
-        <p>Drop reports, source bundles, or a workspace here.</p>
+        <p>Drop reports, source bundles, a workspace, or a lockfile here.</p>
         <button type="button" class="drop-prompt-action">
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
             <path d="M8 3v10M3 8h10" stroke-linecap="round"/>
@@ -109,6 +109,14 @@
           <h2>Links</h2>
           <ul>
             <li><span class="drop-supported-icon" data-icon="links" aria-hidden="true"></span><span class="drop-supported-label">Linked findings</span></li>
+          </ul>
+        </section>
+        <!-- Not saved: a lockfile dropped opens alone, its packages
+             graphed, and is gone once its view is (view/lockfile-drop.js). -->
+        <section class="drop-supported-section">
+          <h2>Lockfiles</h2>
+          <ul>
+            <li><span class="drop-supported-icon" data-icon="lockfile" aria-hidden="true"></span><span class="drop-supported-label">pnpm, npm, Yarn 1</span></li>
           </ul>
         </section>
       </div>

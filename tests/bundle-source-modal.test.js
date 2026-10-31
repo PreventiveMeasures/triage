@@ -671,6 +671,36 @@ test('Code offers a lockfile in the lockfile viewer, last before the stats, whic
   assert.doesNotMatch(broken.body, /<lockfile-graph/u, 'its text where it can\'t be read')
 })
 
+test('a dropped lockfile opens alone, in the Code pane with no file tree or history and a close, on its packages', async t => {
+  const { readDroppedLockfile } = await import('../ui/view/lockfile-drop.js')
+  const { renderDroppedLockfile } = await import('../ui/view/render-bundle.js')
+  t.after(() => { Object.assign(state, { bundleSourceLockfile: false, droppedLockfile: null, currentView: 'findings' }) })
+  const integrity = 'sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A=='
+  const text = `${JSON.stringify({ name: 'app', version: '1.0.0', lockfileVersion: 3, requires: true, packages: {
+    '': { name: 'app', version: '1.0.0', dependencies: { ms: '2.0.0' } },
+    'node_modules/ms': { version: '2.0.0', resolved: 'https://registry.npmjs.org/ms/-/ms-2.0.0.tgz', integrity },
+  } }, null, 2)}\n`
+  const file = new File([text], 'package-lock (1).json')
+  const dropped = await readDroppedLockfile({ lockfile: file, manifest: null }, f => f.name.replace(/ \(\d+\)(?=\.[^.]*$)/u, ''))
+  Object.assign(state, { currentView: 'lockfile', droppedLockfile: dropped, bundleSourceLockfile: true, bundleSourceFile: null })
+  const shown = () => renderText(renderDroppedLockfile(state.droppedLockfile))
+  const reading = shown()
+  assert.match(reading, /^<div class="bundle-code-view is-single-file">\s*<div class="bundle-code-main"><header class="bundle-code-main-bar">/u)
+  assert.doesNotMatch(reading, /bundle-code-rail|bundle-code-splitter|data-bundle-code-history|bundle-code-terminal/u, 'no file tree, history or terminal')
+  assert.match(reading, /<span class="bundle-code-main-path mono"[^>]*>package-lock\.json<\/span>/u, 'named as it was saved')
+  assert.match(reading, /data-bundle-source-lockfile aria-pressed=true aria-busy=true/u, 'its packages asked for first')
+  await import('../ui/view/lockfile-read.js')
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  const read = shown()
+  assert.match(read, /<div class="bundle-code-main-body">\s*<lockfile-graph/u, 'its packages once read')
+  assert.match(read, /<span class="bundle-code-main-stats"><span>21 lines · [^<]+<\/span><\/span>\s*<button type="button" class="bundle-code-close" data-dropped-lockfile-close aria-label="Close"/u,
+    'a close last, after its stats')
+  state.bundleSourceLockfile = false
+  const asText = shown()
+  assert.doesNotMatch(asText, /<lockfile-graph/u)
+  assert.match(asText, /data-bundle-source-wrap.*data-bundle-source-lockfile aria-pressed=false/su, 'its text a toggle away')
+})
+
 test('the source popup and the Search tab\'s source offer a managed bundle\'s minified code pretty-printed, after the wrap toggle', () => {
   const minified = `${'var a=1;'.repeat(200)}\n`
   const sources = { 'dist/app.min.js': minified, 'src/index.js': 'export const a = 1\n' }

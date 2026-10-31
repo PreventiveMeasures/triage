@@ -27,6 +27,7 @@ import { openBundle, prefetchBundleHashesAfterPaint, selectBundle } from './bund
 import { backfillFindingIds, detectFormat, inheritReportMeta, isAppFinding, parseCodexCsvToScans, readReport, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 import { importWorkspaceFromGzip } from './workspace-import.js'
 import { maybePromptFirstUse } from './first-import-prompt.js'
+import { droppedLockfile, openDroppedLockfile as readAndShowLockfile } from './lockfile-drop.js'
 import { clearReportSources, fetchTeamReports, loadManagedBundle, login as managedLogin } from './client-managed.js'
 import { showToast } from './toast.js'
 import { managedHistory } from './managed-history.js'
@@ -387,6 +388,13 @@ async function addFiles(files) {
   // the single choke point for every entry (document drop, the empty-screen
   // drop-zone, and the file picker).
   if (isManagedUiMode()) return
+  // A lockfile is shown, never saved (lockfile-drop.js): it takes none of the
+  // pipeline below, the first-import passkey prompt included, as nothing of
+  // it is written. Dropped with files that are saved, it opens only where
+  // none of them does.
+  const lockfile = droppedLockfile(files, file => stripDownloadDup(file.name))
+  if (lockfile) files = files.filter(file => !lockfile.taken.has(file))
+  if (files.length === 0) { await openDroppedLockfile(lockfile); return }
   // First-import nudge: ask once whether to enable passkey encryption
   // before this drop's files hit disk, so an accepted enable seals the
   // very first write rather than landing plaintext then re-writing the
@@ -549,10 +557,28 @@ async function addFiles(files) {
     render()
     await renderSidebar()
     openBundle(lastBundleIntegrity)
+  } else if (lockfile) {
+    await openDroppedLockfile(lockfile)
   }
   // Imported bundles can supply source links even when a report did not name
   // them. Populate those hashes after the selected report/bundle has rendered.
   void prefetchBundleHashesAfterPaint(newBundleIntegrities).catch(() => {})
+}
+
+// Open a dropped lockfile alone in an editor of its own, on its packages
+// (lockfile-drop.js), in place of whatever view was up, as Home leaves it:
+// nothing saved, nothing to reopen on the next visit. The drop navigates
+// before its read, so a page left meanwhile, or a later drop, keeps the screen.
+function openDroppedLockfile(dropped) {
+  return readAndShowLockfile(dropped, file => stripDownloadDup(file.name), (lockfile) => {
+    closeSessionsExcept(new Set())
+    clearActiveView()
+    state.droppedLockfile = lockfile
+    state.bundleSourceLockfile = true
+    state.currentView = 'lockfile'
+    render()
+    return renderSidebar()
+  }, err => alert(`Failed to load ${dropped.lockfile.name}: ${err.message}`))
 }
 
 // Replace the active view with the named OPFS file. Pre-fetched
@@ -1251,6 +1277,7 @@ function clearActiveView({ forgetLastView = true } = {}) {
   state.repoUrl = ''
   state.repoEditing = false
   state.shownTriage = null
+  state.droppedLockfile = null
   state.currentView = 'findings'
   resetGraph2()
   if (forgetLastView) removeSecureItem(LAST_FILE_KEY)

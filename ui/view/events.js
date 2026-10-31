@@ -229,7 +229,7 @@ function renderSearchNextFrame() {
 }
 import { ensureBundleSources, handOffBundles, openBundle, prefetchBundleHashes, releaseHandoff, selectBundle, selectBundleTab } from './bundle-load.js'
 import { renderSidebar } from './sidebar.js'
-import { BUNDLE_TABS, persistLastBundle, switchToFile, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
+import { BUNDLE_TABS, goHome, persistLastBundle, switchToFile, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
 import { graph2, cleanupGraph2 } from './graph/state.js'
 import { hideToast, showToast } from './toast.js'
@@ -349,6 +349,11 @@ function handleBundleSourceClick(e) {
   if (e.target.closest('[data-bundle-source-lockfile]')) {
     toggleLockfileView()
     render()
+    return true
+  }
+  // A dropped lockfile's editor (lockfile-drop.js) closes to the landing.
+  if (e.target.closest('[data-dropped-lockfile-close]')) {
+    void goHome()
     return true
   }
   const historyButton = e.target.closest('[data-bundle-code-history]')

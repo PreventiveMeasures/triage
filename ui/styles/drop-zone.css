@@ -420,7 +420,7 @@ body:is(.theme-green, .theme-pink) .managed-content-card .managed-content-icon {
    together even with a collapsed sidebar or a narrow split preview. */
 .drop-supported {
   display: grid;
-  grid-template-columns: 1.3fr 1fr 1.35fr 1fr;
+  grid-template-columns: 1.3fr 1fr 1.35fr 1fr 1.1fr;
   gap: .875rem 1.5rem;
   margin-top: 1.25rem;
   text-align: left;
