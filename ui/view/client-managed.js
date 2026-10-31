@@ -123,6 +123,14 @@ export async function fetchBundleDependencyReview(id, options) {
   return (await loadManagedBundle()).fetchBundleDependencyReview(id, options)
 }
 
+export async function fetchBundleValidation(id, options) {
+  return (await loadManagedBundle()).fetchBundleValidation(id, options)
+}
+
+export async function runBundleValidation(id, csrfToken, options) {
+  return (await loadManagedBundle()).runBundleValidation(id, csrfToken, options)
+}
+
 export async function fetchTeamDependencies(teamId, onLine, options) {
   return (await loadManagedBundle()).fetchTeamDependencies(teamId, onLine, options)
 }

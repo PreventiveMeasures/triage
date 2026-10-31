@@ -207,6 +207,35 @@ These requests check access before they work and again before they answer.
 Where the repository a Stasis bundle is attached to reviews dependencies, its Overview shows a **Dependency review** line: whether the npm versions the bundle holds pass their reviews, as the lockfiles installing it lock them at the commit it was built from.
 See [A bundle's dependencies](./dependency-review.md#a-bundles-dependencies).
 
+## Validation
+
+A Stasis bundle's Overview has a **Validation** line with a **Validate** button, which checks that the bundle holds what it says it does:
+
+1. **Own code** (the files of modules naming no ecosystem: the project's own and its workspace's packages, and the root's and an `npm` one's outside `node_modules` whatever they record) must be on GitHub, byte for byte, at the commit the bundle's stamp names, under the directory it was built in (the stamp's, else the bundle's location).
+   Each file is compared by git's blob id with GitHub's listing of the commit's tree, so no file is downloaded; the listing is read a directory at a time, into those holding the bundle's files alone, where GitHub cuts it short.
+   A file whose only difference is a checkout's CRLF line endings passes, and is counted.
+2. **Dependencies** are fetched with upstream (npm's registry, and crates.io for Cargo crates), which holds each tarball to the integrity its registry publishes for it (not the lockfile's), and each file the bundle holds of a package must match the file at its path there.
+   Files of a package the bundle leaves out are expected.
+   A vendored crate's `.cargo-checksum.json`, which `cargo vendor` writes and no crate holds, is held to the crate instead: its package checksum, and the sha256 of each file it lists.
+   An npm version the lockfiles installing the bundle lock from git alone (a git repository, or a git host's tarball) is left unverified: npm may build one as it installs it, and the registry's release of its name and version is another package.
+   A module's recorded commit is no sign of one, as a registry package's `gitHead` is recorded too; without those lockfiles, such a version is held to the registry's.
+   A version pnpm patches is held to its files patched, as pnpm applies the patch: the patch the lockfiles installing the bundle at its commit lock it with, read of the bundle where it holds a file of that hash, else of the repository; without those lockfiles, the patch the bundle holds named for the version, pnpm's way (`patches/name@version.patch`).
+   Each installed copy of a version is held to its files patched or as published apart, as a nested copy may be unpatched, and the version is fetched once.
+   Each patched version is listed with its patch, where it was read, and, valid, whether a copy of it holds its files as patched.
+3. **Coverage**: every file the bundle holds must be one or the other. Stasis's empty placeholder (`.stasis/empty-module.js`, for an import a package disables) is allowed.
+
+The line says **Valid** where every file was checked and matches, **Invalid** where any file differs (`differs`) or is neither on GitHub nor in its package (`unexpected`), and **Incomplete** where nothing failed but some files weren't checked: those of ecosystems upstream fetches no package of by name and version (Composer, Soldeer, crates from git), of versions it couldn't fetch, or not reached within 4 minutes.
+**Details** lists the files failing or left unverified, up to 500, and the packages failing, unverified or patched.
+
+Own code is checked only for a reader who may read all of the bundle's repository, with their own GitHub access, which is checked again after it is read.
+A validation that checked own code, kept or new, is shown only to a reader who still may read all of the repository once it is read; a reader who no longer may is shown the one that didn't check own code instead, or refused a new one.
+For a bundle of no repository or commit, or a reader of only part of its repository, the dependencies are still validated, without the lockfiles (so without their patches, and with no version told apart as from git), and the line warns that own code couldn't be verified, and why.
+
+Validations are kept for a month, by the bundle, its location and whether own code was checked, and shown to the next reader of the Overview without fetching anything: a reader of all of the repository sees the one that checked own code (else the other), and any other reader only one that didn't.
+**Validate again** replaces it.
+A validation needs the CSRF token; two run at once per server instance (`429 validation-busy`), and requests for the same one meanwhile share it: for one checking own code, only the same reader's, as it reads the repository with their GitHub access and checks theirs again after.
+Private scoped npm packages are fetched with the server's `NPM_TOKEN`, as builds fetch them.
+
 ## Bundle advisories
 
 The bundle view's **Advisories** tab audits the bundle's dependencies:

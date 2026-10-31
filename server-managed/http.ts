@@ -78,6 +78,8 @@
 //   GET  /api/bundles/<id>/advisories → published dependency advisories (security access) | 401/403/404
 //   GET  /api/bundles/<id>/dependency-review → what the npm versions it bundles want of review, as the lockfiles installing it lock
 //        them at the commit it was built from, where its repository's review is in effect for a reader of all of it | 401/404/409/413/422/429/502
+//   GET  /api/bundles/<id>/validation → its last validation the reader may see, else none; POST validates it anew: its own code
+//        as GitHub has it at its commit, its dependencies as upstream's packages have them, those covering every file | 401/403/404/409/422/429/502
 //   GET  /api/bundles/<id>/download → authorized original upload | 401/404
 //   GET  /api/bundles/<id>/pretty?path=&hash= → one of its files pretty-printed, Brotli-encoded | 400/401/404/409/413/422/429
 //   GET  /api/bundles/<id>/pretty?other= → the files that changed between it and another bundle, both sides' pretty-printed,
@@ -141,7 +143,7 @@ import { backfillFindingIds, reportEntries } from '@preventive/report'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
-import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTipStore, codeHeadStore, codeTreeStore, commitPullStore, githubTagStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
+import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTipStore, bundleValidationStore, codeHeadStore, codeTreeStore, commitPullStore, githubTagStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
   issueListStore, lockfileReadStore,
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
@@ -151,7 +153,9 @@ import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
 import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
-import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
+import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES, readBundleDetails } from './bundle-cache.ts'
+import { BUNDLE_VALIDATION_READ, type BundleValidation, type LockedPatches, commitBlobs, fetchUpstreamPackage, validateBundle,
+  validationPlan } from './bundle-validation.ts'
 import type { CacheStorage } from './cache-storage.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { type CatalogCommit, backfillBundleCommits, bundleCommits, cacheCommitDetails } from './bundle-commits.ts'
@@ -172,7 +176,7 @@ import { filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { GITHUB_AGENTS } from '../common/managed/github-agents.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
-import { reportRepoGithub } from '@preventive/report'
+import { reportRepoGithub, repoDirectory as stampedDirectory } from '@preventive/report'
 import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedReport } from '../common/managed/report-content.ts'
 import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
@@ -3534,6 +3538,147 @@ async function bundleDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   return { value: { ...answer, ...bundle }, kept: !asked.github }
 }
 
+// GET /api/bundles/:id/validation: the Stasis bundle's last validation
+// (bundle-validation.ts) its reader may see, `{ validation }`, null for none;
+// POST (`run`) validates it anew, keeps it and answers it. Own code is checked
+// only for a reader of all of the repository the bundle is attached to, at
+// the commit its stamp names, with their own GitHub access, as the code
+// viewer reads it, checked again after; for others, or a bundle of no
+// repository or commit, its dependencies alone, and its own code told
+// unverified, and why. Each is kept apart (bundleValidationStore), by the
+// bundle, where it is and whether its own code was checked: a reader of all
+// of it is told the one that checked it, else the other; one of only part
+// of it, the other alone, never a word of the repository. As many run at
+// once as VALIDATIONS_AT_ONCE, those of one bundle asked meanwhile sharing
+// one, one checking own code its reader's alone, as it reads the repository
+// with their access and checks theirs again after; each given VALIDATION_MS
+// for its packages, those left told unverified. The bundle's access, and
+// where own code is told the reader's of all of its repository, checked
+// again once it is read, before it is told.
+const VALIDATIONS_AT_ONCE = 2
+const VALIDATION_MS = 240_000
+const validating = new Map<string, Promise<BundleValidation | Refusal>>()
+async function handleBundleValidation(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, session: ManagedSession, id: string,
+  run: boolean) {
+  if (run && !await checkMutation(req, res, deps, cookie, { handed: true })) return
+  const readable = async () => {
+    const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
+    if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
+    if (!access.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
+    return access.bundle
+  }
+  const record = await readable()
+  if (!record) return
+  if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
+  const whole = record.repoId === null ? null : await wholeRepositoryAccess(deps, cookie, record.repoId)
+  if (whole && 'error' in whole && !PARTIAL_ACCESS.has(whole.error)) { sendRefusal(res, whole); return }
+  const access = whole && !('error' in whole) ? whole : null
+  const reason = whole ? 'no-access' : 'no-repository'
+  const store = bundleValidationStore<BundleValidation>(deps.db, deps.config.debug)
+  const keyOf = (own: boolean) => `${record.id}\0${record.integrity}\0${record.repoId ?? ''}\0${record.repoDirectory}\0${own ? 'own' : 'dependencies'}\0${BUNDLE_VALIDATION_READ}`
+  // Why the reader of all of the repository may no longer be told its own
+  // code, asked once that is read; null where they still may.
+  const lostWhole = async () => {
+    if (!access) return null
+    const current = await wholeRepositoryAccess(deps, cookie, access.repo.repoId)
+    return 'error' in current ? current : sameRepository(current.repo, access.repo) ? null : refusal(409, 'repository-changed')
+  }
+  if (!run) {
+    let kept = access ? [...(await store.readFirst([keyOf(true)], [keyOf(false)])).found.values()][0]?.value : (await store.read(keyOf(false)))?.value
+    if (await lostWhole()) kept = (await store.read(keyOf(false)))?.value
+    if (await readable()) sendJson(res, 200, { validation: plainObject(kept) && typeof kept.status === 'string' ? kept : null })
+    return
+  }
+  const key = keyOf(access !== null)
+  const shared = access ? `${key}\0${access.user.id}` : key
+  let job = validating.get(shared)
+  if (!job) {
+    if (validating.size >= VALIDATIONS_AT_ONCE) { sendJson(res, 429, { error: 'validation-busy' }); return }
+    // Kept before it is told, for a reader asking next.
+    const started: Promise<BundleValidation | Refusal> = bundleValidation(deps, cookie, record, access, reason).then(async validation => {
+      if (!('error' in validation)) await store.write(key, validation, validation.validatedAt)
+      return validation
+    })
+    job = started
+    validating.set(shared, started)
+    started.finally(() => { if (validating.get(shared) === started) validating.delete(shared) }).catch(() => {})
+  }
+  let validation: BundleValidation | Refusal
+  try { validation = await job } catch (err) {
+    if (deps.config.debug) console.warn('managed: bundle validation failed:', err)
+    sendJson(res, 502, { error: 'validation-failed' }); return
+  }
+  if ('error' in validation) { sendRefusal(res, validation); return }
+  const lost = validation.own.checked ? await lostWhole() : null
+  if (lost) { sendRefusal(res, lost); return }
+  const now = await readable()
+  if (!now) return
+  if (now.repoId !== record.repoId || now.repoDirectory !== record.repoDirectory) { sendJson(res, 409, { error: 'repository-changed' }); return }
+  sendJson(res, 200, { validation })
+}
+
+// Bundle `record` validated (bundle-validation.ts): its own code too where
+// `access` lets its reader read all of its repository and its stamp names a
+// commit, read with their GitHub access, which is checked again after
+// (readWholeRepositoryOf), and its npm versions held to the patches the
+// lockfiles installing it lock them with, those they lock from git alone
+// left unverified (lockedPatchesOf), the tree and the lockfiles read at
+// once; else its dependencies alone, its own code unverified for `reason`.
+async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefined, record: ManagedBundle, access: WholeAccess | null, reason: string) {
+  let details
+  try { details = await readBundleDetails(record, deps.bundleStore) } catch { return refusal(422, 'bundle-unavailable') }
+  const plan = details && validationPlan(details)
+  if (!plan) return refusal(422, 'bundle-unavailable')
+  const stamp = (details!.bundle as { repo?: { commit?: unknown; directory?: unknown } } | undefined)?.repo
+  const commit = typeof stamp?.commit === 'string' && /^[a-f\d]{40}$/u.test(stamp.commit) ? stamp.commit : null
+  // Where it was built, as its stamp says, else where it is kept.
+  const directory = stampedDirectory(typeof stamp?.directory === 'string' ? stamp : { directory: record.repoDirectory })
+  const options = { deadline: Date.now() + VALIDATION_MS, fetch: (ecosystem: string, name: string, version: string) => fetchUpstreamPackage(ecosystem, name, version)
+    .catch((err: unknown) => { if (deps.config.debug) console.warn(`managed: validation fetching ${ecosystem}:${name}@${version} failed:`, err); throw err }) }
+  if (!access || !commit) return validateBundle(plan, { reason: access ? 'no-commit' : reason }, options)
+  const repoId = access.repo.repoId
+  const read = await readWholeRepositoryOf(deps, access, async (fullName, token) => {
+    const listing = commitBlobs(fullName, token, commit, plan.own.map(file => directory ? `${directory}/${file.path}` : file.path))
+      .then(blobs => ({ ...blobs, repository: fullName, commit, directory }), (err: unknown) => {
+        if (!(err instanceof GithubApiError) || (err.message !== 'github-not-found' && err.message !== 'github-status-422')) throw err
+        return { reason: 'commit-not-found' }
+      })
+    const [own, locked] = await Promise.all([listing, lockedPatchesOf(deps, fullName, token, repoId, commit, directory, plan.packages)])
+    return { value: await validateBundle(plan, own, { ...options, locked: 'reason' in own ? null : locked }), kept: false }
+  }, () => wholeRepositoryAccess(deps, cookie, repoId))
+  return 'error' in read ? read : read.value
+}
+
+// The patches the lockfiles installing a bundle in `directory` at `commit`
+// lock its npm versions `packages` with (bundle-dependency-reviews.ts), each
+// as the nearest of them locking it does, and each patch's file read of the
+// repository, held to its hash (npm-patch.ts); and the versions they lock
+// from git alone (`source`, a git repository or a git host's tarball); null
+// where none was read.
+async function lockedPatchesOf(deps: ManagedHttpDeps, fullName: string, token: string, repoId: number, commit: string, directory: string,
+  packages: { ecosystem: string; name: string; version: string }[]): Promise<LockedPatches | null> {
+  const versions = packages.filter(pkg => pkg.ecosystem === 'npm' && pkg.name && pkg.version).map(({ name, version }) => ({ name, version }))
+  if (versions.length === 0) return null
+  let read
+  try { read = await lockedAt(fullName, token, commit, lockfileKept(deps, repoId), path => installsBundle(path, directory)) } catch (err) {
+    if (err instanceof GithubApiError && err.status !== 429 && err.status !== 401) return null
+    throw err
+  }
+  if (read.lockfiles.length === 0) return null
+  const [installing] = bundleDependencies(versions, read, commit).told.lockfiles
+  const by = Map.groupBy(installing && 'locked' in installing ? installing.locked : [], pkg => `${pkg.name}@${pkg.version}`)
+  return {
+    of(name, version) {
+      const variants = by.get(`${name}@${version}`)
+      if (variants === undefined) return undefined
+      const patched = variants.find(variant => variant.patchHash)
+      return patched ? { hash: patched.patchHash!, ...patched.patchPath ? { path: patched.patchPath } : {} } : null
+    },
+    read: (hash, path) => readPatch(fullName, token, { hash, repoId, commit, path }),
+    git: (name, version) => by.get(`${name}@${version}`)?.every(variant => variant.source === 'git') ?? false,
+  }
+}
+
 // GET /api/admin/bundles — the uploaded bundles for the "Manage bundles" page.
 // admin|manage, read-only (no CSRF). `maxBytes` is the upload cap; `repos` feeds
 // the upload repo picker.
@@ -5472,6 +5617,12 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (bundleAdvisories) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
+      return
+    }
+    const bundleValidationRoute = /^\/api\/bundles\/([a-f\d-]{36})\/validation$/iu.exec(path)
+    if (bundleValidationRoute) {
+      if (method !== 'GET' && method !== 'POST') { send405(res, 'GET, POST'); return }
+      await handleBundleValidation(req, res, deps, cookie, workspaceSession!.session, bundleValidationRoute[1]!, method === 'POST')
       return
     }
     const bundleReview = /^\/api\/bundles\/([a-f\d-]{36})\/dependency-review$/iu.exec(path)

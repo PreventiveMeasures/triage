@@ -343,6 +343,37 @@ export function fetchBundleDependencyReview(id, { signal } = {}) {
   return request(`/api/bundles/${encodeURIComponent(id)}/dependency-review`, BUNDLE_DEPENDENCY_REVIEW_ERRORS, response => response.json(), signal)
 }
 
+// A bundle's last validation its reader may see (GET
+// /api/bundles/:id/validation), `{ validation }`, null for none; and, POSTed,
+// it validated anew: its own code against GitHub, its dependencies against
+// upstream's packages.
+const BUNDLE_VALIDATION_ERRORS = {
+  ...BUNDLE_DEPENDENCY_REVIEW_ERRORS,
+  'unsupported-bundle': 'Only Stasis bundles are validated.',
+  'validation-busy': 'Other bundles are being validated. Try again shortly.',
+  'validation-failed': 'The validation failed. Try again.',
+  'csrf-missing': 'Your session is missing its request token. Reload the page.',
+  'csrf-mismatch': 'Your session changed. Reload the page.',
+  429: 'Other bundles are being validated. Try again shortly.',
+}
+const validationUrl = id => `/api/bundles/${encodeURIComponent(id)}/validation`
+export function fetchBundleValidation(id, { signal } = {}) {
+  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json(), signal)
+}
+export async function runBundleValidation(id, csrfToken, { signal } = {}) {
+  signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
+  const generation = managedAppState.generation
+  const response = await managedFetch(validationUrl(id), { method: 'POST', credentials: 'same-origin', headers: { 'x-csrf-token': csrfToken }, signal })
+  signal.throwIfAborted()
+  const body = await response.json().catch(() => null)
+  if (!response.ok) {
+    const message = BUNDLE_VALIDATION_ERRORS[body?.error] ?? BUNDLE_VALIDATION_ERRORS[response.status] ?? `Request failed (${response.status})`
+    throw Object.assign(new Error(message), { status: response.status, code: body?.error ?? null })
+  }
+  if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
+  return body
+}
+
 // A team's Dependencies tab's, of those of its repositories `repoIds` names,
 // else all, in one request (GET /api/teams/:id/dependencies): `onLine`
 // called with each line as it comes, as the server tells them
