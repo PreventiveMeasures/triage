@@ -154,7 +154,7 @@ import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
 import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES, readBundleDetails } from './bundle-cache.ts'
-import { BUNDLE_VALIDATION_READ, type BundleValidation, type LockedPatches, type TreeEntry, commitBlobs, fetchUpstreamPackage, validateBundle,
+import { BUNDLE_VALIDATION_READ, type BundleValidation, type LockedPatches, commitBlobs, fetchUpstreamPackage, validateBundle,
   validationPlan } from './bundle-validation.ts'
 import type { CacheStorage } from './cache-storage.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
@@ -176,7 +176,7 @@ import { filterReportData } from '../common/managed/report-filter.ts'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { GITHUB_AGENTS } from '../common/managed/github-agents.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
-import { reportRepoGithub } from '@preventive/report'
+import { reportRepoGithub, repoDirectory as stampedDirectory } from '@preventive/report'
 import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedReport } from '../common/managed/report-content.ts'
 import type { ReportSourcesCache } from './report-sources.ts'
 import { normalizeTeamPath } from './repo-path.ts'
@@ -3567,18 +3567,14 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
   const record = await readable()
   if (!record) return
   if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
-  let access: WholeAccess | null = null, reason = 'no-repository'
-  if (record.repoId !== null) {
-    const whole = await wholeRepositoryAccess(deps, cookie, record.repoId)
-    if ('error' in whole && !PARTIAL_ACCESS.has(whole.error)) { sendRefusal(res, whole); return }
-    if ('error' in whole) reason = 'no-access'
-    else access = whole
-  }
+  const whole = record.repoId === null ? null : await wholeRepositoryAccess(deps, cookie, record.repoId)
+  if (whole && 'error' in whole && !PARTIAL_ACCESS.has(whole.error)) { sendRefusal(res, whole); return }
+  const access = whole && !('error' in whole) ? whole : null
+  const reason = whole ? 'no-access' : 'no-repository'
   const store = bundleValidationStore<BundleValidation>(deps.db, deps.config.debug)
   const keyOf = (own: boolean) => `${record.id}\0${record.integrity}\0${record.repoId ?? ''}\0${record.repoDirectory}\0${own ? 'own' : 'dependencies'}\0${BUNDLE_VALIDATION_READ}`
   if (!run) {
-    const { found: told } = access ? await store.readFirst([keyOf(true)], [keyOf(false)]) : { found: await store.readMany([keyOf(false)]) }
-    const kept = [...told.values()][0]?.value
+    const kept = access ? [...(await store.readFirst([keyOf(true)], [keyOf(false)])).found.values()][0]?.value : (await store.read(keyOf(false)))?.value
     if (await readable()) sendJson(res, 200, { validation: plainObject(kept) && typeof kept.status === 'string' ? kept : null })
     return
   }
@@ -3611,8 +3607,9 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
 // `access` lets its reader read all of its repository and its stamp names a
 // commit, read with their GitHub access, which is checked again after
 // (readWholeRepositoryOf), and its npm versions held to the patches the
-// lockfiles installing it lock them with (lockedPatchesOf); else its
-// dependencies alone, its own code unverified for `reason`.
+// lockfiles installing it lock them with, those they lock from git alone
+// left unverified (lockedPatchesOf), the tree and the lockfiles read at
+// once; else its dependencies alone, its own code unverified for `reason`.
 async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefined, record: ManagedBundle, access: WholeAccess | null, reason: string) {
   let details
   try { details = await readBundleDetails(record, deps.bundleStore) } catch { return refusal(422, 'bundle-unavailable') }
@@ -3621,20 +3618,19 @@ async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefine
   const stamp = (details!.bundle as { repo?: { commit?: unknown; directory?: unknown } } | undefined)?.repo
   const commit = typeof stamp?.commit === 'string' && /^[a-f\d]{40}$/u.test(stamp.commit) ? stamp.commit : null
   // Where it was built, as its stamp says, else where it is kept.
-  const directory = (typeof stamp?.directory === 'string' ? stamp.directory : record.repoDirectory).replaceAll(/^\/+|\/+$/gu, '')
+  const directory = stampedDirectory(typeof stamp?.directory === 'string' ? stamp : { directory: record.repoDirectory })
   const options = { deadline: Date.now() + VALIDATION_MS, fetch: (ecosystem: string, name: string, version: string) => fetchUpstreamPackage(ecosystem, name, version)
     .catch((err: unknown) => { if (deps.config.debug) console.warn(`managed: validation fetching ${ecosystem}:${name}@${version} failed:`, err); throw err }) }
   if (!access || !commit) return validateBundle(plan, { reason: access ? 'no-commit' : reason }, options)
   const repoId = access.repo.repoId
   const read = await readWholeRepositoryOf(deps, access, async (fullName, token) => {
-    let own: { entries: Map<string, TreeEntry>; cut: boolean; repository: string; commit: string; directory: string } | { reason: string }
-    try { own = { ...await commitBlobs(fullName, token, commit, plan.own.map(file => directory ? `${directory}/${file.path}` : file.path)), repository: fullName, commit, directory } }
-    catch (err) {
-      if (!(err instanceof GithubApiError) || (err.message !== 'github-not-found' && err.message !== 'github-status-422')) throw err
-      own = { reason: 'commit-not-found' }
-    }
-    const locked = 'reason' in own ? null : await lockedPatchesOf(deps, fullName, token, repoId, commit, directory, plan.packages)
-    return { value: await validateBundle(plan, own, { ...options, locked }), kept: false }
+    const listing = commitBlobs(fullName, token, commit, plan.own.map(file => directory ? `${directory}/${file.path}` : file.path))
+      .then(blobs => ({ ...blobs, repository: fullName, commit, directory }), (err: unknown) => {
+        if (!(err instanceof GithubApiError) || (err.message !== 'github-not-found' && err.message !== 'github-status-422')) throw err
+        return { reason: 'commit-not-found' }
+      })
+    const [own, locked] = await Promise.all([listing, lockedPatchesOf(deps, fullName, token, repoId, commit, directory, plan.packages)])
+    return { value: await validateBundle(plan, own, { ...options, locked: 'reason' in own ? null : locked }), kept: false }
   }, () => wholeRepositoryAccess(deps, cookie, repoId))
   return 'error' in read ? read : read.value
 }
@@ -3642,7 +3638,9 @@ async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefine
 // The patches the lockfiles installing a bundle in `directory` at `commit`
 // lock its npm versions `packages` with (bundle-dependency-reviews.ts), each
 // as the nearest of them locking it does, and each patch's file read of the
-// repository, held to its hash (npm-patch.ts); null where none was read.
+// repository, held to its hash (npm-patch.ts); and the versions they lock
+// from git alone (`source`, a git repository or a git host's tarball); null
+// where none was read.
 async function lockedPatchesOf(deps: ManagedHttpDeps, fullName: string, token: string, repoId: number, commit: string, directory: string,
   packages: { ecosystem: string; name: string; version: string }[]): Promise<LockedPatches | null> {
   const versions = packages.filter(pkg => pkg.ecosystem === 'npm' && pkg.name && pkg.version).map(({ name, version }) => ({ name, version }))
@@ -3654,16 +3652,16 @@ async function lockedPatchesOf(deps: ManagedHttpDeps, fullName: string, token: s
   }
   if (read.lockfiles.length === 0) return null
   const [installing] = bundleDependencies(versions, read, commit).told.lockfiles
-  const by = new Map<string, { patchHash?: string; patchPath?: string }[]>()
-  for (const pkg of installing && 'locked' in installing ? installing.locked : []) by.set(`${pkg.name}@${pkg.version}`, [...by.get(`${pkg.name}@${pkg.version}`) ?? [], pkg])
+  const by = Map.groupBy(installing && 'locked' in installing ? installing.locked : [], pkg => `${pkg.name}@${pkg.version}`)
   return {
     of(name, version) {
       const variants = by.get(`${name}@${version}`)
-      const patched = variants?.find(variant => variant.patchHash)
       if (variants === undefined) return undefined
+      const patched = variants.find(variant => variant.patchHash)
       return patched ? { hash: patched.patchHash!, ...patched.patchPath ? { path: patched.patchPath } : {} } : null
     },
     read: (hash, path) => readPatch(fullName, token, { hash, repoId, commit, path }),
+    git: (name, version) => by.get(`${name}@${version}`)?.every(variant => variant.source === 'git') ?? false,
   }
 }
 
