@@ -41,7 +41,7 @@ const KINDS = new Set(['differs', 'unexpected', 'unverified'])
 // A server's validation as it is shown, none where it isn't one.
 export function checkedValidation(told) {
   if (!told || !STATUSES.has(told.status)) return null
-  const counts = Object.fromEntries(['files', 'own', 'dependencies', 'synthetic', 'matched', 'eol', 'differs', 'unexpected', 'unverified', 'packages', 'validPackages']
+  const counts = Object.fromEntries(['files', 'own', 'dependencies', 'matched', 'eol', 'differs', 'unexpected', 'unverified', 'packages', 'validPackages']
     .map(name => [name, count(told.counts?.[name])]))
   const own = told.own?.checked === true && typeof told.own.repository === 'string' && /^[\da-f]{40}$/u.test(told.own.commit ?? '')
     ? { checked: true, repository: told.own.repository, commit: told.own.commit, directory: typeof told.own.directory === 'string' ? told.own.directory : '', cut: told.own.cut === true }
@@ -134,8 +134,7 @@ function details(validation) {
     <p class="team-deps-quiet">${own.checked ? html`Own code held to <code>${own.repository}</code> at <code>${own.commit.slice(0, 7)}</code>${own.directory
       ? html` under <code>${own.directory}</code>` : nothing}${counts.eol ? `, ${plural(counts.eol, 'file')} with a checkout’s CRLF line endings` : ''}${own.cut
       ? '; its tree was too large to list whole' : ''}.` : nothing}
-    ${counts.packages ? ` ${plural(counts.validPackages, 'package')} of ${counts.packages.toLocaleString('en-US')} as published.` : ''}${counts.synthetic
-      ? ` ${plural(counts.synthetic, 'file')} Stasis’s own.` : ''}</p>
+    ${counts.packages ? ` ${plural(counts.validPackages, 'package')} of ${counts.packages.toLocaleString('en-US')} as published.` : ''}</p>
     ${problems.length > 0 ? html`<ul class="bundle-validation-list">${problems.map(problem => html`<li class="bundle-validation-row">
       <span class="team-deps-review is-${problem.kind === 'unverified' ? 'wanted' : 'failed'}">${KIND_LABELS[problem.kind]}</span>
       <span class="team-deps-name">${problem.path}</span>
