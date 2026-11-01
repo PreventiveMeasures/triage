@@ -68,7 +68,8 @@ export interface AssessNpmOptions {
   advisories?: boolean
   // Whether OSV's records of malware in the version are asked for too, where
   // `advisories` are: false for a private package, whose name OSV is never
-  // to be sent. True unless given.
+  // to be sent, as upstream sends it none npm's registry doesn't serve
+  // anyone. True unless given.
   osv?: boolean
   // Whether a package is the caller's own, as its own scopes take: a new
   // dependency on one is told no tier nor age, nor is npm asked of it. None
@@ -178,7 +179,8 @@ export function npmReadyDownload(name: string, options: { cache: CacheStore; sig
 // Whether an advisory is of malware rather than a vulnerability: OSV's of a
 // malicious package (`MAL-…`), or one such a record names (its `aliases`),
 // CWE-506, embedded malicious code, whatever its title, or a title naming
-// malware.
+// malware. The rule @preventive/upstream's advisories tell `malware` by, for
+// those it doesn't tell, as Dependabot's alerts.
 export function npmMalwareAdvisory(advisory: { id?: string | undefined; aliases?: readonly string[] | undefined; cwe?: readonly string[] | undefined; title?: string | undefined }): boolean
 
 export function npmFileRisk(path: string, text: string | null, bytes?: number, script?: boolean): unknown

@@ -12,7 +12,7 @@ import { triageWireEntry } from './triage-response.ts'
 import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
-import { auditCache, auditedRepos } from './upstream-cache.ts'
+import { auditCache, auditedKeys } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
 import { type ComparedSide, PrettyError, compared, prettyRequest, prettyText } from './pretty-print.ts'
 import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
@@ -207,7 +207,7 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
     const repoAdvisories = url.searchParams.get('repoAdvisories') === 'true'
     const result = await fetchBundleAdvisories(inventory.packages, signal, {
       debug: deps.config.debug, repoAdvisories, details: url.searchParams.get('details') === 'true',
-      cache: auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug, auditedRepos(inventory.packages, repoAdvisories)),
+      cache: auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug, auditedKeys(inventory.packages, repoAdvisories)),
     })
     await recheck()
     json(res, result.status, result.status === 200 ? { ...inventory, advisories: result.body } : result.body); return

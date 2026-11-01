@@ -230,7 +230,7 @@ test('npm packages anyone may read are asked of OSV too, its malware with them, 
   t.mock.method(globalThis, 'fetch', (url, options = {}) => {
     calls.push({ url: String(url), method: options.method ?? 'GET', body: options.body && JSON.parse(options.body) })
     const { pathname } = new URL(url)
-    if (options.method === 'HEAD') return Promise.resolve(new Response(null, { status: pathname === '/@acme/open' ? 200 : 404 }))
+    if (options.method === 'HEAD') return Promise.resolve(new Response(null, { status: pathname === '/@acme/secret' ? 404 : 200 }))
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
     if (pathname === '/v1/querybatch') {
       return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(({ package: { name } }) => name === 'nx' ? { vulns: [{ id: 'MAL-2025-41443' }] } : {}) }))
@@ -244,29 +244,28 @@ test('npm packages anyone may read are asked of OSV too, its malware with them, 
   })
   const result = await fetchBundleAdvisories(packages, signal())
   assert.equal(result.status, 200)
-  assert.deepEqual(result.body.map(({ name, source, id, versions }) => ({ name, source, id, versions })), [{ name: 'nx', source: 'osv', id: 'MAL-2025-41443', versions: ['21.5.0'] }])
+  assert.deepEqual(result.body.map(({ name, source, id, versions, malware }) => ({ name, source, id, versions, malware })),
+    [{ name: 'nx', source: 'osv', id: 'MAL-2025-41443', versions: ['21.5.0'], malware: true }], 'told of malware as upstream tells it')
   assert.deepEqual(calls.filter(call => call.url.endsWith('/v1/querybatch')).flatMap(call => call.body.queries.map(query => query.package.name)).toSorted(), ['@acme/open', 'nx'],
     'a private package\'s name never sent to OSV')
-  assert.deepEqual(calls.filter(call => call.method === 'HEAD').map(call => call.url).toSorted(), ['https://registry.npmjs.org/@acme/open', 'https://registry.npmjs.org/@acme/secret'],
-    'npm asked only of scoped packages whether anyone may read them, an unscoped one always public')
+  assert.deepEqual(calls.filter(call => call.method === 'HEAD').map(call => call.url).toSorted(),
+    ['https://registry.npmjs.org/@acme/open', 'https://registry.npmjs.org/@acme/secret', 'https://registry.npmjs.org/nx'],
+    'npm asked of each package, scoped or not, whether anyone may read it')
 })
 
-test('a scoped package npm is slow to tell of is taken as private once its time is up, the audit going on', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+test('a package npm can\'t be asked of is taken as private, the audit going on', async t => {
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, options = {}) => {
     calls.push({ url: String(url), method: options.method ?? 'GET', body: options.body && JSON.parse(options.body) })
-    if (options.method === 'HEAD') return new Promise((_resolve, reject) => { options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }) })
+    if (options.method === 'HEAD') return new URL(url).pathname === '/@slow/pkg' ? Promise.reject(new TypeError('fetch failed')) : Promise.resolve(new Response(null))
     if (String(url).endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
     if (String(url).endsWith('/v1/querybatch')) return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(() => ({})) }))
     throw new Error(`unexpected ${url}`)
   })
-  const audit = fetchBundleAdvisories([{ ecosystem: 'npm', name: '@slow/pkg', versions: ['1.0.0'] }, { ecosystem: 'npm', name: 'open', versions: ['1.0.0'] }], signal())
-  while (!calls.some(call => call.method === 'HEAD')) await new Promise(resolve => { setImmediate(resolve) })
-  t.mock.timers.tick(10_000)
-  assert.deepEqual(await audit, { status: 200, body: [] })
+  assert.deepEqual(await fetchBundleAdvisories([{ ecosystem: 'npm', name: '@slow/pkg', versions: ['1.0.0'] }, { ecosystem: 'npm', name: 'open', versions: ['1.0.0'] }], signal()),
+    { status: 200, body: [] })
   assert.deepEqual(calls.filter(call => call.url.endsWith('/v1/querybatch')).flatMap(call => call.body.queries.map(query => query.package.name)), ['open'],
-    'its name never sent to OSV, the unscoped one\'s still')
+    'its name never sent to OSV, the one npm answers for still')
 })
 
 test('empty, canceled and invalid inventories never send requests', async t => {
@@ -341,7 +340,7 @@ test('repository rechecks retry a rejected GitHub token anonymously without repe
   const github = calls.filter(call => new URL(call.url).hostname === 'api.github.com')
   assert.deepEqual(github.map(call => call.authorization), ['Bearer revoked', null])
   assert.equal(github[0].url, github[1].url, 'retry only the rejected repository lookup')
-  assert.equal(calls.length - github.length, 3, 'npm\'s advisories, OSV\'s and the version naming the repository, each asked once')
+  assert.equal(calls.length - github.length, 4, 'npm\'s advisories, whether anyone may read it, OSV\'s and the version naming the repository, each asked once')
 })
 
 test('a rejected token is not reused for later repositories in the same audit', async t => {

@@ -25,6 +25,8 @@ test('security findings constrain only the reviewed version, combined with the s
   assert.equal(npmReviewVerdictLimit(npm, null, socket('malware')), 'reject')
   assert.equal(npmReviewVerdictLimit(npm, list('MAL-2026-1', 'critical')), 'reject')
   assert.equal(npmReviewVerdictLimit(npm, list('GHSA-test', 'critical')), 'request-changes')
+  assert.equal(npmReviewVerdictLimit(npm, { versions: ['2.0.0'], advisories: [{ id: 'GHSA-test', severity: 'high', cwe: ['CWE-200'], malware: true, affected: [0] }] }), 'reject',
+    'malware as upstream tells it, an OSV record of malware naming the advisory')
   assert.equal(npmReviewVerdictLimit(npm, null, socket('criticalCVE')), 'request-changes')
   assert.equal(npmReviewVerdictLimit(npm, list('GHSA-test', 'critical'), socket('malware')), 'reject')
   assert.equal(npmReviewVerdictLimit(npm, list('MAL-2026-1', 'critical', [1])), 'accept', 'fixed findings do not constrain the target')
