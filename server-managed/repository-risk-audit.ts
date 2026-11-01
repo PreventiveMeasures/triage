@@ -1,19 +1,18 @@
 // A lockfile's advisories, as a repository risk scan asks them
 // (repository-risk.ts): npm's registry's of its packages of the registry or
 // a mirror, asked at once, as `npm audit` asks, each told with whether it is
-// of malware (risk's npmMalwareAdvisory); kept by the lockfile's blob, in the
-// instance's memory and the source's `audits`, for RISK_KEPT_MS, as npm
+// of malware, as upstream tells (`malware`); kept by the lockfile's blob, in
+// the instance's memory and the source's `audits`, for RISK_KEPT_MS, as npm
 // publishes advisories, or why they couldn't be had for AUDIT_FAILED_KEPT_MS.
 import type { Advisory } from '@preventive/upstream/advisories.js'
 import { isExactVersion } from '@preventive/upstream/semver.js'
-import { npmMalwareAdvisory } from '../risk/index.js'
 import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import type { LockedPackage } from './locked-packages.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
 import { RISK_KEPT_MS, type RiskFailure, failureOf } from './repository-risk-assess.ts'
 
-export type AdvisoryRow = Advisory & { malware: boolean }
+export type AdvisoryRow = Omit<Advisory, 'malware'> & { malware: boolean }
 // A lockfile's advisories, or why they couldn't be had.
 export type Audit = AdvisoryRow[] | RiskFailure
 
@@ -67,7 +66,7 @@ export async function auditLockfile(source: AuditSource, memory: Lru<{ at: numbe
   let audit: Audit
   try {
     audit = (await source.advisories([...asked].map(([name, versions]) => ({ name, versions: [...versions] })), signal))
-      .map(advisory => ({ ...advisory, malware: npmMalwareAdvisory(advisory) }))
+      .map(advisory => ({ ...advisory, malware: advisory.malware === true }))
   } catch (error) {
     if (signal.aborted) return null
     audit = failureOf(error)

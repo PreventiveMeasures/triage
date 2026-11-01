@@ -23,8 +23,8 @@ importers:
         specifier: 1.0.0-beta.13
         version: 1.0.0-beta.13
       '@preventive/archive':
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.2.2
+        version: 1.2.2
       '@preventive/compare':
         specifier: ^1.2.11
         version: 1.2.11(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)
@@ -44,8 +44,8 @@ importers:
         specifier: 1.0.0-alpha.1
         version: 1.0.0-alpha.1(oxc-parser@0.152.0)
       '@preventive/upstream':
-        specifier: ^1.3.0
-        version: 1.3.0(semver@7.8.5)
+        specifier: ^1.5.0
+        version: 1.5.0(semver@7.8.5)
       css-tree:
         specifier: ^3.2.1
         version: 3.2.1
@@ -896,8 +896,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@preventive/archive@1.2.0':
-    resolution: {integrity: sha512-5Z0i00SoyxPaoWvFStggTwi+C/yVP2SznPWk3MRY4msyxCjzRXxs3YvoqOkt0IK8dcKkxFu1NpuzP9+Ufh9aow==, tarball: https://registry.npmjs.org/@preventive/archive/-/archive-1.2.0.tgz}
+  '@preventive/archive@1.2.2':
+    resolution: {integrity: sha512-RnGcgKh4+lrrgXrW7fAKC1P38GBwJ1rDbbZr4vMzYBHZgYyNFyPE6e/pHOlQxa9bGnNXYiHllsMJVr+cQlsAZQ==, tarball: https://registry.npmjs.org/@preventive/archive/-/archive-1.2.2.tgz}
     engines: {node: '>=24.14.0'}
 
   '@preventive/compare@1.2.11':
@@ -918,8 +918,8 @@ packages:
       oxfmt:
         optional: true
 
-  '@preventive/deptree@1.0.2':
-    resolution: {integrity: sha512-ti7koX2dQEC+DkwDtJOpzpNep908lZpqh3vBERNQMgvthAx/iLycFZNXgE5cp8lfLHHIdiNnPz0I+StEU7W7Zg==, tarball: https://registry.npmjs.org/@preventive/deptree/-/deptree-1.0.2.tgz}
+  '@preventive/deptree@1.3.3':
+    resolution: {integrity: sha512-AIuZ8GJJ/Bo+xnDLW91otO9A0JPA3ykTKtgTV5uhs7YDqryjTn/ZE7LBg1l2NCuIFN25DT00J2xBe6LjcXNUAg==, tarball: https://registry.npmjs.org/@preventive/deptree/-/deptree-1.3.3.tgz}
     engines: {node: '>=24.14.0'}
     hasBin: true
 
@@ -951,8 +951,8 @@ packages:
   '@preventive/terminal@2.0.0-beta.3':
     resolution: {integrity: sha512-HAtOwHcuqowlLTN9F4PTRm91tQJ4DRgPLk57mcSMY7yqCHY+mzYyMk2ne/xTEZTiIff+GZ79Z6O/bbpqbmdbIQ==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.3.tgz}
 
-  '@preventive/upstream@1.3.0':
-    resolution: {integrity: sha512-AvQB70VO1FHI979hp5aSu4UNViQvk2wOCJbgzczGrPL3HDjJ7Q+RBSARCwKv2D2BQZn0XbLsWZx+uLW7fLjdfQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.3.0.tgz}
+  '@preventive/upstream@1.5.0':
+    resolution: {integrity: sha512-UY4O3/mUyBhTySEnx4YYf9Y7fXayHOU4kg+8cBlS597gExF1Y9ksaXvnUGvwh1syNK0M34MUeCcbm+LJpX8teA==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.5.0.tgz}
     engines: {node: '>=24.14.0'}
     peerDependencies:
       semver: ^7.5.2
@@ -962,6 +962,10 @@ packages:
 
   '@preventive/vfs@1.0.0-beta.4':
     resolution: {integrity: sha512-yqx/I33WLZO7+efWJHsE2w8iazwAcIKTUiGYfWfidW09uxRSNUS4tJ9+7e7BhJgC6UsTck1bLbUhKN6a1Rwdqg==, tarball: https://registry.npmjs.org/@preventive/vfs/-/vfs-1.0.0-beta.4.tgz}
+    engines: {node: '>=24.14.0'}
+
+  '@preventive/vfs@1.1.0':
+    resolution: {integrity: sha512-tJSrYMkw5bRYicIm446SL2S+OA0VM+pIlCgPTbNHeft3qMJt1VnFKcbtPRDR+MlsTngeyRmippDUPmoFqxU6YA==, tarball: https://registry.npmjs.org/@preventive/vfs/-/vfs-1.1.0.tgz}
     engines: {node: '>=24.14.0'}
 
   '@rray/frontend@1.0.0':
@@ -1926,10 +1930,10 @@ snapshots:
       '@exodus/bytes': 1.16.0
       '@exodus/stasis-core': 1.0.0-beta.13
       '@exodus/stasis-plugins': 1.0.0-beta.13
-      '@preventive/archive': 1.2.0
-      '@preventive/deptree': 1.0.2(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)
+      '@preventive/archive': 1.2.2
+      '@preventive/deptree': 1.3.3(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)
       '@preventive/lockfile': 1.2.0
-      '@preventive/upstream': 1.3.0(semver@7.8.5)
+      '@preventive/upstream': 1.5.0(semver@7.8.5)
       '@preventive/vfs': 1.0.0-beta.4
       flow-remove-types: 2.338.0
       oxc-parser: 0.152.0
@@ -2202,7 +2206,7 @@ snapshots:
   '@oxlint/binding-win32-x64-msvc@1.87.0':
     optional: true
 
-  '@preventive/archive@1.2.0':
+  '@preventive/archive@1.2.2':
     dependencies:
       '@exodus/bytes': 1.16.0
     transitivePeerDependencies:
@@ -2220,16 +2224,16 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/deptree@1.0.2(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)':
+  '@preventive/deptree@1.3.3(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)':
     dependencies:
       '@chalker/queue': 1.0.1
       '@exodus/bytes': 1.16.0
-      '@preventive/archive': 1.2.0
+      '@preventive/archive': 1.2.2
       '@preventive/compare': 1.2.11(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)
       '@preventive/diff': 1.1.0
       '@preventive/lockfile': 1.2.0
-      '@preventive/upstream': 1.3.0(semver@7.8.5)
-      '@preventive/vfs': 1.0.0-beta.4
+      '@preventive/upstream': 1.5.0(semver@7.8.5)
+      '@preventive/vfs': 1.1.0
     transitivePeerDependencies:
       - '@noble/hashes'
       - css-tree
@@ -2257,21 +2261,23 @@ snapshots:
   '@preventive/terminal@2.0.0-beta.3':
     dependencies:
       '@exodus/bytes': 1.16.0
-      '@preventive/archive': 1.2.0
+      '@preventive/archive': 1.2.2
       '@preventive/diff': 1.1.0
-      '@preventive/vfs': 1.0.0-beta.4
+      '@preventive/vfs': 1.1.0
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/upstream@1.3.0(semver@7.8.5)':
+  '@preventive/upstream@1.5.0(semver@7.8.5)':
     dependencies:
-      '@preventive/archive': 1.2.0
+      '@preventive/archive': 1.2.2
     optionalDependencies:
       semver: 7.8.5
     transitivePeerDependencies:
       - '@noble/hashes'
 
   '@preventive/vfs@1.0.0-beta.4': {}
+
+  '@preventive/vfs@1.1.0': {}
 
   '@rray/frontend@1.0.0':
     dependencies:

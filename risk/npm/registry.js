@@ -211,10 +211,12 @@ export async function npmPackageFacts(name, version, oldVersion, context) {
 // npm's advisories of `version` of a package, as `npm audit` asks them, and
 // where `osv`, OSV's records npm's registry hasn't, as the malicious
 // packages' of nx's versions are (MAL-2025-41443, of GHSA-cxm3-wv7p-598c,
-// which npm's registry hasn't): upstream's `advisories` and its `osv`, an
-// advisory of npm's an OSV record names taking the record's ids among its
-// `aliases`. Each `{ id, url?, title?, cwe, aliases }`, kept ADVISORIES_MS,
-// and given up on once `signal` aborts.
+// which npm's registry hasn't): upstream's `advisories` and its `osv`, which
+// sends OSV the name only where npm's registry serves it anyone. Each `{ id,
+// url?, title?, malware }`, whether it is of malware as upstream tells it, an
+// advisory of npm's an OSV record of malware names among them; kept
+// ADVISORIES_MS, those kept with no `malware` asked again, and given up on
+// once `signal` aborts.
 export async function npmVersionAdvisories(name, version, osv, context) {
   const what = `${name}@${version}`
   const { rows } = await kept(context, 'risk/npm/advisories', what, async () => {
@@ -222,8 +224,8 @@ export async function npmVersionAdvisories(name, version, osv, context) {
     const asked = await untilAborted(advisories([{ ecosystem: 'npm', name, versions: [version] }], { cache: false, osv }), context.signal).catch(error => {
       throw context.signal?.aborted ? error : new NpmRiskError(error?.status === 429 ? 'upstream-busy' : 'upstream-unavailable', `advisories of ${what} couldn't be had: ${error.message}`)
     })
-    return { at: context.now, osv, rows: asked.map(({ id, url, title, cwe, aliases }) => ({ id, ...url ? { url } : {}, ...title ? { title } : {}, cwe, aliases })) }
-  }, hit => context.now - hit.at < ADVISORIES_MS && hit.osv === osv)
+    return { at: context.now, osv, rows: asked.map(({ id, url, title, malware }) => ({ id, ...url ? { url } : {}, ...title ? { title } : {}, malware: malware === true })) }
+  }, hit => context.now - hit.at < ADVISORIES_MS && hit.osv === osv && hit.rows.every(row => typeof row.malware === 'boolean'))
   return rows
 }
 

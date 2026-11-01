@@ -42,7 +42,8 @@ const documentOf = ({ name, versions, created, latest, removed = {} }) => ({ nam
 // name, and `advisories` by name, rows as npm's bulk endpoint answers them;
 // and OSV's records by name and version (`osv`), as its batch query answers
 // them and then each record, or a status it answers every batch with; each
-// URL asked, in order.
+// URL asked, in order, a HEAD's as `HEAD <url>`: whether anyone may read a
+// package, as upstream asks before it sends OSV its name.
 const ADVISORIES = `${REGISTRY}/-/npm/v1/security/advisories/bulk`
 const OSV = 'https://api.osv.dev/v1/querybatch'
 const OSV_RECORD = 'https://api.osv.dev/v1/vulns/'
@@ -51,6 +52,10 @@ function npm(t, packages, downloads = {}, advisories = {}, osv = {}) {
   t.mock.method(globalThis, 'fetch', (input, init) => Promise.resolve(answer(String(input), init)))
   const records = new Map(Object.values(osv).filter(Array.isArray).flat().map(record => [record.id, record]))
   const answer = (url, init) => {
+    if (init?.method === 'HEAD') {
+      asked.push(`HEAD ${url}`)
+      return new Response(null, { status: packages.some(pkg => url === `${REGISTRY}/${pkg.name}`) ? 200 : 404 })
+    }
     asked.push(url)
     if (url === ADVISORIES) return Response.json(Object.fromEntries(Object.keys(JSON.parse(init.body)).filter(name => advisories[name]).map(name => [name, advisories[name]])))
     if (url === OSV) {
@@ -528,7 +533,7 @@ test('against the version risk picks: an attack\'s own earlier version passed ov
   assert.deepEqual(await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, cache }), picked)
   assert.deepEqual(asked, [], 'the pick kept: npm isn\'t asked')
   await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW + 2 * 60 * 60_000, downloads: false, cache })
-  assert.deepEqual(asked.toSorted(), [`${REGISTRY}/handed`, ADVISORIES, OSV].toSorted(), 'picked again after an hour, by its document alone, its advisories asked again as they are')
+  assert.deepEqual(asked.toSorted(), [`${REGISTRY}/handed`, ADVISORIES, `HEAD ${REGISTRY}/handed`, OSV].toSorted(), 'picked again after an hour, by its document alone, its advisories asked again as they are')
   const alone = await assessNpm('handed', '1.0.0', { oldVersion: true, now: NOW, downloads: false })
   assert.equal(alone.oldVersion, null, 'none below it')
   assert.deepEqual(alone, await assessNpm('handed', '1.0.0', { now: NOW, downloads: false }), 'assessed alone')
@@ -813,7 +818,7 @@ test('what is read is kept by type, and an assessment kept needs no tarball', as
   assert.deepEqual(asked, [], 'everything kept: npm isn\'t asked')
   asked.length = 0
   await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW + DAY, cache })
-  assert.deepEqual(asked.toSorted(), [`${REGISTRY}/kept`, ADVISORIES, OSV].toSorted(),
+  assert.deepEqual(asked.toSorted(), [`${REGISTRY}/kept`, ADVISORIES, `HEAD ${REGISTRY}/kept`, OSV].toSorted(),
     'a day on, its deprecations and advisories asked again, as they are after an hour, its downloads kept a week; no tarball')
   asked.length = 0
   await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW + 8 * DAY, cache })
@@ -980,6 +985,21 @@ test('OSV is asked only where `osv` is, and failing, fails the assessment as npm
   asked.length = 0
   assert.ok(!ids(await assessed('osv-1.0.0', { osv: false })).includes('malware'), 'OSV not asked, its malware not told')
   assert.ok(!asked.some(url => url.startsWith('https://api.osv.dev/')), 'nor its name sent')
+})
+
+test('a package npm\'s registry serves no one is never sent OSV, even where `osv` is; its advisories kept with no `malware`, as before upstream told it, asked again', async t => {
+  const secret = { name: '@acme/secret', versions: [version('@acme/secret', '1.0.0', { 'package.json': '{}' }, { dependencies: {} }, ago(30))] }
+  const asked = npm(t, [], {}, { '@acme/secret': [advisory(1, 'GHSA-aaaa-bbbb-cccc', 'Embedded malicious code in @acme/secret', '=1.0.0')] })
+  const cache = store()
+  const malware = async () => (await assessNpm('@acme/secret', '1.0.0', { now: NOW, downloads: false, cache,
+    packument: () => Promise.resolve(documentOf(secret)), tarball: () => Promise.resolve(secret.versions[0].tgz) })).findings.find(({ id }) => id === 'malware')?.advisories?.map(({ id }) => id)
+  assert.deepEqual(await malware(), ['GHSA-aaaa-bbbb-cccc'], 'npm\'s advisory of malware told, as upstream tells it')
+  assert.ok(asked.includes(`HEAD ${REGISTRY}/@acme/secret`), 'npm asked whether anyone may read it')
+  assert.ok(!asked.some(url => url.startsWith('https://api.osv.dev/')), 'its name never sent to OSV')
+  cache.kept.set('risk/npm/advisories @acme/secret@1.0.0', { at: NOW, osv: true, rows: [{ id: 'GHSA-aaaa-bbbb-cccc', title: 'Embedded malicious code in @acme/secret', cwe: ['CWE-506'], aliases: [] }] })
+  asked.length = 0
+  assert.deepEqual(await malware(), ['GHSA-aaaa-bbbb-cccc'], 'kept with no `malware`: asked again, not read as no malware')
+  assert.ok(asked.includes(ADVISORIES))
 })
 
 test('npm having no such package or version is said so', async t => {

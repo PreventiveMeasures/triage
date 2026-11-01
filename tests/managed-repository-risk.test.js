@@ -768,7 +768,8 @@ test('a lockfile’s packages of npm’s registry or a mirror are asked of npm�
     1: { fullName: 'org/one', lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'web/pnpm-lock.yaml', format: 'pnpm' }],
       files: { 'package-lock.json': npmLockfile, 'web/pnpm-lock.yaml': pnpmLockfile } },
   }, () => Promise.resolve(noneFound), { advisories: {
-    'left-pad': [{ id: 'GHSA-left-pad', title: 'Malware in left-pad', severity: 'high', cwe: ['CWE-506'], versions: ['1.3.0'] }],
+    // Malware's as upstream tells it.
+    'left-pad': [{ id: 'GHSA-left-pad', title: 'Malware in left-pad', severity: 'high', cwe: ['CWE-506'], malware: true, versions: ['1.3.0'] }],
     'is-number': [{ id: 'GHSA-is-number', title: 'ReDoS in is-number', severity: 'moderate', cwe: ['CWE-1333'], versions: ['7.0.0', '6.0.0'] }],
   } })
   const lines = await Array.fromAsync(scan(source))

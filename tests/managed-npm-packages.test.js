@@ -1220,7 +1220,8 @@ function insights(t, { downloads = {}, ranges = {}, repos = {}, advisories = {},
     const record = url.match(/^https:\/\/api\.osv\.dev\/v1\/vulns\/(.+)$/u)
     if (record) {
       asked.push(['osv', record[1], auth])
-      return Promise.resolve(osv[record[1]] ? Response.json({ id: record[1], details: osv[record[1]] }) : Response.json({ message: 'Not Found' }, { status: 404 }))
+      const kept = osv[record[1]]
+      return Promise.resolve(kept ? Response.json({ id: record[1], ...typeof kept === 'string' ? { details: kept } : kept }) : Response.json({ message: 'Not Found' }, { status: 404 }))
     }
     const attested = url.match(/^https:\/\/registry\.npmjs\.org\/-\/npm\/v1\/attestations\/(.+)$/u)
     if (attested) {
@@ -1389,6 +1390,21 @@ test('an advisory OSV\'s record covers beyond npm\'s range for it is still one r
   assert.deepEqual(body.advisories, [{ id: 'GHSA-f5x2-xv93-4p23', source: 'registry', ghsa: 'GHSA-f5x2-xv93-4p23', url: 'https://github.com/advisories/GHSA-f5x2-xv93-4p23',
     title: 'Type confusion', severity: 'critical', cvss: 9.8, cwe: ['CWE-843'], range: '<=0.4.3', details: 'Prior to commit fe52854.', affected: [1, 2] }])
   assert.deepEqual(asked.filter(([what]) => what === 'osv'), [['osv', 'GHSA-f5x2-xv93-4p23', null]], 'its record read once')
+})
+
+test('an advisory of npm\'s an OSV record of malware names is told of malware, as upstream tells it, whatever its title and CWEs', async t => {
+  const h = await setup(t)
+  const pkg = packageOf('nx-like', '21.5.0', { 'index.js': '' })
+  registry(t, [{ ...pkg, versions: ['21.4.0', '21.5.0'] }])
+  // As nx's: npm's advisory names no malware, OSV's MAL- record names it.
+  insights(t, {
+    advisories: { 'nx-like': [{ id: 1, url: 'https://github.com/advisories/GHSA-cxm3-wv7p-598c', title: 'Malicious versions of nx-like', severity: 'critical',
+      vulnerable_versions: '=21.5.0', cwe: [] }] },
+    osvHits: { 'nx-like@21.5.0': ['MAL-2025-41443'] },
+    osv: { 'MAL-2025-41443': { summary: 'Malicious code in nx-like (npm)', aliases: ['GHSA-cxm3-wv7p-598c'] } },
+  })
+  const body = (await h.send('/api/npm/advisories?name=nx-like')).json()
+  assert.deepEqual(body.advisories.map(({ id, malware, affected }) => ({ id, malware, affected })), [{ id: 'GHSA-cxm3-wv7p-598c', malware: true, affected: [0] }])
 })
 
 test('advisories its repository publishes on GitHub join npm\'s, its listing kept as bundle advisories keep it', async t => {

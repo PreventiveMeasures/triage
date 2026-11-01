@@ -9,11 +9,13 @@ import type { ManagedSql } from './sql.ts'
 
 // Records @preventive/upstream would otherwise keep in its disk cache, shared
 // by every instance: each repository's published advisory listing, written by
-// dependency audits that ask repositories, keyed `github/advisories/owner/name`.
-// Upstream stamps, validates and expires each value (90 minutes for a listing);
-// a refresh replaces the row, and there is one row per repository, so rows are
-// not evicted. Only public repositories publish advisories: rows are shared
-// across viewers.
+// dependency audits that ask repositories, keyed `github/advisories/owner/name`,
+// and each npm package npm's registry serves anyone, written by audits that ask
+// OSV, keyed `npm/public/name`. Upstream stamps, validates and expires each
+// value (90 minutes for a listing, a month for a public name); a refresh
+// replaces the row, and there is one row per repository or name, so rows are
+// not evicted. Only public repositories publish advisories, and only names
+// anyone may read are kept: rows are shared across viewers.
 export const UPSTREAM_CACHE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_upstream_cache (
   cache_key TEXT PRIMARY KEY,
@@ -88,43 +90,62 @@ export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
 }
 
 // An audit's `cache`: where the server has an upstream disk cache (off Vercel,
-// set at startup), that keeps everything; else this store keeps listings.
-export function auditCache(cacheDir: string | null | undefined, db: UpstreamCacheStore, signal: AbortSignal, debug = false, repos: Iterable<string> = []): CacheStore | undefined {
-  return cacheDir ? undefined : upstreamCache(db, signal, debug, repos)
+// set at startup), that keeps everything; else this store keeps listings and
+// public names, those of `keys` (auditedKeys) read at once.
+export function auditCache(cacheDir: string | null | undefined, db: UpstreamCacheStore, signal: AbortSignal, debug = false, keys: Iterable<string> = []): CacheStore | undefined {
+  return cacheDir ? undefined : upstreamCache(db, signal, debug, keys)
 }
 
-// The repositories whose listings an audit of `packages` asks for, where they
-// are already known: each `github` package, each `soldeer` package's given
-// repository, and with `repoAdvisories`, every other package's. Upstream looks
-// up the rest itself.
-export function auditedRepos(packages: Iterable<Package>, repoAdvisories: boolean): string[] {
-  const repos = [...packages].map(pkg => (pkg.ecosystem === 'github' ? pkg.name
-    : pkg.ecosystem === 'soldeer' || repoAdvisories ? pkg.github : undefined))
-  return [...new Set(repos.filter(repo => repo !== undefined))]
-}
+// Only listings and public names are kept: upstream's other records (npm
+// version documents, registries' repository lookups) read as misses and are
+// not written.
+const LISTINGS = 'github/advisories'
+const PUBLIC_NAMES = 'npm/public'
+const CACHED_TYPES = new Set([LISTINGS, PUBLIC_NAMES])
 
-// Only listings are kept: upstream's other records (npm version documents,
-// registries' repository lookups) read as misses and are not written.
-const CACHED_TYPE = 'github/advisories'
+// What an audit of `packages` reads first, where it is already known: the
+// listings of the repositories it knows, each `github` package, each `soldeer`
+// package's given repository, and with `repoAdvisories`, every other
+// package's, upstream looking up the rest itself; and whether each npm package
+// is public, as upstream asks before it asks OSV of it. Each as upstream asks
+// for it, a listing by its repository's lowercased name.
+export function auditedKeys(packages: Iterable<Package>, repoAdvisories: boolean): string[] {
+  return [...new Set([...packages].flatMap(pkg => {
+    const repo = pkg.ecosystem === 'github' ? pkg.name : pkg.ecosystem === 'soldeer' || repoAdvisories ? pkg.github : undefined
+    return [...pkg.ecosystem === 'npm' ? [`${PUBLIC_NAMES}/${pkg.name}`] : [], ...repo === undefined ? [] : [`${LISTINGS}/${repo.toLowerCase()}`]]
+  }))]
+}
 
 // The cache is an optimization: a database failure is a miss, never a failed
 // audit. Upstream keeps listing after an abandoned audit; once `signal` aborts,
 // the request's database work is over and the store is left alone.
-// Upstream reads one listing at a time per repository, and a request's queries
-// share one connection (Neon), so a recheck of hundreds of packages would wait
-// on as many round trips: the first read asks for every listing of `repos`
-// at once. Any other key, or all of them if that read fails, is read alone.
-export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug = false, repos: Iterable<string> = []): CacheStore {
-  // Upstream asks for a listing by its repository's lowercased name.
-  const batched = new Set([...repos].map(repo => `${CACHED_TYPE}/${repo.toLowerCase()}`))
+// Upstream reads one listing at a time per repository, and whether a name is
+// public eight at a time, and a request's queries share one connection (Neon),
+// so a recheck of hundreds of packages would wait on as many round trips: the
+// first read asks for every one of `keys` at once. Any other key, or all of
+// them if that read fails, is read alone. Upstream writes the public names it
+// finds eight at a time too: those written together are kept in one statement.
+export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug = false, keys: Iterable<string> = []): CacheStore {
+  const batched = new Set(keys)
   let batch: Promise<Map<string, string> | null> | undefined
   const readBatch = () => batch ??= db.getUpstreamCacheEntries([...batched]).catch((error: unknown) => {
     if (debug) console.warn('managed: upstream cache read failed:', error)
     return null
   })
+  const warnWrite = (error: unknown) => { if (debug) console.warn('managed: upstream cache write failed:', error) }
+  let gathered: [key: string, value: string][] = []
+  let keeping: Promise<void> | undefined
+  const keepGathered = () => keeping ??= (async () => {
+    await new Promise(resolve => { setImmediate(resolve) })
+    const entries = gathered
+    gathered = []
+    keeping = undefined
+    if (signal.aborted) return
+    try { await db.setUpstreamCacheEntries(entries, Date.now()) } catch (error) { warnWrite(error) }
+  })()
   return {
     async read(type, key) {
-      if (type !== CACHED_TYPE || signal.aborted) return null
+      if (!CACHED_TYPES.has(type) || signal.aborted) return null
       const cacheKey = `${type}/${key}`
       try {
         const found = batched.has(cacheKey) ? await readBatch() : null
@@ -136,10 +157,13 @@ export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug
       }
     },
     async write(type, key, value) {
-      if (type !== CACHED_TYPE || signal.aborted) return
-      try { await db.setUpstreamCacheEntry(`${type}/${key}`, JSON.stringify(value), Date.now()) } catch (error) {
-        if (debug) console.warn('managed: upstream cache write failed:', error)
+      if (!CACHED_TYPES.has(type) || signal.aborted) return
+      if (type === PUBLIC_NAMES) {
+        gathered.push([`${type}/${key}`, JSON.stringify(value)])
+        await keepGathered()
+        return
       }
+      try { await db.setUpstreamCacheEntry(`${type}/${key}`, JSON.stringify(value), Date.now()) } catch (error) { warnWrite(error) }
     },
   }
 }
@@ -224,10 +248,10 @@ export async function lastListing(cacheDir: string | null | undefined, db: Upstr
   let kept: { at?: unknown } | null
   try {
     if (cacheDir) {
-      const bytes = await readKeptFile(upstreamCachePath(cacheDir, CACHED_TYPE, `${key}.json.gz`), LISTING_BYTES)
+      const bytes = await readKeptFile(upstreamCachePath(cacheDir, LISTINGS, `${key}.json.gz`), LISTING_BYTES)
       kept = bytes && JSON.parse((await gunzipAsync(bytes, { maxOutputLength: LISTING_BYTES })).toString('utf8'))
     } else {
-      const value = await db.getUpstreamCacheEntry(`${CACHED_TYPE}/${key}`)
+      const value = await db.getUpstreamCacheEntry(`${LISTINGS}/${key}`)
       kept = value === null ? null : JSON.parse(value)
     }
   } catch (error) {
@@ -237,7 +261,7 @@ export async function lastListing(cacheDir: string | null | undefined, db: Upstr
   const at = kept?.at
   if (typeof at !== 'number') return null
   return { at, cache: {
-    read: (type, name) => Promise.resolve(type === CACHED_TYPE && name === key ? { ...kept, at: Date.now() } : null),
+    read: (type, name) => Promise.resolve(type === LISTINGS && name === key ? { ...kept, at: Date.now() } : null),
     write: () => Promise.resolve(),
   } }
 }

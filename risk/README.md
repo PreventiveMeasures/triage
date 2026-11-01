@@ -26,7 +26,7 @@ const assessment = await assessNpm('axios', '1.14.1', {
   minimumReleaseAge: 14 * 24 * 60 * 60_000, // the default, two weeks; 0 for none, as a caller's own scopes take
   popularity: true, // the default; false for none, as a caller's own scopes take
   advisories: true, // the default; false to ask none of npm's advisories, as a scan asking them of a lockfile at once does
-  osv: true, // the default; false to ask OSV of none, as a private package's name is never sent it
+  osv: true, // the default; false to ask OSV of none, as a private package's name is never sent it (upstream sends OSV only names npm's registry serves anyone)
   owned: name => name.startsWith('@mine/'), // the caller's own packages, a new dependency on one told no tier nor age; none by default
   cache, // as @preventive/upstream's CacheStore: read(type, key) and write(type, key, value)
 })
@@ -136,7 +136,7 @@ Without `tarball`, a tarball comes from upstream's `getTarball`, held to upstrea
   First, with or without `oldVersion`:
   - `malware`, critical (`npm/malware.js`), where either of these holds:
     - npm took the package down (`takenDown`), whatever version is asked: its latest version is npm's placeholder, a "security holding package" from `npm/security-holder` published by npm.
-    - An advisory of malware names the version (`advisories`, each `{ id, url, title }`).
+    - An advisory of malware names the version (`advisories`, each `{ id, url, title }`), as upstream tells it (its `malware`).
       npm's advisory counts where it has CWE-506 (embedded malicious code), whatever its title, or a title naming malware, as @solana/web3.js's GHSA-jcxm-7wvp-g6p5 does with CWE-200 alone.
       Where `osv` is on, OSV's records that npm's registry hasn't count too (upstream's `osv`), among them the malicious packages OpenSSF lists (`MAL-…`).
       For example, nx's malicious versions have no advisory of npm's, but OSV has MAL-2025-41443.

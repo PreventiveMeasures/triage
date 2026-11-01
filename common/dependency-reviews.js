@@ -47,7 +47,7 @@ export function npmReviewVerdictLimit(npm, advisoryList, socket, risk) {
   const advisories = index < 0 ? [] : advisoryList.advisories.filter(advisory => advisory.affected.includes(index))
   const alerts = npm.private ? [] : socket?.alerts ?? []
   if (risk?.findings?.some(finding => finding.id === 'malware') || npmTakenDown({ npm }) || alerts.some(alert => alert.type === 'malware')
-    || advisories.some(advisory => npmMalwareAdvisory(advisory) || advisory.id?.startsWith('MAL-') || /^Malicious package\b/iu.test(advisory.title ?? ''))) return 'reject'
+    || advisories.some(advisory => advisory.malware === true || npmMalwareAdvisory(advisory) || advisory.id?.startsWith('MAL-') || /^Malicious package\b/iu.test(advisory.title ?? ''))) return 'reject'
   if (advisories.some(advisory => advisory.severity === 'critical') || alerts.some(alert => alert.type === 'criticalCVE')) return 'request-changes'
   return 'accept'
 }

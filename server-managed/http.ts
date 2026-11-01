@@ -147,7 +147,7 @@ import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTip
 import { plainObject } from './npm-manifest.ts'
 import { type NpmDelta, keptNpmDeltas, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
-import { auditCache, auditedRepos, lastListing } from './upstream-cache.ts'
+import { auditCache, auditedKeys, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
 import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
@@ -3294,10 +3294,11 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
     // and, for packages anyone may read, OSV: no repository's. Each lockfile's
     // audit is bounded on its own, for one npm doesn't answer to fail alone and
     // the scan to carry on.
-    async advisories(packages, scanning) {
+    async advisories(asked, scanning) {
       const signal = AbortSignal.any([scanning, AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)])
-      const audited = await fetchBundleAdvisories(packages.map(pkg => ({ ecosystem: 'npm' as const, ...pkg })), signal,
-        { debug: deps.config.debug, cache: auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug) })
+      const packages = asked.map(pkg => ({ ecosystem: 'npm' as const, ...pkg }))
+      const audited = await fetchBundleAdvisories(packages, signal,
+        { debug: deps.config.debug, cache: auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug, auditedKeys(packages, false)) })
       if (audited.status !== 200) throw new NpmPackageError(502, audited.body.error)
       return audited.body
     },
@@ -3449,7 +3450,7 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
     if (res.destroyed || (needsGithub && !(await authorize()))) return
     const result = await fetchBundleAdvisories(inventory.packages, controller.signal, {
       debug: deps.config.debug, repoAdvisories, details, githubToken,
-      cache: auditCache(deps.config.upstreamCacheDir, deps.db, controller.signal, deps.config.debug, auditedRepos(inventory.packages, repoAdvisories)),
+      cache: auditCache(deps.config.upstreamCacheDir, deps.db, controller.signal, deps.config.debug, auditedKeys(inventory.packages, repoAdvisories)),
     })
     if (res.destroyed || !(await authorize())) return
     // Return just inventory and public advisories, never source or report data.

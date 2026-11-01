@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { fetchBundleAdvisories } from '../server-managed/bundle-advisories.ts'
 import { setCacheDir } from '@preventive/upstream/npm.js'
-import { auditCache, auditedRepos, lastListing, upstreamCache } from '../server-managed/upstream-cache.ts'
+import { auditCache, auditedKeys, lastListing, upstreamCache } from '../server-managed/upstream-cache.ts'
 import { checkUpstreamCacheStore } from './_managed-upstream-cache.js'
 import { OSV, osvNone } from './_managed-npm.js'
 
@@ -106,7 +106,7 @@ test('database failures are cache misses, never failed audits', async t => {
   assert.equal(calls.length, 3)
 })
 
-test('only repository listings are kept, never npm version documents', async t => {
+test('only repository listings and public names are kept, never npm version documents', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const integrity = `sha512-${createHash('sha512').update('dep').digest('base64')}`
@@ -116,6 +116,7 @@ test('only repository listings are kept, never npm version documents', async t =
     const { hostname, pathname } = new URL(url)
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
     if (url === OSV) return Promise.resolve(osvNone(init))
+    if (init?.method === 'HEAD') return Promise.resolve(new Response(null))
     if (hostname === 'registry.npmjs.org') {
       assert.equal(pathname, '/dep/2.0.0')
       // Keepable as upstream's disk cache would keep it: its dist is the registry's.
@@ -208,16 +209,20 @@ test('a listing as last kept, however old, is read where audits keep it, the dat
   assert.equal(warn.mock.callCount(), 1)
 })
 
-test('an audit asks for the listings of the repositories it knows in one database read', async t => {
+test('an audit asks for the listings of the repositories it knows, and whether its npm packages are public, in one database read', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const integrity = `sha512-${createHash('sha512').update('found').digest('base64')}`
   const repos = ['org/a', 'org/b', 'org/c', 'org/found', 'org/dep']
-  const github = []
+  const github = [], heads = []
   t.mock.method(globalThis, 'fetch', (url, init) => {
     const { hostname, pathname } = new URL(url)
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
     if (url === OSV) return Promise.resolve(osvNone(init))
+    if (init?.method === 'HEAD') {
+      heads.push(pathname)
+      return Promise.resolve(new Response(null))
+    }
     if (hostname === 'registry.npmjs.org') {
       assert.equal(pathname, '/found/1.0.0')
       return Promise.resolve(Response.json({ name: 'found', version: '1.0.0', repository: 'https://github.com/org/found',
@@ -231,35 +236,73 @@ test('an audit asks for the listings of the repositories it knows in one databas
   // `found` names no repository, so upstream looks it up; `Org/Dep` is spelled as GitHub may have it.
   const audited = [...['a', 'b', 'c'].map(name => ({ ecosystem: 'npm', name, versions: ['1.0.0'], github: `org/${name}` })),
     { ecosystem: 'npm', name: 'found', versions: ['1.0.0'] }, { ecosystem: 'github', name: 'Org/Dep', versions: ['1.0.0'] }]
-  const reads = { batched: [], single: [] }
+  const reads = { batched: [], single: [] }, written = []
   const counted = {
     getUpstreamCacheEntry: key => { reads.single.push(key); return db.getUpstreamCacheEntry(key) },
     getUpstreamCacheEntries: keys => { reads.batched.push(keys); return db.getUpstreamCacheEntries(keys) },
     setUpstreamCacheEntry: (...args) => db.setUpstreamCacheEntry(...args),
+    setUpstreamCacheEntries: (entries, at) => { written.push(entries.map(([key]) => key)); return db.setUpstreamCacheEntries(entries, at) },
   }
   const recheck = () => fetchBundleAdvisories(audited, signal(),
-    { repoAdvisories: true, cache: upstreamCache(counted, signal(), false, auditedRepos(audited, true)) })
+    { repoAdvisories: true, cache: upstreamCache(counted, signal(), false, auditedKeys(audited, true)) })
   const first = await recheck()
   assert.equal(first.status, 200)
   assert.deepEqual(github.toSorted(), repos.toSorted())
+  assert.deepEqual(heads.toSorted(), ['/a', '/b', '/c', '/found'], 'npm asked whether each is public')
+  assert.deepEqual(written, [['npm/public/a', 'npm/public/b', 'npm/public/c', 'npm/public/found']], 'those public kept in one statement')
   reads.batched.length = 0
   reads.single.length = 0
   assert.deepEqual(await recheck(), first)
   assert.equal(github.length, repos.length, 'every listing is answered from the database')
-  assert.deepEqual(reads.batched, [['github/advisories/org/a', 'github/advisories/org/b', 'github/advisories/org/c', 'github/advisories/org/dep']])
+  assert.equal(heads.length, 4, 'and whether each is public')
+  assert.deepEqual(reads.batched, [['npm/public/a', 'github/advisories/org/a', 'npm/public/b', 'github/advisories/org/b', 'npm/public/c', 'github/advisories/org/c',
+    'npm/public/found', 'github/advisories/org/dep']])
   assert.deepEqual(reads.single, ['github/advisories/org/found'], 'a repository looked up is read alone')
 
-  // A failed batch read is read key by key instead, not answered from GitHub.
+  // A failed batch read is read key by key instead, not answered from GitHub nor npm.
   const failing = { ...counted, getUpstreamCacheEntries: () => Promise.reject(new Error('database unavailable')) }
   reads.single.length = 0
   const fallback = await fetchBundleAdvisories(audited, signal(),
-    { repoAdvisories: true, cache: upstreamCache(failing, signal(), false, auditedRepos(audited, true)) })
+    { repoAdvisories: true, cache: upstreamCache(failing, signal(), false, auditedKeys(audited, true)) })
   assert.deepEqual(fallback, first)
   assert.equal(github.length, repos.length)
-  assert.equal(reads.single.length, repos.length)
+  assert.equal(heads.length, 4)
+  assert.equal(reads.single.length, repos.length + 4)
 })
 
-test('audits batch the listings they ask for: github packages, soldeer repositories, and the rest only on a recheck', () => {
+test('whether an npm package is public is kept a month, shared through the database; a private one\'s never, and asked again', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const heads = [], osv = []
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    const { pathname } = new URL(url)
+    if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
+    if (url === OSV) {
+      osv.push(...JSON.parse(init.body).queries.map(query => query.package.name))
+      return Promise.resolve(osvNone(init))
+    }
+    assert.equal(init?.method, 'HEAD', url)
+    heads.push(pathname)
+    return Promise.resolve(new Response(null, { status: pathname === '/@acme/secret' ? 404 : 200 }))
+  })
+  const audited = ['open', '@acme/open', '@acme/secret'].map(name => ({ ecosystem: 'npm', name, versions: ['1.0.0'] }))
+  const audit = () => fetchBundleAdvisories(audited, signal(), { cache: auditCache(null, db, signal(), false, auditedKeys(audited, false)) })
+  assert.deepEqual(await audit(), { status: 200, body: [] })
+  assert.deepEqual([heads.toSorted(), osv.toSorted()], [['/@acme/open', '/@acme/secret', '/open'], ['@acme/open', 'open']])
+  assert.equal(await db.getUpstreamCacheEntry('npm/public/@acme/secret'), null, 'a private name is never kept')
+  assert.equal(JSON.parse(await db.getUpstreamCacheEntry('npm/public/open')).public, true)
+  heads.length = 0
+  osv.length = 0
+  assert.deepEqual(await audit(), { status: 200, body: [] })
+  assert.deepEqual([heads, osv.toSorted()], [['/@acme/secret'], ['@acme/open', 'open']], 'only the private one asked again')
+  const later = Date.now() + 31 * 24 * 60 * 60_000
+  t.mock.method(Date, 'now', () => later)
+  heads.length = 0
+  await audit()
+  assert.deepEqual(heads.toSorted(), ['/@acme/open', '/@acme/secret', '/open'], 'a month on, each asked again')
+})
+
+test('audits batch what they ask for: github packages\' and soldeer repositories\' listings, npm packages\' public names, and the rest\'s listings only on a recheck', () => {
   const mixed = [
     { ecosystem: 'github', name: 'Org/Tool', versions: ['0.0.0'] },
     { ecosystem: 'soldeer', name: 'lib', versions: ['1.0.0'], github: 'org/lib' },
@@ -267,8 +310,8 @@ test('audits batch the listings they ask for: github packages, soldeer repositor
     { ecosystem: 'cargo', name: 'dep', versions: ['1.0.0'], github: 'org/dep' },
     { ecosystem: 'npm', name: 'unknown', versions: ['1.0.0'] },
   ]
-  assert.deepEqual(auditedRepos(mixed, false), ['Org/Tool', 'org/lib'])
-  assert.deepEqual(auditedRepos(mixed, true), ['Org/Tool', 'org/lib', 'org/dep'])
+  assert.deepEqual(auditedKeys(mixed, false), ['github/advisories/org/tool', 'github/advisories/org/lib', 'npm/public/dep', 'npm/public/unknown'])
+  assert.deepEqual(auditedKeys(mixed, true), ['github/advisories/org/tool', 'github/advisories/org/lib', 'npm/public/dep', 'github/advisories/org/dep', 'npm/public/unknown'])
 })
 
 test('an abandoned audit leaves the database alone', async () => {

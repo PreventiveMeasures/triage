@@ -147,7 +147,7 @@ A package from another host is assessed as npm's package only when its lockfile 
 
 - npm's registry: each lockfile's npm and mirror packages in one advisories request, version documents, and the downloads API.
 - OSV: public packages only.
-  A scoped package counts as public only when npm answers for it anonymously.
+  A package, scoped or not, counts as public only when npm answers for it anonymously; that answer is kept for a month.
 - A private package's name is never sent to OSV or Socket.
 - Download counts are kept only for packages the downloads API counts, so a private package's zero is never stored with public counts.
 - GitHub: the repository, its lockfiles and its Dependabot alerts.
@@ -226,6 +226,7 @@ The bundle view's **Advisories** tab audits the bundle's dependencies:
   GitHub requests use the viewer's stored token; public links and viewers without a usable token, or whose token gets a `401`, read anonymously.
 - An npm-only audit contacts only npm and OSV.
 - Repository advisory listings are cached for 90 minutes and shared across viewers, since only public repositories publish them.
+- Which npm packages npm answers for anonymously is cached for a month and shared across viewers; only public names are kept.
 - Failures return `502 upstream-unavailable`, without source contents or findings; an oversized package inventory returns `413` before upstream is contacted.
 
 Report-scoped sources (`/api/reports/:id/sources`) include only the source paths cited by findings the team can see, and access is checked again before they are streamed.

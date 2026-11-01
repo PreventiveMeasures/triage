@@ -18,8 +18,8 @@
 // that locks them (LockedPackage `dev`) once all the rest are, as an install
 // of no devDependencies leaves them out. A lockfile's packages of npm's
 // registry or a mirror are asked of npm's advisories all at once, as `npm
-// audit` asks, each advisory told with whether it is of malware (risk's
-// npmMalwareAdvisory), which alone is a supply chain's risk; the rest are
+// audit` asks, each advisory told with whether it is of malware (upstream's
+// `malware`), which alone is a supply chain's risk; the rest are
 // vulnerabilities, told beside. A repository's Dependabot alerts of npm's, open or dismissed,
 // are told once its lockfiles' advisories are, each with the versions its
 // lockfile locks that it covers, for the page to blend them into npm's; one
@@ -94,8 +94,8 @@ export interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends Audi
 
 // A Dependabot alert as a scan tells it: with the versions of its package
 // the lockfile it is of locks that it covers, none where it is of none read
-// (a package.json, bun's lockfile), and whether it is of malware, as an
-// advisory's is told.
+// (a package.json, bun's lockfile), and whether it is of malware, by the rule
+// upstream tells an advisory's by (risk's npmMalwareAdvisory).
 export type DependabotAlertRow = DependabotAlert & { versions: string[]; malware: boolean }
 
 // A risk line is of npm's package of its name and version, or, with an

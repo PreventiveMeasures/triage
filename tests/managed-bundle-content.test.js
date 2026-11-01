@@ -840,6 +840,8 @@ test('bundle advisories require security, independently of dependency findings',
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, init) => {
     if (url === OSV) return Promise.resolve(osvNone(init))
+    // Whether anyone may read it, as upstream asks before it asks OSV.
+    if (init?.method === 'HEAD') return Promise.resolve(new Response(null))
     calls.push({ url, init })
     return Promise.resolve(Response.json({ dep: [npmAdvisory('Published vulnerability')] }))
   })
@@ -892,6 +894,7 @@ test('advisories recheck security after cold metadata builds and upstream reques
   })
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     if (url === OSV) return osvNone(init)
+    if (init?.method === 'HEAD') return new Response(null)
     calls++
     await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
     return Response.json({ dep: [npmAdvisory('Must not escape')] })
@@ -1082,10 +1085,10 @@ test('persisted inventories exclude stubs per reason and retain scoped skipped d
   assert.equal(skipped.length, 1)
   assert.equal(skipped[0].version, 'dev-main')
   assert.match(skipped[0].because, /Composer dev versions/u)
-  assert.equal(calls.length, 3, 'npm\'s advisories, OSV\'s of ws, anyone may read it, and the repository\'s')
+  assert.equal(calls.length, 4, 'npm\'s advisories, whether anyone may read ws, OSV\'s of it, and the repository\'s')
   assert.deepEqual((await h.send(`${path}?reason=browser`, 'viewer')).json(), { packages: [], skipped: [], advisories: [] })
   assert.deepEqual((await h.send(`${path}?reason=dev`, 'viewer')).json(), { packages: [], skipped, advisories: [] })
-  assert.equal(calls.length, 3, 'stub-only and skipped-only scopes never reach upstream')
+  assert.equal(calls.length, 4, 'stub-only and skipped-only scopes never reach upstream')
   assert.deepEqual((await h.send(`${path}?reason=run`, 'viewer')).json(), {
     packages: [{ ecosystem: 'npm', name: 'ws', versions: ['8.21.1'] }], skipped: [], advisories: [],
   })

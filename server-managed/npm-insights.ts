@@ -286,10 +286,11 @@ export async function npmCommitTags(repo: string, sha: string, version: string, 
 // An advisory on the package, with the versions it covers as their indexes in
 // the list it was asked with: npm's (`registry`), or one its repository
 // publishes on GitHub before GitHub reviews it into npm's (`repository`); its
-// text (markdown) where its source has one.
+// text (markdown) where its source has one; `malware` where upstream tells it
+// is of malware, any of its rows.
 export interface NpmAdvisory {
   id: string; source: Advisory['source']; ghsa?: string; url?: string; title?: string; severity?: string; cvss?: number; cwe: string[]; range?: string
-  details?: string; affected: number[]
+  details?: string; malware?: true; affected: number[]
 }
 
 // `versions` those `affected` indexes; `repository` false where the
@@ -377,7 +378,7 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     const own: NpmAdvisory = {
       id: row.id, source: row.source, ...row.ghsa && { ghsa: row.ghsa }, ...row.url && { url: row.url }, ...row.title && { title: row.title },
       ...row.severity && { severity: row.severity }, ...row.cvss !== undefined && { cvss: row.cvss }, cwe: row.cwe, ...row.range && { range: row.range },
-      ...row.details && { details: row.details }, affected,
+      ...row.details && { details: row.details }, ...row.malware && { malware: true }, affected,
     }
     const known = merged.get(row.id)
     if (!known) {
