@@ -870,8 +870,11 @@ test('a head moved on, its year read anew, the year last counted answered meanwh
   // Read a page at a time, as many as five an answer.
   github(t, { commits, windows: false })
   const total = body => body.stats.weeks.reduce((sum, week) => sum + week.commits, 0)
-  await request({ repoId: '1' })
-  assert.equal(total((await request({ repoId: '1' })).body), 700)
+  // The year asked, not a month: its commits, as far as 54 days back, past
+  // what a month reads on a Sunday (its weeks and as many before, 49 days and
+  // that Sunday's hours), all counted whatever day it is.
+  await request({ repoId: '1', weeks: '52' })
+  assert.equal(total((await request({ repoId: '1', weeks: '52' })).body), 700)
   commits.unshift(...all.slice(0, 600))
   await repositoryReadStore(request.db).write('1\0pulse-head', { sha: all[0].oid }, Date.now())
   const moved = await request({ repoId: '1', weeks: '52' })
