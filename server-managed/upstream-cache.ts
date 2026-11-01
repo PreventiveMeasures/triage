@@ -123,8 +123,7 @@ export function auditedKeys(packages: Iterable<Package>, repoAdvisories: boolean
 // public eight at a time, and a request's queries share one connection (Neon),
 // so a recheck of hundreds of packages would wait on as many round trips: the
 // first read asks for every one of `keys` at once. Any other key, or all of
-// them if that read fails, is read alone. Upstream writes the public names it
-// finds eight at a time too: those written together are kept in one statement.
+// them if that read fails, is read alone.
 export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug = false, keys: Iterable<string> = []): CacheStore {
   const batched = new Set(keys)
   let batch: Promise<Map<string, string> | null> | undefined
@@ -132,17 +131,6 @@ export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug
     if (debug) console.warn('managed: upstream cache read failed:', error)
     return null
   })
-  const warnWrite = (error: unknown) => { if (debug) console.warn('managed: upstream cache write failed:', error) }
-  let gathered: [key: string, value: string][] = []
-  let keeping: Promise<void> | undefined
-  const keepGathered = () => keeping ??= (async () => {
-    await new Promise(resolve => { setImmediate(resolve) })
-    const entries = gathered
-    gathered = []
-    keeping = undefined
-    if (signal.aborted) return
-    try { await db.setUpstreamCacheEntries(entries, Date.now()) } catch (error) { warnWrite(error) }
-  })()
   return {
     async read(type, key) {
       if (!CACHED_TYPES.has(type) || signal.aborted) return null
@@ -158,12 +146,9 @@ export function upstreamCache(db: UpstreamCacheStore, signal: AbortSignal, debug
     },
     async write(type, key, value) {
       if (!CACHED_TYPES.has(type) || signal.aborted) return
-      if (type === PUBLIC_NAMES) {
-        gathered.push([`${type}/${key}`, JSON.stringify(value)])
-        await keepGathered()
-        return
+      try { await db.setUpstreamCacheEntry(`${type}/${key}`, JSON.stringify(value), Date.now()) } catch (error) {
+        if (debug) console.warn('managed: upstream cache write failed:', error)
       }
-      try { await db.setUpstreamCacheEntry(`${type}/${key}`, JSON.stringify(value), Date.now()) } catch (error) { warnWrite(error) }
     },
   }
 }

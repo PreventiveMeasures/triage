@@ -240,8 +240,7 @@ test('an audit asks for the listings of the repositories it knows, and whether i
   const counted = {
     getUpstreamCacheEntry: key => { reads.single.push(key); return db.getUpstreamCacheEntry(key) },
     getUpstreamCacheEntries: keys => { reads.batched.push(keys); return db.getUpstreamCacheEntries(keys) },
-    setUpstreamCacheEntry: (...args) => db.setUpstreamCacheEntry(...args),
-    setUpstreamCacheEntries: (entries, at) => { written.push(entries.map(([key]) => key)); return db.setUpstreamCacheEntries(entries, at) },
+    setUpstreamCacheEntry: (key, ...rest) => { written.push(key); return db.setUpstreamCacheEntry(key, ...rest) },
   }
   const recheck = () => fetchBundleAdvisories(audited, signal(),
     { repoAdvisories: true, cache: upstreamCache(counted, signal(), false, auditedKeys(audited, true)) })
@@ -249,7 +248,7 @@ test('an audit asks for the listings of the repositories it knows, and whether i
   assert.equal(first.status, 200)
   assert.deepEqual(github.toSorted(), repos.toSorted())
   assert.deepEqual(heads.toSorted(), ['/a', '/b', '/c', '/found'], 'npm asked whether each is public')
-  assert.deepEqual(written, [['npm/public/a', 'npm/public/b', 'npm/public/c', 'npm/public/found']], 'those public kept in one statement')
+  assert.deepEqual(written.filter(key => key.startsWith('npm/public/')).toSorted(), ['npm/public/a', 'npm/public/b', 'npm/public/c', 'npm/public/found'], 'those public kept')
   reads.batched.length = 0
   reads.single.length = 0
   assert.deepEqual(await recheck(), first)
