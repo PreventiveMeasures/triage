@@ -154,7 +154,7 @@ import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
 import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
 import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES, readBundleDetails } from './bundle-cache.ts'
-import { BUNDLE_VALIDATION_READ, type BundleValidation, fetchPackage, validateAtCommit, validateDependencies, validationPlan } from './bundle-validation.ts'
+import { BUNDLE_VALIDATION_READ, type BundleValidation, type PlannedBundle, validateAtCommit, validateDependencies, validationPlan } from './bundle-validation.ts'
 import type { CacheStorage } from './cache-storage.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
 import { type CatalogCommit, backfillBundleCommits, bundleCommits, cacheCommitDetails } from './bundle-commits.ts'
@@ -3608,14 +3608,13 @@ async function handleBundleValidation(req: IncomingMessage, res: ServerResponse,
 async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefined, record: ManagedBundle, access: WholeAccess | null) {
   let details
   try { details = await readBundleDetails(record, deps.bundleStore) } catch { return refusal(422, 'bundle-unavailable') }
-  const plan = details?.bundle ? validationPlan(details.bundle) : null
+  const plan = details?.bundle ? validationPlan(details.bundle as PlannedBundle) : null
   if (!plan) return refusal(422, 'bundle-unavailable')
   const stamp = (details!.bundle as { repo?: { commit?: unknown; directory?: unknown } } | undefined)?.repo
   const commit = typeof stamp?.commit === 'string' && /^[a-f\d]{40}$/u.test(stamp.commit) ? stamp.commit : null
   // Where it was built, as its stamp says, else where it is kept.
   const directory = stampedDirectory(typeof stamp?.directory === 'string' ? stamp : { directory: record.repoDirectory })
-  const options = { deadline: Date.now() + VALIDATION_MS, fetch: (ecosystem: string, name: string, version: string, integrity?: string) => fetchPackage(ecosystem, name, version, integrity)
-    .catch((err: unknown) => { if (deps.config.debug) console.warn(`managed: validation fetching ${ecosystem}:${name}@${version} failed:`, err); throw err }) }
+  const options = { deadline: Date.now() + VALIDATION_MS }
   if (!access || !commit) return validateDependencies(plan, access ? 'no-commit' : record.repoId === null ? 'no-repository' : 'no-access', options)
   const read = await readWholeRepositoryOf(deps, access, async (fullName, token) => ({ value: await validateAtCommit(plan, { fullName, token, commit, directory }, options), kept: false }),
     () => wholeRepositoryAccess(deps, cookie, access.repo.repoId))

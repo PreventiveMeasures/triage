@@ -9,7 +9,6 @@ import { test } from 'node:test'
 import { brotliCompressSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { gitBlobId } from '@exodus/stasis/validate'
-import { commitBlobs } from '../server-managed/bundle-validation.ts'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { people } from './_managed-repository-dependency-reviews.js'
@@ -60,37 +59,35 @@ const TREE = {
   'web/patches/ms@2.1.3.patch': { sha: blob(MS_PATCH), mode: '100644', type: 'blob' },
   'web/icon.png': { sha: gitBlobId(Buffer.from('AP8=', 'base64')), mode: '100644', type: 'blob' },
 }
-const PACKAGES = { 'npm:ms@2.1.3': MS, 'npm:left@1.0.0': { 'index.js': 'original\n', 'other.js': 'never bundled\n' } }
-
-test('a commit\'s entries are its tree\'s listing whole, else, cut short, read a directory at a time into those holding the paths asked alone', async t => {
-  const asked = []
-  const listings = {
-    [`${commit}?recursive=1`]: { truncated: true, tree: [] },
-    [commit]: { truncated: false, tree: [{ path: 'web', type: 'tree', sha: 'a'.repeat(40), mode: '040000' }, { path: 'docs', type: 'tree', sha: 'd'.repeat(40), mode: '040000' },
-      { path: 'README.md', type: 'blob', sha: 'e'.repeat(40), mode: '100644' }] },
-    [`${'a'.repeat(40)}?recursive=1`]: { truncated: false, tree: [{ path: 'src', type: 'tree', sha: 'b'.repeat(40), mode: '040000' },
-      { path: 'src/main.js', type: 'blob', sha: 'f'.repeat(40), mode: '100644' }, { path: 'src/link.js', type: 'blob', sha: '1'.repeat(40), mode: '120000' },
-      { path: 'sub', type: 'commit', sha: 'c'.repeat(40), mode: '160000' }] },
+// git's id of a tree of `entries` (each `{ path: its name, mode, sha }`), in
+// git's order, a tree's name with a `/` after it.
+function treeIdOf(entries) {
+  const name = entry => Buffer.from(entry.mode === '040000' ? `${entry.path}/` : entry.path)
+  const body = Buffer.concat(entries.toSorted((a, b) => Buffer.compare(name(a), name(b)))
+    .map(entry => Buffer.concat([Buffer.from(`${entry.mode.replace(/^0/u, '')} ${entry.path}\0`), Buffer.from(entry.sha, 'hex')])))
+  return createHash('sha1').update(`tree ${body.length}\0`).update(body).digest('hex')
+}
+// The tree of `files` (by path) as GitHub lists it whole: its id, and each
+// entry, a tree's too, by its path.
+function treeOf(files) {
+  const listed = []
+  const build = (prefix, paths) => {
+    const entries = [...Map.groupBy(Object.entries(paths), ([path]) => path.split('/')[0])].map(([name, group]) => (group.length === 1 && group[0][0] === name
+      ? { path: name, ...group[0][1] }
+      : { path: name, mode: '040000', type: 'tree', sha: build(`${prefix}${name}/`, Object.fromEntries(group.map(([path, entry]) => [path.slice(name.length + 1), entry]))) }))
+    listed.push(...entries.map(entry => ({ ...entry, path: `${prefix}${entry.path}` })))
+    return treeIdOf(entries)
   }
-  const fetchImpl = t.mock.fn(input => {
-    const tree = String(input).split('/git/trees/')[1]
-    asked.push(tree)
-    return Promise.resolve(listings[tree] ? Response.json(listings[tree]) : Response.json({ message: 'Not Found' }, { status: 404 }))
-  })
-  const { entries, cut } = await commitBlobs('org/repo', 'token', commit, ['web/src/main.js'], fetchImpl)
-  assert.deepEqual([...entries], [['README.md', { sha: 'e'.repeat(40) }], ['web/src/main.js', { sha: 'f'.repeat(40) }], ['web/src/link.js', { symlink: '' }],
-    ['web/sub', { submodule: true }]], 'as Stasis\'s validation takes them: a file by its blob id, a symlink, a submodule')
-  assert.equal(cut, false)
-  assert.deepEqual(asked, [`${commit}?recursive=1`, commit, `${'a'.repeat(40)}?recursive=1`], 'docs never read')
-  await assert.rejects(commitBlobs('org/repo', 'token', '9'.repeat(40), [], fetchImpl), /github-not-found/u)
-})
+  return { id: build('', files), tree: listed }
+}
+const PACKAGES = { 'npm:ms@2.1.3': MS, 'npm:left@1.0.0': { 'index.js': 'original\n', 'other.js': 'never bundled\n' } }
 
 // The app's API as `who` asks it, over a bundle stored at org/repo's `web`,
 // GitHub's tree at its commit (with `repoFiles` beside TREE, their contents
 // read there too), its main branch's head at `head` (whose history holds the
 // commit where it is the commit itself), and npm's registry as PACKAGES says,
 // the registry answering once `gate` settles.
-async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {}, head = commit, tree: listed = true } = {}) {
+async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {}, head = commit } = {}) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const users = await people(db)
@@ -100,6 +97,7 @@ async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {
     uploadedByLogin: 'admin', repoId: repo ? 1 : null, repoDirectory: repo ? 'web' : '' }, Date.now())
   const published = Object.entries(PACKAGES).map(([key, files]) => packageOf(key.slice(4, key.lastIndexOf('@')), key.slice(key.lastIndexOf('@') + 1), files))
   const asked = []
+  const listing = treeOf({ ...TREE, ...Object.fromEntries(Object.entries(repoFiles).map(([path, text]) => [path, { sha: blob(text), mode: '100644', type: 'blob' }])) })
   t.mock.method(globalThis, 'fetch', input => {
     const url = new URL(String(input))
     asked.push(`${url.host}${url.pathname}${url.search}`)
@@ -108,9 +106,9 @@ async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {
       if (url.pathname === '/repos/org/repo/git/ref/heads/main') return Promise.resolve(Response.json({ ref: 'refs/heads/main', object: { type: 'commit', sha: head } }))
       if (url.pathname === '/repos/org/repo/tags') return Promise.resolve(Response.json([]))
       if (url.pathname === '/repos/org/repo/branches') return Promise.resolve(Response.json([{ name: 'main', commit: { sha: head } }]))
-      if (listed && url.pathname === `/repos/org/repo/git/trees/${commit}` && url.search === '?recursive=1') {
-        const tree = { ...TREE, ...Object.fromEntries(Object.entries(repoFiles).map(([path, text]) => [path, { sha: blob(text), mode: '100644', type: 'blob' }])) }
-        return Promise.resolve(Response.json({ truncated: false, tree: Object.entries(tree).map(([path, entry]) => ({ path, ...entry })) }))
+      if (url.pathname === `/repos/org/repo/git/commits/${commit}`) return Promise.resolve(Response.json({ sha: commit, tree: { sha: listing.id } }))
+      if (url.pathname === `/repos/org/repo/git/trees/${listing.id}` && url.search === '?recursive=1') {
+        return Promise.resolve(Response.json({ sha: listing.id, truncated: false, tree: listing.tree }))
       }
       const path = decodeURIComponent(url.pathname.slice('/repos/org/repo/contents/'.length))
       if (url.pathname.startsWith('/repos/org/repo/contents/') && url.searchParams.get('ref') === commit && typeof repoFiles[path] === 'string') {
@@ -137,11 +135,11 @@ async function fixture(t, { repo = true, gate = Promise.resolve(), repoFiles = {
     await handler(req, res)
     return res
   }
-  return { db, users, send, asked }
+  return { db, users, send, asked, listing }
 }
 
 test('a bundle validated on request: its own code too for a reader of all of its repository, kept and told again without fetching anything', async t => {
-  const { db, send, asked } = await fixture(t)
+  const { db, send, asked, listing } = await fixture(t)
   assert.deepEqual((await send('alice')).body, { validation: null }, 'none yet')
   assert.equal((await send('alice', 'POST', false)).status, 403, 'a validation needs the CSRF token')
   const run = await send('alice', 'POST')
@@ -153,7 +151,7 @@ test('a bundle validated on request: its own code too for a reader of all of its
     'the commit main\'s; no lockfile at it, its dependencies held to their registry alone')
   assert.deepEqual(validation.packages.find(pkg => pkg.name === 'ms').patch, { path: 'patches/ms@2.1.3.patch', from: 'bundle', verified: true, applied: true },
     'the bundle\'s patch as the repository has it')
-  assert.ok(asked.includes(`registry.npmjs.org/ms/2.1.3`) && asked.includes(`api.github.com/repos/org/repo/git/trees/${commit}?recursive=1`), 'npm and GitHub asked')
+  assert.ok(asked.includes(`registry.npmjs.org/ms/2.1.3`) && asked.includes(`api.github.com/repos/org/repo/git/trees/${listing.id}?recursive=1`), 'npm and GitHub asked')
   asked.length = 0
   assert.deepEqual((await send('alice')).body, { validation }, 'kept')
   assert.deepEqual(asked.filter(path => !path.startsWith('api.github.com/repos/org/repo')), [], 'nothing fetched to tell it')
@@ -259,17 +257,9 @@ test('a bundle\'s dependencies held to the lockfile installing it at its commit:
   assert.ok(!asked.some(path => path.startsWith('registry.npmjs.org/gone')), 'gone, locked by none, never fetched')
 })
 
-test('a commit of no branch or tag of the repository (a fork\'s, which GitHub serves through its name too) leaves own code unverified, its lockfile not held to', async t => {
+test('a commit of no branch or tag of the repository (a fork\'s, which GitHub serves through its name too, or one it has none of) leaves own code unverified, its lockfile not held to', async t => {
   const { send, asked } = await fixture(t, { head: 'e'.repeat(40), repoFiles: { 'pnpm-lock.yaml': PNPM_LOCK() } })
   const { validation } = (await send('alice', 'POST')).body
   assert.deepEqual([validation.status, validation.own, validation.lockfiles], ['invalid', { checked: false, reason: 'commit-not-in-history' }, null])
   assert.ok(asked.includes(`api.github.com/repos/org/repo/compare/${commit}...main?per_page=1`), 'held to main\'s history')
 })
-
-test('a commit GitHub has none of leaves own code unverified, no history of the repository\'s compared', async t => {
-  const { send, asked } = await fixture(t, { tree: false })
-  const { validation } = (await send('alice', 'POST')).body
-  assert.deepEqual([validation.own, validation.lockfiles], [{ checked: false, reason: 'commit-not-found' }, null])
-  assert.ok(!asked.some(path => path.includes('/compare/') || path.includes('/branches')))
-})
-

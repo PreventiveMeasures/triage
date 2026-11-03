@@ -1,6 +1,7 @@
 // A managed Stasis bundle's validation (server-managed/bundle-validation.ts,
 // Stasis's own) as a line of its Overview's facts (render-bundle.js), with its
 // Validate button and its details: its last one asked once and kept a while.
+import { FILE_REASONS, LOCKFILE_ERRORS, OWN_REASONS, noteOf } from '@exodus/stasis/validate-notes'
 import { html, nothing, svg } from 'lit'
 import { state } from '#client/index.js'
 import { fetchBundleValidation, runBundleValidation } from './client-managed.js'
@@ -78,24 +79,8 @@ export async function validate(bundle) {
 
 const plural = (value, noun) => `${value.toLocaleString('en-US')} ${noun}${value === 1 ? '' : 's'}`
 const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
-// Why own code wasn't checked, a package wasn't, or a file is as it is.
-const OWN_UNCHECKED = { 'no-repository': 'the bundle is attached to no repository', 'no-commit': 'its stamp names no commit',
-  'no-access': 'you may read only part of its repository', 'commit-not-found': 'GitHub has no such commit in its repository',
-  'commit-not-in-history': 'its commit is in no branch or tag of its repository (a fork’s, say)' }
-// Why a version wasn't checked, or fails beside its files.
-const REASONS = { git: 'locked from git, not a registry', unsupported: 'no upstream package to fetch for its ecosystem', unnamed: 'no name or version recorded',
-  'not-published': 'not published', unreadable: 'its registry refused it', timeout: 'not reached in time', failed: 'couldn’t be fetched',
-  'not-registry': 'locked from elsewhere than its registry', 'no-integrity': 'locked with no sha512 to hold its tarball to',
-  local: 'installed from a directory of the repository, which isn’t read', 'patch-unverified': 'as patched by the bundle’s patch, which isn’t verified against the repository',
-  'alias-unverified': 'installed under another name, an alias no lockfile read tells of', 'not-locked': 'not locked by the lockfile',
-  'integrity-mismatch': 'its registry’s tarball isn’t the one the lockfile locks', 'integrity-conflict': 'locked with two integrities',
-  misplaced: 'installed where its path or its lockfile names another package or version' }
-const PATCH_ERRORS = { 'patch-not-in-repository': 'is the bundle’s, not the repository’s', 'patch-not-found': 'is in no file of its hash',
-  'patch-mismatch': 'isn’t of the hash its lockfile locks' }
-// Why its dependencies were held to no lockfile.
-const LOCKFILE_ERRORS = { 'no-lockfile': 'no lockfile of its repository locks them', 'lockfile-ambiguous': 'two package managers’ lockfiles install it',
-  'lockfile-unreadable': 'its lockfile couldn’t be read', 'lockfile-unsupported': 'its lockfile is of a kind Stasis doesn’t read' }
-const FILE_REASONS = { symlink: 'a symlink on GitHub', submodule: 'in a submodule', 'tree-cut': 'GitHub’s tree too large to list whole' }
+// Why own code wasn't checked: Stasis's reasons, and the app's own where its reader may read only part of its repository.
+const OWN_UNCHECKED = { ...OWN_REASONS, 'no-access': 'you may read only part of its repository' }
 const STATUS_LABELS = { valid: 'Valid', invalid: 'Invalid', incomplete: 'Incomplete' }
 // The tone a validation's, a package's or a file's state is shown in.
 const TONE = { valid: 'passed', invalid: 'failed', incomplete: 'wanted', unverified: 'wanted', differs: 'failed', unexpected: 'failed' }
@@ -112,19 +97,10 @@ function said({ counts, own }) {
   return `${told.length > 0 ? `${told.join(', ')}, of ` : 'every one of '}${plural(counts.files, 'file')}${packages.map(text => `; ${text}`).join('')}${own.checked ? '' : '; own code not checked'}`
 }
 
-// A package as its row tells it: its name and version, its state, and its
-// patch or why it wasn't checked.
+// A package as its row tells it: its name and version, its state, and what
+// Stasis notes of it, its paths as code.
 function packageRow(pkg) {
-  const patch = pkg.patch
-  const how = patch?.applied === false ? 'locked patched, bundled as published' : 'patched'
-  // Where a copy of it is installed, where that is why.
-  const at = pkg.at ? html`: <code>${pkg.at}</code>` : nothing
-  const verified = patch?.verified ? ', as the repository has it' : patch?.verified === false ? ', not verified against the repository' : ''
-  const whose = patch?.from === 'bundle' ? ` (the bundle’s${verified})` : ''
-  const note = pkg.reason ? html`${REASONS[pkg.reason] ?? (pkg.status === 'unverified' ? 'not checked' : pkg.reason)}${at}`
-    : patch?.error ? html`its patch${patch.path ? html` <code>${patch.path}</code>` : nothing} ${PATCH_ERRORS[patch.error] ?? `couldn’t be applied (${patch.error})`}`
-    : patch ? html`${how}${patch.path ? html` by <code>${patch.path}</code>${whose}` : nothing}`
-    : pkg.directory ? html`held to <code>${pkg.directory}</code> of the repository` : nothing
+  const note = noteOf(pkg).map(part => typeof part === 'string' ? part : html`<code>${part.path}</code>`)
   return html`<li class="bundle-validation-row"><span class="team-deps-name">${pkg.name}<span class="team-deps-version">@${pkg.version}</span></span>
     <span class="team-deps-review is-${TONE[pkg.status]}">${pkg.status}</span>
     <span class="bundle-validation-note">${note}</span></li>`

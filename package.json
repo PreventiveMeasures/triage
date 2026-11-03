@@ -419,8 +419,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@exodus/stasis": "1.0.0-beta.14",
-    "@exodus/stasis-core": "1.0.0-beta.14",
+    "@exodus/stasis": "1.0.0-beta.15",
+    "@exodus/stasis-core": "1.0.0-beta.15",
     "@preventive/archive": "^1.2.2",
     "@preventive/compare": "^1.2.11",
     "@preventive/diff": "^1.1.0",
@@ -428,7 +428,7 @@
     "@preventive/publishers": "^1.1.0",
     "@preventive/report": "^1.0.1",
     "@preventive/sourcemap": "1.0.0-alpha.1",
-    "@preventive/upstream": "^1.5.0",
+    "@preventive/upstream": "^1.5.1",
     "css-tree": "^3.2.1",
     "oxc-minify": "^0.152.0",
     "oxc-parser": "^0.152.0",
