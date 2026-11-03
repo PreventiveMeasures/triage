@@ -231,6 +231,10 @@ test('npm packages anyone may read are asked of OSV too, its malware with them, 
     calls.push({ url: String(url), method: options.method ?? 'GET', body: options.body && JSON.parse(options.body) })
     const { pathname } = new URL(url)
     if (options.method === 'HEAD') return Promise.resolve(new Response(null, { status: pathname === '/@acme/secret' ? 404 : 200 }))
+    if (pathname.endsWith('/latest')) {
+      const name = pathname.slice(1, -'/latest'.length)
+      return Promise.resolve(name === '@acme/secret' ? Response.json({ error: 'Not found' }, { status: 404 }) : Response.json({ name, version: '1.0.0' }))
+    }
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
     if (pathname === '/v1/querybatch') {
       return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(({ package: { name } }) => name === 'nx' ? { vulns: [{ id: 'MAL-2025-41443' }] } : {}) }))
@@ -248,8 +252,8 @@ test('npm packages anyone may read are asked of OSV too, its malware with them, 
     [{ name: 'nx', source: 'osv', id: 'MAL-2025-41443', versions: ['21.5.0'], malware: true }], 'told of malware as upstream tells it')
   assert.deepEqual(calls.filter(call => call.url.endsWith('/v1/querybatch')).flatMap(call => call.body.queries.map(query => query.package.name)).toSorted(), ['@acme/open', 'nx'],
     'a private package\'s name never sent to OSV')
-  assert.deepEqual(calls.filter(call => call.method === 'HEAD').map(call => call.url).toSorted(),
-    ['https://registry.npmjs.org/@acme/open', 'https://registry.npmjs.org/@acme/secret', 'https://registry.npmjs.org/nx'],
+  assert.deepEqual(calls.filter(call => call.url.endsWith('/latest')).map(call => call.url).toSorted(),
+    ['https://registry.npmjs.org/@acme/open/latest', 'https://registry.npmjs.org/@acme/secret/latest', 'https://registry.npmjs.org/nx/latest'],
     'npm asked of each package, scoped or not, whether anyone may read it')
 })
 
@@ -257,7 +261,7 @@ test('a package npm can\'t be asked of is taken as private, the audit going on',
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, options = {}) => {
     calls.push({ url: String(url), method: options.method ?? 'GET', body: options.body && JSON.parse(options.body) })
-    if (options.method === 'HEAD') return new URL(url).pathname === '/@slow/pkg' ? Promise.reject(new TypeError('fetch failed')) : Promise.resolve(new Response(null))
+    if (String(url).endsWith('/latest')) return new URL(url).pathname === '/@slow/pkg/latest' ? Promise.reject(new TypeError('fetch failed')) : Promise.resolve(Response.json({ name: 'open', version: '1.0.0' }))
     if (String(url).endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
     if (String(url).endsWith('/v1/querybatch')) return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(() => ({})) }))
     throw new Error(`unexpected ${url}`)
