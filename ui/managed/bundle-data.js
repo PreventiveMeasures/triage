@@ -136,12 +136,13 @@ const abortable = (promise, signal) => new Promise((resolve, reject) => {
 })
 
 // A read that a session change aborts, its failures named by `errors`, by
-// their error code or else their status; one read ahead (prefetch) taken.
-export async function request(url, errors, read, signal) {
+// their error code or else their status; one read ahead (prefetch) taken, but
+// for a request of another method (`init`).
+export async function request(url, errors, read, signal, init = {}) {
   signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
   const generation = managedAppState.generation
-  const ask = () => managedFetch(url, { credentials: 'same-origin', signal })
-  const ahead = takePrefetched(url, generation)
+  const ask = () => managedFetch(url, { credentials: 'same-origin', ...init, signal })
+  const ahead = init.method ? null : takePrefetched(url, generation)
   const taken = ahead && await abortable(ahead, signal).then(answer => answer.ok ? answer : null, err => { if (signal.aborted) throw err; return null })
   const response = taken || await ask()
   signal.throwIfAborted()
@@ -341,6 +342,27 @@ const BUNDLE_DEPENDENCY_REVIEW_ERRORS = {
 }
 export function fetchBundleDependencyReview(id, { signal } = {}) {
   return request(`/api/bundles/${encodeURIComponent(id)}/dependency-review`, BUNDLE_DEPENDENCY_REVIEW_ERRORS, response => response.json(), signal)
+}
+
+// A bundle's last validation its reader may see (GET
+// /api/bundles/:id/validation), `{ validation }`, null for none; and, POSTed,
+// it validated anew: its own code against GitHub, its dependencies against
+// upstream's packages.
+const BUNDLE_VALIDATION_ERRORS = {
+  ...BUNDLE_DEPENDENCY_REVIEW_ERRORS,
+  'unsupported-bundle': 'Only Stasis bundles are validated.',
+  'validation-busy': 'Other bundles are being validated. Try again shortly.',
+  'validation-failed': 'The validation failed. Try again.',
+  'csrf-missing': 'Your session is missing its request token. Reload the page.',
+  'csrf-mismatch': 'Your session changed. Reload the page.',
+  429: 'Other bundles are being validated. Try again shortly.',
+}
+const validationUrl = id => `/api/bundles/${encodeURIComponent(id)}/validation`
+export function fetchBundleValidation(id, { signal } = {}) {
+  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json(), signal)
+}
+export function runBundleValidation(id, csrfToken, { signal } = {}) {
+  return request(validationUrl(id), BUNDLE_VALIDATION_ERRORS, response => response.json().catch(() => null), signal, { method: 'POST', headers: { 'x-csrf-token': csrfToken } })
 }
 
 // A team's Dependencies tab's, of those of its repositories `repoIds` names,

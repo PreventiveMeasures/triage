@@ -207,6 +207,24 @@ These requests check access before they work and again before they answer.
 Where the repository a Stasis bundle is attached to reviews dependencies, its Overview shows a **Dependency review** line: whether the npm versions the bundle holds pass their reviews, as the lockfiles installing it lock them at the commit it was built from.
 See [A bundle's dependencies](./dependency-review.md#a-bundles-dependencies).
 
+## Validation
+
+A Stasis bundle's Overview has a **Validation** line with a **Validate** button, which checks that the bundle holds what it says it does by Stasis's own validation (`@exodus/stasis/validate`), the rules [`stasis validate`](https://github.com/PreventiveMeasures/stasis/blob/main/doc/validate.md) checks a bundle by: its own code as GitHub has it at the commit its stamp names (a commit of the repository's own history, not a fork's), and each dependency as its published package has it, held to the lockfile installing it there.
+
+The app reads the repository its own way: own code by git's blob ids of GitHub's listing of the commit's tree, each listing held to its tree's id, so no file of it is downloaded (where GitHub cuts the listing short, a directory at a time, into those holding the bundle's files alone), under the directory it was built in (the stamp's, else the bundle's location).
+Where no lockfile of the repository can be held to, the dependencies are held to their registry's integrity alone, and the line warns why.
+
+The line says **Valid**, **Invalid** or **Incomplete** (nothing failed, but some files weren't checked, packages not reached within 4 minutes among them); **Details** names the ref holding the commit and the lockfiles held to, and lists the files failing or left unverified, up to 500, and the packages failing, unverified or patched, and why.
+
+Own code is checked only for a reader who may read all of the bundle's repository, with their own GitHub access, which is checked again after it is read.
+A validation that checked own code, kept or new, is shown only to a reader who still may read all of the repository once it is read; a reader who no longer may is shown the one that didn't check own code instead, or refused a new one.
+For a bundle of no repository or commit, or a reader of only part of its repository, the dependencies are still validated, without the lockfiles (each held to its registry's integrity alone, without their patches, and with no version told apart as from git), and the line warns that own code couldn't be verified, and why.
+
+Validations are kept for a month, by the bundle, its location and whether own code was checked, and shown to the next reader of the Overview without fetching anything: a reader of all of the repository sees the one that checked own code (else the other), and any other reader only one that didn't.
+**Validate again** replaces it.
+A validation needs the CSRF token; two run at once per server instance (`429 validation-busy`), and requests for the same one meanwhile share it: for one checking own code, only the same reader's, as it reads the repository with their GitHub access and checks theirs again after.
+Private scoped npm packages are fetched with the server's `NPM_TOKEN`, as builds fetch them.
+
 ## Bundle advisories
 
 The bundle view's **Advisories** tab audits the bundle's dependencies:
