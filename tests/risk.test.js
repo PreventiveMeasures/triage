@@ -42,8 +42,9 @@ const documentOf = ({ name, versions, created, latest, removed = {} }) => ({ nam
 // name, and `advisories` by name, rows as npm's bulk endpoint answers them;
 // and OSV's records by name and version (`osv`), as its batch query answers
 // them and then each record, or a status it answers every batch with; each
-// URL asked, in order, a HEAD's as `HEAD <url>`: whether anyone may read a
-// package, as upstream asks before it sends OSV its name.
+// URL asked, in order, a HEAD's as `HEAD <url>`. Whether anyone may read a
+// package, as upstream asks before it sends OSV its name, is its latest
+// version's document, or where that is 404, a HEAD of the package's.
 const ADVISORIES = `${REGISTRY}/-/npm/v1/security/advisories/bulk`
 const OSV = 'https://api.osv.dev/v1/querybatch'
 const OSV_RECORD = 'https://api.osv.dev/v1/vulns/'
@@ -71,6 +72,10 @@ function npm(t, packages, downloads = {}, advisories = {}, osv = {}) {
     }
     for (const pkg of packages) {
       if (url === `${REGISTRY}/${pkg.name}`) return Response.json(documentOf(pkg))
+      if (url === `${REGISTRY}/${pkg.name}/latest`) {
+        const { 'dist-tags': { latest }, versions } = documentOf(pkg)
+        return Response.json(versions[latest])
+      }
       for (const { doc, tgz } of pkg.versions) if (url === doc.dist.tarball) return new Response(tgz)
     }
     return Response.json({ error: 'Not found' }, { status: 404 })
@@ -533,7 +538,7 @@ test('against the version risk picks: an attack\'s own earlier version passed ov
   assert.deepEqual(await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW, downloads: false, cache }), picked)
   assert.deepEqual(asked, [], 'the pick kept: npm isn\'t asked')
   await assessNpm('handed', '1.1.2', { oldVersion: true, now: NOW + 2 * 60 * 60_000, downloads: false, cache })
-  assert.deepEqual(asked.toSorted(), [`${REGISTRY}/handed`, ADVISORIES, `HEAD ${REGISTRY}/handed`, OSV].toSorted(), 'picked again after an hour, by its document alone, its advisories asked again as they are')
+  assert.deepEqual(asked.toSorted(), [`${REGISTRY}/handed`, ADVISORIES, `${REGISTRY}/handed/latest`, OSV].toSorted(), 'picked again after an hour, by its document alone, its advisories asked again as they are')
   const alone = await assessNpm('handed', '1.0.0', { oldVersion: true, now: NOW, downloads: false })
   assert.equal(alone.oldVersion, null, 'none below it')
   assert.deepEqual(alone, await assessNpm('handed', '1.0.0', { now: NOW, downloads: false }), 'assessed alone')
@@ -818,7 +823,7 @@ test('what is read is kept by type, and an assessment kept needs no tarball', as
   assert.deepEqual(asked, [], 'everything kept: npm isn\'t asked')
   asked.length = 0
   await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW + DAY, cache })
-  assert.deepEqual(asked.toSorted(), [`${REGISTRY}/kept`, ADVISORIES, `HEAD ${REGISTRY}/kept`, OSV].toSorted(),
+  assert.deepEqual(asked.toSorted(), [`${REGISTRY}/kept`, ADVISORIES, `${REGISTRY}/kept/latest`, OSV].toSorted(),
     'a day on, its deprecations and advisories asked again, as they are after an hour, its downloads kept a week; no tarball')
   asked.length = 0
   await assessNpm('kept', '1.1.0', { oldVersion: '1.0.0', now: NOW + 8 * DAY, cache })
@@ -1042,7 +1047,7 @@ test('npm\'s documents read within bounds: risk\'s own, or the caller\'s in its 
   const tarball = (name, number) => { read.push([`${name}@${number}`]); return Promise.resolve(own.versions[0].tgz) }
   const assessment = await assessNpm('hooked', '1.0.0', { now: NOW, packument, tarball })
   assert.deepEqual(read, [['hooked', true], ['hooked@1.0.0'], ['dep-like', false]], 'the package assessed with the caller\'s token, its dependency without; its tarball the caller\'s')
-  assert.ok(!asked.some(url => url.startsWith(REGISTRY) && url !== ADVISORIES), 'npm\'s registry asked for no document nor tarball')
+  assert.ok(!asked.some(url => url.startsWith(REGISTRY) && ![ADVISORIES, `${REGISTRY}/hooked/latest`].includes(url)), 'npm\'s registry asked for no document nor tarball, but whether anyone may read it')
   const busy = new Error('npm-busy')
   await assert.rejects(assessNpm('hooked', '1.0.0', { now: NOW, packument, tarball: () => Promise.reject(busy) }), error => error === busy, 'a caller\'s failure thrown as it is')
   assert.equal(assessment.dependencies.added[0].level, 'is-unpopular', 'its document read: public, none of its downloads counted')

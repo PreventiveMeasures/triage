@@ -841,7 +841,7 @@ test('bundle advisories require security, independently of dependency findings',
   t.mock.method(globalThis, 'fetch', (url, init) => {
     if (url === OSV) return Promise.resolve(osvNone(init))
     // Whether anyone may read it, as upstream asks before it asks OSV.
-    if (init?.method === 'HEAD') return Promise.resolve(new Response(null))
+    if (url === 'https://registry.npmjs.org/dep/latest') return Promise.resolve(Response.json({ name: 'dep', version: '2.0.0' }))
     calls.push({ url, init })
     return Promise.resolve(Response.json({ dep: [npmAdvisory('Published vulnerability')] }))
   })
@@ -894,7 +894,7 @@ test('advisories recheck security after cold metadata builds and upstream reques
   })
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     if (url === OSV) return osvNone(init)
-    if (init?.method === 'HEAD') return new Response(null)
+    if (url === 'https://registry.npmjs.org/dep/latest') return Response.json({ name: 'dep', version: '2.0.0' })
     calls++
     await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
     return Response.json({ dep: [npmAdvisory('Must not escape')] })
@@ -1070,6 +1070,7 @@ test('persisted inventories exclude stubs per reason and retain scoped skipped d
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
     calls.push({ url, body: options.body })
+    if (url === 'https://registry.npmjs.org/ws/latest') return Promise.resolve(Response.json({ name: 'ws', version: '8.21.1' }))
     if (url.includes('registry.npmjs.org')) return Promise.resolve(Response.json({}))
     if (url === OSV) return Promise.resolve(osvNone(options))
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)

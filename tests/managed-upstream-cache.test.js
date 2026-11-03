@@ -116,7 +116,7 @@ test('only repository listings and public names are kept, never npm version docu
     const { hostname, pathname } = new URL(url)
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
     if (url === OSV) return Promise.resolve(osvNone(init))
-    if (init?.method === 'HEAD') return Promise.resolve(new Response(null))
+    if (pathname === '/dep/latest') return Promise.resolve(Response.json({ name: 'dep', version: '2.0.0' }))
     if (hostname === 'registry.npmjs.org') {
       assert.equal(pathname, '/dep/2.0.0')
       // Keepable as upstream's disk cache would keep it: its dist is the registry's.
@@ -132,7 +132,7 @@ test('only repository listings and public names are kept, never npm version docu
   assert.equal(await db.getUpstreamCacheEntry('npm/versions/dep@2.0.0'), null)
   assert.notEqual(await db.getUpstreamCacheEntry('github/advisories/org/dep'), null)
   assert.equal((await recheck()).status, 200)
-  assert.equal(calls.filter(url => url.startsWith('https://registry.npmjs.org/dep/')).length, 2, 'npm is asked each time')
+  assert.equal(calls.filter(url => url === 'https://registry.npmjs.org/dep/2.0.0').length, 2, 'npm is asked each time')
   assert.equal(calls.filter(url => url === listing).length, 1, 'the listing is answered from the database')
 
   const used = []
@@ -214,14 +214,14 @@ test('an audit asks for the listings of the repositories it knows, and whether i
   t.after(() => db.close())
   const integrity = `sha512-${createHash('sha512').update('found').digest('base64')}`
   const repos = ['org/a', 'org/b', 'org/c', 'org/found', 'org/dep']
-  const github = [], heads = []
+  const github = [], latest = []
   t.mock.method(globalThis, 'fetch', (url, init) => {
     const { hostname, pathname } = new URL(url)
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
     if (url === OSV) return Promise.resolve(osvNone(init))
-    if (init?.method === 'HEAD') {
-      heads.push(pathname)
-      return Promise.resolve(new Response(null))
+    if (pathname.endsWith('/latest')) {
+      latest.push(pathname)
+      return Promise.resolve(Response.json({ name: pathname.slice(1, -'/latest'.length), version: '1.0.0' }))
     }
     if (hostname === 'registry.npmjs.org') {
       assert.equal(pathname, '/found/1.0.0')
@@ -247,13 +247,13 @@ test('an audit asks for the listings of the repositories it knows, and whether i
   const first = await recheck()
   assert.equal(first.status, 200)
   assert.deepEqual(github.toSorted(), repos.toSorted())
-  assert.deepEqual(heads.toSorted(), ['/a', '/b', '/c', '/found'], 'npm asked whether each is public')
+  assert.deepEqual(latest.toSorted(), ['/a/latest', '/b/latest', '/c/latest', '/found/latest'], 'npm asked whether each is public')
   assert.deepEqual(written.filter(key => key.startsWith('npm/public/')).toSorted(), ['npm/public/a', 'npm/public/b', 'npm/public/c', 'npm/public/found'], 'those public kept')
   reads.batched.length = 0
   reads.single.length = 0
   assert.deepEqual(await recheck(), first)
   assert.equal(github.length, repos.length, 'every listing is answered from the database')
-  assert.equal(heads.length, 4, 'and whether each is public')
+  assert.equal(latest.length, 4, 'and whether each is public')
   assert.deepEqual(reads.batched, [['npm/public/a', 'github/advisories/org/a', 'npm/public/b', 'github/advisories/org/b', 'npm/public/c', 'github/advisories/org/c',
     'npm/public/found', 'github/advisories/org/dep']])
   assert.deepEqual(reads.single, ['github/advisories/org/found'], 'a repository looked up is read alone')
@@ -265,14 +265,14 @@ test('an audit asks for the listings of the repositories it knows, and whether i
     { repoAdvisories: true, cache: upstreamCache(failing, signal(), false, auditedKeys(audited, true)) })
   assert.deepEqual(fallback, first)
   assert.equal(github.length, repos.length)
-  assert.equal(heads.length, 4)
+  assert.equal(latest.length, 4)
   assert.equal(reads.single.length, repos.length + 4)
 })
 
 test('whether an npm package is public is kept a month, shared through the database; a private one\'s never, and asked again', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
-  const heads = [], osv = []
+  const asked = [], osv = []
   t.mock.method(globalThis, 'fetch', (url, init) => {
     const { pathname } = new URL(url)
     if (pathname.endsWith('/advisories/bulk')) return Promise.resolve(Response.json({}))
@@ -280,25 +280,30 @@ test('whether an npm package is public is kept a month, shared through the datab
       osv.push(...JSON.parse(init.body).queries.map(query => query.package.name))
       return Promise.resolve(osvNone(init))
     }
-    assert.equal(init?.method, 'HEAD', url)
-    heads.push(pathname)
-    return Promise.resolve(new Response(null, { status: pathname === '/@acme/secret' ? 404 : 200 }))
+    if (init?.method === 'HEAD') {
+      asked.push(`HEAD ${pathname}`)
+      return Promise.resolve(new Response(null, { status: pathname === '/@acme/secret' ? 404 : 200 }))
+    }
+    assert.ok(pathname.endsWith('/latest'), url)
+    asked.push(pathname)
+    const name = pathname.slice(1, -'/latest'.length)
+    return Promise.resolve(name === '@acme/secret' ? Response.json({ error: 'Not found' }, { status: 404 }) : Response.json({ name, version: '1.0.0' }))
   })
   const audited = ['open', '@acme/open', '@acme/secret'].map(name => ({ ecosystem: 'npm', name, versions: ['1.0.0'] }))
   const audit = () => fetchBundleAdvisories(audited, signal(), { cache: auditCache(null, db, signal(), false, auditedKeys(audited, false)) })
   assert.deepEqual(await audit(), { status: 200, body: [] })
-  assert.deepEqual([heads.toSorted(), osv.toSorted()], [['/@acme/open', '/@acme/secret', '/open'], ['@acme/open', 'open']])
+  assert.deepEqual([asked.toSorted(), osv.toSorted()], [['/@acme/open/latest', '/@acme/secret/latest', '/open/latest', 'HEAD /@acme/secret'], ['@acme/open', 'open']])
   assert.equal(await db.getUpstreamCacheEntry('npm/public/@acme/secret'), null, 'a private name is never kept')
   assert.equal(JSON.parse(await db.getUpstreamCacheEntry('npm/public/open')).public, true)
-  heads.length = 0
+  asked.length = 0
   osv.length = 0
   assert.deepEqual(await audit(), { status: 200, body: [] })
-  assert.deepEqual([heads, osv.toSorted()], [['/@acme/secret'], ['@acme/open', 'open']], 'only the private one asked again')
+  assert.deepEqual([asked, osv.toSorted()], [['/@acme/secret/latest', 'HEAD /@acme/secret'], ['@acme/open', 'open']], 'only the private one asked again')
   const later = Date.now() + 31 * 24 * 60 * 60_000
   t.mock.method(Date, 'now', () => later)
-  heads.length = 0
+  asked.length = 0
   await audit()
-  assert.deepEqual(heads.toSorted(), ['/@acme/open', '/@acme/secret', '/open'], 'a month on, each asked again')
+  assert.deepEqual(asked.toSorted(), ['/@acme/open/latest', '/@acme/secret/latest', '/open/latest', 'HEAD /@acme/secret'], 'a month on, each asked again')
 })
 
 test('audits batch what they ask for: github packages\' and soldeer repositories\' listings, npm packages\' public names, and the rest\'s listings only on a recheck', () => {
