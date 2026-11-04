@@ -93,6 +93,7 @@
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
+//   GET  /api/admin/bundles/<id>/usage → admin|manage the reports linked to it or declaring it, asked before a delete | 401/403/404
 //   DELETE /api/admin/bundles/<id> → admin|manage deletes a bundle | 401/403/404
 //   POST /api/admin/bundles/set-repo → admin|manage attaches/detaches a bundle's repo | 401/403/404
 //   GET  /api/admin/uploads/key  → admin|manage public key for sealed upload bodies | 401/403
@@ -3850,6 +3851,27 @@ async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: 
   try { await pipeline(stored.stream, res) } catch { res.destroy() }
 }
 
+// GET /api/admin/bundles/<id>/usage — the reports that name a bundle, read
+// before deleting it (admin|manage, as the delete): linked to it, so their
+// findings show its code, or declaring it in their bundleHashes without the
+// link. Reports the caller can't read are counted, never named. Read-only, so
+// no CSRF. 404 when the caller can't manage the bundle.
+async function handleBundleUsage(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
+  const s = await readManageSession(res, deps, cookie, { handed: true })
+  if (s == null) return
+  const bundle = await deps.db.getBundle(id)
+  if (!bundle || (s.user.role !== 'admin' && !await deps.db.userCanReadBundle(s.user.id, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  // Each report's readability is read with it, as canViewReport tells a
+  // manager's: one statement however many reports use the bundle.
+  const reports: { id: string; filename: string; linked: boolean }[] = []
+  let otherReports = 0
+  for (const report of await deps.db.listReportsForBundle(id, bundle.integrity, s.user.role === 'admin' ? undefined : s.user.id)) {
+    if (report.readable) reports.push({ id: report.id, filename: report.filename, linked: report.bundleId === id })
+    else otherReports++
+  }
+  sendJson(res, 200, { bundleId: id, reports, otherReports })
+}
+
 // DELETE /api/admin/bundles/<id> — remove a bundle (admin|manage). Mutation:
 // same-origin + CSRF. Drops the row (referencing reports' bundle_id null out via
 // the FK; their bundle_integrity stays, so a re-upload re-links), then the bytes
@@ -5611,6 +5633,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === BUNDLE_SET_VISIBLE_PATH) {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleSetBundleVisible(req, res, deps, cookie); return
+    }
+    const bundleUsage = /^\/api\/admin\/bundles\/([a-f\d-]{36})\/usage$/iu.exec(path)
+    if (bundleUsage) {
+      if (method !== 'GET') { send405(res, 'GET'); return }
+      await handleBundleUsage(res, deps, cookie, bundleUsage[1]!); return
     }
     if (path.startsWith(BUNDLE_PREFIX)) {
       const id = path.slice(BUNDLE_PREFIX.length)

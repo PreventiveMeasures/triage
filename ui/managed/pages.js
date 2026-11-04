@@ -16,7 +16,7 @@ import { formatBytes } from '../scan/metrics.js'
 import { adminIcon, adminNavigation } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
 import { fetchBundleOrigin } from './bundle-data.js'
-import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchRepositoryLockfiles, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRepositoryDependencyReview, setRole, uploadBundle, uploadReport } from './admin-api.js'
+import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundleUsage, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchRepositoryLockfiles, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRepositoryDependencyReview, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { installFileDropZone, pickFiles, uploadFiles, uploadLocalFile } from './file-uploads.js'
 import { viewAs } from '../../client/managed/session.js'
 import localImportStyles from './styles/local-import.css'
@@ -1201,6 +1201,22 @@ const BUNDLE_ICON = html`<svg class="report-icon" viewBox="0 0 16 16" width="16"
   <path d="M8.878.392a1.75 1.75 0 0 0-1.756 0l-5.25 3.045A1.75 1.75 0 0 0 1 4.951v6.098c0 .624.332 1.2.872 1.514l5.25 3.045a1.75 1.75 0 0 0 1.756 0l5.25-3.045c.54-.313.872-.89.872-1.514V4.951c0-.624-.332-1.2-.872-1.514ZM7.875 1.69a.25.25 0 0 1 .25 0l4.63 2.685L8 7.133 3.245 4.375Zm-5.125 4.4 4.5 2.61v5.317l-4.375-2.537a.25.25 0 0 1-.125-.216Zm6 7.927V8.7l4.5-2.61v3.96a.25.25 0 0 1-.125.216Z"/>
 </svg>`
 
+// A bundle's delete confirmation, naming the reports that use it (linked to
+// it, or declaring it in their bundleHashes), as many as fit, and counting
+// those the reader can't access. Their link waits for the same bytes again.
+const BUNDLE_DELETION_NAMES = 5
+function bundleDeletion(bundle, { reports, otherReports }) {
+  const count = reports.length + otherReports
+  if (count === 0) return `Delete “${bundle.filename}”? No reports use it.`
+  const lines = reports.slice(0, BUNDLE_DELETION_NAMES).map(report => `• ${displayName(report.filename)}`)
+  const more = reports.length - lines.length
+  const others = `${otherReports} ${otherReports === 1 ? 'report' : 'reports'} you can't access`
+  if (more > 0) lines.push(`• ${more} more${otherReports > 0 ? `, and ${others}` : ''}`)
+  else if (otherReports > 0) lines.push(`• ${others}`)
+  return [`Delete “${bundle.filename}”?`, '', `${count === 1 ? '1 report uses' : `${count} reports use`} this bundle:`, ...lines, '',
+    `${count === 1 ? 'Its' : 'Their'} findings will show no code from it until the same bundle is uploaded again.`].join('\n')
+}
+
 // Bundles — full-view page for admin/manage. Uploads a bundle (sourcemap /
 // stasis archive, content-addressed by sha512 so dupes collapse) and lists what's
 // stored, with download + delete and uploader/repo attribution. Own
@@ -1213,6 +1229,7 @@ class ManagedAdminBundles extends ManagedPage {
     _query: { state: true },
     _visibility: { state: true },
     _visibilityBusy: { state: true },
+    _deleting: { state: true },
     _creating: { state: true },
     _data: { state: true },
     _locationBundle: { state: true },
@@ -1233,6 +1250,7 @@ class ManagedAdminBundles extends ManagedPage {
     this._query = ''
     this._visibility = 'all'
     this._visibilityBusy = null
+    this._deleting = null
     this._creating = false
     this._data = null
     this._error = null
@@ -1353,7 +1371,7 @@ class ManagedAdminBundles extends ManagedPage {
         ${b.canChangeRepo === false ? nothing : html`<button type="button" class="action" aria-label=${`Set location for ${b.filename}`} data-tooltip="Set repository location" ?disabled=${this._locationBusy} @click=${() => this._openLocation(b)}>${adminIcon('repo')}</button>`}
         <button type="button" class="action" aria-label=${`${visible ? 'Hide' : 'Make visible'} ${b.filename}`} data-tooltip=${visible ? 'Hide from teams' : b.repoId == null ? 'Assign a repository before publishing' : 'Make visible to teams'} ?disabled=${this._visibilityBusy != null || b.canChangeRepo === false || (!visible && b.repoId == null)} @click=${() => void this._setVisible(b, !visible)}>${adminIcon(visible ? 'hide' : 'show')}</button>
         <a class="action" aria-label=${`Download ${b.filename}`} href=${`/api/admin/bundles/${encodeURIComponent(b.id)}`}><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3-3 3 3 3-3M3 11v3h10v-3"/></svg></a>
-        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} ?disabled=${b.canChangeRepo === false} data-tooltip=${b.canChangeRepo === false ? 'Repository access is required to detach or delete this bundle' : nothing} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
+        <button type="button" class="action danger" aria-label=${`Delete ${b.filename}`} ?disabled=${b.canChangeRepo === false || this._deleting != null} data-tooltip=${b.canChangeRepo === false ? 'Repository access is required to detach or delete this bundle' : nothing} @click=${() => this._delete(b)}>${ADMIN_DELETE_ICON}</button>
       </span>
       ${this._locationBundle === b.id ? this._locationEditor(b) : nothing}
     </li>`
@@ -1451,15 +1469,26 @@ class ManagedAdminBundles extends ManagedPage {
     await uploadFiles(this, files, file => uploadBundle(file, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
   }
 
+  // Asks which reports use the bundle first, and says so in the confirmation;
+  // without that answer nothing is deleted.
   async _delete(b) {
-    if (!globalThis.confirm?.(`Delete “${b.filename}”? Linked reports will keep their pending link.`)) return
+    if (this._deleting != null || b.canChangeRepo === false) return
+    this._deleting = b.id
     this._error = null
     try {
-      await this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
-    } catch (err) {
-      this._error = `Delete failed: ${String(err?.message ?? err)}`
-    }
-    await this._load({ preserveError: true })
+      let usage
+      try { usage = await fetchBundleUsage(b.id) } catch (err) {
+        this._error = `Couldn't check which reports use “${b.filename}”: ${String(err?.message ?? err)}`
+        return
+      }
+      if (!globalThis.confirm?.(bundleDeletion(b, usage))) return
+      try {
+        await this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
+      } catch (err) {
+        this._error = `Delete failed: ${String(err?.message ?? err)}`
+      }
+      await this._load({ preserveError: true })
+    } finally { this._deleting = null }
   }
 }
 customElements.define('managed-admin-bundles', ManagedAdminBundles)

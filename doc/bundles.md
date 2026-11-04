@@ -41,6 +41,15 @@ Identical bytes reuse the existing bundle and keep its stored location.
 A bundle that cannot be parsed, or decodes past the limit, can still be downloaded as uploaded.
 For Vercel's request-size limits and chunked uploads, see [VERCEL.md](../server-managed/VERCEL.md).
 
+### Deleting a bundle
+
+Before deleting a bundle, Manage → Bundles asks `GET /api/admin/bundles/:id/usage` which reports use it, and the confirmation names them.
+A report uses a bundle when it is linked to it, so its findings show the bundle's code, or when its `bundleHashes` declared the bundle without the link.
+Only the declared hash the report was linked by is kept, or its first one when it is unlinked, so the report's other `bundleHashes` entries are not counted.
+Reports the deleting user can't read are counted but not named.
+If the check fails, nothing is deleted.
+Deleted, the bundle leaves those reports' findings without its code, until the same bytes are uploaded again and the reports link to them.
+
 ## Creating a bundle from a repository
 
 **Manage** → **Bundles** → **Create** builds a Stasis bundle on the server.

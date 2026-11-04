@@ -886,6 +886,14 @@ test('Postgres managed store: auth, scopes, uploads, history, comments, and rest
   assert.equal((await db.getReport(report)).bundleId, bundle)
   assert.deepEqual(await db.listReportFilenamesWithBundleHash(bundle, 'hash'), ['report.json'])
   assert.deepEqual(await db.listReportFilenamesWithBundleHash(bundle, 'other'), [])
+  const forBundle = { id: report, filename: 'report.json', bundleId: bundle, readable: true }
+  assert.deepEqual(await db.listReportsForBundle(bundle, 'sha512-other'), [forBundle])
+  assert.deepEqual(await db.listReportsForBundle(randomUUID(), 'sha512-abc'), [forBundle])
+  assert.deepEqual(await db.listReportsForBundle(randomUUID(), 'sha512-other'), [])
+  assert.deepEqual(await db.listReportsForBundle(bundle, 'sha512-abc', user), [forBundle], 'read through the team\'s src grant')
+  await db.setReportRepo(report, 1, 'elsewhere')
+  assert.deepEqual(await db.listReportsForBundle(bundle, 'sha512-abc', user), [{ ...forBundle, readable: false }])
+  await db.setReportRepo(report, 1, 'src')
   assert.deepEqual(await db.listReportsForRepo(1), [{ id: report, filename: 'report.json', sha256: 'hash', bundleId: bundle }])
   assert.equal((await db.listReports())[0].id, report)
   assert.equal((await db.listBundles(user))[0].byteSize, 20)
@@ -1436,6 +1444,7 @@ test('Postgres reads and cache writes of one statement send it alone, no transac
     ['listLinkReports', () => db.listLinkReports()],
     ['listLegacyLinkReports', () => db.listLegacyLinkReports()],
     ['listReportFilenamesWithBundleHash', () => db.listReportFilenamesWithBundleHash('bundle', 'sha')],
+    ['listReportsForBundle', () => db.listReportsForBundle('bundle', 'sha512-abc', session.userId)],
     ['listReportsForRepo', () => db.listReportsForRepo(1)],
     ['listBundlesForRepo', () => db.listBundlesForRepo(1)],
     ['listFindingCatalogReports', () => db.listFindingCatalogReports('', 10)],

@@ -263,6 +263,15 @@ export async function uploadBundle(file, csrfToken, repoId, directory = '') {
   return res.json()
 }
 
+// The reports that name a bundle, asked before deleting it: those the caller
+// can read (`linked` when their findings show its code), and how many others.
+export async function fetchBundleUsage(id, signal) {
+  const usage = await readJson(`/api/admin/bundles/${encodeURIComponent(id)}/usage`, signal)
+  if (usage?.bundleId !== id || !Array.isArray(usage.reports) || !usage.reports.every(report => typeof report?.filename === 'string')
+      || !Number.isSafeInteger(usage.otherReports) || usage.otherReports < 0) throw new Error('Invalid bundle usage')
+  return usage
+}
+
 export async function deleteBundle(id, csrfToken) {
   await deleteItem('bundles', id, csrfToken)
 }

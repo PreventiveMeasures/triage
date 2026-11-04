@@ -210,6 +210,11 @@ export interface RepoDataItem {
 
 export type RepoReportItem = Pick<ReportRecord, 'id' | 'filename' | 'sha256' | 'bundleId'>
 
+// A report that names a bundle: linked to it (bundleId is that bundle's), or
+// declaring its integrity as the bundle it was made from without the link.
+// `readable`: whether the manager asking may read it (as getReportView tells).
+export type BundleReportItem = Pick<ReportRecord, 'id' | 'filename' | 'bundleId'> & { readable: boolean }
+
 // A stored per-finding triage row, with the last writer's login resolved like
 // listReports (live login, falling back to the durable snapshot). `flagged`
 // maps the tri-state column: null unset, true/false set. Every field null =
@@ -455,6 +460,10 @@ export interface ManagedDb extends DependencyReviewStore, RepositoryDependencyRe
   getTeamReportAccessSnapshot(sessionId: string, now: number, teamId: string, reportId?: string | null): Promise<TeamReportAccessSnapshot | null>
   getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null>
   listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]>
+  // The reports linked to a bundle, or whose bundleHashes declared its integrity
+  // (bundle_integrity), newest first: what deleting it leaves without code.
+  // Each says whether the manager `userId` (none: an admin) may read it.
+  listReportsForBundle(bundleId: string, integrity: string, userId?: string): Promise<BundleReportItem[]>
   deleteReport(id: string): Promise<boolean>
   // Attach / detach a report's repo + directory link (repoId null = detach);
   // resolves true iff the report exists. The caller validates repoId and the
@@ -929,6 +938,15 @@ function prepareStatements(db: ManagedSql) {
          FROM viewer v`,
     ),
     reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
+    reportsForBundleStmt: db.prepare(
+      `SELECT r.id AS id, r.filename AS filename, r.bundle_id AS bundleId,
+              (? IS NULL OR r.uploaded_by = ? OR EXISTS(SELECT 1 FROM managed_team_repo tr
+                 JOIN managed_team_user tu ON tu.team_id = tr.team_id
+                 JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+                WHERE tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL} AND tu.user_id = ?)) AS readable
+         FROM managed_report r WHERE r.bundle_id = ? OR r.bundle_integrity = ?
+        ORDER BY r.uploaded_at DESC, r.filename ASC, r.id ASC`,
+    ),
     deleteReportStmt: db.prepare(`DELETE FROM managed_report WHERE id = ?`),
     setReportRepoStmt: db.prepare(`UPDATE managed_report SET repo_id = ?, repo_directory = ? WHERE id = ?`),
     setReportVisibleStmt: db.prepare(`UPDATE managed_report SET visible = ? WHERE id = ?`),
@@ -1414,6 +1432,11 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
     async listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]> {
       const rows = (await stmts.reportFilenamesWithBundleHashStmt.all(bundleId, sha256)) as { filename: string }[]
       return rows.map(row => row.filename)
+    },
+    async listReportsForBundle(bundleId: string, integrity: string, userId?: string): Promise<BundleReportItem[]> {
+      const rows = await stmts.reportsForBundleStmt.all(userId ?? null, userId ?? null, userId ?? null, bundleId, integrity) as
+        (Omit<BundleReportItem, 'readable'> & { readable: unknown })[]
+      return rows.map(row => ({ id: row.id, filename: row.filename, bundleId: row.bundleId, readable: Boolean(row.readable) }))
     },
     async deleteReport(id: string): Promise<boolean> {
       return Number((await deleteReportStmt.run(id)).changes) > 0

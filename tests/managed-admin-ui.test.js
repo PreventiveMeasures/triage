@@ -945,6 +945,65 @@ test('connecting the App redirects only for a valid installation response; failu
   assert.equal(page._actionError, null)
 })
 
+test('bundle deletion warns of the reports that use the bundle, and deletes nothing without knowing them', async t => {
+  const page = createPage(customElements.get('managed-admin-bundles'))
+  page.session = adminSession
+  page.appState.setSession(adminSession)
+  const bundle = { id: 'bundle', filename: 'app.map', repoId: 7, visible: true }
+  const named = count => Array.from({ length: count }, (_, i) => ({ id: `r${i}`, filename: `report-${i}.json`, linked: i % 2 === 0 }))
+  let usage = new Response('', { status: 503 })
+  const requests = []
+  t.mock.method(globalThis, 'fetch', (url, options = {}) => {
+    requests.push({ url, method: options.method ?? 'GET', csrf: options.headers?.['x-csrf-token'] })
+    if (url === '/api/admin/bundles/bundle/usage') return Promise.resolve(usage)
+    if (options.method === 'DELETE') return Promise.resolve(Response.json({ ok: true }))
+    return Promise.resolve(Response.json({ bundles: [], repos: [] }))
+  })
+  const messages = []
+  let answer = false
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'confirm')
+  globalThis.confirm = message => { messages.push(message); return answer }
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'confirm', previous); else delete globalThis.confirm })
+  const deletes = () => requests.filter(request => request.method === 'DELETE')
+
+  await page._delete(bundle)
+  assert.equal(messages.length, 0, 'no confirmation without the usage')
+  assert.equal(deletes().length, 0)
+  assert.match(page._error, /Couldn't check which reports use “app\.map”/u)
+  assert.equal(page._deleting, null)
+
+  usage = Response.json({ bundleId: 'other', reports: [], otherReports: 0 })
+  await page._delete(bundle)
+  assert.equal(messages.length, 0, 'nor with another bundle\'s')
+
+  usage = Response.json({ bundleId: 'bundle', reports: [{ id: 'g', filename: 'Audit%20notes: Product%20A.generic-md', linked: true }], otherReports: 1 })
+  await page._delete(bundle)
+  assert.equal(page._error, null)
+  assert.equal(messages.at(-1), [
+    'Delete “app.map”?', '', '2 reports use this bundle:', '• Audit notes: Product A', '• 1 report you can\'t access', '',
+    'Their findings will show no code from it until the same bundle is uploaded again.',
+  ].join('\n'))
+  assert.equal(deletes().length, 0, 'declining deletes nothing')
+
+  usage = Response.json({ bundleId: 'bundle', reports: named(7), otherReports: 2 })
+  await page._delete(bundle)
+  const lines = messages.at(-1).split('\n')
+  assert.equal(lines[2], '9 reports use this bundle:')
+  assert.deepEqual(lines.slice(3, 9), ['• report-0.json', '• report-1.json', '• report-2.json', '• report-3.json', '• report-4.json', '• 2 more, and 2 reports you can\'t access'])
+
+  usage = Response.json({ bundleId: 'bundle', reports: named(1), otherReports: 0 })
+  await page._delete(bundle)
+  assert.match(messages.at(-1), /\n1 report uses this bundle:\n• report-0\.json\n\nIts findings will show no code/u)
+
+  answer = true
+  usage = Response.json({ bundleId: 'bundle', reports: [], otherReports: 0 })
+  await page._delete(bundle)
+  assert.equal(messages.at(-1), 'Delete “app.map”? No reports use it.')
+  assert.deepEqual(deletes(), [{ url: '/api/admin/bundles/bundle', method: 'DELETE', csrf: 'current-token' }])
+  assert.equal(requests.at(-1).url, '/api/admin/bundles', 'the collection reloads after the delete')
+  assert.equal(page._deleting, null)
+})
+
 test('bundle visibility changes use CSRF, refresh catalogs and retain state on failure', async t => {
   const page = createPage(customElements.get('managed-admin-bundles'))
   page.session = adminSession
