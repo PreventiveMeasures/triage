@@ -26,7 +26,7 @@ const SINGLE_STATEMENTS = new Set(['getReport', 'getBundle', 'getStorageRow', 'g
   'listTriageFixes', 'getRepoDependencyReviews', 'listTeamDependencyReviews', 'getNpmReviewReader',
   'listDependencyReviewTeams', 'listDependencyReviewEnabledTeams', 'listUserNpmScopes', 'listTeamNpmScopes', 'hasTeamNpmScope',
   'listGithubMetadata', 'listGithubRepositoryVisibility', 'setGithubMetadata', 'recordGithubMetadataAttempts', 'setGithubRepositoryVisibility',
-  'listLinkReports', 'listLegacyLinkReports', 'listReportFilenamesWithBundleHash', 'listReportsForRepo', 'listBundlesForRepo',
+  'listLinkReports', 'listLegacyLinkReports', 'listReportFilenamesWithBundleHash', 'listReportsForBundle', 'listReportsForRepo', 'listBundlesForRepo',
   'listFindingCatalogReports', 'userCanReadBundleAdvisories',
   'sessionWithUser', 'getTeamReportAccessSnapshot', 'getReportAccessSnapshot', 'getBundleAccessSnapshot', 'getReportView', 'getUserGithubId', 'getUserTeamFeedSnapshot', 'getAnnotations', 'getAnnotationRevision', 'getUserTokens',
   'listReports', 'listBundles', 'listReadableBundleIds', 'listAllRepos', 'listSelectedRepos', 'listRepoScopesForUser', 'listTriage',
