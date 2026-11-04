@@ -3861,10 +3861,12 @@ async function handleBundleUsage(res: ServerResponse, deps: ManagedHttpDeps, coo
   if (s == null) return
   const bundle = await deps.db.getBundle(id)
   if (!bundle || (s.user.role !== 'admin' && !await deps.db.userCanReadBundle(s.user.id, id))) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  // Each report's readability is read with it, as canViewReport tells a
+  // manager's: one statement however many reports use the bundle.
   const reports: { id: string; filename: string; linked: boolean }[] = []
   let otherReports = 0
-  for (const report of await deps.db.listReportsForBundle(id, bundle.integrity)) {
-    if (await canViewReport(deps, s.user, report.id)) reports.push({ id: report.id, filename: report.filename, linked: report.bundleId === id })
+  for (const report of await deps.db.listReportsForBundle(id, bundle.integrity, s.user.role === 'admin' ? undefined : s.user.id)) {
+    if (report.readable) reports.push({ id: report.id, filename: report.filename, linked: report.bundleId === id })
     else otherReports++
   }
   sendJson(res, 200, { bundleId: id, reports, otherReports })

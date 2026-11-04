@@ -2970,17 +2970,18 @@ test('a bundle\'s usage names the reports linked to it or declaring it, counting
   const unused = JSON.parse((await f.upload('/api/admin/bundles', f.adminCookie, f.adminSess.csrfToken, 'unused bytes', { 'x-repo-id': '7', 'x-repo-directory': 'src' })).body)
   const privateBundle = JSON.parse((await f.upload('/api/admin/bundles', f.adminCookie, f.adminSess.csrfToken, 'private bytes', { 'x-repo-id': '8', 'x-repo-directory': 'src' })).body)
   const template = (await f.db.listReports())[0]
-  for (const [id, repoId, bundleId, integrity, offset] of [
-    ['linked', 7, bundle.id, bundle.integrity, 3], ['declared', 7, null, bundle.integrity, 2], ['private', 8, bundle.id, bundle.integrity, 1],
-    ['elsewhere', 7, other.id, other.integrity, 0],
-  ]) await f.db.insertReport({ ...template, id, filename: `${id}.json`, repoId, repoDirectory: 'src', bundleId, bundleIntegrity: integrity, uploadedBy: f.admin.id }, f.now + offset)
+  for (const [id, repoId, bundleId, integrity, offset, uploadedBy = f.admin.id] of [
+    ['linked', 7, bundle.id, bundle.integrity, 4], ['declared', 7, null, bundle.integrity, 3], ['private', 8, bundle.id, bundle.integrity, 2],
+    ['own', 8, bundle.id, bundle.integrity, 1, f.frankSess.userId], ['elsewhere', 7, other.id, other.integrity, 0],
+  ]) await f.db.insertReport({ ...template, id, filename: `${id}.json`, repoId, repoDirectory: 'src', bundleId, bundleIntegrity: integrity, uploadedBy }, f.now + offset)
 
   assert.deepEqual(await usage(bundle.id, f.adminCookie), { bundleId: bundle.id, otherReports: 0, reports: [
     { id: 'linked', filename: 'linked.json', linked: true }, { id: 'declared', filename: 'declared.json', linked: false }, { id: 'private', filename: 'private.json', linked: true },
+    { id: 'own', filename: 'own.json', linked: true },
   ] }, 'newest first, a declared integrity without the link included')
   assert.deepEqual(await usage(bundle.id), { bundleId: bundle.id, otherReports: 1, reports: [
-    { id: 'linked', filename: 'linked.json', linked: true }, { id: 'declared', filename: 'declared.json', linked: false },
-  ] }, 'a report outside the manager\'s access is counted, not named')
+    { id: 'linked', filename: 'linked.json', linked: true }, { id: 'declared', filename: 'declared.json', linked: false }, { id: 'own', filename: 'own.json', linked: true },
+  ] }, 'a report outside the manager\'s access is counted, not named; their own uploads they read anywhere')
   assert.deepEqual(await usage(unused.id), { bundleId: unused.id, reports: [], otherReports: 0 })
   assert.equal(await usage(privateBundle.id), 404, 'as the delete: only a bundle the manager can manage')
   assert.equal(await usage(randomUUID(), f.adminCookie), 404)
@@ -2989,7 +2990,7 @@ test('a bundle\'s usage names the reports linked to it or declaring it, counting
 
   assert.equal((await f.send('DELETE', `/api/admin/bundles/${bundle.id}`, f.cookie, f.frankSess.csrfToken)).statusCode, 200)
   assert.equal(await usage(bundle.id, f.adminCookie), 404)
-  assert.deepEqual((await f.db.listReportsForBundle(bundle.id, bundle.integrity)).map(r => [r.id, r.bundleId]), [['linked', null], ['declared', null], ['private', null]],
+  assert.deepEqual((await f.db.listReportsForBundle(bundle.id, bundle.integrity)).map(r => [r.id, r.bundleId]), [['linked', null], ['declared', null], ['private', null], ['own', null]],
     'deleted, its reports keep the integrity a re-upload links again')
 })
 
