@@ -18,9 +18,12 @@ const packages = [{ ecosystem: 'github', name: 'org/dep', versions: ['1.0.0'] }]
 const advisory = { ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Repository vulnerability', description: '# Details',
   author: { login: 'maintainer' }, vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<2.0.0' }] }
 
+// GitHub's listing of org/dep, each ask noted; OSV, asked of it as an
+// Action, having none of it.
 function stubGithub(t, answer = () => Response.json([advisory])) {
   const calls = []
-  t.mock.method(globalThis, 'fetch', url => {
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (url === OSV) return Promise.resolve(osvNone(init))
     calls.push(url)
     assert.equal(url, listing)
     return Promise.resolve(answer())

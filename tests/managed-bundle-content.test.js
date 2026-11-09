@@ -1086,10 +1086,10 @@ test('persisted inventories exclude stubs per reason and retain scoped skipped d
   assert.equal(skipped.length, 1)
   assert.equal(skipped[0].version, 'dev-main')
   assert.match(skipped[0].because, /Composer dev versions/u)
-  assert.equal(calls.length, 4, 'npm\'s advisories, whether anyone may read ws, OSV\'s of it, and the repository\'s')
+  assert.equal(calls.length, 5, 'npm\'s advisories, whether anyone may read ws, OSV\'s of it and of org/dep as an Action, and the repository\'s')
   assert.deepEqual((await h.send(`${path}?reason=browser`, 'viewer')).json(), { packages: [], skipped: [], advisories: [] })
   assert.deepEqual((await h.send(`${path}?reason=dev`, 'viewer')).json(), { packages: [], skipped, advisories: [] })
-  assert.equal(calls.length, 4, 'stub-only and skipped-only scopes never reach upstream')
+  assert.equal(calls.length, 5, 'stub-only and skipped-only scopes never reach upstream')
   assert.deepEqual((await h.send(`${path}?reason=run`, 'viewer')).json(), {
     packages: [{ ecosystem: 'npm', name: 'ws', versions: ['8.21.1'] }], skipped: [], advisories: [],
   })
@@ -1185,6 +1185,11 @@ for (const mode of ['refresh', 'expired', 'revoked', 'rejected']) {
       : { accessToken: 'expired-token', refreshToken: mode === 'expired' ? null : 'refresh-token', expiresAt: 1 })
     const calls = []
     t.mock.method(globalThis, 'fetch', async (url, init) => {
+      // OSV, asked of org/dep as an Action, with no credential.
+      if (url === OSV) {
+        assert.equal(new Headers(init.headers).get('authorization'), null)
+        return osvNone(init)
+      }
       calls.push(url)
       if (url === 'https://github.com/login/oauth/access_token') {
         assert.equal(JSON.parse(init.body).refresh_token, 'refresh-token')

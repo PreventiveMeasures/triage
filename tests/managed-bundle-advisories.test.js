@@ -147,15 +147,22 @@ test('Composer dev versions and unregistered crates are reported without prevent
   assert.ok(skipped.every(pkg => pkg.because.length > 0))
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (url === 'https://packagist.org/api/security-advisories/') {
+      calls.push({ url, body: new TextDecoder().decode(options.body) })
+      return Promise.resolve(Response.json({ advisories: [] }))
+    }
     calls.push({ url, body: JSON.parse(options.body) })
     return Promise.resolve(Response.json({ results: [{}] }))
   })
   assert.deepEqual(await fetchBundleAdvisories(packages, signal()), { status: 200, body: [] })
-  assert.deepEqual(calls, [{ url: 'https://api.osv.dev/v1/querybatch', body: { queries: [{ package: { ecosystem: 'Packagist', name: 'vendor/pkg' }, version: '1.2.3' }] } }])
+  assert.deepEqual(calls.toSorted((a, b) => a.url.localeCompare(b.url)), [
+    { url: 'https://api.osv.dev/v1/querybatch', body: { queries: [{ package: { ecosystem: 'Packagist', name: 'vendor/pkg' }, version: '1.2.3' }] } },
+    { url: 'https://packagist.org/api/security-advisories/', body: 'packages%5B%5D=vendor%2Fpkg' },
+  ], 'OSV, and Packagist as composer audit asks it, of the release alone')
   const scoped = inventoryOf(modules, ['vendor/private-crate/src/lib.rs'])
   assert.deepEqual(scoped, { packages: [], skipped: [skipped[0]] })
   assert.deepEqual(await fetchBundleAdvisories(scoped.packages, signal()), { status: 200, body: [] })
-  assert.equal(calls.length, 1, 'a skipped-only scope never contacts upstream')
+  assert.equal(calls.length, 2, 'a skipped-only scope never contacts upstream')
 })
 
 test('GitHub branch dot is normalized to the unknown-version placeholder and conservatively matches ranges', async t => {
@@ -164,8 +171,9 @@ test('GitHub branch dot is normalized to the unknown-version placeholder and con
     ['lib/copy', { ecosystem: 'github', name: 'ORG/DEP', version: '0.0.0', files: { 'src/File.sol': 'code' } }],
   ])
   assert.deepEqual(packages, [{ ecosystem: 'github', name: 'ORG/DEP', versions: ['0.0.0'] }])
-  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json([{ ghsa_id: ghsa, state: 'published', summary: 'Repository vulnerability',
-    vulnerabilities: [{ vulnerable_version_range: '>=3.0.0, <4.0.0' }] }])))
+  t.mock.method(globalThis, 'fetch', (url, options) => Promise.resolve(url.endsWith('/v1/querybatch')
+    ? Response.json({ results: JSON.parse(options.body).queries.map(() => ({})) })
+    : Response.json([{ ghsa_id: ghsa, state: 'published', summary: 'Repository vulnerability', vulnerabilities: [{ vulnerable_version_range: '>=3.0.0, <4.0.0' }] }])))
   const result = await fetchBundleAdvisories(packages, signal())
   assert.equal(result.status, 200)
   assert.deepEqual(result.body[0].versions, ['0.0.0'])
@@ -183,12 +191,15 @@ test('managed audits use the real upstream API and authenticate only GitHub acro
         url: `https://github.com/advisories/${ghsa}`, vulnerable_versions: '<2.0.0' }] }))
     }
     if (parsed.pathname === '/v1/querybatch') {
-      // npm's packages anyone may read too, OSV having nothing of them here.
+      // npm's packages anyone may read too, and the github package as an
+      // Action, by its name alone, OSV having nothing of either here.
       const { queries } = JSON.parse(options.body)
-      assert.ok(queries.every(query => ['crates.io', 'Packagist', 'npm'].includes(query.package.ecosystem)))
-      return Promise.resolve(Response.json({ results: queries.map(query => query.package.ecosystem === 'npm' ? {}
+      assert.ok(queries.every(query => ['crates.io', 'Packagist', 'npm', 'GitHub Actions'].includes(query.package.ecosystem)))
+      assert.ok(queries.every(query => (query.package.ecosystem === 'GitHub Actions') === (query.version === undefined)))
+      return Promise.resolve(Response.json({ results: queries.map(query => ['npm', 'GitHub Actions'].includes(query.package.ecosystem) ? {}
         : { vulns: [{ id: query.package.ecosystem === 'crates.io' ? 'RUSTSEC-2026-0001' : ghsa }] }) }))
     }
+    if (parsed.hostname === 'packagist.org') return Promise.resolve(Response.json({ advisories: [] }))
     if (parsed.pathname.startsWith('/v1/vulns/')) {
       const id = parsed.pathname.split('/').at(-1)
       return Promise.resolve(Response.json({ id, aliases: [], details: '# OSV details', affected: [{
@@ -303,6 +314,7 @@ test('repository rechecks enrich npm, Cargo and Composer with matching maintaine
     }
     if (hostname === 'crates.io') return Promise.resolve(Response.json({ crates: [{ id: 'log', repository: 'https://github.com/org/cargo-log' }] }))
     if (hostname === 'repo.packagist.org') return Promise.resolve(Response.json({ packages: { 'vendor/pkg': [{ source: { url: 'https://github.com/org/composer-pkg' } }] } }))
+    if (hostname === 'packagist.org') return Promise.resolve(Response.json({ advisories: [] }))
     assert.equal(hostname, 'api.github.com')
     const ecosystem = pathname.includes('npm-log') ? 'npm' : pathname.includes('cargo-log') ? 'rust' : 'composer'
     const name = ecosystem === 'composer' ? 'vendor/pkg' : 'log'
@@ -314,7 +326,7 @@ test('repository rechecks enrich npm, Cargo and Composer with matching maintaine
   const normal = await fetchBundleAdvisories(packages, signal())
   assert.equal(normal.status, 200)
   assert.equal(normal.body.length, 1)
-  assert.equal(calls.length, 4, 'the default audit only asks npm, and OSV of each ecosystem, npm\'s packages anyone may read among them')
+  assert.equal(calls.length, 5, 'the default audit only asks npm, OSV of each ecosystem, npm\'s packages anyone may read among them, and Packagist')
   const rechecked = await fetchBundleAdvisories(packages, signal(), { repoAdvisories: true })
   assert.equal(rechecked.status, 200)
   assert.equal(rechecked.body.length, 4)
@@ -352,6 +364,7 @@ test('a rejected token is not reused for later repositories in the same audit', 
   const anonymous = new Set()
   let rejected = 0
   t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (url.endsWith('/v1/querybatch')) return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(() => ({})) }))
     if (new Headers(options.headers).has('authorization')) {
       assert.equal(anonymous.size, 0, 'stop using the token once anonymous fallback has started')
       rejected++
@@ -368,7 +381,8 @@ test('a rejected token is not reused for later repositories in the same audit', 
 for (const status of [401, 403, 429, 500]) {
   test(`GitHub advisory failure ${status} retries only an authenticated 401, once`, async t => {
     const credentials = []
-    t.mock.method(globalThis, 'fetch', (_url, options) => {
+    t.mock.method(globalThis, 'fetch', (url, options) => {
+      if (url.endsWith('/v1/querybatch')) return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(() => ({})) }))
       credentials.push(new Headers(options.headers).get('authorization'))
       return Promise.resolve(Response.json({ message: 'Rejected' }, { status }))
     })
@@ -381,7 +395,8 @@ for (const status of [401, 403, 429, 500]) {
 test('an aborted audit does not retry a rejected GitHub token', async t => {
   const controller = new AbortController()
   let calls = 0
-  t.mock.method(globalThis, 'fetch', () => {
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (url.endsWith('/v1/querybatch')) return Promise.resolve(Response.json({ results: JSON.parse(options.body).queries.map(() => ({})) }))
     calls++
     controller.abort()
     return Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 }))
