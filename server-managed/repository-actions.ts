@@ -111,7 +111,8 @@ const isCommit = (text: string) => /^[\da-f]{40}$/u.test(text)
 
 // `source`, what it answers of a public repository kept for every scan, the
 // same whoever asks: of a commit while kept (but none, as one can be pushed
-// later), the rest for RISK_KEPT_MS. A private one's, or one missing, never.
+// later), the rest, its advisories too, for RISK_KEPT_MS. A private one's,
+// or one missing, never.
 export function sharedSource(source: ActionsSource, answers: ActionAnswers): ActionsSource {
   const keyOf = (what: string, name: string, ...more: string[]) => [what, name.toLowerCase(), ...more].join('\0')
   const kept = (key: string, lasting = false) => {
@@ -140,6 +141,7 @@ export function sharedSource(source: ActionsSource, answers: ActionAnswers): Act
     branches: name => shared(name, keyOf('branches', name), false, () => source.branches(name)),
     contains: (name, base, sha) => shared(name, keyOf('contains', name, base, sha), isCommit(base), () => source.contains(name, base, sha)),
     file: (name, path, commit) => shared(name, keyOf('file', name, path, commit), isCommit(commit), () => source.file(name, path, commit)),
+    ...source.advisories && { advisories: (name: string, versions: string[]) => shared(name, keyOf('advisories', name, ...versions), false, () => source.advisories!(name, versions)) },
   }
 }
 
@@ -153,8 +155,8 @@ export interface ActionsResolving {
 }
 
 // A reference's line: kept (`stored`, as read of the store with others),
-// else resolved, and kept where it is a public repository's; why not, where
-// it couldn't be.
+// else resolved, and kept where it is a public repository's and its
+// advisories could be had; why not, where it couldn't be.
 async function resolved(resolving: ActionsResolving, source: ActionsSource, { key, owner }: ActionRef,
   stored = resolving.store?.read(key)): Promise<ActionLine | null> {
   const kept = resolving.memory.get(key) ?? await stored?.then(row => row && { at: row.at, line: row.value })
@@ -164,7 +166,7 @@ async function resolved(resolving: ActionsResolving, source: ActionsSource, { ke
   let found: ResolvedAction
   try { found = await resolveAction(uses, source, { owner }) } catch (error) { return resolving.signal.aborted ? null : { type: 'action', key, ...failureOf(error) } }
   const line: ActionLine = { type: 'action', ...found }
-  if (found.repository?.private === false) {
+  if (found.repository?.private === false && !found.findings.some(({ id }) => id === 'advisories-unavailable')) {
     const at = Date.now()
     resolving.memory.set(key, { at, line })
     await resolving.store?.write(key, line, at)

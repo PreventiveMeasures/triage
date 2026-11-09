@@ -1,5 +1,6 @@
 // A reference resolved on GitHub (`source`, index.d.ts ActionsSource): its
-// repository, its ref's commit and its own code's findings (README.md).
+// repository, its ref's commit, its advisories and its own code's findings
+// (README.md).
 import { YamlError } from '@preventive/lockfile/yaml.js'
 import { readWorkflow } from './workflow.js'
 import { workflowFindings, workflowUses } from './findings.js'
@@ -168,7 +169,33 @@ async function pinnedOf(uses, info, source, tags) {
     else if (tags) findings.push({ id: 'untagged-commit', severity: 'moderate', on: where })
   }
   if (uses.comment && !commentHolds(uses.comment, named)) findings.push({ id: 'comment-mismatch', severity: 'high', comment: uses.comment, tags: named })
-  return { commit, at: 'sha', findings }
+  return { commit, at: 'sha', named, findings }
+}
+
+// The versions a reference's advisories are asked of, as upstream's `github`
+// packages take them: the releases on the commit it runs (`v4.2.1`, not the
+// `v4` moving with it), else a commit by its tags, or as any release where
+// none names it, and a tag or a branch as named (a moving tag its whole line).
+export function advisedVersions(at, ref, commit, named) {
+  const releases = named.filter(tag => isRelease(tagVersion(tag)))
+  if (releases.length > 0) return releases
+  if (at !== 'sha') return [ref]
+  return named.length > 0 ? named : [commit]
+}
+
+const RATED = new Set(['critical', 'high', 'moderate', 'low'])
+
+// A repository's advisories at `versions` (`source.advisories`), each a
+// finding: malware red, else as its source rates it, one unrated yellow.
+// None of a private repository, whose name OSV is never sent; why not
+// (`advisories-unavailable`) where they couldn't be had, the rest resolved
+// all the same.
+async function advisoryFindings(source, info, versions) {
+  if (!source.advisories || info.private !== false) return []
+  let advisories
+  try { advisories = await source.advisories(info.fullName, versions) } catch { return [{ id: 'advisories-unavailable', severity: 'notice' }] }
+  return advisories.map(({ id, title, url, severity, malware, versions: affected }) => ({ id: 'advisory', severity: malware ? 'critical' : RATED.has(severity) ? severity : 'moderate',
+    advisory: id, ...title ? { title } : {}, ...url ? { url } : {}, ...malware ? { malware: true } : {}, versions: affected }))
 }
 
 // A `$/path` (the repository's own at the commit running) as a reference.
@@ -202,9 +229,12 @@ export async function resolveAction(uses, source, { owner = null } = {}) {
   if (!info) return { ...at, repository: null, commit: null, at: null, tags: [], findings, uses: [] }
   const tags = await source.tags(info.fullName)
   const ref = uses.pin === 'sha' ? await pinnedOf(uses, info, source, tags) : await refOf(uses, info, source, tags)
-  const code = ref.commit && !ref.findings.some(({ id }) => id === 'commit-missing') ? await codeOf(uses, info, ref.commit, source) : null
+  const runs = ref.commit && !ref.findings.some(({ id }) => id === 'commit-missing')
+  // What it runs, and its advisories at the versions that is.
+  const [code, advised] = runs ? await Promise.all([codeOf(uses, info, ref.commit, source),
+    advisoryFindings(source, info, advisedVersions(ref.at, uses.ref, ref.commit, ref.named ?? tagsOn(tags, ref.commit)))]) : [null, []]
   return { ...at, repository: { fullName: info.fullName, private: Boolean(info.private) }, commit: ref.commit, at: ref.at, tags: tagsOn(tags, ref.commit),
-    findings: [...findings, ...ref.findings, ...code?.findings ?? []], uses: code?.uses ?? [] }
+    findings: [...findings, ...ref.findings, ...advised, ...code?.findings ?? []], uses: code?.uses ?? [] }
 }
 
 // `source` with its answers kept, by what was asked, while held: a scan's.
@@ -215,5 +245,5 @@ export function keptSource(source) {
     if (!kept.has(key)) kept.set(key, source[method](...args).catch(error => { kept.delete(key); throw error }))
     return kept.get(key)
   }
-  return Object.fromEntries(['repo', 'tags', 'tag', 'branch', 'branches', 'contains', 'file'].map(method => [method, keep(method)]))
+  return Object.fromEntries(['repo', 'tags', 'tag', 'branch', 'branches', 'contains', 'file', 'advisories'].filter(method => source[method]).map(method => [method, keep(method)]))
 }

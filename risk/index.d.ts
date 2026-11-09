@@ -237,6 +237,21 @@ export interface ActionsSource {
   // commits, it holds for good.
   contains(name: string, base: string, sha: string): Promise<boolean | null>
   file(name: string, path: string, commit: string): Promise<string | null>
+  // A public repository's advisories at `versions`, as upstream's
+  // `advisories` tells those of a `github` package: its own published ones,
+  // and OSV's of it as an Action. Without it, none are asked.
+  advisories?(name: string, versions: string[]): Promise<ActionAdvisory[]>
+}
+
+// An advisory of a repository, as upstream's `advisories` tells one.
+export interface ActionAdvisory {
+  id: string
+  url?: string | undefined
+  title?: string | undefined
+  severity?: string | undefined
+  malware?: boolean | undefined
+  // The versions asked that it affects.
+  versions: string[]
 }
 
 // A reference resolved: its repository as GitHub has it now, its ref's

@@ -1180,6 +1180,8 @@ function fixtureActions(): RiskFixtureLine[] {
     action('actions/setup-node@v4', { commit: commit('4'), at: 'tag', tags: ['v4.4.0', 'v4'], findings: [{ id: 'outdated', severity: 'low', latest: 'v6.0.0' }] }),
     action('tj-actions/changed-files@v45', { commit: commit('0'), at: 'tag', tags: ['v45'],
       findings: [{ id: 'tag-off-release', severity: 'high', release: 'v45.0.7' }, { id: 'tag-off-branch', severity: 'low' },
+        { id: 'advisory', severity: 'high', advisory: 'GHSA-mrrh-fwg8-r2c3', url: 'https://github.com/advisories/GHSA-mrrh-fwg8-r2c3',
+          title: 'tj-actions/changed-files through 45.0.7 allows remote attackers to discover secrets by reading actions logs', versions: ['v45'] },
         { id: 'remote-script', severity: 'high', file: 'action.yml', line: 20 }, { id: 'hosts', severity: 'critical', tag: 'Exfiltration', services: ['webhook-site'], file: 'action.yml', line: 21 }] }),
     action('someone/deploy-action@0123456789abcdef0123456789abcdef01234567 # v2.1.0', { commit: '0123456789abcdef0123456789abcdef01234567', at: 'sha', tags: [],
       findings: [{ id: 'imposter-commit', severity: 'critical' }, { id: 'comment-mismatch', severity: 'high', comment: 'v2.1.0', tags: [] }] }),
