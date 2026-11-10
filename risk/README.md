@@ -308,13 +308,13 @@ A finding in a resolved reference's own code also has the `file` it is in.
     It is yellow where only the same owner's workflows name it, because it may only be one the asker can't read.
   - `repo-moved`: renamed or transferred, orange, because GitHub redirects the old name until someone takes it.
   - `repo-fork` and `repo-archived`: low.
-- Its advisories (`resolve.js`), where `source` has `advisories` and the repository is public:
+- Its advisories (`resolve.js`), where `source` has `advisories`:
   - `advisory`: one per advisory, as upstream's `advisories` tells those of a `github` package, with its `advisory` id, `title`, `url` and the `versions` it affects.
     That is the repository's own published advisories, and OSV's records of it as an Action, which GitHub reviews under the Action (tj-actions/changed-files' GHSA-mrrh-fwg8-r2c3).
     It is red for malware, else as the advisory rates it, and yellow where it rates none.
   - The versions asked are the releases on the commit the reference runs (`v4.2.1`, not the `v4` that moves with it).
     Where no release is on it, a commit is asked by its tags, or as any release where no tag names it; a tag or a branch is asked as named, a moving tag as its whole line.
-  - A private repository's are never asked, as its name would be sent to OSV.
+  - A repository not known public is asked as `internal`: of its own published advisories alone, its name sent to no other source.
   - `advisories-unavailable`: a notice, where GitHub or OSV didn't answer; the reference is resolved all the same, and on the managed server not kept, so the next scan asks again.
 - A ref that is not a commit (`findings.js`, `resolve.js`):
   - `unpinned`: by a tag or a branch, orange; yellow for GitHub's own and the same owner's.

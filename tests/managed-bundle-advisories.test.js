@@ -403,6 +403,11 @@ test('a github package is asked of OSV only where GitHub says its repository is 
       vulnerabilities: [{ package: { ecosystem: 'actions', name: 'org/secret' }, vulnerable_version_range: '< 2.0.0' }] }] : []))
   })
   const packages = ['org/open', 'org/secret', 'org/gone'].map(name => ({ ecosystem: 'github', name, versions: ['1.0.0'] }))
+  // One that says, as an Actions scan knows, is taken as it says, GitHub not asked whether it is public.
+  const told = [{ ecosystem: 'github', name: 'org/said-open', versions: ['1.0.0'], internal: false }, { ecosystem: 'github', name: 'org/said-internal', versions: ['1.0.0'], internal: true }]
+  assert.equal((await fetchBundleAdvisories(told, signal(), { githubToken: 'viewer-token' })).status, 200)
+  assert.deepEqual([osv, listed.toSorted()], [['org/said-open'], ['/repos/org/said-internal/security-advisories', '/repos/org/said-open/security-advisories']])
+  osv.length = listed.length = 0
   const result = await fetchBundleAdvisories(packages, signal(), { githubToken: 'viewer-token' })
   assert.equal(result.status, 200)
   assert.deepEqual(result.body.map(({ name, source, id, versions }) => [name, source, id, versions]), [['org/secret', 'repository', ghsa, ['1.0.0']]],

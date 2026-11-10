@@ -3265,15 +3265,12 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
           (error: unknown) => { if (error instanceof GithubApiError && error.status === 404) return []; throw error }),
       }
     },
-    // References resolved with the admin's token, and each public one's
-    // advisories asked as a bundle's `github` package's are
-    // (bundle-advisories.ts): its repository's published ones, and OSV's of
-    // it as an Action. Each is bounded on its own, for one GitHub or OSV
-    // doesn't answer to be told so (`advisories-unavailable`) and the scan to
-    // carry on.
-    actions: { ...githubActionsSource(user.token), async advisories(name, asked) {
+    // References resolved with the admin's token, and each one's advisories
+    // asked as a bundle's `github` package's are (bundle-advisories.ts), one
+    // `internal` of its repository alone, each bounded on its own.
+    actions: { ...githubActionsSource(user.token), async advisories(name, asked, internal) {
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)])
-      const packages = [{ ecosystem: 'github' as const, name, versions: asked }]
+      const packages = [{ ecosystem: 'github' as const, name, versions: asked, internal }]
       const audited = await fetchBundleAdvisories(packages, signal, { debug: deps.config.debug, githubToken: user.token,
         cache: auditCache(deps.config.upstreamCacheDir, deps.db, signal, deps.config.debug, auditedKeys(packages, false)) })
       if (audited.status !== 200) throw new GithubApiError(502, audited.body.error)

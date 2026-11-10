@@ -208,11 +208,11 @@ test('what GitHub answers of a public repository is kept for every scan, whichev
   assert.deepEqual([...new Set(again)].toSorted(), ['branch nested/one', 'file nested/one', 'repo nested/one', 'tags nested/one'])
 })
 
-test('a public repository\'s advisories are asked of what it runs and kept for every scan, a private one\'s never; a line without them not kept', async () => {
+test('advisories are asked of what a reference runs, a public repository\'s kept for every scan, a private one\'s as internal and never; a line without them not kept', async () => {
   const asked = [], caches = riskCaches()
   let failing = false
-  const advisories = (name, versions) => {
-    asked.push(`${name} ${versions.join(' ')}`)
+  const advisories = (name, versions, internal) => {
+    asked.push(`${name} ${versions.join(' ')}${internal ? ' internal' : ''}`)
     if (failing) return Promise.reject(new GithubApiError(502, 'upstream-unavailable'))
     return Promise.resolve(name === 'third/party' ? [{ ecosystem: 'github', name, source: 'osv', id: 'GHSA-2345-6789-cfgh', aliases: [], severity: 'high', cwe: [], versions }] : [])
   }
@@ -226,14 +226,15 @@ test('a public repository\'s advisories are asked of what it runs and kept for e
   const told = await resolve(['third/party@v1'])
   assert.deepEqual(told.get('third/party@v1').findings.filter(({ id }) => id === 'advisory').map(({ advisory, versions }) => [advisory, versions]), [['GHSA-2345-6789-cfgh', ['v1.0.0']]])
   assert.ok(told.has('nested/one@main'))
-  assert.deepEqual(asked, ['third/party v1.0.0'], 'the release v1 is at; nested/one, private, asked none')
+  assert.deepEqual(asked, ['third/party v1.0.0', 'nested/one main internal'], 'the release v1 is at; nested/one, private, of its repository alone')
   await resolve([`third/party@${SHA('b')}`])
-  assert.deepEqual(asked, ['third/party v1.0.0'], 'another reference at that release, another scan, asks none')
+  assert.deepEqual(asked, ['third/party v1.0.0', 'nested/one main internal', 'nested/one main internal'],
+    'another reference at that release, another scan, asks none of third/party; nested/one\'s, never kept, again')
   failing = true
   assert.deepEqual(findingIds((await resolve(['actions/checkout@v4'])).get('actions/checkout@v4').findings).slice(0, 1), ['advisories-unavailable/notice@undefined'])
   failing = false
   await resolve(['actions/checkout@v4'])
-  assert.deepEqual(asked.slice(1), ['actions/checkout v4.2.0', 'actions/checkout v4.2.0'], 'asked again, the line without them not kept')
+  assert.deepEqual(asked.filter(each => each.startsWith('actions/')), ['actions/checkout v4.2.0', 'actions/checkout v4.2.0'], 'asked again, the line without them not kept')
 })
 
 test('a reference of a public repository is kept beyond the instance, a private one\'s not', async () => {

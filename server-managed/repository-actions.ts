@@ -141,7 +141,8 @@ export function sharedSource(source: ActionsSource, answers: ActionAnswers): Act
     branches: name => shared(name, keyOf('branches', name), false, () => source.branches(name)),
     contains: (name, base, sha) => shared(name, keyOf('contains', name, base, sha), isCommit(base), () => source.contains(name, base, sha)),
     file: (name, path, commit) => shared(name, keyOf('file', name, path, commit), isCommit(commit), () => source.file(name, path, commit)),
-    ...source.advisories && { advisories: (name: string, versions: string[]) => shared(name, keyOf('advisories', name, ...versions), false, () => source.advisories!(name, versions)) },
+    ...source.advisories && { advisories: (name: string, versions: string[], internal: boolean) =>
+      shared(name, keyOf('advisories', name, ...versions), false, () => source.advisories!(name, versions, internal)) },
   }
 }
 

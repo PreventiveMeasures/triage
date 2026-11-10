@@ -237,10 +237,11 @@ export interface ActionsSource {
   // commits, it holds for good.
   contains(name: string, base: string, sha: string): Promise<boolean | null>
   file(name: string, path: string, commit: string): Promise<string | null>
-  // A public repository's advisories at `versions`, as upstream's
-  // `advisories` tells those of a `github` package: its own published ones,
-  // and OSV's of it as an Action. Without it, none are asked.
-  advisories?(name: string, versions: string[]): Promise<ActionAdvisory[]>
+  // A repository's advisories at `versions`, as upstream's `advisories`
+  // tells those of a `github` package: its own published ones, and but for
+  // one `internal` (not known public), OSV's of it as an Action. Without it,
+  // none are asked.
+  advisories?(name: string, versions: string[], internal: boolean): Promise<ActionAdvisory[]>
 }
 
 // An advisory of a repository, as upstream's `advisories` tells one.

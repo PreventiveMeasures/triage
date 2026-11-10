@@ -447,16 +447,17 @@ describe('a reference\'s advisories', () => {
   }
 
   it('asked of the releases on the commit it runs, else of a commit\'s tags or the commit, and of a tag or a branch as named', async () => {
-    assert.deepEqual((await resolve('org/act@v1')).asked, [['org/act', ['v1.1.0']]], 'a moving tag by the release it is at, not its whole line')
-    assert.deepEqual((await resolve(`org/act@${SHA('b')}`, { comment: '# v1' })).asked, [['org/act', ['v1.1.0']]])
-    assert.deepEqual((await resolve('org/act@main')).asked, [['org/act', ['v2.0.0']]], 'a branch at a release')
-    assert.deepEqual((await resolve('org/act@v2')).asked, [['org/act', ['v2']]], 'a moving tag on no release, as its whole line')
-    assert.deepEqual((await resolve(`org/act@${SHA('9')}`)).asked, [['org/act', [SHA('9')]]], 'a commit no tag names, as any release')
+    assert.deepEqual((await resolve('org/act@v1')).asked, [['org/act', ['v1.1.0'], false]], 'a moving tag by the release it is at, not its whole line')
+    assert.deepEqual((await resolve(`org/act@${SHA('b')}`, { comment: '# v1' })).asked, [['org/act', ['v1.1.0'], false]])
+    assert.deepEqual((await resolve('org/act@main')).asked, [['org/act', ['v2.0.0'], false]], 'a branch at a release')
+    assert.deepEqual((await resolve('org/act@v2')).asked, [['org/act', ['v2'], false]], 'a moving tag on no release, as its whole line')
+    assert.deepEqual((await resolve(`org/act@${SHA('9')}`)).asked, [['org/act', [SHA('9')], false]], 'a commit no tag names, as any release')
     assert.deepEqual((await resolve(`org/act@${SHA('0')}`)).asked, [], 'none of a commit GitHub hasn\'t')
     assert.deepEqual((await resolve('org/act@nope')).asked, [], 'nor of a ref that is neither a tag nor a branch')
-    assert.deepEqual((await resolve('org/act@v1', { info: { ...ACT.info, private: true } })).asked, [], 'nor of a private repository, whose name OSV is never sent')
-    assert.deepEqual((await resolve('org/act@v1', { info: ACT.info })).asked, [], 'nor of one not told public')
-    assert.deepEqual((await resolve('org/act@v1', { info: { ...ACT.info, fullName: 'Org/Act', private: false } })).asked, [['Org/Act', ['v1.1.0']]],
+    assert.deepEqual((await resolve('org/act@v1', { info: { ...ACT.info, private: true } })).asked, [['org/act', ['v1.1.0'], true]],
+      'a private repository as internal, of its own advisories alone')
+    assert.deepEqual((await resolve('org/act@v1', { info: ACT.info })).asked, [['org/act', ['v1.1.0'], true]], 'and one not told public')
+    assert.deepEqual((await resolve('org/act@v1', { info: { ...ACT.info, fullName: 'Org/Act', private: false } })).asked, [['Org/Act', ['v1.1.0'], false]],
       'by its name as GitHub spells it, as OSV matches it')
   })
 

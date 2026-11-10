@@ -176,26 +176,27 @@ async function pinnedOf(uses, info, source, tags) {
 // packages take them: the releases on the commit it runs (`v4.2.1`, not the
 // `v4` moving with it), else a commit by its tags, or as any release where
 // none names it, and a tag or a branch as named (a moving tag its whole line).
-export function advisedVersions(at, ref, commit, named) {
+function advisedVersions(at, ref, commit, named) {
   const releases = named.filter(tag => isRelease(tagVersion(tag)))
   if (releases.length > 0) return releases
-  if (at !== 'sha') return [ref]
-  return named.length > 0 ? named : [commit]
+  if (at === 'sha') return named.length > 0 ? named : [commit]
+  return [ref]
 }
 
 const RATED = new Set(['critical', 'high', 'moderate', 'low'])
 
 // A repository's advisories at `versions` (`source.advisories`), each a
-// finding: malware red, else as its source rates it, one unrated yellow.
-// None of a private repository, whose name OSV is never sent; why not
-// (`advisories-unavailable`) where they couldn't be had, the rest resolved
-// all the same.
+// finding: malware red, else as its source rates it, one unrated yellow. One
+// not known public is `internal`, asked of its own advisories alone, its name
+// sent to no other source; why not (`advisories-unavailable`) where they
+// couldn't be had, the rest resolved all the same.
 async function advisoryFindings(source, info, versions) {
-  if (!source.advisories || info.private !== false) return []
-  let advisories
-  try { advisories = await source.advisories(info.fullName, versions) } catch { return [{ id: 'advisories-unavailable', severity: 'notice' }] }
-  return advisories.map(({ id, title, url, severity, malware, versions: affected }) => ({ id: 'advisory', severity: malware ? 'critical' : RATED.has(severity) ? severity : 'moderate',
-    advisory: id, ...title ? { title } : {}, ...url ? { url } : {}, ...malware ? { malware: true } : {}, versions: affected }))
+  if (source.advisories === undefined) return []
+  try {
+    return (await source.advisories(info.fullName, versions, info.private ?? true)).map(({ id, title, url, severity, malware, versions: affected }) => ({
+      id: 'advisory', severity: malware ? 'critical' : RATED.has(severity) ? severity : 'moderate', advisory: id, ...title && { title }, ...url && { url },
+      ...malware && { malware: true }, versions: affected }))
+  } catch { return [{ id: 'advisories-unavailable', severity: 'notice' }] }
 }
 
 // A `$/path` (the repository's own at the commit running) as a reference.

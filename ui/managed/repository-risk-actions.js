@@ -51,7 +51,7 @@ const worst = findings => findings.reduce((best, { severity }) => severityRank(s
 // A host's by its tag, an advisory's by its id (`GHSA-…`).
 function findingLabel(finding) {
   if (finding.id === 'hosts') return finding.tag === 'IP lookup' ? finding.tag : `${finding.tag ?? ''} host`.trimStart()
-  if (finding.id === 'advisory' && typeof finding.advisory === 'string') return finding.advisory
+  if (finding.id === 'advisory') return finding.advisory
   return ACTION_FINDINGS[finding.id]?.[0] ?? finding.id
 }
 
