@@ -532,5 +532,13 @@ describe('findingUrl — revision', () => {
     assert.equal(evidenceUrl({ file: 'src/proxy.ts', line: '8' }, f, report, 1), `https://github.com/acme/app/blob/${SHA}/src/proxy.ts#L8`)
     assert.equal(evidenceUrl({ file: 'src/proxy.ts', line: '8' }, { file: 'src/a.ts', auditedCommit: DEP_SHA }, { github: 'acme/app' }, 1),
       `https://github.com/acme/app/blob/${DEP_SHA}/src/proxy.ts#L8`)
+    // A finding naming the report's repo again: its rows take the
+    // report's commit as its own link does.
+    const same = { file: 'src/a.ts', repo: { github: 'acme/app' } }
+    assert.equal(findingUrl(same, report), `https://github.com/acme/app/blob/${SHA}/src/a.ts`)
+    for (const i of [0, 1]) {
+      assert.equal(evidenceUrl({ file: i === 0 ? 'src/a.ts' : 'src/b.ts', line: '2' }, same, report, i),
+        `https://github.com/acme/app/blob/${SHA}/src/${i === 0 ? 'a' : 'b'}.ts#L2`)
+    }
   })
 })

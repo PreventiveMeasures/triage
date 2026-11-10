@@ -14,7 +14,7 @@ import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { dropZone, report } from './dom.js'
 import { clearMergedGroups, getRevalidationConflicts, getShownGroups, toGroup } from './group.js'
 import { configureDepsDir, hasRevalidateStamp, stampUpstreamFindings } from './format.js'
-import { repoCommit, sameRepoSlug } from '../../common/repo-commit.js'
+import { reportCommit } from '../../common/repo-commit.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { readManagedReport } from '../../common/managed/report-content.ts'
@@ -1576,12 +1576,6 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
     // Empty string when the report declares none, the same "nothing
     // here" the repo stamp uses.
     const repoDir = repoDirectory(reportRepo)
-    // …and the `commit` the report read that repository at, which links
-    // pin to instead of HEAD (format.js fileUrl). The report's own, so
-    // only while the repo answering for it is the one the report names:
-    // it says nothing about a repo typed in later or assigned in its
-    // place. Empty when there's none, as older reports have.
-    const repoCommitStamp = sameRepoSlug(declaredRepo, reportRepoGithub({ repo: data?.repo })) ? repoCommit(data.repo) : ''
     // Preserve report boundaries and every original copy. Workspace grouping
     // depends on the App lens, so discarding duplicates here would make it
     // impossible to keep App rows separate and later merge their source rows.
@@ -1601,7 +1595,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
           _id: state.nextFindingId++,
           _repoFallback: repoFallback,
           _repoDirectory: repoDir,
-          _repoCommit: repoCommitStamp,
+          _repoCommit: reportCommit(data, declaredRepo),
           _reportName: name,
           _depsDirectory: depsDirectory,
           _managedReportId: managedReportId,

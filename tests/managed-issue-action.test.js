@@ -36,7 +36,7 @@ test('managed issue action has no native creation URL for modified clicks or Ope
   const draft = new URL(action.values[0])
   assert.equal(draft.pathname, '/o/r/issues/new')
   assert.equal(draft.searchParams.get('title'), 'Finding title')
-  assert.match(draft.searchParams.get('body'), /Finding description/u)
+  assert.equal(draft.searchParams.has('body'), false, 'the dialog drafts the body from the finding')
 })
 
 test('the prefilled issue body links each evidence row as it links File:', t => {

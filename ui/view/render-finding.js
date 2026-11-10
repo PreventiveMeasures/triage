@@ -902,17 +902,19 @@ function issueTitle(f) {
   return base.length > 120 ? `${base.slice(0, 119)}…` : base
 }
 
-// Issue body — the finding detail for the pre-filled `?body=`: the
-// body the managed dialog creates through the API, every section in
-// (issue-draft.js), so an issue reads the same whichever way it
-// was opened. No `Repo:` line (the issue already lives on that repo);
-// file:line and each Evidence row link to the source on GitHub, the
-// targets the card's links use, and stay plain text where nothing
-// resolves; Impact and Recommendation are GitHub alerts.
-function issueBody(f) {
+// What an issue draft (issue-draft.js) takes from the view: the source
+// and Evidence links the card's links resolve to, and whether the
+// revalidation layer shows. Both ways of opening an issue build their
+// body from it, so an issue reads the same either way.
+export function issueDraftOptions(f) {
   const repoFallback = findingRepoTarget(f)
-  return createIssueDraft(f, { sourceUrl: findingUrl(f, repoFallback), evidence: evidenceMarkdown(f, { repoFallback }),
-    showRevalidation: revalidationShown(), allSections: true }).body
+  return { sourceUrl: findingUrl(f, repoFallback), evidence: evidenceMarkdown(f, { repoFallback }), showRevalidation: revalidationShown() }
+}
+
+// Issue body — the finding detail for the pre-filled `?body=`, every
+// section in, as the managed dialog creates it through the API.
+function issueBody(f) {
+  return createIssueDraft(f, { ...issueDraftOptions(f), allSections: true }).body
 }
 
 // Workspace-merged views show which report a finding came from.
@@ -995,11 +997,13 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const findingRepoId = isManagedUiMode()
     ? reportRepoGithub({ repo: { github: activeTab.repo?.github || activeTab._repoFallback } })
     : findingRepo(activeTab)
-  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab),
-    labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
   const managedIssue = isManagedUiMode() && state.managedSession && !state.managedSession.publicShare && state.currentManagedTeam
+  // No button once the finding has its issue. The managed dialog drafts
+  // the body from the finding itself, so its form URL carries none.
+  const issueHref = managedIssueFor(activeTab) ? null : githubIssueUrl(findingRepoId, { title: issueTitle(activeTab),
+    body: managedIssue ? '' : issueBody(activeTab), labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
   const issueContent = html`${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}`
-  const issueBtn = managedIssueFor(activeTab) ? nothing : issueHref
+  const issueBtn = issueHref
     ? managedIssue
       ? html`<button type="button" class="mark-issue" data-issue-form=${issueHref} data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</button>`
       : html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</a>`

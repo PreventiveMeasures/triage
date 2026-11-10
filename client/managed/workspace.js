@@ -3,8 +3,8 @@
 import { isManagedUiMode, state } from '../state.ts'
 import { collectDuplicates } from '../linked-findings.js'
 import { dependencyDirectory } from '../dependency-paths.js'
-import { findingTitle, inheritReportMeta, isAppFinding, reportEntries, reportRepoGithub } from '@preventive/report'
-import { repoCommit, sameRepoSlug } from '../../common/repo-commit.js'
+import { findingTitle, inheritReportMeta, isAppFinding, reportEntries } from '@preventive/report'
+import { reportCommit } from '../../common/repo-commit.js'
 import { revalidationLinks } from '../../common/security-links.js'
 
 let workspace = null
@@ -24,9 +24,7 @@ export function setManagedWorkspace(teamId, reports) {
       continue
     }
     const entries = reportEntries(data) ?? []
-    // The revision the report read its repository at, while the repo the
-    // team links to it is the one it names (ui/view/ingest.js).
-    const commit = sameRepoSlug(report.repo.github, reportRepoGithub(data)) ? repoCommit(data.repo) : ''
+    const commit = reportCommit(data, report.repo.github)
     const directory = dependencyDirectory([{ groups: [entries.flat().filter(f => f && typeof f === 'object')], tree: data.tree, treeDependencies: data.treeDependencies }])
     for (const [index, entry] of entries.entries()) {
       const members = (Array.isArray(entry) ? entry : [entry]).filter(f => f && typeof f === 'object').map(f => {

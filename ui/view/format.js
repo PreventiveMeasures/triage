@@ -9,7 +9,7 @@ import { html, nothing } from 'lit'
 import { parseFindingUrl } from '../../client/finding-link.js'
 import { formatBytes as formatByteSize } from '../scan/metrics.js'
 import { REVALIDATE_FILTERS, hasRevalidateStamp } from '../../common/finding-filters.js'
-import { repoCommit, sameRepoSlug } from '../../common/repo-commit.js'
+import { asCommit, repoCommit, sameRepoSlug } from '../../common/repo-commit.js'
 export { PARTIAL_MODES, REVALIDATE_FILTERS, activeRevalidateKinds, hasRevalidateStamp, revalidateFilterKinds } from '../../common/finding-filters.js'
 // What a finding IS — the readers shared with the report library's
 // markdown writer — lives in that library; re-exported here unchanged so
@@ -501,33 +501,26 @@ function repoTarget(repo) {
 // A package-reference "file" links to nothing — blob-linking
 // `.../blob/HEAD/name@1.2.3` under either repo would 404.
 //
-// A report names its repository in its header and a finding names one
-// only where its own differs (a dependency's upstream): the finding's
-// `repo` wins, and each `directory` and `commit` goes with the `github`
-// it was declared beside. It may be written as a URL (`https://
-// github.com/o/r`, `….git`, `…/tree/main`) as well as a slug; it is
-// read down to the slug first, as the issue button reads it, so the
-// link doesn't come out as `github.com/https://github.com/…`.
-//
-// The link is at the revision the report read, so its line numbers
-// still land on the code they describe after the branch moves on, and
-// at HEAD when that revision isn't known: the repo's `commit` (see
-// common/repo-commit.js), the report's for a finding that names the
-// report's repo again, else `auditedCommit`, the finding's "Commit
-// audited" that older piolium and markdown reports carry (not
-// `commitHash`, which is where the bug was introduced). That one is a
-// revision of the report's repo, which a finding's own repo is when it
-// names the same slug, or when the file is the project's own source
-// rather than a dependency's: a dependency's own repo is its upstream,
-// where neither the report's commit nor the audited one exists.
+// The finding's `repo` may be written as a GitHub URL (`….git`,
+// `…/tree/main`) and is read down to its slug, as the issue button
+// reads it. Links are at the revision the report read, so a line number
+// still lands on the code it describes after the branch moves on:
+//   1. the finding's own `repo.commit`, for its own repo;
+//   2. the report's (`repoFallback.commit`), for the report's repo,
+//      which a finding's own repo is when it names the same slug;
+//   3. `auditedCommit`, the "Commit audited" older piolium and markdown
+//      reports carry, for the report's repo or own source, never a
+//      dependency's upstream;
+//   4. HEAD.
+// Never `commitHash`: that is where the bug was introduced.
 export function fileUrl(file, repo, repoFallback, auditedCommit = '') {
   if (isPkgRef(file)) return null
   const own = repoTarget(repo)
   const fallback = repoTarget(repoFallback)
-  const audited = repoCommit({ commit: auditedCommit })
+  const audited = asCommit(auditedCommit)
   if (own.id) {
     const slug = reportRepoGithub({ repo: { github: own.id } })
-    const base = slug ? `https://github.com/${slug}` : repoBaseUrl(own.id)
+    const base = repoBaseUrl(slug ?? own.id)
     const sameRepo = sameRepoSlug(slug, reportRepoGithub({ repo: { github: fallback.id } }))
     const ref = own.commit || (sameRepo ? fallback.commit : '')
       || (sameRepo || !hasDependencyMarker(file) ? audited : '') || 'HEAD'
@@ -576,11 +569,10 @@ export function findingUrl(f, repoFallback) {
   if (isHttpUrl(f.location)) return f.location
   const url = fileUrl(f.file, f.repo, repoFallback, f.auditedCommit)
   if (!url) return null
-  // A range anchors as GitHub highlights it, `#L20-L30`; any other
-  // shape keeps its leading number.
+  // A range anchors as GitHub highlights it, `#L20-L30`.
   const range = lineRange(f.line)
   if (range && range.end > range.start) return `${url}#L${range.start}-L${range.end}`
-  const lineNum = range?.start ?? parseInt(f.line, 10)
+  const lineNum = parseInt(f.line, 10)
   return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
 }
 
@@ -1038,10 +1030,10 @@ export function evidenceUrl(row, f, repoFallback, index) {
   if (typeof file !== 'string' || file === '') return null
   const main = f?.file ?? ''
   const repo = f?.repo?.github
-  // Every row carries the finding's audited commit, which `fileUrl`
-  // applies only where it does for the finding.
+  // Rows resolve with the finding's audited commit and the report's
+  // target, so `fileUrl` pins each as it pins the finding.
   const auditedCommit = f?.auditedCommit
-  const inFindingRepo = () => (repo ? findingUrl({ file, line: row?.line, repo: f.repo, auditedCommit }, null) : null)
+  const inFindingRepo = () => (repo ? findingUrl({ file, line: row?.line, repo: f.repo, auditedCommit }, repoFallback) : null)
 
   // 1. The row that restates the finding's own location. Wherever the
   //    finding is, this row is in the same place, so the finding's repo
