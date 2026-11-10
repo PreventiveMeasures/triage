@@ -43,6 +43,10 @@ const PLACES = [
   p => `\`\`\`weird\n${p}\n\`\`\``,
   p => `\`\`\`html\n${p}\n\`\`\``,
   p => `\`\`\`js\nconst s = '${p}'\n\`\`\``,
+  p => `> ${p}`,
+  p => `> [!CAUTION]\n> **Impact:**\n> ${p}`,
+  p => `> [!TIP]\n> - ${p}\n>\n> \`\`\`html\n> ${p}\n> \`\`\``,
+  p => `> outer\n> > ${p}`,
 ]
 const BODIES = INJECTED.flatMap(p => PLACES.map(place => place(p)))
 const HOSTILE = BODIES.join('\n\n')

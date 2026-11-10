@@ -25,6 +25,7 @@ import { githubUser, githubUsers } from '../github-users.js'
 import { reviewSections } from '../pull-reviews.js'
 import { knowItems, knownChanges, knownItem, readAtOf } from '../repository-items.js'
 import proseCSS from '../../styles/prose.css'
+import quoteCSS from '../../styles/md-quote.css'
 import codeTokensCSS from '../../styles/code-tokens.css'
 import styles from './dialog-repository-item.css'
 import appUserCSS from '../../styles/app-user.css'
@@ -49,7 +50,7 @@ const readItems = new Map()
 const itemKey = (repoId, number) => `${clientState.managedSession?.id}\0${clientState.managedSession?.role}\0${repoId}\0${number}`
 
 class RepositoryItemDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(proseCSS), unsafeCSS(codeTokensCSS), unsafeCSS(appUserCSS), unsafeCSS(styles)]
+  static styles = [...AppDialog.styles, unsafeCSS(proseCSS), unsafeCSS(quoteCSS), unsafeCSS(codeTokensCSS), unsafeCSS(appUserCSS), unsafeCSS(styles)]
   static properties = { repository: { attribute: false }, target: { attribute: false }, _trail: { state: true }, _items: { state: true } }
 
   constructor() {
