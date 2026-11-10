@@ -2,6 +2,7 @@ import { html, nothing, unsafeCSS } from 'lit'
 import { requestGithubIssue } from '../../../client/managed/issues.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { createIssueDraft, editIssueDraft, toggleIssueDraftSection } from '../issue-draft.js'
+import quoteCSS from '../../styles/md-quote.css'
 import styles from './managed-issue-dialog.css'
 
 const ERRORS = {
@@ -16,7 +17,7 @@ const ERRORS = {
 }
 
 class ManagedIssueDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(styles)]
+  static styles = [...AppDialog.styles, unsafeCSS(styles), unsafeCSS(quoteCSS)]
   static properties = { teamId: { attribute: false }, context: { attribute: false }, session: { attribute: false },
     formUrl: { attribute: false }, title: { state: true }, body: { state: true }, prepared: { state: true },
     busy: { state: true }, creating: { state: true }, message: { state: true }, uncertain: { state: true }, createdUrl: { state: true },

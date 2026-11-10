@@ -793,16 +793,23 @@ function trimTrailingBlank(lines) {
   return lines.slice(0, end).join('\n')
 }
 
+// Each line's offset in the text it was split from, to check the line
+// against fenceRanges.
+function lineOffsets(lines) {
+  const offsets = []
+  let at = 0
+  for (const line of lines) { offsets.push(at); at += line.length + 1 }
+  return offsets
+}
+
 export function listSegments(text) {
   const src = typeof text === 'string' ? text : ''
   if (!src) return [text]
   const ranges = fenceRanges(src)
   const lines = src.split('\n')
-  // Line → byte offset, so a candidate marker can be checked against
-  // the fenced ranges: a `- ` or `1. ` inside a snippet is code.
-  const offsets = []
-  let at = 0
-  for (const line of lines) { offsets.push(at); at += line.length + 1 }
+  // A candidate marker is checked against the fenced ranges: a `- ` or
+  // `1. ` inside a snippet is code.
+  const offsets = lineOffsets(lines)
   const startsItem = (i) => !inFence(ranges, offsets[i])
     && !HRULE_RE.test(lines[i])
     && LIST_ITEM_RE.test(lines[i])
@@ -848,8 +855,8 @@ export function listSegments(text) {
         // Back at the margin after a blank line: the list is over. Without
         // the blank it's a wrapped item, which markdown reads as part of
         // the item however far left the report wrapped it to — unless the
-        // line is a heading or a rule, which no item wraps onto.
-        if (indent < item.column && (afterBlank || HEADING_RE.test(line) || HRULE_RE.test(line))) break
+        // line is a heading, a rule or a quote, which no item wraps onto.
+        if (indent < item.column && (afterBlank || HEADING_RE.test(line) || HRULE_RE.test(line) || QUOTE_LINE_RE.test(line))) break
       }
       item.lines.push(shedIndent(line, item.column))
       afterBlank = false
@@ -875,7 +882,8 @@ export function listSegments(text) {
 // paragraph holding one splits around it: the prose before and after
 // come back as strings, a heading as `{ level, text }` (its closing
 // hashes dropped) and a rule as `{ rule: true }`. Only those two —
-// setext headings, block quotes and the rest of markdown stay text: a
+// setext headings and the rest of markdown stay text (block quotes come
+// out before a paragraph gets here: quoteSegments, below): a
 // `---` right under a line of prose underlines it, so it is no rule
 // (a `***`, `___` or `- - -` there can't be an underline, and is one;
 // nor can a line of spaces be underlined).
@@ -905,6 +913,135 @@ export function lineBlockSegments(text) {
   if (out.length === 0) return [text]
   pushProse(lines.length)
   return out
+}
+
+// ── Block quotes and alerts ──────────────────────────────────────────
+// A quoted passage, `>` down its left, used to print as its own source
+// text: every line led by its marker, the quote run on into the prose.
+// And GitHub's alerts are quotes — `> [!CAUTION]` over the quoted text —
+// so an issue body that leads its Impact with one showed the markup.
+//
+// `quoteSegments` splits a run of prose into the runs between quotes
+// and the quotes, each `{ quote: true, alert, body }`. `body` is the
+// quote's content with its markers shed, a markdown body of its own for
+// the same pass to render, as a list item's is — which puts the quote's
+// paragraphs (a bare `>` between them), lists, fenced snippets and
+// quotes of its own INSIDE it.
+//
+// A line is the quote's when it opens on `>`, up to three spaces in;
+// and, as markdown reads it, when it goes on with the paragraph the
+// quote left open without one (laziness): a line of text straight under
+// quoted text, that doesn't start a block of its own — a heading, a
+// rule, a fence or a list item end the quote instead, as a blank line
+// does. A fence the quote opened takes no lazy line either: its code
+// carries the `>` to the end.
+//
+// `alert` is the alert the quote is, lowercased: its first line is
+// `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` on
+// its own, in any case, as GitHub reads it, and that line is dropped
+// from `body`. Null for any other quote — and for a marker with nothing
+// under it, which GitHub draws as a plain quote. `alerts: false` reads
+// every quote as plain: GitHub draws an alert only at the top level of
+// a body, never inside a list item or another quote.
+//
+// A `>` line inside a fenced block is code (fenceRanges, the parsers'
+// reading). And the fences inside a quote are the quote's: their lines
+// carry the `>` and open nothing out here, so a snippet comes out whole
+// in `body` and is cut out when the quote's body is rendered.
+//
+// The prose runs come back as written, blank lines and all: joined back
+// with `\n` in place of each quote, they're the text again. Text with
+// no quote in it comes back as a single-element array holding it
+// unchanged, the same fast path the splitters above offer.
+const QUOTE_LINE_RE = /^ {0,3}>/u
+const QUOTE_MARKER_RE = /^ {0,3}> ?/u
+const ALERT_MARKER_RE = /^[ \t]*\[!(note|tip|important|warning|caution)\][ \t]*$/iu
+const FENCE_START_RE = /^ {0,3}(?:`{3}|~{3})/u
+// What leads a quoted line's text: the `>`s of quotes inside it and the
+// markers of its list items. One pass of a starred group, with nothing
+// after it to fail, so it never backtracks however long the run.
+const NESTED_MARKERS_RE = /^(?: {0,3}> ?| *(?:[-*+]|\d{1,9}[.)])(?: +|$))*/u
+
+// How many quotes deep, one inside another, the renderer draws
+// (render-finding.js markdownBody) and unquotedText sheds. Past that the
+// rest stays text: a line of thousands of `>`s costs a few passes rather
+// than one per marker, and no recursion that deep.
+export const QUOTE_DEPTH = 16
+
+// A heading, a rule or a fence: a line that is no paragraph's text.
+const isLeafBlock = (line) => HEADING_RE.test(line) || HRULE_RE.test(line) || FENCE_START_RE.test(line)
+
+// The fence a quote's own lines leave open after `line`: the run that
+// opened it, or '' with none open. Read a line at a time, as a fence
+// opens and closes (a ``` inside a ~~~ or a ```` block is content),
+// which is all the laziness above needs to know; the quote's body gets
+// the full reading when it's rendered.
+function fenceAfter(open, line) {
+  const fence = FENCE_LINE_RE.exec(line)
+  if (!fence) return open
+  if (!open) return fence[2][0] === '`' && fence[3].includes('`') ? '' : fence[2]
+  return fence[2][0] === open[0] && fence[2].length >= open.length && !fence[3].trim() ? '' : open
+}
+
+// Blank lines at either end of a quote are no part of what it says.
+function trimBlankLines(lines) {
+  let from = 0
+  let to = lines.length
+  while (from < to && !lines[from].trim()) from++
+  while (to > from && !lines[to - 1].trim()) to--
+  return lines.slice(from, to).join('\n')
+}
+
+export function quoteSegments(text, { alerts = true } = {}) {
+  const src = typeof text === 'string' ? text : ''
+  if (!/^ {0,3}>/mu.test(src)) return [text]
+  const ranges = fenceRanges(src)
+  const lines = src.split('\n')
+  const offsets = lineOffsets(lines)
+  const quoted = (i) => QUOTE_LINE_RE.test(lines[i]) && !inFence(ranges, offsets[i])
+
+  const out = []
+  let proseFrom = 0
+  let i = 0
+  while (i < lines.length) {
+    if (!quoted(i)) { i++; continue }
+    if (i > proseFrom) out.push(lines.slice(proseFrom, i).join('\n'))
+    const body = []
+    let fence = ''
+    // Whether the quote's last line left a paragraph open — its text,
+    // past the markers of what it nests, a lazy line can go on with.
+    let paragraph = false
+    for (; i < lines.length; i++) {
+      const line = lines[i]
+      if (quoted(i)) {
+        const content = line.replace(QUOTE_MARKER_RE, '')
+        const inCode = fence !== ''
+        fence = fenceAfter(fence, content)
+        const own = content.replace(NESTED_MARKERS_RE, '')
+        paragraph = !inCode && !fence && own.trim() !== '' && !isLeafBlock(own)
+        body.push(content)
+      } else if (paragraph && line.trim() && !isLeafBlock(line) && !LIST_ITEM_RE.test(line)) {
+        body.push(line)
+      } else {
+        break
+      }
+    }
+    const marker = alerts ? ALERT_MARKER_RE.exec(body[0]) : null
+    const under = marker ? trimBlankLines(body.slice(1)) : ''
+    out.push({ quote: true, alert: under ? marker[1].toLowerCase() : null, body: under || trimBlankLines(body) })
+    proseFrom = i
+  }
+  if (proseFrom < lines.length) out.push(lines.slice(proseFrom).join('\n'))
+  return out
+}
+
+// The text with its quotes' markers shed and what they quote left in
+// place, for the compact surfaces: a line or two of summary, where a
+// quote's block would break the line they get. An alert's marker line
+// goes with the `>`s, the kind of callout being chrome as they are.
+export function unquotedText(text, depth = QUOTE_DEPTH) {
+  if (depth <= 0) return text
+  return quoteSegments(text).map((seg) => (typeof seg === 'string' ? seg : unquotedText(seg.body, depth - 1))).join('\n')
 }
 
 // ── Line ranges──────────────────────────────────────────────────────

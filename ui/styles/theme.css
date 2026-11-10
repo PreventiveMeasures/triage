@@ -53,6 +53,11 @@
      two stamps don't read as one. So it is --medium's hue wherever that
      is text, as Compare's changed chips and labels are. */
   --yellow: #d29922;
+  /* GitHub's purple, which it draws an IMPORTANT alert in (the
+     rendered prose's `> [!IMPORTANT]`, styles/md-quote.css): the one
+     alert colour no other token carries. Darkened on the pale themes,
+     as GitHub's own light palette does. */
+  --purple: #a371f7;
   /* Triage marker palette — single source for the four colors
      surfaced by the per-finding marker UI. Cross the shadow
      boundary so both the `<color-marker>` shadow stylesheet and
@@ -196,6 +201,7 @@ body.theme-paper {
      above so `partial` and `unknown` still read apart here. */
   --yellow: #7d6a00;
   --search-limit-text: var(--yellow);
+  --purple: #8250df;
   --bookmark-color: oklch(.52 .20 325deg);
   --high-bug: #a85a14;
   --bug: #6b5e52;
@@ -471,6 +477,7 @@ body.theme-pink {
   /* And the yellow, darkened for the same reason. */
   --yellow: #7d6a00;
   --search-limit-text: var(--yellow);
+  --purple: #8250df;
   --bookmark-color: oklch(.52 .20 325deg);
   --high-bug: #a85a14;
   --bug: #8c5e6c;

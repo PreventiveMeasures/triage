@@ -5,12 +5,13 @@ import { severityBadge } from './shared.js'
 import { flowText } from '../format.js'
 import { renderHighlighted } from '../render-finding.js'
 import proseCSS from '../../styles/prose.css'
+import quoteCSS from '../../styles/md-quote.css'
 import codeTokensCSS from '../../styles/code-tokens.css'
 import severityCSS from './dialog-severity.css'
 import styles from './dialog-advisory-details.css'
 
 class AdvisoryDetailsDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(proseCSS), unsafeCSS(codeTokensCSS), unsafeCSS(severityCSS), unsafeCSS(styles)]
+  static styles = [...AppDialog.styles, unsafeCSS(proseCSS), unsafeCSS(quoteCSS), unsafeCSS(codeTokensCSS), unsafeCSS(severityCSS), unsafeCSS(styles)]
   static properties = { heading: { attribute: false }, severity: { attribute: false }, _body: { state: true } }
 
   connectedCallback() {

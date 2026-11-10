@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit'
+import { html, nothing, svg } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
@@ -6,7 +6,7 @@ import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId
 import { publicSharePath } from '../../client/managed/public-share.js'
 import { reportRepoGithub } from '@preventive/report'
 import { newIssueLabels } from '../../common/github-issue-labels.js'
-import { SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineBlockSegments, lineRange, listSegments, locationLabel, markdownLinkToken, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker } from './format.js'
+import { QUOTE_DEPTH, SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineBlockSegments, lineRange, listSegments, locationLabel, markdownLinkToken, quoteSegments, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker, unquotedText } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, findingSourcePath, focusCodePosition } from './focus-code.js'
@@ -264,13 +264,15 @@ function lineBlockTemplate({ level, text, rule }) {
 //
 // A task item (`- [x] Lint passes`, a pull request's test plan) shows
 // its box, ticked as the markdown says, where the bullet would be.
+//
+// `depth` is the quotes the list sits in (see markdownBody).
 const TASK_ITEM_RE = /^\[([ xX])\][ \t]+/u
-function listTemplate({ ordered, start, items }) {
+function listTemplate({ ordered, start, items }, depth) {
   const entries = items.map((item) => {
     const task = TASK_ITEM_RE.exec(item)
     return task
-      ? html`<li class="md-task"><input type="checkbox" disabled ?checked=${task[1] !== ' '}>${renderHighlighted(item.slice(task[0].length))}</li>`
-      : html`<li>${renderHighlighted(item)}</li>`
+      ? html`<li class="md-task"><input type="checkbox" disabled ?checked=${task[1] !== ' '}>${markdownBody(item.slice(task[0].length), depth)}</li>`
+      : html`<li>${markdownBody(item, depth)}</li>`
   })
   return ordered
     ? html`<ol class="md-list" start=${start > 1 ? start : nothing}>${entries}</ol>`
@@ -290,8 +292,8 @@ function listTemplate({ ordered, start, items }) {
 // anchors take their accent color from theme.css in light DOM and from
 // finding-card.css in the shadow root).
 //
-// A body with no list and no fence in it takes the inline path
-// directly, so the common case costs two scans and nothing else.
+// A body with no list, fence or quote in it takes the inline path
+// directly, so the common case costs three scans and nothing else.
 //
 // `paragraphs: false` renders a run as ONE flow, blank lines and all,
 // for the compact surfaces that want a finding's prose as a single
@@ -300,24 +302,91 @@ function listTemplate({ ordered, start, items }) {
 // surfaces are a line or two of summary in a row or a side panel, and
 // a block element opening a list there would break the line they get.
 //
+// Quotes stay out of it too, a quote's block breaking that line as a
+// list's would (quoteTemplate below draws them everywhere else): their
+// `>`s, and an alert's `[!NOTE]` line, are shed and what they quote
+// stays in the flow as text (format.js unquotedText).
+//
 // CRLF line endings come in as `\n`, as in flowText, for the bodies that
 // reach here without it.
 export function renderHighlighted(raw, { paragraphs = true } = {}) {
+  return markdownBody(raw, 0, { paragraphs, alerts: true })
+}
+
+// renderHighlighted's pass, which a list item's content and a quote's
+// come back through. `alerts` only at the top, where GitHub draws them
+// (format.js quoteSegments); `depth` is the quotes the body sits in,
+// past QUOTE_DEPTH of which a `>` stays the text it was.
+function markdownBody(raw, depth, { paragraphs = true, alerts = false } = {}) {
   if (!raw) return raw
-  const text = raw.replaceAll('\r\n', '\n')
+  const crlf = raw.replaceAll('\r\n', '\n')
+  const text = paragraphs ? crlf : unquotedText(crlf)
   const blocks = paragraphs ? listSegments(text) : [text]
   // More than one block means the prose runs have LIST SIBLINGS, and
   // the gap between them is a margin — which needs an element to sit
   // on (see proseTemplate's `wrap`).
   const many = blocks.length > 1
-  const prose = (run) => (paragraphs ? proseTemplate(run, { wrap: many }) : renderInline(run))
   const flow = (run) => {
     const segments = codeBlockSegments(run)
-    if (segments.length === 1 && typeof segments[0] === 'string') return prose(segments[0])
-    return segments.map((seg) => (typeof seg === 'string' ? prose(seg) : codeBlockTemplate(seg)))
+    const parts = paragraphs && depth < QUOTE_DEPTH
+      ? segments.flatMap((seg) => (typeof seg === 'string' ? quoteRuns(seg, alerts) : [seg]))
+      : segments
+    // A quote is a block among the prose as a list is, its gap to the
+    // runs either side a margin too.
+    const wrap = many || parts.some((part) => part.quote)
+    const prose = (seg) => (paragraphs ? proseTemplate(seg, { wrap }) : renderInline(seg))
+    if (parts.length === 1 && typeof parts[0] === 'string') return prose(parts[0])
+    return parts.map((part) => (typeof part === 'string' ? prose(part)
+      : part.quote ? quoteTemplate(part, depth) : codeBlockTemplate(part)))
   }
   if (blocks.length === 1 && typeof blocks[0] === 'string') return flow(blocks[0])
-  return blocks.map((b) => (typeof b === 'string' ? flow(b) : listTemplate(b)))
+  return blocks.map((b) => (typeof b === 'string' ? flow(b) : listTemplate(b, depth)))
+}
+
+// A run's quotes and the prose between them (format.js quoteSegments),
+// that prose without the newlines that put each quote on lines of its
+// own: the quote is a block with its own margins, and the run is
+// `pre-wrap`, where they'd print as blank lines either side (the same
+// reason codeBlockSegments drops them around a fence). A run of only
+// blank lines between two quotes is the gap that made them two.
+function quoteRuns(run, alerts) {
+  const segments = quoteSegments(run, { alerts })
+  if (segments.length === 1) return segments
+  return segments.flatMap((seg) => {
+    if (typeof seg !== 'string') return [seg]
+    let from = 0
+    let to = seg.length
+    while (from < to && seg[from] === '\n') from++
+    while (to > from && seg[to - 1] === '\n') to--
+    const prose = seg.slice(from, to)
+    return prose.trim() ? [prose] : []
+  })
+}
+
+// GitHub's five alerts, each by the title it draws and a glyph for it:
+// the circled i, the bulb, the speech bubble, the triangle, the octagon.
+const ALERT_GLYPH = (paths) => html`<svg class="md-alert-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
+const ALERTS = {
+  note: ['Note', ALERT_GLYPH(svg`<circle cx="8" cy="8" r="6.25"/><path d="M8 7.25v3.5M8 5v.01"/>`)],
+  tip: ['Tip', ALERT_GLYPH(svg`<path d="M6 12.5h4M6.75 14.75h2.5M8 1.25a4.25 4.25 0 0 0-2.5 7.69c.3.22.5.57.5.94v.87h4v-.87c0-.37.2-.72.5-.94A4.25 4.25 0 0 0 8 1.25Z"/>`)],
+  important: ['Important', ALERT_GLYPH(svg`<path d="M2.75 1.75h10.5a1 1 0 0 1 1 1v7.5a1 1 0 0 1-1 1H8.5l-3 2.75v-2.75H2.75a1 1 0 0 1-1-1v-7.5a1 1 0 0 1 1-1Z"/><path d="M8 4.25v3M8 9.25v.01"/>`)],
+  warning: ['Warning', ALERT_GLYPH(svg`<path d="M7.13 2.25a1 1 0 0 1 1.74 0l5.9 10.5a1 1 0 0 1-.87 1.5H2.1a1 1 0 0 1-.87-1.5Z"/><path d="M8 6v3.25M8 11.75v.01"/>`)],
+  caution: ['Caution', ALERT_GLYPH(svg`<path d="M5.3 1.5h5.4l3.8 3.8v5.4l-3.8 3.8H5.3l-3.8-3.8V5.3Z"/><path d="M8 4.75v3.75M8 11.25v.01"/>`)],
+}
+
+// A `>` quote as a `<blockquote>`, and a GitHub alert as GitHub draws
+// one: a callout titled by its kind — Caution, Tip — whose bar and title
+// take the kind's colour (md-quote.css). What the quote says is a body
+// of its own, rendered by the same pass, so its paragraphs, lists,
+// fenced snippets and nested quotes all come out inside it.
+//
+// One line, as codeBlockTemplate's is: the prose around it is
+// `pre-wrap`, where a template's own newlines would print.
+function quoteTemplate({ alert, body }, depth) {
+  const content = markdownBody(body, depth + 1)
+  if (!alert) return html`<blockquote class="md-quote">${content}</blockquote>`
+  const [title, icon] = ALERTS[alert]
+  return html`<div class="md-alert md-alert-${alert}"><div class="md-alert-title">${icon}${title}</div>${content}</div>`
 }
 
 // The producer buckets behind a set of report names, first-seen order
