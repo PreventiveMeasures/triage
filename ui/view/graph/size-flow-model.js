@@ -6,6 +6,7 @@ import { packageCounts } from './count-flow.js'
 import { filterSizes } from './size-flow-filter.js'
 import { MAX_FILE_EDGES, MAX_PACKAGE_EDGES, crowdedPackages } from './crowded-packages.js'
 import { batchedReachability } from './size-flow-reachability.js'
+import { fileLabelOf } from './file-label.js'
 
 const bytes = n => Number.isFinite(n) && n >= 0 ? n : 0
 
@@ -133,7 +134,10 @@ export function buildSizeFlow(graph, { packages = false, metric = 'size' } = {})
   const byId = new Map(), idOf = file => `${packages ? 'p' : 'f'}:${packages ? files.get(file).pkg : file}`
   for (const file of active) {
     const id = idOf(file), n = files.get(file)
-    if (!byId.has(id)) {byId.set(id, { id, pkg: n.pkg, label: packages ? pkgLabel(n.pkg) : file,
+    // A file bar names a dependency's file by its package (fileLabelOf);
+    // `path` keeps where it is installed, for search and the details panel.
+    if (!byId.has(id)) {byId.set(id, { id, pkg: n.pkg, label: packages ? pkgLabel(n.pkg) : fileLabelOf(n),
+      path: packages ? undefined : n.origFile ?? file,
       version: packages ? undefined : n.packageInfo?.version, files: [], own: 0, virtual: true, incoming: [], outgoing: [] })}
     const row = byId.get(id)
     row.files.push(file); row.own += bytes(n.size); row.virtual &&= !!n.virtual

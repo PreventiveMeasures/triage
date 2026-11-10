@@ -266,7 +266,7 @@ class SizeFlow extends LitElement {
   matchesNode(node) {
     if (sizeFlowFilterSize(node) < this.minSize || this.layout?.hiddenPackages?.has(node.pkg)) return false
     const query = graph2.pathFilter.trim().toLowerCase()
-    if (query && !`${node.label} ${node.pkg}`.toLowerCase().includes(query)) return false
+    if (query && !`${node.label} ${node.pkg} ${node.path ?? ''}`.toLowerCase().includes(query)) return false
     if (this.graph.issuesHidden) return true
     const some = key => node.files.some(file => [...(this.model.files.get(file)[key] ?? [])].some(v =>
       (key === 'severitySet' ? graph2.selectedSeverities : graph2.selectedColors).has(v)))
@@ -347,7 +347,12 @@ class SizeFlow extends LitElement {
   }
 
   renderVersions(node) {
-    if (!node.instances?.length) return null
+    // A dependency's file, named by its package: its version, and where it is installed.
+    if (!node.instances) {
+      return node.path && node.label !== node.files[0]
+        ? html`<div class="flow-versions"><div>${node.version || 'Unknown version'}</div><small>${node.path}</small></div>` : null
+    }
+    if (node.instances.length === 0) return null
     if (node.instances.length === 1) {
       const instance = node.instances[0]
       return html`<div class="flow-versions"><div>${instance.version || 'Unknown version'}</div><small>${instance.directory}</small></div>`
