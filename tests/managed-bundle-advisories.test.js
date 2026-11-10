@@ -386,7 +386,7 @@ test('a rejected token is not reused for later repositories in the same audit', 
   assert.ok(rejected > 0 && rejected < packages.length, 'queued repositories use the anonymous client directly')
 })
 
-test('a github package is asked of OSV and its listing only where GitHub says its repository is public', async t => {
+test('a github package is asked of OSV only where GitHub says its repository is public, one private or gone of its own listing alone', async t => {
   const listed = [], osv = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
     if (url.endsWith('/v1/querybatch')) {
@@ -399,12 +399,16 @@ test('a github package is asked of OSV and its listing only where GitHub says it
     if (pathname === '/repos/org/secret') return Promise.resolve(Response.json({ full_name: 'org/secret', private: true }))
     if (pathname === '/repos/org/gone') return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
     listed.push(pathname)
-    return Promise.resolve(Response.json([]))
+    return Promise.resolve(Response.json(pathname === '/repos/org/secret/security-advisories' ? [{ ghsa_id: ghsa, state: 'published', summary: 'Private advisory',
+      vulnerabilities: [{ package: { ecosystem: 'actions', name: 'org/secret' }, vulnerable_version_range: '< 2.0.0' }] }] : []))
   })
   const packages = ['org/open', 'org/secret', 'org/gone'].map(name => ({ ecosystem: 'github', name, versions: ['1.0.0'] }))
-  assert.deepEqual(await fetchBundleAdvisories(packages, signal(), { githubToken: 'viewer-token' }), { status: 200, body: [] })
+  const result = await fetchBundleAdvisories(packages, signal(), { githubToken: 'viewer-token' })
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.body.map(({ name, source, id, versions }) => [name, source, id, versions]), [['org/secret', 'repository', ghsa, ['1.0.0']]],
+    'a private repository\'s own advisories read all the same')
   assert.deepEqual(osv, ['org/open'], 'a private repository\'s name, or one GitHub has none of, never sent to OSV')
-  assert.deepEqual(listed, ['/repos/org/open/security-advisories'])
+  assert.deepEqual(listed.toSorted(), ['/repos/org/gone/security-advisories', '/repos/org/open/security-advisories', '/repos/org/secret/security-advisories'])
   t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ message: 'API rate limit exceeded' }, { status: 403 })))
   assert.deepEqual(await fetchBundleAdvisories(packages, signal(), { githubToken: 'viewer-token' }), { status: 502, body: { error: 'upstream-unavailable' } },
     'where GitHub doesn\'t say, the audit fails, none sent to OSV')

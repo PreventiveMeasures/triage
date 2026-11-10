@@ -39,18 +39,18 @@ async function isPublicRepo(github: Client, repo: string): Promise<boolean> {
   }
 }
 
-// The packages upstream is asked of. Upstream asks OSV of every `github`
-// package by its name, as an Action, so one is asked only where GitHub says
-// its repository is public: one private, or one GitHub has none of, is left
-// out, its own published advisories with it, as a private npm package's name
-// never reaches OSV either.
-async function publicPackages(packages: Package[], github: Client): Promise<Package[]> {
-  const repos = [...new Set(packages.flatMap(pkg => pkg.ecosystem === 'github' ? [pkg.name] : []))]
-  const open = new Set<string>()
+// The packages as upstream is asked of them. Upstream asks OSV of every
+// `github` package by its name, as an Action, but of one `internal`: each is
+// internal but where GitHub says its repository is public, so a private one,
+// or one GitHub has none of, has its own published advisories read alone, as
+// a private npm package's name never reaches OSV either.
+async function markInternal(packages: Package[], github: Client): Promise<Package[]> {
+  const internal = new Set(packages.flatMap(pkg => pkg.ecosystem === 'github' ? [pkg.name] : []))
+  const repos = [...internal]
   for (let at = 0; at < repos.length; at += REPOS_AT_ONCE) {
-    await Promise.all(repos.slice(at, at + REPOS_AT_ONCE).map(async repo => { if (await isPublicRepo(github, repo)) open.add(repo) }))
+    await Promise.all(repos.slice(at, at + REPOS_AT_ONCE).map(async repo => { if (await isPublicRepo(github, repo)) internal.delete(repo) }))
   }
-  return packages.filter(pkg => pkg.ecosystem !== 'github' || open.has(pkg.name))
+  return packages.map(pkg => pkg.ecosystem === 'github' && internal.has(pkg.name) ? { ...pkg, internal: true } : pkg)
 }
 
 // The managed caller supplies its user's token when available; public shares
@@ -80,13 +80,13 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
     // npm packages anyone may read are asked of OSV too (upstream's `osv`),
     // for the malicious packages' records npm's registry hasn't: upstream
     // sends OSV only the names npm's registry serves without a token, so a
-    // private one's never leaves for OSV, as it never does for Socket; nor a
-    // `github` package's whose repository isn't public (publicPackages). Kept
+    // private one's never leaves for OSV, as it never does for Socket; nor an
+    // internal `github` package's (markInternal). Kept
     // in the caller's store, or without one in upstream's disk cache, where
     // the server set one (auditCache).
     const client = github ?? advisoryGithubClient(githubToken, signal)
     const options = { github: client, repoAdvisories, details, osv: true, ...(cache && { cache }) }
-    return { status: 200, body: await Promise.race([publicPackages(packages, client).then(asked => advisories(asked, options)), deadline]) }
+    return { status: 200, body: await Promise.race([markInternal(packages, client).then(asked => advisories(asked, options)), deadline]) }
   } catch (error) {
     // Answered as upstream's failure alone: logged, its message, or with
     // `debug` the whole error, but for a request its client gave up on. One

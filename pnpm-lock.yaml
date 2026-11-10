@@ -44,8 +44,8 @@ importers:
         specifier: 1.0.0-alpha.1
         version: 1.0.0-alpha.1(oxc-parser@0.152.0)
       '@preventive/upstream':
-        specifier: ^1.6.0
-        version: 1.6.0(semver@7.8.5)
+        specifier: ^1.7.0
+        version: 1.7.0(semver@7.8.5)
       css-tree:
         specifier: ^3.2.1
         version: 3.2.1
@@ -970,8 +970,8 @@ packages:
   '@preventive/terminal@2.0.0-beta.3':
     resolution: {integrity: sha512-HAtOwHcuqowlLTN9F4PTRm91tQJ4DRgPLk57mcSMY7yqCHY+mzYyMk2ne/xTEZTiIff+GZ79Z6O/bbpqbmdbIQ==, tarball: https://registry.npmjs.org/@preventive/terminal/-/terminal-2.0.0-beta.3.tgz}
 
-  '@preventive/upstream@1.6.0':
-    resolution: {integrity: sha512-k0767DDai1QWkvyfWa+Nuh1SErT57lLLuMMD80GD/MWdyfQIYpMv/3HHxvw8St86Ni7cCDPfCC3eeg49OwG5rQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.6.0.tgz}
+  '@preventive/upstream@1.7.0':
+    resolution: {integrity: sha512-E9n3pXKdWY/tLm7wVMOShNMonVZiaVzprwT6owwQ3wy4rx+Cu4di+XecJDZiJScpz/8ruzCMImaJ6Wa9k6SNNQ==, tarball: https://registry.npmjs.org/@preventive/upstream/-/upstream-1.7.0.tgz}
     engines: {node: '>=24.14.0'}
     peerDependencies:
       semver: ^7.5.2
@@ -1961,7 +1961,7 @@ snapshots:
       '@preventive/deptree': 1.4.0(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)(semver@7.8.5)
       '@preventive/lockfile': 1.3.0
       '@preventive/rn': 1.0.0-alpha.4(esbuild@0.28.2)(flow-remove-types@2.338.0)(oxc-parser@0.152.0)
-      '@preventive/upstream': 1.6.0(semver@7.8.5)
+      '@preventive/upstream': 1.7.0(semver@7.8.5)
       '@preventive/vfs': 1.1.0
       flow-remove-types: 2.338.0
       oxc-parser: 0.152.0
@@ -2262,7 +2262,7 @@ snapshots:
       '@preventive/compare': 1.2.11(css-tree@3.2.1)(oxc-minify@0.152.0)(oxc-parser@0.152.0)(oxfmt@0.72.0)
       '@preventive/diff': 1.1.0
       '@preventive/lockfile': 1.3.0
-      '@preventive/upstream': 1.6.0(semver@7.8.5)
+      '@preventive/upstream': 1.7.0(semver@7.8.5)
       '@preventive/vfs': 1.1.0
     transitivePeerDependencies:
       - '@noble/hashes'
@@ -2303,7 +2303,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  '@preventive/upstream@1.6.0(semver@7.8.5)':
+  '@preventive/upstream@1.7.0(semver@7.8.5)':
     dependencies:
       '@preventive/archive': 1.4.0
       '@preventive/lockfile': 1.3.0
