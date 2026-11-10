@@ -1040,12 +1040,15 @@ export function evidenceUrl(row, f, repoFallback, index) {
 // blank line between rows, which markdown reads as a loose list: the
 // handoff wants that (its rows carry prose and it is a document in its
 // own right), the compact `**Evidence:**` block below does not.
-function evidenceRows(f, { spaced = false } = {}) {
+// `link(row, i)` names each row's target; by default only the URL the
+// report wrote for it.
+function evidenceRows(f, { spaced = false, link = row => row.url } = {}) {
   const rows = Array.isArray(f?.evidence) ? f.evidence : []
   if (rows.length === 0) return ''
   return rows.map((row, i) => {
     const label = locationLabel(row)
-    const lines = [`${i + 1}. ${row.url ? `[${label}](${row.url})` : label}`]
+    const url = link(row, i)
+    const lines = [`${i + 1}. ${url ? `[${label}](${url})` : label}`]
     const note = evidenceNote(row)
     if (note) for (const noteLine of note.split('\n')) lines.push(`   ${noteLine}`)
     return lines.join('\n')
@@ -1058,8 +1061,15 @@ function evidenceRows(f, { spaced = false } = {}) {
 // markdown export, the pre-filled GitHub issue body, and the search
 // haystack. Empty string for a finding without rows, so callers can
 // `if (block)` rather than special-case the format.
-export function evidenceMarkdown(f) {
-  const rows = evidenceRows(f)
+//
+// With `repoFallback`, every row links where the card's does
+// (`evidenceUrl` against it), as `File:` links through `findingUrl`:
+// the issue body is read on GitHub, where a bare path leads nowhere.
+// Without it, only the rows the report itself linked, so the search
+// haystack never holds URLs the report didn't write.
+export function evidenceMarkdown(f, { repoFallback } = {}) {
+  const link = repoFallback === undefined ? undefined : (row, i) => evidenceUrl(row, f, repoFallback, i)
+  const rows = evidenceRows(f, { link })
   return rows ? `**Evidence:**\n${rows}` : ''
 }
 

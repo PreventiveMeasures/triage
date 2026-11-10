@@ -14,6 +14,17 @@ const FIELD_IDS = new Map([...FIELDS.map(([id, label]) => [sectionKey(label), id
   ['reproductionsteps', 'reproduction'], ['recommendedfix', 'recommendation']])
 // GitHub's issue body limit, which the server enforces before creating one.
 const MAX_BODY = 65_536
+// A section is its label over its text. Two read as GitHub alerts, the
+// label kept inside: the impact, `[!CAUTION]` on a security finding (the
+// one the issue's `security` label marks) and `[!IMPORTANT]` otherwise,
+// and the recommendation, `[!TIP]`.
+const quoted = text => text.split('\n').map(line => line ? `> ${line}` : '>').join('\n')
+function sectionText({ id, label, parts }, finding) {
+  const text = `**${label}:**\n${parts.join('\n\n')}`
+  const alert = id === 'impact' ? (finding.isSecurity === true ? 'CAUTION' : 'IMPORTANT')
+    : id === 'recommendation' ? 'TIP' : null
+  return alert ? `> [!${alert}]\n${quoted(text)}` : text
+}
 
 // Keep optional narrative sections separate from the description, including
 // formats that put labelled sections in the description instead of fields.
@@ -49,8 +60,8 @@ export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevali
     add(id, label, text)
   }
   const ordered = [...FIELDS.map(([id]) => content.get(id)).filter(Boolean), ...[...content.values()].filter(s => !FIELDS.some(([id]) => id === s.id))]
-  let draft = { body: blocks.join('\n\n'), sections: ordered.map(({ id, label, parts }) => ({ id, label,
-    text: `**${label}:**\n${parts.join('\n\n')}`, selected: false, start: 0, end: 0 })), footer: null }
+  let draft = { body: blocks.join('\n\n'), sections: ordered.map(section => ({ id: section.id, label: section.label,
+    text: sectionText(section, finding), selected: false, start: 0, end: 0 })), footer: null }
   // The link, then each section, only while the body stays within what GitHub
   // accepts; evidence alone can be far longer.
   let link = findingLink ? `Triage: ${findingLink}` : ''

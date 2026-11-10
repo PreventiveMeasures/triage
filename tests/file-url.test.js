@@ -373,6 +373,22 @@ describe('evidence rows', () => {
     ].join('\n'))
   })
 
+  // The issue body's form: each row linked where the card's is, the
+  // report's own URL first, a row that resolves nowhere left as text.
+  it('links every row the card links, given the repo target', () => {
+    const dep = { ...f, file: 'node_modules/lodash/index.js', evidence: [...f.evidence, { file: 'node_modules/qs/lib/parse.js', line: '7' }] }
+    assert.equal(evidenceMarkdown(dep, { repoFallback: { github: 'acme/monorepo', directory: '' } }), [
+      '**Evidence:**',
+      '1. [libs/a.ts:10-20](https://github.com/o/r/blob/abc/libs/a.ts#L10-L20)',
+      '   The merge loop.',
+      '2. [libs/b.ts:30](https://github.com/acme/monorepo/blob/HEAD/libs/b.ts#L30)',
+      '   The sink.',
+      '3. [libs/c.ts](https://github.com/acme/monorepo/blob/HEAD/libs/c.ts)',
+      '4. node_modules/qs/lib/parse.js:7',
+    ].join('\n'))
+    assert.equal(evidenceMarkdown(f, { repoFallback: null }).split('\n')[3], '2. [libs/b.ts:30](https://github.com/acme/widgets/blob/HEAD/libs/b.ts#L30)')
+  })
+
   it('keeps a multi-line note inside its own row', () => {
     const md = evidenceMarkdown({ evidence: [{ file: 'a.ts', line: '1', text: 'First.\nSecond.' }] })
     assert.equal(md, '**Evidence:**\n1. a.ts:1\n   First.\n   Second.')
