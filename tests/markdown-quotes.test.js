@@ -124,6 +124,26 @@ test('quotes nest only so deep, and a long run of markers costs no more than a f
   assert.ok(text.includes(`${'>'.repeat(100000 - 16)} x`), 'past that the markers stay text')
 })
 
+// List items count toward the same depth as quotes: each level parses
+// what it holds again, so a few KB of nested markers used to recurse
+// once per marker, until the stack ran out (3,000 `1. ` did). Past 16
+// levels the rest is the innermost item's text.
+test('lists nest only so deep too, counted with quotes, and a deep one costs a few passes', () => {
+  const t = performance.now()
+  const ordered = shown(`${'1. '.repeat(3000)}x`)
+  const indented = shown(Array.from({ length: 300 }, (_, i) => `${' '.repeat(i * 2)}- x${i}`).join('\n'))
+  const mixed = shown(`${'- > '.repeat(2000)}x`)
+  const ms = performance.now() - t
+  assert.ok(ms < 2000, `lists took ${ms.toFixed(0)}ms`)
+  assert.equal(ordered.match(/<ol /gu).length, 16)
+  assert.ok(ordered.includes(`${'1. '.repeat(3000 - 16)}x`), 'past that the markers stay text')
+  assert.equal(indented.match(/<ul /gu).length, 16)
+  assert.ok(indented.includes('<li>x15\n- x16\n  - x17'), 'the 17th item on is the 16th\'s text')
+  assert.equal(mixed.match(/<ul |<blockquote/gu).length, 16)
+  // Normal nesting is drawn as before.
+  assert.equal(shown('- a\n  - b\n    > c').match(/<ul |<blockquote/gu).length, 3)
+})
+
 test('the created issue\'s preview draws its alerts', () => {
   const dialog = Object.assign(new (customElements.get('managed-issue-dialog'))(), {
     context: { repository: 'o/r' }, session: { login: 'author' }, renderBody: renderHighlighted,

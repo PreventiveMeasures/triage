@@ -967,11 +967,12 @@ const FENCE_START_RE = /^ {0,3}(?:`{3}|~{3})/u
 // after it to fail, so it never backtracks however long the run.
 const NESTED_MARKERS_RE = /^(?: {0,3}> ?| *(?:[-*+]|\d{1,9}[.)])(?: +|$))*/u
 
-// How many quotes deep, one inside another, the renderer draws
-// (render-finding.js markdownBody) and unquotedText sheds. Past that the
-// rest stays text: a line of thousands of `>`s costs a few passes rather
-// than one per marker, and no recursion that deep.
-export const QUOTE_DEPTH = 16
+// How many blocks deep, quotes and list items one inside another, the
+// renderer draws (render-finding.js markdownBody), and how many quotes
+// unquotedText sheds. Past that the rest stays text. Each level parses
+// what it holds again, so a line of thousands of `>`s or `- `s costs a
+// few passes rather than one per marker, and no recursion that deep.
+export const NESTING_DEPTH = 16
 
 // A heading, a rule or a fence: a line that is no paragraph's text.
 const isLeafBlock = (line) => HEADING_RE.test(line) || HRULE_RE.test(line) || FENCE_START_RE.test(line)
@@ -1044,7 +1045,7 @@ export function quoteSegments(text, { alerts = true } = {}) {
 // place, for the compact surfaces: a line or two of summary, where a
 // quote's block would break the line they get. An alert's marker line
 // goes with the `>`s, the kind of callout being chrome as they are.
-export function unquotedText(text, depth = QUOTE_DEPTH) {
+export function unquotedText(text, depth = NESTING_DEPTH) {
   if (depth <= 0) return text
   return quoteSegments(text).map((seg) => (typeof seg === 'string' ? seg : unquotedText(seg.body, depth - 1))).join('\n')
 }
