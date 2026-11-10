@@ -1406,11 +1406,12 @@ report.addEventListener('click', (e) => {
     if (finding?._managedReportId && finding.id) {
       e.preventDefault()
       const url = new URL(issueBtn.dataset.issueForm)
+      const repoFallback = findingRepoTarget(finding)
       void openManagedIssueDialog({ teamId: state.currentManagedTeam, session: { ...state.managedSession },
         context: { reportId: finding._managedReportId, findingId: finding.id, repository: url.pathname.split('/').slice(1, 3).join('/') },
         formUrl: url.href, title: url.searchParams.get('title') ?? '', body: url.searchParams.get('body') ?? '',
-        finding, draftOptions: { sourceUrl: findingUrl(finding, findingRepoTarget(finding)),
-          evidence: evidenceMarkdown(finding), showRevalidation: revalidationShown(),
+        finding, draftOptions: { sourceUrl: findingUrl(finding, repoFallback),
+          evidence: evidenceMarkdown(finding, { repoFallback }), showRevalidation: revalidationShown(),
           findingLink: findingLinkFor(finding) },
         renderBody: renderHighlighted, render,
       }).catch(() => showToast('Could not open issue creation. Please retry.'))

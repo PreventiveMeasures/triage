@@ -39,6 +39,16 @@ test('managed issue action has no native creation URL for modified clicks or Ope
   assert.match(draft.searchParams.get('body'), /Finding description/u)
 })
 
+test('the prefilled issue body links each evidence row as it links File:', t => {
+  const action = issueAction(t, { serverMode: 'standalone' }, { line: '3', repo: { github: 'o/r' },
+    evidence: [{ file: 'src/file.js', line: '3' }, { file: 'src/sink.js', line: '9-12', text: 'The sink.' }] })
+  const lines = new URL(action.values[0]).searchParams.get('body').split('\n')
+  const blob = 'https://github.com/o/r/blob/HEAD/src'
+  assert.ok(lines.includes(`File: [src/file.js:3](${blob}/file.js#L3)`))
+  assert.ok(lines.includes(`1. [src/file.js:3](${blob}/file.js#L3)`))
+  assert.ok(lines.includes(`2. [src/sink.js:9-12](${blob}/sink.js#L9)`))
+})
+
 for (const [mode, overrides] of [
   ['e2e', { serverMode: 'e2e' }],
   ['standalone', { serverMode: 'standalone' }],

@@ -908,15 +908,17 @@ function issueTitle(f) {
 // file:line is a Markdown link to the source on GitHub — the same
 // target the card / row file links use, falling back to plain
 // `file:line` text when the path can't be linked (e.g. a node_modules
-// file with no resolvable upstream repo). Blocks join with a blank line
+// file with no resolvable upstream repo). Evidence rows link the same
+// way, each to its own row's target. Blocks join with a blank line
 // so the file link and confidence bracket the description paragraph.
 function issueBody(f) {
-  const href = findingUrl(f, findingRepoTarget(f))
+  const repoFallback = findingRepoTarget(f)
+  const href = findingUrl(f, repoFallback)
   const loc = locationLabel(f)
   const blocks = []
   if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
   if (f.description) blocks.push(f.description)
-  const evidence = evidenceMarkdown(f)
+  const evidence = evidenceMarkdown(f, { repoFallback })
   if (evidence) blocks.push(evidence)
   if (f.confidence !== undefined && f.confidence !== null) blocks.push(`Confidence: ${f.confidence}/10`)
   return blocks.join('\n\n')
