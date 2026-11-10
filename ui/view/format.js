@@ -551,6 +551,12 @@ function stripLineAnchor(url) {
   return url.replace(/#L\d+(?:-L?\d+)?$/u, '')
 }
 
+// A `lineRange` as GitHub anchors it: `#L42`, or `#L20-L30`, which it
+// highlights whole.
+function lineAnchor({ start, end }) {
+  return end > start ? `#L${start}-L${end}` : `#L${start}`
+}
+
 // Source URL for ONE finding's location — every finding-level file /
 // line link routes through here so they all resolve the same target.
 //
@@ -569,9 +575,8 @@ export function findingUrl(f, repoFallback) {
   if (isHttpUrl(f.location)) return f.location
   const url = fileUrl(f.file, f.repo, repoFallback, f.auditedCommit)
   if (!url) return null
-  // A range anchors as GitHub highlights it, `#L20-L30`.
   const range = lineRange(f.line)
-  if (range && range.end > range.start) return `${url}#L${range.start}-L${range.end}`
+  if (range) return `${url}${lineAnchor(range)}`
   const lineNum = parseInt(f.line, 10)
   return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
 }
@@ -1206,15 +1211,16 @@ export function evidenceUrl(row, f, repoFallback, index) {
 // handoff wants that (its rows carry prose and it is a document in its
 // own right), the compact `**Evidence:**` block below does not.
 // `link(row, i)` names each row's target; by default only the URL the
-// report wrote for it.
-function evidenceRows(f, { spaced = false, link = row => row.url } = {}) {
+// report wrote for it. `lineLinks` links the line references in a row's
+// note to that target too (linkLineRefs).
+function evidenceRows(f, { spaced = false, link = row => row.url, lineLinks = false } = {}) {
   const rows = Array.isArray(f?.evidence) ? f.evidence : []
   if (rows.length === 0) return ''
   return rows.map((row, i) => {
     const label = locationLabel(row)
     const url = link(row, i)
     const lines = [`${i + 1}. ${url ? `[${label}](${url})` : label}`]
-    const note = evidenceNote(row)
+    const note = lineLinks ? linkLineRefs(evidenceNote(row), url) : evidenceNote(row)
     if (note) for (const noteLine of note.split('\n')) lines.push(`   ${noteLine}`)
     return lines.join('\n')
   }).join(spaced ? '\n\n' : '\n')
@@ -1228,14 +1234,31 @@ function evidenceRows(f, { spaced = false, link = row => row.url } = {}) {
 // `if (block)` rather than special-case the format.
 //
 // With `repoFallback`, every row links where the card's does
-// (`evidenceUrl` against it), as `File:` links through `findingUrl`:
-// the issue body is read on GitHub, where a bare path leads nowhere.
-// Without it, only the rows the report itself linked, so the search
-// haystack never holds URLs the report didn't write.
+// (`evidenceUrl` against it), as `File:` links through `findingUrl`,
+// and so do the line references in its note: the issue body is read on
+// GitHub, where a bare path leads nowhere. Without it, only the rows the
+// report itself linked, so the search haystack never holds URLs the
+// report didn't write.
 export function evidenceMarkdown(f, { repoFallback } = {}) {
-  const link = repoFallback === undefined ? undefined : (row, i) => evidenceUrl(row, f, repoFallback, i)
-  const rows = evidenceRows(f, { link })
+  const linked = repoFallback !== undefined
+  const link = linked ? (row, i) => evidenceUrl(row, f, repoFallback, i) : undefined
+  const rows = evidenceRows(f, { link, lineLinks: linked })
   return rows ? `**Evidence:**\n${rows}` : ''
+}
+
+// A line reference in an evidence row's note, `(line 40)`, `(lines
+// 40-50)`, `(L40)` or `(L40-L50)`, as a link to those lines in the file
+// the row links to, its own anchor swapped for theirs. Only on a GitHub
+// blob link, whose anchors these are. Code spans, fences and links
+// already in the note are matched first and kept as they are.
+const NOTE_LINE_REF_RE = /(```[^]*?```|~~~[^]*?~~~|`[^`\n]*`|\[[^\]\n]*\]\([^)\s]*\))|\(\s*(?:lines?|L)\s*(\d+)(?:\s*(?:-|–|—|to)\s*L?(\d+))?\s*\)/giu
+function linkLineRefs(note, url) {
+  if (!note || !url || !GH_BLOB_RE.test(url)) return note
+  const file = stripLineAnchor(url)
+  return note.replace(NOTE_LINE_REF_RE, (match, kept, from, to) => {
+    const range = kept ? null : lineRange(to ? `${from}-${to}` : from)
+    return range ? `([${match.slice(1, -1).trim()}](${file}${lineAnchor(range)}))` : match
+  })
 }
 
 // One inline markdown link — `[label](url)` — as it appears INSIDE a

@@ -403,6 +403,37 @@ describe('evidence rows', () => {
     assert.equal(evidenceMarkdown(f, { repoFallback: null }).split('\n')[3], '2. [libs/b.ts:30](https://github.com/acme/widgets/blob/HEAD/libs/b.ts#L30)')
   })
 
+  // The issue body's form links a note's line references too, each to
+  // those lines in the file its row links to. Other surfaces keep the
+  // note as written.
+  it('links the line references in a row\'s note to the row\'s file', () => {
+    const blob = 'https://github.com/acme/widgets/blob/HEAD/src'
+    const text = 'Read (line 40), then (lines 40-50), (L7), (L8-L9) and (Lines 3 – 1).\n'
+      + 'Kept: `(line 4)`, [see (line 5)](https://example.com), (line 40, 52), (L0), (lines).'
+    const row = { file: 'src/a.ts', line: '12', text }
+    const md = evidenceMarkdown({ repo: { github: 'acme/widgets' }, evidence: [row] }, { repoFallback: null })
+    assert.equal(md, [
+      '**Evidence:**',
+      `1. [src/a.ts:12](${blob}/a.ts#L12)`,
+      `   Read ([line 40](${blob}/a.ts#L40)), then ([lines 40-50](${blob}/a.ts#L40-L50)), ([L7](${blob}/a.ts#L7)),`
+        + ` ([L8-L9](${blob}/a.ts#L8-L9)) and ([Lines 3 – 1](${blob}/a.ts#L1-L3)).`,
+      '   Kept: `(line 4)`, [see (line 5)](https://example.com), (line 40, 52), (L0), (lines).',
+    ].join('\n'))
+    // A fence in the note is code.
+    const fenced = evidenceMarkdown({ repo: { github: 'acme/widgets' }, evidence: [{ file: 'src/a.ts', text: '```\nf() // (line 3)\n```' }] }, { repoFallback: null })
+    assert.ok(fenced.includes('f() // (line 3)'))
+    // The report's own pinned link: its anchor swapped for the note's.
+    const pinned = { file: 'libs/a.ts', line: '10-20', url: 'https://github.com/o/r/blob/abc/libs/a.ts#L10-L20', text: 'The loop (line 14).' }
+    assert.ok(evidenceMarkdown({ evidence: [pinned] }, { repoFallback: null })
+      .includes('The loop ([line 14](https://github.com/o/r/blob/abc/libs/a.ts#L14)).'))
+    // No link for the row, or a link off GitHub: the note as written.
+    assert.ok(evidenceMarkdown({ evidence: [{ file: 'src/a.ts', text: 'At (line 4).' }] }, { repoFallback: null }).includes('   At (line 4).'))
+    assert.ok(evidenceMarkdown({ evidence: [{ ...pinned, url: 'https://gitlab.com/o/r/-/blob/abc/libs/a.ts#L10' }] }, { repoFallback: null })
+      .includes('   The loop (line 14).'))
+    // The search haystack and the other surfaces: unchanged.
+    assert.ok(evidenceMarkdown({ evidence: [pinned] }).includes('   The loop (line 14).'))
+  })
+
   it('keeps a multi-line note inside its own row', () => {
     const md = evidenceMarkdown({ evidence: [{ file: 'a.ts', line: '1', text: 'First.\nSecond.' }] })
     assert.equal(md, '**Evidence:**\n1. a.ts:1\n   First.\n   Second.')
