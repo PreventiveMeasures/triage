@@ -23,6 +23,23 @@ test('issue draft offers populated sections with only impact selected initially'
   assert.deepEqual(createIssueDraft({ description: 'Only prose.', impact: '  ', evidence: [] }).sections, [])
 })
 
+// GitHub draws a permalink to lines, standing alone on its line, as the
+// code it points at: the source at a full commit opens the issue that
+// way, with no `File:` label. Anything else keeps the labelled link.
+test('the source at a full commit opens the issue as a bare permalink, anything else as File:', () => {
+  const sha = 'c'.repeat(40)
+  const first = (sourceUrl) => createIssueDraft(finding, { sourceUrl }).body.split('\n\n')[0]
+  for (const url of [`https://github.com/o/r/blob/${sha}/src/api.js#L12`, `https://github.com/o/r/blob/${sha}/src/api.js#L12-L20`,
+    `https://github.com/o/r/blob/${'d'.repeat(64)}/src/api.js#L12`]) {
+    assert.equal(first(url), url)
+  }
+  for (const url of ['https://github.com/o/r/blob/HEAD/src/api.js#L12', 'https://github.com/o/r/blob/abc1234/src/api.js#L12',
+    `https://github.com/o/r/blob/${sha}/src/api.js`, `https://gitlab.com/o/r/blob/${sha}/src/api.js#L12`]) {
+    assert.equal(first(url), `File: [src/api.js:12](${url})`)
+  }
+  assert.equal(first(undefined), 'File: src/api.js:12')
+})
+
 test('all sections can start selected, in order, above the finding link on the bottom line', () => {
   const link = 'https://triage.test/team/t/r/finding'
   let draft = draftFor(finding, { allSections: true, findingLink: link })

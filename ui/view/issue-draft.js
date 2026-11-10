@@ -14,6 +14,13 @@ const FIELD_IDS = new Map([...FIELDS.map(([id, label]) => [sectionKey(label), id
   ['reproductionsteps', 'reproduction'], ['recommendedfix', 'recommendation']])
 // GitHub's issue body limit, which the server enforces before creating one.
 const MAX_BODY = 65_536
+// A GitHub link to a line or lines at a full commit hash: on a line of its
+// own in an issue of that repository, GitHub draws the code it points at.
+// The finding's source, at the revision the report read, then opens the
+// issue as that snippet; at HEAD, at a short hash or without lines it
+// stays `File: [path:lines](url)`. Evidence links never do: a list of
+// snippets would bury the notes between them.
+const PERMALINK_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/blob\/(?:[0-9a-f]{40}|[0-9a-f]{64})\/[^\s#]+#L\d+(?:-L\d+)?$/iu
 // A section is its label over its text. Two read as GitHub alerts, the
 // label kept inside: the impact, `[!CAUTION]` on a security finding (the
 // one the issue's `security` label marks) and `[!IMPORTANT]` otherwise,
@@ -42,7 +49,7 @@ export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevali
     content.set(id, section)
   }
   const location = locationLabel(finding)
-  if (finding.file) blocks.push(`File: ${sourceUrl ? `[${location}](${sourceUrl})` : location}`)
+  if (finding.file) blocks.push(PERMALINK_RE.test(sourceUrl ?? '') ? sourceUrl : `File: ${sourceUrl ? `[${location}](${sourceUrl})` : location}`)
   let current = null
   for (const section of descriptionSections(stripExportMarker(finding.description, finding))) {
     if (section.label !== null) {
