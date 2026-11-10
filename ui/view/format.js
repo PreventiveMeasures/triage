@@ -793,16 +793,23 @@ function trimTrailingBlank(lines) {
   return lines.slice(0, end).join('\n')
 }
 
+// Each line's offset in the text it was split from, to check the line
+// against fenceRanges.
+function lineOffsets(lines) {
+  const offsets = []
+  let at = 0
+  for (const line of lines) { offsets.push(at); at += line.length + 1 }
+  return offsets
+}
+
 export function listSegments(text) {
   const src = typeof text === 'string' ? text : ''
   if (!src) return [text]
   const ranges = fenceRanges(src)
   const lines = src.split('\n')
-  // Line → byte offset, so a candidate marker can be checked against
-  // the fenced ranges: a `- ` or `1. ` inside a snippet is code.
-  const offsets = []
-  let at = 0
-  for (const line of lines) { offsets.push(at); at += line.length + 1 }
+  // A candidate marker is checked against the fenced ranges: a `- ` or
+  // `1. ` inside a snippet is code.
+  const offsets = lineOffsets(lines)
   const startsItem = (i) => !inFence(ranges, offsets[i])
     && !HRULE_RE.test(lines[i])
     && LIST_ITEM_RE.test(lines[i])
@@ -990,9 +997,7 @@ export function quoteSegments(text, { alerts = true } = {}) {
   if (!/^ {0,3}>/mu.test(src)) return [text]
   const ranges = fenceRanges(src)
   const lines = src.split('\n')
-  const offsets = []
-  let at = 0
-  for (const line of lines) { offsets.push(at); at += line.length + 1 }
+  const offsets = lineOffsets(lines)
   const quoted = (i) => QUOTE_LINE_RE.test(lines[i]) && !inFence(ranges, offsets[i])
 
   const out = []
@@ -1023,9 +1028,7 @@ export function quoteSegments(text, { alerts = true } = {}) {
     }
     const marker = alerts ? ALERT_MARKER_RE.exec(body[0]) : null
     const under = marker ? trimBlankLines(body.slice(1)) : ''
-    out.push(under
-      ? { quote: true, alert: marker[1].toLowerCase(), body: under }
-      : { quote: true, alert: null, body: trimBlankLines(body) })
+    out.push({ quote: true, alert: under ? marker[1].toLowerCase() : null, body: under || trimBlankLines(body) })
     proseFrom = i
   }
   if (proseFrom < lines.length) out.push(lines.slice(proseFrom).join('\n'))
@@ -1038,9 +1041,7 @@ export function quoteSegments(text, { alerts = true } = {}) {
 // goes with the `>`s, the kind of callout being chrome as they are.
 export function unquotedText(text, depth = QUOTE_DEPTH) {
   if (depth <= 0) return text
-  const segments = quoteSegments(text)
-  if (segments.length === 1 && typeof segments[0] === 'string') return text
-  return segments.map((seg) => (typeof seg === 'string' ? seg : unquotedText(seg.body, depth - 1))).join('\n')
+  return quoteSegments(text).map((seg) => (typeof seg === 'string' ? seg : unquotedText(seg.body, depth - 1))).join('\n')
 }
 
 // ── Line ranges──────────────────────────────────────────────────────

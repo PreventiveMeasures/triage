@@ -34,10 +34,12 @@
 /* An alert: the bar and the title in its kind's colour, GitHub's for
    each — blue for a note, green for a tip, purple for something
    important, amber for a warning, red for a caution — off the theme's
-   tokens, so every theme retunes them as it does those. Its own text
-   keeps the prose's colour: the title says what kind it is. */
+   tokens, so every theme retunes them as it does those. A note takes
+   `--info`, blue in every theme, rather than `--accent`, which is green
+   or pink in some, as a tip is. Its own text keeps the prose's colour:
+   the title says what kind it is. */
 .md-alert {
-  --md-alert: var(--accent);
+  --md-alert: var(--info);
   padding: .35lh .85em;
   border-inline-start: .25em solid var(--md-alert);
   background: rgb(from var(--md-alert) r g b / .06);
