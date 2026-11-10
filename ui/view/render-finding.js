@@ -6,7 +6,7 @@ import { bundlesForFileHash, duplicatesOf, encodeFindingRef, isLinkableFindingId
 import { publicSharePath } from '../../client/managed/public-share.js'
 import { reportRepoGithub } from '@preventive/report'
 import { newIssueLabels } from '../../common/github-issue-labels.js'
-import { QUOTE_DEPTH, SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineBlockSegments, lineRange, listSegments, locationLabel, markdownLinkToken, quoteSegments, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker, unquotedText } from './format.js'
+import { NESTING_DEPTH, SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineBlockSegments, lineRange, listSegments, locationLabel, markdownLinkToken, quoteSegments, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker, unquotedText } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
 import { attachedBundle, bundleSource, findingSourcePath, focusCodePosition } from './focus-code.js'
@@ -265,14 +265,15 @@ function lineBlockTemplate({ level, text, rule }) {
 // A task item (`- [x] Lint passes`, a pull request's test plan) shows
 // its box, ticked as the markdown says, where the bullet would be.
 //
-// `depth` is the quotes the list sits in (see markdownBody).
+// `depth` is the blocks the list sits in (see markdownBody); its items'
+// content sits one deeper.
 const TASK_ITEM_RE = /^\[([ xX])\][ \t]+/u
 function listTemplate({ ordered, start, items }, depth) {
   const entries = items.map((item) => {
     const task = TASK_ITEM_RE.exec(item)
     return task
-      ? html`<li class="md-task"><input type="checkbox" disabled ?checked=${task[1] !== ' '}>${markdownBody(item.slice(task[0].length), depth)}</li>`
-      : html`<li>${markdownBody(item, depth)}</li>`
+      ? html`<li class="md-task"><input type="checkbox" disabled ?checked=${task[1] !== ' '}>${markdownBody(item.slice(task[0].length), depth + 1)}</li>`
+      : html`<li>${markdownBody(item, depth + 1)}</li>`
   })
   return ordered
     ? html`<ol class="md-list" start=${start > 1 ? start : nothing}>${entries}</ol>`
@@ -315,20 +316,23 @@ export function renderHighlighted(raw, { paragraphs = true } = {}) {
 
 // renderHighlighted's pass, which a list item's content and a quote's
 // come back through. `alerts` only at the top, where GitHub draws them
-// (format.js quoteSegments); `depth` is the quotes the body sits in,
-// past QUOTE_DEPTH of which a `>` stays the text it was.
+// (format.js quoteSegments); `depth` is the quotes and list items the
+// body sits in, past NESTING_DEPTH of which a `>` or a `- ` stays the text
+// it was: a report's text is untrusted, and every level parses what it
+// holds again.
 function markdownBody(raw, depth, { paragraphs = true, alerts = false } = {}) {
   if (!raw) return raw
   const crlf = raw.replaceAll('\r\n', '\n')
   const text = paragraphs ? crlf : unquotedText(crlf)
-  const blocks = paragraphs ? listSegments(text) : [text]
+  const nests = paragraphs && depth < NESTING_DEPTH
+  const blocks = nests ? listSegments(text) : [text]
   // More than one block means the prose runs have LIST SIBLINGS, and
   // the gap between them is a margin — which needs an element to sit
   // on (see proseTemplate's `wrap`).
   const many = blocks.length > 1
   const flow = (run) => {
     const segments = codeBlockSegments(run)
-    const parts = paragraphs && depth < QUOTE_DEPTH
+    const parts = nests
       ? segments.flatMap((seg) => (typeof seg === 'string' ? quoteRuns(seg, alerts) : [seg]))
       : segments
     // A quote is a block among the prose as a list is, its gap to the
