@@ -80,7 +80,7 @@ test('an untouched draft keeps every section for the API and only Impact for the
   assert.deepEqual(dialog.sections.map(s => s.selected), [true, true])
   const destination = await redirected.promise
   assert.deepEqual(dialog.sections.map(s => s.selected), [true, false])
-  assert.equal(new URL(destination).searchParams.get('body'), 'Main description\n\n**Impact:**\nImpact details\n\nTriage: https://triage.test/f')
+  assert.equal(new URL(destination).searchParams.get('body'), 'Main description\n\n> [!IMPORTANT]\n> **Impact:**\n> Impact details\n\nTriage: https://triage.test/f')
   mode = 'api'; await dialog.check()
   assert.deepEqual(dialog.sections.map(s => s.selected), [true, true])
   dialog.toggleSection('impact', false)

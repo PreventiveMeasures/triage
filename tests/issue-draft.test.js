@@ -18,7 +18,7 @@ test('issue draft offers populated sections with only impact selected initially'
   assert.match(draft.body, /File: \[src\/api.js:12\]\(https:\/\/github.com\/o\/r\/blob\/HEAD\/src\/api.js#L12\)/u)
   assert.match(draft.body, /An unchecked request reaches storage\./u)
   assert.match(draft.body, /Confidence: 8\/10/u)
-  assert.match(draft.body, /\*\*Impact:\*\*\nPrivate data can be disclosed\./u)
+  assert.match(draft.body, /\n\n> \[!IMPORTANT\]\n> \*\*Impact:\*\*\n> Private data can be disclosed\.$/u)
   assert.doesNotMatch(draft.body, /Evidence|Reproduction|Recommendation|Confidence reason/u)
   assert.deepEqual(createIssueDraft({ description: 'Only prose.', impact: '  ', evidence: [] }).sections, [])
 })
@@ -27,7 +27,7 @@ test('all sections can start selected, in order, above the finding link on the b
   const link = 'https://triage.test/team/t/r/finding'
   let draft = draftFor(finding, { allSections: true, findingLink: link })
   assert.ok(draft.sections.every(s => s.selected))
-  assert.match(draft.body, /Confidence: 8\/10\n\n\*\*Impact:\*\*[^]*\*\*Evidence:\*\*[^]*\*\*Reproduction:\*\*[^]*\*\*Recommendation:\*\*[^]*\*\*Confidence reason:\*\*\nThe route is reachable\.\n\nTriage: https:\/\/triage\.test\/team\/t\/r\/finding$/u)
+  assert.match(draft.body, /Confidence: 8\/10\n\n> \[!IMPORTANT\]\n> \*\*Impact:\*\*[^]*\*\*Evidence:\*\*[^]*\*\*Reproduction:\*\*[^]*\*\*Recommendation:\*\*[^]*\*\*Confidence reason:\*\*\nThe route is reachable\.\n\nTriage: https:\/\/triage\.test\/team\/t\/r\/finding$/u)
   draft = toggleIssueDraftSection(draft, 'reproduction', false)
   draft = editIssueDraft(draft, draft.body.replace('Check ownership', 'Verify ownership'))
   draft = toggleIssueDraftSection(draft, 'reproduction', true)
@@ -46,7 +46,7 @@ test('sections that would take the body past GitHub\'s limit start unselected', 
   assert.match(draft.body, /\*\*Confidence reason:\*\*\nThe route is reachable\.\n\nTriage: https:\/\/triage\.test\/f$/u)
   const description = 'x'.repeat(65_530)
   assert.deepEqual(createIssueDraft({ description, impact: 'Impact' }, { allSections: true, findingLink: link }),
-    { body: description, sections: [{ id: 'impact', label: 'Impact', text: '**Impact:**\nImpact', selected: false, start: 0, end: 0 }], footer: null })
+    { body: description, sections: [{ id: 'impact', label: 'Impact', text: '> [!IMPORTANT]\n> **Impact:**\n> Impact', selected: false, start: 0, end: 0 }], footer: null })
 })
 
 test('the finding link ends a draft without other text and is released by edits across it', () => {
@@ -64,20 +64,36 @@ test('the finding link ends a draft without other text and is released by edits 
   draft = toggleIssueDraftSection(draft, 'reproduction', false)
   draft = editIssueDraft(draft, draft.body.replace('Impact text\n\nTriage', 'Impact text Triage'))
   draft = toggleIssueDraftSection(draft, 'reproduction', true)
-  assert.equal(draft.body, 'Opening.\n\n**Impact:**\nImpact text Triage finding: https://triage.test/f\n\n**Reproduction:**\nSteps')
+  assert.equal(draft.body, 'Opening.\n\n> [!IMPORTANT]\n> **Impact:**\n> Impact text Triage finding: https://triage.test/f\n\n**Reproduction:**\nSteps')
   draft = editIssueDraft(draft, 'Rewritten.')
   assert.equal(draft.footer, null)
   draft = toggleIssueDraftSection(draft, 'impact', true)
-  assert.equal(draft.body, 'Rewritten.\n\n**Impact:**\nImpact text')
+  assert.equal(draft.body, 'Rewritten.\n\n> [!IMPORTANT]\n> **Impact:**\n> Impact text')
 })
 
 test('labelled report descriptions expose whole sections, including multiple paragraphs and code', () => {
   const draft = createIssueDraft({ description: 'Opening.\n\n**Impact:** First paragraph.\n\nSecond paragraph.\n\n**Reproduction steps:** Run this:\n\n```\n**Not a section:**\n\nexample\n```\n\n**Mitigation:** Restrict access.' })
   assert.deepEqual(draft.sections.map(s => s.id), ['impact', 'reproduction', 'mitigation'])
-  assert.match(draft.body, /First paragraph\.\n\nSecond paragraph\./u)
+  assert.match(draft.body, /> First paragraph\.\n>\n> Second paragraph\./u)
   assert.doesNotMatch(draft.body, /Run this|Not a section|Restrict access/u)
   const withRepro = toggleIssueDraftSection(draft, 'reproduction', true)
   assert.match(withRepro.body, /Run this:\n\n```\n\*\*Not a section:\*\*\n\nexample\n```/u)
+})
+
+test('impact and recommendation are GitHub alerts under their own labels, every line quoted; other sections are not', () => {
+  const f = { ...finding, description: 'Opening.\n\n**Recommended fix:** Use a guard:\n\n```\nguard(user)\n```' }
+  let draft = createIssueDraft(f, { allSections: true, findingLink: 'https://triage.test/f' })
+  const tip = ['> [!TIP]', '> **Recommended fix:**', '> Use a guard:', '>', '> ```', '> guard(user)', '> ```', '>',
+    '> Check ownership before returning data.'].join('\n')
+  assert.equal(draft.sections.find(s => s.id === 'recommendation').text, tip)
+  assert.ok(draft.body.includes(`\n\n${tip}\n\n**Confidence reason:**`))
+  assert.match(draft.body, /\n\n> \[!IMPORTANT\]\n> \*\*Impact:\*\*\n> Private data[^]*\n\n\*\*Reproduction:\*\*\nSend/u)
+  assert.equal(createIssueDraft({ ...f, isSecurity: true }).sections.find(s => s.id === 'impact').text,
+    '> [!CAUTION]\n> **Impact:**\n> Private data can be disclosed.')
+  draft = toggleIssueDraftSection(draft, 'recommendation', false)
+  assert.doesNotMatch(draft.body, /\[!TIP\]|guard/u)
+  draft = toggleIssueDraftSection(draft, 'recommendation', true)
+  assert.ok(draft.body.endsWith(`\n\n${tip}\n\nTriage: https://triage.test/f`))
 })
 
 test('revalidation sections follow the active revalidation layer', () => {
@@ -127,7 +143,7 @@ test('inserting at section boundaries and deleting a section does not corrupt ad
   assert.match(draft.body, /Check ownership before returning data\./u)
   assert.doesNotMatch(draft.body, /Edited heading/u)
   draft = toggleIssueDraftSection(draft, 'impact', true)
-  assert.match(draft.body, /Edited heading: \*\*Impact:\*\*/u)
+  assert.match(draft.body, /Edited heading: > \[!IMPORTANT\]\n> \*\*Impact:\*\*/u)
 })
 
 test('toggling an appended section preserves trailing blank lines in an edited section', () => {
