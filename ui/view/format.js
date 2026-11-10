@@ -1,5 +1,5 @@
 import { dependencyDirectory } from '../../client/dependency-paths.js'
-import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, fenceRanges, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, inFence, isHttpUrl, locationLabel, prettyModel, repoDirectory, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription, unescapeMd } from '@preventive/report'
+import { REVALIDATE_KINDS, SEVERITIES, SEVERITY_ORDER, correctedVariants, descriptionSections, displayedSeverity, effectiveSeverity, evidenceNote, fenceRanges, findingDisplayName, findingTitle, firstLine, hasSeverityCorrection, inFence, isHttpUrl, locationLabel, prettyModel, repoDirectory, reportRepoGithub, revalidateKindOf, runMetaLine, splitDescription, stripExportMarker, titledDescription, unescapeMd } from '@preventive/report'
 import { html, nothing } from 'lit'
 // Direct relative import, NOT `#client/index.js`: this module rides in
 // the lazy `ui/graph.js` bundle, and the aggregator would drag `state`
@@ -9,6 +9,7 @@ import { html, nothing } from 'lit'
 import { parseFindingUrl } from '../../client/finding-link.js'
 import { formatBytes as formatByteSize } from '../scan/metrics.js'
 import { REVALIDATE_FILTERS, hasRevalidateStamp } from '../../common/finding-filters.js'
+import { asCommit, repoCommit, sameRepoSlug } from '../../common/repo-commit.js'
 export { PARTIAL_MODES, REVALIDATE_FILTERS, activeRevalidateKinds, hasRevalidateStamp, revalidateFilterKinds } from '../../common/finding-filters.js'
 // What a finding IS — the readers shared with the report library's
 // markdown writer — lives in that library; re-exported here unchanged so
@@ -478,9 +479,9 @@ export function isPkgRef(file) {
 // back only with the repo it was declared beside, never applied to
 // the other one.
 function repoTarget(repo) {
-  if (repo == null || typeof repo === 'string') return { id: repo ?? '', prefix: '' }
+  if (repo == null || typeof repo === 'string') return { id: repo ?? '', prefix: '', commit: '' }
   const dir = repoDirectory(repo)
-  return { id: typeof repo.github === 'string' ? repo.github : '', prefix: dir ? `${dir}/` : '' }
+  return { id: typeof repo.github === 'string' ? repo.github : '', prefix: dir ? `${dir}/` : '', commit: repoCommit(repo) }
 }
 
 // `repo` (the per-finding `repo` stamp, e.g. `{ github:
@@ -499,15 +500,36 @@ function repoTarget(repo) {
 // client aggregator with it.
 // A package-reference "file" links to nothing — blob-linking
 // `.../blob/HEAD/name@1.2.3` under either repo would 404.
-export function fileUrl(file, repo, repoFallback) {
+//
+// The finding's `repo` may be written as a GitHub URL (`….git`,
+// `…/tree/main`) and is read down to its slug, as the issue button
+// reads it. Links are at the revision the report read, so a line number
+// still lands on the code it describes after the branch moves on:
+//   1. the finding's own `repo.commit`, for its own repo;
+//   2. the report's (`repoFallback.commit`), for the report's repo,
+//      which a finding's own repo is when it names the same slug;
+//   3. `auditedCommit`, the "Commit audited" older piolium and markdown
+//      reports carry, for the report's repo or own source, never a
+//      dependency's upstream;
+//   4. HEAD.
+// Never `commitHash`: that is where the bug was introduced.
+export function fileUrl(file, repo, repoFallback, auditedCommit = '') {
   if (isPkgRef(file)) return null
   const own = repoTarget(repo)
-  if (own.id) return `https://github.com/${own.id}/blob/HEAD/${own.prefix}${stripPackagePrefix(file)}`
-  if (isModule(file)) return null
   const fallback = repoTarget(repoFallback)
+  const audited = asCommit(auditedCommit)
+  if (own.id) {
+    const slug = reportRepoGithub({ repo: { github: own.id } })
+    const base = repoBaseUrl(slug ?? own.id)
+    const sameRepo = sameRepoSlug(slug, reportRepoGithub({ repo: { github: fallback.id } }))
+    const ref = own.commit || (sameRepo ? fallback.commit : '')
+      || (sameRepo || !hasDependencyMarker(file) ? audited : '') || 'HEAD'
+    return `${base}/blob/${ref}/${own.prefix}${stripPackagePrefix(file)}`
+  }
+  if (isModule(file)) return null
   const base = repoBaseUrl(fallback.id)
   if (!base) return null
-  return `${base}/blob/HEAD/${fallback.prefix}${file}`
+  return `${base}/blob/${fallback.commit || audited || 'HEAD'}/${fallback.prefix}${file}`
 }
 
 // File-level link for a finding's path — the file headers the list /
@@ -545,8 +567,11 @@ function stripLineAnchor(url) {
 export function findingUrl(f, repoFallback) {
   if (!f) return null
   if (isHttpUrl(f.location)) return f.location
-  const url = fileUrl(f.file, f.repo, repoFallback)
+  const url = fileUrl(f.file, f.repo, repoFallback, f.auditedCommit)
   if (!url) return null
+  // A range anchors as GitHub highlights it, `#L20-L30`.
+  const range = lineRange(f.line)
+  if (range && range.end > range.start) return `${url}#L${range.start}-L${range.end}`
   const lineNum = parseInt(f.line, 10)
   return Number.isFinite(lineNum) ? `${url}#L${lineNum}` : url
 }
@@ -1005,7 +1030,10 @@ export function evidenceUrl(row, f, repoFallback, index) {
   if (typeof file !== 'string' || file === '') return null
   const main = f?.file ?? ''
   const repo = f?.repo?.github
-  const inFindingRepo = () => (repo ? findingUrl({ file, line: row?.line, repo: f.repo }, null) : null)
+  // Rows resolve with the finding's audited commit and the report's
+  // target, so `fileUrl` pins each as it pins the finding.
+  const auditedCommit = f?.auditedCommit
+  const inFindingRepo = () => (repo ? findingUrl({ file, line: row?.line, repo: f.repo, auditedCommit }, repoFallback) : null)
 
   // 1. The row that restates the finding's own location. Wherever the
   //    finding is, this row is in the same place, so the finding's repo
@@ -1030,7 +1058,7 @@ export function evidenceUrl(row, f, repoFallback, index) {
   // its repo is that dependency's upstream and would be the wrong
   // answer for a file in the project — so the report's repo takes it.
   if (repo && !hasDependencyMarker(main)) return inFindingRepo()
-  return findingUrl({ file, line: row?.line }, repoFallback)
+  return findingUrl({ file, line: row?.line, auditedCommit }, repoFallback)
 }
 
 // The evidence rows as a numbered markdown list, no heading — each

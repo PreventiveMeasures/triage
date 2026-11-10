@@ -75,7 +75,7 @@ describe('findingRepoTarget', () => {
     // at the top of the report: the paths it writes are relative to
     // that package, so every link resolves under it.
     const f = finding({ _repoFallback: 'babel/babel', _repoDirectory: 'packages/babel-core' })
-    assert.deepEqual(findingRepoTarget(f), { github: 'babel/babel', directory: 'packages/babel-core' })
+    assert.deepEqual(findingRepoTarget(f), { github: 'babel/babel', directory: 'packages/babel-core', commit: '' })
     assert.equal(
       findingUrl(f, findingRepoTarget(f)),
       'https://github.com/babel/babel/blob/HEAD/packages/babel-core/src/a.js#L7',
@@ -103,10 +103,17 @@ describe('findingRepoTarget', () => {
 
   it('reads a report with no directory as the repo root', () => {
     for (const f of [finding({ _repoFallback: 'owner/name' }), finding({ _repoFallback: 'owner/name', _repoDirectory: '' })]) {
-      assert.deepEqual(findingRepoTarget(f), { github: 'owner/name', directory: '' })
+      assert.deepEqual(findingRepoTarget(f), { github: 'owner/name', directory: '', commit: '' })
       assert.equal(findingUrl(f, findingRepoTarget(f)), 'https://github.com/owner/name/blob/HEAD/src/a.js#L7')
     }
-    assert.deepEqual(findingRepoTarget(undefined), { github: '', directory: '' })
+    assert.deepEqual(findingRepoTarget(undefined), { github: '', directory: '', commit: '' })
+  })
+
+  it('carries the commit the report read, which its links pin to', () => {
+    const commit = '0123456789abcdef0123456789abcdef01234567'
+    const f = finding({ _repoFallback: 'owner/name', _repoDirectory: 'app', _repoCommit: commit })
+    assert.deepEqual(findingRepoTarget(f), { github: 'owner/name', directory: 'app', commit })
+    assert.equal(findingUrl(f, findingRepoTarget(f)), `https://github.com/owner/name/blob/${commit}/app/src/a.js#L7`)
   })
 })
 

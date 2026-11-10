@@ -313,8 +313,9 @@ export function findingRepoFallback(f) {
 //
 // A finding's OWN `repo` carries its own directory and is read off the
 // finding by `fileUrl`; the two are never mixed.
+// `commit` is the `_repoCommit` stamp (common/repo-commit.js reportCommit).
 export function findingRepoTarget(f) {
-  return { github: findingRepoFallback(f), directory: f?._repoDirectory ?? '' }
+  return { github: findingRepoFallback(f), directory: f?._repoDirectory ?? '', commit: f?._repoCommit ?? '' }
 }
 
 // Repo identifier (slug or URL) for a finding, matching the `Repo:`

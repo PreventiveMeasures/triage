@@ -1,7 +1,7 @@
 import { html, nothing, unsafeCSS } from 'lit'
 import { requestGithubIssue } from '../../../client/managed/issues.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
-import { createIssueDraft, editIssueDraft, toggleIssueDraftSection } from './issue-draft.js'
+import { createIssueDraft, editIssueDraft, toggleIssueDraftSection } from '../issue-draft.js'
 import styles from './managed-issue-dialog.css'
 
 const ERRORS = {

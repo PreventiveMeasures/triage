@@ -7,11 +7,11 @@ import { managedBundleRoute, managedCodeLocation } from './managed-bundle-naviga
 import { managedHistory } from './managed-history.js'
 import { openFindingHistoryDialog, openManagedIssueDialog } from './client-managed.js'
 import { canViewFindingHistory } from './finding-history.js'
-import { renderHighlighted } from './render-finding.js'
+import { issueDraftOptions, renderHighlighted } from './render-finding.js'
 import { BUNDLE_SOURCE_WRAP_KEY, KANBAN_DETAIL_FULLSCREEN_KEY, SEVERITY_MODE_KEY, bundleFindingsWalk, isEncryptionEnabled, isManagedUiMode, patchEntry, readBundle, saveRepoUrlFor, saveTriage, state, subscribeToBundleFindingIndex, subscribeToBundleHashIndex, subscribeToLinkedFindings } from '#client/index.js'
 import { downloadBlob, report } from './dom.js'
-import { commonPrefix, configureRevalidation, depsDirName, evidenceMarkdown, findingUrl, handoffBlock, isModule, lineRange, revalidationShown } from './format.js'
-import { activeTabFor, canApplyFixToGroup, canEditTriage, canTriageFinding, findGroupById, findingRepo, findingRepoTarget, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
+import { commonPrefix, configureRevalidation, depsDirName, handoffBlock, isModule, lineRange } from './format.js'
+import { activeTabFor, canApplyFixToGroup, canEditTriage, canTriageFinding, findGroupById, findingRepo, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
 import { applyOpeningFilters, clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
 import { focusCodeHistory, focusCodeLinkPosition, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
@@ -1406,13 +1406,10 @@ report.addEventListener('click', (e) => {
     if (finding?._managedReportId && finding.id) {
       e.preventDefault()
       const url = new URL(issueBtn.dataset.issueForm)
-      const repoFallback = findingRepoTarget(finding)
       void openManagedIssueDialog({ teamId: state.currentManagedTeam, session: { ...state.managedSession },
         context: { reportId: finding._managedReportId, findingId: finding.id, repository: url.pathname.split('/').slice(1, 3).join('/') },
-        formUrl: url.href, title: url.searchParams.get('title') ?? '', body: url.searchParams.get('body') ?? '',
-        finding, draftOptions: { sourceUrl: findingUrl(finding, repoFallback),
-          evidence: evidenceMarkdown(finding, { repoFallback }), showRevalidation: revalidationShown(),
-          findingLink: findingLinkFor(finding) },
+        formUrl: url.href, title: url.searchParams.get('title') ?? '',
+        finding, draftOptions: { ...issueDraftOptions(finding), findingLink: findingLinkFor(finding) },
         renderBody: renderHighlighted, render,
       }).catch(() => showToast('Could not open issue creation. Please retry.'))
       return

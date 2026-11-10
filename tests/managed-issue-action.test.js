@@ -36,7 +36,7 @@ test('managed issue action has no native creation URL for modified clicks or Ope
   const draft = new URL(action.values[0])
   assert.equal(draft.pathname, '/o/r/issues/new')
   assert.equal(draft.searchParams.get('title'), 'Finding title')
-  assert.match(draft.searchParams.get('body'), /Finding description/u)
+  assert.equal(draft.searchParams.has('body'), false, 'the dialog drafts the body from the finding')
 })
 
 test('the prefilled issue body links each evidence row as it links File:', t => {
@@ -46,7 +46,24 @@ test('the prefilled issue body links each evidence row as it links File:', t => 
   const blob = 'https://github.com/o/r/blob/HEAD/src'
   assert.ok(lines.includes(`File: [src/file.js:3](${blob}/file.js#L3)`))
   assert.ok(lines.includes(`1. [src/file.js:3](${blob}/file.js#L3)`))
-  assert.ok(lines.includes(`2. [src/sink.js:9-12](${blob}/sink.js#L9)`))
+  assert.ok(lines.includes(`2. [src/sink.js:9-12](${blob}/sink.js#L9-L12)`))
+})
+
+// Outside managed mode the form is the only way in, so its body is the
+// one the managed dialog creates through the API: every section, the
+// alerts included, and the source pinned to the commit the report read.
+test('the prefilled issue body is the managed dialog\'s, every section in', t => {
+  const commit = 'a'.repeat(40)
+  const finding = { line: '3', repo: undefined, _repoFallback: 'o/r', _repoCommit: commit, isSecurity: true,
+    impact: 'Data leaks.', reproduction: 'Run it.', recommendation: 'Check it.' }
+  const body = new URL(issueAction(t, { serverMode: 'standalone' }, finding).values[0]).searchParams.get('body')
+  assert.equal(body, [
+    `File: [src/file.js:3](https://github.com/o/r/blob/${commit}/src/file.js#L3)`,
+    'Finding description',
+    '> [!CAUTION]\n> **Impact:**\n> Data leaks.',
+    '**Reproduction:**\nRun it.',
+    '> [!TIP]\n> **Recommendation:**\n> Check it.',
+  ].join('\n\n'))
 })
 
 for (const [mode, overrides] of [

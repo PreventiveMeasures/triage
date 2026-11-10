@@ -14,6 +14,7 @@ import { openPasskeyUnlockDialog } from './dialogs/passkey-unlock-dialog.js'
 import { dropZone, report } from './dom.js'
 import { clearMergedGroups, getRevalidationConflicts, getShownGroups, toGroup } from './group.js'
 import { configureDepsDir, hasRevalidateStamp, stampUpstreamFindings } from './format.js'
+import { reportCommit } from '../../common/repo-commit.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { readManagedReport } from '../../common/managed/report-content.ts'
@@ -1594,6 +1595,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
           _id: state.nextFindingId++,
           _repoFallback: repoFallback,
           _repoDirectory: repoDir,
+          _repoCommit: reportCommit(data, declaredRepo),
           _reportName: name,
           _depsDirectory: depsDirectory,
           _managedReportId: managedReportId,

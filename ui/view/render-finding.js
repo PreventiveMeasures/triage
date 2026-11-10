@@ -16,6 +16,7 @@ import { CLAUDE_MARK_PATH, GITHUB_ICON_SVG } from './icons.js'
 import { findingLinkFor } from './finding-link.js'
 import { managedCommentsFor } from './managed-comments.js'
 import { automaticFixFor, managedIssueFor } from './managed-issues.js'
+import { createIssueDraft } from './issue-draft.js'
 import { managedCommentTemplate } from './managed-comment.js'
 import { renderCommentText } from './comment-text.js'
 import { COPY_ICON } from './lit-icons.js'
@@ -901,27 +902,19 @@ function issueTitle(f) {
   return base.length > 120 ? `${base.slice(0, 119)}…` : base
 }
 
-// Issue body — the finding detail for the pre-filled `?body=`. Tailored
-// for a GitHub issue rather than reusing the copy / Claude handoff
-// block: no `Repo:` line (the issue already lives on that repo), the
-// description sits on its own as a bare paragraph (no label), and
-// file:line is a Markdown link to the source on GitHub — the same
-// target the card / row file links use, falling back to plain
-// `file:line` text when the path can't be linked (e.g. a node_modules
-// file with no resolvable upstream repo). Evidence rows link the same
-// way, each to its own row's target. Blocks join with a blank line
-// so the file link and confidence bracket the description paragraph.
-function issueBody(f) {
+// What an issue draft (issue-draft.js) takes from the view: the source
+// and Evidence links the card's links resolve to, and whether the
+// revalidation layer shows. Both ways of opening an issue build their
+// body from it, so an issue reads the same either way.
+export function issueDraftOptions(f) {
   const repoFallback = findingRepoTarget(f)
-  const href = findingUrl(f, repoFallback)
-  const loc = locationLabel(f)
-  const blocks = []
-  if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
-  if (f.description) blocks.push(f.description)
-  const evidence = evidenceMarkdown(f, { repoFallback })
-  if (evidence) blocks.push(evidence)
-  if (f.confidence !== undefined && f.confidence !== null) blocks.push(`Confidence: ${f.confidence}/10`)
-  return blocks.join('\n\n')
+  return { sourceUrl: findingUrl(f, repoFallback), evidence: evidenceMarkdown(f, { repoFallback }), showRevalidation: revalidationShown() }
+}
+
+// Issue body — the finding detail for the pre-filled `?body=`, every
+// section in, as the managed dialog creates it through the API.
+function issueBody(f) {
+  return createIssueDraft(f, { ...issueDraftOptions(f), allSections: true }).body
 }
 
 // Workspace-merged views show which report a finding came from.
@@ -1004,11 +997,13 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   const findingRepoId = isManagedUiMode()
     ? reportRepoGithub({ repo: { github: activeTab.repo?.github || activeTab._repoFallback } })
     : findingRepo(activeTab)
-  const issueHref = githubIssueUrl(findingRepoId, { title: issueTitle(activeTab), body: issueBody(activeTab),
-    labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
   const managedIssue = isManagedUiMode() && state.managedSession && !state.managedSession.publicShare && state.currentManagedTeam
+  // No button once the finding has its issue. The managed dialog drafts
+  // the body from the finding itself, so its form URL carries none.
+  const issueHref = managedIssueFor(activeTab) ? null : githubIssueUrl(findingRepoId, { title: issueTitle(activeTab),
+    body: managedIssue ? '' : issueBody(activeTab), labels: newIssueLabels(activeTab.isSecurity === true, state.githubNewIssueLabels) })
   const issueContent = html`${ISSUE_ICON}${showActionLabels ? html`<span class="mark-btn-label">Issue</span>` : nothing}`
-  const issueBtn = managedIssueFor(activeTab) ? nothing : issueHref
+  const issueBtn = issueHref
     ? managedIssue
       ? html`<button type="button" class="mark-issue" data-issue-form=${issueHref} data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</button>`
       : html`<a class="mark-issue" href=${issueHref} target="_blank" rel="noopener" data-tooltip=${showActionLabels ? nothing : 'Create a GitHub issue for this finding'} aria-label="Create a GitHub issue for this finding">${issueContent}</a>`
