@@ -339,7 +339,7 @@ export async function loadTeamAnnotations(db: ManagedDb, store: BlobStore, snaps
   const revision = await teamAnnotationRevision(db, snapshot, [...all])
   const { triage, comments, issues: savedIssues } = await db.getAnnotations([...ids])
   const issues = Object.fromEntries(visibleManagedIssues(savedIssues, snapshot)
-    .map(issue => [issue.findingId, { url: issue.issueUrl!, autoFix: issue.autoFixUrl }]))
+    .map(issue => [issue.findingId, { url: issue.issueUrl!, autoFix: issue.autoFixUrl, duplicateOf: issue.duplicateOfUrl }]))
   const entries = Object.fromEntries(triage.map(row => [row.findingId, triageWireEntry(row)]))
   const annotated = new Set([...triage.map(row => row.findingId), ...comments.map(comment => comment.findingId), ...Object.keys(issues)])
   const reports = Object.fromEntries([...visible].map(([id, report]) => [id, [...report.ids].filter(finding => annotated.has(finding))]))

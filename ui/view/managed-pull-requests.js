@@ -45,6 +45,7 @@ export function refreshManagedIssueMetadata(teamId, ids, previous) {
   for (const { id, issue } of issues) {
     if (issue?.url && !previous.has(id)) managedFixes.read(issue.url, { refreshIfMissing: true })
     if (issue?.autoFix && issue.autoFix !== previous.get(id)?.autoFix) managedFixes.read(issue.autoFix, { refreshIfMissing: true })
+    if (issue?.duplicateOf && issue.duplicateOf !== previous.get(id)?.duplicateOf) managedFixes.read(issue.duplicateOf, { refreshIfMissing: true })
   }
   const url = issues.find(({ issue }) => issue?.url)?.issue.url
   if (url) managedFixes.read(url)

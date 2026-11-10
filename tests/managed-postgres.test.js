@@ -1609,17 +1609,21 @@ test('Postgres upgrades saved issues and retains derived fixes after restart', a
   await db.claimManagedIssue({ findingId: 'f', repoId: 1, repository: 'o/r', requestId: 'r', createdBy: null, createdAt: 1 })
   await db.finishManagedIssue('f', 'r', url)
   const legacy = await connect()
-  try { await legacy.query('ALTER TABLE managed_finding_issue DROP COLUMN auto_fix_url, DROP COLUMN auto_fix_checked_at; DELETE FROM managed_schema_version WHERE version = 19;') }
-  finally { await legacy.release() }
+  try {
+    await legacy.query(`ALTER TABLE managed_finding_issue DROP COLUMN auto_fix_url, DROP COLUMN auto_fix_checked_at, DROP COLUMN duplicate_of_url;
+      DELETE FROM managed_schema_version WHERE version IN (19, 35);`)
+  } finally { await legacy.release() }
   await db.close()
   const upgraded = await openPostgresManagedDb(connect)
   assert.equal((await upgraded.getManagedIssue('f')).issueUrl, url)
   assert.equal((await upgraded.getManagedIssue('f')).autoFixUrl, null)
-  await upgraded.setManagedIssueAutoFix('f', url, null, fix, 100)
+  assert.equal((await upgraded.getManagedIssue('f')).duplicateOfUrl, null)
+  await upgraded.setManagedIssueTracking('f', url, { autoFix: null, duplicateOf: null }, { autoFix: fix, duplicateOf: 'https://github.com/o/r/issues/9' }, 100)
   await upgraded.close()
   const reopened = await openPostgresManagedDb(connect)
   t.after(() => reopened.close())
   assert.equal((await reopened.getManagedIssue('f')).autoFixUrl, fix)
+  assert.equal((await reopened.getManagedIssue('f')).duplicateOfUrl, 'https://github.com/o/r/issues/9')
 })
 
 test('dependency reviews publish, revoke and continue as frozen sets (Postgres)', async t => {

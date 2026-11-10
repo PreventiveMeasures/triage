@@ -19,6 +19,7 @@ const pull = (number, extra = {}) => ({ number, title: `PR ${number}`, body: 'De
   createdAt: `2026-09-${String(number).padStart(2, '0')}T00:00:00Z`, repository, ...extra })
 const issue = (nodes, extra = {}) => ({ number: 1, title: 'Issue', body: 'Description', state: 'OPEN', stateReason: null,
   closedByPullRequestsReferences: { nodes, pageInfo: { hasNextPage: false, endCursor: null } }, ...extra })
+const none = { autoFix: null, duplicateOf: null }
 const response = (...items) => Response.json({ data: Object.fromEntries(items.map((item, i) => [`r${i}`, { ...repository, item }])) })
 
 async function fixture(t) {
@@ -59,7 +60,7 @@ test('one GraphQL request fetches issue status, latest eligible linked PR and ma
   assert.deepEqual(result.fixes.map(fix => [fix.url, fix.status, fix.stateReason]), [
     [issueUrl, 'closed', 'completed'], [pullUrl(2), 'closed', null], [pullUrl(2) + '/files', 'closed', null], [pullUrl(7), 'draft', null],
   ])
-  assert.equal(result.updates[0].next, pullUrl(7))
+  assert.deepEqual(result.updates[0].next, { autoFix: pullUrl(7), duplicateOf: null })
   assert.equal((await f.db.getManagedIssue('shared-finding')).autoFixUrl, null, 'lookup itself has no unscoped writes')
   assert.deepEqual(await f.db.listGithubMetadata(['1:issue:1', '1:pull:7']), [], 'live private metadata is not placed under stale public cache grants')
 })
@@ -71,7 +72,7 @@ test('complete reads always follow the newest eligible PR, replace old automatic
   for (const [nodes, next] of [[ [pull(3)], pullUrl(3) ], [ [pull(9, { state: 'MERGED' }), pull(10, { state: 'CLOSED' })], pullUrl(9) ], [ [pull(11, { state: 'CLOSED' })], null ], [ [], null ]]) {
     const result = await f.lookup(() => response(issue(nodes)))
     const previous = (await f.db.getManagedIssue('shared-finding')).autoFixUrl
-    assert.deepEqual(result.updates.map(update => update.next), previous === next ? [] : [next], 'an unchanged Fix is not written')
+    assert.deepEqual(result.updates.map(update => update.next.autoFix), previous === next ? [] : [next], 'an unchanged Fix is not written')
     assert.equal(await f.db.applyManagedIssueFixes(f.sessionId, f.snapshot, result.updates), true)
     assert.equal((await f.db.getManagedIssue('shared-finding')).autoFixUrl, next)
     assert.deepEqual(await f.db.listTriage(['shared-finding']), manual)
@@ -89,7 +90,7 @@ test('pagination considers every linked PR and issues extra requests only for un
     return response(issue([pull(8, { state: 'MERGED' })]))
   }, [issueUrl, pullUrl(2)])
   assert.equal(calls, 2)
-  assert.equal(result.updates[0].next, pullUrl(8))
+  assert.equal(result.updates[0].next.autoFix, pullUrl(8))
 })
 
 for (const [name, fetchImpl] of [
@@ -104,7 +105,7 @@ for (const [name, fetchImpl] of [
 ]) {
   test(`${name} preserves the old automatic Fix`, async t => {
     const f = await fixture(t)
-    await f.db.setManagedIssueAutoFix('shared-finding', issueUrl, null, pullUrl(2), 1)
+    await f.db.setManagedIssueTracking('shared-finding', issueUrl, none, { autoFix: pullUrl(2), duplicateOf: null }, 1)
     const result = await f.lookup(fetchImpl)
     assert.deepEqual(result.updates, [])
     assert.equal((await f.db.getManagedIssue('shared-finding')).autoFixUrl, pullUrl(2))
@@ -165,7 +166,7 @@ test('workspace refresh saves the derived Fix and exposes both links through sco
   const annotations = await request('/api/teams/team/annotations', { session: f.session, method: 'GET' })
   assert.equal(annotations.status, 200)
   const data = JSON.parse(annotations.body)
-  assert.deepEqual(data.issues, { 'shared-finding': { url: issueUrl, autoFix: pullUrl(3) } })
+  assert.deepEqual(data.issues, { 'shared-finding': { url: issueUrl, autoFix: pullUrl(3), duplicateOf: null } })
   assert.equal(data.entries['shared-finding'].fix, pullUrl(2))
   assert.ok(data.reports[reportId].includes('shared-finding'))
 })
@@ -215,7 +216,7 @@ test('an older lookup never replaces a newer change to the derived Fix, even one
   assert.equal(await stored(), pullUrl(3), 'changed to 5 and back')
   older.answer([pull(3), pull(4)])
   const { updates } = await older.lookup
-  assert.deepEqual(updates.map(update => [update.previous, update.next]), [[pullUrl(3), pullUrl(4)]])
+  assert.deepEqual(updates.map(update => [update.previous.autoFix, update.next.autoFix]), [[pullUrl(3), pullUrl(4)]])
   await apply(updates)
   assert.equal(await stored(), pullUrl(3), 'the change back was checked later')
 
@@ -241,12 +242,13 @@ test('SQLite upgrades saved issues without replacing their references and retain
   await original.finishManagedIssue('f', 'request', issueUrl)
   await original.close()
   const legacy = new DatabaseSync(path)
-  legacy.exec('ALTER TABLE managed_finding_issue DROP COLUMN auto_fix_url; ALTER TABLE managed_finding_issue DROP COLUMN auto_fix_checked_at;')
+  legacy.exec('ALTER TABLE managed_finding_issue DROP COLUMN auto_fix_url; ALTER TABLE managed_finding_issue DROP COLUMN auto_fix_checked_at; ALTER TABLE managed_finding_issue DROP COLUMN duplicate_of_url;')
   legacy.close()
   const upgraded = openSqliteManagedDb(path)
   assert.equal((await upgraded.getManagedIssue('f')).issueUrl, issueUrl)
   assert.equal((await upgraded.getManagedIssue('f')).autoFixUrl, null)
-  await upgraded.setManagedIssueAutoFix('f', issueUrl, null, pullUrl(2), 100)
+  assert.equal((await upgraded.getManagedIssue('f')).duplicateOfUrl, null)
+  await upgraded.setManagedIssueTracking('f', issueUrl, none, { autoFix: pullUrl(2), duplicateOf: null }, 100)
   await upgraded.close()
   const reopened = openSqliteManagedDb(path)
   t.after(() => reopened.close())
@@ -272,4 +274,136 @@ test('losing team access during GitHub lookup discards metadata and the derived 
   const result = await harness(f.db, store)('/api/teams/team/fixes', { session: f.session, method: 'GET' })
   assert.equal(result.status, 404)
   assert.equal((await f.db.getManagedIssue('shared-finding')).autoFixUrl, null)
+})
+
+// Closed as a duplicate: the saved issue stays, and the one it duplicates is
+// followed, as a redirect is, for its status and pull requests.
+const issueAt = number => `https://github.com/org/repo1/issues/${number}`
+// Closed as a duplicate of `reference`, or of issue `reference` in repo1.
+const duplicate = reference => ({ state: 'CLOSED', stateReason: 'DUPLICATE',
+  duplicateOf: typeof reference === 'number' ? { number: reference, repository } : reference })
+// Answers each aliased read from `items`, by `owner/name#number`, recording
+// each request's reads, as `owner/name#number` (`+` where read linked).
+function github(items, requests = []) {
+  return (url, init) => {
+    const reads = JSON.parse(init.body).query.split('\n').map(line => {
+      const [, alias, owner, name, number] = /(r\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\) \{ databaseId nameWithOwner item: (?:issue|pullRequest)\(number: (\d+)\)/u.exec(line)
+      return { alias, key: `${owner}/${name}#${number}`, linked: line.includes('duplicateOf {') }
+    })
+    requests.push(reads.map(read => read.key + (read.linked ? '+' : '')))
+    return Response.json({ data: Object.fromEntries(reads.map(read => [read.alias, items[read.key] ? { ...repository, item: items[read.key] } : null])) })
+  }
+}
+
+test('an issue closed as a duplicate tracks the one it duplicates, beside it, and that one is read first thereafter', async t => {
+  const f = await fixture(t), requests = []
+  const items = {
+    'org/repo1#1': issue([pull(3)], duplicate({ number: 9, repository: { databaseId: 1, nameWithOwner: 'ORG/Repo1' } })),
+    'org/repo1#9': issue([pull(5)], { number: 9, title: 'Original' }),
+  }
+  const result = await f.lookup(github(items, requests))
+  assert.deepEqual(requests, [['org/repo1#1+'], ['org/repo1#9+']], 'the one it duplicates is read once it is known')
+  assert.deepEqual(result.fixes.map(fix => [fix.url, fix.status, fix.stateReason]), [
+    [issueUrl, 'closed', 'duplicate'], [issueAt(9), 'open', null], [pullUrl(5), 'open', null],
+  ])
+  assert.deepEqual(result.updates.map(update => update.next), [{ autoFix: pullUrl(5), duplicateOf: issueAt(9) }], 'named as the workspace names its repository')
+  assert.equal(await f.db.applyManagedIssueFixes(f.sessionId, f.snapshot, result.updates), true)
+  const saved = await f.db.getManagedIssue('shared-finding')
+  assert.deepEqual([saved.issueUrl, saved.autoFixUrl, saved.duplicateOfUrl], [issueUrl, pullUrl(5), issueAt(9)], 'the saved issue is not replaced')
+
+  // Kept, the duplicate is read with the saved issue, as a cached redirect is.
+  requests.length = 0
+  const again = await lookupIssueLinks(config, f.db, f.snapshot, [issueUrl, issueAt(9)], await f.db.listManagedIssues(['shared-finding']), github(items, requests))
+  assert.deepEqual(requests, [['org/repo1#1+', 'org/repo1#9+']])
+  assert.deepEqual(again.updates, [], 'unchanged, nothing is written')
+
+  // The saved issue's own pull requests still count, the newest winning.
+  items['org/repo1#1'] = issue([pull(3), pull(7)], duplicate(9))
+  assert.deepEqual((await f.lookup(github(items))).updates.map(update => update.next), [{ autoFix: pullUrl(7), duplicateOf: issueAt(9) }])
+})
+
+for (const [name, reopened] of [['reopened', { state: 'OPEN', stateReason: 'REOPENED' }], ['closed as completed', { state: 'CLOSED', stateReason: 'COMPLETED' }]]) {
+  test(`an issue ${name} drops the duplicate it was saved with`, async t => {
+    const f = await fixture(t), requests = []
+    await f.db.setManagedIssueTracking('shared-finding', issueUrl, none, { autoFix: null, duplicateOf: issueAt(9) }, 1)
+    const items = { 'org/repo1#1': issue([], { ...duplicate(9), ...reopened }), 'org/repo1#9': issue([pull(5)], { number: 9 }) }
+    const result = await lookupIssueLinks(config, f.db, f.snapshot, [issueUrl, issueAt(9)], await f.db.listManagedIssues(['shared-finding']), github(items, requests))
+    assert.deepEqual(requests, [['org/repo1#1+', 'org/repo1#9+']])
+    assert.deepEqual(result.updates.map(update => update.next), [none], 'nor takes its pull requests')
+  })
+}
+
+test('a newest pull request outside the workspace keeps the saved Fix, and the duplicate is saved all the same', async t => {
+  const f = await fixture(t)
+  await f.db.setManagedIssueTracking('shared-finding', issueUrl, none, { autoFix: pullUrl(2), duplicateOf: null }, 1)
+  const foreign = pull(5, { repository: { databaseId: 2, nameWithOwner: 'org/repo2' } })
+  const result = await f.lookup(github({ 'org/repo1#1': issue([pull(3)], duplicate(9)), 'org/repo1#9': issue([foreign], { number: 9 }) }))
+  assert.deepEqual(result.updates.map(update => update.next), [{ autoFix: pullUrl(2), duplicateOf: issueAt(9) }])
+  assert.equal(result.fixes.some(fix => fix.url.includes('/repo2/')), false, 'nor is the foreign pull request disclosed')
+})
+
+for (const [name, reference] of [
+  ['outside the workspace repositories', { number: 4, repository: { databaseId: 2, nameWithOwner: 'org/repo2' } }],
+  ['under a repository ID it does not have', { number: 4, repository: { databaseId: 7, nameWithOwner: 'org/repo1' } }],
+]) {
+  test(`a duplicate ${name} is neither followed nor saved`, async t => {
+    const f = await fixture(t), requests = []
+    const result = await f.lookup(github({ 'org/repo1#1': issue([], duplicate(reference)), 'org/repo2#4': issue([pull(5)], { number: 4 }) }, requests))
+    assert.deepEqual(requests, [['org/repo1#1+']])
+    assert.deepEqual(result.fixes.map(fix => fix.url), [issueUrl])
+    assert.deepEqual(result.updates, [])
+  })
+}
+
+test('duplicates are followed in turn to the last, as far as five, and a cycle ends', async t => {
+  const f = await fixture(t), requests = []
+  const chain = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`org/repo1#${i + 1}`, issue(i === 2 ? [pull(4)] : [], { number: i + 1, ...duplicate(i + 2) })]))
+  const result = await f.lookup(github(chain, requests))
+  assert.equal(requests.length, 6)
+  assert.deepEqual(result.updates.map(update => update.next), [{ autoFix: pullUrl(4), duplicateOf: issueAt(6) }])
+
+  const cycle = { 'org/repo1#1': issue([], duplicate(9)), 'org/repo1#9': issue([], { number: 9, ...duplicate(1) }) }
+  requests.length = 0
+  assert.deepEqual((await f.lookup(github(cycle, requests))).updates.map(update => update.next), [{ autoFix: null, duplicateOf: issueAt(9) }])
+  assert.deepEqual(requests, [['org/repo1#1+'], ['org/repo1#9+']])
+})
+
+test('a duplicate whose read fails, or which GitHub refuses to name, keeps what was saved and the issue\'s status', async t => {
+  const f = await fixture(t)
+  const kept = { autoFix: pullUrl(2), duplicateOf: issueAt(9) }
+  await f.db.setManagedIssueTracking('shared-finding', issueUrl, none, kept, 1)
+  let calls = 0
+  const failed = await f.lookup(() => ++calls === 1 ? response(issue([], duplicate(12))) : new Response(null, { status: 502 }))
+  assert.equal(calls, 2)
+  assert.deepEqual(failed.updates, [])
+  const refused = await f.lookup(() => Response.json({ data: { r0: { ...repository, item: issue([], duplicate(null)) } },
+    errors: [{ type: 'FORBIDDEN', path: ['r0', 'item', 'duplicateOf'], message: 'Resource not accessible' }] }))
+  assert.deepEqual(refused.fixes.map(fix => [fix.url, fix.stateReason]), [[issueUrl, 'duplicate']])
+  assert.deepEqual(refused.updates, [])
+  const malformed = await f.lookup(() => response(issue([], duplicate({ number: 'twelve', repository }))))
+  assert.deepEqual(malformed.updates, [])
+  const saved = await f.db.getManagedIssue('shared-finding')
+  assert.deepEqual([saved.autoFixUrl, saved.duplicateOfUrl], [kept.autoFix, kept.duplicateOf])
+})
+
+test('a duplicate outside the team is hidden from its projections', async t => {
+  const f = await fixture(t), saved = await f.db.listManagedIssues(['shared-finding'])
+  assert.equal(visibleManagedIssues([{ ...saved[0], duplicateOfUrl: issueAt(9) }], f.snapshot)[0].duplicateOfUrl, issueAt(9))
+  assert.equal(visibleManagedIssues([{ ...saved[0], duplicateOfUrl: 'https://github.com/org/repo2/issues/9' }], f.snapshot)[0].duplicateOfUrl, null)
+  assert.equal(visibleManagedIssues([{ ...saved[0], duplicateOfUrl: pullUrl(9) }], f.snapshot)[0].duplicateOfUrl, null)
+})
+
+test('workspace refresh saves the duplicate, exposes it through annotations, and reads it with the issue next time', async t => {
+  const f = await fixture(t), requests = [], store = memoryStore()
+  await f.db.setReportVisible(await seedReport(f.db, store, f.session.userId), true)
+  const request = harness(f.db, store)
+  t.mock.method(globalThis, 'fetch', github({ 'org/repo1#1': issue([], duplicate(9)), 'org/repo1#9': issue([pull(5)], { number: 9 }) }, requests))
+  const first = await request('/api/teams/team/fixes', { session: f.session, method: 'GET' })
+  assert.equal(first.status, 200)
+  assert.deepEqual(JSON.parse(first.body).fixes.map(fix => [fix.url, fix.status]), [[issueUrl, 'closed'], [issueAt(9), 'open'], [pullUrl(5), 'open']])
+  const annotations = await request('/api/teams/team/annotations', { session: f.session, method: 'GET' })
+  assert.deepEqual(JSON.parse(annotations.body).issues, { 'shared-finding': { url: issueUrl, autoFix: pullUrl(5), duplicateOf: issueAt(9) } })
+  requests.length = 0
+  assert.equal((await request('/api/teams/team/fixes', { session: f.session, method: 'GET' })).status, 200)
+  assert.deepEqual(requests, [['org/repo1#1+', 'org/repo1#5', 'org/repo1#9+']])
 })

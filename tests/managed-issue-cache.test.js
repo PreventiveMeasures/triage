@@ -27,13 +27,13 @@ const settle = async () => { for (let i = 0; i < 4; i++) await setImmediate() }
 const flush = async t => { t.mock.timers.tick(1); await settle() }
 
 test('issue discovery warms metadata in kanban and derived updates reuse that batch without a second fetch', async t => {
-  state.managedIssues.set('finding', { url: issue, autoFix: null })
+  state.managedIssues.set('finding', { url: issue, autoFix: null, duplicateOf: null })
   refreshManagedIssueMetadata('team', ['finding'], new Map())
   t.mock.timers.tick(1)
   for (let i = 0; i < 4; i++) await setImmediate()
   assert.deepEqual(calls, ['team'])
   const previous = new Map(state.managedIssues)
-  state.managedIssues.set('finding', { url: issue, autoFix: pr })
+  state.managedIssues.set('finding', { url: issue, autoFix: pr, duplicateOf: null })
   refreshManagedIssueMetadata('team', ['finding'], previous)
   assert.equal(managedFixes.read(pr).title, 'Fix')
   t.mock.timers.tick(1)
@@ -43,11 +43,11 @@ test('issue discovery warms metadata in kanban and derived updates reuse that ba
 
 
 test('an automatic PR introduced by another client refreshes missing metadata before the cache TTL expires', async t => {
-  state.managedIssues.set('finding', { url: issue, autoFix: pr })
+  state.managedIssues.set('finding', { url: issue, autoFix: pr, duplicateOf: null })
   refreshManagedIssueMetadata('team', ['finding'], new Map())
   await flush(t)
   const next = 'https://github.com/o/r/pull/3', previous = new Map(state.managedIssues)
-  state.managedIssues.set('finding', { url: issue, autoFix: next })
+  state.managedIssues.set('finding', { url: issue, autoFix: next, duplicateOf: null })
   response = () => [metadata(issue), metadata(next)]
   refreshManagedIssueMetadata('team', ['finding'], previous)
   assert.equal(managedFixes.read(pr).title, 'Fix', 'existing metadata remains available during refresh')
@@ -64,11 +64,11 @@ outcomes.forEach(outcome => {
   test(`an in-flight batch with the new PR ${outcome} handles the annotation without aborting or looping`, async t => {
     const next = 'https://github.com/o/r/pull/3', pending = Promise.withResolvers()
     response = () => pending.promise
-    state.managedIssues.set('finding', { url: issue, autoFix: null })
+    state.managedIssues.set('finding', { url: issue, autoFix: null, duplicateOf: null })
     refreshManagedIssueMetadata('team', ['finding'], new Map())
     await flush(t)
     const previous = new Map(state.managedIssues)
-    state.managedIssues.set('finding', { url: issue, autoFix: next })
+    state.managedIssues.set('finding', { url: issue, autoFix: next, duplicateOf: null })
     refreshManagedIssueMetadata('team', ['finding'], previous)
     await flush(t)
     assert.equal(calls.length, 1)
@@ -89,18 +89,18 @@ test('a team\'s first annotations load reuses the batch read for its issues; a f
   assert.equal(managedFixes.read(issue), null, 'its Fix links read the batch as they render')
   await flush(t)
   assert.deepEqual(calls, ['team'])
-  state.managedIssues.set('finding', { url: issue, autoFix: null })
+  state.managedIssues.set('finding', { url: issue, autoFix: null, duplicateOf: null })
   refreshManagedIssueMetadata('team', ['finding'], new Map())
   await flush(t)
   assert.deepEqual(calls, ['team'], 'issues first seen as annotations load are in the batch read')
   const other = 'https://github.com/o/r/issues/4', previous = new Map(state.managedIssues)
-  state.managedIssues.set('finding', { url: other, autoFix: null })
+  state.managedIssues.set('finding', { url: other, autoFix: null, duplicateOf: null })
   response = () => [metadata(other)]
   refreshManagedIssueMetadata('team', ['finding'], previous)
   await flush(t)
   assert.deepEqual(calls, ['team', 'team'], 'one linked in place of another discards the batch')
   const before = new Map(state.managedIssues), linked = 'https://github.com/o/r/issues/5'
-  state.managedIssues.set('another', { url: linked, autoFix: null })
+  state.managedIssues.set('another', { url: linked, autoFix: null, duplicateOf: null })
   response = () => [metadata(other), metadata(linked)]
   refreshManagedIssueMetadata('team', ['finding', 'another'], before)
   await flush(t)

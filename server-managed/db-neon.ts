@@ -40,7 +40,7 @@ const LOCK = 'SELECT pg_advisory_xact_lock(1937006964, 1835101793)'
 // Whether every version up to the latest is recorded, in one round trip at
 // a cold start: a database with no versions table yet (undefined_table) has
 // none. Outside a transaction, so the failed read aborts nothing.
-const SCHEMA_VERSIONS = 34
+const SCHEMA_VERSIONS = 35
 async function currentSchema(db: PgConnection): Promise<boolean> {
   try {
     const { rows } = await db.query(`SELECT count(*) AS n FROM managed_schema_version WHERE version BETWEEN 1 AND ${SCHEMA_VERSIONS}`)
@@ -209,6 +209,14 @@ async function migrateTeamAppSummaries(db: PgConnection): Promise<void> {
   await db.query('INSERT INTO managed_schema_version VALUES (34)')
 }
 
+// The issue a saved one was closed as a duplicate of, none known of those
+// checked before.
+async function migrateIssueDuplicates(db: PgConnection): Promise<void> {
+  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 35')).rows.length > 0) return
+  await db.query('ALTER TABLE managed_finding_issue ADD COLUMN IF NOT EXISTS duplicate_of_url TEXT')
+  await db.query('INSERT INTO managed_schema_version VALUES (35)')
+}
+
 async function initialize(db: PgConnection): Promise<void> {
   if (await currentSchema(db)) return
   await db.query('BEGIN')
@@ -283,7 +291,8 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
     for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes, migrateDependencyReviews, migrateGithubLinks, migrateRepositoryDependencyReviews,
-      migrateRepositoryDependencyReviewLockfiles, migrateRepoUploadIndexes, migrateDependencyReviewShasums, migrateDependencyReviewPatches, migrateTeamAppSummaries]) await migrate(db)
+      migrateRepositoryDependencyReviewLockfiles, migrateRepoUploadIndexes, migrateDependencyReviewShasums, migrateDependencyReviewPatches, migrateTeamAppSummaries,
+      migrateIssueDuplicates]) await migrate(db)
     await db.query('COMMIT')
   } catch (err) {
     await db.query('ROLLBACK')

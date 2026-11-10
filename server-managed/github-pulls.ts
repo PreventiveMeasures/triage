@@ -6,6 +6,9 @@ import { ensureUserAccessToken } from './github-oauth.ts'
 
 type Metadata = Pick<GithubMetadata, 'title' | 'description' | 'status' | 'stateReason'>
 const MAX_GITHUB_LOOKUPS = 200
+// A load reading this many open or unknown items anew also rechecks one closed
+// item, rounded up (lookupFixes).
+const CLOSED_RECHECK_EVERY = 10
 const GITHUB_LOOKUP_TIMEOUT_MS = 10_000
 const GITHUB_METADATA_TTL_MS = 60_000
 const GITHUB_PUBLIC_VISIBILITY_TTL_MS = 60_000
@@ -132,6 +135,32 @@ async function fetchMetadata(ref: GithubFixRef, token: string | null, fetchImpl:
   } catch { return null }
 }
 
+// What a load reads of its `entries`, by what is cached of them at `now`:
+// those missing or stale, the least recently checked first, as many as
+// MAX_GITHUB_LOOKUPS. Closed items are kept once fetched, but GitHub can
+// reopen them (merged ones are final): a load reading open or unknown items
+// anew also rechecks a tenth as many closed ones, the least recently checked
+// first, after them. None where every item is closed or fresh, and a busy
+// workspace cycles through its closed items, a recheck rotating its item
+// behind the others whether or not GitHub answers.
+function readsOf<Entry extends [string, GithubFixRef]>(entries: Entry[], metadata: Map<string, GithubMetadata>, now: number): Entry[] {
+  const lastCheckedAt = ([key]: Entry) => Math.max(metadata.get(key)?.fetchedAt ?? 0, metadata.get(key)?.attemptedAt ?? 0)
+  const oldestFirst = (a: Entry, b: Entry) => lastCheckedAt(a) - lastCheckedAt(b)
+  const stale = ([key, ref]: Entry) => {
+    const cached = metadata.get(key)
+    // Backfill closed issues cached before closure reasons existed, within the
+    // same authorized/capped queue. Even an unknown reason completes backfill.
+    return !cached || (ref.kind === 'issue' && cached.status === 'closed' && cached.stateReason == null)
+      || (['open', 'draft'].includes(cached.status) && cached.fetchedAt + GITHUB_METADATA_TTL_MS <= now)
+  }
+  const pending = entries.filter(stale).toSorted(oldestFirst).slice(0, MAX_GITHUB_LOOKUPS)
+  // Stale ones are missing, open, draft, or closed issues awaiting backfill.
+  const reread = pending.filter(([key]) => metadata.get(key)?.status !== 'closed').length
+  const rechecks = entries.filter(entry => metadata.get(entry[0])?.status === 'closed' && !stale(entry))
+    .toSorted(oldestFirst).slice(0, Math.ceil(reread / CLOSED_RECHECK_EVERY))
+  return [...pending, ...rechecks]
+}
+
 // The workspace handler checks user -> team membership and finding visibility.
 // Shared private metadata also requires this viewer's live GitHub access,
 // including for admins. Only recently verified public repos skip that check.
@@ -169,27 +198,17 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   const readable = await readableRepositories(repositories, context)
   const authorized = [...jobs.entries()].filter(([, ref]) => readable.has(ref.repo))
   const metadata = new Map((await db.listGithubMetadata(authorized.map(([key]) => key))).map(entry => [entry.key, entry]))
-  const lastCheckedAt = (key: string) => {
-    const cached = metadata.get(key)
-    return Math.max(cached?.fetchedAt ?? 0, cached?.attemptedAt ?? 0)
-  }
-  const pending = authorized.filter(([key, ref]) => {
-    const cached = metadata.get(key)
-    // Backfill closed issues cached before closure reasons existed, within the
-    // same authorized/capped queue. Even an unknown reason completes backfill.
-    return !cached || (ref.kind === 'issue' && cached.status === 'closed' && cached.stateReason == null)
-      || (['open', 'draft'].includes(cached.status) && cached.fetchedAt + GITHUB_METADATA_TTL_MS <= now)
-  }).toSorted(([a], [b]) => lastCheckedAt(a) - lastCheckedAt(b)).slice(0, MAX_GITHUB_LOOKUPS)
+  const reads = readsOf(authorized, metadata, now)
   // Only stale/missing, distinct, authorized entries consume the request budget.
   // Prioritize missing/oldest entries so a large workspace makes progress.
-  if (pending.length > 0) {
-    const publicRefreshes = new Set(pending.filter(([, ref]) => publicRepos.has(ref.repo) && !checks.verified.has(ref.repo)).map(([, ref]) => ref.repo))
+  if (reads.length > 0) {
+    const publicRefreshes = new Set(reads.filter(([, ref]) => publicRepos.has(ref.repo) && !checks.verified.has(ref.repo)).map(([, ref]) => ref.repo))
     if (publicRefreshes.size > 0) token = await verifyPublicRefreshes(config, snapshot.user.id, repositories.filter(repo => publicRefreshes.has(repo.github)), context)
     const fresh: Omit<GithubMetadata, 'attemptedAt'>[] = []
     const attempted: string[] = []
     // All waves and access checks share one deadline and four-call limit.
-    for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
-      await Promise.all(pending.slice(i, i + 4).map(async ([key, ref]) => {
+    for (let i = 0; i < reads.length && !signal.aborted; i += 4) {
+      await Promise.all(reads.slice(i, i + 4).map(async ([key, ref]) => {
         if (signal.aborted) return
         if (metadata.has(key)) attempted.push(key)
         const result = await fetchMetadata(ref, publicRepos.has(ref.repo) && !checks.verified.has(ref.repo) ? null : token, fetchWithinDeadline)

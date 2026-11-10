@@ -1511,6 +1511,7 @@ function tabBodyTemplate(f, isActive, idx, total, context, tabIds) {
         ${managedCommentTemplate(item, renderCommentText(item.body))}
       </div>`) : comment ? html`<div class="comment-block"><span class="comment-label">Comment:</span> ${renderCommentText(comment)}</div>` : nothing}
       ${issue ? html`<div class="fix-block"><span class="fix-label">Issue:</span> <managed-fix-link .url=${issue.url}></managed-fix-link></div>` : nothing}
+      ${issue?.duplicateOf ? html`<div class="fix-block"><span class="fix-label">Duplicate of:</span> <managed-fix-link .url=${issue.duplicateOf}></managed-fix-link></div>` : nothing}
       ${fix
         ? html`<div class="fix-block"><span class="fix-label">Fix:</span> ${isHttpUrl(fix)
           ? html`<managed-fix-link .url=${fix}></managed-fix-link>`

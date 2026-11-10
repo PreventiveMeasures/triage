@@ -241,7 +241,7 @@ export async function openManagedIssueDialog({ render, ...props }) {
   return managed.openManagedIssueDialog({ ...props, isCurrent, onCreated: url => {
     if (!isCurrent()) return
     const id = props.context.findingId, previous = state.managedIssues.get(id)
-    const changed = applyManagedIssues([id], { [id]: { url, autoFix: previous?.url === url ? previous.autoFix : null } })
+    const changed = applyManagedIssues([id], { [id]: previous?.url === url ? previous : { url } })
     invalidateManagedFixes(props.teamId)
     if (changed) render()
   } })

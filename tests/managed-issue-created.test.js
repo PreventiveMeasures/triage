@@ -36,7 +36,7 @@ test('creating an issue repaints the saved issue immediately without waiting for
   assert.ok(templates(findingCardInnerTemplate([finding])).some(item => item.strings[0].includes('class="mark-issue"')))
   const dialog = await open()
   dialog.onCreated(url)
-  assert.deepEqual(paints, [{ url, autoFix: null }])
+  assert.deepEqual(paints, [{ url, autoFix: null, duplicateOf: null }])
   assert.deepEqual(invalidations, ['team'])
   const card = templates(findingCardInnerTemplate([finding]))
   assert.equal(card.some(item => item.strings[0].includes('class="mark-issue"')), false)
@@ -44,7 +44,7 @@ test('creating an issue repaints the saved issue immediately without waiting for
 })
 
 test('an unchanged existing issue keeps its automatic Fix and does not repaint', async () => {
-  const existing = { url, autoFix: 'https://github.com/o/r/pull/2' }
+  const existing = { url, autoFix: 'https://github.com/o/r/pull/2', duplicateOf: null }
   state.managedIssues.set('finding', existing)
   const dialog = await open()
   dialog.onCreated(url)

@@ -130,6 +130,7 @@ export function openSqliteManagedDb(path: string, options: ManagedDbOptions = {}
     ensureColumn(db, 'managed_team', 'dependency_review', 'INTEGER NOT NULL DEFAULT 0')
     ensureColumn(db, 'managed_finding_issue', 'auto_fix_url', 'TEXT')
     ensureColumn(db, 'managed_finding_issue', 'auto_fix_checked_at', 'INTEGER')
+    ensureColumn(db, 'managed_finding_issue', 'duplicate_of_url', 'TEXT')
     ensureColumn(db, 'managed_selected_repo', 'active', 'INTEGER NOT NULL DEFAULT 1')
     for (const [column, type] of REPOSITORY_DEPENDENCY_REVIEW_COLUMNS) ensureColumn(db, 'managed_selected_repo', column, type)
     for (const [column, type] of DEPENDENCY_REVIEW_COLUMNS) ensureColumn(db, 'managed_dependency_review', column, type)
