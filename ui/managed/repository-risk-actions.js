@@ -1,6 +1,7 @@
 // The Actions tab of Manage → Repositories → Risk (repository-risk.js): a row
-// of each reference repositories' workflows make, resolved on GitHub, and of
-// each thing their steps fetch or run past a pin, each where it is used.
+// of each reference repositories' workflows make, resolved on GitHub, its
+// advisories among its findings, and of each thing their steps fetch or run
+// past a pin, each where it is used.
 import { html, nothing } from 'lit'
 import { SEVERITIES } from '../../risk/files/stamps.js'
 import { encodePath } from '../view/bundle-origin-links.js'
@@ -39,17 +40,25 @@ const ACTION_FINDINGS = {
   'comment-mismatch': ['Comment mismatch', 'The version the comment beside it names isn’t this commit’s.'],
   'action-missing': ['No action.yml', 'No action.yml where it names, at the commit.'],
   'unreadable': ['Unreadable', 'Its file couldn’t be read as GitHub reads it.'],
+  'advisory': ['Advisory', 'A published advisory of the version it runs.'],
+  'advisories-unavailable': ['Advisories unavailable', 'Its advisories couldn’t be had: asked again by the next scan.'],
 }
 // The Actions tab's rows shown: all, the references resolved, or what steps fetch.
 export const ACTION_KINDS = { all: 'All', actions: 'Actions', steps: 'Steps' }
 
 export const severityRank = severity => SEVERITIES.includes(severity) ? SEVERITIES.indexOf(severity) : SEVERITIES.length
 const worst = findings => findings.reduce((best, { severity }) => severityRank(severity) < severityRank(best) ? severity : best, null)
-const findingLabel = finding => finding.id === 'hosts' ? (finding.tag === 'IP lookup' ? finding.tag : `${finding.tag ?? ''} host`.trimStart()) : ACTION_FINDINGS[finding.id]?.[0] ?? finding.id
+// A host's by its tag, an advisory's by its id (`GHSA-…`).
+function findingLabel(finding) {
+  if (finding.id === 'hosts') return finding.tag === 'IP lookup' ? finding.tag : `${finding.tag ?? ''} host`.trimStart()
+  if (finding.id === 'advisory') return finding.advisory
+  return ACTION_FINDINGS[finding.id]?.[0] ?? finding.id
+}
 
 // What a finding found, as its tooltip tells it beside what it says.
 function findingDetail(finding) {
   const parts = []
+  if (finding.id === 'advisory') parts.push(finding.malware ? 'Malware, not a vulnerability.' : '', finding.title, finding.versions?.length ? `affects ${finding.versions.join(', ')}` : '', finding.url)
   if (finding.id === 'fetched-package') parts.push(stepName(finding), ...finding.localFirst ? [finding.locked ? (finding.installed ? '' : 'locked, but run before any install') : 'no lockfile here locks it'] : [])
   if (finding.services) parts.push(finding.services.join(', '))
   if (finding.expression) parts.push(`\${{ ${finding.expression} }}`)

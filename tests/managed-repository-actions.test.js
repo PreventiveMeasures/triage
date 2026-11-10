@@ -70,14 +70,14 @@ function sourceOf({ files = FILES, workflows = ['.github/workflows/ci.yml'], act
 // GitHub as the scan resolves references with: actions/checkout and
 // third/party, public, v1 of third/party's at B, its v1.0.0 too, its
 // action.yml naming `nested/one@main`, and nested/one a private repository.
-function actionsSource({ fail = null } = {}) {
+function actionsSource({ fail = null, advisories } = {}) {
   const info = (fullName, isPrivate = false) => ({ fullName, defaultBranch: 'main', private: isPrivate })
   const source = actionsSourceOf({
     'actions/checkout': { info: info('actions/checkout'), tags: [{ tag: 'v4', oid: SHA('c') }, { tag: 'v4.2.0', oid: SHA('c') }] },
     'third/party': { info: info('third/party'), tags: [{ tag: 'v1', oid: SHA('b') }, { tag: 'v1.0.0', oid: SHA('b') }],
       files: { [`action.yml@${SHA('b')}`]: 'runs:\n  using: composite\n  steps:\n    - uses: nested/one@main\n' } },
     'nested/one': { info: info('nested/one', true), tags: [], branches: [{ branch: 'main', oid: SHA('d') }], files: { [`action.yml@${SHA('d')}`]: 'runs:\n  using: node24\n  main: index.js\n' } },
-  })
+  }, { advisories })
   const { repo } = source
   source.repo = name => fail?.(name) ? Promise.reject(new GithubApiError(429, 'github-rate-limited', 60)) : repo(name)
   return source
@@ -206,6 +206,35 @@ test('what GitHub answers of a public repository is kept for every scan, whichev
   // Other references of third/party, at the same commit, and nested/one, private, again.
   const again = await asked([`third/party@${SHA('b')} # v1.0.0`, `third/party@${SHA('b')}`])
   assert.deepEqual([...new Set(again)].toSorted(), ['branch nested/one', 'file nested/one', 'repo nested/one', 'tags nested/one'])
+})
+
+test('advisories are asked of what a reference runs, a public repository\'s kept for every scan, a private one\'s as internal and never; a line without them not kept', async () => {
+  const asked = [], caches = riskCaches()
+  let failing = false
+  const advisories = (name, versions, internal) => {
+    asked.push(`${name} ${versions.join(' ')}${internal ? ' internal' : ''}`)
+    if (failing) return Promise.reject(new GithubApiError(502, 'upstream-unavailable'))
+    return Promise.resolve(name === 'third/party' ? [{ ecosystem: 'github', name, source: 'osv', id: 'GHSA-2345-6789-cfgh', aliases: [], severity: 'high', cwe: [], versions }] : [])
+  }
+  const resolve = async keys => {
+    const told = []
+    const resolving = resolvingActions({ source: actionsSource({ advisories }), signal: new AbortController().signal, tell: line => { told.push(line) }, memory: caches.actions, answers: caches.actionAnswers })
+    resolving.add(keys.map(key => ({ key, owner: 'org', depth: 0 })))
+    await resolving.close()
+    return new Map(told.map(line => [line.key, line]))
+  }
+  const told = await resolve(['third/party@v1'])
+  assert.deepEqual(told.get('third/party@v1').findings.filter(({ id }) => id === 'advisory').map(({ advisory, versions }) => [advisory, versions]), [['GHSA-2345-6789-cfgh', ['v1.0.0']]])
+  assert.ok(told.has('nested/one@main'))
+  assert.deepEqual(asked, ['third/party v1.0.0', 'nested/one main internal'], 'the release v1 is at; nested/one, private, of its repository alone')
+  await resolve([`third/party@${SHA('b')}`])
+  assert.deepEqual(asked, ['third/party v1.0.0', 'nested/one main internal', 'nested/one main internal'],
+    'another reference at that release, another scan, asks none of third/party; nested/one\'s, never kept, again')
+  failing = true
+  assert.deepEqual(findingIds((await resolve(['actions/checkout@v4'])).get('actions/checkout@v4').findings).slice(0, 1), ['advisories-unavailable/notice@undefined'])
+  failing = false
+  await resolve(['actions/checkout@v4'])
+  assert.deepEqual(asked.filter(each => each.startsWith('actions/')), ['actions/checkout v4.2.0', 'actions/checkout v4.2.0'], 'asked again, the line without them not kept')
 })
 
 test('a reference of a public repository is kept beyond the instance, a private one\'s not', async () => {

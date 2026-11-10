@@ -2,7 +2,7 @@ import './_polyfills.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import '../ui/managed/repository-risk.js'
-import { ActionsState, pinnedTo, referenceHref } from '../ui/managed/repository-risk-actions.js'
+import { ActionsState, findingsCell, pinnedTo, referenceHref } from '../ui/managed/repository-risk-actions.js'
 import { scanWorkflow } from '../risk/index.js'
 import { templateText } from './_lit.js'
 
@@ -116,4 +116,22 @@ test('a reference\'s own code\'s findings of one line, each of what it is about'
   const fetched = name => ({ id: 'fetched-package', severity: 'high', tool: 'npx', name, spec: null, file: 'action.yml', line: 9 })
   state.apply({ type: 'action', key: 'org/act@v1', commit: SHA('1'), at: 'tag', tags: [], findings: [fetched('foo'), fetched('bar'), fetched('foo')], uses: [] })
   assert.deepEqual(state.rows('actions')[0].findings.map(({ id, name }) => `${id}/${name ?? ''}`), ['unpinned/', 'fetched-package/foo', 'fetched-package/bar'])
+})
+
+test('a reference\'s advisories, each by its id, the row as severe as the worst, what each says in its tooltip', () => {
+  const state = new ActionsState()
+  state.apply({ type: 'workflow', repo: 1, path: 'a.yml', kind: 'workflow', ...scanWorkflow('workflow', `on: push\njobs:\n  a:\n    steps:\n      - uses: org/act@${SHA('1')} # v1.0.0\n`) })
+  const url = 'https://github.com/advisories/GHSA-2345-6789-cfgh'
+  state.apply({ type: 'action', key: `org/act@${SHA('1')} # v1.0.0`, commit: SHA('1'), at: 'sha', tags: ['v1.0.0'], uses: [], findings: [
+    { id: 'advisory', severity: 'moderate', advisory: 'GHSA-2345-6789-cfgh', title: 'Leaks secrets', url, versions: ['v1.0.0'] },
+    { id: 'advisory', severity: 'critical', advisory: 'MAL-2025-1', malware: true, versions: ['v1.0.0'] },
+    { id: 'advisories-unavailable', severity: 'notice' },
+  ] })
+  const [row] = state.rows('actions')
+  assert.equal(row.severity, 'critical')
+  assert.deepEqual(row.findings.map(({ advisory, id }) => advisory ?? id), ['GHSA-2345-6789-cfgh', 'MAL-2025-1', 'advisories-unavailable'], 'two advisories, both kept')
+  const cell = templateText(findingsCell(row.findings))
+  assert.match(cell, new RegExp(`risk-moderate\\s+data-tooltip=A published advisory of the version it runs\\.\\nLeaks secrets\\naffects v1\\.0\\.0\\n${url}>GHSA-2345-6789-cfgh<`, 'u'))
+  assert.match(cell, /risk-critical\s+data-tooltip=A published advisory of the version it runs\.\nMalware, not a vulnerability\.\naffects v1\.0\.0>MAL-2025-1</u)
+  assert.match(cell, /risk-notice\s+data-tooltip=Its advisories couldn’t be had: asked again by the next scan\.>Advisories unavailable</u)
 })

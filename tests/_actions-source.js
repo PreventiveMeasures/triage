@@ -1,8 +1,9 @@
 // GitHub as an actions scan resolves references with (risk ActionsSource), of
 // `repos`, each `{ info, tags, branches, complete, history, missing, files }`:
 // `history` by a commit or a branch, the commits in it; `files` by
-// `path@commit`. Each call asked noted (`asked`, `[method, ...args]`).
-export function actionsSourceOf(repos) {
+// `path@commit`; with `advisories`, a repository's advisories at the versions
+// asked, as it answers them. Each call asked noted (`asked`, `[method, ...args]`).
+export function actionsSourceOf(repos, { advisories } = {}) {
   const asked = [], repo = name => repos[name.toLowerCase()]
   const answer = (method, value) => (...args) => { asked.push([method, ...args]); return Promise.resolve(value(...args)) }
   return {
@@ -17,5 +18,6 @@ export function actionsSourceOf(repos) {
       return missing.includes(sha) ? null : (history[base] ?? [base]).includes(sha)
     }),
     file: answer('file', (name, path, commit) => repo(name)?.files?.[`${path}@${commit}`] ?? null),
+    ...advisories && { advisories: answer('advisories', advisories) },
   }
 }

@@ -437,6 +437,57 @@ describe('a reference resolved on GitHub', () => {
   })
 })
 
+describe('a reference\'s advisories', () => {
+  // A reference of org/act, public unless `info` says otherwise, its
+  // advisories as `advised` answers them, and what they were asked of.
+  const resolve = async (text, { comment = null, advised = () => [], info = { ...ACT.info, private: false } } = {}) => {
+    const source = actionsSourceOf({ 'org/act': { ...ACT, info } }, { advisories: advised })
+    const resolved = await resolveAction(readUses(text, { comment }), source)
+    return { ...resolved, found: ids(resolved.findings), asked: source.asked.flatMap(([what, ...args]) => what === 'advisories' ? [args] : []) }
+  }
+
+  it('asked of the releases on the commit it runs, else of a commit\'s tags or the commit, and of a tag or a branch as named', async () => {
+    assert.deepEqual((await resolve('org/act@v1')).asked, [['org/act', ['v1.1.0'], false]], 'a moving tag by the release it is at, not its whole line')
+    assert.deepEqual((await resolve(`org/act@${SHA('b')}`, { comment: '# v1' })).asked, [['org/act', ['v1.1.0'], false]])
+    assert.deepEqual((await resolve('org/act@main')).asked, [['org/act', ['v2.0.0'], false]], 'a branch at a release')
+    assert.deepEqual((await resolve('org/act@v2')).asked, [['org/act', ['v2'], false]], 'a moving tag on no release, as its whole line')
+    assert.deepEqual((await resolve(`org/act@${SHA('9')}`)).asked, [['org/act', [SHA('9')], false]], 'a commit no tag names, as any release')
+    assert.deepEqual((await resolve(`org/act@${SHA('0')}`)).asked, [], 'none of a commit GitHub hasn\'t')
+    assert.deepEqual((await resolve('org/act@nope')).asked, [], 'nor of a ref that is neither a tag nor a branch')
+    assert.deepEqual((await resolve('org/act@v1', { info: { ...ACT.info, private: true } })).asked, [['org/act', ['v1.1.0'], true]],
+      'a private repository as internal, of its own advisories alone')
+    assert.deepEqual((await resolve('org/act@v1', { info: ACT.info })).asked, [['org/act', ['v1.1.0'], true]], 'and one not told public')
+    assert.deepEqual((await resolve('org/act@v1', { info: { ...ACT.info, fullName: 'Org/Act', private: false } })).asked, [['Org/Act', ['v1.1.0'], false]],
+      'by its name as GitHub spells it, as OSV matches it')
+  })
+
+  it('each a finding, malware red, else as rated and unrated yellow, before its code\'s; why not where they couldn\'t be had, the rest resolved', async () => {
+    const url = 'https://github.com/advisories/GHSA-2345-6789-cfgh'
+    const advised = (name, versions) => [
+      { ecosystem: 'github', name, source: 'osv', id: 'GHSA-2345-6789-cfgh', ghsa: 'GHSA-2345-6789-cfgh', url, aliases: [], title: 'Leaks secrets', severity: 'high', cwe: [], versions },
+      { ecosystem: 'github', name, source: 'osv', id: 'MAL-2025-1', aliases: [], severity: 'low', cwe: [], malware: true, versions },
+      { ecosystem: 'github', name, source: 'repository', id: 'GHSA-3456-789c-fghj', aliases: [], cwe: [], versions },
+    ]
+    assert.deepEqual((await resolve(`org/act@${SHA('c')}`, { advised })).findings, [
+      { id: 'advisory', severity: 'high', advisory: 'GHSA-2345-6789-cfgh', title: 'Leaks secrets', url, versions: ['v1.0.0'] },
+      { id: 'advisory', severity: 'critical', advisory: 'MAL-2025-1', malware: true, versions: ['v1.0.0'] },
+      { id: 'advisory', severity: 'moderate', advisory: 'GHSA-3456-789c-fghj', versions: ['v1.0.0'] },
+    ])
+    assert.deepEqual((await resolve('org/act@v1', { advised })).found.slice(0, 4), ['outdated/low', 'advisory/high', 'advisory/critical', 'advisory/moderate'])
+    const failed = await resolve('org/act@v1', { advised: () => Promise.reject(new Error('busy')) })
+    assert.deepEqual(failed.found, ['outdated/low', 'advisories-unavailable/notice', 'unpinned/high@4', 'remote-script/high@6'])
+  })
+
+  it('kept for a scan by the versions asked, as two references at one release ask once', async () => {
+    let asked = 0
+    const source = keptSource(actionsSourceOf({ 'org/act': { ...ACT, info: { ...ACT.info, private: false } } }, { advisories: () => { asked++; return [] } }))
+    await resolveAction(readUses('org/act@v1'), source)
+    await resolveAction(readUses(`org/act@${SHA('b')}`, { comment: '# v1.1.0' }), source)
+    await resolveAction(readUses('org/act@v2'), source)
+    assert.equal(asked, 2)
+  })
+})
+
 describe('versions of tags', () => {
   it('a release of three parts, a major or minor tag that moves, none else', () => {
     assert.deepEqual(['v4', 'v4.2', '4.2.1', 'v4.2.1-rc.1', 'latest', 'v'].map(tagVersion), [[4, null, null], [4, 2, null], [4, 2, 1], null, null, null])

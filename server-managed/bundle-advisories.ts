@@ -43,9 +43,10 @@ async function isPublicRepo(github: Client, repo: string): Promise<boolean> {
 // `github` package by its name, as an Action, but of one `internal`: each is
 // internal but where GitHub says its repository is public, so a private one,
 // or one GitHub has none of, has its own published advisories read alone, as
-// a private npm package's name never reaches OSV either.
+// a private npm package's name never reaches OSV either. One that says
+// (`internal`, as its caller knows) is taken as it says.
 async function markInternal(packages: Package[], github: Client): Promise<Package[]> {
-  const internal = new Set(packages.flatMap(pkg => pkg.ecosystem === 'github' ? [pkg.name] : []))
+  const internal = new Set(packages.flatMap(pkg => pkg.ecosystem === 'github' && pkg.internal === undefined ? [pkg.name] : []))
   const repos = [...internal]
   for (let at = 0; at < repos.length; at += REPOS_AT_ONCE) {
     await Promise.all(repos.slice(at, at + REPOS_AT_ONCE).map(async repo => { if (await isPublicRepo(github, repo)) internal.delete(repo) }))
