@@ -333,6 +333,15 @@ for (const [name, reopened] of [['reopened', { state: 'OPEN', stateReason: 'REOP
   })
 }
 
+test('a newest pull request outside the workspace keeps the saved Fix, and the duplicate is saved all the same', async t => {
+  const f = await fixture(t)
+  await f.db.setManagedIssueTracking('shared-finding', issueUrl, none, { autoFix: pullUrl(2), duplicateOf: null }, 1)
+  const foreign = pull(5, { repository: { databaseId: 2, nameWithOwner: 'org/repo2' } })
+  const result = await f.lookup(github({ 'org/repo1#1': issue([pull(3)], duplicate(9)), 'org/repo1#9': issue([foreign], { number: 9 }) }))
+  assert.deepEqual(result.updates.map(update => update.next), [{ autoFix: pullUrl(2), duplicateOf: issueAt(9) }])
+  assert.equal(result.fixes.some(fix => fix.url.includes('/repo2/')), false, 'nor is the foreign pull request disclosed')
+})
+
 for (const [name, reference] of [
   ['outside the workspace repositories', { number: 4, repository: { databaseId: 2, nameWithOwner: 'org/repo2' } }],
   ['under a repository ID it does not have', { number: 4, repository: { databaseId: 7, nameWithOwner: 'org/repo1' } }],

@@ -144,9 +144,11 @@ function issueUpdates(jobs: Map<string, Job>, byIssue: Map<string, ManagedIssue[
       .toSorted((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.number - a.number)[0]
     const repo = latest && workspaceRepository(latest.repository, allowed)
     // The viewer's token can have broader access than this workspace. Never
-    // persist or disclose a PR from outside the workspace repository grants.
-    if (latest && !repo) continue
-    const autoFix = latest ? `https://github.com/${repo!.github}/pull/${latest.number}` : null
+    // persist or disclose a PR from outside the workspace repository grants:
+    // where the newest is one, the saved Fix stays. The duplicate, checked
+    // against the grants itself, is saved all the same.
+    const foreign = Boolean(latest && !repo)
+    const autoFix = latest && repo ? `https://github.com/${repo.github}/pull/${latest.number}` : null
     if (latest && autoFix) metadata.set(autoFix, { url: autoFix, ...itemMetadata(latest, 'pull')! })
     const last = chain.at(-1)!
     const duplicate = chain.length > 1 ? issueUrlOf(last.repo, last.number) : null
@@ -159,9 +161,10 @@ function issueUpdates(jobs: Map<string, Job>, byIssue: Map<string, ManagedIssue[
     // way the next lookup finds the stored values differ, and writes the
     // current ones.
     for (const issue of saved) {
-      if (issue.autoFixUrl !== autoFix || issue.duplicateOfUrl !== duplicate) {
+      const tracking = { autoFix: foreign ? issue.autoFixUrl : autoFix, duplicateOf: duplicate }
+      if (issue.autoFixUrl !== tracking.autoFix || issue.duplicateOfUrl !== tracking.duplicateOf) {
         updates.push({ findingId: issue.findingId, issueUrl: issue.issueUrl!, checkedAt,
-          previous: { autoFix: issue.autoFixUrl, duplicateOf: issue.duplicateOfUrl }, next: { autoFix, duplicateOf: duplicate } })
+          previous: { autoFix: issue.autoFixUrl, duplicateOf: issue.duplicateOfUrl }, next: tracking })
       }
     }
   }
