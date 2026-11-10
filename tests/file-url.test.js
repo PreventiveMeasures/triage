@@ -419,9 +419,18 @@ describe('evidence rows', () => {
         + ` ([L8-L9](${blob}/a.ts#L8-L9)) and ([Lines 3 – 1](${blob}/a.ts#L1-L3)).`,
       '   Kept: `(line 4)`, [see (line 5)](https://example.com), (line 40, 52), (L0), (lines).',
     ].join('\n'))
-    // A fence in the note is code.
-    const fenced = evidenceMarkdown({ repo: { github: 'acme/widgets' }, evidence: [{ file: 'src/a.ts', text: '```\nf() // (line 3)\n```' }] }, { repoFallback: null })
-    assert.ok(fenced.includes('f() // (line 3)'))
+    // Markdown that already means something stays as written: a fence
+    // (a ``` inside a ```` block is the block's), a code span of any
+    // backtick run, link text with a title or a reference, an autolink
+    // and a bare URL. A lone backtick opens nothing.
+    const note = (written) => evidenceMarkdown({ repo: { github: 'acme/widgets' }, evidence: [{ file: 'src/a.ts', text: written }] }, { repoFallback: null })
+      .split('\n').slice(2).map((line) => line.slice(3)).join('\n')
+    for (const kept of ['```\nf() // (line 3)\n```', '````\n```\n(line 3)\n```\n(line 4)\n````', '``(line 4)``', '`` a ` (line 4) ``',
+      '[sink (line 4)](https://example.com "title (line 5)")', '[sink (line 4)][ref]', '<https://example.com/(L4)>', 'https://example.com/(L4)']) {
+      assert.equal(note(kept), kept, kept)
+    }
+    assert.equal(note('a ` b (line 9)'), `a \` b ([line 9](${blob}/a.ts#L9))`)
+    assert.equal(note('```\n(line 3)\n```\nThen (line 4).'), `\`\`\`\n(line 3)\n\`\`\`\nThen ([line 4](${blob}/a.ts#L4)).`)
     // The report's own pinned link: its anchor swapped for the note's.
     const pinned = { file: 'libs/a.ts', line: '10-20', url: 'https://github.com/o/r/blob/abc/libs/a.ts#L10-L20', text: 'The loop (line 14).' }
     assert.ok(evidenceMarkdown({ evidence: [pinned] }, { repoFallback: null })
