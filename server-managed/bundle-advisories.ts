@@ -6,20 +6,51 @@ export const ADVISORIES_TIMEOUT_MS = 30_000
 function advisoryGithubClient(token: string | null, signal: AbortSignal): Client {
   const authenticated = createClient({ token, userAgent: 'deepview-triage' })
   let client = authenticated
+  // Published advisories, and whether a repository is public, remain
+  // readable after a token is revoked. Reuse anonymous access for subsequent
+  // repositories in this audit as well.
+  async function retried<T>(ask: (current: Client) => Promise<T>): Promise<T> {
+    const current = client
+    try { return await ask(current) } catch (error) {
+      if (token === null || current !== authenticated || !(error instanceof HttpError) || error.status !== 401) throw error
+      signal.throwIfAborted()
+      if (client === authenticated) client = createClient({ token: null, userAgent: 'deepview-triage' })
+      return await ask(client)
+    }
+  }
   return {
     ...authenticated,
-    async listRepoAdvisories(options) {
-      const current = client
-      try { return await current.listRepoAdvisories(options) } catch (error) {
-        if (token === null || current !== authenticated || !(error instanceof HttpError) || error.status !== 401) throw error
-        signal.throwIfAborted()
-        // Published advisories remain readable after a token is revoked. Reuse
-        // anonymous access for subsequent repositories in this audit as well.
-        if (client === authenticated) client = createClient({ token: null, userAgent: 'deepview-triage' })
-        return await client.listRepoAdvisories(options)
-      }
-    },
+    listRepoAdvisories: options => retried(current => current.listRepoAdvisories(options)),
+    getRepo: options => retried(current => current.getRepo(options)),
   }
+}
+
+// How many repositories GitHub is asked at once whether they are public, as
+// upstream asks for their listings.
+const REPOS_AT_ONCE = 4
+
+// Whether GitHub says anyone may read `repo`: not one private, nor one it
+// has none of for this client (gone, or not the caller's to read). Any other
+// failure is thrown, as the audit then fails.
+async function isPublicRepo(github: Client, repo: string): Promise<boolean> {
+  try { return (await github.getRepo({ repo, followRedirect: true }) as { private?: unknown } | null)?.private === false } catch (error) {
+    if (error instanceof HttpError && [404, 410, 451].includes(error.status)) return false
+    throw error
+  }
+}
+
+// The packages upstream is asked of. Upstream asks OSV of every `github`
+// package by its name, as an Action, so one is asked only where GitHub says
+// its repository is public: one private, or one GitHub has none of, is left
+// out, its own published advisories with it, as a private npm package's name
+// never reaches OSV either.
+async function publicPackages(packages: Package[], github: Client): Promise<Package[]> {
+  const repos = [...new Set(packages.flatMap(pkg => pkg.ecosystem === 'github' ? [pkg.name] : []))]
+  const open = new Set<string>()
+  for (let at = 0; at < repos.length; at += REPOS_AT_ONCE) {
+    await Promise.all(repos.slice(at, at + REPOS_AT_ONCE).map(async repo => { if (await isPublicRepo(github, repo)) open.add(repo) }))
+  }
+  return packages.filter(pkg => pkg.ecosystem !== 'github' || open.has(pkg.name))
 }
 
 // The managed caller supplies its user's token when available; public shares
@@ -49,11 +80,13 @@ export async function fetchBundleAdvisories(packages: Package[], signal: AbortSi
     // npm packages anyone may read are asked of OSV too (upstream's `osv`),
     // for the malicious packages' records npm's registry hasn't: upstream
     // sends OSV only the names npm's registry serves without a token, so a
-    // private one's never leaves for OSV, as it never does for Socket. Kept in
-    // the caller's store, or without one in upstream's disk cache, where the
-    // server set one (auditCache).
-    const options = { github: github ?? advisoryGithubClient(githubToken, signal), repoAdvisories, details, osv: true, ...(cache && { cache }) }
-    return { status: 200, body: await Promise.race([advisories(packages, options), deadline]) }
+    // private one's never leaves for OSV, as it never does for Socket; nor a
+    // `github` package's whose repository isn't public (publicPackages). Kept
+    // in the caller's store, or without one in upstream's disk cache, where
+    // the server set one (auditCache).
+    const client = github ?? advisoryGithubClient(githubToken, signal)
+    const options = { github: client, repoAdvisories, details, osv: true, ...(cache && { cache }) }
+    return { status: 200, body: await Promise.race([publicPackages(packages, client).then(asked => advisories(asked, options)), deadline]) }
   } catch (error) {
     // Answered as upstream's failure alone: logged, its message, or with
     // `debug` the whole error, but for a request its client gave up on. One

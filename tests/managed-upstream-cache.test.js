@@ -18,12 +18,13 @@ const packages = [{ ecosystem: 'github', name: 'org/dep', versions: ['1.0.0'] }]
 const advisory = { ghsa_id: 'GHSA-2345-6789-cfgh', state: 'published', summary: 'Repository vulnerability', description: '# Details',
   author: { login: 'maintainer' }, vulnerabilities: [{ package: { ecosystem: 'npm', name: 'dep' }, vulnerable_version_range: '<2.0.0' }] }
 
-// GitHub's listing of org/dep, each ask noted; OSV, asked of it as an
-// Action, having none of it.
+// GitHub's listing of org/dep, each ask noted; org/dep public, as an audit
+// asks first; and OSV, asked of it as an Action, having none of it.
 function stubGithub(t, answer = () => Response.json([advisory])) {
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, init) => {
     if (url === OSV) return Promise.resolve(osvNone(init))
+    if (url === 'https://api.github.com/repos/org/dep') return Promise.resolve(Response.json({ full_name: 'org/dep', private: false }))
     calls.push(url)
     assert.equal(url, listing)
     return Promise.resolve(answer())
@@ -231,6 +232,7 @@ test('an audit asks for the listings of the repositories it knows, and whether i
       return Promise.resolve(Response.json({ name: 'found', version: '1.0.0', repository: 'https://github.com/org/found',
         dist: { tarball: 'https://registry.npmjs.org/found/-/found-1.0.0.tgz', integrity } }))
     }
+    if (url.toLowerCase() === 'https://api.github.com/repos/org/dep') return Promise.resolve(Response.json({ full_name: 'Org/Dep', private: false }))
     const repo = repos.find(name => url.toLowerCase() === `https://api.github.com/repos/${name}/security-advisories?state=published&per_page=100`)
     assert.ok(repo, url)
     github.push(repo)

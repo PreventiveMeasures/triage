@@ -7,6 +7,12 @@ import { bundleSummary } from '../server-managed/bundle-cache.ts'
 
 const ghsa = 'GHSA-2345-6789-cfgh'
 const signal = () => new AbortController().signal
+// GitHub's answer for a repository anyone may read, where `url` asks for
+// one, as an audit asks whether a `github` package's is public; else null.
+function publicRepo(url) {
+  const named = /^https:\/\/api\.github\.com\/repos\/([^/?]+\/[^/?]+)$/u.exec(String(url))
+  return named && Response.json({ full_name: decodeURIComponent(named[1]), private: false })
+}
 function mixedBundle() {
   return { kind: 'stasis', bundle: Bundle.parse(new Bundle({ modules: new Map([
     ['.', { ecosystem: 'npm', name: 'app', version: '1.0.0', files: { 'app.js': 'private source' } }],
@@ -173,7 +179,7 @@ test('GitHub branch dot is normalized to the unknown-version placeholder and con
   assert.deepEqual(packages, [{ ecosystem: 'github', name: 'ORG/DEP', versions: ['0.0.0'] }])
   t.mock.method(globalThis, 'fetch', (url, options) => Promise.resolve(url.endsWith('/v1/querybatch')
     ? Response.json({ results: JSON.parse(options.body).queries.map(() => ({})) })
-    : Response.json([{ ghsa_id: ghsa, state: 'published', summary: 'Repository vulnerability', vulnerabilities: [{ vulnerable_version_range: '>=3.0.0, <4.0.0' }] }])))
+    : publicRepo(url) ?? Response.json([{ ghsa_id: ghsa, state: 'published', summary: 'Repository vulnerability', vulnerabilities: [{ vulnerable_version_range: '>=3.0.0, <4.0.0' }] }])))
   const result = await fetchBundleAdvisories(packages, signal())
   assert.equal(result.status, 200)
   assert.deepEqual(result.body[0].versions, ['0.0.0'])
@@ -210,6 +216,7 @@ test('managed audits use the real upstream API and authenticate only GitHub acro
       assert.equal(parsed.searchParams.get('project_name'), 'solpkg')
       return Promise.resolve(Response.json({ data: [{ name: 'solpkg', github_url: 'https://github.com/org/dep' }] }))
     }
+    if (parsed.pathname === '/repos/org/dep') return Promise.resolve(publicRepo(url))
     assert.equal(parsed.pathname, '/repos/org/dep/security-advisories')
     assert.equal(parsed.searchParams.get('state'), 'published')
     assert.equal(options.redirect, 'manual')
@@ -370,12 +377,37 @@ test('a rejected token is not reused for later repositories in the same audit', 
       rejected++
       return Promise.resolve(Response.json({ message: 'Bad credentials' }, { status: 401 }))
     }
+    if (publicRepo(url)) return Promise.resolve(publicRepo(url))
     anonymous.add(new URL(url).pathname)
     return Promise.resolve(Response.json([]))
   })
   assert.deepEqual(await fetchBundleAdvisories(packages, signal(), { githubToken: 'revoked' }), { status: 200, body: [] })
-  assert.equal(anonymous.size, packages.length)
+  assert.equal(anonymous.size, packages.length, 'each listing asked anonymously')
   assert.ok(rejected > 0 && rejected < packages.length, 'queued repositories use the anonymous client directly')
+})
+
+test('a github package is asked of OSV and its listing only where GitHub says its repository is public', async t => {
+  const listed = [], osv = []
+  t.mock.method(globalThis, 'fetch', (url, options) => {
+    if (url.endsWith('/v1/querybatch')) {
+      const { queries } = JSON.parse(options.body)
+      osv.push(...queries.map(query => query.package.name))
+      return Promise.resolve(Response.json({ results: queries.map(() => ({})) }))
+    }
+    const { pathname } = new URL(url)
+    if (pathname === '/repos/org/open') return Promise.resolve(publicRepo(url))
+    if (pathname === '/repos/org/secret') return Promise.resolve(Response.json({ full_name: 'org/secret', private: true }))
+    if (pathname === '/repos/org/gone') return Promise.resolve(Response.json({ message: 'Not Found' }, { status: 404 }))
+    listed.push(pathname)
+    return Promise.resolve(Response.json([]))
+  })
+  const packages = ['org/open', 'org/secret', 'org/gone'].map(name => ({ ecosystem: 'github', name, versions: ['1.0.0'] }))
+  assert.deepEqual(await fetchBundleAdvisories(packages, signal(), { githubToken: 'viewer-token' }), { status: 200, body: [] })
+  assert.deepEqual(osv, ['org/open'], 'a private repository\'s name, or one GitHub has none of, never sent to OSV')
+  assert.deepEqual(listed, ['/repos/org/open/security-advisories'])
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ message: 'API rate limit exceeded' }, { status: 403 })))
+  assert.deepEqual(await fetchBundleAdvisories(packages, signal(), { githubToken: 'viewer-token' }), { status: 502, body: { error: 'upstream-unavailable' } },
+    'where GitHub doesn\'t say, the audit fails, none sent to OSV')
 })
 
 for (const status of [401, 403, 429, 500]) {
