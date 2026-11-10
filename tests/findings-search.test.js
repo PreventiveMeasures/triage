@@ -268,7 +268,7 @@ describe('applyFilters — annotation filters (comment | fix | flag, group-level
 test('Has fix includes automatic and manual links across siblings, with Without as its complement', t => {
   reset()
   const next = { serverMode: 'managed', localMode: false, currentManagedTeam: 'team', managedSession: { id: 'user' },
-    managedIssues: new Map([['auto', { url: 'https://github.com/o/r/issues/1', autoFix: 'https://github.com/o/r/pull/2' }]]) }
+    managedIssues: new Map([['auto', { url: 'https://github.com/o/r/issues/1', autoFix: 'https://github.com/o/r/pull/2', duplicateOf: null }]]) }
   const previous = Object.fromEntries(Object.keys(next).map(key => [key, state[key]]))
   Object.assign(state, next)
   t.after(() => { Object.assign(state, previous); reset() })

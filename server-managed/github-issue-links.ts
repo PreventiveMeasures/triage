@@ -1,4 +1,4 @@
-import { type GithubFixResult, githubIssueClosedReason, isGithubRepoName, parseGithubFixUrl } from '../common/github-pr.ts'
+import { type GithubFixResult, githubIssueClosedReason, isGithubRepoName, parseGithubFixUrl, parseGithubIssueUrl } from '../common/github-pr.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import type { IssueTracking, ManagedIssue } from './managed-issues.ts'
@@ -9,7 +9,8 @@ export type IssueFixUpdate = { findingId: string; issueUrl: string; previous: Is
 type Pull = { number: number; title: string; body: string | null; state: string; isDraft: boolean; createdAt: string;
   repository: { databaseId: number; nameWithOwner: string } }
 type Connection = { nodes: Pull[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } }
-type IssueReference = { number?: unknown; repository?: { databaseId?: unknown; nameWithOwner?: unknown } | null }
+type RepositoryReference = { databaseId?: unknown; nameWithOwner?: unknown } | null | undefined
+type IssueReference = { number?: unknown; repository?: RepositoryReference }
 type Issue = { number: number; title: string; body: string | null; state: string; stateReason: string | null; closedByPullRequestsReferences?: Connection
   duplicateOf?: IssueReference | null }
 type Repository = TeamReportAccessSnapshot['repositories'][number]
@@ -30,8 +31,17 @@ const linkedFields = (cursor: string | null) => 'duplicateOf { number repository
 // How many issues a saved one is followed through, each closed as a
 // duplicate of the next: each is another request after the last.
 const MAX_DUPLICATE_HOPS = 5
-const jobKey = (repo: Repository, kind: Job['kind'], number: number) => `${repo.repoId}:${kind}:${number}`
+const jobKey = (repoId: number, kind: Job['kind'], number: number) => `${repoId}:${kind}:${number}`
 const issueUrlOf = (repo: Repository, number: number) => `https://github.com/${repo.github}/issues/${number}`
+// Whether GitHub named a repository as one is: by its stable ID and a name.
+const isRepositoryReference = (ref: RepositoryReference): ref is { databaseId: number; nameWithOwner: string } =>
+  Number.isSafeInteger(ref?.databaseId) && typeof ref?.nameWithOwner === 'string' && isGithubRepoName(ref.nameWithOwner)
+// The workspace repository GitHub named, matching its name and stable ID
+// both; none for one outside the workspace repository grants.
+const workspaceRepository = (ref: { databaseId: number; nameWithOwner: string }, allowed: Map<string, Repository>) => {
+  const repo = allowed.get(ref.nameWithOwner.toLowerCase())
+  return repo?.repoId === ref.databaseId ? repo : null
+}
 
 function metadataQuery(jobs: Job[]) {
   return `{ ${jobs.map((job, index) => {
@@ -54,24 +64,26 @@ function itemMetadata(item: Issue | Pull, kind: Job['kind']): Omit<Metadata, 'ur
 function duplicateOf(issue: Issue, allowed: Map<string, Repository>): Duplicate | undefined {
   if (issue.state !== 'CLOSED' || issue.stateReason !== 'DUPLICATE' || issue.duplicateOf == null) return null
   const { number, repository } = issue.duplicateOf
-  if (!Number.isSafeInteger(number) || (number as number) <= 0 || !Number.isSafeInteger(repository?.databaseId)
-    || typeof repository?.nameWithOwner !== 'string' || !isGithubRepoName(repository.nameWithOwner)) return undefined
-  const repo = allowed.get(repository.nameWithOwner.toLowerCase())
-  return repo && repo.repoId === repository.databaseId ? { repo, number: number as number } : null
+  if (!Number.isSafeInteger(number) || (number as number) <= 0 || !isRepositoryReference(repository)) return undefined
+  const repo = workspaceRepository(repository, allowed)
+  return repo ? { repo, number: number as number } : null
 }
 
-function readPage(job: Job, item: Issue | Pull, metadata: Map<string, Metadata>, allowed: Map<string, Repository>): boolean {
+// `refused`: GitHub answered with an error on the issue's duplicate alone,
+// which, like a malformed one, leaves it shown but what it redirects to
+// unknown.
+function readPage(job: Job, item: Issue | Pull, metadata: Map<string, Metadata>, allowed: Map<string, Repository>, refused: boolean): boolean {
   const details = itemMetadata(item, job.kind)
   if (!details || item.number !== job.number) return false
   for (const url of job.aliases) metadata.set(url, { url, ...details })
   if (!job.linked) return false
-  const duplicate = duplicateOf(item as Issue, allowed)
+  const duplicate = refused ? undefined : duplicateOf(item as Issue, allowed)
   if (duplicate === undefined) return false
   const connection = (item as Issue).closedByPullRequestsReferences
   if (!connection || !Array.isArray(connection.nodes) || typeof connection.pageInfo?.hasNextPage !== 'boolean'
     || connection.nodes.some(pr => !pr || !Number.isSafeInteger(pr.number) || pr.number <= 0 || typeof pr.createdAt !== 'string'
       || !Number.isFinite(Date.parse(pr.createdAt)) || !itemMetadata(pr, 'pull') || typeof pr.isDraft !== 'boolean'
-      || !Number.isSafeInteger(pr.repository?.databaseId) || typeof pr.repository?.nameWithOwner !== 'string' || !isGithubRepoName(pr.repository.nameWithOwner))) return false
+      || !isRepositoryReference(pr.repository))) return false
   job.duplicateOf = duplicate
   job.pulls.push(...connection.nodes)
   if (!connection.pageInfo.hasNextPage) { job.complete = true; return false }
@@ -82,70 +94,58 @@ function readPage(job: Job, item: Issue | Pull, metadata: Map<string, Metadata>,
 
 // A saved issue's job, then those of the issues it was closed as a duplicate
 // of in turn, as far as this lookup has read them, a redirect followed rather
-// than the saved issue replaced: `end` where the last names none further to
-// follow (or one already in the chain, or past MAX_DUPLICATE_HOPS), else
-// `missing`, where one names an issue this lookup has no linked job for.
-function duplicateChain(root: Job, jobs: Map<string, Job>): { chain: Job[]; end: boolean; missing: Duplicate } {
+// than the saved issue replaced. `next` is null where the last names none
+// further to follow (or one already in the chain, or past
+// MAX_DUPLICATE_HOPS); the one it names where this lookup has no linked job
+// for it; undefined where one is yet unread, or what it names unknown.
+function duplicateChain(root: Job, jobs: Map<string, Job>): { chain: Job[]; next: Duplicate | undefined } {
   const chain = [root]
   for (let job = root; ;) {
     const target = job.duplicateOf
-    if (target === undefined) return { chain, end: false, missing: null }
-    if (target === null || chain.length > MAX_DUPLICATE_HOPS) return { chain, end: true, missing: null }
-    const next = jobs.get(jobKey(target.repo, 'issue', target.number))
-    if (next && chain.includes(next)) return { chain, end: true, missing: null }
-    if (!next?.linked) return { chain, end: false, missing: target }
+    if (!target || chain.length > MAX_DUPLICATE_HOPS) return { chain, next: target && null }
+    const next = jobs.get(jobKey(target.repo.repoId, 'issue', target.number))
+    if (next && chain.includes(next)) return { chain, next: null }
+    if (!next?.linked) return { chain, next: target }
     chain.push(job = next)
   }
 }
 
 // The issues saved ones were closed as duplicates of, which this lookup has
 // yet to read with their linked pull requests: each made a linked job, as a
-// saved issue's own is, one read without them read again with them.
-function duplicateJobs(jobs: Map<string, Job>, roots: Set<string>): Job[] {
+// saved issue's own is (one read without them never read further).
+function duplicateJobs(jobs: Map<string, Job>, roots: Iterable<string>): Job[] {
   const found: Job[] = []
   for (const key of roots) {
     const root = jobs.get(key)
-    const missing = root && duplicateChain(root, jobs).missing
-    if (!missing) continue
-    const missingKey = jobKey(missing.repo, 'issue', missing.number), url = issueUrlOf(missing.repo, missing.number)
-    const job = jobs.get(missingKey)
-    if (!job) {
-      jobs.set(missingKey, { repo: missing.repo, kind: 'issue', number: missing.number, aliases: [url], linked: true, cursor: null, pulls: [], complete: false })
-      found.push(jobs.get(missingKey)!)
-      continue
-    }
-    Object.assign(job, { linked: true, cursor: null, pulls: [], complete: false, duplicateOf: undefined })
+    const next = root && duplicateChain(root, jobs).next
+    if (!next) continue
+    const nextKey = jobKey(next.repo.repoId, 'issue', next.number), url = issueUrlOf(next.repo, next.number)
+    let job = jobs.get(nextKey)
+    if (!job) jobs.set(nextKey, job = { repo: next.repo, kind: 'issue', number: next.number, aliases: [], linked: true, cursor: null, pulls: [], complete: false })
+    job.linked = true
     if (!job.aliases.includes(url)) job.aliases.push(url)
     found.push(job)
   }
   return found
 }
 
-function issueUpdates(jobs: Map<string, Job>, issues: ManagedIssue[], allowed: Map<string, Repository>, checkedAt: number, metadata: Map<string, Metadata>) {
+// `byIssue`: the saved issues each job's issue is, by its key.
+function issueUpdates(jobs: Map<string, Job>, byIssue: Map<string, ManagedIssue[]>, allowed: Map<string, Repository>, checkedAt: number, metadata: Map<string, Metadata>) {
   const updates: IssueFixUpdate[] = []
-  // The issues each job's issue is, by repository and number, read once.
-  const byIssue = new Map<string, ManagedIssue[]>()
-  for (const issue of issues) {
-    const ref = parseGithubFixUrl(issue.issueUrl)
-    if (ref?.kind !== 'issue') continue
-    const key = `${issue.repoId}:issue:${ref.number}`, same = byIssue.get(key)
-    if (same) same.push(issue)
-    else byIssue.set(key, [issue])
-  }
   for (const [key, saved] of byIssue) {
     const root = jobs.get(key)
     if (!root?.linked) continue
     // The saved issue and every one it was closed as a duplicate of in turn,
     // each read whole: the last is tracked, and the pull requests of all.
-    const { chain, end } = duplicateChain(root, jobs)
-    if (!end || !chain.every(job => job.complete)) continue
+    const { chain, next } = duplicateChain(root, jobs)
+    if (next !== null || !chain.every(job => job.complete)) continue
     // "Last" means the newest PR by creation time, never its latest comment.
     const latest = chain.flatMap(job => job.pulls).filter(pr => pr.state !== 'CLOSED')
       .toSorted((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.number - a.number)[0]
-    const repo = latest && allowed.get(latest.repository.nameWithOwner.toLowerCase())
+    const repo = latest && workspaceRepository(latest.repository, allowed)
     // The viewer's token can have broader access than this workspace. Never
     // persist or disclose a PR from outside the workspace repository grants.
-    if (latest && (!repo || repo.repoId !== latest.repository.databaseId)) continue
+    if (latest && !repo) continue
     const autoFix = latest ? `https://github.com/${repo!.github}/pull/${latest.number}` : null
     if (latest && autoFix) metadata.set(autoFix, { url: autoFix, ...itemMetadata(latest, 'pull')! })
     const last = chain.at(-1)!
@@ -179,21 +179,22 @@ export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, sna
   const checkedAt = Date.now(), signal = AbortSignal.timeout(10_000)
   const allowed = new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github)).map(repo => [repo.github.toLowerCase(), repo]))
   const jobs = new Map<string, Job>()
-  // Saved issues (`roots`), and those (with the duplicates they were saved
-  // with), read with their linked pull requests.
-  const linked = new Set<string>(), roots = new Set<string>()
+  // The saved issues by their issue's key, and the issues read with their
+  // linked pull requests: theirs, and the duplicates they were saved with.
+  const byIssue = new Map<string, ManagedIssue[]>(), linked = new Set<string>()
   for (const issue of issues) {
-    const ref = parseGithubFixUrl(issue.issueUrl)
-    if (ref?.kind !== 'issue') continue
-    roots.add(`${issue.repoId}:issue:${ref.number}`)
-    const duplicate = parseGithubFixUrl(issue.duplicateOfUrl), repo = duplicate && allowed.get(duplicate.repo.toLowerCase())
-    if (duplicate?.kind === 'issue' && repo) linked.add(jobKey(repo, 'issue', duplicate.number))
+    const ref = parseGithubIssueUrl(issue.issueUrl)
+    if (!ref) continue
+    const key = jobKey(issue.repoId, 'issue', ref.number)
+    byIssue.set(key, [...byIssue.get(key) ?? [], issue])
+    linked.add(key)
+    const duplicate = parseGithubIssueUrl(issue.duplicateOfUrl), repo = duplicate && allowed.get(duplicate.repo.toLowerCase())
+    if (duplicate && repo) linked.add(jobKey(repo.repoId, 'issue', duplicate.number))
   }
-  for (const key of roots) linked.add(key)
   for (const url of urls) {
     const ref = parseGithubFixUrl(url), repo = ref && allowed.get(ref.repo.toLowerCase())
     if (!ref || !repo) continue
-    const key = jobKey(repo, ref.kind, ref.number), previous = jobs.get(key)
+    const key = jobKey(repo.repoId, ref.kind, ref.number), previous = jobs.get(key)
     if (previous) { previous.aliases.push(url); continue }
     jobs.set(key, { repo, kind: ref.kind, number: ref.number, aliases: [url], linked: linked.has(key), cursor: null, pulls: [], complete: false })
   }
@@ -201,11 +202,12 @@ export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, sna
   const withinDeadline: typeof fetch = (input, init) => { signal.throwIfAborted(); return fetchImpl(input, { ...init, signal }) }
   const token = await ensureUserAccessToken(config, db, snapshot.user.id, checkedAt, withinDeadline)
   if (!token) return { fixes: await lookupFixes(config, db, snapshot, urls, withinDeadline), updates: [] }
-  const metadata = new Map<string, Metadata>(), refused = new Set<string>()
+  const metadata = new Map<string, Metadata>()
   let pending = [...jobs.values()]
   for (let page = 0; pending.length > 0 && page < 100 && !signal.aborted; page++) {
     const batch = pending.slice(0, 200), query = metadataQuery(batch)
     let data: Record<string, { databaseId: number; nameWithOwner: string; item: Issue | Pull } | null>
+    const refused = new Set<string>()
     try {
       const response = await withinDeadline('https://api.github.com/graphql', {
         method: 'POST', redirect: 'error',
@@ -220,7 +222,6 @@ export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, sna
       if (!body?.data || body.errors != null && (!Array.isArray(body.errors)
         || body.errors.some(error => typeof error?.path?.[0] !== 'string' || !/^r\d+$/u.test(error.path[0])))) break
       data = body.data
-      refused.clear()
       for (const error of body.errors ?? []) {
         const [alias, field, reference] = error.path! as string[]
         if (field === 'item' && reference === 'duplicateOf') refused.add(alias!)
@@ -231,11 +232,10 @@ export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, sna
     for (const [index, job] of batch.entries()) {
       const repository = data[`r${index}`]
       if (repository?.databaseId !== job.repo.repoId || typeof repository.nameWithOwner !== 'string' || repository.nameWithOwner.toLowerCase() !== job.repo.github.toLowerCase()) continue
-      if (readPage(job, repository.item, metadata, allowed)) pending.push(job)
-      if (refused.has(`r${index}`)) job.duplicateOf = undefined
+      if (readPage(job, repository.item, metadata, allowed, refused.has(`r${index}`))) pending.push(job)
     }
-    for (const job of duplicateJobs(jobs, roots)) if (!pending.includes(job)) pending.push(job)
+    for (const job of duplicateJobs(jobs, byIssue.keys())) if (!pending.includes(job)) pending.push(job)
   }
-  const updates = issueUpdates(jobs, issues, allowed, checkedAt, metadata)
+  const updates = issueUpdates(jobs, byIssue, allowed, checkedAt, metadata)
   return { fixes: [...metadata.values()], updates }
 }

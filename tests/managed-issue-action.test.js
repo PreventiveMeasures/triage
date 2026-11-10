@@ -81,7 +81,7 @@ test('managed issue targets use finding/report metadata rather than unrelated lo
 for (const manual of ['', 'https://github.com/o/r/pull/2', 'https://github.com/o/r/pull/3']) {
   test(`saved issue replaces creation and renders automatic Fix alongside manual ${manual || '(empty)'}`, t => {
     const autoFix = 'https://github.com/o/r/pull/3', url = 'https://github.com/o/r/issues/1'
-    const rendered = cardTemplates(t, { triage: new Map([['finding', { fix: manual }]]), managedIssues: new Map([['finding', { url, autoFix }]]) })
+    const rendered = cardTemplates(t, { triage: new Map([['finding', { fix: manual }]]), managedIssues: new Map([['finding', { url, autoFix, duplicateOf: null }]]) })
     assert.equal(rendered.some(template => template.strings[0].includes('class="mark-issue"')), false)
     const links = rendered.filter(template => template.strings.join('').includes('<managed-fix-link'))
     assert.ok(links.some(template => template.strings.join('').includes('Issue:') && template.values.includes(url)))
@@ -92,41 +92,34 @@ for (const manual of ['', 'https://github.com/o/r/pull/2', 'https://github.com/o
   })
 }
 
-test('kanban cards link the manual Fix, else the issue\'s pull request, else the issue', t => {
-  const autoFix = 'https://github.com/o/r/pull/3', finding = { id: 'finding' }, url = 'https://github.com/o/r/issues/1'
+test('kanban cards link the manual Fix, else the issue\'s pull request, else the issue it duplicates, else the issue', t => {
+  const autoFix = 'https://github.com/o/r/pull/3', duplicateOf = 'https://github.com/o/r/issues/9', finding = { id: 'finding' }, url = 'https://github.com/o/r/issues/1'
   const previous = { serverMode: state.serverMode, localMode: state.localMode, currentManagedTeam: state.currentManagedTeam,
     managedSession: state.managedSession, managedIssues: state.managedIssues }
   t.after(() => Object.assign(state, previous))
   Object.assign(state, { serverMode: 'managed', localMode: false, currentManagedTeam: 'team',
-    managedSession: { id: 'user', role: 'view', csrfToken: 'csrf' }, managedIssues: new Map([['finding', { url, autoFix: null }]]) })
+    managedSession: { id: 'user', role: 'view', csrfToken: 'csrf' }, managedIssues: new Map([['finding', { url, autoFix: null, duplicateOf: null }]]) })
   assert.equal(cardLinkFor(finding, null), url)
   assert.equal(cardLinkFor(finding, { fix: '' }), url)
   assert.equal(cardLinkFor(finding, { fix: 'https://github.com/o/r/pull/2' }), 'https://github.com/o/r/pull/2')
   assert.equal(cardLinkFor(finding, { fix: 'patched upstream' }), 'patched upstream')
-  state.managedIssues.set('finding', { url, autoFix })
+  state.managedIssues.set('finding', { url, autoFix, duplicateOf: null })
   assert.equal(cardLinkFor(finding, null), autoFix)
   assert.equal(cardLinkFor(finding, { fix: 'https://github.com/o/r/pull/2' }), 'https://github.com/o/r/pull/2')
+  state.managedIssues.set('finding', { url, autoFix: null, duplicateOf })
+  assert.equal(cardLinkFor(finding, null), duplicateOf)
+  state.managedIssues.set('finding', { url, autoFix, duplicateOf })
+  assert.equal(cardLinkFor(finding, null), autoFix, 'a pull request still wins')
   state.managedSession = { publicShare: true }
   assert.equal(cardLinkFor(finding, null), '', 'public links never show saved issues')
 })
 
-test('an issue closed as a duplicate shows the issue it duplicates beside it, and kanban cards track that one', t => {
-  const autoFix = 'https://github.com/o/r/pull/3', duplicateOf = 'https://github.com/o/r/issues/9', url = 'https://github.com/o/r/issues/1'
+test('an issue closed as a duplicate shows the issue it duplicates beside it', t => {
+  const duplicateOf = 'https://github.com/o/r/issues/9', url = 'https://github.com/o/r/issues/1'
   const rendered = cardTemplates(t, { triage: new Map(), managedIssues: new Map([['finding', { url, autoFix: null, duplicateOf }]]) })
   const links = rendered.filter(template => template.strings.join('').includes('<managed-fix-link'))
   assert.ok(links.some(template => template.strings.join('').includes('Issue:') && template.values.includes(url)), 'the saved issue is kept')
   assert.ok(links.some(template => template.strings.join('').includes('Duplicate of:') && template.values.includes(duplicateOf)))
   const plain = cardTemplates(t, { triage: new Map(), managedIssues: new Map([['finding', { url, autoFix: null, duplicateOf: null }]]) })
   assert.equal(plain.some(template => template.strings.join('').includes('Duplicate of:')), false)
-
-  const finding = { id: 'finding' }
-  const previous = { serverMode: state.serverMode, localMode: state.localMode, currentManagedTeam: state.currentManagedTeam,
-    managedSession: state.managedSession, managedIssues: state.managedIssues }
-  t.after(() => Object.assign(state, previous))
-  Object.assign(state, { serverMode: 'managed', localMode: false, currentManagedTeam: 'team',
-    managedSession: { id: 'user', role: 'view', csrfToken: 'csrf' }, managedIssues: new Map([['finding', { url, autoFix: null, duplicateOf }]]) })
-  assert.equal(cardLinkFor(finding, null), duplicateOf)
-  state.managedIssues.set('finding', { url, autoFix, duplicateOf })
-  assert.equal(cardLinkFor(finding, null), autoFix, 'a pull request still wins')
-  assert.equal(cardLinkFor(finding, { fix: 'https://github.com/o/r/pull/2' }), 'https://github.com/o/r/pull/2', 'and a manual Fix over it')
 })

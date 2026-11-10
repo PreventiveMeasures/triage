@@ -25,7 +25,7 @@ export function applyManagedIssues(ids, issues = {}, expected) {
     const next = parseGithubIssueUrl(raw?.url) ? { url: raw.url, autoFix: parseGithubPrUrl(raw.autoFix) ? raw.autoFix : null,
       duplicateOf: parseGithubIssueUrl(raw.duplicateOf) ? raw.duplicateOf : null } : null
     const previous = state.managedIssues.get(id)
-    if (previous?.url === next?.url && previous?.autoFix === next?.autoFix && (previous?.duplicateOf ?? null) === (next?.duplicateOf ?? null)) continue
+    if (previous?.url === next?.url && previous?.autoFix === next?.autoFix && previous?.duplicateOf === next?.duplicateOf) continue
     if (next) state.managedIssues.set(id, next)
     else state.managedIssues.delete(id)
     changed = true

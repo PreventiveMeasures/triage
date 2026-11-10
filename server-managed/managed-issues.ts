@@ -51,11 +51,12 @@ export function visibleManagedIssues(issues: ManagedIssue[], snapshot: TeamRepor
   if (snapshot.user.id.startsWith('share:')) return []
   const repos = new Set(snapshot.repositories.map(repo => repo.repoId))
   const names = new Set(snapshot.repositories.map(repo => repo.github.toLowerCase()))
-  return issues.filter(issue => issue.issueUrl && repos.has(issue.repoId)).map(issue => {
-    const duplicate = parseGithubIssueUrl(issue.duplicateOfUrl), ref = parseGithubPrUrl(issue.autoFixUrl)
-    return { ...issue, autoFixUrl: ref && names.has(ref.repo.toLowerCase()) ? issue.autoFixUrl : null,
-      duplicateOfUrl: duplicate && names.has(duplicate.repo.toLowerCase()) ? issue.duplicateOfUrl : null }
-  })
+  const inTeam = (url: string | null, parse: typeof parseGithubPrUrl) => {
+    const ref = parse(url)
+    return ref && names.has(ref.repo.toLowerCase()) ? url : null
+  }
+  return issues.filter(issue => issue.issueUrl && repos.has(issue.repoId)).map(issue =>
+    ({ ...issue, autoFixUrl: inTeam(issue.autoFixUrl, parseGithubPrUrl), duplicateOfUrl: inTeam(issue.duplicateOfUrl, parseGithubIssueUrl) }))
 }
 export function managedIssueMethods(db: ManagedSql): ManagedIssueStore {
   const fields = `finding_id AS findingId, repo_id AS repoId, repository, request_id AS requestId,

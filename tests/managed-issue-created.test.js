@@ -44,7 +44,7 @@ test('creating an issue repaints the saved issue immediately without waiting for
 })
 
 test('an unchanged existing issue keeps its automatic Fix and does not repaint', async () => {
-  const existing = { url, autoFix: 'https://github.com/o/r/pull/2' }
+  const existing = { url, autoFix: 'https://github.com/o/r/pull/2', duplicateOf: null }
   state.managedIssues.set('finding', existing)
   const dialog = await open()
   dialog.onCreated(url)

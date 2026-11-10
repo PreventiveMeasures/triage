@@ -725,7 +725,7 @@ test('issue hydration and live updates stay separate from manual triage and neve
   state.managedReports = [{ id: 'A' }]
   state.reports = [{ _managedReportId: 'A', groups: [[{ id: 'x' }]] }]
   const url = 'https://github.com/o/r/issues/1'
-  annotationResult = { A: { entries: { x: { fix: 'manual override' } }, issues: { x: { url, autoFix: 'https://github.com/o/r/pull/2' } } } }
+  annotationResult = { A: { entries: { x: { fix: 'manual override' } }, issues: { x: { url, autoFix: 'https://github.com/o/r/pull/2', duplicateOf: null } } } }
   assert.equal(await hydrateManagedReportTriage('A', { readAnnotations: createManagedAnnotationRead('team') }), true)
   assert.equal(state.triage.get('x').fix, 'manual override')
   assert.equal(state.managedIssues.get('x').autoFix, 'https://github.com/o/r/pull/2')
@@ -747,7 +747,7 @@ test('an annotation read cannot erase an issue created while it was in flight', 
   annotationResult = () => response.promise
   const hydrated = hydrateManagedReportTriage('A', { readAnnotations: createManagedAnnotationRead('team') })
   await settle()
-  const created = { url: 'https://github.com/o/r/issues/1', autoFix: null }
+  const created = { url: 'https://github.com/o/r/issues/1', autoFix: null, duplicateOf: null }
   state.managedIssues.set('x', created)
   response.resolve({ A: { entries: {}, issues: {} } })
   assert.equal(await hydrated, true)

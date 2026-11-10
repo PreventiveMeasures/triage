@@ -279,7 +279,9 @@ test('losing team access during GitHub lookup discards metadata and the derived 
 // Closed as a duplicate: the saved issue stays, and the one it duplicates is
 // followed, as a redirect is, for its status and pull requests.
 const issueAt = number => `https://github.com/org/repo1/issues/${number}`
-const duplicate = (number, extra = {}) => ({ state: 'CLOSED', stateReason: 'DUPLICATE', duplicateOf: { number, repository }, ...extra })
+// Closed as a duplicate of `reference`, or of issue `reference` in repo1.
+const duplicate = reference => ({ state: 'CLOSED', stateReason: 'DUPLICATE',
+  duplicateOf: typeof reference === 'number' ? { number: reference, repository } : reference })
 // Answers each aliased read from `items`, by `owner/name#number`, recording
 // each request's reads, as `owner/name#number` (`+` where read linked).
 function github(items, requests = []) {
@@ -289,15 +291,14 @@ function github(items, requests = []) {
       return { alias, key: `${owner}/${name}#${number}`, linked: line.includes('duplicateOf {') }
     })
     requests.push(reads.map(read => read.key + (read.linked ? '+' : '')))
-    return Response.json({ data: Object.fromEntries(reads.map(read => [read.alias, items[read.key]
-      ? { databaseId: Number(read.key.split('#')[0].at(-1)), nameWithOwner: read.key.split('#')[0], item: items[read.key] } : null])) })
+    return Response.json({ data: Object.fromEntries(reads.map(read => [read.alias, items[read.key] ? { ...repository, item: items[read.key] } : null])) })
   }
 }
 
 test('an issue closed as a duplicate tracks the one it duplicates, beside it, and that one is read first thereafter', async t => {
   const f = await fixture(t), requests = []
   const items = {
-    'org/repo1#1': issue([pull(3)], duplicate(9, { duplicateOf: { number: 9, repository: { databaseId: 1, nameWithOwner: 'ORG/Repo1' } } })),
+    'org/repo1#1': issue([pull(3)], duplicate({ number: 9, repository: { databaseId: 1, nameWithOwner: 'ORG/Repo1' } })),
     'org/repo1#9': issue([pull(5)], { number: 9, title: 'Original' }),
   }
   const result = await f.lookup(github(items, requests))
@@ -325,7 +326,7 @@ for (const [name, reopened] of [['reopened', { state: 'OPEN', stateReason: 'REOP
   test(`an issue ${name} drops the duplicate it was saved with`, async t => {
     const f = await fixture(t), requests = []
     await f.db.setManagedIssueTracking('shared-finding', issueUrl, none, { autoFix: null, duplicateOf: issueAt(9) }, 1)
-    const items = { 'org/repo1#1': issue([], duplicate(9, reopened)), 'org/repo1#9': issue([pull(5)], { number: 9 }) }
+    const items = { 'org/repo1#1': issue([], { ...duplicate(9), ...reopened }), 'org/repo1#9': issue([pull(5)], { number: 9 }) }
     const result = await lookupIssueLinks(config, f.db, f.snapshot, [issueUrl, issueAt(9)], await f.db.listManagedIssues(['shared-finding']), github(items, requests))
     assert.deepEqual(requests, [['org/repo1#1+', 'org/repo1#9+']])
     assert.deepEqual(result.updates.map(update => update.next), [none], 'nor takes its pull requests')
@@ -338,7 +339,7 @@ for (const [name, reference] of [
 ]) {
   test(`a duplicate ${name} is neither followed nor saved`, async t => {
     const f = await fixture(t), requests = []
-    const result = await f.lookup(github({ 'org/repo1#1': issue([], duplicate(4, { duplicateOf: reference })), 'org/repo2#4': issue([pull(5)], { number: 4 }) }, requests))
+    const result = await f.lookup(github({ 'org/repo1#1': issue([], duplicate(reference)), 'org/repo2#4': issue([pull(5)], { number: 4 }) }, requests))
     assert.deepEqual(requests, [['org/repo1#1+']])
     assert.deepEqual(result.fixes.map(fix => fix.url), [issueUrl])
     assert.deepEqual(result.updates, [])
@@ -366,11 +367,11 @@ test('a duplicate whose read fails, or which GitHub refuses to name, keeps what 
   const failed = await f.lookup(() => ++calls === 1 ? response(issue([], duplicate(12))) : new Response(null, { status: 502 }))
   assert.equal(calls, 2)
   assert.deepEqual(failed.updates, [])
-  const refused = await f.lookup(() => Response.json({ data: { r0: { ...repository, item: issue([], duplicate(12, { duplicateOf: null })) } },
+  const refused = await f.lookup(() => Response.json({ data: { r0: { ...repository, item: issue([], duplicate(null)) } },
     errors: [{ type: 'FORBIDDEN', path: ['r0', 'item', 'duplicateOf'], message: 'Resource not accessible' }] }))
   assert.deepEqual(refused.fixes.map(fix => [fix.url, fix.stateReason]), [[issueUrl, 'duplicate']])
   assert.deepEqual(refused.updates, [])
-  const malformed = await f.lookup(() => response(issue([], duplicate(12, { duplicateOf: { number: 'twelve', repository } }))))
+  const malformed = await f.lookup(() => response(issue([], duplicate({ number: 'twelve', repository }))))
   assert.deepEqual(malformed.updates, [])
   const saved = await f.db.getManagedIssue('shared-finding')
   assert.deepEqual([saved.autoFixUrl, saved.duplicateOfUrl], [kept.autoFix, kept.duplicateOf])
