@@ -55,12 +55,15 @@ test('the prefilled issue body links each evidence row as it links File:', t => 
 test('the prefilled issue body is the managed dialog\'s, every section in', t => {
   const commit = 'a'.repeat(40)
   const finding = { line: '3', repo: undefined, _repoFallback: 'o/r', _repoCommit: commit, isSecurity: true,
-    impact: 'Data leaks.', reproduction: 'Run it.', recommendation: 'Check it.' }
+    impact: 'Data leaks.', reproduction: 'Run it.', recommendation: 'Check it.', evidence: [{ file: 'src/sink.js', line: '9-12' }] }
   const body = new URL(issueAction(t, { serverMode: 'standalone' }, finding).values[0]).searchParams.get('body')
+  // The source at that commit opens the issue as GitHub's snippet of it;
+  // the Evidence rows stay labelled links.
   assert.equal(body, [
-    `File: [src/file.js:3](https://github.com/o/r/blob/${commit}/src/file.js#L3)`,
+    `https://github.com/o/r/blob/${commit}/src/file.js#L3`,
     'Finding description',
     '> [!CAUTION]\n> **Impact:**\n> Data leaks.',
+    `**Evidence:**\n1. [src/sink.js:9-12](https://github.com/o/r/blob/${commit}/src/sink.js#L9-L12)`,
     '**Reproduction:**\nRun it.',
     '> [!TIP]\n> **Recommendation:**\n> Check it.',
   ].join('\n\n'))
