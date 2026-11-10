@@ -114,7 +114,11 @@ function projectClient(files) {
       assert.equal(repo, 'org/repo'); assert.equal(ref, commit)
       return Object.hasOwn(files, path) ? Promise.resolve(files[path]) : Promise.reject(new Error(`no ${path} in the fixture`))
     },
-    // Soldeer's git dependencies follow a moved repository through it; the fixture has none.
+    // Soldeer's git dependencies are fetched by their commit's tree, and
+    // follow a moved repository; the fixture has none.
+    getCommitTree({ repo }) {
+      return Promise.reject(new Error(`no ${repo} in the fixture`))
+    },
     getRepo({ repo }) {
       return Promise.reject(new Error(`no ${repo} in the fixture`))
     },

@@ -1073,6 +1073,7 @@ test('persisted inventories exclude stubs per reason and retain scoped skipped d
     if (url === 'https://registry.npmjs.org/ws/latest') return Promise.resolve(Response.json({ name: 'ws', version: '8.21.1' }))
     if (url.includes('registry.npmjs.org')) return Promise.resolve(Response.json({}))
     if (url === OSV) return Promise.resolve(osvNone(options))
+    if (url === 'https://api.github.com/repos/org/dep') return Promise.resolve(Response.json({ full_name: 'org/dep', private: false }))
     assert.match(url, /\/repos\/org\/dep\/security-advisories/u)
     return Promise.resolve(Response.json([]))
   })
@@ -1086,10 +1087,10 @@ test('persisted inventories exclude stubs per reason and retain scoped skipped d
   assert.equal(skipped.length, 1)
   assert.equal(skipped[0].version, 'dev-main')
   assert.match(skipped[0].because, /Composer dev versions/u)
-  assert.equal(calls.length, 4, 'npm\'s advisories, whether anyone may read ws, OSV\'s of it, and the repository\'s')
+  assert.equal(calls.length, 6, 'npm\'s advisories, whether anyone may read ws, whether org/dep is public, OSV\'s of ws and of org/dep as an Action, and its listing')
   assert.deepEqual((await h.send(`${path}?reason=browser`, 'viewer')).json(), { packages: [], skipped: [], advisories: [] })
   assert.deepEqual((await h.send(`${path}?reason=dev`, 'viewer')).json(), { packages: [], skipped, advisories: [] })
-  assert.equal(calls.length, 4, 'stub-only and skipped-only scopes never reach upstream')
+  assert.equal(calls.length, 6, 'stub-only and skipped-only scopes never reach upstream')
   assert.deepEqual((await h.send(`${path}?reason=run`, 'viewer')).json(), {
     packages: [{ ecosystem: 'npm', name: 'ws', versions: ['8.21.1'] }], skipped: [], advisories: [],
   })
@@ -1185,6 +1186,11 @@ for (const mode of ['refresh', 'expired', 'revoked', 'rejected']) {
       : { accessToken: 'expired-token', refreshToken: mode === 'expired' ? null : 'refresh-token', expiresAt: 1 })
     const calls = []
     t.mock.method(globalThis, 'fetch', async (url, init) => {
+      // OSV, asked of org/dep as an Action, with no credential.
+      if (url === OSV) {
+        assert.equal(new Headers(init.headers).get('authorization'), null)
+        return osvNone(init)
+      }
       calls.push(url)
       if (url === 'https://github.com/login/oauth/access_token') {
         assert.equal(JSON.parse(init.body).refresh_token, 'refresh-token')
@@ -1192,15 +1198,16 @@ for (const mode of ['refresh', 'expired', 'revoked', 'rejected']) {
         if (mode === 'revoked') await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: false, security: false })
         return Response.json({ access_token: 'refreshed-token', expires_in: 3600 })
       }
-      assert.match(url, /^https:\/\/api\.github\.com\/repos\/org\/dep\/security-advisories/u)
+      // Whether org/dep is public, then its listing, each with the same credential.
+      assert.match(url, /^https:\/\/api\.github\.com\/repos\/org\/dep(?:\/security-advisories|$)/u)
       const authorization = new Headers(init.headers).get('authorization')
       if (mode === 'rejected' && authorization === 'Bearer rejected-token') return Response.json({ message: 'Bad credentials' }, { status: 401 })
       assert.equal(authorization, mode === 'expired' || mode === 'rejected' ? null : 'Bearer refreshed-token')
-      return Response.json([])
+      return url.endsWith('/repos/org/dep') ? Response.json({ full_name: 'org/dep', private: false }) : Response.json([])
     })
     const response = await h.send(`/api/bundles/${record.id}/advisories`, 'viewer')
     assert.equal(response.status, mode === 'revoked' ? 403 : 200)
-    assert.equal(calls.length, mode === 'refresh' || mode === 'rejected' ? 2 : 1)
+    assert.equal(calls.length, { refresh: 3, expired: 2, revoked: 1, rejected: 3 }[mode], 'a rejected token asked once, its fallback kept for the listing')
     if (mode === 'revoked') assert.deepEqual(response.json(), { error: 'security-access-required' })
     else assert.deepEqual(response.json().advisories, [])
     if (mode === 'refresh') assert.equal((await h.db.getUserTokens(h.users.viewer.userId)).accessToken, 'refreshed-token')

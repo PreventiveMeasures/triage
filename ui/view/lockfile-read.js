@@ -205,7 +205,7 @@ const READERS = {
   // and may name a pod not installed for this one, which is left out.
   async cocoapods(text) {
     const { parsePodfileLock } = await import('@preventive/lockfile/cocoapods.js')
-    const { pods, dependencies } = parsePodfileLock(text)
+    const { pods, dependencies } = await parsePodfileLock(text)
     const installed = ({ name }) => Object.hasOwn(pods, name) ? [name] : []
     return {
       importers: { '.': { dependencies: unique(dependencies.flatMap(installed)) } },
