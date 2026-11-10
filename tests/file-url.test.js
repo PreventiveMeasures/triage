@@ -430,6 +430,18 @@ describe('evidence rows', () => {
       assert.equal(note(kept), kept, kept)
     }
     assert.equal(note('a ` b (line 9)'), `a \` b ([line 9](${blob}/a.ts#L9))`)
+    // Notes are untrusted: what would make the matching rescan the rest of
+    // a line at every character (unclosed `[` or `<`, backtick runs that
+    // never close) costs one pass. A quadratic pass took seconds on these.
+    for (const [lead, n] of [['[', 80_000], ['<', 80_000], ['`` `', 20_000], ['( ', 80_000]]) {
+      const started = performance.now()
+      assert.ok(note(`${lead.repeat(n)} (line 4)`).endsWith(`([line 4](${blob}/a.ts#L4))`), lead)
+      assert.ok(performance.now() - started < 500, `${lead} x${n}`)
+    }
+    const runs = Array.from({ length: 400 }, (_, i) => '`'.repeat(i + 1)).join(' ')
+    const started = performance.now()
+    assert.ok(note(`${runs} (line 4)`).endsWith(`([line 4](${blob}/a.ts#L4))`))
+    assert.ok(performance.now() - started < 500, 'backtick runs')
     assert.equal(note('```\n(line 3)\n```\nThen (line 4).'), `\`\`\`\n(line 3)\n\`\`\`\nThen ([line 4](${blob}/a.ts#L4)).`)
     // The report's own pinned link: its anchor swapped for the note's.
     const pinned = { file: 'libs/a.ts', line: '10-20', url: 'https://github.com/o/r/blob/abc/libs/a.ts#L10-L20', text: 'The loop (line 14).' }

@@ -1249,21 +1249,20 @@ export function evidenceMarkdown(f, { repoFallback } = {}) {
 // A line reference in an evidence row's note, `(line 40)`, `(lines
 // 40-50)`, `(L40)` or `(L40-L50)`, as a link to those lines in the file
 // the row links to, its own anchor swapped for theirs. Only on a GitHub
-// blob link, whose anchors these are.
-//
-// What markdown already gives a meaning stays as written: fenced blocks
-// (fenceRanges, so a ``` inside a ```` block is the block's), and, matched
-// before a reference can be, code spans (closed only by a run of as many
-// backticks as opened them), link text with what follows it (`[…](… "t")`,
-// `[…][ref]`), autolinks and bare URLs.
-const NOTE_LINE_REF_RE = /((?<!`)(`+)(?!`)[^]*?(?<!`)\2(?!`)|\[[^\]\n]*\](?:\([^)\n]*\)|\[[^\]\n]*\])?|<[^>\n]*>|\bhttps?:\/\/\S+)|\(\s*(?:lines?|L)\s*(\d+)(?:\s*(?:-|–|—|to)\s*L?(\d+))?\s*\)/giu
+// blob link, whose anchors these are. What markdown already gives a
+// meaning stays as written: fenced blocks (fenceRanges, so a ``` inside a
+// ```` block is the block's) and the inline constructs keptRanges finds.
+const LINE_REF_RE = /\(\s*(?:lines?|L)\s*(\d+)(?:\s*(?:-|–|—|to)\s*L?(\d+))?\s*\)/giu
 function linkLineRefs(note, url) {
-  if (!note || !url || !GH_BLOB_RE.test(url)) return note
+  if (!note || !url || !GH_BLOB_RE.test(url) || !/\(\s*(?:lines?|L)\s*\d/iu.test(note)) return note
   const file = stripLineAnchor(url)
-  const link = (prose) => prose.replace(NOTE_LINE_REF_RE, (match, kept, ticks, from, to) => {
-    const range = kept ? null : lineRange(to ? `${from}-${to}` : from)
-    return range ? `([${match.slice(1, -1).trim()}](${file}${lineAnchor(range)}))` : match
-  })
+  const link = (prose) => {
+    const kept = keptRanges(prose)
+    return prose.replace(LINE_REF_RE, (match, from, to, at) => {
+      const range = inFence(kept, at) ? null : lineRange(to ? `${from}-${to}` : from)
+      return range ? `([${match.slice(1, -1).trim()}](${file}${lineAnchor(range)}))` : match
+    })
+  }
   let out = ''
   let at = 0
   for (const [start, end] of fenceRanges(note)) {
@@ -1271,6 +1270,65 @@ function linkLineRefs(note, url) {
     at = end
   }
   return out + link(note.slice(at))
+}
+
+// The inline markdown in `text` a line reference is no part of, as
+// sorted, disjoint [start, end) ranges: code spans (a backtick run closed
+// by the next run of its own length; one never closed is literal), link
+// text with what follows it (`[…](… "title")`, `[…][ref]`), autolinks
+// and bare URLs. The note is untrusted, so the pass is linear however it
+// is written: every "next `]`" and the like is read off an index built
+// once, never by rescanning the rest of the line.
+function keptRanges(text) {
+  const kept = []
+  const runs = [...text.matchAll(/`+/gu)].map((m) => [m.index, m.index + m[0].length])
+  const closer = []
+  const lastOfLength = new Map()
+  for (let r = runs.length - 1; r >= 0; r--) {
+    const length = runs[r][1] - runs[r][0]
+    closer[r] = lastOfLength.get(length)
+    lastOfLength.set(length, r)
+  }
+  for (let r = 0; r < runs.length; r++) {
+    if (closer[r] === undefined) continue
+    kept.push([runs[r][0], runs[closer[r]][1]])
+    r = closer[r]
+  }
+  const nextOf = (ch) => {
+    const at = Array.from({ length: text.length + 1 }, () => Infinity)
+    for (let i = text.length - 1; i >= 0; i--) at[i] = text[i] === ch ? i : at[i + 1]
+    return at
+  }
+  const [newline, bracket, paren, angle] = ['\n', ']', ')', '>'].map(nextOf)
+  const spans = kept.length
+  let span = 0
+  for (let i = 0; i < text.length; i++) {
+    while (span < spans && kept[span][1] <= i) span++
+    if (span < spans && kept[span][0] <= i) { i = kept[span][1] - 1; continue }
+    let end = -1
+    if (text[i] === '[' && bracket[i + 1] < newline[i]) {
+      end = bracket[i + 1] + 1
+      const tail = text[end] === '(' ? paren[end] : text[end] === '[' ? bracket[end + 1] : Infinity
+      if (tail < newline[end]) end = tail + 1
+    } else if (text[i] === '<' && angle[i + 1] < newline[i]) {
+      end = angle[i + 1] + 1
+    } else if ((text[i] === 'h' || text[i] === 'H') && /^https?:\/\//iu.test(text.slice(i, i + 8)) && !/\w/u.test(text[i - 1] ?? '')) {
+      end = i
+      while (end < text.length && !/\s/u.test(text[end])) end++
+    }
+    if (end > i) {
+      kept.push([i, end])
+      i = end - 1
+    }
+  }
+  kept.sort((a, b) => a[0] - b[0])
+  const merged = []
+  for (const [from, to] of kept) {
+    const last = merged.at(-1)
+    if (last && from < last[1]) last[1] = Math.max(last[1], to)
+    else merged.push([from, to])
+  }
+  return merged
 }
 
 // One inline markdown link — `[label](url)` — as it appears INSIDE a
