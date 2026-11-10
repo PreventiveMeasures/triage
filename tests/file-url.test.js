@@ -99,6 +99,15 @@ describe('fileUrl — repository directory', () => {
     )
   })
 
+  // A finding's repo written as a URL, as some imports do, is the same
+  // slug: never `github.com/https://github.com/…`.
+  it('reads a finding repo written as a GitHub URL down to its slug', () => {
+    for (const github of ['https://github.com/o/r', 'https://github.com/o/r.git', 'github.com/o/r/tree/main', 'https://www.github.com/o/r/']) {
+      assert.equal(fileUrl('src/a.js', { github }, ''), 'https://github.com/o/r/blob/HEAD/src/a.js', github)
+    }
+    assert.equal(fileUrl('src/a.js', { github: 'https://gitlab.com/o/r' }, ''), 'https://gitlab.com/o/r/blob/HEAD/src/a.js')
+  })
+
   it('links exactly as before without one', () => {
     for (const repo of ['acme/widgets', { github: 'acme/widgets' }, { github: 'acme/widgets', directory: '' }]) {
       assert.equal(fileUrl('src/a.js', repo, ''), 'https://github.com/acme/widgets/blob/HEAD/src/a.js')
@@ -169,11 +178,16 @@ describe('findingUrl', () => {
     )
   })
 
-  it('anchors a range at its start line', () => {
-    assert.equal(
-      findingUrl({ file: 'src/a.ts', line: '10-20', repo: { github: 'acme/widgets' } }, ''),
-      'https://github.com/acme/widgets/blob/HEAD/src/a.ts#L10',
-    )
+  // GitHub highlights a `#L10-L20` anchor whole; a backwards range reads
+  // as the span it meant, and a shape `lineRange` doesn't take keeps
+  // its leading number, as every line did before.
+  it('anchors a range as the range', () => {
+    const at = (line) => findingUrl({ file: 'src/a.ts', line, repo: { github: 'acme/widgets' } }, '')
+    assert.equal(at('10-20'), 'https://github.com/acme/widgets/blob/HEAD/src/a.ts#L10-L20')
+    assert.equal(at('20 - 10'), 'https://github.com/acme/widgets/blob/HEAD/src/a.ts#L10-L20')
+    assert.equal(at('10-10'), 'https://github.com/acme/widgets/blob/HEAD/src/a.ts#L10')
+    assert.equal(at(12), 'https://github.com/acme/widgets/blob/HEAD/src/a.ts#L12')
+    assert.equal(at('12:5'), 'https://github.com/acme/widgets/blob/HEAD/src/a.ts#L12')
   })
 
   it('drops the anchor when the line is unknown', () => {
@@ -454,5 +468,69 @@ describe('githubRefLabel', () => {
     ]) {
       assert.equal(githubRefLabel(bad), '', String(bad))
     }
+  })
+})
+
+// The revision a link points at: the one the report read, so a line
+// number still lands on the code it describes after the branch moves
+// on; HEAD wherever that isn't known. A report's header names it as
+// `repo.commit` (ingest stamps it `_repoCommit`, group.js
+// findingRepoTarget passes it as `commit`), a finding's own `repo` can
+// name its own, and older reports may carry `auditedCommit` instead,
+// or nothing at all.
+describe('findingUrl — revision', () => {
+  const SHA = '0123456789abcdef0123456789abcdef01234567'
+  const DEP_SHA = 'fedcba9876543210fedcba9876543210fedcba98'
+  const report = { github: 'acme/app', directory: '', commit: SHA }
+
+  it('pins own source to the commit the report read', () => {
+    assert.equal(findingUrl({ file: 'src/a.ts', line: '3' }, report), `https://github.com/acme/app/blob/${SHA}/src/a.ts#L3`)
+    assert.equal(findingUrl({ file: 'src/a.ts', line: '3' }, { ...report, directory: 'app/src' }),
+      `https://github.com/acme/app/blob/${SHA}/app/src/src/a.ts#L3`)
+  })
+
+  it('stays on HEAD for a report that names no commit, or no repo', () => {
+    for (const fallback of [{ github: 'acme/app', directory: '' }, { github: 'acme/app', directory: '', commit: '' }, 'acme/app', { github: 'acme/app', commit: 'main' }]) {
+      assert.equal(findingUrl({ file: 'src/a.ts', line: '3' }, fallback), 'https://github.com/acme/app/blob/HEAD/src/a.ts#L3')
+    }
+    assert.equal(findingUrl({ file: 'src/a.ts', line: '3' }, { github: '', commit: SHA }), null)
+  })
+
+  // A finding names a repo only where its own differs from the report's:
+  // that repo's revision is its own `commit`, never the report's.
+  it('links a finding\'s own repo at its own commit, else HEAD', () => {
+    const dep = { file: 'node_modules/lodash/index.js', line: '9' }
+    assert.equal(findingUrl({ ...dep, repo: { github: 'lodash/lodash' } }, report), 'https://github.com/lodash/lodash/blob/HEAD/index.js#L9')
+    assert.equal(findingUrl({ ...dep, repo: { github: 'lodash/lodash', commit: DEP_SHA } }, report),
+      `https://github.com/lodash/lodash/blob/${DEP_SHA}/index.js#L9`)
+    // A bare commit, with no repo beside it, says nothing.
+    assert.equal(findingUrl({ file: 'src/a.ts', repo: { commit: DEP_SHA } }, report), `https://github.com/acme/app/blob/${SHA}/src/a.ts`)
+  })
+
+  it('takes the report\'s commit for a finding naming the report\'s repo again, in any spelling', () => {
+    assert.equal(findingUrl({ file: 'src/a.ts', repo: { github: 'https://github.com/Acme/App' } }, report),
+      `https://github.com/Acme/App/blob/${SHA}/src/a.ts`)
+  })
+
+  // `auditedCommit` (piolium's "Commit audited", a markdown report's one
+  // cited commit) is the project's revision too, so it answers where the
+  // report's does: own source, never a dependency's upstream. It is not
+  // `commitHash`, the commit that introduced the bug.
+  it('falls back to the audited commit for own source, behind the report\'s', () => {
+    const own = { file: 'src/a.ts', auditedCommit: DEP_SHA }
+    assert.equal(findingUrl(own, { github: 'acme/app' }), `https://github.com/acme/app/blob/${DEP_SHA}/src/a.ts`)
+    assert.equal(findingUrl({ ...own, repo: { github: 'acme/app' } }, ''), `https://github.com/acme/app/blob/${DEP_SHA}/src/a.ts`)
+    assert.equal(findingUrl(own, report), `https://github.com/acme/app/blob/${SHA}/src/a.ts`)
+    assert.equal(findingUrl({ file: 'node_modules/lodash/index.js', repo: { github: 'lodash/lodash' }, auditedCommit: DEP_SHA }, report),
+      'https://github.com/lodash/lodash/blob/HEAD/index.js')
+    assert.equal(findingUrl({ file: 'src/a.ts', commitHash: DEP_SHA }, { github: 'acme/app' }), 'https://github.com/acme/app/blob/HEAD/src/a.ts')
+  })
+
+  it('pins evidence rows as it pins the finding', () => {
+    const f = { file: 'node_modules/lodash/index.js', repo: { github: 'lodash/lodash' }, auditedCommit: DEP_SHA }
+    assert.equal(evidenceUrl({ file: 'node_modules/lodash/merge.js', line: '4' }, f, report, 1), 'https://github.com/lodash/lodash/blob/HEAD/merge.js#L4')
+    assert.equal(evidenceUrl({ file: 'src/proxy.ts', line: '8' }, f, report, 1), `https://github.com/acme/app/blob/${SHA}/src/proxy.ts#L8`)
+    assert.equal(evidenceUrl({ file: 'src/proxy.ts', line: '8' }, { file: 'src/a.ts', auditedCommit: DEP_SHA }, { github: 'acme/app' }, 1),
+      `https://github.com/acme/app/blob/${DEP_SHA}/src/proxy.ts#L8`)
   })
 })

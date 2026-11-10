@@ -38,6 +38,28 @@ test('managed links and report rows stay in the active team, with no local index
   assert.equal(records[0].data.findings[0]._managedReportId, undefined, 'indexing preserves cached response objects')
 })
 
+// The commit a report read its repo at rides along while the repo the
+// team links the report to is that one; another repo, or a report naming
+// no commit, links at HEAD.
+test('managed findings carry the report\'s commit only for the repo it names', () => {
+  state.serverMode = 'managed'
+  state.localMode = false
+  state.managedSession = { id: 'viewer', role: 'view' }
+  state.currentManagedTeam = 'one'
+  const commit = 'b'.repeat(40)
+  const report = (assigned, embedded) => ({ id: 'report', filename: 'scan.json', repo: { github: assigned, directory: '' },
+    data: { repo: embedded, findings: [{ id: 'a', title: 'A' }] } })
+  for (const [assigned, embedded, expected] of [
+    ['Org/App', { github: 'org/app', commit }, commit],
+    ['org/other', { github: 'org/app', commit }, ''],
+    ['org/app', { github: 'org/app' }, ''],
+    ['org/app', undefined, ''],
+  ]) {
+    setManagedWorkspace('one', [report(assigned, embedded)])
+    assert.equal(reportRowsForFindingIds(['a'])[0].members[0]._repoCommit, expected, `${assigned} ← ${JSON.stringify(embedded)}`)
+  }
+})
+
 test('global response links drive finding duplicates without introducing team link files', () => {
   state.serverMode = 'managed'
   state.localMode = false

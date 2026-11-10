@@ -16,6 +16,7 @@ import { CLAUDE_MARK_PATH, GITHUB_ICON_SVG } from './icons.js'
 import { findingLinkFor } from './finding-link.js'
 import { managedCommentsFor } from './managed-comments.js'
 import { automaticFixFor, managedIssueFor } from './managed-issues.js'
+import { createIssueDraft } from './issue-draft.js'
 import { managedCommentTemplate } from './managed-comment.js'
 import { renderCommentText } from './comment-text.js'
 import { COPY_ICON } from './lit-icons.js'
@@ -901,27 +902,17 @@ function issueTitle(f) {
   return base.length > 120 ? `${base.slice(0, 119)}…` : base
 }
 
-// Issue body — the finding detail for the pre-filled `?body=`. Tailored
-// for a GitHub issue rather than reusing the copy / Claude handoff
-// block: no `Repo:` line (the issue already lives on that repo), the
-// description sits on its own as a bare paragraph (no label), and
-// file:line is a Markdown link to the source on GitHub — the same
-// target the card / row file links use, falling back to plain
-// `file:line` text when the path can't be linked (e.g. a node_modules
-// file with no resolvable upstream repo). Evidence rows link the same
-// way, each to its own row's target. Blocks join with a blank line
-// so the file link and confidence bracket the description paragraph.
+// Issue body — the finding detail for the pre-filled `?body=`: the
+// body the managed dialog creates through the API, every section in
+// (issue-draft.js), so an issue reads the same whichever way it
+// was opened. No `Repo:` line (the issue already lives on that repo);
+// file:line and each Evidence row link to the source on GitHub, the
+// targets the card's links use, and stay plain text where nothing
+// resolves; Impact and Recommendation are GitHub alerts.
 function issueBody(f) {
   const repoFallback = findingRepoTarget(f)
-  const href = findingUrl(f, repoFallback)
-  const loc = locationLabel(f)
-  const blocks = []
-  if (f.file) blocks.push(`File: ${href ? `[${loc}](${href})` : loc}`)
-  if (f.description) blocks.push(f.description)
-  const evidence = evidenceMarkdown(f, { repoFallback })
-  if (evidence) blocks.push(evidence)
-  if (f.confidence !== undefined && f.confidence !== null) blocks.push(`Confidence: ${f.confidence}/10`)
-  return blocks.join('\n\n')
+  return createIssueDraft(f, { sourceUrl: findingUrl(f, repoFallback), evidence: evidenceMarkdown(f, { repoFallback }),
+    showRevalidation: revalidationShown(), allSections: true }).body
 }
 
 // Workspace-merged views show which report a finding came from.

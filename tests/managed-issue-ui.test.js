@@ -10,7 +10,7 @@ class TestDialog { static styles = []; _finish() { this._settled = true } }
 mock.module('../ui/view/dialogs/app-dialog.js', { namedExports: { AppDialog: TestDialog, openAppDialog: () => {} } })
 await import('../ui/view/dialogs/managed-issue-dialog.js')
 const Dialog = customElements.get('managed-issue-dialog')
-const { createIssueDraft } = await import('../ui/view/dialogs/issue-draft.js')
+const { createIssueDraft } = await import('../ui/view/issue-draft.js')
 const session = { id: 'user', login: 'author', role: 'view', csrfToken: 'csrf' }
 function dialogFixture(t) {
   const old = { managedSession: state.managedSession, currentManagedTeam: state.currentManagedTeam }

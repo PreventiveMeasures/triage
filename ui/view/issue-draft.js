@@ -28,8 +28,9 @@ function sectionText({ id, label, parts }, finding) {
 
 // Keep optional narrative sections separate from the description, including
 // formats that put labelled sections in the description instead of fields.
-// The caller formats source links and evidence in the main view bundle, keeping
-// its formatting/client imports out of the lazy managed chunk. Only Impact
+// The caller formats source links and evidence (format.js), so this module
+// needs only @preventive/report: the card builds the GitHub form's body with
+// it up front, and the lazily loaded managed issue dialog its draft. Only Impact
 // starts selected unless `allSections`; `findingLink` ends the body, and
 // sections toggled on later go above it.
 export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevalidation = true, findingLink, allSections = false } = {}) {

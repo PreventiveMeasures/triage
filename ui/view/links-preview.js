@@ -3,6 +3,7 @@
 // triage store and the original report's source/bundle metadata.
 import { computeLinkHint, ensureTriageLoaded, isManagedUiMode, loadRepoUrlFor, readFile, reportRowsForFindingIds, state, workspacesHoldingReport } from '#client/index.js'
 import { securityStampOptions } from './security-stamp.js'
+import { repoCommit } from '../../common/repo-commit.js'
 import { store } from '@rray/frontend/state-management'
 import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 
@@ -50,6 +51,7 @@ export async function openLinksPreview(id, reportName, rowIndex, managedReportId
         _reportName: reportName,
         _repoFallback: reportRepoGithub(data) ?? loadRepoUrlFor(reportName),
         _repoDirectory: repoDirectory(data?.repo),
+        _repoCommit: reportRepoGithub(data) ? repoCommit(data.repo) : '',
         _bundleHashes: data.bundleHashes ?? [],
         _source: finding.source ?? data.source ?? null,
       }
