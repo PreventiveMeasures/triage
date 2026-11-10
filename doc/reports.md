@@ -146,8 +146,12 @@ Links come from manual Fix values, and from saved issues and their linked pull r
 - Access and the saved Fix links are rechecked after GitHub answers, before anything is returned.
 - Cached metadata never grants access to another team, repository, hidden finding or GitHub user.
 
-Merged and closed items are kept once fetched, and open items are refreshed when over a minute old.
-Each load refreshes at most 200 items, so a large workspace can show older statuses until later loads.
+Merged items are kept once fetched, and open items are refreshed when over a minute old.
+Closed items are kept too, but GitHub can reopen them.
+A load that fetches open or uncached items also rechecks a tenth as many closed items from the same workspace, rounded up, least recently checked first.
+A workspace whose items are all closed, merged or recently fetched rechecks nothing.
+Each load fetches at most 200 open or uncached items, plus those closed rechecks, so a large workspace can show older statuses until later loads.
+Workspaces with saved issues are read live with the viewer's GitHub token when they have one, closed items included, and use this cache only without one.
 
 ## Creating GitHub issues
 

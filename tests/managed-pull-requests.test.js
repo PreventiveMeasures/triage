@@ -413,7 +413,7 @@ test('merged and closed entries stay cached after verifying the current viewer w
   assert.equal(result[0].description, 'Permanent merged body')
 })
 
-test('missing entries take priority, then oldest stale open/draft entries fill the 200-item queue', async t => {
+test('missing entries take priority, then oldest stale open/draft entries fill the 200-item queue, and a tenth as many closed ones follow', async t => {
   const f = await fixture(t), now = Date.now()
   const entries = [
     { key: '7:pull:1', title: 'Younger', description: 'Old younger body', status: 'open', fetchedAt: now - 70_000 },
@@ -425,9 +425,13 @@ test('missing entries take priority, then oldest stale open/draft entries fill t
   ]
   await f.db.setGithubMetadata(entries)
   const calls = [], missing = Array.from({ length: 198 }, (_, i) => link(100 + i))
-  const result = await f.lookup([link(1), link(2), link(3), link(4), link(5), link(6), ...missing], url => { calls.push(url); return responseFor(url) })
-  assert.equal(calls.length, 200)
-  assert.deepEqual(calls.slice(-2).map(url => Number(url.split('/').at(-1))), [2, 3], 'the oldest open and draft fill the spare slots')
+  const result = await f.lookup([link(1), link(2), link(3), link(4), link(5), link(6), ...missing], url => {
+    calls.push(url)
+    return url.endsWith('/pulls/6') ? Response.json(payload(6, { state: 'closed' })) : responseFor(url)
+  })
+  assert.equal(calls.length, 201)
+  assert.deepEqual(calls.slice(-3).map(url => Number(url.split('/').at(-1))), [2, 3, 6],
+    'the oldest open and draft fill the spare slots, then the one closed entry is rechecked, never the merged one')
   assert.equal(result[0].title, 'Younger', 'stale entries outside the refresh budget are still returned')
   assert.equal(result[0].description, 'Old younger body')
   assert.equal(result[1].title, 'Fix 2', 'successful refresh overrides the old cached value')
@@ -435,7 +439,53 @@ test('missing entries take priority, then oldest stale open/draft entries fill t
   assert.equal(result[3].title, 'Fresh')
   assert.equal(result[4].status, 'merged')
   assert.equal(result[5].status, 'closed')
+  assert.equal(result[5].title, 'Fix 6', 'rechecked')
   assert.ok(result.slice(6).every(row => row.status === 'open'))
+})
+
+test('a load reading open or unknown items anew rechecks a tenth as many closed ones, the least recently checked first', async t => {
+  const f = await fixture(t)
+  let now = Date.now()
+  t.mock.method(Date, 'now', () => now)
+  const issue = number => `https://github.com/ExampleOrg/ExampleRepo/issues/${number}`
+  await f.db.setGithubMetadata([
+    ...[1, 2, 3, 4, 5].map(number => ({ key: `7:issue:${number}`, title: `Closed ${number}`, description: null, status: 'closed', stateReason: 'completed', fetchedAt: number })),
+    { key: '7:pull:6', title: 'Merged', description: null, status: 'merged', fetchedAt: 0 },
+    { key: '7:pull:7', title: 'Fresh', description: null, status: 'open', fetchedAt: now },
+  ])
+  const board = [1, 2, 3, 4, 5].map(issue).concat([link(6), link(7)])
+  const reads = calls => calls.filter(url => url.includes('/issues/')).map(url => Number(url.split('/').at(-1)))
+  // Issues answer as still closed, but where `answer` says otherwise.
+  const stillClosed = url => url.includes('/issues/')
+    ? Response.json(issuePayload(Number(url.split('/').at(-1)), { state: 'closed', state_reason: 'completed' })) : responseFor(url)
+  const read = async (urls, answer = stillClosed) => {
+    const calls = []
+    now++
+    const result = await f.lookup(urls, url => { calls.push(url); return answer(url) })
+    return { calls, result }
+  }
+
+  // Eleven read anew (missing), so two closed ones too: the oldest. One was reopened.
+  const misses = Array.from({ length: 11 }, (_, i) => link(100 + i))
+  const first = await read([...board, ...misses], url => url.endsWith('/issues/1') ? responseFor(url) : stillClosed(url))
+  assert.equal(first.calls.length, 13)
+  assert.deepEqual(reads(first.calls), [1, 2])
+  assert.deepEqual(first.result.slice(0, 2).map(row => [row.status, row.title]), [['open', 'Issue 1'], ['closed', 'Issue 2']])
+
+  // Every item closed, merged or fresh: nothing is read, closed ones neither.
+  assert.equal((await read(board, () => assert.fail('nothing is read anew'))).calls.length, 0)
+
+  // One read anew rounds up to one recheck. One GitHub fails rotates all the same.
+  const failed = await read([...board, link(200)], url => url.endsWith('/issues/3') ? new Response(null, { status: 503 }) : stillClosed(url))
+  assert.deepEqual(reads(failed.calls), [3])
+  assert.equal(failed.result[2].title, 'Closed 3', 'a failed recheck keeps what was cached')
+  assert.deepEqual(reads((await read([...board, link(201)])).calls), [4], 'the failed one waits behind those not checked since')
+
+  // Never more than the workspace has: open 1 has gone stale, and 30 more are read anew.
+  now += 60_000
+  const many = await read([...board, ...Array.from({ length: 30 }, (_, i) => link(300 + i))])
+  assert.deepEqual(reads(many.calls), [1, 5, 2, 3, 4], 'the stale open issue, then all four closed ones, oldest checked first')
+  assert.equal(many.calls.filter(url => url.endsWith('/pulls/6')).length, 0, 'merged is final')
 })
 
 test('large workspaces return all cached entries and progress through missing metadata across reads', async t => {
