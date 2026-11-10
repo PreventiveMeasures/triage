@@ -951,7 +951,8 @@ function kanbanCardTemplate(g, opts = {}) {
   // column, directly above the meta row's confidence number (kanban
   // variant only; the focus-side queue stays indicator-free). One slot,
   // a link wins over comment, never both: the manual Fix, else the pull
-  // request linked to the saved issue, else that issue (cardLinkFor). A
+  // request linked to the saved issue, else the issue it was closed as a
+  // duplicate of, else that issue (cardLinkFor). A
   // URL renders as a real link (the payoff of surfacing it on the card
   // is one-click access to the PR or issue); a free-form fix or a
   // comment reuses the `.mark-fix` / `.mark-comment` classes so the

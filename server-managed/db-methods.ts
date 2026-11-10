@@ -1012,7 +1012,7 @@ function prepareStatements(db: ManagedSql) {
                 WHERE c.finding_id IN (SELECT id FROM requested)) AS comments,
               (SELECT json_group_array(json_object('findingId', i.finding_id, 'repoId', i.repo_id, 'repository', i.repository, 'requestId', i.request_id,
                         'issueUrl', i.issue_url, 'autoFixUrl', i.auto_fix_url, 'autoFixCheckedAt', i.auto_fix_checked_at,
-                        'createdBy', i.created_by, 'createdAt', i.created_at) ORDER BY i.finding_id)
+                        'duplicateOfUrl', i.duplicate_of_url, 'createdBy', i.created_by, 'createdAt', i.created_at) ORDER BY i.finding_id)
                  FROM managed_finding_issue i WHERE i.finding_id IN (SELECT id FROM requested)) AS issues`,
     ),
     selectTriageFixesStmt: db.prepare(`SELECT DISTINCT fix FROM managed_finding_triage
@@ -1026,7 +1026,8 @@ function prepareStatements(db: ManagedSql) {
                  FROM managed_finding_triage t WHERE t.finding_id IN (SELECT id FROM requested)) AS triage,
               (SELECT json_group_array(json_object('id', c.id, 'version', c.version) ORDER BY c.id)
                  FROM managed_finding_comment c WHERE c.finding_id IN (SELECT id FROM requested)) AS comments,
-              (SELECT json_group_array(json_object('findingId', i.finding_id, 'issueUrl', i.issue_url, 'autoFixUrl', i.auto_fix_url) ORDER BY i.finding_id)
+              (SELECT json_group_array(json_object('findingId', i.finding_id, 'issueUrl', i.issue_url, 'autoFixUrl', i.auto_fix_url,
+                        'duplicateOfUrl', i.duplicate_of_url) ORDER BY i.finding_id)
                  FROM managed_finding_issue i WHERE i.finding_id IN (SELECT id FROM requested) AND i.issue_url IS NOT NULL) AS issues`,
     ),
     insertBundleStmt: db.prepare(
@@ -1940,7 +1941,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       // Recheck access inside the same write transaction as the derived field.
       const current = await methods.getTeamReportAccessSnapshot(sessionId, Date.now(), snapshot.teamId!, snapshot.reportId)
       if (!current?.teamId || JSON.stringify(current) !== JSON.stringify(snapshot)) return false
-      for (const update of updates) await methods.setManagedIssueAutoFix(update.findingId, update.issueUrl, update.previous, update.next, update.checkedAt)
+      for (const update of updates) await methods.setManagedIssueTracking(update.findingId, update.issueUrl, update.previous, update.next, update.checkedAt)
       return true
     },
     ...workspaceShareMethods(db),

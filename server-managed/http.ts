@@ -366,7 +366,9 @@ async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, 
   const storedIssues = await deps.db.listManagedIssues(ids)
   const issues = visibleManagedIssues(storedIssues, snapshot)
   const visibleIds = new Set(issues.map(issue => issue.findingId))
-  const urls = [...new Set([...manualUrls, ...issues.flatMap(issue => [issue.issueUrl!, ...(issue.autoFixUrl ? [issue.autoFixUrl] : [])])])]
+  // A saved issue's duplicate is read with it, as a kept redirect is followed:
+  // its status even where only cached metadata can be shown.
+  const urls = [...new Set([...manualUrls, ...issues.flatMap(issue => [issue.issueUrl!, ...[issue.autoFixUrl, issue.duplicateOfUrl].filter(url => url !== null)])])]
   await recheckTeam(deps.db, s.session.id, snapshot)
   const result = issues.length > 0
     ? await lookupIssueLinks(deps.config, deps.db, snapshot, urls, storedIssues.filter(issue => visibleIds.has(issue.findingId)))

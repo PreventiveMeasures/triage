@@ -36,7 +36,7 @@ test('creating an issue repaints the saved issue immediately without waiting for
   assert.ok(templates(findingCardInnerTemplate([finding])).some(item => item.strings[0].includes('class="mark-issue"')))
   const dialog = await open()
   dialog.onCreated(url)
-  assert.deepEqual(paints, [{ url, autoFix: null }])
+  assert.deepEqual(paints, [{ url, autoFix: null, duplicateOf: null }])
   assert.deepEqual(invalidations, ['team'])
   const card = templates(findingCardInnerTemplate([finding]))
   assert.equal(card.some(item => item.strings[0].includes('class="mark-issue"')), false)

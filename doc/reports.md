@@ -184,9 +184,15 @@ Reading it still needs the finding to be visible and its repository reachable th
 Public links never expose saved issues.
 The newest pull request linked to the issue, other than one closed without merging, becomes the finding's derived Fix.
 Linked pull requests outside the team's repositories are neither shown nor saved.
+An issue closed as a duplicate keeps its place as the finding's issue, and the issue it duplicates shows beside it as **Duplicate of**.
+That issue is tracked for its status, and its linked pull requests count toward the derived Fix with the saved issue's own.
+A chain of duplicates is followed to its last issue, at most five steps.
+The duplicate is saved with the issue, like a redirect, and read alongside it on the next load, even by viewers whose loads use the shared cache.
+Reopening the issue, or closing it for another reason, drops the duplicate.
+A duplicate outside the team's repositories is neither followed nor saved, and the issue then shows only its own status.
 A manual Fix stays a user override, and both show when they differ.
 Either one satisfies **Has fix**, and derived updates add no triage history.
-A kanban card has room for one link: the manual Fix, else the derived Fix, else the issue.
+A kanban card has room for one link: the manual Fix, else the derived Fix, else the issue it duplicates, else the issue.
 
 A database reservation stops simultaneous requests, even on different servers, from creating duplicate issues.
 A lost GitHub response is never retried automatically, and the dialog offers a status check instead.
