@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { totalmem } from 'node:os'
 import { mock, test } from 'node:test'
 import { bundleBuildDiagnostic } from '../server-managed/bundle-build-diagnostics.js'
 
@@ -7,17 +8,19 @@ import { bundleBuildDiagnostic } from '../server-managed/bundle-build-diagnostic
 class Worker extends EventEmitter {
   static start
   static env
+  static resourceLimits
   constructor(url, options) {
     super()
     assert.ok(url.href.endsWith('/bundle-build-worker.js'))
     Worker.env = options.env
+    Worker.resourceLimits = options.resourceLimits
     assert.deepEqual(options.execArgv, [])
     Worker.start(this)
   }
   terminate() { this.emit('exit', 1); return Promise.resolve(1) }
 }
 mock.module('node:worker_threads', { namedExports: { Worker } })
-const { BundleBuildError, buildRepositoryBundle, parseBundleBuild } = await import('../server-managed/bundle-build.ts')
+const { BundleBuildError, buildHeapLimitMib, buildRepositoryBundle, parseBundleBuild } = await import('../server-managed/bundle-build.ts')
 const token = 'private-test-credential'
 const input = parseBundleBuild({ repoId: 12, commit: 'a'.repeat(40), entries: ['src/index.js'], conditions: { preset: 'node', conditions: ['node'] } })
 const request = { input, github: 'org/repo', token, maxBytes: 1_000_000, scopes: [null] }
@@ -120,4 +123,36 @@ test('diagnostics redact credentials, omit upstream response bodies, and bound c
   for (const secret of [token, 'ghp_someToken', 'password', 'secret']) assert.ok(!text.includes(secret))
   assert.equal(bundleBuildDiagnostic('thrown string', null).message, 'thrown string')
   assert.ok(bundleBuildDiagnostic(new Error('x'.repeat(20_000)), null).stack.length <= 8192)
+})
+
+test('a build’s heap is what a project producing 512 MiB of JSON takes, or what the process’s memory leaves', () => {
+  const mib = 1024 ** 2
+  assert.equal(buildHeapLimitMib(16 * 1024 * mib), 2048, 'no more where there is more')
+  assert.equal(buildHeapLimitMib(2560 * mib), 2048)
+  assert.equal(buildHeapLimitMib(2048 * mib), 1536, 'what a 2 GiB container leaves past the server’s 512 MiB')
+  assert.equal(buildHeapLimitMib(768 * mib), 512, 'never less than the 512 MiB a build always had')
+  assert.equal(buildHeapLimitMib(), buildHeapLimitMib(Math.min(process.constrainedMemory() || Infinity, totalmem())), 'of this process’s memory')
+})
+
+test('a worker is given that heap, and one running out of it is told so, its limit logged', async t => {
+  const logs = capture(t)
+  Worker.start = worker => queueMicrotask(() => {
+    worker.emit('error', Object.assign(new Error('Worker terminated due to reaching memory limit: JS heap out of memory'), { code: 'ERR_WORKER_OUT_OF_MEMORY' }))
+    worker.emit('exit', 1)
+  })
+  await assert.rejects(buildRepositoryBundle('user', request, new AbortController().signal), { code: 'build-memory', status: 413 })
+  assert.deepEqual(Worker.resourceLimits, { maxOldGenerationSizeMb: buildHeapLimitMib() })
+  const failures = logs.filter(log => log.event === 'failed')
+  assert.deepEqual(failures.map(log => [log.code, log.heapLimitMib, log.diagnostic.code]), [['build-memory', buildHeapLimitMib(), 'ERR_WORKER_OUT_OF_MEMORY']])
+})
+
+test('one build at a time in a process, each user’s alike', async () => {
+  let finish
+  Worker.start = worker => { finish = () => worker.emit('message', { bytes: new Uint8Array(), directory: '', filename: 'bundle.br' }) }
+  const running = buildRepositoryBundle('one', request, new AbortController().signal)
+  await assert.rejects(buildRepositoryBundle('other', request, new AbortController().signal), { code: 'build-busy', status: 429 })
+  finish()
+  await running
+  Worker.start = worker => queueMicrotask(() => worker.emit('message', { bytes: new Uint8Array(), directory: '', filename: 'bundle.br' }))
+  await buildRepositoryBundle('other', request, new AbortController().signal)
 })

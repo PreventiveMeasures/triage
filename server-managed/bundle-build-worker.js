@@ -9,6 +9,10 @@ import { githubBundleFilename } from './bundle-build.ts'
 import { bundleBuildDiagnostic } from './bundle-build-diagnostics.js'
 import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG, namesLockfiles, parseStasisConfig } from './stasis-config.ts'
 
+// A bundle's JSON, before compression, at most: a project producing it is
+// what a build's heap is sized for (bundle-build.ts buildHeapLimitMib).
+export const MAX_SERIALIZED_BYTES = 512 * 1024 * 1024
+
 const regularFile = entry => entry.type === 'blob' && ['100644', '100755'].includes(entry.mode)
 const parentOf = path => posix.dirname(path).replace(/^\.$/u, '')
 
@@ -141,8 +145,14 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   // narrower team grant: the storage location must cover the actual bundle.
   if (!allowed(directory)) throw new Error('build-scope')
   progress('serialize')
-  const serialized = bundle.serialize()
-  if (Buffer.byteLength(serialized) > 200 * 1024 * 1024) throw new Error('too-large')
+  // V8 holds no string much past MAX_SERIALIZED_BYTES (2^29 - 24 characters):
+  // a bundle that would be longer can't be serialized, and is too large too.
+  let serialized
+  try { serialized = bundle.serialize() } catch (error) {
+    if (error instanceof RangeError) throw new Error('too-large', { cause: error })
+    throw error
+  }
+  if (Buffer.byteLength(serialized) > MAX_SERIALIZED_BYTES) throw new Error('too-large')
   progress('compress')
   const bytes = brotliCompressSync(serialized, brotliOptions())
   if (bytes.length > maxBytes) throw new Error('too-large')

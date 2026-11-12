@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
+import { totalmem } from 'node:os'
 import { posix } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { BUNDLE_BUILD_TIMEOUT_MS, type BundleBuildLeaseStore } from './bundle-build-leases.ts'
@@ -111,8 +112,25 @@ export interface BuildRequest {
   // none, as on Vercel. Resolved here: the worker's env holds NPM_TOKEN alone.
   cacheDir: string | null
 }
-// An extra per-process ceiling; admission must also hold the shared DB lease.
+// An extra per-process ceiling, one build at a time, its worker given the heap
+// buildHeapLimitMib sizes; admission must also hold the shared DB lease.
 const active = new Set<string>()
+const MAX_ACTIVE_BUILDS = 1
+
+// What a build's worker may take of the JS heap, in MiB: what a project
+// producing the largest bundle a build serializes (512 MiB of JSON, the
+// worker's MAX_SERIALIZED_BYTES) takes to build, its tree laid out, scanned,
+// held and serialized in memory, about 1.3 GiB as measured, with room to
+// spare; less only where the memory the process may use, its container's
+// limit else the machine's, leaves less once the server keeps
+// SERVER_RESERVE_MIB, down to the 512 MiB a build always had. Past it, Node
+// terminates the worker (build-memory), not the process.
+const BUILD_HEAP_MIB = 2048
+const SERVER_RESERVE_MIB = 512
+const MIN_BUILD_HEAP_MIB = 512
+export function buildHeapLimitMib(memory = Math.min(process.constrainedMemory() || Infinity, totalmem())): number {
+  return Math.min(BUILD_HEAP_MIB, Math.max(MIN_BUILD_HEAP_MIB, Math.floor(memory / 1024 ** 2) - SERVER_RESERVE_MIB))
+}
 
 export async function withBundleBuildLease<T>(db: BundleBuildLeaseStore, userId: string, signal: AbortSignal,
   work: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -145,15 +163,16 @@ export async function withBundleBuildLease<T>(db: BundleBuildLeaseStore, userId:
 // Cap concurrent builds, terminate disconnected/timed-out work, and share no
 // credentials or mutable Stasis state between requests.
 export async function buildRepositoryBundle(userId: string, request: BuildRequest, signal: AbortSignal): Promise<BuiltBundle> {
-  if (active.has(userId) || active.size >= 2) throw new BundleBuildError(429, 'build-busy')
+  if (active.has(userId) || active.size >= MAX_ACTIVE_BUILDS) throw new BundleBuildError(429, 'build-busy')
   signal.throwIfAborted()
   active.add(userId)
   let worker: Worker | undefined
   let workerUrl: URL | undefined
   let stage: BundleBuildStage = 'worker-start'
   const buildId = randomUUID(), started = performance.now()
+  const heapLimitMib = buildHeapLimitMib()
   const context = { buildId, repoId: request.input.repoId, github: request.github, commit: request.input.commit,
-    directory: request.input.directory, entryCount: request.input.entries.length, node: process.version }
+    directory: request.input.directory, entryCount: request.input.entries.length, node: process.version, heapLimitMib }
   const log = (event: string, details: Record<string, unknown> = {}) => {
     const write = event === 'failed' ? console.error : console.info
     write('managed-bundle-build:', JSON.stringify({ ...context, workerUrl: workerUrl?.href, event, stage, elapsedMs: Math.round(performance.now() - started), ...details }))
@@ -166,7 +185,7 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
     const npmToken = process.env['NPM_TOKEN']
     const env = npmToken ? { NPM_TOKEN: npmToken } : {}
     worker = new Worker(workerUrl, {
-      workerData: { ...request, type: 'managed-bundle-build' }, env, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 512 },
+      workerData: { ...request, type: 'managed-bundle-build' }, env, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: heapLimitMib },
     })
     const running = worker
     return await new Promise((resolve, reject) => {
@@ -194,7 +213,11 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
         const { bytes } = message
         resolve({ bytes: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), directory: message.directory, filename: message.filename })
       })
-      running.once('error', error => fail(422, 'build-failed', { diagnostic: bundleBuildDiagnostic(error, request.token) }))
+      // Past its heap (heapLimitMib), Node terminates the worker with ERR_WORKER_OUT_OF_MEMORY.
+      running.once('error', error => {
+        const outOfMemory = (error as { code?: unknown }).code === 'ERR_WORKER_OUT_OF_MEMORY'
+        fail(outOfMemory ? 413 : 422, outOfMemory ? 'build-memory' : 'build-failed', { diagnostic: bundleBuildDiagnostic(error, request.token) })
+      })
       running.once('exit', exitCode => fail(422, 'build-failed', { exitCode }))
       if (signal.aborted) abort()
     })
