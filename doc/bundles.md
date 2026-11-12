@@ -108,7 +108,7 @@ If the bytes match an existing bundle, it reuses that one.
 | --- | --- | --- |
 | Concurrent builds | 2 per deployment, across all instances that share the managed database; 1 per server process; 1 per user | `429 build-busy` |
 | Build time | 3 minutes, including the wait for a build slot | `504 build-timeout` |
-| Worker memory | 2 GiB of heap, what a project producing the largest output takes to build; less where the memory the server process may use (its container's limit, else the machine's) leaves less once 512 MiB is kept for the server, down to 512 MiB | `413 build-memory` |
+| Worker memory | The memory the server process may use (its container's limit, else the machine's) less 512 MiB for the server and the worker's file bytes and output, at least 512 MiB of heap: 3.5 GiB on a 4 GiB function | `413 build-memory` |
 | Output | 512 MiB of JSON before compression, and the upload size limit after it | `413 too-large` |
 
 Other failures are `422 build-lockfile` (no lockfile, or more than one could install the project), `422 github-rate-limited` and `422 github-build-failed`.

@@ -117,20 +117,19 @@ export interface BuildRequest {
 const active = new Set<string>()
 const MAX_ACTIVE_BUILDS = 1
 
-// What a build's worker may take of the JS heap, in MiB: what a project
-// producing the largest bundle a build serializes (512 MiB of JSON, the
-// worker's MAX_SERIALIZED_BYTES) takes to build, its tree laid out, scanned
-// and held in memory, its JSON written as bytes off the heap: one of about
-// 500 MiB of small modules builds within 1 GiB, a real tree's taking more,
-// with room to spare; less only where the memory the process may use, its
-// container's limit else the machine's, leaves less once the server keeps
-// SERVER_RESERVE_MIB, down to the 512 MiB a build always had. Past it, Node
+// What a build's worker may take of the JS heap, in MiB: the memory the
+// process may use, its container's limit else the machine's, less
+// RESERVED_MIB, at least the 512 MiB a build always had. A large project's
+// tree, as a React Native app's, laid out and scanned in memory, takes more
+// than 2 GiB, as `stasis github-bundle` takes what Node's default heap gives
+// it. What is reserved is the server's, and the worker's own beyond its heap:
+// the bytes of the files it lays out, its bundle's JSON (512 MiB at most, the
+// worker's MAX_SERIALIZED_BYTES) and that compressed. Past it, Node
 // terminates the worker (build-memory), not the process.
-const BUILD_HEAP_MIB = 2048
-const SERVER_RESERVE_MIB = 512
+const RESERVED_MIB = 512
 const MIN_BUILD_HEAP_MIB = 512
 export function buildHeapLimitMib(memory = Math.min(process.constrainedMemory() || Infinity, totalmem())): number {
-  return Math.min(BUILD_HEAP_MIB, Math.max(MIN_BUILD_HEAP_MIB, Math.floor(memory / 1024 ** 2) - SERVER_RESERVE_MIB))
+  return Math.max(MIN_BUILD_HEAP_MIB, Math.floor(memory / 1024 ** 2) - RESERVED_MIB)
 }
 
 export async function withBundleBuildLease<T>(db: BundleBuildLeaseStore, userId: string, signal: AbortSignal,
