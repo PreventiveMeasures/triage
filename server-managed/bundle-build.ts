@@ -119,10 +119,11 @@ const MAX_ACTIVE_BUILDS = 1
 
 // What a build's worker may take of the JS heap, in MiB: what a project
 // producing the largest bundle a build serializes (512 MiB of JSON, the
-// worker's MAX_SERIALIZED_BYTES) takes to build, its tree laid out, scanned,
-// held and serialized in memory, about 1.3 GiB as measured, with room to
-// spare; less only where the memory the process may use, its container's
-// limit else the machine's, leaves less once the server keeps
+// worker's MAX_SERIALIZED_BYTES) takes to build, its tree laid out, scanned
+// and held in memory, its JSON written as bytes off the heap: one of about
+// 500 MiB of small modules builds within 1 GiB, a real tree's taking more,
+// with room to spare; less only where the memory the process may use, its
+// container's limit else the machine's, leaves less once the server keeps
 // SERVER_RESERVE_MIB, down to the 512 MiB a build always had. Past it, Node
 // terminates the worker (build-memory), not the process.
 const BUILD_HEAP_MIB = 2048

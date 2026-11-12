@@ -12,7 +12,7 @@ const file = (path, mode = '100644') => ({ path, mode, type: 'blob', sha: 'b'.re
 
 const node = { preset: 'node', conditions: ['node'], platforms: [] }
 
-function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, modules = {}, contents = {}, conditions = node, serialize = () => '{}' } = {}) {
+function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, modules = {}, contents = {}, conditions = node, serializedBytes = () => Buffer.from('{}') } = {}) {
   const input = parseBundleBuild({ repoId: 1, commit, entries, ...(conditions && { conditions }) })
   const builds = [], fileReads = [], reads = []
   const client = { listRepoDir({ repo, sha, directory }) {
@@ -37,7 +37,7 @@ function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, mod
     // Exercise the same repeated directory reads as Stasis's lockfile discovery.
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
-    return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, modules: new Map(Object.entries(modules)), serialize } }
+    return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, modules: new Map(Object.entries(modules)), serializedBytes } }
   }
   const run = () => buildStasisBundle({ input, github: 'org/repo', token: null, maxBytes: 1000, scopes }, client)
   return { run, reads, builds, fileReads }
@@ -267,10 +267,13 @@ test('a stasis.config.json outside the team scope can’t build the entries it l
   assert.equal(f.builds.length, 0)
 })
 
-test('a bundle too long for a string, which V8 can’t serialize, is too large, as one past 512 MiB of JSON is', async () => {
+test('a bundle past 512 MiB of JSON is too large, as one with a module too long for V8 to serialize is', async () => {
   assert.equal(MAX_SERIALIZED_BYTES, 512 * 1024 * 1024)
-  const f = await fixture(['app/index.js'], [file('app/package.json')], { serialize: () => { throw new RangeError('Invalid string length') } })
-  await assert.rejects(f.run(), { message: 'too-large' })
-  const failing = await fixture(['app/index.js'], [file('app/package.json')], { serialize: () => { throw new TypeError('not a size') } })
+  const past = { length: MAX_SERIALIZED_BYTES + 1 }
+  for (const serializedBytes of [() => past, () => { throw new RangeError('Invalid string length') }]) {
+    const f = await fixture(['app/index.js'], [file('app/package.json')], { serializedBytes })
+    await assert.rejects(f.run(), { message: 'too-large' })
+  }
+  const failing = await fixture(['app/index.js'], [file('app/package.json')], { serializedBytes: () => { throw new TypeError('not a size') } })
   await assert.rejects(failing.run(), { message: 'not a size' }, 'any other failure is its own')
 })

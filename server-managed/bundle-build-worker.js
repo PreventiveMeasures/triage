@@ -145,14 +145,14 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   // narrower team grant: the storage location must cover the actual bundle.
   if (!allowed(directory)) throw new Error('build-scope')
   progress('serialize')
-  // V8 holds no string much past MAX_SERIALIZED_BYTES (2^29 - 24 characters):
-  // a bundle that would be longer can't be serialized, and is too large too.
+  // Its JSON as bytes, a module at a time, never one string on the heap; a
+  // module too large for V8 to hold as one is too large too.
   let serialized
-  try { serialized = bundle.serialize() } catch (error) {
+  try { serialized = bundle.serializedBytes() } catch (error) {
     if (error instanceof RangeError) throw new Error('too-large', { cause: error })
     throw error
   }
-  if (Buffer.byteLength(serialized) > MAX_SERIALIZED_BYTES) throw new Error('too-large')
+  if (serialized.length > MAX_SERIALIZED_BYTES) throw new Error('too-large')
   progress('compress')
   const bytes = brotliCompressSync(serialized, brotliOptions())
   if (bytes.length > maxBytes) throw new Error('too-large')
