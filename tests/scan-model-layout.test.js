@@ -121,6 +121,7 @@ describe('default scan models', () => {
     assert.ok(defaults.models.some(model => model.id === 'deepseek/deepseek-v4-pro'))
     assert.ok(defaults.models.some(model => model.id === 'mistralai/mistral-large-4-0'))
     assert.ok(defaults.models.some(model => model.id === 'google/gemini-4-carbon'))
+    assert.ok(defaults.models.some(model => model.id === 'google/gemini-4-hydrogen'))
   })
 
   test('direct-provider defaults contain only their own models and keep GPT Pro pairs', () => {

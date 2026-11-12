@@ -18,6 +18,7 @@ export function defaultScanModels(provider: string | null = null) {
     'moonshotai/kimi-k3',
     'google/gemini-4-carbon',
     'google/gemini-4-argon',
+    'google/gemini-4-hydrogen',
     'google/gemma-4-31b-it',
     'x-ai/grok-4.7',
     'z-ai/glm-5.3',
