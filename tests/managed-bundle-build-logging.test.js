@@ -156,3 +156,32 @@ test('one build at a time in a process, each user’s alike', async () => {
   Worker.start = worker => queueMicrotask(() => worker.emit('message', { bytes: new Uint8Array(), directory: '', filename: 'bundle.br' }))
   await buildRepositoryBundle('other', request, new AbortController().signal)
 })
+
+test('the worker’s memory and notes are the log’s alone, beside how this Node was built', async t => {
+  const logs = capture(t)
+  const memory = { rssMib: 900, heapUsedMib: 700, heapTotalMib: 750, externalMib: 20, arrayBuffersMib: 300 }
+  const bytes = new Uint8Array([1])
+  Worker.start = worker => queueMicrotask(() => {
+    worker.emit('message', { type: 'note', event: 'project', details: { project: 'app', configured: true } })
+    worker.emit('message', { type: 'progress', stage: 'build', memory })
+    worker.emit('message', { type: 'note', event: 'download', details: { tree: 'repo', bytes: 1234 } })
+    worker.emit('message', { type: 'memory', memory: { ...memory, heapUsedMib: 2900 } })
+    worker.emit('message', { bytes, directory: 'app', filename: 'bundle.br' })
+  })
+  assert.deepEqual(await buildRepositoryBundle('user', request, new AbortController().signal), { bytes: Buffer.from(bytes), directory: 'app', filename: 'bundle.br' },
+    'the bundle alone, nothing of the worker’s memory')
+  assert.deepEqual(logs.map(log => log.event), ['started', 'project', 'progress', 'download', 'memory', 'completed'])
+  assert.deepEqual(logs.find(log => log.event === 'project').project, 'app')
+  assert.deepEqual(logs.find(log => log.event === 'download').bytes, 1234)
+  assert.deepEqual(logs.find(log => log.event === 'progress').memory, memory)
+  assert.equal(logs.find(log => log.event === 'memory').memory.heapUsedMib, 2900)
+  const [started] = logs
+  assert.equal(started.v8, process.versions.v8)
+  assert.equal(started.pointerCompression, process.config.variables.v8_enable_pointer_compression)
+  assert.equal(started.memoryMib, Math.round(Math.min(process.constrainedMemory() || Infinity, totalmem()) / 1024 ** 2))
+
+  Worker.start = worker => queueMicrotask(() => worker.emit('message', { error: 'build-failed', status: 422, diagnostic: { message: 'x' }, memory }))
+  const failure = await buildRepositoryBundle('user', request, new AbortController().signal).then(() => null, error => error)
+  assert.deepEqual({ ...failure, message: failure.message }, { status: 422, code: 'build-failed', message: 'build-failed' }, 'the error’s code alone')
+  assert.deepEqual(logs.filter(log => log.event === 'failed').map(log => log.memory), [memory])
+})
