@@ -125,11 +125,11 @@ test('diagnostics redact credentials, omit upstream response bodies, and bound c
   assert.ok(bundleBuildDiagnostic(new Error('x'.repeat(20_000)), null).stack.length <= 8192)
 })
 
-test('a build’s heap is what a project producing 512 MiB of JSON takes, or what the process’s memory leaves', () => {
+test('a build’s heap is the memory the process may use, less what the server and the worker keep beyond it', () => {
   const mib = 1024 ** 2
-  assert.equal(buildHeapLimitMib(16 * 1024 * mib), 2048, 'no more where there is more')
-  assert.equal(buildHeapLimitMib(2560 * mib), 2048)
-  assert.equal(buildHeapLimitMib(2048 * mib), 1536, 'what a 2 GiB container leaves past the server’s 512 MiB')
+  assert.equal(buildHeapLimitMib(4096 * mib), 3584, 'a 4 GiB container')
+  assert.equal(buildHeapLimitMib(16 * 1024 * mib), 16 * 1024 - 512)
+  assert.equal(buildHeapLimitMib(2048 * mib), 1536)
   assert.equal(buildHeapLimitMib(768 * mib), 512, 'never less than the 512 MiB a build always had')
   assert.equal(buildHeapLimitMib(), buildHeapLimitMib(Math.min(process.constrainedMemory() || Infinity, totalmem())), 'of this process’s memory')
 })
