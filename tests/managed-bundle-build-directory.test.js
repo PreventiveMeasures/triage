@@ -152,29 +152,41 @@ test('a workspace lockfile widening the bundle beyond the project still needs ac
   assert.equal(f.builds.length, 1)
 })
 
-test('a project whose package.json depends on a @prisma/ package has Stasis generate Prisma Client', async () => {
-  const files = [file('package.json'), file('packages/app/package.json')]
-  for (const [manifest, generate] of [
-    [{ dependencies: { '@prisma/client': '7.10.0' } }, ['prisma']],
-    [{ devDependencies: { '@prisma/adapter-pg': '7.10.0' } }, ['prisma']],
-    [{ dependencies: { prisma: '7.10.0', 'left-pad': '1.3.0' } }, undefined],
-    [{ dependencies: ['@prisma/client'] }, undefined],
-    ['{not json', undefined],
+test('Prisma Clients and TypeScript are Stasis’s to detect: no generate given, nor a package.json read for them', async () => {
+  const contents = { 'packages/app/package.json': '{"dependencies":{"@prisma/client":"7.10.0"}}', 'contracts/package.json': '{"dependencies":{"@prisma/client":"7.10.0"}}' }
+  for (const [entry, files] of [
+    ['packages/app/src/main.ts', [file('package.json'), file('packages/app/package.json')]],
+    ['contracts/src/Token.sol', [file('contracts/foundry.toml'), file('contracts/package.json')]],
   ]) {
-    const contents = { 'packages/app/package.json': typeof manifest === 'string' ? manifest : JSON.stringify(manifest), 'package.json': '{"dependencies":{"@prisma/client":"7.10.0"}}' }
-    const f = await fixture(['packages/app/src/main.ts'], files, { contents })
+    const f = await fixture([entry], files, { contents })
     await f.run()
-    assert.deepEqual(f.builds[0].generate, generate, JSON.stringify(manifest))
-    assert.deepEqual(f.fileReads, ['packages/app/package.json'], 'only the project’s own package.json is read')
+    assert.equal(f.builds[0].generate, undefined, entry)
+    assert.equal(f.builds[0].typescript, undefined, entry)
+    assert.deepEqual(f.fileReads, [], entry)
   }
 })
 
-test('Solidity builds never read package.json for Prisma', async () => {
-  const f = await fixture(['contracts/src/Token.sol'], [file('contracts/foundry.toml'), file('contracts/package.json')],
-    { contents: { 'contracts/package.json': '{"dependencies":{"@prisma/client":"7.10.0"}}' } })
-  await f.run()
-  assert.equal(f.builds[0].generate, undefined)
-  assert.deepEqual(f.fileReads, [])
+test('a Solidity build names Soldeer, but where the stasis.config.json it builds from names the lockfiles to lay out', async () => {
+  const solidity = [file('contracts/foundry.toml'), file('contracts/soldeer.lock'), file('package.json'), file('pnpm-lock.yaml')]
+  for (const [contents, packageManager, why] of [
+    [null, 'soldeer', 'no stasis.config.json'],
+    [{ entries: { 'src/Token.sol': {} } }, 'soldeer', 'one listing the entry, naming no lockfiles'],
+    [{ entries: { 'src/Token.sol': {} }, lockfiles: ['soldeer.lock'] }, undefined, 'one listing the entry and naming its lockfiles'],
+    [{ lockfiles: ['soldeer.lock'] }, undefined, 'one naming its lockfiles alone, the project’s'],
+    [{ lockfiles: 'soldeer.lock' }, undefined, 'one naming them as Stasis refuses, for its build to say why'],
+  ]) {
+    const f = await fixture(['contracts/src/Token.sol'], contents === null ? solidity : [...solidity, file('contracts/stasis.config.json')],
+      { contents: contents === null ? {} : { 'contracts/stasis.config.json': JSON.stringify(contents) } })
+    await f.run()
+    assert.equal(f.builds[0].directory, 'contracts', why)
+    assert.equal(f.builds[0].packageManager, packageManager, why)
+    assert.deepEqual(f.fileReads, contents === null ? [] : ['contracts/stasis.config.json'], `${why}: read once`)
+  }
+  const js = await fixture(['app/index.ts'], [file('app/package.json'), file('app/stasis.config.json')],
+    { contents: { 'app/stasis.config.json': JSON.stringify({ lockfiles: ['../pnpm-lock.yaml'] }) } })
+  await js.run()
+  assert.equal(js.builds[0].packageManager, undefined)
+  assert.deepEqual(js.fileReads, ['app/stasis.config.json'], 'a JS build’s config is read for its entries alone')
 })
 
 const config = entries => JSON.stringify({ scope: 'full', entries })
@@ -190,7 +202,7 @@ test('entries a stasis.config.json lists build from its directory, with no optio
   const { github: _github, sha: _sha, client: _client, cache: _cache, ...options } = f.builds[0]
   assert.deepEqual(options, { directory: 'packages/app', entries: ['src/main.ts', 'src/worker.ts', 'bin/cli.js'] }, 'Stasis takes each one’s from the file')
   assert.equal(result.directory, 'packages/app')
-  assert.deepEqual(f.fileReads, ['packages/app/stasis.config.json', 'packages/app/package.json'], 'each stasis.config.json is read once')
+  assert.deepEqual(f.fileReads, ['packages/app/stasis.config.json'], 'each stasis.config.json is read once')
 })
 
 test('a stasis.config.json above the entries’ package builds them from there, the nearest one naming each', async () => {

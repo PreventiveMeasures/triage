@@ -62,6 +62,10 @@ The revision list suggests up to 100 branches and tags, and accepts any other na
   Metro builds for iOS and Android and requires the `react-native` condition.
 - The build runs from the nearest directory, at or above the entry points' common parent, that holds a `package.json` (or `foundry.toml`, `soldeer.toml` or `soldeer.lock`).
 - The build never runs repository code or install scripts.
+- Stasis detects TypeScript, and generates the Prisma Clients the entry points reach unless `stasis.config.json` sets `generatePrisma: false`.
+  Generating one needs Stasis's optional `@prisma/client-generator-ts` peer, which this server doesn't install, so an import of a generated client fails the build, saying why.
+- A build is held to the `stasis.lock.json` at the bundle's root, where there is one, as `stasis bundle` holds it.
+  One that disagrees with the build, or `lock: "frozen"` in `stasis.config.json` without one, fails it (`422 stasis-lock`).
 
 ### Entries in `stasis.config.json`
 
@@ -74,7 +78,9 @@ They are built as `stasis bundle` builds them:
 - Listed entry points are never combined with others, or with another file's (`422 config-mixed`).
 - An entry setting an option that runs a program (`babel`, `metro-resolver`, `cargo`, `cargo-target`) fails the build (`422 config-runs-code`).
   `stasis bundle` takes these only with the same flag given as consent; a server build has none to give.
-- A `stasis.config.json` whose entries can't be read, or whose options Stasis refuses, fails the build (`422 config-invalid`).
+- The `lockfiles` it names are the ones laid out, a Solidity project's included.
+- Its `allowedPaths`, `disallowedPaths`, `allowedModules` and `disallowedModules`, the file's or an entry's, hold the bundle: one holding a path or package they refuse fails (`422 config-policy`).
+- A `stasis.config.json` whose entries can't be read, whose options Stasis refuses, or whose `lockfiles` it can't lay out, fails the build (`422 config-invalid`).
 
 Creating a bundle requires:
 
