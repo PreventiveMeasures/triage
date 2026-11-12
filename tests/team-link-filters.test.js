@@ -119,4 +119,38 @@ describe('a team board\'s URL', () => {
     assert.equal(state.filterRepo, '')
     assert.deepEqual([...state.filterSeverities], ['low'])
   })
+
+  // A link opened on the board already showing (its load reset nothing)
+  // shows what it would on a fresh one: the filters it names and no
+  // others, the rest as the board opened, the reader's sort kept.
+  it('replaces the board\'s filters, rather than adding to them', () => {
+    Object.assign(state, { filterRepo: 'owner/a', filterInclude: 'needle', filterColors: new Set(['red']), filterConfMin: 7, sortBy: 'file' })
+    applyLinkedFilters({ severities: ['high'] })
+    assert.equal(state.filterRepo, '')
+    assert.equal(state.filterInclude, '')
+    assert.equal(state.filterColors.size, 0)
+    assert.equal(state.filterConfMin, 0)
+    assert.equal(state.sortBy, 'file')
+    assert.deepEqual(route(), { ...base, filters: { severities: ['high'] } })
+  })
+
+  // What the board opened on is the baseline, the confidence floor it
+  // chose among it. A reset that clears that floor (to reveal a finding
+  // under it) leaves a board a link would not open again.
+  it('measures against the floor the board opened on, through a reset that clears it', () => {
+    const scored = [[{ ...finding('c', 'owner/a'), confidence: 9 }], [{ ...finding('d', 'owner/b'), confidence: 2 }]]
+    state.reports = [{ fileName: 'r.json', groups: scored }]
+    clearMergedGroups()
+    applyOpeningFilters(getShownGroups())
+    assert.equal(state.filterConfMin, 3)
+    state.filterRepo = 'owner/a'
+    assert.deepEqual(route().filters, { repo: 'owner/a' })
+    resetFilters()
+    state.filterRepo = 'owner/a'
+    assert.equal(state.filterConfMin, 0)
+    assert.deepEqual(route(), base, 'the floor the link would open on is not the one shown')
+    applyLinkedFilters({ repo: 'owner/a' })
+    assert.equal(state.filterConfMin, 3, 'a link puts back the floor the board opened on')
+    assert.deepEqual(route().filters, { repo: 'owner/a' })
+  })
 })

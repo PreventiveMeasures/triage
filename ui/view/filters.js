@@ -107,7 +107,6 @@ export function repositoryFilterValues(groups) {
 }
 
 export function resetFilters() {
-  opened = { ...UNFILTERED_OPENING }
   state.filterSeverities = new Set()
   state.filterColors = new Set()
   state.filterSources = new Set()
@@ -331,9 +330,11 @@ export function applyOpeningFilters(groups, { resetSort = true } = {}) {
   opened = Object.fromEntries(Object.keys(UNFILTERED_OPENING).map((key) => [key, state[key]]))
 }
 
-// What the fields applyOpeningFilters sets were last set to, by it or by
-// resetFilters: the view as it opened, which a team link measures the
-// filters on screen against (linkedFilters).
+// What applyOpeningFilters last set its fields to: the view as it opened,
+// which is what a team link opens again, and what the filters on screen
+// are measured against for one (linkedFilters). Only it sets them:
+// resetFilters clears the floor it chose (to reveal a finding under it,
+// finding-link.js), which a link's opening would put back.
 const UNFILTERED_OPENING = { filterConfMin: 0, filterConfMax: 10, filterRevalidate: '', filterPartial: '' }
 let opened = { ...UNFILTERED_OPENING }
 
@@ -358,10 +359,15 @@ export function linkedFilters() {
   return Object.keys(filters).length > 0 ? filters : null
 }
 
-// A team link's filters, applied to the board once its findings are in:
-// a repository the board has no choice for is left out rather than
-// emptying it.
+// A team link's filters, applied to the board once its findings are in,
+// and nothing else: every other filter as the view opened, the sort left
+// alone, so a board already open (whose load resets nothing) shows what a
+// fresh one would. A repository the board has no choice for is left out
+// rather than emptying it.
 export function applyLinkedFilters(filters) {
+  const sortBy = state.sortBy
+  resetFilters()
+  Object.assign(state, opened, { sortBy })
   if (filters?.repo && repositoryFilterValues(applyScopeFilters(getShownGroups())).has(filters.repo)) state.filterRepo = filters.repo
   if (filters?.severities?.length > 0) state.filterSeverities = new Set(filters.severities)
 }
