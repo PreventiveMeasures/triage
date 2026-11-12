@@ -6,6 +6,7 @@ import { randomToken } from './crypto.ts'
 import { githubIssueClosedReason } from '../common/github-pr.ts'
 import { reportEntries, reportRepoGithub } from '@preventive/report'
 import { newIssueLabels } from '../common/github-issue-labels.js'
+import { ignoresOwnRepo } from '../common/finding-repo.js'
 import { appJwt, githubAppConfigured, installUrl, publicRepositoryName } from './github-app.ts'
 import { ISSUE_LOGIN_PATH, issueUserToken } from './github-issue-oauth.ts'
 import { TeamReportsError, loadTeamReports, recheckTeam, teamSnapshot } from './team-reports.ts'
@@ -75,8 +76,10 @@ export async function prepareGithubIssue(config: ManagedConfig, db: ManagedDb, s
   if (stored) return { ...referenceResult(stored, repoIds), labels, recheck }
   // The target comes from this finding's own source, or the report's managed
   // assignment. Team membership alone must not let a caller claim an unrelated
-  // repository's issue as the permanent reference for this finding.
-  const findingRepo = finding['repo'] as { github?: unknown } | null | undefined
+  // repository's issue as the permanent reference for this finding. One on an
+  // advisory naming the advised package's repository as its own is the
+  // report's (common/finding-repo.js).
+  const findingRepo = (ignoresOwnRepo(finding, report.repo.github) ? null : finding['repo']) as { github?: unknown } | null | undefined
   const targetRepository = publicRepositoryName(reportRepoGithub({ repo: { github: findingRepo?.github || report.repo.github } }))
   if (!targetRepository || targetRepository.toLowerCase() !== context.repository.toLowerCase()) throw new IssueError(400, 'bad-issue-repository')
   const repository = snapshot.repositories.find(repo => repo.github.toLowerCase() === targetRepository.toLowerCase())

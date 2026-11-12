@@ -29,6 +29,7 @@ export { findingTitleForId, reportRowsCitingFindingIds, reportRowsForFindingIds,
 
 import { addFindingToBucket, dropKeyFromBucket, indexFindingByVersion, isPlaceholderNpmPackage, newBucket, packageVersionOf, pruneVersionSlot, recomputeBucketReports } from './bundle-finding-versions.js'
 import { listFiles, onFileMutated, readFile } from './storage.js'
+import { dropForeignRepo } from '../common/finding-repo.js'
 import { findingTitle, isAppFinding, loadFindings, reportEntries, reportRepoGithub, revalidateKindOf, stampSecurityGroups } from '@preventive/report'
 
 const byHash = new Map()
@@ -460,7 +461,10 @@ async function indexOne(name) {
       try { reportFallback = loadRepoUrlFor(name) } catch {}
     }
     let added = false
-    for (const f of findings) {
+    // A finding on an advisory may name the advised package's repository as
+    // its own, which nothing reads (common/finding-repo.js).
+    for (const raw of findings) {
+      const f = dropForeignRepo(raw, reportFallback)
       const key = findingDedupeKey(f)
       if (f.fileHash && indexFindingByHash(f, key, name)) added = true
       if (f.file && indexFindingByPackage(f, key, name)) added = true

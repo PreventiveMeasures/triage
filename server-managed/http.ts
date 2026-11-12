@@ -173,6 +173,7 @@ import type { OriginGate } from '../server-common/origin.ts'
 import { isRole, roleAtLeast } from '../common/managed/roles.ts'
 import { VISIBILITY_PERMISSIONS, parseTeamUserPermissions } from '../common/managed/permissions.ts'
 import { filterReportData } from '../common/managed/report-filter.ts'
+import { ourRepoSlugs, withoutStrayRepos } from '../common/finding-repo.js'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { GITHUB_AGENTS } from '../common/managed/github-agents.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
@@ -4128,7 +4129,9 @@ async function handleViewReport(req: IncomingMessage, res: ServerResponse, deps:
     const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
     if (data == null) { sendJson(res, 422, { error: 'unreadable-report' }); return }
     const links = mergeLinkGroups(snapshot.linkRevision ? await deps.db.getEnabledLinkGroups(snapshot.linkRevision) : [], await reportIds(data))
-    envelope = { data, repo: access.repo, ...(links.length > 0 ? { links } : {}) }
+    // Without a finding's `repo` none of ours (common/finding-repo.js isStrayRepo).
+    const ours = ourRepoSlugs([...(await deps.db.listSelectedRepos()).map(repo => repo.fullName), access.repo.github])
+    envelope = { data: withoutStrayRepos(data, ours), repo: access.repo, ...(links.length > 0 ? { links } : {}) }
   }
   // Link decryption and finding-ID backfill can outlast access or link changes.
   const current = await deps.db.getReportAccessSnapshot(s.session.id, Date.now(), [id])
@@ -4166,6 +4169,9 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
   if (!snapshot || snapshot.user.id !== s.user.id) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!roleAtLeast(snapshot.user.role, 'manage')) { sendJson(res, 404, { error: 'no-report' }); return }
   const reports = new Map(snapshot.reports.map(report => [report.id, report]))
+  // The repositories that are ours, for a finding's `repo` none of them
+  // (common/finding-repo.js isStrayRepo), which every report sent leaves out.
+  const selected = (await deps.db.listSelectedRepos()).map(repo => repo.fullName)
   if (reports.size !== ids.length) { sendJson(res, 404, { error: 'no-report' }); return }
   const storedBytes = snapshot.reports.reduce((total, report) => total + report.byteSize, 0)
   if (storedBytes > MAX_REPORT_QUERY_BYTES) { sendJson(res, 413, { error: 'batch-too-large' }); return }
@@ -4203,7 +4209,8 @@ async function handleQueryReports(req: IncomingMessage, res: ServerResponse, dep
           const { data } = readManagedReport(bytes.toString('utf8'), access.filename)
           if (!data) return fail(422, 'unreadable-report')
           for (const findingId of await reportIds(data)) findingIds.add(findingId)
-          const part = Buffer.from(`${index > 0 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions, access.repo), repo: access.repo })}`)
+          const ours = ourRepoSlugs([...selected, access.repo.github])
+          const part = Buffer.from(`${index > 0 ? ',' : ''}${JSON.stringify({ id, data: filterReportData(data, access.permissions, access.repo, undefined, ours), repo: access.repo })}`)
           outputBytes += part.length
           if (outputBytes > MAX_REPORT_QUERY_BYTES) return fail(413, 'batch-too-large')
           // Completion order may differ from the requested report order.

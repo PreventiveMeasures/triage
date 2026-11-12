@@ -4,6 +4,7 @@
 import { inheritReportMeta, isAppFinding, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 import { readManagedReport } from './report-content.ts'
 import { revalidationLinks, securityLinks } from '../security-links.js'
+import { dropForeignRepo, withoutStrayRepos } from '../finding-repo.js'
 
 export interface ViewerPermissions {
   dependencies: boolean
@@ -54,8 +55,8 @@ export function projectFinding(value: unknown, report: Finding): Finding | null 
 // Native JSON and supported text imports obey the same permission rules.
 // A filtered text import is returned as JSON under its original filename, which
 // readManagedReport already accepts. Unchanged inputs keep their original bytes.
-export function filterReportContent(content: string, perms: ViewerPermissions, filename = '', repo?: unknown): string {
-  if (perms.dependencies && perms.security) return content
+export function filterReportContent(content: string, perms: ViewerPermissions, filename = '', repo?: unknown, ours?: ReadonlySet<string>): string {
+  if (perms.dependencies && perms.security && !ours) return content
   let data: unknown
   try { data = JSON.parse(content) } catch {
     const parsed = readManagedReport(content, filename)
@@ -65,20 +66,30 @@ export function filterReportContent(content: string, perms: ViewerPermissions, f
     }
     data = parsed.data
   }
-  const filtered = filterReportData(data, perms, repo)
+  const filtered = filterReportData(data, perms, repo, undefined, ours)
   return filtered === data ? content : JSON.stringify(filtered)
 }
 
 // repo, when supplied, is the server's authoritative assignment (including an
-// explicit unassigned value). Finding-specific repos still describe their source.
-export function filterReportData(data: unknown, perms: ViewerPermissions, repo?: unknown, securityIds?: Set<string>): unknown {
+// explicit unassigned value). Finding-specific repos still describe their source,
+// but for those `ours` (when given) says are none of ours, which are removed for
+// every viewer (common/finding-repo.js withoutStrayRepos).
+export function filterReportData(data: unknown, perms: ViewerPermissions, repo?: unknown, securityIds?: Set<string>, ours?: ReadonlySet<string>): unknown {
+  if (ours) data = withoutStrayRepos(data, ours)
   if (perms.dependencies && perms.security) return data
   const report = object(data)
   if (!report) return data
   const key = Array.isArray(report['findings']) ? 'findings' : Array.isArray(report['groups']) ? 'groups' : null
   if (!key) return data
+  // A finding's `repo` naming the package its advisory is on is no
+  // organization of ours (common/finding-repo.js), and vouches for nothing.
+  const reportRepo = reportRepoGithub({ repo: repo === undefined ? report['repo'] : repo })
+  const read = (original: unknown) => {
+    const finding = projectFinding(original, report)
+    return finding && dropForeignRepo(finding, reportRepo)
+  }
   const entries = (report[key] as unknown[]).map(entry => ({
-    entry, members: (Array.isArray(entry) ? entry : [entry]).map(original => ({ original, finding: projectFinding(original, report) })),
+    entry, members: (Array.isArray(entry) ? entry : [entry]).map(original => ({ original, finding: read(original) })),
   }))
   const groups = entries.map(({ members }) => members.flatMap(({ finding }) => finding ? [finding] : []))
   if (!perms.security) stampSecurityGroups(groups, { linkedIds: securityLinks(revalidationLinks(groups.flat())).linkedIds })

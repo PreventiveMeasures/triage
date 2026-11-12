@@ -15,6 +15,7 @@ import { dropZone, report } from './dom.js'
 import { clearMergedGroups, getRevalidationConflicts, getShownGroups, toGroup } from './group.js'
 import { configureDepsDir, hasRevalidateStamp, stampUpstreamFindings } from './format.js'
 import { reportCommit } from '../../common/repo-commit.js'
+import { dropForeignRepo } from '../../common/finding-repo.js'
 import { applyOpeningFilters, resetFilters } from './filters.js'
 import { reportWorkspaceFor } from './finding-link.js'
 import { readManagedReport } from '../../common/managed/report-content.ts'
@@ -1591,7 +1592,7 @@ async function ingestReport(name, content, gen = null, { renderView = true, mana
         // "Code →" lookup constrains its search to bundles this report
         // is about. Empty array when the report lacked the field.
         const filled = {
-          ...f,
+          ...dropForeignRepo(f, repoFallback),
           _id: state.nextFindingId++,
           _repoFallback: repoFallback,
           _repoDirectory: repoDir,

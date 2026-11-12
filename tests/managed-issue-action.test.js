@@ -65,7 +65,7 @@ test('the prefilled issue body is the managed dialog\'s, every section in', t =>
     'Finding description',
     '> [!CAUTION]\n> **Impact:**\n> Data leaks.',
     `**Evidence:**\n1. [src/sink.js:9-12](https://github.com/o/r/blob/${commit}/src/sink.js#L9-L12)`,
-    '**Reproduction:**\nRun it.',
+    '> [!NOTE]\n> **Reproduction:**\n> Run it.',
     '> [!TIP]\n> **Recommendation:**\n> Check it.',
   ].join('\n\n'))
 })
@@ -98,6 +98,29 @@ test('managed issue targets use finding/report metadata rather than unrelated lo
   assert.equal(issueAction(t, { repoUrl: 'o/global' }, { ...finding, repo: undefined, _repoFallback: null }), undefined)
 })
 
+
+// A finding on an advisory naming the advised package's repository as its own
+// `repo`: its issue goes to the report's repository, in managed mode as in
+// standalone, whatever its file is (common/finding-repo.js), and opens on the
+// advisory rather than its source.
+test('a finding naming the advised package\'s repository is filed in the report\'s, opening on the advisory', t => {
+  const index = getPackagesIndex(), key = 'advisory-issue-test'
+  const previous = index.get(key)
+  index.set(key, { files: new Set(['node_modules/body-parser/a.js']), repos: new Set(['expressjs/body-parser']) })
+  t.after(() => { if (previous) index.set(key, previous); else index.delete(key) })
+  const url = 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc'
+  const finding = { file: 'node_modules/body-parser/a.js', _repoFallback: 'o/assigned', repo: { github: 'expressjs/body-parser' },
+    package: { npm: { name: 'express', version: '4.18.0' } }, advisory: { package: 'body-parser', url } }
+  for (const overrides of [{}, { serverMode: 'standalone' }]) {
+    const action = new URL(issueAction(t, overrides, finding).values[0])
+    assert.equal(action.pathname, '/o/assigned/issues/new', JSON.stringify(overrides))
+  }
+  const body = new URL(issueAction(t, { serverMode: 'standalone' }, finding).values[0]).searchParams.get('body')
+  assert.equal(body.split('\n\n')[0], `Advisory: ${url}`)
+  // A repository by another name than the advised package's stays its own.
+  const other = { ...finding, advisory: { package: 'other', url } }
+  assert.equal(new URL(issueAction(t, {}, other).values[0]).pathname, '/expressjs/body-parser/issues/new')
+})
 
 for (const manual of ['', 'https://github.com/o/r/pull/2', 'https://github.com/o/r/pull/3']) {
   test(`saved issue replaces creation and renders automatic Fix alongside manual ${manual || '(empty)'}`, t => {

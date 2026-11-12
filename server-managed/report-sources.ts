@@ -8,6 +8,7 @@ import { bundleSourceLinkImports } from '../common/bundle-source-links.js'
 import type { BundleDetails } from '../common/bundle-metadata.js'
 import { loadManagedFindings, managedFindingSourcePaths } from '../common/managed/report-content.ts'
 import { type ViewerPermissions, filterReportContent } from '../common/managed/report-filter.ts'
+import { ourRepoSlugs } from '../common/finding-repo.js'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
 import { readBundleDetails } from './bundle-cache.ts'
 import type { BlobStore } from './blob-store.ts'
@@ -84,6 +85,12 @@ async function lendSourcemapEdges(details: BundleDetails, bundle: ManagedBundle,
 // identity and visibility are part of the key: a broader viewer's sources must
 // never populate a restricted response. Group derivatives by hash and filename
 // format so each format's permissions can be removed after its last deletion.
+// The repositories that are ours, so that a finding's `repo` none of them is
+// left out (common/finding-repo.js isStrayRepo).
+async function oursFor(db: ManagedDb, repo: { github: string | null }): Promise<Set<string>> {
+  return ourRepoSlugs([...(await db.listSelectedRepos()).map(selected => selected.fullName), repo.github])
+}
+
 export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, reports: BlobStore, bundles: BundleStore, sourcemapEdges?: SourcemapEdges) {
   const pending = new Map<string, { reportId: string; job: Promise<boolean> }>()
   let queue = Promise.resolve()
@@ -102,7 +109,7 @@ export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, r
     if (!sourcePaths) {
       const bytes = await reports.get(report.id)
       if (!bytes) return false
-      const parsed = await loadManagedFindings(filterReportContent(bytes.toString('utf8'), permissions, report.filename, repo), report.filename)
+      const parsed = await loadManagedFindings(filterReportContent(bytes.toString('utf8'), permissions, report.filename, repo, await oursFor(db, repo)), report.filename)
       if (!parsed) return false
       sourcePaths = managedFindingSourcePaths(parsed.findings)
     }

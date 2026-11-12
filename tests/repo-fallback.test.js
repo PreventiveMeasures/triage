@@ -23,6 +23,7 @@ const { state } = await import('../client/state.ts')
 const { findingRepo, findingRepoFallback, findingRepoTarget } = await import('../ui/view/group.js')
 const { configureRevalidation, findingUrl } = await import('../ui/view/format.js')
 const { applyFilters, applyScopeFilters, repoOfFinding, repositoryFilterValues, resetFilters } = await import('../ui/view/filters.js')
+const { dropForeignRepo, ignoresOwnRepo } = await import('../common/finding-repo.js')
 
 const REPO = 'https://github.com/owner/name'
 const finding = (extra = {}) => ({ file: 'src/a.js', line: 7, ...extra })
@@ -222,5 +223,49 @@ describe('repository filter for DeepView App findings', () => {
     const group = [app, source, linkedApp]
     group.linkedTabs = [app, linkedApp]
     assert.deepEqual(repositoryOptions([group]), ['owner/app', 'owner/linked-app'])
+  })
+})
+
+// A finding on an advisory may name the advised package's repository as its
+// own `repo` (common/finding-repo.js): that one is ignored, as if it named
+// none, and the report's repository is the one it is filtered under and its
+// issue goes to. Only that one: a `repo` by another name, and the report's
+// own (which a merge stamps), stay.
+describe('findings naming the advised package\'s repository as their own', () => {
+  beforeEach(() => { state.repoUrl = '' })
+  const advised = (extra = {}) => finding({ file: 'node_modules/body-parser/index.js', repo: { github: 'expressjs/body-parser' }, _repoFallback: 'owner/app',
+    package: { npm: { name: 'express', version: '4.18.0' } }, advisory: { package: 'body-parser', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc' }, ...extra })
+
+  it('ignores that repository for filtering and for the issue', () => {
+    assert.equal(ignoresOwnRepo(advised(), 'owner/app'), true)
+    assert.equal(repoOfFinding(advised()), 'owner/app')
+    assert.equal(findingRepo(advised()), 'owner/app')
+    assert.deepEqual([...repositoryFilterValues([[advised()], [finding({ repo: { github: 'expressjs/express' } })]])].toSorted(), ['expressjs/express', 'owner/app'])
+    for (const [repo, advisory] of [['https://github.com/ExpressJS/Body-Parser.git', 'body-parser'], ['babel/core', '@babel/core']]) {
+      assert.equal(ignoresOwnRepo(advised({ repo: { github: repo }, advisory: { package: advisory } }), 'owner/app'), true, repo)
+    }
+    assert.equal(findingRepo(advised({ _repoFallback: '' })), null, 'no report repository: none, not the package\'s')
+    assert.equal(findingRepo({ ...finding({ file: 'node_modules/body-parser/index.js', _repoFallback: 'owner/app' }), _repoIgnored: true }), 'owner/app',
+      'one whose repository was dropped on the way in is the report\'s too')
+  })
+
+  it('keeps a repository by another name, or the report\'s own', () => {
+    for (const extra of [{ repo: { github: 'expressjs/express' } }, { repo: { github: 'owner/app' } }, { _repoFallback: 'expressjs/body-parser' },
+      { advisory: { package: 'express' } }, { advisory: undefined }, { advisory: { url: 'https://example.com' } }, { repo: { github: 'https://gitlab.com/expressjs/body-parser' } }]) {
+      const f = advised(extra)
+      assert.equal(ignoresOwnRepo(f, f._repoFallback), false, JSON.stringify(extra))
+      assert.equal(repoOfFinding(f), f.repo.github, JSON.stringify(extra))
+    }
+  })
+
+  it('drops only that repository on the way in, keeping parent and the rest', () => {
+    const f = advised({ parent: 'P-1', id: 'A-1' })
+    const read = dropForeignRepo(f, 'owner/app')
+    const { repo: _dropped, ...rest } = f
+    assert.deepEqual(read, { ...rest, _repoIgnored: true })
+    assert.equal(read.parent, 'P-1')
+    assert.equal(dropForeignRepo(advised({ repo: { github: 'owner/app' } }), 'owner/app').repo.github, 'owner/app')
+    const plain = finding({ repo: { github: 'expressjs/body-parser' } })
+    assert.equal(dropForeignRepo(plain, 'owner/app'), plain)
   })
 })

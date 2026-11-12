@@ -1,4 +1,4 @@
-import { descriptionSections, locationLabel, stripExportMarker } from '@preventive/report'
+import { descriptionSections, isHttpUrl, locationLabel, stripExportMarker } from '@preventive/report'
 
 const FIELDS = [
   ['impact', 'Impact'],
@@ -21,15 +21,15 @@ const MAX_BODY = 65_536
 // stays `File: [path:lines](url)`. Evidence links never do: a list of
 // snippets would bury the notes between them.
 const PERMALINK_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/blob\/(?:[0-9a-f]{40}|[0-9a-f]{64})\/[^\s#]+#L\d+(?:-L\d+)?$/iu
-// A section is its label over its text. Two read as GitHub alerts, the
+// A section is its label over its text. Three read as GitHub alerts, the
 // label kept inside: the impact, `[!CAUTION]` on a security finding (the
 // one the issue's `security` label marks) and `[!IMPORTANT]` otherwise,
-// and the recommendation, `[!TIP]`.
+// the reproduction, `[!NOTE]`, and the recommendation, `[!TIP]`.
 const quoted = text => text.split('\n').map(line => line ? `> ${line}` : '>').join('\n')
 function sectionText({ id, label, parts }, finding) {
   const text = `**${label}:**\n${parts.join('\n\n')}`
   const alert = id === 'impact' ? (finding.isSecurity === true ? 'CAUTION' : 'IMPORTANT')
-    : id === 'recommendation' ? 'TIP' : null
+    : id === 'reproduction' ? 'NOTE' : id === 'recommendation' ? 'TIP' : null
   return alert ? `> [!${alert}]\n${quoted(text)}` : text
 }
 
@@ -48,8 +48,11 @@ export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevali
     if (!section.parts.includes(text.trim())) section.parts.push(text.trim())
     content.set(id, section)
   }
+  // A finding on an advisory opens on the advisory, in place of its source.
   const location = locationLabel(finding)
-  if (finding.file) blocks.push(PERMALINK_RE.test(sourceUrl ?? '') ? sourceUrl : `File: ${sourceUrl ? `[${location}](${sourceUrl})` : location}`)
+  const advisory = isHttpUrl(finding.advisory?.url) ? finding.advisory.url : null
+  if (advisory) blocks.push(`Advisory: ${advisory}`)
+  else if (finding.file) blocks.push(PERMALINK_RE.test(sourceUrl ?? '') ? sourceUrl : `File: ${sourceUrl ? `[${location}](${sourceUrl})` : location}`)
   let current = null
   for (const section of descriptionSections(stripExportMarker(finding.description, finding))) {
     if (section.label !== null) {

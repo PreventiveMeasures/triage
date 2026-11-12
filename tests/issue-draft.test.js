@@ -40,6 +40,18 @@ test('the source at a full commit opens the issue as a bare permalink, anything 
   assert.equal(first(undefined), 'File: src/api.js:12')
 })
 
+// A finding on an advisory opens its issue on the advisory, in place of the
+// link to its source, whatever that link is.
+test('a finding with an advisory link opens on it rather than on its source', () => {
+  const url = 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc'
+  const first = (extra, sourceUrl) => createIssueDraft({ ...finding, ...extra }, { sourceUrl }).body.split('\n\n')[0]
+  assert.equal(first({ advisory: { package: 'pkg', url } }, `https://github.com/o/r/blob/${'c'.repeat(40)}/src/api.js#L12`), `Advisory: ${url}`)
+  assert.equal(first({ advisory: { url }, file: undefined }), `Advisory: ${url}`)
+  for (const advisory of [{ package: 'pkg' }, { url: 'javascript:alert(1)' }, { url: '' }]) {
+    assert.equal(first({ advisory }, 'https://github.com/o/r/blob/HEAD/src/api.js#L12'), 'File: [src/api.js:12](https://github.com/o/r/blob/HEAD/src/api.js#L12)')
+  }
+})
+
 test('all sections can start selected, in order, above the finding link on the bottom line', () => {
   const link = 'https://triage.test/team/t/r/finding'
   let draft = draftFor(finding, { allSections: true, findingLink: link })
@@ -48,7 +60,7 @@ test('all sections can start selected, in order, above the finding link on the b
   draft = toggleIssueDraftSection(draft, 'reproduction', false)
   draft = editIssueDraft(draft, draft.body.replace('Check ownership', 'Verify ownership'))
   draft = toggleIssueDraftSection(draft, 'reproduction', true)
-  assert.match(draft.body, /Verify ownership[^]*\n\n\*\*Reproduction:\*\*\nSend an unauthenticated request\.\n\nTriage: https:\/\/triage\.test\/team\/t\/r\/finding$/u)
+  assert.match(draft.body, /Verify ownership[^]*\n\n> \[!NOTE\]\n> \*\*Reproduction:\*\*\n> Send an unauthenticated request\.\n\nTriage: https:\/\/triage\.test\/team\/t\/r\/finding$/u)
   for (const { id } of draft.sections) draft = toggleIssueDraftSection(draft, id, false)
   assert.match(draft.body, /Confidence: 8\/10\n\nTriage: https:\/\/triage\.test\/team\/t\/r\/finding$/u)
   assert.equal(draft.body.slice(draft.footer.start, draft.footer.end), `Triage: ${link}`)
@@ -70,7 +82,7 @@ test('the finding link ends a draft without other text and is released by edits 
   let draft = createIssueDraft({ reproduction: 'Steps' }, { findingLink: 'https://triage.test/f' })
   assert.equal(draft.body, '\n\nTriage: https://triage.test/f')
   draft = toggleIssueDraftSection(draft, 'reproduction', true)
-  assert.equal(draft.body, '**Reproduction:**\nSteps\n\nTriage: https://triage.test/f')
+  assert.equal(draft.body, '> [!NOTE]\n> **Reproduction:**\n> Steps\n\nTriage: https://triage.test/f')
   draft = toggleIssueDraftSection(draft, 'reproduction', false)
   assert.equal(draft.body, '\n\nTriage: https://triage.test/f')
   // Typing into the link keeps it tracked; joining it to the text above leaves later sections after it.
@@ -81,7 +93,7 @@ test('the finding link ends a draft without other text and is released by edits 
   draft = toggleIssueDraftSection(draft, 'reproduction', false)
   draft = editIssueDraft(draft, draft.body.replace('Impact text\n\nTriage', 'Impact text Triage'))
   draft = toggleIssueDraftSection(draft, 'reproduction', true)
-  assert.equal(draft.body, 'Opening.\n\n> [!IMPORTANT]\n> **Impact:**\n> Impact text Triage finding: https://triage.test/f\n\n**Reproduction:**\nSteps')
+  assert.equal(draft.body, 'Opening.\n\n> [!IMPORTANT]\n> **Impact:**\n> Impact text Triage finding: https://triage.test/f\n\n> [!NOTE]\n> **Reproduction:**\n> Steps')
   draft = editIssueDraft(draft, 'Rewritten.')
   assert.equal(draft.footer, null)
   draft = toggleIssueDraftSection(draft, 'impact', true)
@@ -94,17 +106,17 @@ test('labelled report descriptions expose whole sections, including multiple par
   assert.match(draft.body, /> First paragraph\.\n>\n> Second paragraph\./u)
   assert.doesNotMatch(draft.body, /Run this|Not a section|Restrict access/u)
   const withRepro = toggleIssueDraftSection(draft, 'reproduction', true)
-  assert.match(withRepro.body, /Run this:\n\n```\n\*\*Not a section:\*\*\n\nexample\n```/u)
+  assert.match(withRepro.body, /> Run this:\n>\n> ```\n> \*\*Not a section:\*\*\n>\n> example\n> ```/u)
 })
 
-test('impact and recommendation are GitHub alerts under their own labels, every line quoted; other sections are not', () => {
+test('impact, reproduction and recommendation are GitHub alerts under their own labels, every line quoted; other sections are not', () => {
   const f = { ...finding, description: 'Opening.\n\n**Recommended fix:** Use a guard:\n\n```\nguard(user)\n```' }
   let draft = createIssueDraft(f, { allSections: true, findingLink: 'https://triage.test/f' })
   const tip = ['> [!TIP]', '> **Recommended fix:**', '> Use a guard:', '>', '> ```', '> guard(user)', '> ```', '>',
     '> Check ownership before returning data.'].join('\n')
   assert.equal(draft.sections.find(s => s.id === 'recommendation').text, tip)
   assert.ok(draft.body.includes(`\n\n${tip}\n\n**Confidence reason:**`))
-  assert.match(draft.body, /\n\n> \[!IMPORTANT\]\n> \*\*Impact:\*\*\n> Private data[^]*\n\n\*\*Reproduction:\*\*\nSend/u)
+  assert.match(draft.body, /\n\n> \[!IMPORTANT\]\n> \*\*Impact:\*\*\n> Private data[^]*\n\n> \[!NOTE\]\n> \*\*Reproduction:\*\*\n> Send[^]*\n\n\*\*Confidence reason:\*\*\nThe route/u)
   assert.equal(createIssueDraft({ ...f, isSecurity: true }).sections.find(s => s.id === 'impact').text,
     '> [!CAUTION]\n> **Impact:**\n> Private data can be disclosed.')
   draft = toggleIssueDraftSection(draft, 'recommendation', false)

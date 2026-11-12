@@ -3798,6 +3798,27 @@ for (const linked of [false, true]) {
   })
 }
 
+// One on an advisory naming the advised package's repository as its own
+// `repo`, which is no repository of the project's: it is filed in the
+// report's (common/finding-repo.js).
+test('a finding naming the advised package\'s repository is filed in the report\'s repository', async t => {
+  const { db, store, team, session, cfg, context } = await issueFixture(t)
+  await store.put(context.reportId, Buffer.from(JSON.stringify({ source: 'native', findings: [
+    { id: 'own', file: 'package.json', repo: { github: 'https://github.com/expressjs/body-parser.git' },
+      package: { npm: { name: 'express', version: '4.18.0' } }, advisory: { package: 'body-parser', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc' } },
+  ] })))
+  const fetchImpl = (url, init) => {
+    assert.ok(url.startsWith('https://api.github.com/repos/o/r/'), url)
+    if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
+    return jsonResponse(init.method === 'POST' ? { number: 97 } : {}, init.method === 'POST' ? 201 : 200)
+  }
+  await assert.rejects(prepareGithubIssue(cfg, db, store, session, team.id, { ...context, repository: 'expressjs/body-parser' }, fetchImpl), /bad-issue-repository/u)
+  const prepared = await prepareGithubIssue(cfg, db, store, session, team.id, context, fetchImpl)
+  assert.equal(prepared.mode, 'api')
+  const result = await createGithubIssue(prepared, { title: 'Advisory finding', body: '' }, fetchImpl)
+  assert.equal(result.url, 'https://github.com/o/r/issues/97')
+})
+
 test('an unsupported explicit finding repository cannot be replaced with the report assignment', async t => {
   const { db, store, team, session, cfg, context } = await issueFixture(t)
   await store.put(context.reportId, Buffer.from(JSON.stringify({ source: 'native', findings: [
