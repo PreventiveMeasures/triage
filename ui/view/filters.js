@@ -1,7 +1,7 @@
 import { automaticFixFor } from './managed-issues.js'
 import { isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
-import { drawnTabs, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
+import { drawnTabs, getShownGroups, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
 import { defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, canLockConfirmed as lockConfirmed } from '../../common/finding-filters.js'
 export { confidenceOnScale, rangeApplies } from '../../common/finding-filters.js'
 import { reportDuplicateIds } from './report-duplicates.js'
@@ -107,6 +107,7 @@ export function repositoryFilterValues(groups) {
 }
 
 export function resetFilters() {
+  opened = { ...UNFILTERED_OPENING }
   state.filterSeverities = new Set()
   state.filterColors = new Set()
   state.filterSources = new Set()
@@ -327,6 +328,42 @@ export function applyOpeningFilters(groups, { resetSort = true } = {}) {
   state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
   state.filterPartial = ''
   if (resetSort) state.sortBy = priorityApplies(groups) ? 'priority-desc' : 'severity'
+  opened = Object.fromEntries(Object.keys(UNFILTERED_OPENING).map((key) => [key, state[key]]))
+}
+
+// What the fields applyOpeningFilters sets were last set to, by it or by
+// resetFilters: the view as it opened, which a team link measures the
+// filters on screen against (linkedFilters).
+const UNFILTERED_OPENING = { filterConfMin: 0, filterConfMax: 10, filterRevalidate: '', filterPartial: '' }
+let opened = { ...UNFILTERED_OPENING }
+
+// The repository and severities the board is filtered to, for a link to
+// the team that opens it so (common/managed/routes.js): only when they are
+// ALL it is filtered by, every other filter as the view opened, so the
+// link names the view exactly or not at all. Null when neither is set, or
+// when the repository is the "no repository" choice, which no link names.
+export function linkedFilters() {
+  // Every other filter's "off" is an empty set or string but for those
+  // the view opened on; the search's negation is nothing without a search.
+  for (const key of FILTER_FIELDS) {
+    if (key === 'filterRepo' || key === 'filterSeverities' || key === 'filterIncludeNegate') continue
+    const value = state[key]
+    if (value instanceof Set ? value.size > 0 : value !== (Object.hasOwn(opened, key) ? opened[key] : '')) return null
+  }
+  if (state.filterRepo === NO_REPO_SENTINEL) return null
+  const filters = {
+    ...(state.filterRepo ? { repo: state.filterRepo } : {}),
+    ...(state.filterSeverities.size > 0 ? { severities: [...state.filterSeverities] } : {}),
+  }
+  return Object.keys(filters).length > 0 ? filters : null
+}
+
+// A team link's filters, applied to the board once its findings are in:
+// a repository the board has no choice for is left out rather than
+// emptying it.
+export function applyLinkedFilters(filters) {
+  if (filters?.repo && repositoryFilterValues(applyScopeFilters(getShownGroups())).has(filters.repo)) state.filterRepo = filters.repo
+  if (filters?.severities?.length > 0) state.filterSeverities = new Set(filters.severities)
 }
 
 // Priority is a meaningful ordering only when every visible row can be

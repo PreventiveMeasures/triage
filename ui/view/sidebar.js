@@ -20,6 +20,7 @@ import { currentViewSignal } from './view-navigation.js'
 import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath, managedTeamCollapses, managedTeamFindings } from './managed-sidebar.js'
 import { railLetters } from './sidebar-rail.js'
 import { cleanupGraph2 } from './graph/state.js'
+import { applyLinkedFilters } from './filters.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, canReadRepositoryCode, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
@@ -2382,6 +2383,15 @@ async function restoreManagedPageContent(route, isCurrent) {
   // between them must preserve filters and avoid fetching/parsing again.
   if (!canReuseReport && !(await switchToManagedTeam(team, route.reportId, { history: false }))) return false
   if (!isCurrent()) return false
+  // A team link's repository and severity filters, on the board it names
+  // them for (common/managed/team-filters.js).
+  if (route.filters && route.view === 'findings' && route.reportId == null && !state.currentLinks) {
+    if (state.viewMode === 'graph') cleanupGraph2()
+    state.viewMode = 'kanban'
+    state.focusGid = null
+    state.kanbanPopoverGid = null
+    applyLinkedFilters(route.filters)
+  }
   if (state.currentView !== route.view) cleanupGraph2()
   state.currentView = state.currentLinks ? 'links' : route.view
   document.body.classList.remove('report-fullscreen')
