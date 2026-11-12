@@ -17,6 +17,7 @@ import type { TeamWorkspaceSummary } from './team-app.ts'
 import { triageWireEntry } from './triage-response.ts'
 import { visibleManagedIssues } from './managed-issues.ts'
 import { MAX_REPORT_QUERY_BYTES, MAX_REPORT_QUERY_COUNT } from './report-query.ts'
+import { ourRepoSlugs } from '../common/finding-repo.js'
 
 type Finding = Record<string, unknown>
 type TeamReport = { id: string; filename: string; data: unknown; repo: { github: string | null; directory: string } }
@@ -167,7 +168,10 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
   const allIds = new Set<string>(), visible: Visibility = new Map()
   for (let i = 0; i < reports.length; i++) {
     const access = snapshot.reports[i]!, report = reports[i]!
-    report.data = filterReportData(report.data, access.permissions, access.repo, securityIds)
+    // A finding's `repo` none of the team's (common/finding-repo.js
+    // isStrayRepo) is removed before anything reads it.
+    const ours = ourRepoSlugs([...snapshot.repositories.map(repo => repo.github), access.repo.github])
+    report.data = filterReportData(report.data, access.permissions, access.repo, securityIds, ours)
     if (report.data && typeof report.data === 'object' && ('think' in report.data || 'reportRepo' in report.data)) {
       const { think: _think, reportRepo: _reportRepo, ...data } = report.data as Finding
       report.data = data
