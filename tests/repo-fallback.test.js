@@ -23,6 +23,7 @@ const { state } = await import('../client/state.ts')
 const { findingRepo, findingRepoFallback, findingRepoTarget } = await import('../ui/view/group.js')
 const { configureRevalidation, findingUrl } = await import('../ui/view/format.js')
 const { applyFilters, applyScopeFilters, repoOfFinding, repositoryFilterValues, resetFilters } = await import('../ui/view/filters.js')
+const { ignoresOwnRepo } = await import('../common/finding-repo.js')
 
 const REPO = 'https://github.com/owner/name'
 const finding = (extra = {}) => ({ file: 'src/a.js', line: 7, ...extra })
@@ -224,3 +225,30 @@ describe('repository filter for DeepView App findings', () => {
     assert.deepEqual(repositoryOptions([group]), ['owner/app', 'owner/linked-app'])
   })
 })
+
+// A finding on an advisory on the npm package it names: its `repo` is that
+// package's, so the report's repository is the one it is filtered under and
+// its issue goes to (common/finding-repo.js). Only when the advisory is on
+// that very package.
+describe('findings on an advisory on their own npm package', () => {
+  beforeEach(() => { state.repoUrl = '' })
+  const advised = (extra = {}) => finding({ file: 'node_modules/pkg/a.js', repo: { github: 'pkg/upstream' }, _repoFallback: 'owner/app',
+    package: { npm: { name: 'pkg', version: '1.2.3' } }, advisory: { package: 'pkg', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc' }, ...extra })
+
+  it('takes the report\'s repository for filtering and for the issue', () => {
+    assert.equal(ignoresOwnRepo(advised()), true)
+    assert.equal(repoOfFinding(advised()), 'owner/app')
+    assert.equal(findingRepo(advised()), 'owner/app')
+    assert.deepEqual([...repositoryFilterValues([[advised()], [finding({ repo: { github: 'pkg/upstream' } })]])].toSorted(), ['owner/app', 'pkg/upstream'])
+    assert.equal(findingRepo(advised({ _repoFallback: '' })), null, 'no report repository: none, not the package\'s')
+  })
+
+  it('keeps the finding\'s own repository otherwise', () => {
+    for (const extra of [{ advisory: { package: 'other' } }, { advisory: undefined }, { advisory: null }, { package: undefined },
+      { package: { npm: { name: '' } }, advisory: { package: '' } }, { advisory: 'pkg' }]) {
+      assert.equal(ignoresOwnRepo(advised(extra)), false, JSON.stringify(extra))
+      assert.equal(repoOfFinding(advised(extra)), 'pkg/upstream', JSON.stringify(extra))
+    }
+  })
+})
+

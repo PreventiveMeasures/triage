@@ -5,6 +5,7 @@ import { drawnTabs, getMergedGroups, primaryTab, tabKey, triageEntry, underlying
 import { defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, canLockConfirmed as lockConfirmed, rangeApplies } from '../../common/finding-filters.js'
 export { confidenceOnScale, rangeApplies } from '../../common/finding-filters.js'
 import { reportDuplicateIds } from './report-duplicates.js'
+import { ignoresOwnRepo } from '../../common/finding-repo.js'
 
 // Stand-in for the "no analyzer" bucket in the analyzer dropdown.
 // Plain `'null'` would collide with a legitimate analyzer literally
@@ -88,11 +89,13 @@ export function matchesRunFilters(f) {
 // their report, even when their source code lives in a dependency repo.
 // Prefer their report's repo (stamped at ingest as `_repoFallback`) for
 // both the repository selector and its matching predicate. Other findings
-// keep the source repo first. File/source links resolve separately.
+// keep the source repo first, but for one on an advisory on its own npm
+// package, whose `repo` is that package's (common/finding-repo.js). File/source
+// links resolve separately.
 export function repoOfFinding(f) {
   const reportRepo = typeof f._repoFallback === 'string' && f._repoFallback ? f._repoFallback : null
   if (f.isApp && !(f._source ?? f.source) && reportRepo) return reportRepo
-  if (typeof f.repo?.github === 'string' && f.repo.github) return f.repo.github
+  if (!ignoresOwnRepo(f) && typeof f.repo?.github === 'string' && f.repo.github) return f.repo.github
   return reportRepo
 }
 

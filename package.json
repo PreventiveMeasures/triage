@@ -278,6 +278,8 @@
     "common/finding-id.js",
     "common/finding-duplicates.js",
     "common/finding-filters.js",
+    "common/finding-repo.d.ts",
+    "common/finding-repo.js",
     "common/github-pr.ts",
     "common/github-issue-labels.js",
     "common/github-issue-labels.d.ts",

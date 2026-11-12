@@ -16,6 +16,7 @@ import { securityStampOptions } from './security-stamp.js'
 import { mergeLinkedWorkspaceGroups } from '../../common/linked-workspace-groups.js'
 import { splitRevalidationInputs } from '../../common/revalidation-input-groups.js'
 import { tabKey } from '../../common/finding-filters.js'
+import { ignoresOwnRepo } from '../../common/finding-repo.js'
 
 // ID helpers. Internally every `state.reports[].groups[i]` is a
 // Finding[] (single-finding entries are wrapped at ingest, so code
@@ -323,8 +324,11 @@ export function findingRepoTarget(f) {
 // node_modules file resolves to its package bucket's repo when that
 // bucket maps to exactly one upstream, otherwise the per-finding
 // `repo.github` / the resolved fallback above. Returns null when
-// none of those is known.
+// none of those is known. A finding on an advisory on its own npm package
+// is the report's repo's, whatever its file or `repo` say
+// (common/finding-repo.js).
 export function findingRepo(f) {
+  if (ignoresOwnRepo(f)) return findingRepoFallback(f) || null
   for (const bucket of getPackagesIndex().values()) {
     if (bucket.files.has(f.file)) {
       return bucket.repos?.size === 1 ? [...bucket.repos][0] : null

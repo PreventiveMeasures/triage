@@ -65,7 +65,7 @@ test('the prefilled issue body is the managed dialog\'s, every section in', t =>
     'Finding description',
     '> [!CAUTION]\n> **Impact:**\n> Data leaks.',
     `**Evidence:**\n1. [src/sink.js:9-12](https://github.com/o/r/blob/${commit}/src/sink.js#L9-L12)`,
-    '**Reproduction:**\nRun it.',
+    '> [!NOTE]\n> **Reproduction:**\n> Run it.',
     '> [!TIP]\n> **Recommendation:**\n> Check it.',
   ].join('\n\n'))
 })
@@ -98,6 +98,29 @@ test('managed issue targets use finding/report metadata rather than unrelated lo
   assert.equal(issueAction(t, { repoUrl: 'o/global' }, { ...finding, repo: undefined, _repoFallback: null }), undefined)
 })
 
+
+// A finding on an advisory on its own npm package names that package's repo
+// as its `repo`: its issue goes to the report's repository, in managed mode
+// as in standalone, whatever its file is (common/finding-repo.js), and opens
+// on the advisory rather than its source.
+test('an advisory on the finding\'s own npm package is filed in the report\'s repository, opening on the advisory', t => {
+  const index = getPackagesIndex(), key = 'advisory-issue-test'
+  const previous = index.get(key)
+  index.set(key, { files: new Set(['node_modules/pkg/a.js']), repos: new Set(['o/package-upstream']) })
+  t.after(() => { if (previous) index.set(key, previous); else index.delete(key) })
+  const url = 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc'
+  const finding = { file: 'node_modules/pkg/a.js', _repoFallback: 'o/assigned', repo: { github: 'o/package-upstream' },
+    package: { npm: { name: 'pkg', version: '1.0.0' } }, advisory: { package: 'pkg', url } }
+  for (const overrides of [{}, { serverMode: 'standalone' }]) {
+    const action = new URL(issueAction(t, overrides, finding).values[0])
+    assert.equal(action.pathname, '/o/assigned/issues/new', JSON.stringify(overrides))
+  }
+  const body = new URL(issueAction(t, { serverMode: 'standalone' }, finding).values[0]).searchParams.get('body')
+  assert.equal(body.split('\n\n')[0], `Advisory: ${url}`)
+  // An advisory on another package leaves the finding's own repository its own.
+  const other = { ...finding, advisory: { package: 'other', url } }
+  assert.equal(new URL(issueAction(t, {}, other).values[0]).pathname, '/o/package-upstream/issues/new')
+})
 
 for (const manual of ['', 'https://github.com/o/r/pull/2', 'https://github.com/o/r/pull/3']) {
   test(`saved issue replaces creation and renders automatic Fix alongside manual ${manual || '(empty)'}`, t => {
