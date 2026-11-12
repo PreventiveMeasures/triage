@@ -12,13 +12,27 @@ import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG, namesLockfiles, parseStasisConf
 const regularFile = entry => entry.type === 'blob' && ['100644', '100755'].includes(entry.mode)
 const parentOf = path => posix.dirname(path).replace(/^\.$/u, '')
 
+// The listing of `directory` at the commit, null where the commit has no
+// directory there: one only the tree a lockfile lays out holds, as a package in
+// node_modules a stasis.config.json lists entries of. A read that fails of one
+// it has, as the listing above it tells, fails.
+async function directoryListing(input, github, client, directory) {
+  try {
+    return await client.listRepoDir({ repo: github, sha: input.commit, directory: directory || undefined })
+  } catch (error) {
+    const above = directory ? await directoryListing(input, github, client, parentOf(directory)) : undefined
+    if (above === null || above?.some(entry => entry.path === posix.basename(directory) && entry.type === 'tree') === false) return null
+    throw error
+  }
+}
+
 // The text of the stasis.config.json in a directory, null where there is none,
 // each read once a build.
 function configReader(input, github, client) {
   const read = new Map()
   const configText = async directory => {
-    const listing = await client.listRepoDir({ repo: github, sha: input.commit, directory: directory || undefined })
-    if (!listing.some(entry => entry.path === STASIS_CONFIG && regularFile(entry))) return null
+    const listing = await directoryListing(input, github, client, directory)
+    if (!listing?.some(entry => entry.path === STASIS_CONFIG && regularFile(entry))) return null
     return await client.getRepoFile({ repo: github, path: posix.join(directory, STASIS_CONFIG), ref: input.commit })
   }
   return directory => {
@@ -69,8 +83,8 @@ async function projectDirectory(input, github, client) {
   const manifests = input.entries[0].endsWith('.sol') ? ['foundry.toml', 'soldeer.toml', 'soldeer.lock'] : ['package.json']
   if (!input.directory) return ''
   for (let directory = input.directory; ; directory = posix.dirname(directory).replace(/^\.$/u, '')) {
-    const entries = await client.listRepoDir({ repo: github, sha: input.commit, directory: directory || undefined })
-    if (entries.some(entry => manifests.includes(entry.path) && regularFile(entry))) return directory
+    const entries = await directoryListing(input, github, client, directory)
+    if (entries?.some(entry => manifests.includes(entry.path) && regularFile(entry))) return directory
     if (!directory) return input.directory
   }
 }

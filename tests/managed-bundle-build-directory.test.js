@@ -20,8 +20,12 @@ function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, mod
     assert.equal(sha, commit)
     reads.push(directory ?? '')
     if (failAt !== undefined && directory === failAt) throw new Error('GitHub unavailable')
-    return Promise.resolve(files.filter(entry => posix.dirname(entry.path) === (directory || '.'))
-      .map(entry => ({ ...entry, path: posix.basename(entry.path) })))
+    // As GitHub lists one: its files, and the directories in it, each a tree.
+    const prefix = directory ? `${directory}/` : ''
+    const trees = new Set(files.filter(entry => entry.path.startsWith(prefix) && entry.path.slice(prefix.length).includes('/'))
+      .map(entry => entry.path.slice(prefix.length).split('/')[0]))
+    return Promise.resolve([...files.filter(entry => posix.dirname(entry.path) === (directory || '.')).map(entry => ({ ...entry, path: posix.basename(entry.path) })),
+      ...[...trees].map(name => ({ path: name, mode: '040000', type: 'tree', sha: 'c'.repeat(40) }))])
   }, getRepoFile({ repo, path, ref }) {
     assert.equal(repo, 'org/repo')
     assert.equal(ref, commit)
@@ -134,8 +138,9 @@ test('symlinks and directories named package.json do not select a project root',
   assert.deepEqual(f.builds[0].entries, ['app/src/main.ts'])
 })
 
-test('failed GitHub reads cannot masquerade as absent dependency files', async () => {
-  const f = await fixture(['app/src/main.ts'], [file('package.json')], { failAt: 'app' })
+test('failed GitHub reads cannot masquerade as absent dependency files, nor as a directory the commit hasn’t', async () => {
+  // `app` is a directory of the root's listing, so its read failing fails the build.
+  const f = await fixture(['app/src/main.ts'], [file('package.json'), file('app/src/main.ts')], { failAt: 'app' })
   await assert.rejects(f.run(), /GitHub unavailable/u)
   assert.equal(f.builds.length, 0)
 })
