@@ -38,6 +38,24 @@ test('managed links and report rows stay in the active team, with no local index
   assert.equal(records[0].data.findings[0]._managedReportId, undefined, 'indexing preserves cached response objects')
 })
 
+// A finding naming the advised package's repository as its own reads as
+// naming none (common/finding-repo.js): measured against the repo the team
+// links the report to.
+test('managed findings read without the advised package\'s repository', () => {
+  state.serverMode = 'managed'
+  state.localMode = false
+  state.managedSession = { id: 'viewer', role: 'view' }
+  state.currentManagedTeam = 'one'
+  setManagedWorkspace('one', [{ id: 'report', filename: 'scan.json', repo: { github: 'org/app', directory: '' }, data: { findings: [
+    { id: 'a', title: 'A', parent: 'p', repo: { github: 'expressjs/body-parser' }, advisory: { package: 'body-parser' } },
+    { id: 'b', title: 'B', repo: { github: 'Org/App' }, advisory: { package: 'app' } },
+  ] } }])
+  const [advised, merged] = ['a', 'b'].map(id => reportRowsForFindingIds([id])[0].members[0])
+  assert.equal(advised.repo, undefined)
+  assert.equal(advised.parent, 'p')
+  assert.deepEqual(merged.repo, { github: 'Org/App' })
+})
+
 // The commit a report read its repo at rides along while the repo the
 // team links the report to is that one; another repo, or a report naming
 // no commit, links at HEAD.

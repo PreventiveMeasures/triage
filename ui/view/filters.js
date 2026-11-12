@@ -89,13 +89,13 @@ export function matchesRunFilters(f) {
 // their report, even when their source code lives in a dependency repo.
 // Prefer their report's repo (stamped at ingest as `_repoFallback`) for
 // both the repository selector and its matching predicate. Other findings
-// keep the source repo first, but for one on an advisory on its own npm
-// package, whose `repo` is that package's (common/finding-repo.js). File/source
-// links resolve separately.
+// keep the source repo first, but for one on an advisory whose `repo` is the
+// advised package's (common/finding-repo.js). File/source links resolve
+// separately.
 export function repoOfFinding(f) {
   const reportRepo = typeof f._repoFallback === 'string' && f._repoFallback ? f._repoFallback : null
   if (f.isApp && !(f._source ?? f.source) && reportRepo) return reportRepo
-  if (!ignoresOwnRepo(f) && typeof f.repo?.github === 'string' && f.repo.github) return f.repo.github
+  if (!ignoresOwnRepo(f, reportRepo) && typeof f.repo?.github === 'string' && f.repo.github) return f.repo.github
   return reportRepo
 }
 

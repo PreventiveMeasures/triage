@@ -315,6 +315,8 @@
     "common/managed/triage.ts",
     "common/managed/upload-seal.ts",
     "common/save-error-reason.ts",
+    "common/repo-commit.d.ts",
+    "common/repo-commit.js",
     "common/revalidation-conflicts.js",
     "common/revalidation-input-groups.js",
     "common/server-info.ts",

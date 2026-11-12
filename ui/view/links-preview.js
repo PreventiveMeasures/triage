@@ -4,6 +4,7 @@
 import { computeLinkHint, ensureTriageLoaded, isManagedUiMode, loadRepoUrlFor, readFile, reportRowsForFindingIds, state, workspacesHoldingReport } from '#client/index.js'
 import { securityStampOptions } from './security-stamp.js'
 import { reportCommit } from '../../common/repo-commit.js'
+import { dropForeignRepo } from '../../common/finding-repo.js'
 import { store } from '@rray/frontend/state-management'
 import { inheritReportMeta, isAppFinding, loadFindings, repoDirectory, reportEntries, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 
@@ -45,11 +46,12 @@ export async function openLinksPreview(id, reportName, rowIndex, managedReportId
     const row = includesFinding(rows[rowIndex]) ? rows[rowIndex] : rows.find(includesFinding)
     if (!row) throw new Error('This finding is no longer in the report.')
     const { data } = parsed
+    const repoFallback = reportRepoGithub(data) ?? loadRepoUrlFor(reportName)
     const group = row.filter((f) => f?.id).map((finding) => {
       const filled = {
-        ...finding,
+        ...dropForeignRepo(finding, repoFallback),
         _reportName: reportName,
-        _repoFallback: reportRepoGithub(data) ?? loadRepoUrlFor(reportName),
+        _repoFallback: repoFallback,
         _repoDirectory: repoDirectory(data?.repo),
         _repoCommit: reportCommit(data, reportRepoGithub(data)),
         _bundleHashes: data.bundleHashes ?? [],

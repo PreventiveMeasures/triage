@@ -3798,22 +3798,21 @@ for (const linked of [false, true]) {
   })
 }
 
-// One on an advisory on its own npm package names that package's repository
-// as its `repo`, which is no repository of the project's: it is filed in the
-// report's, even with that upstream linked to the team (common/finding-repo.js).
-test('a finding on an advisory on its own npm package is filed in the report\'s repository', async t => {
+// One on an advisory naming the advised package's repository as its own
+// `repo`, which is no repository of the project's: it is filed in the
+// report's (common/finding-repo.js).
+test('a finding naming the advised package\'s repository is filed in the report\'s repository', async t => {
   const { db, store, team, session, cfg, context } = await issueFixture(t)
-  await db.setTeamRepo(team.id, 8, null)
   await store.put(context.reportId, Buffer.from(JSON.stringify({ source: 'native', findings: [
-    { id: 'own', file: 'node_modules/pkg/a.js', repo: { github: 'https://github.com/O/Other.git/tree/main' },
-      package: { npm: { name: 'pkg', version: '1.0.0' } }, advisory: { package: 'pkg', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc' } },
+    { id: 'own', file: 'package.json', repo: { github: 'https://github.com/expressjs/body-parser.git' },
+      package: { npm: { name: 'express', version: '4.18.0' } }, advisory: { package: 'body-parser', url: 'https://github.com/advisories/GHSA-aaaa-bbbb-cccc' } },
   ] })))
   const fetchImpl = (url, init) => {
     assert.ok(url.startsWith('https://api.github.com/repos/o/r/'), url)
     if (url.endsWith('/installation')) return jsonResponse({ permissions: { issues: 'write' } })
     return jsonResponse(init.method === 'POST' ? { number: 97 } : {}, init.method === 'POST' ? 201 : 200)
   }
-  await assert.rejects(prepareGithubIssue(cfg, db, store, session, team.id, { ...context, repository: 'o/other' }, fetchImpl), /bad-issue-repository/u)
+  await assert.rejects(prepareGithubIssue(cfg, db, store, session, team.id, { ...context, repository: 'expressjs/body-parser' }, fetchImpl), /bad-issue-repository/u)
   const prepared = await prepareGithubIssue(cfg, db, store, session, team.id, context, fetchImpl)
   assert.equal(prepared.mode, 'api')
   const result = await createGithubIssue(prepared, { title: 'Advisory finding', body: '' }, fetchImpl)

@@ -4,6 +4,7 @@
 import { inheritReportMeta, isAppFinding, reportRepoGithub, stampSecurityGroups } from '@preventive/report'
 import { readManagedReport } from './report-content.ts'
 import { revalidationLinks, securityLinks } from '../security-links.js'
+import { dropForeignRepo } from '../finding-repo.js'
 
 export interface ViewerPermissions {
   dependencies: boolean
@@ -77,8 +78,15 @@ export function filterReportData(data: unknown, perms: ViewerPermissions, repo?:
   if (!report) return data
   const key = Array.isArray(report['findings']) ? 'findings' : Array.isArray(report['groups']) ? 'groups' : null
   if (!key) return data
+  // A finding's `repo` naming the package its advisory is on is no
+  // organization of ours (common/finding-repo.js), and vouches for nothing.
+  const reportRepo = reportRepoGithub({ repo: repo === undefined ? report['repo'] : repo })
+  const read = (original: unknown) => {
+    const finding = projectFinding(original, report)
+    return finding && dropForeignRepo(finding, reportRepo)
+  }
   const entries = (report[key] as unknown[]).map(entry => ({
-    entry, members: (Array.isArray(entry) ? entry : [entry]).map(original => ({ original, finding: projectFinding(original, report) })),
+    entry, members: (Array.isArray(entry) ? entry : [entry]).map(original => ({ original, finding: read(original) })),
   }))
   const groups = entries.map(({ members }) => members.flatMap(({ finding }) => finding ? [finding] : []))
   if (!perms.security) stampSecurityGroups(groups, { linkedIds: securityLinks(revalidationLinks(groups.flat())).linkedIds })

@@ -134,3 +134,18 @@ test('raw Markdown responses cannot bypass security filtering', () => {
   assert.deepEqual(filtered.findings, [])
   assert.equal(filterReportContent(report, perms(false, true), 'report.md'), report)
 })
+
+// A finding on an advisory may name the advised package's repository as its
+// own `repo` (common/finding-repo.js): that organization is no own one, and
+// lets no dependency finding of it through, while the report's own stays.
+test('a repository naming the advised package vouches for no organization', () => {
+  const report = { repo: { github: 'owner/app' }, findings: [
+    { id: 'advised', file: 'package.json', repo: { github: 'expressjs/body-parser' }, advisory: { package: 'body-parser' } },
+    { id: 'dependency', file: 'node_modules/body-parser/a.js', repo: { github: 'expressjs/body-parser' } },
+    { id: 'merged', file: 'package-lock.json', repo: { github: 'owner/app' }, advisory: { package: 'app' } },
+  ] }
+  assert.deepEqual(ids(filterReportData(report, perms(false, true))), ['advised', 'merged'])
+  const trusted = { ...report, findings: [{ ...report.findings[0], advisory: { package: 'express' } }, report.findings[1]] }
+  assert.deepEqual(ids(filterReportData(trusted, perms(false, true))), ['advised', 'dependency'], 'a repository by another name stays its own')
+})
+

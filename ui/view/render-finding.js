@@ -1069,7 +1069,7 @@ function actionButtonsTemplate(group, sortedTabs, groupSt, activeTab, context = 
   // Match the server's finding/report target; local package-index inference
   // is not authoritative for creating a permanent managed issue reference.
   const findingRepoId = isManagedUiMode()
-    ? reportRepoGithub({ repo: { github: (ignoresOwnRepo(activeTab) ? '' : activeTab.repo?.github) || activeTab._repoFallback } })
+    ? reportRepoGithub({ repo: { github: (ignoresOwnRepo(activeTab, activeTab._repoFallback) ? '' : activeTab.repo?.github) || activeTab._repoFallback } })
     : findingRepo(activeTab)
   const managedIssue = isManagedUiMode() && state.managedSession && !state.managedSession.publicShare && state.currentManagedTeam
   // No button once the finding has its issue. The managed dialog drafts

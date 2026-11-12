@@ -85,6 +85,23 @@ describe('Links finding preview', () => {
     assert.deepEqual(sortTabs(group).map((f) => f.id), ['pass'], 'normal cards retain the existing lens')
   })
 
+  // A finding naming the advised package's repository as its own reads as
+  // naming none (common/finding-repo.js), everything else kept.
+  it('reads a finding without the advised package\'s repository', async () => {
+    const name = await fixture({ repo: { github: 'owner/app' }, findings: [
+      { id: 'A', file: 'package.json', parent: 'P', repo: { github: 'expressjs/body-parser' }, advisory: { package: 'body-parser' } },
+      { id: 'B', file: 'package.json', repo: { github: 'owner/app' }, advisory: { package: 'app' } },
+    ] })
+    await openLinksPreview('A', name)
+    const [advised] = getLinksPreview().group
+    await openLinksPreview('B', name)
+    const [merged] = getLinksPreview().group
+    assert.equal(advised.repo, undefined)
+    assert.equal(advised._repoIgnored, true)
+    assert.equal(advised.parent, 'P')
+    assert.deepEqual(merged.repo, { github: 'owner/app' }, 'the report\'s own repository, as a merge stamps it, stays')
+  })
+
   it('uses the report source and saved repository fallback', async () => {
     const name = await fixture({ source: 'claude-security', findings: [{ id: 'A', revalidate: 'revalidation' }] })
     saveRepoUrlFor(name, 'owner/fallback')

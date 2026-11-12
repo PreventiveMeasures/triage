@@ -324,11 +324,11 @@ export function findingRepoTarget(f) {
 // node_modules file resolves to its package bucket's repo when that
 // bucket maps to exactly one upstream, otherwise the per-finding
 // `repo.github` / the resolved fallback above. Returns null when
-// none of those is known. A finding on an advisory on its own npm package
-// is the report's repo's, whatever its file or `repo` say
+// none of those is known. A finding whose `repo` named the package it
+// advises against is the report's, whatever its file says
 // (common/finding-repo.js).
 export function findingRepo(f) {
-  if (ignoresOwnRepo(f)) return findingRepoFallback(f) || null
+  if (f._repoIgnored || ignoresOwnRepo(f, findingRepoFallback(f))) return findingRepoFallback(f) || null
   for (const bucket of getPackagesIndex().values()) {
     if (bucket.files.has(f.file)) {
       return bucket.repos?.size === 1 ? [...bucket.repos][0] : null
