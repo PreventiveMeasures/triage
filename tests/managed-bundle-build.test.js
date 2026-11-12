@@ -427,3 +427,13 @@ test('real Stasis builds the entries stasis.config.json lists in a package the l
   assert.deepEqual([...bundle.entries].toSorted(), ['index.js', 'node_modules/tool/cli.js'])
   assert.ok(bundle.sources.has('node_modules/tool/lib/run.js'), 'what it imports, from the tree laid out')
 })
+
+test('real Stasis lays a pnpm tree out for no Node: engineStrict takes an engines.node the server’s Node isn’t', async () => {
+  const project = {
+    'package.json': JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', engines: { node: '1.0.0' }, packageManager: 'pnpm@10.33.4' }),
+    'pnpm-lock.yaml': "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n",
+    'pnpm-workspace.yaml': 'engineStrict: true\n',
+    'index.js': 'export const app = 1\n',
+  }
+  assert.deepEqual(await entriesOf(configured(project, ['index.js'], { conditions })), ['index.js'])
+})
