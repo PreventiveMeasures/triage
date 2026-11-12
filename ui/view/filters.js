@@ -360,14 +360,16 @@ export function linkedFilters() {
 }
 
 // A team link's filters, applied to the board once its findings are in,
-// and nothing else: every other filter as the view opened, the sort left
-// alone, so a board already open (whose load resets nothing) shows what a
-// fresh one would. A repository the board has no choice for is left out
+// and nothing else: every other filter as this board opens, the sort left
+// alone, so a board already open (whose load reset nothing, and whose
+// opening may have been read off another view's triage status) shows what
+// a fresh one would. A repository the board has no choice for is left out
 // rather than emptying it.
 export function applyLinkedFilters(filters) {
   const sortBy = state.sortBy
   resetFilters()
-  Object.assign(state, opened, { sortBy })
+  state.sortBy = sortBy
+  applyOpeningFilters(getShownGroups(), { resetSort: false })
   if (filters?.repo && repositoryFilterValues(applyScopeFilters(getShownGroups())).has(filters.repo)) state.filterRepo = filters.repo
   if (filters?.severities?.length > 0) state.filterSeverities = new Set(filters.severities)
 }

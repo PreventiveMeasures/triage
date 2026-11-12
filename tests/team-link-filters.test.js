@@ -153,4 +153,24 @@ describe('a team board\'s URL', () => {
     assert.equal(state.filterConfMin, 3, 'a link puts back the floor the board opened on')
     assert.deepEqual(route().filters, { repo: 'owner/a' })
   })
+  // Outside Kanban a view shows one triage status, and its opening floor is
+  // read off that status alone. A link is for Kanban's board, every status
+  // on it, and opens on that board's floor whichever view loaded the team.
+  it('opens on Kanban\'s floor, whichever view the team was loaded in', () => {
+    const scored = [[{ ...finding('c', 'owner/a'), confidence: 9 }], [{ ...finding('d', 'owner/b'), confidence: 2 }]]
+    state.reports = [{ fileName: 'r.json', groups: scored }]
+    clearMergedGroups()
+    state.triage.set('d', { triage: 'fixed' })
+    try {
+      state.viewMode = 'table'
+      applyOpeningFilters(getShownGroups())
+      assert.equal(state.filterConfMin, 0, 'the open finding alone sets no floor')
+      state.viewMode = 'kanban'
+      applyLinkedFilters({ severities: ['high'] })
+      assert.equal(state.filterConfMin, 3)
+      assert.deepEqual(route().filters, { severities: ['high'] })
+    } finally {
+      state.triage.delete('d')
+    }
+  })
 })
