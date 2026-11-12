@@ -1,8 +1,8 @@
 import { automaticFixFor } from './managed-issues.js'
 import { isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
-import { drawnTabs, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
-import { defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, canLockConfirmed as lockConfirmed } from '../../common/finding-filters.js'
+import { drawnTabs, getMergedGroups, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
+import { defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, canLockConfirmed as lockConfirmed, rangeApplies } from '../../common/finding-filters.js'
 export { confidenceOnScale, rangeApplies } from '../../common/finding-filters.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 
@@ -327,6 +327,55 @@ export function applyOpeningFilters(groups, { resetSort = true } = {}) {
   state.filterRevalidate = defaultRevalidateFilter(groups, state.filterConfMin)
   state.filterPartial = ''
   if (resetSort) state.sortBy = priorityApplies(groups) ? 'priority-desc' : 'severity'
+}
+
+// The filters a team's Kanban board opens on, which a team link opens it
+// on again: applyOpeningFilters' choices read off every triage status on
+// it, the confidence range at 0—10 where render.js drops it
+// (rangeApplies). Asked of the board as it is now, never of how this view
+// happened to open, which may have been another layout's one status, or a
+// reset since (finding-link.js clears the floor to reveal a finding).
+function kanbanOpening(groups) {
+  const drawn = groups.map(drawnTabs).filter((g) => g.length > 0)
+  const floor = defaultConfidenceFloor(groups)
+  return { filterConfMin: drawn.length > 0 && rangeApplies(drawn) ? floor : 0, filterConfMax: 10,
+    filterRevalidate: defaultRevalidateFilter(groups, floor), filterPartial: '' }
+}
+
+// The repository and severities the Kanban board is filtered to, for a link
+// to the team that opens it so (common/managed/routes.js): only when they
+// are ALL it is filtered by, every other filter as the board opens, so the
+// link names the view exactly or not at all. Null when neither is set, or
+// when the repository is the "no repository" choice, which no link names.
+export function linkedFilters() {
+  if (state.filterRepo === NO_REPO_SENTINEL || (!state.filterRepo && state.filterSeverities.size === 0)) return null
+  // Every other filter's "off" is an empty set or string, but for those
+  // the board opens on; the search's negation is nothing without a search.
+  const opening = ['filterConfMin', 'filterConfMax', 'filterRevalidate', 'filterPartial']
+  for (const key of FILTER_FIELDS) {
+    if (opening.includes(key) || key === 'filterRepo' || key === 'filterSeverities' || key === 'filterIncludeNegate') continue
+    if (state[key] instanceof Set ? state[key].size > 0 : state[key] !== '') return null
+  }
+  const opens = kanbanOpening(getMergedGroups())
+  if (opening.some((key) => state[key] !== opens[key])) return null
+  return {
+    ...(state.filterRepo ? { repo: state.filterRepo } : {}),
+    ...(state.filterSeverities.size > 0 ? { severities: [...state.filterSeverities] } : {}),
+  }
+}
+
+// A team link's filters, applied to its Kanban board once the findings are
+// in, and nothing else: every other filter as the board opens, the sort
+// left alone, so a board already open (whose load reset nothing) shows
+// what a fresh one would. A repository the board has no choice for is left
+// out rather than emptying it.
+export function applyLinkedFilters(filters) {
+  const sortBy = state.sortBy
+  const groups = getMergedGroups()
+  resetFilters()
+  Object.assign(state, kanbanOpening(groups), { sortBy })
+  if (filters?.repo && repositoryFilterValues(applyScopeFilters(groups)).has(filters.repo)) state.filterRepo = filters.repo
+  if (filters?.severities?.length > 0) state.filterSeverities = new Set(filters.severities)
 }
 
 // Priority is a meaningful ordering only when every visible row can be

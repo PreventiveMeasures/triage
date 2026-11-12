@@ -2,6 +2,7 @@
 import { BUNDLE_TABS } from '../bundle-tabs.js'
 import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../finding-id.js'
 import { isNpmPackageName, isNpmPackageSpec, isPatchHash, isPatchPath } from './npm-packages.js'
+import { filtersOf, filtersQuery } from './team-filters.js'
 
 // How Compare reviews the changes, past its Overview: `code`, beside the
 // tree of changed files. A link names the mode after the bundle or version
@@ -89,7 +90,8 @@ export function managedRoutePath(route) {
     const suffix = findingPath(route.finding.id)
     return route.view === 'findings' && suffix ? `${team}${report}${suffix}` : null
   }
-  return `${team}${report}${route.view === 'files' ? '/files' : ''}`
+  if (route.view === 'files') return `${team}${report}/files`
+  return `${team}${report}${report ? '' : filtersQuery(route.filters)}`
 }
 
 // The npm viewer: its lookup page, or a package version's Overview, Code,
@@ -285,7 +287,9 @@ export function parseManagedRoute(url) {
     if (match[4]?.length > MAX_FINDING_ID_LENGTH * 9) return null
     const id = match[4] ? decodeURIComponent(match[4]) : null
     if (id != null && !findingPath(id)) return null
-    return { view: match[3] ? 'files' : 'findings', teamSlug, reportSlug, ...(id == null ? {} : { finding: { id } }) }
+    if (match[3]) return { view: 'files', teamSlug, reportSlug }
+    if (id != null) return { view: 'findings', teamSlug, reportSlug, finding: { id } }
+    return { view: 'findings', teamSlug, reportSlug, ...(reportSlug == null ? filtersOf(url.searchParams) : {}) }
   } catch { return null }
 }
 

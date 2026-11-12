@@ -20,6 +20,7 @@ import { currentViewSignal } from './view-navigation.js'
 import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath, managedTeamCollapses, managedTeamFindings } from './managed-sidebar.js'
 import { railLetters } from './sidebar-rail.js'
 import { cleanupGraph2 } from './graph/state.js'
+import { applyLinkedFilters } from './filters.js'
 import { MANAGED_PAGES, managedRouteForIds, resolveManagedRoute } from '../../common/managed/routes.js'
 import { ROLES, canReadRepositoryCode, isRole } from '../../common/managed/roles.ts'
 import { initManagedTriagePush, resetManagedTriage } from './managed-triage.js'
@@ -2380,8 +2381,20 @@ async function restoreManagedPageContent(route, isCurrent) {
   if (!team) return false
   // Findings/Files are two views of the same hydrated reports. Switching
   // between them must preserve filters and avoid fetching/parsing again.
+  // A team link's repository and severity filters are for the board that
+  // shows every triage status, Kanban (common/managed/team-filters.js):
+  // switched to before the team loads, so it opens as a fresh Kanban board
+  // does, its opening filters read off every status, not one view's.
+  const linked = route.filters && route.view === 'findings' && route.reportId == null ? route.filters : null
+  if (linked) {
+    if (state.viewMode === 'graph') cleanupGraph2()
+    state.viewMode = 'kanban'
+    state.focusGid = null
+    state.kanbanPopoverGid = null
+  }
   if (!canReuseReport && !(await switchToManagedTeam(team, route.reportId, { history: false }))) return false
   if (!isCurrent()) return false
+  if (linked && !state.currentLinks) applyLinkedFilters(linked)
   if (state.currentView !== route.view) cleanupGraph2()
   state.currentView = state.currentLinks ? 'links' : route.view
   document.body.classList.remove('report-fullscreen')

@@ -309,6 +309,7 @@
     "common/managed/scan-models.ts",
     "common/managed/team-app.js",
     "common/managed/team-app.d.ts",
+    "common/managed/team-filters.js",
     "common/managed/triage.ts",
     "common/managed/upload-seal.ts",
     "common/save-error-reason.ts",
