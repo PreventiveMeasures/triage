@@ -5,14 +5,14 @@ import { parseBundleBuild } from '../server-managed/bundle-build.ts'
 
 let build
 mock.module('@exodus/stasis/vfs-bundle', { namedExports: { buildGitHubBundle: options => build(options), setCacheDir: () => {} } })
-const { buildStasisBundle } = await import('../server-managed/bundle-build-worker.js')
+const { MAX_SERIALIZED_BYTES, buildStasisBundle } = await import('../server-managed/bundle-build-worker.js')
 
 const commit = 'a'.repeat(40)
 const file = (path, mode = '100644') => ({ path, mode, type: 'blob', sha: 'b'.repeat(40) })
 
 const node = { preset: 'node', conditions: ['node'], platforms: [] }
 
-function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, modules = {}, contents = {}, conditions = node } = {}) {
+function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, modules = {}, contents = {}, conditions = node, serialize = () => '{}' } = {}) {
   const input = parseBundleBuild({ repoId: 1, commit, entries, ...(conditions && { conditions }) })
   const builds = [], fileReads = [], reads = []
   const client = { listRepoDir({ repo, sha, directory }) {
@@ -37,7 +37,7 @@ function fixture(entries, files, { scopes = [null], failAt, bundleDirectory, mod
     // Exercise the same repeated directory reads as Stasis's lockfile discovery.
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
     await options.client.listRepoDir({ repo: options.github, sha: options.sha, directory: options.directory })
-    return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, modules: new Map(Object.entries(modules)), serialize: () => '{}' } }
+    return { bundle: { repo: { directory: bundleDirectory ?? options.directory }, modules: new Map(Object.entries(modules)), serialize } }
   }
   const run = () => buildStasisBundle({ input, github: 'org/repo', token: null, maxBytes: 1000, scopes }, client)
   return { run, reads, builds, fileReads }
@@ -265,4 +265,12 @@ test('a stasis.config.json outside the team scope can’t build the entries it l
     { contents: { 'stasis.config.json': config({ 'app/src/main.ts': {} }) }, conditions: null, scopes: ['app'] })
   await assert.rejects(f.run(), /build-scope/u)
   assert.equal(f.builds.length, 0)
+})
+
+test('a bundle too long for a string, which V8 can’t serialize, is too large, as one past 512 MiB of JSON is', async () => {
+  assert.equal(MAX_SERIALIZED_BYTES, 512 * 1024 * 1024)
+  const f = await fixture(['app/index.js'], [file('app/package.json')], { serialize: () => { throw new RangeError('Invalid string length') } })
+  await assert.rejects(f.run(), { message: 'too-large' })
+  const failing = await fixture(['app/index.js'], [file('app/package.json')], { serialize: () => { throw new TypeError('not a size') } })
+  await assert.rejects(failing.run(), { message: 'not a size' }, 'any other failure is its own')
 })

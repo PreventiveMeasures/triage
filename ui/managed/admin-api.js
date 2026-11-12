@@ -163,6 +163,7 @@ export async function createBundle(input, csrfToken, signal) {
       'build-busy': 'A bundle is already being built, or the server is busy. Try again shortly.',
       'build-timeout': 'The bundle build timed out. Try a smaller selection or retry.',
       'too-large': 'This bundle exceeds the server’s size limit.',
+      'build-memory': 'Building this selection needs more memory than the server gives a build. Select fewer entry points, or build it with stasis github-bundle and upload the bundle.',
       'github-rate-limited': 'GitHub’s API rate limit has been reached. Retry after the limit resets.',
       'github-build-failed': 'Could not fetch the repository from GitHub. Check access and retry.',
       'repository-changed': 'The repository connection changed during the build. Reload and try again.',
