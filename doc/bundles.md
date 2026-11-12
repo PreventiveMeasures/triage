@@ -73,6 +73,7 @@ A directory whose `stasis.config.json` lists `entries` suggests those, and selec
 They are built as `stasis bundle` builds them:
 
 - An entry point is listed when the nearest `stasis.config.json` at or above it that lists it in `entries` does.
+  One may be in what the lockfile installs, such as a package's file in `node_modules`, which the repository doesn't hold: Stasis builds it from the tree it lays out.
 - Listed entry points are built from that file's directory, where Stasis builds each with its options there (see Stasis's [github-bundle Entries](https://github.com/PreventiveMeasures/stasis/blob/main/doc/github-bundle.md#entries)).
   They take no conditions, so the conditions chooser is hidden while only they are selected (`422 config-conditions` if a request gives some).
 - Listed entry points are never combined with others, or with another file's (`422 config-mixed`).

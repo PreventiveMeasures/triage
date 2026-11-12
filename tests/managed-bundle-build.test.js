@@ -6,6 +6,7 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { buildGitHubBundle } from '@exodus/stasis/vfs-bundle'
 import { buildErrorCode, buildStasisBundle } from '../server-managed/bundle-build-worker.js'
 import { buildRepositoryBundle, githubBundleFilename, parseBundleBuild } from '../server-managed/bundle-build.ts'
+import { packageOf, registry } from './_managed-npm.js'
 
 const commit = 'a'.repeat(40)
 const conditions = { preset: 'node', conditions: ['node'], platforms: [] }
@@ -89,6 +90,8 @@ function projectClient(files) {
     listRepoDir({ repo, sha, directory }) {
       assert.equal(repo, 'org/repo'); assert.equal(sha, commit)
       const prefix = directory ? directory + '/' : ''
+      // As upstream's: a directory the commit hasn't is refused, not listed empty.
+      if (prefix && !Object.keys(files).some(path => path.startsWith(prefix))) throw new Error(`listRepoDir: ${repo}@${sha} has no directory at ${JSON.stringify(directory)}`)
       const entries = new Map()
       for (const path of Object.keys(files).filter(candidate => candidate.startsWith(prefix))) {
         const relative = path.slice(prefix.length)
@@ -407,4 +410,20 @@ test('real Stasis holds a build to the repository’s stasis.lock.json, by the l
   const frozen = JSON.stringify({ entries: { 'index.ts': {} }, lock: 'frozen' })
   assert.deepEqual(await entriesOf(configured({ ...locked, 'stasis.config.json': frozen }, ['index.ts'])), ['index.ts'])
   assert.equal(await codeOf(configured({ ...files, 'stasis.config.json': frozen }, ['index.ts'])), 'stasis-lock', 'frozen, it needs one there')
+})
+
+test('real Stasis builds the entries stasis.config.json lists in a package the lockfile installs, which the repository doesn’t hold', async t => {
+  const tool = packageOf('tool', '1.0.0', { 'package.json': JSON.stringify({ name: 'tool', version: '1.0.0', type: 'module', bin: { tool: 'cli.js' } }),
+    'cli.js': 'import { run } from "./lib/run.js"\nrun()\n', 'lib/run.js': 'export const run = () => {}\n' })
+  registry(t, [tool])
+  const app = { name: 'app', version: '1.0.0', type: 'module', dependencies: { tool: '1.0.0' } }
+  const project = { 'package.json': JSON.stringify(app), 'index.js': 'export const app = 1\n',
+    'package-lock.json': lockOf({ name: app.name, version: app.version, dependencies: app.dependencies },
+      { 'node_modules/tool': { version: '1.0.0', resolved: tool.doc.dist.tarball, integrity: tool.doc.dist.integrity, bin: { tool: 'cli.js' } } }),
+    'stasis.config.json': JSON.stringify({ entries: { 'index.js': {}, 'node_modules/tool/cli.js': {} } }) }
+  const built = await configured(project, ['index.js', 'node_modules/tool/cli.js'])
+  const bundle = Bundle.parse(brotliDecompressSync(built.bytes).toString())
+  assert.equal(built.directory, '')
+  assert.deepEqual([...bundle.entries].toSorted(), ['index.js', 'node_modules/tool/cli.js'])
+  assert.ok(bundle.sources.has('node_modules/tool/lib/run.js'), 'what it imports, from the tree laid out')
 })
