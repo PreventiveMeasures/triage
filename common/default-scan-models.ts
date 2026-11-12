@@ -3,7 +3,7 @@
 export function defaultScanModels(provider: string | null = null) {
   const ids = [
     'anthropic/claude-opus-5.5',
-    'anthropic/claude-fable-5.1',
+    'anthropic/claude-fable-5.2',
     'anthropic/claude-sonnet-5.5',
     'anthropic/claude-haiku-5.5',
     'openai/gpt-6-astra',
@@ -14,10 +14,10 @@ export function defaultScanModels(provider: string | null = null) {
     'openai/gpt-6.1-terra-pro',
     'openai/gpt-6-luna',
     'openai/gpt-6-luna-pro',
-    'moonshotai/kimi-k3',
     'moonshotai/kimi-k3.1-pro',
-    'google/gemini-4-argon',
+    'moonshotai/kimi-k3',
     'google/gemini-4-carbon',
+    'google/gemini-4-argon',
     'google/gemma-4-31b-it',
     'x-ai/grok-4.7',
     'z-ai/glm-5.3',
