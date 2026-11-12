@@ -120,6 +120,7 @@ describe('default scan models', () => {
     assert.ok(defaults.models.some(model => model.id === 'qwen/qwen3.8-max'))
     assert.ok(defaults.models.some(model => model.id === 'deepseek/deepseek-v4-pro'))
     assert.ok(defaults.models.some(model => model.id === 'mistralai/mistral-large-4-0'))
+    assert.ok(defaults.models.some(model => model.id === 'google/gemini-4-carbon'))
   })
 
   test('direct-provider defaults contain only their own models and keep GPT Pro pairs', () => {
@@ -131,8 +132,8 @@ describe('default scan models', () => {
       assert.equal(filtered.defaultModel, expected[0].id)
     }
     assert.equal(defaultScanModels('openai').defaultModel, 'openai/gpt-6-astra')
-    assert.equal(defaultScanModels('moonshot').defaultModel, 'moonshotai/kimi-k3')
-    assert.deepEqual(defaultScanModels('moonshot').models.map(model => model.id), ['moonshotai/kimi-k3', 'moonshotai/kimi-k3.1-pro'])
+    assert.equal(defaultScanModels('moonshot').defaultModel, 'moonshotai/kimi-k3.1-pro')
+    assert.deepEqual(defaultScanModels('moonshot').models.map(model => model.id), ['moonshotai/kimi-k3.1-pro', 'moonshotai/kimi-k3'])
     assert.deepEqual(modelRows(defaultScanModels('openai').models).map(model => [model.id, model.pro?.id]), [
       ['openai/gpt-6-astra', 'openai/gpt-6-astra-pro'],
       ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol-pro'],
