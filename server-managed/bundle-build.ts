@@ -128,7 +128,8 @@ const MAX_ACTIVE_BUILDS = 1
 // terminates the worker (build-memory), not the process.
 const RESERVED_MIB = 512
 const MIN_BUILD_HEAP_MIB = 512
-export function buildHeapLimitMib(memory = Math.min(process.constrainedMemory() || Infinity, totalmem())): number {
+const processMemory = () => Math.min(process.constrainedMemory() || Infinity, totalmem())
+export function buildHeapLimitMib(memory = processMemory()): number {
   return Math.max(MIN_BUILD_HEAP_MIB, Math.floor(memory / 1024 ** 2) - RESERVED_MIB)
 }
 
@@ -171,8 +172,11 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
   let stage: BundleBuildStage = 'worker-start'
   const buildId = randomUUID(), started = performance.now()
   const heapLimitMib = buildHeapLimitMib()
+  // How this Node was built, as it decides what a heap holds the same objects in.
+  const { v8_enable_pointer_compression: pointerCompression, v8_enable_sandbox: v8Sandbox } = process.config.variables as Record<string, unknown>
   const context = { buildId, repoId: request.input.repoId, github: request.github, commit: request.input.commit,
-    directory: request.input.directory, entryCount: request.input.entries.length, node: process.version, heapLimitMib }
+    directory: request.input.directory, entryCount: request.input.entries.length, node: process.version, v8: process.versions.v8, pointerCompression, v8Sandbox,
+    memoryMib: Math.round(processMemory() / 1024 ** 2), heapLimitMib }
   const log = (event: string, details: Record<string, unknown> = {}) => {
     const write = event === 'failed' ? console.error : console.info
     write('managed-bundle-build:', JSON.stringify({ ...context, workerUrl: workerUrl?.href, event, stage, elapsedMs: Math.round(performance.now() - started), ...details }))
@@ -202,10 +206,15 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
       const abort = () => fail(signal.reason instanceof BundleBuildError ? signal.reason.status : 499,
         signal.reason instanceof BundleBuildError ? signal.reason.code : 'build-cancelled')
       signal.addEventListener('abort', abort, { once: true })
-      running.on('message', (message: Omit<BuiltBundle, 'bytes'> & { bytes: Uint8Array; type?: string; stage?: BundleBuildStage; error?: string; status?: number; diagnostic?: BundleBuildDiagnostic }) => {
+      // The worker's memory and notes are the log's alone: the response tells
+      // the bundle, or the error's code, and nothing of them.
+      running.on('message', (message: Omit<BuiltBundle, 'bytes'> & { bytes: Uint8Array; type?: string; stage?: BundleBuildStage; error?: string; status?: number;
+        diagnostic?: BundleBuildDiagnostic; memory?: Record<string, number>; event?: string; details?: Record<string, unknown> }) => {
         if (settled) return
-        if (message.type === 'progress' && message.stage) { stage = message.stage; log('progress'); return }
-        if (message.error) { fail(message.status ?? 422, message.error, { diagnostic: message.diagnostic }); return }
+        if (message.type === 'progress' && message.stage) { stage = message.stage; log('progress', { memory: message.memory }); return }
+        if (message.type === 'memory') { log('memory', { memory: message.memory }); return }
+        if (message.type === 'note' && typeof message.event === 'string') { log(message.event, message.details ?? {}); return }
+        if (message.error) { fail(message.status ?? 422, message.error, { diagnostic: message.diagnostic, memory: message.memory }); return }
         settled = true
         cleanup()
         log('completed', { byteSize: message.bytes.length })

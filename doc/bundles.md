@@ -99,6 +99,7 @@ If the bytes match an existing bundle, it reuses that one.
 - From npm: the lockfile's packages, their version documents and tarballs.
 - The build runs in a worker that receives no server credential except `NPM_TOKEN`, which npm needs for private scoped packages.
 - Build logs (`managed-bundle-build:` records) never include credentials or upstream response bodies, and the API returns only an error code.
+- They record the build worker's memory at each stage and every 5 seconds (the process's resident set, the worker's heap and its ArrayBuffers), the directory Stasis builds from, each tree it downloads of the repository (the whole repository's or a directory's) and its size, and the Node build (V8 version, pointer compression, sandbox); none of it reaches the API's answer.
 - Off Vercel, what builds and audits download is kept in upstream's disk cache, `$XDG_CACHE_HOME/PreventiveMeasures` (or `~/.cache/PreventiveMeasures`).
   On Vercel nothing is kept on disk.
 

@@ -437,3 +437,23 @@ test('real Stasis lays a pnpm tree out for no Node: engineStrict takes an engine
   }
   assert.deepEqual(await entriesOf(configured(project, ['index.js'], { conditions })), ['index.js'])
 })
+
+test('real Stasis’s build notes the directory it builds from and each tree it downloads of the repo, the whole repo’s or a directory’s', async () => {
+  const noted = async project => {
+    const notes = []
+    await buildStasisBundle({ input: input(['app/index.ts']), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, projectClient(project), () => {},
+      (event, details) => notes.push([event, details]))
+    return notes
+  }
+  const app = under('app', files)
+  const alone = await noted(app)
+  assert.deepEqual(alone.map(([event, details]) => [event, details.project ?? details.tree]), [['project', 'app'], ['download', 'directory']], 'a directory standing alone')
+  assert.equal(alone[0][1].configured, false)
+  assert.ok(alone[1][1].bytes > 0)
+  const workspace = { ...app, 'app/package-lock.json': undefined, 'package.json': JSON.stringify({ name: 'root', version: '1.0.0', workspaces: ['app'] }),
+    'package-lock.json': lockOf({ name: 'root', version: '1.0.0', workspaces: ['app'] }, { app: { name: 'fixture', version: '1.0.0' }, 'node_modules/fixture': { resolved: 'app', link: true } }) }
+  delete workspace['app/package-lock.json']
+  const notes = await noted(workspace)
+  assert.deepEqual(notes.map(([event, { tree }]) => [event, tree]), [['project', undefined], ['download', 'repo']], 'a workspace’s, the whole repo')
+  assert.ok(notes[1][1].bytes > 0)
+})

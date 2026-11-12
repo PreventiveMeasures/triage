@@ -104,15 +104,24 @@ async function packageName(input, github, project, bundle, client) {
   return typeof name === 'string' ? name : null
 }
 
-export async function buildStasisBundle({ input, github, token, maxBytes, scopes, cacheDir = null }, client = createClient({ token }), progress = () => {}) {
+// `note` is told what the build log keeps of a build beside its stages: the
+// directory Stasis builds from (`project`), and each tree it downloads of the
+// repo (`download`), the whole repo's or a directory's, and its bytes.
+export async function buildStasisBundle({ input, github, token, maxBytes, scopes, cacheDir = null }, client = createClient({ token }), progress = () => {}, note = () => {}) {
   const allowed = path => scopes.some(scope => !scope || path === scope || path.startsWith(scope + '/'))
   // Reuse these immutable listings when Stasis discovers the lockfile root.
   const listings = new Map()
+  const downloaded = (tree, read) => async options => {
+    const bytes = await read(options)
+    note('download', { tree, bytes: bytes.length })
+    return bytes
+  }
   const buildClient = { ...client, listRepoDir(options) {
     const key = JSON.stringify([options.repo, options.sha, options.directory ?? ''])
     if (!listings.has(key)) listings.set(key, client.listRepoDir(options))
     return listings.get(key)
-  } }
+  }, getRepoTarball: downloaded('repo', options => client.getRepoTarball(options)),
+  getRepoTreeTarball: downloaded('directory', options => client.getRepoTreeTarball(options)) }
   // Upstream's disk cache keeps the npm tarballs and version documents, and
   // the repo's tree, in `cacheDir`; without one (Vercel), nothing is kept on
   // disk. This fresh worker inherits no application credentials but NPM_TOKEN.
@@ -134,6 +143,7 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   // config's generatePrisma leaves it.
   const { packageManager, ...options } = input.options
   const named = packageManager !== undefined && !namesLockfiles(await configText(project) ?? '{}')
+  note('project', { project, configured: configured !== null, ...(named && { packageManager }) })
   const { bundle } = await buildGitHubBundle({
     github, sha: input.commit, directory: project || undefined,
     entries: input.entries.map(entry => posix.relative(project || '.', entry)),
@@ -181,16 +191,32 @@ export function buildErrorCode(error, message) {
   return /no packageManager given|lockfile installs|no (?:pnpm-lock\.yaml|yarn\.lock|package-lock\.json|soldeer\.lock) found in /u.test(message) ? 'build-lockfile' : 'build-failed'
 }
 
+// The worker's memory as the build log keeps it, in MiB: the process's
+// resident set (the server's with it), and this worker's own heap, used (what
+// is garbage not yet collected among it) and held, what is bound to its
+// objects outside it, and its ArrayBuffers.
+const MEMORY_EVERY_MS = 5000
+function memoryOf() {
+  const { rss, heapUsed, heapTotal, external, arrayBuffers } = process.memoryUsage()
+  const mib = bytes => Math.round(bytes / 1024 ** 2)
+  return { rssMib: mib(rss), heapUsedMib: mib(heapUsed), heapTotalMib: mib(heapTotal), externalMib: mib(external), arrayBuffersMib: mib(arrayBuffers) }
+}
+
 if (parentPort && workerData?.type === 'managed-bundle-build') {
   // Send diagnostics to the request's parent thread, which writes them before
   // returning the HTTP response. Worker stdout can be lost on termination.
+  // Its memory too, at each stage and every MEMORY_EVERY_MS, so that the log
+  // tells where it grew of a worker terminated past its heap.
   const send = (message, transfer = []) => {
     // Node worker messages have no browser target origin.
     // oxlint-disable-next-line unicorn/require-post-message-target-origin
     parentPort.postMessage(message, transfer)
   }
+  const reporting = setInterval(() => send({ type: 'memory', memory: memoryOf() }), MEMORY_EVERY_MS)
+  reporting.unref()
   try {
-    const built = await buildStasisBundle(workerData, undefined, stage => send({ type: 'progress', stage }))
+    const built = await buildStasisBundle(workerData, undefined, stage => send({ type: 'progress', stage, memory: memoryOf() }),
+      (event, details) => send({ type: 'note', event, details }))
     // The bytes handed over rather than copied, where they alone fill their
     // buffer (a small one may share Node's pool, which can't be moved).
     const { bytes } = built
@@ -198,6 +224,8 @@ if (parentPort && workerData?.type === 'managed-bundle-build') {
   } catch (error) {
     const diagnostic = bundleBuildDiagnostic(error, workerData.token)
     const code = buildErrorCode(error, diagnostic.message)
-    send({ error: code, status: code === 'too-large' ? 413 : code === 'build-scope' ? 403 : code === 'bad-conditions' ? 400 : 422, diagnostic })
+    send({ error: code, status: code === 'too-large' ? 413 : code === 'build-scope' ? 403 : code === 'bad-conditions' ? 400 : 422, diagnostic, memory: memoryOf() })
+  } finally {
+    clearInterval(reporting)
   }
 }
