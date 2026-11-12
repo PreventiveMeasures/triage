@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { configEntryKey, parseStasisConfig } from '../server-managed/stasis-config.ts'
+import { configEntryKey, namesLockfiles, parseStasisConfig } from '../server-managed/stasis-config.ts'
 
 const config = (entries, directory) => parseStasisConfig(JSON.stringify({ entries }), directory)
 
@@ -30,4 +30,10 @@ test('one whose entries Stasis can’t tell is refused', () => {
   for (const entries of [[], 'index.js', null]) {
     assert.throws(() => parseStasisConfig(JSON.stringify({ entries }), 'app'), /app\/stasis\.config\.json: entries must be an object/u, JSON.stringify(entries))
   }
+})
+
+test('a stasis.config.json names the lockfiles to lay out where it has lockfiles, whatever Stasis makes of them', () => {
+  assert.equal(namesLockfiles(JSON.stringify({ lockfiles: ['soldeer.lock'] })), true)
+  assert.equal(namesLockfiles(JSON.stringify({ lockfiles: 'soldeer.lock', entries: {} })), true, 'Stasis refuses it, saying why')
+  for (const text of ['{}', JSON.stringify({ entries: { 'a.sol': {} } }), '[]', 'null', '{not json']) assert.equal(namesLockfiles(text), false, text)
 })

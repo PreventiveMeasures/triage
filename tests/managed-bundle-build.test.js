@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { brotliDecompressSync, gzipSync } from 'node:zlib'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { buildGitHubBundle } from '@exodus/stasis/vfs-bundle'
 import { buildErrorCode, buildStasisBundle } from '../server-managed/bundle-build-worker.js'
 import { buildRepositoryBundle, githubBundleFilename, parseBundleBuild } from '../server-managed/bundle-build.ts'
 
@@ -272,6 +273,15 @@ test('missing, ambiguous and named-but-missing lockfiles are reported as the loc
     ['buildVfsBundle: stasis.config.json\'s entries name index.js but not main.js: bundle either the entries it names or others, not both', 'config-mixed'],
     ['buildVfsBundle: stasis.config.json is not valid JSON', 'config-invalid'],
     ['buildVfsBundle: stasis.config.json: entries "index.js": unknown option "x"', 'config-invalid'],
+    ['buildVfsBundle: stasis.config.json: lock can only be \'frozen\' (got "none")', 'config-invalid'],
+    ['stasis.config.json\'s lockfiles names nope/package-lock.json, which is no file in /', 'config-invalid'],
+    ['buildVfsBundle: stasis.config.json: disallowedPaths refuses value.ts ("value.ts")', 'config-policy'],
+    ['buildVfsBundle: stasis.config.json: entries "a.ts", "b.ts": allowedModules allows none of 2 packages: x@1.0.0, y@1.0.0', 'config-policy'],
+    ['buildVfsBundle: stasis.config.json: entries "index.ts": allowedPaths does not allow secret.ts', 'config-policy'],
+    ['buildVfsBundle: stasis.config.json: entries "index.ts": disallowedPaths must be an array of non-empty strings', 'config-invalid'],
+    ['app/stasis.lock.json: content mismatch for \'value.ts\'', 'stasis-lock'],
+    ['stasis.lock.json isn\'t there, and lock = frozen holds the build to it', 'stasis-lock'],
+    ['stasis.lock.json (lock = frozen) doesn\'t attest extra.ts', 'stasis-lock'],
   ]) assert.equal(buildErrorCode(new Error(message), message), code, message)
   assert.equal(buildErrorCode(new Error('too-large'), 'too-large'), 'too-large')
 })
@@ -351,4 +361,50 @@ test('real Stasis refuses stasis.config.json entries that run code, or that it c
   for (const options of [{ unknown: true }, { output: 'x.br' }, { metro: true }, { conditions: [] }]) {
     assert.equal(await refused(options), 'config-invalid', JSON.stringify(options))
   }
+})
+
+const lockOf = (root, packages) => JSON.stringify({ name: root.name, version: root.version, lockfileVersion: 3, requires: true,
+  packages: { '': root, ...packages } }, null, 2) + '\n'
+const soldeer = {
+  'foundry.toml': '[profile.default]\nsrc = "src"\nlibs = ["dependencies"]\n[dependencies]\n', 'soldeer.lock': 'version = 2\ndependencies = []\n',
+  'src/Token.sol': 'pragma solidity ^0.8.0; import "./Base.sol"; contract Token is Base {}', 'src/Base.sol': 'pragma solidity ^0.8.0; contract Base {}',
+}
+const under = (directory, tree) => Object.fromEntries(Object.entries(tree).map(([path, text]) => [`${directory}/${path}`, text]))
+const configured = (project, entries, extra = {}) => buildStasisBundle({ input: parseBundleBuild({ repoId: 1, commit, entries, ...extra }), github: 'org/repo', token: null,
+  maxBytes: 1_000_000, scopes: [null] }, projectClient(project))
+const entriesOf = async built => [...Bundle.parse(brotliDecompressSync((await built).bytes).toString()).entries]
+const codeOf = promise => promise.then(() => null, error => buildErrorCode(error, error.message))
+
+test('real Stasis lays out the lockfiles stasis.config.json names, a JS workspace’s above it and a Soldeer project’s alike', async () => {
+  const root = { name: 'root', version: '1.0.0', workspaces: ['app'] }
+  const workspace = { 'package.json': JSON.stringify(root), 'package-lock.json': lockOf(root, { app: { version: '1.0.0' }, 'node_modules/app': { resolved: 'app', link: true } }),
+    ...under('app', { 'package.json': JSON.stringify({ name: 'app', version: '1.0.0', type: 'module' }), 'index.ts': files['index.ts'], 'value.ts': files['value.ts'],
+      'stasis.config.json': JSON.stringify({ entries: { 'index.ts': {} }, lockfiles: ['../package-lock.json'] }) }) }
+  assert.deepEqual(await entriesOf(configured(workspace, ['app/index.ts'])), ['index.ts'])
+  const contracts = { ...under('contracts', soldeer), 'contracts/stasis.config.json': JSON.stringify({ entries: { 'src/Token.sol': {} }, lockfiles: ['soldeer.lock'] }) }
+  assert.deepEqual(await entriesOf(configured(contracts, ['contracts/src/Token.sol'])), ['src/Token.sol'], 'no package manager given beside them')
+  const unnamed = { ...under('contracts', soldeer), 'contracts/stasis.config.json': JSON.stringify({ lockfiles: ['soldeer.lock'] }) }
+  assert.deepEqual(await entriesOf(configured(unnamed, ['contracts/src/Token.sol'])), ['src/Token.sol'], 'named by a config listing no entries')
+  const missing = { ...files, 'stasis.config.json': JSON.stringify({ entries: { 'index.ts': {} }, lockfiles: ['app/package-lock.json'] }) }
+  assert.equal(await codeOf(configured(missing, ['index.ts'])), 'config-invalid', 'one naming no file is the config’s')
+})
+
+test('real Stasis holds a bundle to stasis.config.json’s policy, the file’s or an entry’s', async () => {
+  const policed = policy => ({ ...files, 'stasis.config.json': JSON.stringify({ entries: { 'index.ts': policy.entry ?? {} }, ...policy.file }) })
+  assert.deepEqual(await entriesOf(configured(policed({ entry: { allowedPaths: ['*.ts', 'package.json'] } }), ['index.ts'])), ['index.ts'])
+  for (const policy of [{ file: { disallowedPaths: ['value.ts'] } }, { entry: { disallowedPaths: ['value.ts'] } }, { entry: { allowedPaths: ['index.ts'] } }]) {
+    assert.equal(await codeOf(configured(policed(policy), ['index.ts'])), 'config-policy', JSON.stringify(policy))
+  }
+  assert.equal(await codeOf(configured(policed({ entry: { disallowedPaths: 'value.ts' } }), ['index.ts'])), 'config-invalid', 'one Stasis can’t read is the config’s')
+})
+
+test('real Stasis holds a build to the repository’s stasis.lock.json, by the lock mode stasis.config.json pins', async () => {
+  // As `stasis github-bundle --lockfile` writes it, of the same tree.
+  const built = await buildGitHubBundle({ github: 'org/repo', sha: commit, entries: ['index.ts'], conditions: ['node'], client: projectClient(files), cache: false })
+  const locked = { ...files, 'stasis.lock.json': built.lockfile.serialize() }
+  assert.deepEqual(await entriesOf(configured(locked, ['index.ts'], { conditions })), ['index.ts'], 'one agreeing with it builds')
+  assert.equal(await codeOf(configured({ ...locked, 'value.ts': 'export const value: number = 43' }, ['index.ts'], { conditions })), 'stasis-lock', 'one that disagrees is refused')
+  const frozen = JSON.stringify({ entries: { 'index.ts': {} }, lock: 'frozen' })
+  assert.deepEqual(await entriesOf(configured({ ...locked, 'stasis.config.json': frozen }, ['index.ts'])), ['index.ts'])
+  assert.equal(await codeOf(configured({ ...files, 'stasis.config.json': frozen }, ['index.ts'])), 'stasis-lock', 'frozen, it needs one there')
 })

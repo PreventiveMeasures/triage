@@ -44,3 +44,12 @@ export function parseStasisConfig(text: string, directory = ''): Set<string> | n
   }
   return new Set(named.keys())
 }
+
+// Whether the stasis.config.json whose text is `text` names the lockfiles Stasis
+// lays out (`lockfiles`), beside which it takes no package manager; false where
+// Stasis can't read it, for the build to say why.
+export function namesLockfiles(text: string): boolean {
+  let config: unknown
+  try { config = JSON.parse(text) } catch { return false }
+  return plainObject(config) && config['lockfiles'] !== undefined
+}

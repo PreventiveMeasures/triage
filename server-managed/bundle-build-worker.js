@@ -7,18 +7,32 @@ import { brotliOptions } from '@exodus/stasis-core/brotli'
 import { HttpError, createClient } from '@preventive/upstream/github.js'
 import { githubBundleFilename } from './bundle-build.ts'
 import { bundleBuildDiagnostic } from './bundle-build-diagnostics.js'
-import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG, parseStasisConfig } from './stasis-config.ts'
+import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG, namesLockfiles, parseStasisConfig } from './stasis-config.ts'
 
 const regularFile = entry => entry.type === 'blob' && ['100644', '100755'].includes(entry.mode)
 const parentOf = path => posix.dirname(path).replace(/^\.$/u, '')
 
+// The text of the stasis.config.json in a directory, null where there is none,
+// each read once a build.
+function configReader(input, github, client) {
+  const read = new Map()
+  const configText = async directory => {
+    const listing = await client.listRepoDir({ repo: github, sha: input.commit, directory: directory || undefined })
+    if (!listing.some(entry => entry.path === STASIS_CONFIG && regularFile(entry))) return null
+    return await client.getRepoFile({ repo: github, path: posix.join(directory, STASIS_CONFIG), ref: input.commit })
+  }
+  return directory => {
+    if (!read.has(directory)) read.set(directory, configText(directory))
+    return read.get(directory)
+  }
+}
+
 // The entries the stasis.config.json in `directory` names (parseStasisConfig's),
 // null where it has none. One whose entries Stasis can't tell is config-invalid.
-async function directoryConfig(input, github, directory, client) {
-  const listing = await client.listRepoDir({ repo: github, sha: input.commit, directory: directory || undefined })
-  if (!listing.some(entry => entry.path === STASIS_CONFIG && regularFile(entry))) return null
+async function directoryConfig(configText, directory) {
+  const text = await configText(directory)
+  if (text === null) return null
   const path = posix.join(directory, STASIS_CONFIG)
-  const text = await client.getRepoFile({ repo: github, path, ref: input.commit })
   try {
     if (Buffer.byteLength(text) > MAX_STASIS_CONFIG_BYTES) throw new Error(`${path} is larger than ${MAX_STASIS_CONFIG_BYTES} bytes`)
     return parseStasisConfig(text, directory)
@@ -32,15 +46,10 @@ async function directoryConfig(input, github, directory, client) {
 // where none lists any. Stasis reads the one in the directory it builds from
 // alone, and builds the entries it lists alone: with others, or with another
 // file's, they are config-mixed.
-async function listingConfig(input, github, client) {
-  const configs = new Map()
-  const configAt = directory => {
-    if (!configs.has(directory)) configs.set(directory, directoryConfig(input, github, directory, client))
-    return configs.get(directory)
-  }
+async function listingConfig(input, configText) {
   const found = await Promise.all(input.entries.map(async entry => {
     for (let directory = parentOf(entry); ; directory = parentOf(directory)) {
-      const config = await configAt(directory)
+      const config = await directoryConfig(configText, directory)
       if (config?.has(posix.relative(`/${directory}`, `/${entry}`))) return { entry, directory }
       if (!directory) return { entry, directory: null }
     }
@@ -77,21 +86,6 @@ async function packageName(input, github, project, bundle, client) {
   return typeof name === 'string' ? name : null
 }
 
-// Prisma Client is what `prisma generate` writes, not what the repo holds: for
-// a JS project whose package.json depends on a @prisma/ package, Stasis
-// generates it before the scan (generate: ['prisma']).
-async function prismaGenerate(input, github, project, client) {
-  if (input.entries[0].endsWith('.sol')) return []
-  const listing = await client.listRepoDir({ repo: github, sha: input.commit, directory: project || undefined })
-  if (!listing.some(entry => entry.path === 'package.json' && regularFile(entry))) return []
-  const text = await client.getRepoFile({ repo: github, path: posix.join(project, 'package.json'), ref: input.commit })
-  let manifest
-  try { manifest = JSON.parse(text) } catch { return [] }
-  const named = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
-    .flatMap(field => manifest?.[field] !== null && typeof manifest?.[field] === 'object' ? Object.keys(manifest[field]) : [])
-  return named.some(name => name.startsWith('@prisma/')) ? ['prisma'] : []
-}
-
 export async function buildStasisBundle({ input, github, token, maxBytes, scopes, cacheDir = null }, client = createClient({ token }), progress = () => {}) {
   const allowed = path => scopes.some(scope => !scope || path === scope || path.startsWith(scope + '/'))
   // Reuse these immutable listings when Stasis discovers the lockfile root.
@@ -109,16 +103,23 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   // Entries stasis.config.json lists are built from its directory, where
   // Stasis builds each with its options there, taking no conditions; others,
   // from their project with the conditions chosen.
-  const configured = await listingConfig(input, github, buildClient)
+  const configText = configReader(input, github, buildClient)
+  const configured = await listingConfig(input, configText)
   if (configured !== null && input.conditions !== null) throw new Error('config-conditions')
   if (configured === null && input.conditions === null && !input.entries[0].endsWith('.sol')) throw new Error('bad-conditions')
   const project = configured ?? await projectDirectory(input, github, buildClient)
   if (!allowed(project)) throw new Error('build-scope')
-  const generate = await prismaGenerate(input, github, project, buildClient)
+  // Stasis lays out the lockfiles the stasis.config.json it builds from names,
+  // refusing a package manager given beside them: Soldeer is named only for a
+  // Solidity build of a project whose config names none. Stasis detects the
+  // rest itself: TypeScript, and the Prisma Clients the entries reach, as the
+  // config's generatePrisma leaves it.
+  const { packageManager, ...options } = input.options
+  const named = packageManager !== undefined && !namesLockfiles(await configText(project) ?? '{}')
   const { bundle } = await buildGitHubBundle({
     github, sha: input.commit, directory: project || undefined,
     entries: input.entries.map(entry => posix.relative(project || '.', entry)),
-    ...input.options, client: buildClient, ...(cacheDir === null && { cache: false }), ...(generate.length > 0 && { generate }),
+    ...options, ...(named && { packageManager }), client: buildClient, ...(cacheDir === null && { cache: false }),
   })
   const directory = bundle.repo?.directory ?? ''
   progress('scope')
@@ -139,14 +140,20 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
 // the caller's grants: those stay in the diagnostic. A missing or ambiguous
 // lockfile, or the named one missing, is the lockfile's. Stasis refuses a
 // stasis.config.json entry setting an option that runs a program, whatever
-// is given (nothing of the repo runs); one it can't build with its options
-// is the config's.
+// is given (nothing of the repo runs); a bundle holding a path or package its
+// allowedPaths, disallowedPaths, allowedModules or disallowedModules refuses,
+// the config's or an entry's, is the policy's; one it can't read, build with
+// its options, or lay out the lockfiles it names of, is the config's. A build
+// the repository's stasis.lock.json disagrees with, or that its lock mode
+// holds to one that isn't there, is the stasis.lock.json's.
 export function buildErrorCode(error, message) {
   if (['build-scope', 'too-large', 'bad-conditions', 'config-invalid', 'config-mixed', 'config-conditions'].includes(message)) return message
   if (error instanceof HttpError) return error.status === 429 ? 'github-rate-limited' : 'github-build-failed'
   if (/, which runs .+, and nothing of the project runs here$/u.test(message)) return 'config-runs-code'
   if (message.endsWith(': bundle either the entries it names or others, not both')) return 'config-mixed'
-  if (/\bstasis\.config\.json(?: is not valid JSON|: entries)/u.test(message)) return 'config-invalid'
+  if (/\bstasis\.config\.json(?:: entries .*?)?: (?:allowed|disallowed)(?:Paths|Modules) (?:refuses|does not allow|allows none of) /u.test(message)) return 'config-policy'
+  if (/\bstasis\.config\.json(?: is not valid JSON|: |'s lockfiles )/u.test(message)) return 'config-invalid'
+  if (/\bstasis\.lock\.json(?::| isn't there,| \(lock = )/u.test(message)) return 'stasis-lock'
   return /no packageManager given|lockfile installs|no (?:pnpm-lock\.yaml|yarn\.lock|package-lock\.json|soldeer\.lock) found in /u.test(message) ? 'build-lockfile' : 'build-failed'
 }
 
