@@ -134,10 +134,10 @@ describe('a team board\'s URL', () => {
     assert.deepEqual(route(), { ...base, filters: { severities: ['high'] } })
   })
 
-  // What the board opened on is the baseline, the confidence floor it
-  // chose among it. A reset that clears that floor (to reveal a finding
+  // The baseline is what the board opens on, the confidence floor it
+  // chooses among it. A reset that clears that floor (to reveal a finding
   // under it) leaves a board a link would not open again.
-  it('measures against the floor the board opened on, through a reset that clears it', () => {
+  it('measures against the floor the board opens on, through a reset that clears it', () => {
     const scored = [[{ ...finding('c', 'owner/a'), confidence: 9 }], [{ ...finding('d', 'owner/b'), confidence: 2 }]]
     state.reports = [{ fileName: 'r.json', groups: scored }]
     clearMergedGroups()
@@ -172,5 +172,38 @@ describe('a team board\'s URL', () => {
     } finally {
       state.triage.delete('d')
     }
+  })
+
+  // The same board, loaded in Table and switched to Kanban by hand: what
+  // it shows is still Table's floor, which a link would not open on.
+  it('names nothing on a board switched to Kanban with another view\'s floor', () => {
+    const scored = [[{ ...finding('c', 'owner/a'), confidence: 9 }], [{ ...finding('d', 'owner/b'), confidence: 2 }]]
+    state.reports = [{ fileName: 'r.json', groups: scored }]
+    clearMergedGroups()
+    state.triage.set('d', { triage: 'fixed' })
+    try {
+      state.viewMode = 'table'
+      applyOpeningFilters(getShownGroups())
+      state.viewMode = 'kanban'
+      state.filterSeverities = new Set(['high'])
+      assert.deepEqual(route(), base, 'Table\'s floor of 0 is no floor a link opens on')
+      state.filterConfMin = 3
+      assert.deepEqual(route().filters, { severities: ['high'] })
+    } finally {
+      state.triage.delete('d')
+    }
+  })
+
+  // render.js drops the range to 0—10 where a finding has no score: the
+  // floor the board opens on is then none, whatever it would choose.
+  it('takes no floor for a board without the confidence range', () => {
+    const mixed = [[{ ...finding('c', 'owner/a'), confidence: 9 }], [{ ...finding('d', 'owner/b'), confidence: 2 }], [finding('e', 'owner/a')]]
+    state.reports = [{ fileName: 'r.json', groups: mixed }]
+    clearMergedGroups()
+    state.filterConfMin = 0
+    state.filterRepo = 'owner/a'
+    assert.deepEqual(route().filters, { repo: 'owner/a' })
+    applyLinkedFilters({ repo: 'owner/a' })
+    assert.equal(state.filterConfMin, 0)
   })
 })
