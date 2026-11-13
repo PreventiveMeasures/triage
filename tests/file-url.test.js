@@ -388,9 +388,11 @@ describe('evidence rows', () => {
   })
 
   // The issue body's form: each row linked where the card's is, the
-  // report's own URL first, a row that resolves nowhere left as text.
+  // report's own URL first, a row that resolves nowhere a code span, so
+  // GitHub reads no `@scope` in its path as a mention.
   it('links every row the card links, given the repo target', () => {
-    const dep = { ...f, file: 'node_modules/lodash/index.js', evidence: [...f.evidence, { file: 'node_modules/qs/lib/parse.js', line: '7' }] }
+    const dep = { ...f, file: 'node_modules/lodash/index.js', evidence: [...f.evidence, { file: 'node_modules/qs/lib/parse.js', line: '7' },
+      { file: 'node_modules/@scope/pkg/a.js', text: 'Via @scope/pkg.' }] }
     assert.equal(evidenceMarkdown(dep, { repoFallback: { github: 'acme/monorepo', directory: '' } }), [
       '**Evidence:**',
       '1. [libs/a.ts:10-20](https://github.com/o/r/blob/abc/libs/a.ts#L10-L20)',
@@ -398,8 +400,12 @@ describe('evidence rows', () => {
       '2. [libs/b.ts:30](https://github.com/acme/monorepo/blob/HEAD/libs/b.ts#L30)',
       '   The sink.',
       '3. [libs/c.ts](https://github.com/acme/monorepo/blob/HEAD/libs/c.ts)',
-      '4. node_modules/qs/lib/parse.js:7',
+      '4. `node_modules/qs/lib/parse.js:7`',
+      '5. `node_modules/@scope/pkg/a.js`',
+      '   Via @scope/pkg.',
     ].join('\n'))
+    // The search haystack: the path as written.
+    assert.ok(evidenceMarkdown(dep).endsWith('\n5. node_modules/@scope/pkg/a.js\n   Via @scope/pkg.'))
     assert.equal(evidenceMarkdown(f, { repoFallback: null }).split('\n')[3], '2. [libs/b.ts:30](https://github.com/acme/widgets/blob/HEAD/libs/b.ts#L30)')
   })
 

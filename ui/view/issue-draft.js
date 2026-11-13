@@ -1,4 +1,5 @@
 import { descriptionSections, isHttpUrl, locationLabel, stripExportMarker } from '@preventive/report'
+import { codeSpan } from './code-span.js'
 
 const FIELDS = [
   ['impact', 'Impact'],
@@ -36,8 +37,10 @@ function sectionText({ id, label, parts }, finding) {
 // Keep optional narrative sections separate from the description, including
 // formats that put labelled sections in the description instead of fields.
 // The caller formats source links and evidence (format.js), so this module
-// needs only @preventive/report: the card builds the GitHub form's body with
-// it up front, and the lazily loaded managed issue dialog its draft. Only Impact
+// needs only @preventive/report and code-span.js: the card builds the GitHub
+// form's body with it up front, and the lazily loaded managed issue dialog its
+// draft. A source that links nowhere is a code span, as its evidence rows are,
+// so GitHub reads no `@scope` in it as a mention. Only Impact
 // starts selected unless `allSections`; `findingLink` ends the body, and
 // sections toggled on later go above it.
 export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevalidation = true, findingLink, allSections = false } = {}) {
@@ -52,7 +55,7 @@ export function createIssueDraft(finding, { sourceUrl, evidence = '', showRevali
   const location = locationLabel(finding)
   const advisory = isHttpUrl(finding.advisory?.url) ? finding.advisory.url : null
   if (advisory) blocks.push(`Advisory: ${advisory}`)
-  else if (finding.file) blocks.push(PERMALINK_RE.test(sourceUrl ?? '') ? sourceUrl : `File: ${sourceUrl ? `[${location}](${sourceUrl})` : location}`)
+  else if (finding.file) blocks.push(PERMALINK_RE.test(sourceUrl ?? '') ? sourceUrl : `File: ${sourceUrl ? `[${location}](${sourceUrl})` : codeSpan(location)}`)
   let current = null
   for (const section of descriptionSections(stripExportMarker(finding.description, finding))) {
     if (section.label !== null) {

@@ -10,6 +10,7 @@ import { parseFindingUrl } from '../../client/finding-link.js'
 import { formatBytes as formatByteSize } from '../scan/metrics.js'
 import { REVALIDATE_FILTERS, hasRevalidateStamp } from '../../common/finding-filters.js'
 import { asCommit, repoCommit, sameRepoSlug } from '../../common/repo-commit.js'
+import { codeSpan } from './code-span.js'
 export { PARTIAL_MODES, REVALIDATE_FILTERS, activeRevalidateKinds, hasRevalidateStamp, revalidateFilterKinds } from '../../common/finding-filters.js'
 // What a finding IS — the readers shared with the report library's
 // markdown writer — lives in that library; re-exported here unchanged so
@@ -1213,14 +1214,16 @@ export function evidenceUrl(row, f, repoFallback, index) {
 // own right), the compact `**Evidence:**` block below does not.
 // `link(row, i)` names each row's target; by default only the URL the
 // report wrote for it. `lineLinks` links the line references in a row's
-// note to that target too (linkLineRefs).
+// note to that target too (linkLineRefs), and puts a row that links
+// nowhere in a code span (codeSpan), as GitHub would otherwise read the
+// `@scope` in a dependency's path as a mention.
 function evidenceRows(f, { spaced = false, link = row => row.url, lineLinks = false } = {}) {
   const rows = Array.isArray(f?.evidence) ? f.evidence : []
   if (rows.length === 0) return ''
   return rows.map((row, i) => {
     const label = locationLabel(row)
     const url = link(row, i)
-    const lines = [`${i + 1}. ${url ? `[${label}](${url})` : label}`]
+    const lines = [`${i + 1}. ${url ? `[${label}](${url})` : lineLinks ? codeSpan(label) : label}`]
     const note = lineLinks ? linkLineRefs(evidenceNote(row), url) : evidenceNote(row)
     if (note) for (const noteLine of note.split('\n')) lines.push(`   ${noteLine}`)
     return lines.join('\n')
