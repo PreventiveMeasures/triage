@@ -2590,14 +2590,15 @@ document.addEventListener('download-requested', async () => {
 })
 
 // `<analyzer-select>` dispatches this when a row in its analyzer /
-// model popover is picked. detail always carries BOTH dimensions
-// (the clicked one updated, the other passed through unchanged), so
-// one listener writes the pair without knowing which column was
-// clicked. The component owns its popover, so there's no id-keyed
+// model / validation model popover is picked. detail always carries
+// EVERY dimension (the clicked one updated, the others passed through
+// unchanged), so one listener writes them without knowing which column
+// was clicked. The component owns its popover, so there's no id-keyed
 // branch in a generic change listener.
 report.addEventListener('analyzer-change', (e) => {
   state.filterAnalyzer = e.detail.analyzer
   state.filterModel = e.detail.model
+  state.filterValidationModel = e.detail.validationModel
   render()
 })
 // `<repo-filter>` forwards the shared repository selector change. Mirrors

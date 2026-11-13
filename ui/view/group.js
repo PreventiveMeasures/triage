@@ -8,7 +8,7 @@ import { SEVERITY_ORDER, canDropRevalidation, depsDirName, displayedSeverity, is
 // inside function bodies, never during module evaluation, so whichever
 // module evaluates first resolves the other's hoisted function
 // declarations by the time anything runs.
-import { matchesRunFilters } from './filters.js'
+import { matchesRunTab } from './filters.js'
 import { mergeReportGroups } from '../../common/workspace-groups.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
 import { getLinksPreview } from './links-preview.js'
@@ -260,6 +260,7 @@ export function activeTabFor(group) {
   }
   // No explicit selection yet. Candidate pool: all tabs in display
   // order, narrowed to the tabs matching the analyzer/model dropdown
+  // (matchesRunTab, which takes a Validation model's pass row too)
   // while that filter is active — a group stays visible when ANY tab
   // matches (group-level some() in applyFilters), so without the
   // narrowing a group could open on the very duplicate the user just
@@ -275,8 +276,8 @@ export function activeTabFor(group) {
   // marker so an annotated sibling opens first; else the pool's first
   // (= primaryTab(group) when unfiltered).
   let pool = sorted
-  if (state.filterAnalyzer || state.filterModel) {
-    const matching = sorted.filter(matchesRunFilters)
+  if (state.filterAnalyzer || state.filterModel || state.filterValidationModel) {
+    const matching = sorted.filter(matchesRunTab)
     if (matching.length > 0) pool = matching
   }
   return pool.find(tabHasMarks) ?? pool[0]

@@ -1,6 +1,6 @@
 import { automaticFixFor } from './managed-issues.js'
 import { isPlaceholderNpmPackage, state } from '#client/index.js'
-import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
+import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRevalidation, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
 import { drawnTabs, getMergedGroups, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
 import { defaultConfidenceFloor as confidenceFloor, confidenceOnScale, confirmedCoverage, confirmedIsDefault, canLockConfirmed as lockConfirmed, rangeApplies } from '../../common/finding-filters.js'
 export { confidenceOnScale, rangeApplies } from '../../common/finding-filters.js'
@@ -50,7 +50,7 @@ export function modelOfFinding(f) {
   return prettyModel(f.model) || null
 }
 
-// Analyzer + model dimension predicate — the two run-meta checks of
+// Analyzer + model dimension predicate — two run-meta checks of
 // the toolbar's `<analyzer-select>` dropdown, factored out of
 // matchesFilters because group.js's activeTabFor ALSO consults it:
 // when the dropdown narrows the view, the tab a dedup group opens on
@@ -65,6 +65,10 @@ export function modelOfFinding(f) {
 //
 // Model: matched on `modelOfFinding` (the pretty name; see that
 // helper for why). Findings with no model match NULL_MODEL_SENTINEL.
+// Only on a row the revalidation pass did not write: the pass's own
+// row answers to the Validation model instead (matchesValidationModel),
+// so that a model the pass ran on can be asked for what IT found in the
+// scans beneath, where the pass ran on that one model everywhere.
 //
 // Both dimensions are evaluated per-finding, so selecting both means
 // "SOME finding carries this exact analyzer+model combination" — not
@@ -77,11 +81,86 @@ export function matchesRunFilters(f) {
     if (a !== want) return false
   }
   if (F.filterModel) {
+    if (isRevalidation(f)) return false
     const m = modelOfFinding(f)
     const want = F.filterModel === NULL_MODEL_SENTINEL ? null : F.filterModel
     if (m !== want) return false
   }
   return true
+}
+
+// The dropdown's third dimension, offered in App mode: the model of the
+// revalidation pass's own row (`revalidate: "revalidation"`), by the
+// same pretty name and NULL_MODEL_SENTINEL bucket as Model. Any other
+// row matches no Validation model.
+export function matchesValidationModel(f) {
+  const want = activeFilters().filterValidationModel
+  if (!want) return true
+  return isRevalidation(f) && modelOfFinding(f) === (want === NULL_MODEL_SENTINEL ? null : want)
+}
+
+// A dropdown selection as the value it asks for: `undefined` for none,
+// `null` for the no-value bucket.
+export function runFilterValue(value, sentinel) {
+  return value === '' ? undefined : value === sentinel ? null : value
+}
+
+// The `<analyzer-select>` dropdown's counts: per column, a Map of each
+// value to how many of `groups`, whole rows, it would show, under the
+// other columns' selection. One pass builds all three: per group,
+// collect the analyzers of its tabs that pass the Model filter, and the
+// models of those that pass the Analyzer filter, where the row has a
+// pass of the Validation model; and the models of its passes where
+// some tab carries the analyzer+model pair. Each collected value then
+// counts the group once, as matchesRunRow would show it.
+//
+// Whole rows, the scans App mode folds under a pass's included, so the
+// counts are the same whether the reader sees those or not.
+export function runFilterCounts(groups) {
+  const F = activeFilters()
+  const wantA = runFilterValue(F.filterAnalyzer, NULL_ANALYZER_SENTINEL)
+  const wantM = runFilterValue(F.filterModel, NULL_MODEL_SENTINEL)
+  const wantV = runFilterValue(F.filterValidationModel, NULL_MODEL_SENTINEL)
+  const analyzerOf = (f) => f._analyzer ?? null
+  const analyzerOk = (f) => wantA === undefined || analyzerOf(f) === wantA
+  const modelOk = (f) => wantM === undefined || (!isRevalidation(f) && modelOfFinding(f) === wantM)
+  const counts = { analyzers: new Map(), models: new Map(), validationModels: new Map() }
+  const count = (map, values) => { for (const value of values) map.set(value, (map.get(value) ?? 0) + 1) }
+  for (const g of groups) {
+    const validated = wantV === undefined || g.some((f) => isRevalidation(f) && modelOfFinding(f) === wantV)
+    const paired = (wantA === undefined && wantM === undefined) || g.some((f) => analyzerOk(f) && modelOk(f))
+    const analyzers = new Set()
+    const models = new Set()
+    const validationModels = new Set()
+    for (const f of g) {
+      const pass = isRevalidation(f)
+      if (validated && modelOk(f)) analyzers.add(analyzerOf(f))
+      if (validated && !pass && analyzerOk(f)) models.add(modelOfFinding(f))
+      if (paired && pass) validationModels.add(modelOfFinding(f))
+    }
+    count(counts.analyzers, analyzers)
+    count(counts.models, models)
+    count(counts.validationModels, validationModels)
+  }
+  return counts
+}
+
+// The tabs a row should open on under the dropdown's selection (group.js
+// activeTabFor): one matching what the selection asks of a single tab.
+export function matchesRunTab(f) {
+  const F = activeFilters()
+  return (Boolean(F.filterAnalyzer || F.filterModel) && matchesRunFilters(f))
+    || (Boolean(F.filterValidationModel) && matchesValidationModel(f))
+}
+
+// The dropdown's selection, asked of a whole row: some row carrying the
+// analyzer+model combination, and some pass's row of the Validation
+// model. Separately, since no one row can be both: the pass's row is the
+// only one with a Validation model, and the only one without a Model.
+export function matchesRunRow(group) {
+  const F = activeFilters()
+  if (F.filterValidationModel && !group.some(matchesValidationModel)) return false
+  return !(F.filterAnalyzer || F.filterModel) || group.some(matchesRunFilters)
 }
 
 // Resolve a finding's repo to a single string key, or null when no
@@ -115,6 +194,7 @@ export function resetFilters() {
   state.filterSources = new Set()
   state.filterAnalyzer = ''
   state.filterModel = ''
+  state.filterValidationModel = ''
   state.filterRepo = ''
   state.filterConfMin = 0
   state.filterConfMax = 10
@@ -147,7 +227,7 @@ export function resetFilters() {
 // stand-in for `state` as far as filtering is concerned.
 const FILTER_FIELDS = [
   'filterSeverities', 'filterColors', 'filterSources',
-  'filterAnalyzer', 'filterModel', 'filterRepo',
+  'filterAnalyzer', 'filterModel', 'filterValidationModel', 'filterRepo',
   'filterConfMin', 'filterConfMax',
   'filterInclude', 'filterIncludeNegate',
   'filterComment', 'filterFix', 'filterFlagged', 'filterDuplicates', 'filterCrossContext', 'filterAppStacked', 'filterSecurity',
@@ -492,6 +572,13 @@ function searchOf(raw) {
 // can ask "does ANY tab in this group match?" — per the user spec,
 // one matching tab keeps the whole group visible.
 export function matchesFilters(f) {
+  return matchesEntryFilters(f) && matchesRunFilters(f)
+}
+
+// All of it but the `<analyzer-select>` dropdown's dimensions, which
+// matchesFilters adds per tab and applyFilters asks of a row with a
+// revalidation pass's row in it as a whole (matchesRunRow).
+function matchesEntryFilters(f) {
   if (!matchesScopeFilters(f)) return false
   const F = activeFilters()
   const { inc, idWords } = searchOf(F.filterInclude)
@@ -508,13 +595,6 @@ export function matchesFilters(f) {
   // NOT evaluated here — they're GROUP-level (see matchesAnnotationFilters
   // / applyFilters) so 'with' / 'without' stay complementary across a
   // dedup group.
-  // Analyzer + model filters — the `<analyzer-select>` dropdown's two
-  // dimensions, shared with group.js's default-tab resolution via
-  // matchesRunFilters (see its comment above for the matching rules).
-  // applyFilters runs this at the GROUP level via `g.some(...)`, so a
-  // dedup group shows in full when any entry matches — same
-  // group-visibility as severity / color.
-  if (!matchesRunFilters(f)) return false
   // Repo filter — single-select dropdown shown only in workspace
   // view (parent gates the chip on `state.currentWorkspace` + a
   // multi-repo option list). Empty = no filter; `NO_REPO_SENTINEL`
@@ -635,25 +715,40 @@ export function hasSecurityContrast(groups) {
   return groups.some(isSecurityGroup) && groups.some((g) => !isSecurityGroup(g))
 }
 
-// Base rows for analyzer/severity/color counts and repository options. The
+// Base rows for severity/color counts and repository options. The
 // caller supplies the current lens's rows and triage bucket. After filtering
 // rows, project their visible tabs too: App mode folds underlying findings
 // inside surviving rows, and those hidden tabs must not contribute values.
 // Annotation and second-row filters don't narrow these selector choices.
 export function applyScopeFilters(groups) {
-  return groups.filter((g) => g.some(matchesScopeFilters)).map(drawnTabs)
+  return scopeRows(groups).map(drawnTabs)
+}
+
+// The same rows, whole: what the `<analyzer-select>` dropdown counts,
+// since its Model asks for the rows App mode folds under the pass's, as
+// applyFilters does.
+export function scopeRows(groups) {
+  return groups.filter((g) => g.some(matchesScopeFilters))
 }
 
 export function applyFilters(groups) {
   // Per-tab existential filters (severity / color / source / analyzer /
   // model / repo / search) via `g.some`, AND the group-level annotation
   // filters.
+  //
+  // The `<analyzer-select>` dropdown's dimensions are per tab too, with
+  // the rest (matchesFilters), except on a row holding a revalidation
+  // pass's row. There they ask the row as a whole (matchesRunRow): the
+  // pass's row is the one App mode draws, and the Model asked for is one
+  // of the scans beneath it, which need not agree with the pass on
+  // severity, confidence or outcome.
   const duplicatesMode = !state.currentWorkspace && activeFilters().filterDuplicates
   const duplicateIds = duplicatesMode ? reportDuplicateIds() : null
   const crossContextMode = activeFilters().filterCrossContext
   const appStackedMode = activeFilters().filterAppStacked
   const securityMode = activeFilters().filterSecurity
-  return groups.filter((g) => g.some(matchesFilters) && matchesAnnotationFilters(g)
+  return groups.filter((g) => (g.some(isRevalidation) ? g.some(matchesEntryFilters) : g.some(matchesFilters)) && matchesRunRow(g)
+    && matchesAnnotationFilters(g)
     && (!duplicatesMode || (duplicatesMode === 'with') === g.some((f) => duplicateIds.has(tabKey(f))))
     && (!crossContextMode || (crossContextMode === 'with') === isCrossContextGroup(g))
     && (!appStackedMode || (appStackedMode === 'with') === isAppStackedGroup(g))

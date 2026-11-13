@@ -14,7 +14,7 @@ import { beforeEach, describe, it } from 'node:test'
 import './_polyfills.js'
 
 const { state } = await import('../client/state.ts')
-const { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, applyFilters, cloneFilterFields } = await import('../ui/view/filters.js')
+const { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, cloneFilterFields } = await import('../ui/view/filters.js')
 const { activeFilterDescriptions, exportBucketGroups, exportSelectionSummary } = await import('../ui/view/export-summary.js')
 
 function reset() {
@@ -23,6 +23,7 @@ function reset() {
   state.filterSources = new Set()
   state.filterAnalyzer = ''
   state.filterModel = ''
+  state.filterValidationModel = ''
   state.filterRepo = ''
   state.filterConfMin = 0
   state.filterConfMax = 10
@@ -207,6 +208,15 @@ describe('activeFilterDescriptions', () => {
     ])
   })
 
+  it('names the validation model apart from the model', () => {
+    state.filterModel = 'opus 5 5'
+    state.filterValidationModel = NULL_MODEL_SENTINEL
+    assert.deepEqual(described(), [
+      { label: 'Model', value: 'opus 5 5' },
+      { label: 'Validation model', value: '(none)' },
+    ])
+  })
+
   it('renders annotation tri-state filters as with / without', () => {
     state.filterComment = 'with'
     state.filterFix = 'without'
@@ -229,6 +239,8 @@ describe('activeFilterDescriptions — dropping a filter', () => {
     state.filterColors = new Set(['red'])
     state.filterSources = new Set(['own'])
     state.filterAnalyzer = 'semgrep'
+    state.filterModel = 'opus 5 5'
+    state.filterValidationModel = 'opus 5 5'
     state.filterRepo = 'acme/app'
     state.filterConfMin = 4
     state.filterInclude = 'sql'

@@ -11,9 +11,9 @@ import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
+import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, isRevalidation, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, shouldLockConfirmed } from './filters.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, scopeRows, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 import { SOURCE_LABELS, revalidateKindOf } from '@preventive/report'
@@ -755,10 +755,11 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            StateElement, so stale-filter clears in the parent's
            pipeline above re-render the trigger label and row
            highlights on their own. -->
-      ${analyzerSelect.analyzers.length > 1 || analyzerSelect.models.length > 1
+      ${analyzerSelect.analyzers.length > 1 || analyzerSelect.models.length > 1 || analyzerSelect.validationModels.length > 1
         ? html`<analyzer-select
             .analyzers=${analyzerSelect.analyzers}
             .models=${analyzerSelect.models}
+            .validationModels=${analyzerSelect.validationModels}
             .groups=${analyzerSelect.groups}
           ></analyzer-select>`
         : nothing}
@@ -1781,13 +1782,17 @@ function mergedRowFacts(mergedGroups) {
   // source-marked imports first (in ANALYZER_LABELS' order), the null
   // bucket last, the rest alphabetical between them. Models (pretty
   // names — see modelOfFinding) sort alphabetically with the null
-  // bucket pinned last, same shape as the repo options below.
+  // bucket pinned last, same shape as the repo options below. A
+  // revalidation pass's own row gives its model to the Validation model
+  // column instead (filters.js matchesValidationModel), which App mode
+  // alone offers: with the layer off, no row is the pass's.
   const analyzerSet = new Set()
   const modelSet = new Set()
+  const validationModelSet = new Set()
   for (const g of mergedGroups) {
     for (const f of g) {
       analyzerSet.add(f._analyzer ?? null)
-      modelSet.add(modelOfFinding(f))
+      ;(isRevalidation(f) ? validationModelSet : modelSet).add(modelOfFinding(f))
     }
   }
   const knownOrder = Object.keys(ANALYZER_LABELS)
@@ -1803,9 +1808,10 @@ function mergedRowFacts(mergedGroups) {
     return String(a ?? '').localeCompare(String(b ?? ''))
   })
   const modelOptions = [...modelSet].toSorted(nullLastCmp)
+  const validationModelOptions = [...validationModelSet].toSorted(nullLastCmp)
   rowFacts = {
     key, hasAnyPriority, hasAnyModulesPath, hasAnySourcePath, hasMultipleFiles, repoInputUseful, knownRepo,
-    analyzerSet, modelSet, analyzerOptions, modelOptions,
+    analyzerSet, modelSet, validationModelSet, analyzerOptions, modelOptions, validationModelOptions,
   }
   return rowFacts
 }
@@ -2434,7 +2440,7 @@ function renderImpl() {
   const hasAnyConfidence = visibleAllGroups.length > 0 && rangeApplies(visibleAllGroups)
   const {
     hasAnyPriority, hasAnyModulesPath, hasAnySourcePath, hasMultipleFiles, repoInputUseful, knownRepo,
-    analyzerSet, modelSet, analyzerOptions, modelOptions,
+    analyzerSet, modelSet, validationModelSet, analyzerOptions, modelOptions, validationModelOptions,
   } = mergedRowFacts(mergedGroups)
   // If the previously-selected analyzer / model is no longer present
   // (report unload / workspace switch), clear that dimension so a
@@ -2454,6 +2460,13 @@ function renderImpl() {
   if (state.filterModel) {
     const want = state.filterModel === NULL_MODEL_SENTINEL ? null : state.filterModel
     if (!modelSet.has(want) || modelSet.size < 2) state.filterModel = ''
+  }
+  if (state.filterValidationModel) {
+    const want = state.filterValidationModel === NULL_MODEL_SENTINEL ? null : state.filterValidationModel
+    // Its column is offered with a single value too, wherever the
+    // dropdown is (analyzer-select.js).
+    const offered = analyzerSet.size > 1 || modelSet.size > 1 || validationModelSet.size > 1
+    if (!validationModelSet.has(want) || !offered) state.filterValidationModel = ''
   }
   // Same for a revalidation outcome the loaded set no longer reaches —
   // a report unloaded out from under the selection would otherwise
@@ -2700,7 +2713,7 @@ function renderImpl() {
     },
     // Counts use scope-filtered groups; analyzer/model option lists
     // stay stable so values excluded by those filters can still show zero.
-    { analyzers: analyzerOptions, models: modelOptions, groups: selectorGroups }, repoOptions)
+    { analyzers: analyzerOptions, models: modelOptions, validationModels: validationModelOptions, groups: scopeRows(allGroups) }, repoOptions)
 
     // Empty-state line — slot-based so the typeLabel (which can carry
     // user-controlled analyzer-type strings) flows through Lit's

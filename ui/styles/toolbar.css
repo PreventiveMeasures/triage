@@ -302,6 +302,7 @@
   border-radius: var(--ui-radius, 6px);
   box-shadow: 0 4px 12px rgb(0 0 0 / .25);
   font-size: .825rem;
+  max-width: calc(100vw - 8px);
   /* WCO: the popover sits in the top layer above body's drag baseline.
      Row buttons are no-drag via the central `button` selector, but the
      panel's own padding / gap pixels would inherit drag and eat clicks
@@ -313,6 +314,12 @@
 .analyzer-menu[popover]:not(:popover-open) { display: none; }
 .analyzer-menu[popover]:popover-open { display: flex; }
 .analyzer-menu-sep { border-left: 1px solid var(--border); }
+/* Up to three columns (App mode adds Validation model): on a narrow
+   screen they share its width, their labels ellipsized, rather than
+   push the panel past its edge. */
+@media (width <= 36rem) {
+  .analyzer-menu-col { min-width: 0; flex: 1 1 0; }
+}
 .analyzer-menu-col {
   display: flex; flex-direction: column;
   gap: 1px;

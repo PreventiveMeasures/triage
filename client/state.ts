@@ -181,6 +181,7 @@ export interface State {
   filterSources: Set<string>
   filterAnalyzer: string
   filterModel: string
+  filterValidationModel: string
   filterRepo: string
   filterRevalidate: string
   filterPartial: string
@@ -759,13 +760,17 @@ export const state: State = store<State>({
   // per-finding run-meta lines display), so vendor-prefixed spellings
   // of one model collapse into a single bucket. `NULL_MODEL_SENTINEL`
   // selects findings with no model (source-marked imports never stamp
-  // one).
+  // one). A revalidation pass's own row (`revalidate: "revalidation"`)
+  // answers to `filterValidationModel` instead, by the same name and
+  // sentinel: the dropdown's third column, offered in App mode, so that
+  // the model a pass ran on can be asked for what it found beneath.
   //
   // The selector is hidden when neither dimension has more than one
   // distinct value across the loaded reports — nothing to choose
   // between.
   filterAnalyzer: '',
   filterModel: '',
+  filterValidationModel: '',
   // Repository filter — single-select dropdown, only meaningful in
   // workspace view (single-file mode usually has one repo). Empty
   // string = no filter. Otherwise the value matches a finding's

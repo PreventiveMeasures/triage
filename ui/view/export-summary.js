@@ -77,6 +77,10 @@ export function activeFilterDescriptions(fields = state) {
   if (fields.filterModel) {
     out.push({ key: 'model', label: 'Model', value: fields.filterModel === NULL_MODEL_SENTINEL ? '(none)' : fields.filterModel, clear: { filterModel: '' } })
   }
+  if (fields.filterValidationModel) {
+    out.push({ key: 'validationModel', label: 'Validation model',
+      value: fields.filterValidationModel === NULL_MODEL_SENTINEL ? '(none)' : fields.filterValidationModel, clear: { filterValidationModel: '' } })
+  }
   if (fields.filterRepo) {
     out.push({ key: 'repo', label: 'Repository', value: fields.filterRepo === NO_REPO_SENTINEL ? '(no repo)' : fields.filterRepo, clear: { filterRepo: '' } })
   }
