@@ -59,6 +59,21 @@ describe('App mode: Model and Validation model', () => {
       { analyzers: {}, models: {}, validationModels: { A: 2 } })
   })
 
+  // The Analyzer column counted the drawn tabs, so another analyzer's
+  // finding folded under a pass read 0, though picking it shows the row.
+  it('counts an analyzer folded under a pass, as picking it shows the row', () => {
+    state.reports = [{ fileName: 'report.json', groups: [
+      [pass('pass', 'A'), scan('import', 'A', { _analyzer: 'claude-security' })], [finding('lone', 'A')],
+    ] }]
+    for (const detailed of [false, true]) {
+      state.revalidationDetailed = detailed
+      assert.deepEqual(plain(runFilterCounts(scopeRows(getMergedGroups()))).analyzers, { security: 2, 'claude-security': 1 }, `detailed: ${detailed}`)
+      state.filterAnalyzer = 'claude-security'
+      assert.deepEqual(ids(applyFilters(getMergedGroups())), [['pass', 'import']], `detailed: ${detailed}`)
+      state.filterAnalyzer = ''
+    }
+  })
+
   it('shows the rows whose scans have the Model, drawn as the pass alone unless detailed', () => {
     load()
     for (const [model, row] of [['A', ['pA0', 'A0']], ['B', ['pA1', 'B1']]]) {
