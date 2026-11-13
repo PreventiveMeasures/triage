@@ -117,12 +117,13 @@ class AnalyzerSelect extends StateElement {
   render() {
     const showAnalyzers = this.analyzers.length > 1
     const showModels = this.models.length > 1
-    if (!showAnalyzers && !showModels && this.validationModels.length < 2) return nothing
     // Shown with a single value too, unlike the other two: Model then
     // means the scans beneath the passes, and this column says which
     // model the passes ran on. Nor is one vacuous as a filter, as a row
-    // with no pass in it matches none.
+    // with no pass in it matches none (the parent offers the dropdown
+    // for it alone where some row has none: filters.js runFiltersOffered).
     const showValidation = this.validationModels.length > 0
+    if (!showAnalyzers && !showModels && !showValidation) return nothing
 
     // Active filter values mapped back to dimension values:
     // `undefined` = dimension unfiltered, `null` = the no-value bucket.

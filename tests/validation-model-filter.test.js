@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import './_polyfills.js'
 
 const { state } = await import('../client/state.ts')
-const { applyFilters, applyScopeFilters, matchesFilters, resetFilters, runFilterCounts, scopeRows } = await import('../ui/view/filters.js')
+const { applyFilters, applyScopeFilters, matchesFilters, resetFilters, runFilterCounts, runFiltersOffered, scopeRows } = await import('../ui/view/filters.js')
 const { configureDepsDir, configureRevalidation } = await import('../ui/view/format.js')
 const { activeTabFor, getMergedGroups } = await import('../ui/view/group.js')
 
@@ -135,6 +135,20 @@ describe('App mode: Model and Validation model', () => {
     state.filterModel = ''
     state.filterValidationModel = 'A'
     assert.equal(activeTabFor(row).id, 'p')
+  })
+
+  // One analyzer, one model beneath, one validation model: the dropdown
+  // is offered where picking that validation model leaves a row out.
+  it('offers a single validation model where some row has no pass of it', () => {
+    const one = (...values) => new Set(values)
+    const columns = { analyzers: one('security'), models: one('A'), validationModels: one('A') }
+    const validated = [pass('p', 'A'), scan('s', 'A')]
+    assert.equal(runFiltersOffered([validated], columns), false)
+    assert.equal(runFiltersOffered([validated, [finding('lone', 'A')]], columns), true)
+    state.filterValidationModel = 'A'
+    assert.deepEqual(ids(applyFilters([validated, [finding('lone', 'A')]])), [['p', 's']])
+    assert.equal(runFiltersOffered([[finding('lone', 'A')]], { ...columns, validationModels: one() }), false)
+    assert.equal(runFiltersOffered([[finding('lone', 'A')]], { ...columns, models: one('A', 'B'), validationModels: one() }), true)
   })
 
   // With the layer off no row is a pass's, so Model asks every row and

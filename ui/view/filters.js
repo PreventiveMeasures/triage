@@ -145,6 +145,16 @@ export function runFilterCounts(groups) {
   return counts
 }
 
+// Whether the `<analyzer-select>` dropdown has a choice to offer over
+// `groups`, given the Sets of values each column would list: a column
+// with more than one, or a single validation model some row has no pass
+// of, which picking it leaves out. A single one every row has a pass of
+// would leave out nothing.
+export function runFiltersOffered(groups, { analyzers, models, validationModels }) {
+  return analyzers.size > 1 || models.size > 1 || validationModels.size > 1
+    || (validationModels.size === 1 && groups.some((g) => !g.some(isRevalidation)))
+}
+
 // The tabs a row should open on under the dropdown's selection (group.js
 // activeTabFor): one matching what the selection asks of a single tab.
 export function matchesRunTab(f) {
