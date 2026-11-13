@@ -37,7 +37,11 @@ test('the source at a full commit opens the issue as a bare permalink, anything 
     `https://github.com/o/r/blob/${sha}/src/api.js`, `https://gitlab.com/o/r/blob/${sha}/src/api.js#L12`]) {
     assert.equal(first(url), `File: [src/api.js:12](${url})`)
   }
-  assert.equal(first(undefined), 'File: src/api.js:12')
+  assert.equal(first(undefined), 'File: `src/api.js:12`')
+  // A source that links nowhere is a code span, so GitHub reads no `@scope`
+  // in it as a mention.
+  const scoped = { ...finding, file: 'node_modules/@scope/pkg/a.js', line: 3 }
+  assert.equal(createIssueDraft(scoped).body.split('\n\n')[0], 'File: `node_modules/@scope/pkg/a.js:3`')
 })
 
 // A finding on an advisory opens its issue on the advisory, in place of the
