@@ -2,6 +2,7 @@
 // Rows import columns. Expanded packages retain their external connections.
 import { orderCyclicGroup } from './matrix-order.js'
 import { pkgLabel } from '../bundle-pkg-of.js'
+import { fileLabelOf } from './file-label.js'
 import { countsTowardsCycles } from './cycle-imports.js'
 
 export function stronglyConnected(ids, links) {
@@ -47,7 +48,7 @@ export function buildDependencyMatrix(graph, { expanded = new Set(), order = 'st
     const id = `${isFile ? 'f' : 'p'}:${isFile ? file.file : file.pkg}`
     if (!byId.has(id)) {
       byId.set(id, { id, pkg: file.pkg, file: isFile ? file.file : null,
-        label: isFile ? file.file : pkgLabel(file.pkg),
+        label: isFile ? fileLabelOf(file) : pkgLabel(file.pkg),
         files: [], size: 0, issues: 0, incoming: 0, outgoing: 0, importers: 0, dependencies: 0 })
     }
     const row = byId.get(id)

@@ -1,7 +1,7 @@
 import { packageOf } from './utils.js'
 import { pkgLabel } from '../bundle-pkg-of.js'
 import { totalFindings } from '../file-counts.js'
-import { SEVERITIES, depsDirName } from '../format.js'
+import { SEVERITIES } from '../format.js'
 
 // Top-severity tier for a per-file count map. Walks SEVERITIES
 // (highest-to-lowest order in format.js) and returns the first
@@ -360,26 +360,4 @@ export function packageVersions(graph, pkg) {
   const versions = new Set()
   for (const n of graph.byPkg.get(pkg) ?? []) if (n.packageInfo?.version !== undefined) versions.add(n.packageInfo.version)
   return [...versions].toSorted((a, b) => a.localeCompare(b, 'en', { numeric: true }))
-}
-
-// Strip a file path's package anchor so callers can show
-// "index.js" instead of "node_modules/foo/index.js" (npm) or
-// "foo/bar.js" instead of "packages/app/foo/bar.js" (workspace package).
-// Mirrors packageOf / bundlePkgOf: packages anchor on either
-// `node_modules/<pkg>/` or `dependencies/<pkg>/` — try both
-// regardless of the report-driven depsDirName, since the bundle
-// graph runs without a report (depsDirName falls back to
-// 'dependencies' even when the bundle paths use node_modules).
-// For own source in the synthetic '__own__' bucket the file is
-// returned as-is — there's no meaningful prefix to strip and
-// consumers should fall back to the full path.
-export function pkgRelative(file, pkg) {
-  if (!pkg || pkg === '/' || pkg === '__own__') return file
-  for (const dep of ['node_modules', 'dependencies', depsDirName()]) {
-    const anchor = dep + '/' + pkg + '/'
-    const idx = file.indexOf(anchor)
-    if (idx >= 0) return file.slice(idx + anchor.length)
-  }
-  if (file.startsWith(pkg + '/')) return file.slice(pkg.length + 1)
-  return file
 }

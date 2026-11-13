@@ -7,7 +7,8 @@ import { DEPENDENCIES_ICON_SVG, GRAPH_ICON_SVG, LAYERS_ICON_SVG, MATRIX_ICON_SVG
 import { SEVERITIES, formatBytes } from '../format.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
-import { graphTerms, packageVersions, pkgLabelOf, pkgRelative } from './data.js'
+import { graphTerms, packageVersions, pkgLabelOf } from './data.js'
+import { pkgRelative } from './file-label.js'
 import { dependencyFilesOn, dependencyNetwork, packageNetwork } from './package-network.js'
 // `<graph-layout>` is defined in `./graph-layout.js`, behind the
 // lazy entry `ui/graph.js` (loaded by `view/graph-attach.js` on
