@@ -17,6 +17,7 @@ import { type GraphqlError, githubGraphql } from './github-graphql.ts'
 import { SHA, count, nameOf, timeOf } from './github-values.ts'
 import { touchesLockfile } from './pull-dependencies.ts'
 import { ITEM_THREADS, type ReviewNode, TILE_THREADS, pullReviews, reviewFields, reviewsRefused } from './pull-reviews.ts'
+import type { Connection } from './repository-history.ts'
 
 const ISSUES_PAGE = 50
 // What a kept page or item was read as: kept ones read before differ.
@@ -64,8 +65,7 @@ type Node = ReviewNode & { number?: unknown; title?: unknown; createdAt?: unknow
   isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown; baseRefOid?: unknown
   commits?: { nodes?: { commit?: { statusCheckRollup?: { state?: unknown } | null } | null }[] }
   files?: { totalCount?: unknown; nodes?: ({ path?: unknown } | null)[] } | null }
-type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }
-  page?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (Node | null)[] } } | null }
+type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }; page?: Connection<Node> } | null }
 
 const REVIEWS: Record<string, string> = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes', REVIEW_REQUIRED: 'required' }
 const CHECKS: Record<string, string> = { SUCCESS: 'success', FAILURE: 'failure', ERROR: 'failure', PENDING: 'pending', EXPECTED: 'pending' }
@@ -73,24 +73,35 @@ const CHECKS: Record<string, string> = { SUCCESS: 'success', FAILURE: 'failure',
 export type IssueReason = 'completed' | 'not-planned' | 'duplicate'
 export const ISSUE_REASONS: Record<string, IssueReason> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
 
+// An issue or pull request by its number, title and author, as its tile and
+// the Pulse's lists (repository-pulse.ts) name it; null for one GitHub names
+// no number for.
+export function itemOf(node: { number?: unknown; title?: unknown; author?: GraphAccount } | null) {
+  if (!node || !Number.isSafeInteger(node.number) || (node.number as number) <= 0) return null
+  const author = actorOf(node.author)
+  return { number: node.number as number, title: nameOf(node.title, MAX_TITLE) ?? '', author: author.login, authorId: author.id }
+}
+// An issue's state as a tile tells it, and why it was closed; a pull
+// request's, and whether it is a draft.
+export const issueState = (state: unknown, reason: unknown) => ({ state: state === 'OPEN' ? 'open' : 'closed', reason: ISSUE_REASONS[String(reason)] ?? null })
+export const pullState = (state: unknown, draft: unknown) => ({ state: state === 'MERGED' ? 'merged' : state === 'OPEN' ? 'open' : 'closed', draft: draft === true })
+
 // An issue or pull request as a tile shows it; null for one GitHub names no
 // number for.
 function item(kind: IssuesKind, node: Node | null) {
-  if (!node || !Number.isSafeInteger(node.number) || (node.number as number) <= 0) return null
-  const author = actorOf(node.author)
+  const named = itemOf(node)
+  if (!node || !named) return null
   const labels = (node.labels?.nodes ?? []).flatMap(label => {
     const name = nameOf(label?.name)
     return name ? [{ name, color: typeof label?.color === 'string' && COLOR.test(label.color) ? label.color.toLowerCase() : null }] : []
   })
-  const common = { number: node.number as number, title: nameOf(node.title, MAX_TITLE) ?? '', author: author.login, authorId: author.id, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt),
+  const common = { ...named, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt),
     closedAt: timeOf(node.closedAt), comments: count(node.comments?.totalCount), labels, moreLabels: Math.max(0, count(node.labels?.totalCount) - labels.length) }
-  if (kind === 'issues') {
-    return { ...common, state: node.state === 'OPEN' ? 'open' : 'closed', reason: ISSUE_REASONS[String(node.stateReason)] ?? null }
-  }
+  if (kind === 'issues') return { ...common, ...issueState(node.state, node.stateReason) }
   const checks = node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state
   const listed = node.files?.nodes
   const paths = Array.isArray(listed) ? listed.flatMap(file => typeof file?.path === 'string' ? [file.path] : []) : null
-  return { ...common, state: node.state === 'MERGED' ? 'merged' : node.state === 'OPEN' ? 'open' : 'closed', draft: node.isDraft === true, mergedAt: timeOf(node.mergedAt),
+  return { ...common, ...pullState(node.state, node.isDraft), mergedAt: timeOf(node.mergedAt),
     review: REVIEWS[String(node.reviewDecision)] ?? null, checks: CHECKS[String(checks)] ?? null, additions: count(node.additions), deletions: count(node.deletions),
     head: nameOf(node.headRefName), base: nameOf(node.baseRefName),
     ...paths ? { touchesLockfile: touchesLockfile(paths, count(node.files?.totalCount)) } : {} }

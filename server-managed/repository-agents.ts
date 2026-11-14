@@ -21,7 +21,7 @@ import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
 import { ACTOR, type GraphAccount, type GraphActor, type NamedAccount, actorOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
 import { githubGraphql, notFound } from './github-graphql.ts'
 import { SHA, count, nameOf, timeOf } from './github-values.ts'
-import { ALL_BRANCHES, type HistoryCommit, type HistoryPages, commitIds, commitMarks, commitsQuery, historyFrom, historyMarks, inBatches, messageMarks,
+import { ALL_BRANCHES, type Connection, type HistoryCommit, type HistoryPages, commitIds, commitMarks, commitsQuery, historyFrom, historyMarks, inBatches, messageMarks,
   nextCursor } from './repository-history.ts'
 import type { IssueList, PullList } from './repository-pulls.ts'
 
@@ -101,7 +101,6 @@ export type PullNode = { number?: unknown; title?: unknown; state?: unknown; isD
 type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
   author?: GraphActor | null; associatedPullRequests?: { totalCount?: unknown } }
 export type IssueNode = { number?: unknown; title?: unknown; state?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: GraphAccount }
-type Connection<T> = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (T | null)[] }
 // Whether a pull request brought each commit, `c<n>` the `n`th's.
 const pulledQuery = (size: number) => commitsQuery(size, 'c', 'associatedPullRequests(first: 1) { totalCount }')
 type Pulled = { repository?: Record<string, { associatedPullRequests?: { totalCount?: unknown } } | null> | null }

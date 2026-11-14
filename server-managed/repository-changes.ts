@@ -39,6 +39,11 @@ export interface ChangesStore {
 const pathOf = (value: unknown) => typeof value === 'string' && value !== '' && value.length <= MAX_PATH && !/\p{Cc}/u.test(value) ? value : null
 // No such commit: GitHub's 404, or its 422 for an id naming none.
 const noCommit = (err: unknown) => err instanceof GithubApiError && (err.message === 'github-not-found' || err.message === 'github-status-422')
+// What `read` answers; null where GitHub has no such commit.
+const orNoCommit = <T>(read: Promise<T>) => read.catch((err: unknown) => {
+  if (noCommit(err)) return null
+  throw err
+})
 
 // A file's status as git names it: a copy is a file added; one GitHub
 // lists unchanged (its mode alone changed, say) changes none.
@@ -153,13 +158,8 @@ export async function repositoryTree(fullName: string, token: string | null, com
   const held = await kept.read(commit)
   if (held) return held
   const listing = treeListing(fullName, token, fetchImpl)
-  let whole: Awaited<ReturnType<TreeListing>>
-  try {
-    whole = await listing(commit, true)
-  } catch (err) {
-    if (noCommit(err)) return null
-    throw err
-  }
+  const whole = await orNoCommit(listing(commit, true))
+  if (!whole) return null
   const files: Blob[] = []
   let cut = false
   if (whole.truncated) cut = await treeByTrees(commit, listing, files)
@@ -255,14 +255,9 @@ async function directoryTree(fullName: string, token: string | null, commit: str
   const listing = treeListing(fullName, token, fetchImpl)
   let tree = commit
   for (const name of path.split('/')) {
-    let entries: TreeEntry[]
-    try {
-      entries = (await listing(tree, false)).entries
-    } catch (err) {
-      if (noCommit(err)) return null
-      throw err
-    }
-    const entry = entries.find(item => item?.path === name && item.type === 'tree')
+    const listed = await orNoCommit(listing(tree, false))
+    if (!listed) return null
+    const entry = listed.entries.find(item => item?.path === name && item.type === 'tree')
     if (typeof entry?.sha !== 'string' || !SHA.test(entry.sha)) return null
     tree = entry.sha
   }

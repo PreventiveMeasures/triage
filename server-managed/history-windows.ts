@@ -7,7 +7,7 @@
 // walk later, from a head moved on or in the Commits tab, reads them kept.
 import { linkNoreplyUsers } from './github-accounts.ts'
 import { githubGraphql } from './github-graphql.ts'
-import { COMMIT_FRAGMENT, type GraphCommit, HISTORY_PAGE, type HistoryCommit, type HistoryPages, PAGES_PARALLEL, PAGES_PER_QUERY, commitActors, graphCommit,
+import { COMMIT_FRAGMENT, type Connection, type GraphCommit, HISTORY_PAGE, type HistoryCommit, type HistoryPages, PAGES_PARALLEL, PAGES_PER_QUERY, commitActors, graphCommit,
   inBatches, nextCursor, variablesOf } from './repository-history.ts'
 
 // Windows a read is split into at most, each meant to hold as many commits
@@ -39,7 +39,7 @@ const windowsQuery = (count: number) => `query($owner: String!, $name: String!, 
 ${COMMIT_FRAGMENT}`
 
 type Window = { since: number | null; until: number; after: string | null; oldest?: number }
-type WindowPage = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: GraphCommit[] } | null
+type WindowPage = Connection<GraphCommit> | null
 type Windows = { repository?: { object?: Record<string, WindowPage> | null } | null } | null
 // A time as GitHub takes it, to the second: a window's start rounded down,
 // its end up, so that those beside each other overlap rather than part.

@@ -29,14 +29,13 @@
 import type { LockfileFormat } from '@preventive/upstream/github.js'
 import { type ActionsSource, type Severity, npmMalwareAdvisory } from '../risk/index.js'
 import { isNpmPackageName, isNpmPackageSpec } from '../common/managed/npm-packages.js'
-import type { NpmVersionDocument } from './npm-packages.ts'
 import { type Lru, lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
 import { MAX_SPARE_ASSESSMENTS } from './npm-risk.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { type Queue, inTurns, queue } from './queue.ts'
 import { type DownloadsSource, readyingDownloads } from './scan-downloads.ts'
-import { type AssessedPackage, type Assessment, BUSY_RETRIES, BUSY_WAIT_MS, RISK_KEPT_MS, type RiskFailure, assessPackage, failureOf, isBusy } from './repository-risk-assess.ts'
+import { type AssessedPackage, type AssessingSource, BUSY_RETRIES, BUSY_WAIT_MS, RISK_KEPT_MS, type RiskFailure, assessPackage, failureOf, isBusy } from './repository-risk-assess.ts'
 import { type AdvisoryRow, type Audit, type AuditSource, auditLockfiles } from './repository-risk-audit.ts'
 import { type DependabotRead, type ListedLockfile, type LockfileRead, type OpenedRepository, type RepositoryFailure, type RepositoryRead, SCAN_READ_KEPT_MS,
   readRepository } from './repository-risk-read.ts'
@@ -52,18 +51,11 @@ export { SCAN_READ_KEPT_MS } from './repository-risk-read.ts'
 // locks them too.
 export interface RepositoryRiskRepo { repoId: number; fullName: string; paths?: readonly string[] }
 
-interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends AuditSource {
+interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends AuditSource, AssessingSource {
   repos(): Promise<R[]>
   open(repo: R): Promise<OpenedRepository>
   // Whether a team lists a package's scope, its own packages.
   teamScoped(name: string): Promise<boolean>
-  // npm's document of a version; an NpmPackageError where npm has none.
-  version(name: string, version: string, signal: AbortSignal): Promise<NpmVersionDocument>
-  assess(doc: NpmVersionDocument, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
-  // A version npm has no document of, as risk tells one npm removed: its
-  // malware alone, its package taken down by npm; an NpmRiskError where
-  // nothing tells of it (npm-risk.ts npmRiskRemoved).
-  removed(name: string, version: string, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
   // Where risk lines are kept beyond this instance, as RiskCaches keeps them
   // in it (npm-kept.ts riskLineStore, the database's).
   risks?: KeptStore<RiskLine>
@@ -88,8 +80,6 @@ interface RepositoryRiskSource<R extends RepositoryRiskRepo> extends AuditSource
   actionFiles?: KeptStore<WorkflowsRead>
   actionLines?: KeptStore<ActionLine>
 }
-
-
 
 // A Dependabot alert as a scan tells it: with the versions of its package
 // the lockfile it is of locks that it covers, none where it is of none read
@@ -121,7 +111,7 @@ export type RepositoryRiskLine =
 export interface ScanProgress { repos: ToldRepository[] }
 interface ToldRepository { id: number; name: string; paths: readonly string[] | null; lockfiles: string[]; actions?: ActionRef[] }
 
-type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
+export type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
 
 // What scans keep between them, in this instance's memory: a repository's
 // lockfiles as listed at a commit, and a lockfile's packages by its blob,
@@ -288,7 +278,7 @@ function assessLater(scan: Scan, packages: LockedPackage[]) {
   if (fresh.length > 0) scan.lookups.add(fresh)
 }
 
-type LockfileLine = Extract<RepositoryRiskLine, { type: 'lockfile' }>
+export type LockfileLine = Extract<RepositoryRiskLine, { type: 'lockfile' }>
 
 // A lockfile's advisories line, of its audit (repository-risk-audit.ts auditLockfile).
 const advisoriesLine = ({ repo, path }: LockfileLine, audit: Audit) => ({ type: 'advisories', repo, path, ...Array.isArray(audit) ? { advisories: audit } : audit } as const)
@@ -417,6 +407,26 @@ function leftOver(scan: Scan): AssessedPackage[][] {
   return [scan.stale.filter(pkg => !dev(pkg)), [...scan.dev.values(), ...scan.stale.filter(dev)]]
 }
 
+// The scan's work, behind its lines (repositoryRiskLines), `done` last, its
+// lines closed once it ends, its failure given to `fail`.
+async function runScan(scan: Scan, fail: (error: unknown) => void) {
+  try {
+    // Those with no risk line kept assessed first, as their lockfiles are read,
+    await assessing(scan, async assess => {
+      const looking = lookUp(scan, assess)
+      // stopped at once where reading fails;
+      try { await readRepositories(scan) } catch (error) { fail(error) } finally { scan.lookups.close() }
+      await looking
+    })
+    // then those told stale, and those only devDependencies need, in turn.
+    for (const left of leftOver(scan)) {
+      if (!scan.signal.aborted && left.length > 0) await assessing(scan, assess => { assess(left); return Promise.resolve() })
+    }
+    await scan.actions?.close()
+    if (!scan.signal.aborted) scan.lines.add({ type: 'done' })
+  } catch (error) { fail(error) } finally { scan.lines.close() }
+}
+
 // The scan's lines, in the order they are found: the repositories first,
 // then each repository's lockfiles and their packages once read and access
 // is checked again, and each package's risk: as kept, however old, at once
@@ -445,27 +455,10 @@ export async function* repositoryRiskLines<R extends RepositoryRiskRepo>(source:
     answers: caches.actionAnswers, store: source.actionLines }) : null
   const scan: Scan = { source, caches, signal: running, lines, lookups: queue(running), seen: new Map(), dev: new Map(), stale: [], told: new Map(), actions,
     audits: inTurns(AUDITS_AT_ONCE) }
+  // A failure of the scan itself kept, to throw once the lines before it are
+  // told, and the scan stopped.
   const failed: unknown[] = []
-  void (async () => {
-    try {
-      // Those with no risk line kept assessed first, as their lockfiles are read,
-      await assessing(scan, async assess => {
-        const looking = lookUp(scan, assess)
-        // stopped at once where reading fails;
-        try { await readRepositories(scan) } catch (error) { failed.push(error); stopped.abort() } finally { scan.lookups.close() }
-        await looking
-      })
-      // then those told stale, and those only devDependencies need, in turn.
-      for (const left of leftOver(scan)) {
-        if (!running.aborted && left.length > 0) await assessing(scan, assess => { assess(left); return Promise.resolve() })
-      }
-      await actions?.close()
-      if (!running.aborted) scan.lines.add({ type: 'done' })
-    } catch (error) {
-      failed.push(error)
-      stopped.abort()
-    } finally { scan.lines.close() }
-  })()
+  void runScan(scan, error => { failed.push(error); stopped.abort() })
   try {
     let done = false
     for (let line = await scan.lines.take(); line !== undefined; line = await scan.lines.take()) {

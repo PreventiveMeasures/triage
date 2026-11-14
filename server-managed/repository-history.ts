@@ -208,10 +208,12 @@ export type GraphCommit = { oid?: unknown; message?: unknown; committedDate?: un
   parents?: { nodes?: { oid?: unknown }[] } }
 type GraphTarget = { __typename?: unknown; oid?: unknown; committedDate?: unknown; target?: GraphTarget | null }
 type GraphRef = { name?: unknown; target?: GraphTarget | null }
-type HeadsPage = { repository?: { defaultBranchRef?: GraphRef | null
-  branches?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: GraphRef[] }; tags?: { nodes?: GraphRef[] } } | null }
+type HeadsPage = { repository?: { defaultBranchRef?: GraphRef | null; branches?: Connection<GraphRef>; tags?: { nodes?: GraphRef[] } } | null }
 type Histories = { repository?: Record<string, { history?: { pageInfo?: { hasNextPage?: unknown }; nodes?: GraphCommit[] } } | null> | null }
 
+// A page of a connection, as GitHub's GraphQL API answers one: whether
+// another follows and where, and its nodes.
+export type Connection<T> = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (T | null)[] }
 // Where a connection's next page starts, as its page tells it; null where
 // none follows.
 export const nextCursor = (page: { hasNextPage?: unknown; endCursor?: unknown } | null | undefined) =>

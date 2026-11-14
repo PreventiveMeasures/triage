@@ -15,6 +15,7 @@
 // the popup, which reads reviews' bodies.
 import { githubAgent } from '../common/managed/github-agents.ts'
 import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
+import type { GraphqlError } from './github-graphql.ts'
 import { SHA, timeOf } from './github-values.ts'
 
 const REVIEWERS = 20
@@ -48,7 +49,7 @@ export const reviewFields = (threads: number, detail: boolean) => `headRefOid
 // The fields read for reviews that GitHub may refuse alone, as it refuses an
 // App a pull request's checks: their pull request then shows no reviews.
 const REVIEW_PATHS = new Set(['latestReviews', 'reviewRequests', 'reviewThreads', 'firstComments', 'lastComments'])
-export const reviewsRefused = (error: { type?: unknown; path?: unknown } | null | undefined) => error?.type === 'FORBIDDEN' && Array.isArray(error.path)
+export const reviewsRefused = (error: GraphqlError) => error?.type === 'FORBIDDEN' && Array.isArray(error.path)
   && error.path.some(part => REVIEW_PATHS.has(part as string))
 
 type Comment = { author?: GraphAccount; body?: unknown; updatedAt?: unknown; createdAt?: unknown } | null

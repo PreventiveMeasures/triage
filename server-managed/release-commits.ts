@@ -8,7 +8,7 @@
 import { type ChangesStore, type CommitChanges, repositoryChanges } from './repository-changes.ts'
 import { githubGraphql } from './github-graphql.ts'
 import { SHA, timeOf } from './github-values.ts'
-import { nextCursor } from './repository-history.ts'
+import { type Connection, nextCursor } from './repository-history.ts'
 
 // The tags read, a page a query, the latest commits' first, as many pages as
 // TAG_PAGES; of the commits they name, as many as RELEASES_READ have their
@@ -33,7 +33,7 @@ const TAGS_QUERY = `query($owner: String!, $name: String!, $after: String) {
   }
 }`
 type TagTarget = { __typename?: unknown; oid?: unknown; committedDate?: unknown; target?: TagTarget | null } | null | undefined
-type TagsPage = { repository?: { refs?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: ({ target?: TagTarget } | null)[] } | null } | null }
+type TagsPage = { repository?: { refs?: Connection<{ target?: TagTarget }> | null } | null }
 
 // The commit a tag names, through its annotated tags, and when it was
 // committed; null for one naming no commit (a tree, a blob).

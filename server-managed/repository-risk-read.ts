@@ -19,7 +19,7 @@ import type { KeptStore } from './npm-kept.ts'
 import { inTurns } from './queue.ts'
 import { type WorkflowsRead, lastingRead, readActions } from './repository-actions.ts'
 import { type RiskFailure, failureOf } from './repository-risk-assess.ts'
-import type { RepositoryRiskLine, RepositoryRiskRepo } from './repository-risk.ts'
+import type { LockfileLine, RepositoryRiskLine, RepositoryRiskRepo } from './repository-risk.ts'
 
 // The formats of npm's ecosystem, as findRepoLockfiles names them, and those
 // of them read here.
@@ -39,7 +39,6 @@ export type LockfileRead = { packages: LockedPackage[] } | RiskFailure
 // them to check again before they are told (`recheck`), or why they couldn't
 // be had.
 export type DependabotRead = { alerts: DependabotAlert[]; recheck?(): Promise<void> } | RiskFailure
-type LockfileLine = Extract<RepositoryRiskLine, { type: 'lockfile' }>
 export type RepositoryFailure = Extract<RepositoryRiskLine, { type: 'repo'; error: string }>
 
 // A repository opened at its default branch's head (`commit`): its lockfiles,

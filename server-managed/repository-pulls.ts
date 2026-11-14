@@ -22,7 +22,7 @@ import { AGENT_BRANCH_PREFIXES } from './app-agents.ts'
 import { AGENT_ISSUE_FIELDS, AGENT_PULL_FIELDS, type IssueNode, type PullNode, issue, pull } from './repository-agents.ts'
 import { githubGraphql } from './github-graphql.ts'
 import { SHA, count, timeOf } from './github-values.ts'
-import { nextCursor } from './repository-history.ts'
+import { type Connection, nextCursor } from './repository-history.ts'
 import { ISSUE_REASONS, type IssueReason } from './repository-issues.ts'
 
 // What the pull requests kept are read by, its version: bumped as what a
@@ -102,7 +102,7 @@ const ISSUES_QUERY = `query($owner: String!, $name: String!, $after: String, $fi
 }`
 type ClosedNode = IssueNode & { stateReason?: unknown; closedAt?: unknown; author?: IssueNode['author'] & { __typename?: unknown } }
 const botOf = (author: { __typename?: unknown } | null | undefined) => author?.__typename === 'Bot' ? { bot: true as const } : {}
-type ListPage<Node> = { repository?: Record<string, { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (Node | null)[] } | null> | null }
+type ListPage<Node> = { repository?: Record<string, Connection<Node> | null> | null }
 
 const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_PREFIXES.some(prefix => name.startsWith(prefix))
 // Whether a pull request is an agent's: by its branch, a label naming one,
