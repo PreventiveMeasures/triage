@@ -44,6 +44,11 @@ function sourceOf(uri: unknown) {
 // What `keys` lead to in `value`, through objects and arrays.
 const field = (value: unknown, ...keys: string[]): unknown =>
   keys.reduce<unknown>((at, key) => plainObject(at) || Array.isArray(at) ? (at as Record<string, unknown>)[key] : undefined, value)
+// The list they lead to, none where it is none.
+const listAt = (value: unknown, ...keys: string[]): unknown[] => {
+  const list = field(value, ...keys)
+  return Array.isArray(list) ? list : []
+}
 
 // What a statement says of the build, as v1 or v0.2 says it; null where it
 // names no source repository.
@@ -93,8 +98,7 @@ async function askProvenance(name: string, version: string, integrity: string): 
   const json = await askUpstreamJson(`${ATTESTATIONS_API}/${name.replace('/', '%2f')}@${encodeURIComponent(version)}`,
     { headers: { accept: 'application/json' }, limit: ATTESTATIONS_BYTES })
   if (json === null) return null
-  const attestations: unknown[] = Array.isArray(field(json, 'attestations')) ? field(json, 'attestations') as unknown[] : []
-  const slsa = attestations.find(item => SLSA.test(text(field(item, 'predicateType')) ?? ''))
+  const slsa = listAt(json, 'attestations').find(item => SLSA.test(text(field(item, 'predicateType')) ?? ''))
   if (!slsa) return null
   // The statement, whatever its length (the answer is bounded as a whole),
   // unlike the fields read out of it.
@@ -105,8 +109,7 @@ async function askProvenance(name: string, version: string, integrity: string): 
   // version's integrity has it.
   const purl = `pkg:npm/${name.replace(/^@/u, '%40')}@${version}`
   const digest = /^sha512-(.+)$/u.exec(integrity)?.[1]
-  const subjects: unknown[] = Array.isArray(field(statement, 'subject')) ? field(statement, 'subject') as unknown[] : []
-  if (!digest || !subjects.some(subject => field(subject, 'name') === purl && field(subject, 'digest', 'sha512') === Buffer.from(digest, 'base64').toString('hex'))) return null
+  if (!digest || !listAt(statement, 'subject').some(subject => field(subject, 'name') === purl && field(subject, 'digest', 'sha512') === Buffer.from(digest, 'base64').toString('hex'))) return null
   const provenance = readStatement(text(field(slsa, 'predicateType'))!, field(statement, 'predicate'))
   const logIndex = Number(field(slsa, 'bundle', 'verificationMaterial', 'tlogEntries', '0', 'logIndex'))
   return provenance && { ...provenance, logIndex: Number.isSafeInteger(logIndex) && logIndex >= 0 ? logIndex : null, runner: runnerOf(field(slsa, 'bundle')) }

@@ -272,7 +272,7 @@ export const lockedWith = (pkg: LockedPackage) => `${lockedAs(pkg)}\0${pkg.integ
 // them.
 function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[]): DirectoryDependencies {
   const failed = [...before, ...after].find(read => 'error' in read)
-  if (failed && 'error' in failed) return { paths, error: failed.error, ...failed.detail ? { detail: failed.detail } : {} }
+  if (failed) return { paths, error: failed.error, ...failed.detail ? { detail: failed.detail } : {} }
   const known = new Set<string>()
   const versions = new Map<string, Set<string>>()
   for (const pkg of before.flatMap(read => 'packages' in read ? read.packages : [])) {

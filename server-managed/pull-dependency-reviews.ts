@@ -79,27 +79,26 @@ export async function reviewBaseline(fullName: string, token: string, repoId: nu
   const stored = await kept.read(key)
   if (stored) { const baseline = { versions: new Set(stored.versions), unread: stored.unread }; baselines.set(key, baseline); return baseline }
   const read = await lockedAt(fullName, token, since, reads, () => true, asked)
-  const { packages } = lockedIn(read), { unread } = read
-  const versions = new Set<string>()
-  for (const pkg of packages) if (reviewedAs(pkg) === 'version') for (const held of baselineKeys(pkg)) versions.add(held)
-  const baseline = { versions, unread }
+  const versions = new Set(lockedIn(read).packages.filter(pkg => reviewedAs(pkg) === 'version').flatMap(pkg => baselineKeys(pkg)))
+  const baseline = { versions, unread: read.unread }
   baselines.set(key, baseline)
-  await kept.write(key, { versions: [...versions], unread: baseline.unread })
+  await kept.write(key, { versions: [...versions], unread: read.unread })
   return baseline
 }
 
 // Passing reviews by the version they are of, its name and version.
 type ReviewsOf = Map<string, PublishedReview[]>
-function reviewsByVersion(reviews: PublishedReview[]): ReviewsOf {
-  const by: ReviewsOf = new Map()
-  for (const review of reviews) {
-    const key = `${review.package}@${review.version}`
-    const held = by.get(key)
-    if (held) held.push(review)
-    else by.set(key, [review])
-  }
-  return by
+export const reviewsByVersion = (reviews: PublishedReview[]): ReviewsOf => Map.groupBy(reviews, review => `${review.package}@${review.version}`)
+// Of those, `pkg`'s: of its version, of an integrity it is locked with, and
+// of its patch.
+export function reviewsOf(pkg: LockedPackage, reviews: ReviewsOf): PublishedReview[] {
+  const hashes = hashesOf(pkg)
+  return (reviews.get(`${pkg.name}@${pkg.version}`) ?? []).filter(review => hashes.includes(review.integrity) && (review.patchHash ?? '') === (pkg.patchHash ?? ''))
 }
+// Whether `review` is of `pkg` whole, or compared with one of `bases` of its
+// package (any, for `any`).
+export const comparedWith = (review: PublishedReview, pkg: LockedPackage, bases: string[] | 'any') => review.basePackage === null
+  || (review.basePackage === pkg.name && (bases === 'any' || bases.includes(review.baseVersion ?? '')))
 
 const ACCEPTING = new Set(['accept', 'accept-with-nits'])
 // Where `pkg`'s reviewers stand on it among `reviews`, those of its version,
@@ -113,14 +112,8 @@ const ACCEPTING = new Set(['accept', 'accept-with-nits'])
 // their login, their latest verdict, whether they pass it, and whether that
 // verdict is its comments' (`comment`), which counts for it alone.
 function stancesOf(pkg: LockedPackage, reviews: ReviewsOf, bases: string[] | 'any') {
-  const hashes = hashesOf(pkg)
-  const by = new Map<string, PublishedReview[]>()
-  for (const review of reviews.get(`${pkg.name}@${pkg.version}`) ?? []) {
-    if (!hashes.includes(review.integrity) || (review.patchHash ?? '') !== (pkg.patchHash ?? '')) continue
-    by.set(review.reviewer, [...by.get(review.reviewer) ?? [], review])
-  }
-  const qualifies = (review: PublishedReview) => review.full && ACCEPTING.has(review.status)
-    && (review.basePackage === null || (review.basePackage === pkg.name && (bases === 'any' || bases.includes(review.baseVersion ?? ''))))
+  const by = Map.groupBy(reviewsOf(pkg, reviews), review => review.reviewer)
+  const qualifies = (review: PublishedReview) => review.full && ACCEPTING.has(review.status) && comparedWith(review, pkg, bases)
   let commented = 0, passing = 0, rejected = false
   const reviewers: Reviewer[] = []
   for (const theirs of by.values()) {
@@ -303,7 +296,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
     return judged.wants && passed.has(askedOf(pkg)[0]) ? { review: { reviewed: true }, wants: false } : judged
   }))
   const unread = baselineUnread.filter(path => heldTo(scope, path))
-  const listed = dirs.flatMap(dir => 'unreviewed' in dir ? [dir] : [])
+  const listed = dirs.filter(dir => 'unreviewed' in dir)
   return { ...answered, cut, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required,
     since: reviewed ? null : state.since, canReview: state.canReview, ...reviewed ? { reviewedDependencies: true } : {},
     toReview: distinct(listed.map(dir => dir.toReview), versionKey), unreviewed: distinct(listed.map(dir => dir.unreviewed), versionKey),

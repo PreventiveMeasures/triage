@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto'
 import { isPatchHash, isPatchPath } from '../common/managed/npm-packages.js'
 import { SHA } from './github-values.ts'
 import { type Lru, lru } from './lru.ts'
-import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
+import { NpmPackageError, type NpmPackageFile, npmFileText, pathOrder } from './npm-packages.ts'
 import { type GithubAsked, repositoryFile } from './pull-dependencies.ts'
 
 // Where a patch is read: its file in a repository (by its id) at a commit,
@@ -280,7 +280,7 @@ export function patchedFiles(files: NpmPackageFile[], patch: PatchedFile[]): Npm
     }
     byPath.set(file.path, next)
   }
-  return [...byPath].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+  return [...byPath].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => pathOrder(a.path, b.path))
 }
 
 // About the bytes a patch read takes: the characters of its paths and of the

@@ -91,13 +91,9 @@ async function publishedReviews(db: ManagedSql, repoId: number, versions: Review
         basePackage: string | null; baseVersion: string | null; files: string | null; status: ReviewVerdict; publishedAt: number }[])
       .filter(row => keys.has(`${row.package}@${row.version}`))
     if (rows.length === 0) continue
-    const entries = new Map<string, { file: string; status: ReviewVerdict | null }[]>()
-    for (const { reviewId, ...entry } of await db.prepare(`SELECT review_id AS reviewId, file, status FROM managed_dependency_file_review
-      WHERE review_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as { reviewId: string; file: string; status: ReviewVerdict | null }[]) {
-      const of = entries.get(reviewId)
-      if (of) of.push(entry)
-      else entries.set(reviewId, [entry])
-    }
+    const read = await db.prepare(`SELECT review_id AS reviewId, file, status FROM managed_dependency_file_review
+      WHERE review_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as { reviewId: string; file: string; status: ReviewVerdict | null }[]
+    const entries = Map.groupBy(read, entry => entry.reviewId)
     for (const row of rows) {
       // A snapshot of paths alone, before non-text files were told, can't be full.
       const { files, nonTextFiles } = snapshotOf(row.files)

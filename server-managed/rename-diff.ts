@@ -25,6 +25,7 @@ import { needsPrettyPrint, prettyExtension } from '../common/pretty-print.js'
 import { type ChangeBlock, blocksHold, textLines } from '../common/line-diff.js'
 import type { OpenedBlob } from './blob-store.ts'
 import { encodeBrotli } from './brotli.ts'
+import { pathOrder } from './npm-packages.ts'
 import { type ComparedSide, PrettyError, type PrettyRequest, opened, prettyText } from './pretty-print.ts'
 import { workerTurns } from './worker-turns.ts'
 
@@ -216,7 +217,7 @@ export function renamedPairs([base, other]: readonly [ComparedSide, ComparedSide
   const pairs = comparedFiles([base, other]).changed.flatMap(({ path, basePath = path }) => {
     const [from, to] = [olds.get(basePath), news.get(path)]
     return from && to && from.hash !== to.hash && [from, to].every(file => renamable(file) && needsPrettyPrint(file.path, file.text)) ? [[from, to] as const] : []
-  }).toSorted(([, a], [, b]) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  }).toSorted(([, a], [, b]) => pathOrder(a.path, b.path))
   return (async function* () {
     for (const [from, to] of pairs) {
       const request = { base: { path: from.path, hash: from.hash, extension: from.extension }, other: { path: to.path, hash: to.hash, extension: to.extension } }

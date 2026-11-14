@@ -11,6 +11,7 @@
 // time per process, for at most a minute; told a line each, `{ path, hash,
 // otherPath, otherHash }`, a side not there null, which the viewer checks
 // name the files it shows. Access is the caller's to check.
+import { pathOrder } from './npm-packages.ts'
 import { type ComparedSide, PrettyError, type PrettyRequest } from './pretty-print.ts'
 import { comparedFiles } from './rename-diff.ts'
 import { workerTurns } from './worker-turns.ts'
@@ -50,10 +51,7 @@ export function typeOnlyFiles([base, other]: readonly [ComparedSide, ComparedSid
   const pairs = [...changed.map(({ path, basePath = path }) => [olds.get(basePath), news.get(path)]),
     ...onlyBase.map(({ path, basePath = path }) => [olds.get(basePath), null]), ...onlyOther.map(({ path }) => [null, news.get(path)])]
     .filter((sides): sides is [File | null, File | null] => sides.every(file => file !== undefined) && sides.some(file => file !== null) && sides[0]?.hash !== sides[1]?.hash)
-    .toSorted(([a, b], [c, d]) => {
-      const [x, y] = [(b ?? a)!.path, (d ?? c)!.path]
-      return x < y ? -1 : x > y ? 1 : 0
-    })
+    .toSorted(([a, b], [c, d]) => pathOrder((b ?? a)!.path, (d ?? c)!.path))
   return (async function* () {
     if (pairs.length === 0) return
     const deadline = Date.now() + PROOF_TIMEOUT_MS

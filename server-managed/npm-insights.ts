@@ -270,8 +270,10 @@ async function askTags(repo: string, sha: string, version: string, token: string
     .filter(node => taggedCommit(node.target) === sha).map(node => node.name).toSorted()
 }
 
-// Null where no token asked: nothing to keep for a reader who has one.
+// Null where no token asked: nothing to keep for a reader who has one; kept
+// by the repository, the commit and the version asked.
 const commitTags = kept<string[] | null>(500, tags => tags !== null)
+const tagsKey = (repo: string, sha: string, version: string) => `${repo.toLowerCase()}\0${sha}\0${version}`
 
 // The tags of a public repository (owner/name) that point to `sha`, a
 // version's publish commit, among those naming its `version` (`v1.2.3`,
@@ -279,7 +281,7 @@ const commitTags = kept<string[] | null>(500, tags => tags !== null)
 // a token: the reader's own (`githubToken`, asked for only where the tags
 // aren't kept), where they have one; without, none are asked.
 export async function npmCommitTags(repo: string, sha: string, version: string, githubToken: () => Promise<string | null>): Promise<string[]> {
-  return await commitTags(`${repo.toLowerCase()}\0${sha}\0${version}`, async () => {
+  return await commitTags(tagsKey(repo, sha, version), async () => {
     const token = await githubToken()
     return token === null ? null : askTags(repo, sha, version, token)
   }) ?? []
@@ -364,18 +366,23 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     }
   }
   if (result.status !== 200) throw new NpmPackageError(502, 'upstream-unavailable')
+  return { versions, repository, ...keptAt && { keptAt }, advisories: mergedAdvisories(result.body, versions) }
+}
+
+// Upstream's advisories as NpmAdvisory tells them, those covering none of
+// `versions` left out, the worst first. npm's registry answers an advisory
+// once a range it covers, and upstream answers the versions OSV's record of
+// it, or its repository, covers beyond npm's under the same id, in a row of
+// their own (as hermes-engine's GHSA-f5x2-xv93-4p23: npm's `<=0.4.3`, OSV's
+// fixed in 0.5.2): here it is one row, the first's (npm's, then OSV's, then
+// the repository's, as upstream orders them) with what it lacks taken from
+// the rest, its ranges joined as semver joins them, the versions and CWEs
+// they cover together, and the worst severity and highest score of them: a
+// version only the repository reports keeps the severity it gives.
+function mergedAdvisories(rows: Advisory[], versions: string[]): NpmAdvisory[] {
   const index = new Map(versions.map((version, i) => [version, i]))
-  // npm's registry answers an advisory once a range it covers, and upstream
-  // answers the versions OSV's record of it, or its repository, covers beyond
-  // npm's under the same id, in a row of their own (as hermes-engine's
-  // GHSA-f5x2-xv93-4p23: npm's `<=0.4.3`, OSV's fixed in 0.5.2): here it is
-  // one row, the first's (npm's, then OSV's, then the repository's, as
-  // upstream orders them) with what it lacks taken from the rest, its ranges
-  // joined as semver joins them, the versions and CWEs they cover together,
-  // and the worst severity and highest score of them: a version only the
-  // repository reports keeps the severity it gives.
   const merged = new Map<string, NpmAdvisory>()
-  for (const row of result.body) {
+  for (const row of rows) {
     const affected = row.versions.map(version => index.get(version)).filter(at => at !== undefined)
     const own: NpmAdvisory = {
       id: row.id, source: row.source, ...row.ghsa && { ghsa: row.ghsa }, ...row.url && { url: row.url }, ...row.title && { title: row.title },
@@ -393,11 +400,8 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     merged.set(row.id, { ...own, ...known, ...range && { range }, ...severity && { severity }, ...cvss >= 0 && { cvss }, cwe: [...new Set([...known.cwe, ...row.cwe])],
       affected: [...known.affected, ...affected] })
   }
-  return {
-    versions, repository, ...keptAt && { keptAt },
-    advisories: [...merged.values()].map(row => ({ ...row, affected: [...new Set(row.affected)].toSorted((a, b) => a - b) })).filter(row => row.affected.length > 0)
-      .toSorted((a, b) => rank(a.severity) - rank(b.severity) || a.id.localeCompare(b.id)),
-  }
+  return [...merged.values()].map(row => ({ ...row, affected: [...new Set(row.affected)].toSorted((a, b) => a - b) })).filter(row => row.affected.length > 0)
+    .toSorted((a, b) => rank(a.severity) - rank(b.severity) || a.id.localeCompare(b.id))
 }
 
 const ADVISORY_LISTS = 100
@@ -441,7 +445,7 @@ export function npmKnown(name: string, version: string, isPrivate: boolean, repo
   const key = advisoryKeys.get(name)
   const list = key === undefined ? undefined : advisoryLists.peek(key)
   if (list?.versions.includes(version)) known.advisories = { name, ...list }
-  const tags = repo === null || sha === null ? [] : commitTags.peek(`${repo.toLowerCase()}\0${sha}\0${version}`)
+  const tags = repo === null || sha === null ? [] : commitTags.peek(tagsKey(repo, sha, version))
   if (tags) known.tags = { name, version, tags }
   const socket = isPrivate ? null : socketReports.peek(`${name}@${version}`)
   if (socket !== undefined) known.socket = { name, version, socket }
