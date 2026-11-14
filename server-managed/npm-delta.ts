@@ -16,11 +16,11 @@
 // first's; and kept by both sides' integrities, in this instance and beyond
 // it (`kept`), what a version holds never changing. Access is the caller's
 // to check.
-import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
 import type { KeptStore } from './npm-kept.ts'
 import { type Lru, lru } from './lru.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
+import { workerTurns } from './worker-turns.ts'
 
 export interface NpmDelta { additions: number; deletions: number; typeless: { additions: number; deletions: number } | null; binary: boolean }
 
@@ -32,26 +32,8 @@ const MAX_TEXT_LENGTH = 64 * 1024 * 1024
 
 const deltas: Lru<NpmDelta> = lru(20_000)
 const working = new Map<string, Promise<NpmDelta>>()
-let active = 0
-const waiting: Array<() => void> = []
-
-async function turn(deadline: number): Promise<void> {
-  if (active < MAX_ACTIVE) { active++; return }
-  if (waiting.length >= MAX_WAITING) throw new NpmPackageError(429, 'delta-busy')
-  await new Promise<void>((resolve, reject) => {
-    const next = () => { clearTimeout(timer); resolve() }
-    const timer = setTimeout(() => {
-      waiting.splice(waiting.indexOf(next), 1)
-      reject(new NpmPackageError(504, 'delta-timeout'))
-    }, deadline - Date.now())
-    waiting.push(next)
-  })
-}
-function done() {
-  const next = waiting.shift()
-  if (next) next()
-  else active--
-}
+const workers = workerTurns({ what: 'package delta', active: MAX_ACTIVE, waiting: MAX_WAITING, error: NpmPackageError,
+  busy: 'delta-busy', timeout: 'delta-timeout', failed: 'delta-failed' })
 
 const lines = (told: unknown): told is { additions: number; deletions: number } => typeof told === 'object' && told !== null
   && Number.isSafeInteger((told as { additions?: unknown }).additions) && Number.isSafeInteger((told as { deletions?: unknown }).deletions)
@@ -67,29 +49,9 @@ const isCounted = (told: unknown): told is Counted => typeof told === 'object' &
 
 // What the worker counts of `base` against `other`, each its text files' paths and texts.
 function counted(base: [string, string][], other: [string, string][], deadline: number): Promise<Counted> {
-  let worker: Worker
-  try {
-    worker = new Worker(new URL('./npm-delta-worker.js', import.meta.url), {
-      workerData: { base, other }, execArgv: ['--disable-warning=ExperimentalWarning'], resourceLimits: { maxOldGenerationSizeMb: 1536 },
-    })
-  } catch (err) {
-    console.warn('managed: a package delta could not start:', err)
-    throw new NpmPackageError(503, 'unavailable')
-  }
-  return new Promise((resolve, reject) => {
-    let answer: Counted | null = null, failure = new NpmPackageError(422, 'delta-failed')
-    const timer = setTimeout(() => { failure = new NpmPackageError(504, 'delta-timeout'); void worker.terminate() }, deadline - Date.now())
-    worker.once('message', (told: unknown) => {
-      if (isCounted(told)) answer = told
-      void worker.terminate()
-    })
-    worker.once('error', err => { console.warn('managed: a package delta failed:', err) })
-    worker.once('exit', () => {
-      clearTimeout(timer)
-      if (answer) resolve(answer)
-      else reject(failure)
-    })
-  })
+  return workers.run(new URL('./npm-delta-worker.js', import.meta.url), {
+    workerData: { base, other }, execArgv: ['--disable-warning=ExperimentalWarning'], resourceLimits: { maxOldGenerationSizeMb: 1536 },
+  }, told => (isCounted(told) ? told : null), deadline)
 }
 
 // A side's text files, by path, how long their texts are, and its other,
@@ -174,20 +136,18 @@ export async function keptNpmDeltas(sides: [string | null, string][], kept: Kept
 async function worked(key: string, base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null): Promise<NpmDelta> {
   const known = deltaOf((await kept?.read(key))?.value)
   if (known) { deltas.set(key, known); return known }
-  await turn(Date.now() + DELTA_TIMEOUT_MS)
-  let binary, told
-  try {
+  const delta = await workers.inTurn(Date.now() + DELTA_TIMEOUT_MS, async (): Promise<NpmDelta> => {
     // Its turn held till both sides are read, or have failed.
     const [baseRead, otherRead] = await Promise.allSettled([base ? base.files() : Promise.resolve(null), other.files()])
     if (baseRead.status === 'rejected') throw baseRead.reason
     if (otherRead.status === 'rejected') throw otherRead.reason
     const [olds, news] = [texts(baseRead.value), texts(otherRead.value)]
     if (olds.length + news.length > MAX_TEXT_LENGTH) throw new NpmPackageError(413, 'package-too-large')
-    binary = binaryChanged(olds.binaries, news.binaries)
-    told = await counted(olds.read, news.read, Date.now() + DELTA_TIMEOUT_MS)
-  } finally { done() }
-  const delta = { additions: told.additions, deletions: told.deletions,
-    typeless: told.typeFiles > 0 ? { additions: told.additions - told.typeAdditions, deletions: told.deletions - told.typeDeletions } : null, binary }
+    const binary = binaryChanged(olds.binaries, news.binaries)
+    const told = await counted(olds.read, news.read, Date.now() + DELTA_TIMEOUT_MS)
+    return { additions: told.additions, deletions: told.deletions,
+      typeless: told.typeFiles > 0 ? { additions: told.additions - told.typeAdditions, deletions: told.deletions - told.typeDeletions } : null, binary }
+  })
   deltas.set(key, delta)
   await kept?.write(key, delta, Date.now())
   return delta

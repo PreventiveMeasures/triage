@@ -14,9 +14,7 @@
 // again through the pretty-print cache first, which checks that its source
 // holds a file of that hash. Access is the caller's to check.
 import { Buffer } from 'node:buffer'
-import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
-import { Worker } from 'node:worker_threads'
 import { brotliDecompress } from 'node:zlib'
 import { layoutPackageDirs, treeLayout } from '@preventive/compare'
 import { computeFileHash } from '@preventive/report'
@@ -27,7 +25,8 @@ import { needsPrettyPrint, prettyExtension } from '../common/pretty-print.js'
 import { type ChangeBlock, blocksHold, textLines } from '../common/line-diff.js'
 import type { OpenedBlob } from './blob-store.ts'
 import { encodeBrotli } from './brotli.ts'
-import { type ComparedSide, PrettyError, type PrettyRequest, prettyText } from './pretty-print.ts'
+import { type ComparedSide, PrettyError, type PrettyRequest, opened, prettyText } from './pretty-print.ts'
+import { workerTurns } from './worker-turns.ts'
 
 // What a minifier renames: JavaScript, as the viewer offers it for.
 const RENAMABLE = new Set(['js', 'mjs', 'cjs'])
@@ -67,34 +66,10 @@ export function renameDiffRequest(params: URLSearchParams): RenameDiffRequest | 
   return base && other ? { base, other } : null
 }
 
-let activeDiffs = 0
-const waiting: Array<() => void> = []
+const workers = workerTurns({ what: 'rename diff', active: MAX_ACTIVE_DIFFS, waiting: MAX_WAITING_DIFFS, error: PrettyError,
+  busy: 'diff-busy', timeout: 'diff-timeout', failed: 'undiffable' })
 const kept = new Map<string, Buffer>()
 const pending = new Map<string, Promise<Buffer>>()
-
-// A worker's turn, waited for behind those running until `deadline`; given
-// up, it goes to the next one waiting.
-async function turn(deadline: number): Promise<void> {
-  if (activeDiffs < MAX_ACTIVE_DIFFS) { activeDiffs++; return }
-  if (waiting.length >= MAX_WAITING_DIFFS) throw new PrettyError(429, 'diff-busy')
-  await new Promise<void>((resolve, reject) => {
-    const next = () => { clearTimeout(timer); resolve() }
-    const timer = setTimeout(() => {
-      waiting.splice(waiting.indexOf(next), 1)
-      reject(new PrettyError(504, 'diff-timeout'))
-    }, deadline - Date.now())
-    waiting.push(next)
-  })
-}
-function done() {
-  const next = waiting.shift()
-  if (next) next()
-  else activeDiffs--
-}
-async function inTurn<T>(deadline: number, work: () => Promise<T>): Promise<T> {
-  await turn(deadline)
-  try { return await work() } finally { done() }
-}
 
 // Whether a worker's answer is one as rename-diff-worker.js gives it, its
 // blocks taking the old side it answered to the new one asked of, whitespace
@@ -125,35 +100,16 @@ function marksFit(before: string, after: string, marks: unknown): boolean {
   return true
 }
 
-// Settled once the worker is gone, so that its turn is given up only then.
 function inWorker(before: string, after: string, { base, other }: RenameDiffRequest, deadline: number): Promise<RenameDiff> {
   if (before.length + after.length > MAX_DIFF_CHARS) throw new PrettyError(413, 'diff-too-large')
-  let worker: Worker
-  try {
-    worker = new Worker(new URL('./rename-diff-worker.js', import.meta.url), {
-      workerData: { before, after, extension: base.extension, otherExtension: other.extension }, execArgv: [],
-      resourceLimits: { maxOldGenerationSizeMb: 1024 },
-    })
-  } catch (err) {
-    console.warn('managed: a rename diff could not start:', err)
-    throw new PrettyError(503, 'unavailable')
-  }
-  return new Promise<RenameDiff>((resolve, reject) => {
-    let diff: RenameDiff | null = null, failure = new PrettyError(422, 'undiffable')
-    const timer = setTimeout(() => { failure = new PrettyError(504, 'diff-timeout'); void worker.terminate() }, deadline - Date.now())
-    worker.once('message', (answer: unknown) => {
-      if (answers(answer, before, after)) diff = answer
-      else console.warn('managed: a rename diff answered what does not take its old side to the new')
-      void worker.terminate()
-    })
-    worker.once('error', err => { console.warn('managed: a rename diff failed:', err) })
-    // Gone: answered, run out of memory, or terminated.
-    worker.once('exit', () => {
-      clearTimeout(timer)
-      if (diff) resolve(diff)
-      else reject(failure)
-    })
-  })
+  return workers.run(new URL('./rename-diff-worker.js', import.meta.url), {
+    workerData: { before, after, extension: base.extension, otherExtension: other.extension }, execArgv: [],
+    resourceLimits: { maxOldGenerationSizeMb: 1024 },
+  }, answer => {
+    if (answers(answer, before, after)) return answer
+    console.warn('managed: a rename diff answered what does not take its old side to the new')
+    return null
+  }, deadline)
 }
 
 // `work` given until `deadline`: past it, answered 504 and left to finish on its own.
@@ -169,7 +125,6 @@ async function encoded(diff: RenameDiff, { base, other }: RenameDiffRequest, [be
   const [prettyHash, otherPrettyHash] = await Promise.all([computeFileHash(before), computeFileHash(after)])
   return encodeBrotli(Buffer.from(JSON.stringify({ ...diff, hash: base.hash, otherHash: other.hash, prettyHash, otherPrettyHash })))
 }
-const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
 
 // The answer for the two files a request names, Brotli-encoded, `texts`
 // reading both sides pretty-printed (and so checking each is its source's):
@@ -190,7 +145,7 @@ async function answerOf(request: RenameDiffRequest, texts: () => Promise<[string
   if (!keep) {
     const deadline = Date.now() + DIFF_TIMEOUT_MS
     let sides: [string, string] = ['', '']
-    const diff = await inTurn(deadline, async () => {
+    const diff = await workers.inTurn(deadline, async () => {
       sides = await byDeadline(texts(), deadline)
       return inWorker(sides[0], sides[1], request, deadline)
     })
@@ -212,7 +167,7 @@ async function answerOf(request: RenameDiffRequest, texts: () => Promise<[string
     answer = held()
     if (!answer) {
       const deadline = Date.now() + DIFF_TIMEOUT_MS
-      const job = inTurn(deadline, () => inWorker(before, after, request, deadline)).then(diff => encoded(diff, request, [before, after])).finally(() => pending.delete(key))
+      const job = workers.inTurn(deadline, () => inWorker(before, after, request, deadline)).then(diff => encoded(diff, request, [before, after])).finally(() => pending.delete(key))
       pending.set(key, answer = job)
     }
   }

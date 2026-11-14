@@ -121,7 +121,7 @@ export async function prettyBody(text: string, extension: string): Promise<Buffe
   return encodeBrotli(Buffer.from(result.code))
 }
 
-const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
+export const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
 
 // A version's file's hash, by its bytes: those of a version's files loaded
 // a little while since are the same bytes (npm-loads.ts), hashed once.

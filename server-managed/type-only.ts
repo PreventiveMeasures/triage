@@ -11,9 +11,9 @@
 // time per process, for at most a minute; told a line each, `{ path, hash,
 // otherPath, otherHash }`, a side not there null, which the viewer checks
 // name the files it shows. Access is the caller's to check.
-import { Worker } from 'node:worker_threads'
 import { type ComparedSide, PrettyError, type PrettyRequest } from './pretty-print.ts'
 import { comparedFiles } from './rename-diff.ts'
+import { workerTurns } from './worker-turns.ts'
 
 // TypeScript files, by extension as the pretty-print cache reads them: none
 // other is asked about.
@@ -27,55 +27,17 @@ const PROOF_TIMEOUT_MS = 60_000
 type File = PrettyRequest & { text: string }
 export interface TypeOnlyLine { path: string | null; hash: string | null; otherPath: string | null; otherHash: string | null }
 
-let active = 0
-const waiting: Array<() => void> = []
-
-async function turn(deadline: number): Promise<void> {
-  if (active < MAX_ACTIVE_PROOFS) { active++; return }
-  if (waiting.length >= MAX_WAITING_PROOFS) throw new PrettyError(429, 'proof-busy')
-  await new Promise<void>((resolve, reject) => {
-    const next = () => { clearTimeout(timer); resolve() }
-    const timer = setTimeout(() => {
-      waiting.splice(waiting.indexOf(next), 1)
-      reject(new PrettyError(504, 'proof-timeout'))
-    }, deadline - Date.now())
-    waiting.push(next)
-  })
-}
-function done() {
-  const next = waiting.shift()
-  if (next) next()
-  else active--
-}
+const workers = workerTurns({ what: 'type-only proof', active: MAX_ACTIVE_PROOFS, waiting: MAX_WAITING_PROOFS, error: PrettyError,
+  busy: 'proof-busy', timeout: 'proof-timeout', failed: 'unproven' })
 
 // Which of `pairs` compareTrees stamps types only, by index, in a worker
 // settled once it is gone; none where it fails, as no proof should.
 function proven(pairs: Array<[File | null, File | null]>, deadline: number): Promise<boolean[]> {
-  let worker: Worker
-  try {
-    worker = new Worker(new URL('./type-only-worker.js', import.meta.url), {
-      workerData: { pairs: pairs.map(sides => sides.map(file => file && { path: file.path, text: file.text })) },
-      // Node's type stripping, which the proof holds oxc's tree to, warns it is experimental.
-      execArgv: ['--disable-warning=ExperimentalWarning'], resourceLimits: { maxOldGenerationSizeMb: 1024 },
-    })
-  } catch (err) {
-    console.warn('managed: a type-only proof could not start:', err)
-    throw new PrettyError(503, 'unavailable')
-  }
-  return new Promise((resolve, reject) => {
-    let answer: boolean[] | null = null, failure = new PrettyError(422, 'unproven')
-    const timer = setTimeout(() => { failure = new PrettyError(504, 'proof-timeout'); void worker.terminate() }, deadline - Date.now())
-    worker.once('message', (told: unknown) => {
-      if (Array.isArray(told) && told.length === pairs.length && told.every(one => typeof one === 'boolean')) answer = told
-      void worker.terminate()
-    })
-    worker.once('error', err => { console.warn('managed: a type-only proof failed:', err) })
-    worker.once('exit', () => {
-      clearTimeout(timer)
-      if (answer) resolve(answer)
-      else reject(failure)
-    })
-  })
+  return workers.run(new URL('./type-only-worker.js', import.meta.url), {
+    workerData: { pairs: pairs.map(sides => sides.map(file => file && { path: file.path, text: file.text })) },
+    // Node's type stripping, which the proof holds oxc's tree to, warns it is experimental.
+    execArgv: ['--disable-warning=ExperimentalWarning'], resourceLimits: { maxOldGenerationSizeMb: 1024 },
+  }, (told): boolean[] | null => (Array.isArray(told) && told.length === pairs.length && told.every(one => typeof one === 'boolean') ? told : null), deadline)
 }
 
 // The files that changed between a comparison's two sides in types alone,
@@ -95,9 +57,7 @@ export function typeOnlyFiles([base, other]: readonly [ComparedSide, ComparedSid
   return (async function* () {
     if (pairs.length === 0) return
     const deadline = Date.now() + PROOF_TIMEOUT_MS
-    await turn(deadline)
-    let stamped
-    try { stamped = await proven(pairs, deadline) } finally { done() }
+    const stamped = await workers.inTurn(deadline, () => proven(pairs, deadline))
     for (const [i, [from, to]] of pairs.entries()) {
       if (stamped[i]) yield { path: from?.path ?? null, hash: from?.hash ?? null, otherPath: to?.path ?? null, otherHash: to?.hash ?? null }
     }
