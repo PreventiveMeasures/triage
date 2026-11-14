@@ -101,6 +101,9 @@ function binaryChanged(olds: NpmPackageFile[], news: NpmPackageFile[]): boolean 
 }
 
 type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
+// A delta's key: the integrities of the version it is against, or none, and
+// of the version.
+const deltaKey = (base: string | null, other: string) => `${base ?? '(empty)'}\0${other}`
 
 // The delta of `other` (its integrity, and how to read its files) against
 // `base`, or none, as held, else shared with one asked before it, else
@@ -108,7 +111,7 @@ type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
 // it is looked for, lest those asked together each look, find none, and work
 // it out.
 export function npmDelta(base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null = null): Promise<NpmDelta> {
-  const key = `${base?.integrity ?? '(empty)'}\0${other.integrity}`
+  const key = deltaKey(base?.integrity ?? null, other.integrity)
   const known = deltas.get(key)
   if (known) return Promise.resolve(known)
   const shared = working.get(key)
@@ -122,7 +125,7 @@ export function npmDelta(base: Side | null, other: Side, kept: KeptStore<NpmDelt
 // against, or none, and of the version) held or kept, by their keys
 // (npmDelta's), in one read of `kept` for those not held: none worked out.
 export async function keptNpmDeltas(sides: [string | null, string][], kept: KeptStore<NpmDelta>): Promise<Map<string, NpmDelta>> {
-  const keys = [...new Set(sides.map(([base, other]) => `${base ?? '(empty)'}\0${other}`))]
+  const keys = [...new Set(sides.map(([base, other]) => deltaKey(base, other)))]
   const found = new Map(keys.flatMap(key => { const known = deltas.get(key); return known ? [[key, known] as const] : [] }))
   const unheld = keys.filter(key => !found.has(key))
   for (const [key, row] of unheld.length > 0 ? await kept.readMany(unheld) : []) {

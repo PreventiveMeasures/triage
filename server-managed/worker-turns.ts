@@ -1,11 +1,11 @@
-// Work done in workers of its own, off the event loop (npm-delta.ts,
-// rename-diff.ts, type-only.ts): as many at once per process as `active`,
-// those waiting their turn past them as many as `waiting`, any more refused
-// (429 `busy`), each waiting until its deadline at most (504 `timeout`); a
-// worker given until its deadline too, then terminated (504 `timeout`). One
-// that can't start is refused (503 `unavailable`), and one gone without an
-// answer `accept` takes fails (422 `failed`), each as `error` tells it; `what`
-// names them in the log.
+// Jobs worked out each in a worker of its own, off the event loop
+// (npm-delta.ts, rename-diff.ts, type-only.ts): as many at once per process
+// as `active`, those waiting their turn past them as many as `waiting`, any
+// more refused (429 `busy`), each waiting until its deadline at most (504
+// `timeout`); a worker given until its deadline too, then terminated (504
+// `timeout`). One that can't start is refused (503 `unavailable`), and one
+// gone without an answer `accept` takes fails (422 `failed`), each as `error`
+// tells it; `what` names them in the log.
 import { Worker, type WorkerOptions } from 'node:worker_threads'
 
 export function workerTurns({ what, active, waiting, error: Failure, busy, timeout, failed }: {
