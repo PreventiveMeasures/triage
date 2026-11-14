@@ -11,8 +11,8 @@
 import { isExactVersion, satisfies, validRange } from '@preventive/upstream/semver.js'
 import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import { GithubApiError, githubUnreachable, throwGithubResponseError } from './github-errors.ts'
-import { API_VERSION, GITHUB_API, USER_AGENT, encodedPath, repoApi } from './github-requests.ts'
-import { LOGIN } from './github-values.ts'
+import { GITHUB_API, encodedPath, githubHeaders, repoApi } from './github-requests.ts'
+import { LOGIN, isId } from './github-values.ts'
 import type { LockedPackage } from './locked-packages.ts'
 
 // An alert, as GitHub has it: its `number` in its repository and its page
@@ -78,7 +78,7 @@ function dismissalOf(state: string, raw: Record<string, any>): AlertDismissal {
 function alertOf(fullName: string, raw: unknown): DependabotAlert | null {
   if (raw == null || typeof raw !== 'object') return null
   const { number, state, dependency, security_advisory: advisory, security_vulnerability: vulnerability } = raw as Record<string, any>
-  if (!Number.isSafeInteger(number) || number <= 0 || !STATES.includes(state)) return null
+  if (!isId(number) || !STATES.includes(state)) return null
   const ghsa = advisory?.ghsa_id, manifest = dependency?.manifest_path, name = dependency?.package?.name
   if (dependency?.package?.ecosystem !== 'npm' || !isNpmPackageName(name) || !isRepoPath(manifest) || typeof ghsa !== 'string' || !GHSA.test(ghsa)) return null
   const severity = SEVERITIES.get(vulnerability?.severity ?? advisory?.severity)
@@ -117,10 +117,7 @@ async function askPage(url: string, token: string, fetchImpl: typeof fetch): Pro
   const started = Date.now()
   let res: Response
   try {
-    res = await fetchImpl(url, {
-      signal: AbortSignal.timeout(PAGE_TIMEOUT_MS), redirect: 'error',
-      headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION },
-    })
+    res = await fetchImpl(url, { signal: AbortSignal.timeout(PAGE_TIMEOUT_MS), redirect: 'error', headers: githubHeaders(token) })
   } catch (error) { throw githubUnreachable(error, started) }
   if (res.status === 403) {
     const message = (await res.clone().json().catch(() => null) as { message?: unknown } | null)?.message

@@ -130,8 +130,8 @@ function serveCompared(res: ServerResponse, deps: ManagedHttpDeps, bundle: Manag
   recheck: () => Promise<void>, stream: Stream) {
   if (part === 'comparison') return serveComparison(res, deps, bundle, other, url, stream)
   if (part === 'rename-diff' && url.searchParams.has('path')) return serveRenameDiff(res, deps, bundle, other, url, stream)
-  return serveChanges(res, deps, bundle, other, recheck, part === 'pretty' ? compared : part === 'type-only' ? typeOnlyFiles : renamedPairs,
-    part === 'pretty' ? '' : url.searchParams.get('scope') ?? '')
+  if (part === 'pretty') return serveChanges(res, deps, bundle, other, recheck, compared, '')
+  return serveChanges(res, deps, bundle, other, recheck, part === 'type-only' ? typeOnlyFiles : renamedPairs, url.searchParams.get('scope') ?? '')
 }
 
 // One of a bundle's JavaScript files diffed with one of `other`, another of

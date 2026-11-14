@@ -2,7 +2,7 @@
 // repository's activity names its authors (repository-history.ts and the
 // Commits, Issues, Agents and Pulse tabs' readers).
 import { githubGraphql, notFound } from './github-graphql.ts'
-import { LOGIN } from './github-values.ts'
+import { LOGIN, isId } from './github-values.ts'
 
 // An account as GitHub names it: its login, else null, and its numeric id
 // where GitHub names one with it.
@@ -10,7 +10,7 @@ export interface NamedAccount { login: string | null; id: number | null }
 export function accountOf(account: { login?: unknown; id?: unknown } | null | undefined): NamedAccount {
   const login = typeof account?.login === 'string' && LOGIN.test(account.login) ? account.login : null
   const id = account?.id
-  return { login, id: login && Number.isSafeInteger(id) && (id as number) > 0 ? id as number : null }
+  return { login, id: login && isId(id) ? id : null }
 }
 
 // An actor (the author of an issue or a pull request, one who merged one) as

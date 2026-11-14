@@ -14,6 +14,10 @@ export const timeOf = (value: unknown) => {
   return Number.isSafeInteger(at) ? at : null
 }
 
+// An id or a number GitHub gives (an account's, a repository's, an issue's):
+// a positive integer.
+export const isId = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0
+
 // A count GitHub gives, 0 where it gives none.
 export const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 

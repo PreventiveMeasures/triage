@@ -6,13 +6,13 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedSession, ManagedUser, UserTokens } from './db.ts'
 import { randomToken, safeEqual } from './crypto.ts'
-import { API_VERSION, USER_AGENT } from './github-requests.ts'
+import { GITHUB_API, githubHeaders } from './github-requests.ts'
 import { STATE_COOKIE, buildCookie, clearCookie, cookieName, createSession, parseCookies } from './session.ts'
 import { isViewing } from './view-as.ts'
 
 const GITHUB_AUTHORIZE_URL = 'https://github.com/login/oauth/authorize'
 const GITHUB_TOKEN_URL = 'https://github.com/login/oauth/access_token'
-const GITHUB_USER_URL = 'https://api.github.com/user'
+const GITHUB_USER_URL = `${GITHUB_API}/user`
 const STATE_TTL_S = 600
 
 export const LOGIN_PATH = '/api/oauth/github/login'
@@ -217,12 +217,7 @@ async function refreshStoredToken(
 export async function fetchIdentity(token: string, fetchImpl: typeof fetch): Promise<ManagedUser> {
   let res: Response
   try {
-    res = await fetchImpl(GITHUB_USER_URL, {
-      headers: {
-        'authorization': `Bearer ${token}`, 'accept': 'application/vnd.github+json',
-        'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
-      },
-    })
+    res = await fetchImpl(GITHUB_USER_URL, { headers: githubHeaders(token) })
   } catch { throw new OAuthError(502, 'github-user-unreachable') }
   if (!res.ok) throw new OAuthError(502, `github-user-status-${res.status}`)
   let body: unknown

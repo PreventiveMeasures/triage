@@ -10,7 +10,8 @@ import { ignoresOwnRepo } from '../common/finding-repo.js'
 import { appJwt, githubAppConfigured, installUrl, publicRepositoryName } from './github-app.ts'
 import { ISSUE_LOGIN_PATH } from './github-issue-oauth.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
-import { API_VERSION, USER_AGENT, encodedPath } from './github-requests.ts'
+import { GITHUB_API, encodedPath, githubHeaders } from './github-requests.ts'
+import { isId } from './github-values.ts'
 import { TeamReportsError, loadTeamReports, recheckTeam, teamSnapshot } from './team-reports.ts'
 
 export const MAX_ISSUE_BODY_BYTES = 512_000
@@ -31,10 +32,9 @@ export function parseIssueContext(raw: unknown): Context {
 async function github(path: string, token: string, fetchImpl: typeof fetch, payload?: unknown) {
   let response: Response
   try {
-    response = await fetchImpl(`https://api.github.com${path}`, {
+    response = await fetchImpl(`${GITHUB_API}${path}`, {
       method: payload === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
-      headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json',
-        'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION, 'content-type': 'application/json' },
+      headers: { ...githubHeaders(token), 'content-type': 'application/json' },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     })
   } catch { throw new IssueError(502, payload === undefined ? 'github-unavailable' : 'github-create-uncertain') }
@@ -135,7 +135,7 @@ export async function createGithubIssue(prepared: Awaited<ReturnType<typeof prep
   if (!response.ok) throw new IssueError(response.status === 422 ? 422 : 502, response.status >= 500 ? 'github-create-uncertain' : 'github-create-failed')
   let issue: { number?: unknown }
   try { issue = await response.json() } catch { throw new IssueError(502, 'github-create-uncertain') }
-  if (!Number.isSafeInteger(issue?.number) || Number(issue.number) <= 0) throw new IssueError(502, 'github-create-uncertain')
+  if (!isId(issue?.number)) throw new IssueError(502, 'github-create-uncertain')
   // Construct the URL from validated inputs, never an upstream redirect target.
   const number = Number(issue.number), url = `https://github.com${prepared.path.slice('/repos'.length)}/issues/${issue.number}`
   if (!await db.finishManagedIssue(findingId, requestId, url)) throw new IssueError(502, 'github-create-uncertain')

@@ -14,6 +14,7 @@ import { readBundleDetails } from './bundle-cache.ts'
 import type { BlobStore } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
 import type { ManagedBundle, ManagedDb, ReportRecord } from './db.ts'
+import { inTurns } from './queue.ts'
 
 const compress = promisify(gzip)
 const reportFormat = (filename: string) => extname(filename).toLowerCase()
@@ -93,12 +94,7 @@ async function oursFor(db: ManagedDb, repo: { github: string | null }): Promise<
 // format so each format's permissions can be removed after its last deletion.
 export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, reports: BlobStore, bundles: BundleStore, sourcemapEdges?: SourcemapEdges) {
   const pending = new Map<string, { reportId: string; job: Promise<boolean> }>()
-  let queue = Promise.resolve()
-  function enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const job = queue.then(work)
-    queue = job.then(() => undefined, () => undefined)
-    return job
-  }
+  const enqueue = inTurns(1)
   async function referenced(report: ReportRecord, bundle: ManagedBundle) {
     const names = await db.listReportFilenamesWithBundleHash(bundle.id, report.sha256)
     return names.some(name => reportFormat(name) === reportFormat(report.filename)) && await db.getBundle(bundle.id) != null

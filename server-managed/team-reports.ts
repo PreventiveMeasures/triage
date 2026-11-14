@@ -133,8 +133,9 @@ function withoutTree(report: TeamReport): string | null {
   })
   return `${JSON.stringify(report.id)}:${JSON.stringify(Object.fromEntries(files))}`
 }
-async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<EncodedWorkspace & { visible: Visibility }> {
-  if (snapshot.reports.length > MAX_REPORT_QUERY_COUNT || snapshot.reports.reduce((n, r) => n + r.byteSize, 0) > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
+// The snapshot's reports, read WORKSPACE_READS_AT_ONCE at a time, in its
+// order, their findings' IDs backfilled.
+async function readWorkspaceReports(store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<TeamReport[]> {
   const reports: TeamReport[] = []
   let inputBytes = 0, next = 0
   // Bound both remote reads and raw buffers, retaining stable report order for
@@ -157,6 +158,11 @@ async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: Tea
     }
   }))
   for (const result of results) if (result.status === 'rejected') throw result.reason
+  return reports
+}
+async function buildTeamWorkspace(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<EncodedWorkspace & { visible: Visibility }> {
+  if (snapshot.reports.length > MAX_REPORT_QUERY_COUNT || snapshot.reports.reduce((n, r) => n + r.byteSize, 0) > MAX_REPORT_QUERY_BYTES) throw new TeamReportsError(413, 'batch-too-large')
+  const reports = await readWorkspaceReports(store, snapshot)
   const globalLinks = snapshot.linkRevision ? await db.getEnabledLinkGroups(snapshot.linkRevision) : []
   const groups = reports.flatMap(report => groupsOf(report.data).map(group => group.map(f => projectFinding(f, report.data as Finding)!)))
   // Unknown IDs can connect known findings. App findings link to the inputs
@@ -275,18 +281,14 @@ export async function loadTeamReports(db: ManagedDb, store: BlobStore, snapshot:
   return body.reports
 }
 async function teamVisibility(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Visibility> {
-  let visible = caches.get(db)?.get(workspaceKey(snapshot))
-  if (!visible) {
-    // A large snapshot may deliberately remain uncached, or be evicted by
-    // another request. Authorization uses this load's result in either case.
-    visible = (await loadTeamWorkspace(db, store, snapshot)).visible
-  }
-  return visible
+  // A large snapshot may deliberately remain uncached, or be evicted by
+  // another request. Authorization uses this load's result in either case.
+  return caches.get(db)?.get(workspaceKey(snapshot)) ?? (await loadTeamWorkspace(db, store, snapshot)).visible
 }
+// The findings `visible`'s reports show, each once.
+const findingIdsOf = (visible: Visibility) => new Set([...visible.values()].flatMap(report => [...report.ids]))
 export async function teamWorkspaceFindingIds(db: ManagedDb, store: BlobStore, snapshot: TeamReportAccessSnapshot): Promise<Set<string>> {
-  const ids = new Set<string>()
-  for (const report of (await teamVisibility(db, store, snapshot)).values()) for (const id of report.ids) ids.add(id)
-  return ids
+  return findingIdsOf(await teamVisibility(db, store, snapshot))
 }
 
 // What a focused team's annotations are at, for the snapshot reading them, as
@@ -337,9 +339,7 @@ export async function loadTeamAnnotations(db: ManagedDb, store: BlobStore, snaps
   if (reportId !== null && !snapshot.reports.some(r => r.id === reportId)) throw new TeamReportsError(404, 'no-report')
   const workspace = await teamVisibility(db, store, snapshot)
   const visible = reportId === null ? workspace : new Map([[reportId, workspace.get(reportId)!]])
-  const all = new Set<string>(), ids = new Set<string>()
-  for (const report of visible.values()) for (const id of report.ids) ids.add(id)
-  for (const report of workspace.values()) for (const id of report.ids) all.add(id)
+  const all = findingIdsOf(workspace), ids = findingIdsOf(visible)
   const revision = await teamAnnotationRevision(db, snapshot, [...all])
   const { triage, comments, issues: savedIssues } = await db.getAnnotations([...ids])
   const issues = Object.fromEntries(visibleManagedIssues(savedIssues, snapshot)

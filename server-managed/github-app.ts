@@ -8,6 +8,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import type { ManagedConfig } from './config.ts'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
 import { GITHUB_API, USER_AGENT, githubJson, onTokenRejected, repoApi } from './github-requests.ts'
+import { isId } from './github-values.ts'
 import { eachOf } from './queue.ts'
 
 const PER_PAGE = 100
@@ -76,7 +77,7 @@ function parseRepo(raw: unknown, installationId: number | null): ConnectedRepo |
   if ((raw as { archived?: unknown }).archived === true) return null
   const id = (raw as { id?: unknown }).id
   const fullName = (raw as { full_name?: unknown }).full_name
-  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return null
+  if (!isId(id)) return null
   if (typeof fullName !== 'string' || fullName === '') return null
   const htmlUrl = (raw as { html_url?: unknown }).html_url
   const branch = (raw as { default_branch?: unknown }).default_branch
@@ -148,7 +149,7 @@ async function listInstallationIds(jwt: string, fetchImpl: typeof fetch): Promis
     if (!Array.isArray(body)) throw new GithubApiError(502, 'github-malformed')
     for (const inst of body) {
       const id = (inst as { id?: unknown }).id
-      if (typeof id === 'number' && Number.isSafeInteger(id) && id > 0) ids.push(id)
+      if (isId(id)) ids.push(id)
     }
     if (body.length < PER_PAGE) break
   }
@@ -207,7 +208,7 @@ export async function repositoryInstallation(config: ManagedConfig, repoId: numb
   }
   const installation = raw as { id?: unknown; suspended_at?: unknown; permissions?: { contents?: unknown } } | null
   const id = installation?.id
-  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw new GithubApiError(502, 'github-malformed')
+  if (!isId(id)) throw new GithubApiError(502, 'github-malformed')
   if (installation?.suspended_at != null || !['read', 'write'].includes(String(installation?.permissions?.contents))) return null
   const token = await installationAccessToken(githubAppId, githubAppPrivateKey, id, fetchImpl)
   const repo = parseRepo(await githubJson(repoApi(fullName), token, fetchImpl), id)
@@ -263,7 +264,7 @@ export interface GithubIdentity { id: number; login: string }
 // else's access. All repo paths come from GitHub's installation catalogue.
 export async function githubUserIdentity(userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<GithubIdentity> {
   const identity = await githubJson(`${GITHUB_API}/user`, userToken, fetchImpl) as { id?: unknown; login?: unknown }
-  if (typeof identity?.login !== 'string' || !identity.login || typeof identity.id !== 'number' || !Number.isSafeInteger(identity.id) || identity.id <= 0) throw new GithubApiError(502, 'github-malformed')
+  if (typeof identity?.login !== 'string' || !identity.login || !isId(identity.id)) throw new GithubApiError(502, 'github-malformed')
   return { id: identity.id, login: identity.login }
 }
 

@@ -6,6 +6,14 @@ export const GITHUB_API = 'https://api.github.com'
 export const API_VERSION = '2022-11-28'
 export const USER_AGENT = 'deepview-triage'
 
+// What GitHub's REST API is asked with: its media type and version, as
+// USER_AGENT, and `token` as Bearer where there is one (githubJson and the
+// readers that ask GitHub themselves).
+export const githubHeaders = (token: string | null) => ({
+  ...(token == null ? {} : { authorization: `Bearer ${token}` }), 'accept': 'application/vnd.github+json',
+  'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
+})
+
 // Only outstanding reads: a completed answer (or failure) is never reused.
 // Keep transports and credentials separate, including anonymous reads. When
 // full, new reads proceed normally rather than waiting for an unrelated one.
@@ -143,8 +151,7 @@ export function githubJson(url: string, token: string | null, fetchImpl: typeof 
         signal: AbortSignal.timeout(body === undefined ? 10_000 : 20_000),
         redirect: 'error',
         headers: {
-          ...(token == null ? {} : { authorization: `Bearer ${token}` }), 'accept': 'application/vnd.github+json',
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }), 'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
+          ...githubHeaders(token), ...(body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(tagged ? { 'if-none-match': tagged.etag } : {}),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
