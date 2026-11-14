@@ -86,7 +86,7 @@ async function projectDirectory(input, github, client) {
   // Input validation permits either JS/TS entries or Solidity entries, never a mix.
   const manifests = input.entries[0].endsWith('.sol') ? ['foundry.toml', 'soldeer.toml', 'soldeer.lock'] : ['package.json']
   if (!input.directory) return ''
-  for (let directory = input.directory; ; directory = posix.dirname(directory).replace(/^\.$/u, '')) {
+  for (let directory = input.directory; ; directory = parentOf(directory)) {
     const entries = await directoryListing(input, github, client, directory)
     if (entries?.some(entry => manifests.includes(entry.path) && regularFile(entry))) return directory
     if (!directory) return input.directory

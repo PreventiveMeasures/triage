@@ -3,6 +3,7 @@ import { setImmediate } from 'node:timers/promises'
 import { CacheMissError } from './cache-storage.ts'
 import { decodeUtf8 } from '../common/utf8.js'
 import { bundleCommitHash } from '../common/bundle-commit.js'
+import type { OpenedBlob } from './blob-store.ts'
 import type { BundleCacheRecord, BundleCacheStorage, BundleSummary } from './bundle-cache.ts'
 
 // Version 3 adds the optional source commit; version 4 counts lines of code
@@ -24,24 +25,30 @@ async function readCurrentSummary(storage: BundleCacheStorage, id: string): Prom
   }
 }
 
-async function readSummary(storage: BundleCacheStorage, id: string, file: string): Promise<BundleSummary | { retryAt: number }> {
-  const cached = await storage.open(id, file)
+// A cached file's bytes, read whole and its stream destroyed; null past `max`.
+export async function readCachedBytes(cached: OpenedBlob, max: number): Promise<Buffer | null> {
   try {
     const chunks: Buffer[] = []
     let size = 0
     for await (const chunk of cached.stream) {
       size += chunk.length
-      if (size > 1024) throw new Error('Invalid bundle summary')
+      if (size > max) return null
       chunks.push(Buffer.from(chunk))
     }
-    const summary = JSON.parse(decodeUtf8(Buffer.concat(chunks))) as BundleSummary | { retryAt: number }
-    if (summary && 'retryAt' in summary && Number.isSafeInteger(summary.retryAt) && summary.retryAt > 0) return summary
-    const counts = summary as BundleSummary
-    if (!counts || ![counts.files, counts.codeFiles, counts.lines].every(value => Number.isSafeInteger(value) && value >= 0)
-        || counts.codeFiles > counts.files || (counts.commit !== undefined && !bundleCommitHash(counts.commit))
-        || [counts.stasisVersion, counts.versionedPackages].some(value => value !== undefined && !(Number.isSafeInteger(value) && value >= 0))) throw new Error('Invalid bundle summary')
-    return counts
+    return Buffer.concat(chunks)
   } finally { cached.stream.destroy() }
+}
+
+async function readSummary(storage: BundleCacheStorage, id: string, file: string): Promise<BundleSummary | { retryAt: number }> {
+  const bytes = await readCachedBytes(await storage.open(id, file), 1024)
+  if (!bytes) throw new Error('Invalid bundle summary')
+  const summary = JSON.parse(decodeUtf8(bytes)) as BundleSummary | { retryAt: number }
+  if (summary && 'retryAt' in summary && Number.isSafeInteger(summary.retryAt) && summary.retryAt > 0) return summary
+  const counts = summary as BundleSummary
+  if (!counts || ![counts.files, counts.codeFiles, counts.lines].every(value => Number.isSafeInteger(value) && value >= 0)
+      || counts.codeFiles > counts.files || (counts.commit !== undefined && !bundleCommitHash(counts.commit))
+      || [counts.stasisVersion, counts.versionedPackages].some(value => value !== undefined && !(Number.isSafeInteger(value) && value >= 0))) throw new Error('Invalid bundle summary')
+  return counts
 }
 
 export function createBundleSummaryCache(storage: BundleCacheStorage, build: (record: BundleCacheRecord) => Promise<BundleSummary>, exists: (id: string) => Promise<unknown>) {

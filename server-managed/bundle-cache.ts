@@ -14,7 +14,7 @@ import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
 import { CacheMissError } from './cache-storage.ts'
-import { SUMMARY_FILENAME, createBundleSummaryCache } from './bundle-summary-cache.ts'
+import { SUMMARY_FILENAME, createBundleSummaryCache, readCachedBytes } from './bundle-summary-cache.ts'
 
 const decompress = promisify(brotliDecompress)
 const MAX_DECODED_BYTES = 512 * 1024 * 1024
@@ -185,19 +185,12 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
     async advisoryInventory(record: ManagedBundle, reason = ''): Promise<BundleAdvisoryInventory | null | undefined> {
       if (record.kind !== 'stasis') return { packages: [], skipped: [] }
       const cached = await openCached(record, packagesFilename)
-      try {
-        if (cached.size != null && cached.size > MAX_PACKAGE_INVENTORY_BYTES) return null
-        const chunks: Buffer[] = []
-        let size = 0
-        for await (const chunk of cached.stream) {
-          size += chunk.length
-          if (size > MAX_PACKAGE_INVENTORY_BYTES) return null
-          chunks.push(Buffer.from(chunk))
-        }
-        const inventory = JSON.parse(decodeUtf8(Buffer.concat(chunks)))
-        if (inventory === null) return null
-        return reason ? (Object.hasOwn(inventory.reasons, reason) ? inventory.reasons[reason] : undefined) : inventory.all
-      } finally { cached.stream.destroy() }
+      if (cached.size != null && cached.size > MAX_PACKAGE_INVENTORY_BYTES) { cached.stream.destroy(); return null }
+      const bytes = await readCachedBytes(cached, MAX_PACKAGE_INVENTORY_BYTES)
+      if (!bytes) return null
+      const inventory = JSON.parse(decodeUtf8(bytes))
+      if (inventory === null) return null
+      return reason ? (Object.hasOwn(inventory.reasons, reason) ? inventory.reasons[reason] : undefined) : inventory.all
     },
     async delete(id: string) {
       // Call after deleting the row. Waiting prevents an in-flight builder

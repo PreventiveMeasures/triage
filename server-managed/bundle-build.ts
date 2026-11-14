@@ -13,7 +13,7 @@ export class BundleBuildError extends Error {
   constructor(status: number, code: string) { super(code); this.status = status; this.code = code }
 }
 
-export interface BundleBuildInput {
+interface BundleBuildInput {
   repoId: number
   commit: string
   entries: string[]
@@ -105,8 +105,8 @@ export function githubBundleFilename(github: string, directory: string, commit: 
   return `${repo}.${dir}${tail}`
 }
 
-export interface BuiltBundle { bytes: Buffer; directory: string; filename: string }
-export interface BuildRequest {
+interface BuiltBundle { bytes: Buffer; directory: string; filename: string }
+interface BuildRequest {
   input: BundleBuildInput; github: string; token: string | null; maxBytes: number; scopes: (string | null)[]
   // Upstream's disk cache for what a build fetches (setCacheDir), or null for
   // none, as on Vercel. Resolved here: the worker's env holds NPM_TOKEN alone.
