@@ -8,7 +8,8 @@ import { reportEntries, reportRepoGithub } from '@preventive/report'
 import { newIssueLabels } from '../common/github-issue-labels.js'
 import { ignoresOwnRepo } from '../common/finding-repo.js'
 import { appJwt, githubAppConfigured, installUrl, publicRepositoryName } from './github-app.ts'
-import { ISSUE_LOGIN_PATH, issueUserToken } from './github-issue-oauth.ts'
+import { ISSUE_LOGIN_PATH } from './github-issue-oauth.ts'
+import { ensureUserAccessToken } from './github-oauth.ts'
 import { encodedPath } from './github-requests.ts'
 import { TeamReportsError, loadTeamReports, recheckTeam, teamSnapshot } from './team-reports.ts'
 
@@ -92,7 +93,7 @@ export async function prepareGithubIssue(config: ManagedConfig, db: ManagedDb, s
   let installed: { permissions?: { issues?: string } }
   try { installed = await installation.json() } catch { throw new IssueError(502, 'github-unavailable') }
   if (installed?.permissions?.issues !== 'write') return { mode: 'permissions' as const, authorizationPath: installUrl(config), labels, recheck }
-  const token = await issueUserToken(config, db, session.userId, fetchImpl)
+  const token = await ensureUserAccessToken(config, db, session.userId, Date.now(), fetchImpl)
   if (!token) return { mode: 'authorize' as const, authorizationPath: ISSUE_LOGIN_PATH, labels, recheck }
   // All requested labels are optional, including security and operator labels.
   // Omit missing names rather than rejecting issue creation or creating labels.

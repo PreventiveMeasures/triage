@@ -4,7 +4,7 @@
 import { Buffer } from 'node:buffer'
 import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
-import type { ManagedDb, ManagedUser, UserTokens } from './db.ts'
+import type { ManagedDb, ManagedSession, ManagedUser, UserTokens } from './db.ts'
 import { randomToken, safeEqual } from './crypto.ts'
 import { STATE_COOKIE, buildCookie, clearCookie, cookieName, createSession, parseCookies } from './session.ts'
 import { isViewing } from './view-as.ts'
@@ -36,15 +36,45 @@ export interface CallbackDeps { config: ManagedConfig; db: ManagedDb; avatarStor
 // grants are approved separately when installing the App.
 export function buildLoginRedirect(config: ManagedConfig): { location: string; setCookie: string } {
   const state = randomToken()
+  const setCookie = buildCookie(cookieName(config, STATE_COOKIE), state, {
+    maxAgeS: STATE_TTL_S, secure: config.cookieSecure, sameSite: 'Lax',
+  })
+  return { location: authorizeUrl(config, state).toString(), setCookie }
+}
+
+// GitHub's page authorizing the App, which sends `state` back to the callback.
+function authorizeUrl(config: ManagedConfig, state: string): URL {
   const u = new URL(GITHUB_AUTHORIZE_URL)
   u.searchParams.set('client_id', config.githubClientId)
   u.searchParams.set('redirect_uri', config.oauthCallbackUrl)
   u.searchParams.set('state', state)
   u.searchParams.set('allow_signup', 'false')
-  const setCookie = buildCookie(cookieName(config, STATE_COOKIE), state, {
-    maxAgeS: STATE_TTL_S, secure: config.cookieSecure, sameSite: 'Lax',
-  })
-  return { location: u.toString(), setCookie }
+  return u
+}
+
+// An authorization a signed-in session starts (github-issue-oauth.ts,
+// github-link-oauth.ts): GitHub's page, and the cookie `name` keeping its
+// state bound to that session, `<state>.<session id>.<when set>`.
+export function sessionAuthorization(config: ManagedConfig, name: string, session: ManagedSession, now: number): { url: URL; setCookie: string } {
+  const state = randomToken()
+  return { url: authorizeUrl(config, state), setCookie: buildCookie(cookieName(config, name), `${state}.${session.id}.${now}`,
+    { secure: config.cookieSecure, maxAgeS: STATE_TTL_S, sameSite: 'Lax' }) }
+}
+
+// Whether the `state` GitHub sent back is the one cookie `name` keeps: the
+// callback is that authorization's.
+export function stateCookieMatches(config: ManagedConfig, name: string, query: URLSearchParams, cookie: string | undefined): boolean {
+  const expected = parseCookies(cookie).get(cookieName(config, name))?.split('.')[0]
+  return !!expected && safeEqual(query.get('state') ?? '', expected)
+}
+
+// Whether cookie `name` keeps the `state` GitHub sent back, bound to
+// `session` (sessionAuthorization) no longer than STATE_TTL_S ago.
+export function sessionStateValid(config: ManagedConfig, name: string, session: ManagedSession, query: URLSearchParams, cookie: string | undefined, now: number): boolean {
+  const [expected, sessionId, timestamp] = (parseCookies(cookie).get(cookieName(config, name)) ?? '').split('.')
+  const started = Number(timestamp), state = query.get('state')
+  return !!state && !!expected && safeEqual(state, expected) && sessionId === session.id
+    && !!timestamp && Number.isFinite(started) && now >= started && now - started <= STATE_TTL_S * 1000
 }
 
 // GET /api/oauth/github/callback?code&state — the GitHub OAuth hook.

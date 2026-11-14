@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { GithubApiError, githubUnreachable, throwGithubResponseError } from './github-errors.ts'
 import { timed } from './request-timing.ts'
 
-const API_VERSION = '2022-11-28'
+export const GITHUB_API = 'https://api.github.com'
+export const API_VERSION = '2022-11-28'
 export const USER_AGENT = 'deepview-triage'
 
 // Only outstanding reads: a completed answer (or failure) is never reused.
@@ -11,6 +12,7 @@ export const USER_AGENT = 'deepview-triage'
 const MAX_PENDING_READS = 1000
 type PendingRead = { promise: Promise<unknown>; shared: boolean }
 const pendingReads = new WeakMap<typeof fetch, Map<string, PendingRead>>()
+const requestKey = (request: string) => createHash('sha256').update(request).digest('hex')
 
 // Invalidate installation credentials and access verdicts when GitHub rejects
 // a token, including when several callers share the rejected request.
@@ -18,7 +20,7 @@ const rejectedTokenListeners = new Set<(token: string, fetchImpl: typeof fetch) 
 export function onTokenRejected(listener: (token: string, fetchImpl: typeof fetch) => void): void {
   rejectedTokenListeners.add(listener)
 }
-export function tokenRejected(token: string, fetchImpl: typeof fetch): void {
+function tokenRejected(token: string, fetchImpl: typeof fetch): void {
   for (const listener of rejectedTokenListeners) listener(token, fetchImpl)
 }
 
@@ -26,7 +28,7 @@ export async function shareGithubRead<T>(fetchImpl: typeof fetch, request: strin
   let pending = pendingReads.get(fetchImpl)
   if (!pending) { pending = new Map(); pendingReads.set(fetchImpl, pending) }
   // The request includes credentials and query variables. Retain only its hash.
-  const key = createHash('sha256').update(request).digest('hex')
+  const key = requestKey(request)
   const held = pending.get(key)
   if (held) {
     held.shared = true
@@ -65,7 +67,6 @@ const taggedOf = (fetchImpl: typeof fetch) => {
   if (!tagged) taggedReads.set(fetchImpl, tagged = { reads: new Map(), bytes: 0 })
   return tagged
 }
-const requestKey = (request: string) => createHash('sha256').update(request).digest('hex')
 // A GET's request as its answer is kept by: its URL and credential.
 const taggedRequest = (url: string, token: string | null) => JSON.stringify([url, token?.startsWith('ghs_') ? { installation: true } : token])
 
@@ -79,7 +80,7 @@ export function keepTaggedReadsIn(store: TaggedStore | null): void { taggedStore
 // The answer kept to `request`, its ETag and body as GitHub wrote it: as
 // this process holds it, else, where a store is kept beyond it, as that
 // keeps it.
-export function taggedRead(fetchImpl: typeof fetch, request: string): TaggedRead | undefined | Promise<TaggedRead | undefined> {
+function taggedRead(fetchImpl: typeof fetch, request: string): TaggedRead | undefined | Promise<TaggedRead | undefined> {
   const { reads } = taggedOf(fetchImpl)
   const key = requestKey(request)
   const read = reads.get(key)
@@ -94,7 +95,7 @@ async function storedTaggedRead(fetchImpl: typeof fetch, key: string, store: Tag
 }
 
 // `text` kept as GitHub's answer to `request`, by its ETag.
-export async function keepTaggedRead(fetchImpl: typeof fetch, request: string, etag: string, text: string): Promise<void> {
+async function keepTaggedRead(fetchImpl: typeof fetch, request: string, etag: string, text: string): Promise<void> {
   const key = requestKey(request)
   holdTaggedRead(fetchImpl, key, { etag, text })
   if (text.length <= MAX_STORED_READ_BYTES) await taggedStore?.write(key, { etag, text }).catch(() => {})
@@ -116,7 +117,7 @@ function holdTaggedRead(fetchImpl: typeof fetch, key: string, read: TaggedRead) 
 // `path` (a repository's full name, a branch, a file's path) with each of its
 // segments URL-encoded, and the REST API's URL of the repository `fullName`.
 export const encodedPath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
-export const repoApi = (fullName: string) => `https://api.github.com/repos/${encodedPath(fullName)}`
+export const repoApi = (fullName: string) => `${GITHUB_API}/repos/${encodedPath(fullName)}`
 
 // One GitHub API call returning parsed JSON, optionally Bearer-authed by a
 // user token, App JWT, or installation token, `body` sent as JSON (a GraphQL

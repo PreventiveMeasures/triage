@@ -7,10 +7,14 @@ import { createHash, createSign } from 'node:crypto'
 import { createClient } from '@preventive/upstream/github.js'
 import type { ManagedConfig } from './config.ts'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
-import { USER_AGENT, githubJson, onTokenRejected, repoApi } from './github-requests.ts'
+import { GITHUB_API, USER_AGENT, githubJson, onTokenRejected, repoApi } from './github-requests.ts'
+import { eachOf } from './queue.ts'
 
-const GITHUB_API = 'https://api.github.com'
 const PER_PAGE = 100
+// Bound fan-out while keeping independent installations/permission checks off
+// one long serial critical path. eachOf preserves input order for
+// deterministic merges.
+const GITHUB_REQUESTS_AT_ONCE = 4
 const INSTALLATION_TOKEN_TTL_MS = 5 * 60_000
 const INSTALLATION_TOKEN_EXPIRY_MARGIN_MS = 60_000
 const MAX_INSTALLATION_TOKENS = 256
@@ -115,13 +119,8 @@ export async function fetchPublicRepository(fullName: string): Promise<Connected
 // a short page, deduped + sorted. With an identity-only token this returns the
 // user's PUBLIC repos. READ-ONLY.
 export async function listUserRepos(accessToken: string): Promise<ConnectedRepo[]> {
-  const byName = new Map<string, ConnectedRepo>()
   const body = await upstreamGithub(() => createClient({ token: accessToken, userAgent: USER_AGENT }).listUserRepos())
-  for (const r of body) {
-    const repo = parseRepo(r, null)
-    if (repo != null) byName.set(repo.fullName, repo)
-  }
-  return [...byName.values()].toSorted((a, b) => a.fullName.localeCompare(b.fullName))
+  return mergeRepos(body.flatMap(r => parseRepo(r, null) ?? []))
 }
 
 // ── PRIVATE: App installations via installation tokens ──
@@ -220,13 +219,7 @@ export async function repositoryInstallation(config: ManagedConfig, repoId: numb
 // each tagged with the installation id that can read it.
 function repoPage(body: unknown, installationId: number): ConnectedRepo[] {
   const repositories = (body as { repositories?: unknown }).repositories
-  if (!Array.isArray(repositories)) return []
-  const out: ConnectedRepo[] = []
-  for (const r of repositories) {
-    const repo = parseRepo(r, installationId)
-    if (repo != null) out.push(repo)
-  }
-  return out
+  return Array.isArray(repositories) ? repositories.flatMap(r => parseRepo(r, installationId) ?? []) : []
 }
 
 // Every repository one installation can read, paginated by the page count from
@@ -250,25 +243,11 @@ export async function listInstalledRepos(config: ManagedConfig, fetchImpl: typeo
   const { githubAppId, githubAppPrivateKey } = config
   if (githubAppId == null || githubAppPrivateKey == null) return []
   const jwt = appJwt(githubAppId, githubAppPrivateKey)
-  const lists = await mapGithubRequests(await listInstallationIds(jwt, fetchImpl), async (id) => {
+  const lists = await eachOf(await listInstallationIds(jwt, fetchImpl), GITHUB_REQUESTS_AT_ONCE, async (id) => {
     const token = await installationAccessToken(githubAppId, githubAppPrivateKey, id, fetchImpl)
     return listInstallationRepos(token, id, fetchImpl)
   })
   return mergeRepos(...lists)
-}
-
-// Bound fan-out while keeping independent installations/permission checks off
-// one long serial critical path. Preserve input order for deterministic merges.
-async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>): Promise<U[]> {
-  const results: U[] = []
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++
-      results[index] = await work(items[index]!)
-    }
-  }))
-  return results
 }
 
 // A GitHub account, as GitHub's /user tells it.
@@ -303,14 +282,10 @@ export async function githubRepoPermission(fullName: string, token: string, iden
 // The levels that read a repository.
 export const READ_PERMISSIONS: ReadonlySet<string> = new Set(['read', 'write', 'admin'])
 
-export async function githubRepoReadPermission(fullName: string, token: string, identity: GithubIdentity, fetchImpl: typeof fetch = globalThis.fetch): Promise<boolean> {
-  return READ_PERMISSIONS.has(await githubRepoPermission(fullName, token, identity, fetchImpl))
-}
-
 export async function filterInstalledRepos(config: ManagedConfig, repositories: ConnectedRepo[], userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {
   const identity = await githubUserIdentity(userToken, fetchImpl)
   const tokens = new Map<number, Promise<string | null>>()
-  const allowed = await mapGithubRequests(repositories, async (repo) => {
+  const allowed = await eachOf(repositories, GITHUB_REQUESTS_AT_ONCE, async (repo) => {
     // Internal repos may have private=false; missing visibility is not proof
     // of public access either. Only explicitly public repositories skip checks.
     if (repo.visibility === 'public') return true
@@ -322,7 +297,7 @@ export async function filterInstalledRepos(config: ManagedConfig, repositories: 
     }
     const accessToken = await token
     if (!accessToken) return false
-    return githubRepoReadPermission(repo.fullName, accessToken, identity, fetchImpl)
+    return READ_PERMISSIONS.has(await githubRepoPermission(repo.fullName, accessToken, identity, fetchImpl))
   })
   return repositories.filter((_, index) => allowed[index])
 }

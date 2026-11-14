@@ -3,7 +3,7 @@ import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import type { IssueTracking, ManagedIssue } from './managed-issues.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
-import { lookupFixes } from './github-pulls.ts'
+import { allowedRepositories, deadlineFetch, lookupFixes } from './github-pulls.ts'
 
 export type IssueFixUpdate = { findingId: string; issueUrl: string; previous: IssueTracking; next: IssueTracking; checkedAt: number }
 type Pull = { number: number; title: string; body: string | null; state: string; isDraft: boolean; createdAt: string;
@@ -180,7 +180,7 @@ function issueUpdates(jobs: Map<string, Job>, byIssue: Map<string, ManagedIssue[
 export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, snapshot: TeamReportAccessSnapshot,
   urls: string[], issues: ManagedIssue[], fetchImpl: typeof fetch = fetch): Promise<{ fixes: GithubFixResult[]; updates: IssueFixUpdate[] }> {
   const checkedAt = Date.now(), signal = AbortSignal.timeout(10_000)
-  const allowed = new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github)).map(repo => [repo.github.toLowerCase(), repo]))
+  const allowed = allowedRepositories(snapshot)
   const jobs = new Map<string, Job>()
   // The saved issues by their issue's key, and the issues read with their
   // linked pull requests: theirs, and the duplicates they were saved with.
@@ -202,7 +202,7 @@ export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, sna
     jobs.set(key, { repo, kind: ref.kind, number: ref.number, aliases: [url], linked: linked.has(key), cursor: null, pulls: [], complete: false })
   }
   if (jobs.size === 0) return { fixes: [], updates: [] }
-  const withinDeadline: typeof fetch = (input, init) => { signal.throwIfAborted(); return fetchImpl(input, { ...init, signal }) }
+  const withinDeadline = deadlineFetch(fetchImpl, signal)
   const token = await ensureUserAccessToken(config, db, snapshot.user.id, checkedAt, withinDeadline)
   if (!token) return { fixes: await lookupFixes(config, db, snapshot, urls, withinDeadline), updates: [] }
   const metadata = new Map<string, Metadata>()

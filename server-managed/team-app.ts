@@ -21,6 +21,7 @@ import type { ManagedDb, TeamReportAccessSnapshot, UserTeam } from './db.ts'
 import type { WorkspaceShareSnapshot } from './workspace-shares.ts'
 import { TeamReportsError, loadTeamSummary } from './team-reports.ts'
 import { teamAppSummaryKey } from './team-app-summaries.ts'
+import { eachOf } from './queue.ts'
 
 export type { TeamAppMetadata }
 export interface TeamWorkspaceSummary { app: TeamAppMetadata; empty: readonly string[] }
@@ -141,13 +142,9 @@ export async function teamAppStates(db: ManagedDb, store: BlobStore, sessionId: 
   // once, in one statement.
   const unknown = missing.filter(([key, team]) => !caches.get(db)?.has(key) && published(team).length > 0).map(([key]) => key)
   for (const [key, summary] of unknown.length > 0 ? await storedSummaries(db, unknown) : []) remember(db, key, summary)
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(CLASSIFY_CONCURRENCY, missing.length) }, async () => {
-    while (next < missing.length) {
-      const [key, team] = missing[next++]!
-      states.set(key, await classify(db, store, key, team, () => db.getTeamReportAccessSnapshot(sessionId, Date.now(), team.id), false))
-    }
-  }))
+  await eachOf(missing, CLASSIFY_CONCURRENCY, async ([key, team]) => {
+    states.set(key, await classify(db, store, key, team, () => db.getTeamReportAccessSnapshot(sessionId, Date.now(), team.id), false))
+  })
   return states
 }
 

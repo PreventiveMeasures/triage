@@ -28,6 +28,19 @@ type RepositoryAccessContext = {
   includePrivateList?: boolean
 }
 
+// The workspace's repositories GitHub can name, by their lowercased names.
+export function allowedRepositories(snapshot: TeamReportAccessSnapshot): Map<string, Repository> {
+  return new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github)).map(repo => [repo.github.toLowerCase(), repo]))
+}
+
+// `fetchImpl`, each request of it cut short at `signal`, and none started past it.
+export function deadlineFetch(fetchImpl: typeof fetch, signal: AbortSignal): typeof fetch {
+  return (input, init) => {
+    signal.throwIfAborted()
+    return fetchImpl(input, { ...init, signal })
+  }
+}
+
 function githubRequest(token: string | null): RequestInit {
   return {
     headers: {
@@ -165,7 +178,7 @@ function readsOf<Entry extends [string, GithubFixRef]>(entries: Entry[], metadat
 // Shared private metadata also requires this viewer's live GitHub access,
 // including for admins. Only recently verified public repos skip that check.
 export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot: TeamReportAccessSnapshot, urls: string[], fetchImpl: typeof fetch = globalThis.fetch): Promise<GithubFixResult[]> {
-  const allowed = new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github)).map(repo => [repo.github.toLowerCase(), repo]))
+  const allowed = allowedRepositories(snapshot)
   const parsed = urls.map(parseGithubFixUrl)
   const jobs = new Map<string, GithubFixRef>()
   const keys = parsed.map(ref => {
@@ -178,10 +191,7 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   if (jobs.size === 0) return []
   const now = Date.now()
   const signal = AbortSignal.timeout(GITHUB_LOOKUP_TIMEOUT_MS)
-  const fetchWithinDeadline: typeof fetch = (input, init) => {
-    signal.throwIfAborted()
-    return fetchImpl(input, { ...init, signal })
-  }
+  const fetchWithinDeadline = deadlineFetch(fetchImpl, signal)
   const repositories = [...new Map([...jobs.values()].map(ref => {
     const repo = allowed.get(ref.repo.toLowerCase())!
     return [repo.repoId, repo] as const

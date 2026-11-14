@@ -11,7 +11,7 @@
 import { isExactVersion, satisfies, validRange } from '@preventive/upstream/semver.js'
 import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import { GithubApiError, githubUnreachable, throwGithubResponseError } from './github-errors.ts'
-import { encodedPath, repoApi } from './github-requests.ts'
+import { API_VERSION, GITHUB_API, USER_AGENT, encodedPath, repoApi } from './github-requests.ts'
 import type { LockedPackage } from './locked-packages.ts'
 
 // An alert, as GitHub has it: its `number` in its repository and its page
@@ -43,9 +43,6 @@ export interface DependabotAlert {
 // `not_used` or `tolerable_risk`; `at` as GitHub writes it (ISO 8601).
 export interface AlertDismissal { auto?: true; reason?: string; at?: string; by?: string; comment?: string }
 
-const API = 'https://api.github.com'
-const API_VERSION = '2022-11-28'
-const USER_AGENT = 'deepview-triage'
 const PER_PAGE = 100
 // Up to how many pages a listing asks: 2,000 alerts of npm's in a repository,
 // past which the rest are left out; where open and dismissed ones are more,
@@ -106,7 +103,7 @@ function nextPage(link: string | null): [string, string] | null {
   if (!next) return null
   let url
   try { url = new URL(next) } catch { return null }
-  if (url.origin !== API) return null
+  if (url.origin !== GITHUB_API) return null
   const after = url.searchParams.get('after'), page = url.searchParams.get('page')
   return after ? ['after', after] : page && /^\d{1,4}$/u.test(page) ? ['page', page] : null
 }
