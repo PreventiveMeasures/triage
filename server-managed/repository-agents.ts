@@ -20,8 +20,8 @@ import { GITHUB_AGENTS, type GithubAgentAccount, type GithubAgentId, githubAgent
 import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
 import { ACTOR, type GraphAccount, type GraphActor, type NamedAccount, actorOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
 import { githubGraphql, notFound } from './github-graphql.ts'
-import { count, nameOf, timeOf } from './github-values.ts'
-import { ALL_BRANCHES, type HistoryCommit, type HistoryPages, SHA, commitIds, commitMarks, commitsQuery, historyFrom, historyMarks, inBatches, messageMarks,
+import { SHA, count, nameOf, timeOf } from './github-values.ts'
+import { ALL_BRANCHES, type HistoryCommit, type HistoryPages, commitIds, commitMarks, commitsQuery, historyFrom, historyMarks, inBatches, messageMarks,
   nextCursor } from './repository-history.ts'
 import type { IssueList, PullList } from './repository-pulls.ts'
 

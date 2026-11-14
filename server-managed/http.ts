@@ -148,7 +148,7 @@ import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTip
   issueListStore, lockfileReadStore,
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
-import { type NpmDelta, keptNpmDeltas, npmDelta } from './npm-delta.ts'
+import { type NpmDelta, deltaKey, keptNpmDeltas, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedKeys, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -186,7 +186,7 @@ import { CONFIG_PATH, type ManagedSessionInfo, type ServerInfo } from '../common
 import { bundleCommitHash } from '../common/bundle-commit.js'
 import { collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
 import { type TaggedRead, keepTaggedReadsIn } from './github-requests.ts'
-import { timeOf } from './github-values.ts'
+import { SHA, timeOf } from './github-values.ts'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
 import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
@@ -239,7 +239,7 @@ import { type GithubAsked, type ListedLockfile, type LockfileRead, type Lockfile
   type PullDependencyStore, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
 import { eachOf } from './queue.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
-import { MAX_REQUIRED_REVIEWS, type RepoDependencyReview, SINCE_COMMIT } from './repository-dependency-reviews.ts'
+import { MAX_REQUIRED_REVIEWS, type RepoDependencyReview } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, heldTo, reviewedIn, scopeOf } from './lockfile-scope.ts'
 import { type BundledVersion, bundleDependencies, installsBundle } from './bundle-dependency-reviews.ts'
 import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
@@ -1091,7 +1091,7 @@ async function handleRepositoryDependencyReview(req: IncomingMessage, res: Serve
   const lockfiles = body['lockfiles'] === undefined ? undefined : scopeOf(body['lockfiles'])
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof enabled !== 'boolean'
     || typeof required !== 'number' || !Number.isSafeInteger(required) || required < 1 || required > MAX_REQUIRED_REVIEWS
-    || (since !== null && (typeof since !== 'string' || !SINCE_COMMIT.test(since))) || lockfiles === null) {
+    || (since !== null && (typeof since !== 'string' || !SHA.test(since))) || lockfiles === null) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
   if (since !== null && deps.reviewedDependencies) { sendJson(res, 400, { error: 'since-unsupported' }); return }
@@ -1726,7 +1726,7 @@ const REPOSITORY_LISTINGS_HELD = 256
 const LISTING_READ = 1
 type TreeFiles = Awaited<ReturnType<typeof repositoryTreeFiles>>
 const repositoryTrees = new WeakMap<ManagedDb, { ids: Lru<string>; files: Lru<TreeFiles>; listings: Lru<DirectoryListing> }>()
-const treeId = (value: unknown): value is string => typeof value === 'string' && /^[a-f\d]{40}$/u.test(value)
+const treeId = (value: unknown): value is string => typeof value === 'string' && SHA.test(value)
 const treeFiles = (value: unknown): value is TreeFiles => value === null || (plainObject(value)
   && Number.isSafeInteger(value['files']) && (value['files'] as number) >= 0 && Number.isSafeInteger(value['bytes']) && (value['bytes'] as number) >= 0)
 const directoryListing = (value: unknown): value is DirectoryListing => plainObject(value) && Array.isArray(value['entries']) && typeof value['limited'] === 'boolean'
@@ -1975,7 +1975,7 @@ async function handleRepositoryChanges(res: ServerResponse, deps: ManagedHttpDep
 // reads are (readForReplay).
 async function handleRepositoryTree(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const commit = query.get('commit') ?? ''
-  if (!/^[a-f\d]{40}$/u.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!SHA.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
   const store = historyTreeStore<CommitTree>(deps.db, deps.config.debug)
   await readForReplay(res, deps, cookie, query, async (fullName, token, repoId, path) => {
     const kept = { read: async (sha: string) => {
@@ -2271,7 +2271,7 @@ async function defaultTip(deps: ManagedHttpDeps, repoId: number, fullName: strin
   const heads = await repositoryReadStore(deps.db, deps.config.debug).read(`${repoId}\0heads`)
   const all = heads && Date.now() - heads.at < REPOSITORY_READ_FRESH_MS ? heads.value as AllHeads : null
   const tip = all?.heads.find(head => head.name === all.defaultBranch)?.sha
-  if (typeof tip === 'string' && /^[a-f\d]{40}$/u.test(tip)) return { sha: tip, kept: true }
+  if (typeof tip === 'string' && SHA.test(tip)) return { sha: tip, kept: true }
   const head = async () => ({ sha: await defaultHead(fullName, token) })
   const stamp = stampOf(deps, repoId, fullName, token)
   const read = await (current ? currentAnswer(deps, `${repoId}\0pulse-head`, head, stamp) : keptAnswer(deps, `${repoId}\0pulse-head`, head, undefined, false, stamp))
@@ -2735,9 +2735,6 @@ const withDeltas = async (deps: ManagedHttpDeps, answers: object[]) => {
   return deltas.length > 0 ? { deltas } : {}
 }
 
-// A commit's or a blob's id, as GitHub names one.
-const OBJECT_ID = /^[a-f\d]{40}$/u
-
 // A repository's open pull requests, as many pages of them as
 // TEAM_PULL_PAGES, each read and kept as GET issues reads it; each's base's
 // and head's commits as its page has them (`commits`, by its number), where
@@ -2764,7 +2761,7 @@ type OpenPullsPage = { items?: unknown; more?: unknown; after?: unknown; commits
 function pageCommits(page: OpenPullsPage, commits: Map<number, PullCommits>) {
   for (const pull of Array.isArray(page.commits) ? page.commits as { number?: unknown; base?: unknown; head?: unknown }[] : []) {
     const { number, base, head } = pull ?? {}
-    if (Number.isSafeInteger(number) && typeof base === 'string' && OBJECT_ID.test(base) && typeof head === 'string' && OBJECT_ID.test(head)) {
+    if (Number.isSafeInteger(number) && typeof base === 'string' && SHA.test(base) && typeof head === 'string' && SHA.test(head)) {
       commits.set(number as number, { base, head })
     }
   }
@@ -2824,7 +2821,7 @@ async function teamDeltas(deps: ManagedHttpDeps, answers: object[]) {
   if (sides.length === 0) return []
   const counted = await keptNpmDeltas(sides.map(({ key }) => key), npmDeltaStore<NpmDelta>(deps.db, deps.config.debug))
   return sides.flatMap(({ name, version, base, key: [against, other] }) => {
-    const delta = counted.get(`${against ?? '(empty)'}\0${other}`)
+    const delta = counted.get(deltaKey(against, other))
     return delta ? [[name, version, base, delta]] : []
   })
 }
@@ -2880,7 +2877,7 @@ function lockfileKept(deps: ManagedHttpDeps, repoId: number): LockfileStore {
       async read(commit) {
         const value: unknown = (await listings.read(keyOf(commit)))?.value
         return Array.isArray(value) && value.every(item => typeof item?.path === 'string' && typeof item.format === 'string' && lockfileFormat(item.path) === item.format
-          && typeof item.sha === 'string' && OBJECT_ID.test(item.sha)) ? value : null
+          && typeof item.sha === 'string' && SHA.test(item.sha)) ? value : null
       },
       write: (commit, listed) => listings.write(keyOf(commit), listed, Date.now()),
     },
@@ -3517,7 +3514,7 @@ async function handleBundleDependencyReview(res: ServerResponse, deps: ManagedHt
   if (inventory === null) { sendJson(res, 413, { error: 'payload-too-large' }); return }
   const bundled = (inventory?.packages ?? []).filter(pkg => pkg.ecosystem === 'npm').flatMap(pkg => pkg.versions.map(version => ({ name: pkg.name, version })))
   // Its commit as GitHub names one, of SHA-1.
-  if (!commit || !/^[a-f\d]{40}$/u.test(commit) || bundled.length === 0) { none(); return }
+  if (!commit || !SHA.test(commit) || bundled.length === 0) { none(); return }
   const read = await readWholeRepositoryOf(deps, access, (fullName, token, user) => bundleDependencyAnswer(deps, fullName, token, user, repoId, setting,
     { commit: commit!, directory: record.repoDirectory, bundled }), () => wholeRepositoryAccess(deps, cookie, repoId))
   if ('error' in read) { sendRefusal(res, read); return }
@@ -3614,7 +3611,7 @@ async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefine
   const plan = details?.bundle ? validationPlan(details.bundle as PlannedBundle) : null
   if (!plan) return refusal(422, 'bundle-unavailable')
   const stamp = (details!.bundle as { repo?: { commit?: unknown; directory?: unknown } } | undefined)?.repo
-  const commit = typeof stamp?.commit === 'string' && /^[a-f\d]{40}$/u.test(stamp.commit) ? stamp.commit : null
+  const commit = typeof stamp?.commit === 'string' && SHA.test(stamp.commit) ? stamp.commit : null
   // Where it was built, as its stamp says, else where it is kept.
   const directory = stampedDirectory(typeof stamp?.directory === 'string' ? stamp : { directory: record.repoDirectory })
   const options = { deadline: Date.now() + VALIDATION_MS }

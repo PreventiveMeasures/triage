@@ -15,7 +15,7 @@
 // the popup, which reads reviews' bodies.
 import { githubAgent } from '../common/managed/github-agents.ts'
 import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
-import { timeOf } from './github-values.ts'
+import { SHA, timeOf } from './github-values.ts'
 
 const REVIEWERS = 20
 const REQUESTS = 10
@@ -29,7 +29,6 @@ const FIRST_COMMENTS = 5
 const LAST_COMMENTS = 20
 const MAX_TITLE = 200
 const MAX_PATH = 1000
-const COMMIT = /^[a-f\d]{40}$/u
 
 // The fields a pull request's reviews are read by, its threads' places and
 // links with them for its popup (`detail`). A team requested is no reviewer
@@ -73,7 +72,7 @@ const ASKED = /^@codex\s+review\b/iu
 const FAILED = /^Codex Review: Something went wrong/u
 const WORKFLOW = /<!--\s*gh-aw-workflow-id:\s*([\w.-]{1,100})\s*-->/u
 
-const commitOf = (value: unknown) => typeof value === 'string' && COMMIT.test(value.toLowerCase()) ? value.toLowerCase() : null
+const commitOf = (value: unknown) => typeof value === 'string' && SHA.test(value.toLowerCase()) ? value.toLowerCase() : null
 const textOf = (value: unknown) => typeof value === 'string' ? value : ''
 const isCodex = (account: GraphAccount) => {
   const { login, id } = actorOf(account)

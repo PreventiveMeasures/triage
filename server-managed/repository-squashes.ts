@@ -3,7 +3,8 @@
 // with GraphQL once and kept by its commit.
 import { linkNoreplyUsers } from './github-accounts.ts'
 import { githubGraphql, notFound } from './github-graphql.ts'
-import { COMMIT_FRAGMENT, type GraphCommit, type HistoryCommit, SHA, commitActors, commitIds, commitsQuery, graphCommit, inBatches, variablesOf } from './repository-history.ts'
+import { SHA } from './github-values.ts'
+import { COMMIT_FRAGMENT, type GraphCommit, type HistoryCommit, commitActors, commitIds, commitsQuery, graphCommit, inBatches, variablesOf } from './repository-history.ts'
 
 // A pull request squashed into a commit of the default branch's history
 // (`merge`): its number, the commit its head was at when merged (`head`,

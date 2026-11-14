@@ -9,7 +9,7 @@ import { bundleReasons } from '../common/bundle-reasons.js'
 import { sourcemapEdges } from '../common/bundle-sourcemap.js'
 import { type BundleAdvisoryInventory, bundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { decodeUtf8 } from '../common/utf8.js'
-import type { OpenedBlob } from './blob-store.ts'
+import { type OpenedBlob, readBytes } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
@@ -175,11 +175,7 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
     // A sourcemap's edges as its metadata keeps them, read with the parser
     // once, for a derivative that reads the bundle itself (report previews).
     async sourcemapEdges(record: ManagedBundle): Promise<BundleDetails['edges']> {
-      const cached = await openCached(record, filename)
-      const chunks: Buffer[] = []
-      try { for await (const chunk of cached.stream) chunks.push(Buffer.from(chunk)) }
-      finally { cached.stream.destroy() }
-      const decoded = await decompress(Buffer.concat(chunks), { maxOutputLength: MAX_DECODED_BYTES })
+      const decoded = await decompress(await readBytes(await openCached(record, filename)), { maxOutputLength: MAX_DECODED_BYTES })
       return parseBundleMetadata(JSON.parse(decodeUtf8(decoded)), record.integrity).edges
     },
     async advisoryInventory(record: ManagedBundle, reason = ''): Promise<BundleAdvisoryInventory | null | undefined> {

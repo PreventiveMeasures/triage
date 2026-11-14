@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { ManagedMutationError } from './management.ts'
 import type { PatchSource } from './npm-patch.ts'
-import type { ManagedSql } from './sql.ts'
+import { type ManagedSql, jsonRows } from './sql.ts'
 import { REVIEW_VERDICTS, type ReviewSummary, type ReviewVerdict, allowedReviewVerdicts, needsPackageJsonReview, summarizeReview } from '../common/dependency-reviews.js'
 
 // A review is of a version, as npm's registry has it, by its integrity; of
@@ -187,9 +187,6 @@ function expanded(review: ReviewRow, entries: ReviewEntry[], readIn: ReviewTeam[
   return { ...review, patchSource: review.patchSource ? JSON.parse(review.patchSource) as PatchSource : null, files, nonTextFiles, entries: ownEntries,
     ...summarizeReview(ownEntries, files, nonTextFiles), teams: readIn }
 }
-// Rows gathered into one JSON array value (json_group_array): its text on
-// SQLite, parsed already on Postgres, where none gather as NULL.
-export const gathered = <T>(value: unknown): T[] => value == null ? [] : (typeof value === 'string' ? JSON.parse(value) : value) as T[]
 
 async function publish(db: ManagedSql, current: DependencyReview | undefined, user: string, change: Extract<ReviewChange, { action: 'publish' }>, now: number,
   tarballs: ReviewedTarballs | undefined) {
@@ -258,7 +255,7 @@ async function listTeam(db: ManagedSql, teamId: string, user: string, before: { 
   const reviews = rows.filter(row => row.id != null)
   const page = reviews.slice(0, 50)
   const last = page.at(-1)
-  return { reviews: page.map(({ reader: _reader, entries, teams: readIn, ...review }) => expanded(review, gathered(entries), gathered(readIn))),
+  return { reviews: page.map(({ reader: _reader, entries, teams: readIn, ...review }) => expanded(review, jsonRows(entries), jsonRows(readIn))),
     next: reviews.length > 50 && last ? { time: Number(last.publishedAt), id: last.id } : null }
 }
 

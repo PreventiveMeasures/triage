@@ -12,6 +12,7 @@ import { isExactVersion, satisfies, validRange } from '@preventive/upstream/semv
 import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import { GithubApiError, githubUnreachable, throwGithubResponseError } from './github-errors.ts'
 import { API_VERSION, GITHUB_API, USER_AGENT, encodedPath, repoApi } from './github-requests.ts'
+import { LOGIN } from './github-values.ts'
 import type { LockedPackage } from './locked-packages.ts'
 
 // An alert, as GitHub has it: its `number` in its repository and its page
@@ -60,7 +61,6 @@ const isRepoPath = (path: unknown): path is string => typeof path === 'string' &
 // The states asked: a fixed alert's dependency is no longer what it was.
 const STATES = ['open', 'dismissed', 'auto_dismissed']
 const REASONS = new Set(['fix_started', 'inaccurate', 'no_bandwidth', 'not_used', 'tolerable_risk'])
-const LOGIN = /^[\dA-Za-z](?:[\dA-Za-z-]{0,38})(?:\[bot\])?$/u
 
 const text = (value: unknown, most = 500) => typeof value === 'string' && value.trim() ? value.trim().slice(0, most) : undefined
 

@@ -15,7 +15,7 @@ import type { Advisory, CacheStore } from '@preventive/upstream/advisories.js'
 import { type Client, HttpError, createClient } from '@preventive/upstream/github.js'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { isExactVersion } from '@preventive/upstream/semver.js'
-import { repoApi } from './github-requests.ts'
+import { USER_AGENT, repoApi } from './github-requests.ts'
 import { kept } from './kept.ts'
 import { type NpmProvenance, keptNpmProvenance } from './npm-provenance.ts'
 import { plainObject } from './npm-manifest.ts'
@@ -174,7 +174,7 @@ async function countOpenPulls(repo: string, token: string | null): Promise<numbe
   let res: Response
   try {
     res = await fetch(`${repoApi(repo)}/pulls?state=open&per_page=1`, {
-      headers: { accept: 'application/vnd.github+json', 'user-agent': 'deepview-triage', ...token && { authorization: `Bearer ${token}` } },
+      headers: { accept: 'application/vnd.github+json', 'user-agent': USER_AGENT, ...token && { authorization: `Bearer ${token}` } },
       redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS),
     })
   } catch { return null }
@@ -200,7 +200,7 @@ const NONE = new Set([301, 302, 307, 308, 404])
 // again next time. Public is `visibility: 'public'`, as github-app.ts
 // requires: an internal repository answers `private: false`.
 async function publicRepo(repo: string, token: string | null): Promise<{ json: Record<string, unknown> & { full_name: string }; auth: string | null } | null> {
-  const ask = (auth: string | null) => createClient({ token: auth, userAgent: 'deepview-triage' }).getRepo({ repo, followRedirect: true }) as Promise<unknown>
+  const ask = (auth: string | null) => createClient({ token: auth, userAgent: USER_AGENT }).getRepo({ repo, followRedirect: true }) as Promise<unknown>
   let auth = token, json: unknown
   try { json = await ask(token) }
   catch (error) {
@@ -256,7 +256,7 @@ async function askTags(repo: string, sha: string, version: string, token: string
   const [owner, name] = repo.split('/')
   const json = await askUpstreamJson(GITHUB_GRAPHQL, {
     method: 'POST', limit: API_BYTES, absent: [],
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'deepview-triage' },
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': USER_AGENT },
     body: JSON.stringify({ query: TAGS_QUERY, variables: { owner, name, query: version } }),
   })
   const data = plainObject(json) ? json['data'] : null
@@ -351,7 +351,7 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     const unreached = github ?? named
     const last = unreached === null ? null : await lastListing(unreached)
     let untaken = false
-    const offline: Client = { ...createClient({ token: null, userAgent: 'deepview-triage' }),
+    const offline: Client = { ...createClient({ token: null, userAgent: USER_AGENT }),
       listRepoAdvisories: () => { untaken = true; return Promise.reject(new Error('GitHub can\'t be reached')) } }
     const listed = last && await ask(unreached, () => last.cache, { github: offline })
     if (last && listed?.status === 200) {

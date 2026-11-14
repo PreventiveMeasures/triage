@@ -3,12 +3,11 @@ import { bundleCommitHash } from '../common/bundle-commit.js'
 import type { BundleSummary } from './bundle-cache.ts'
 import type { ManagedDb } from './db.ts'
 import { type GithubCommit, githubCommitKey } from './github-metadata.ts'
-import { timeOf } from './github-values.ts'
+import { LOGIN, timeOf } from './github-values.ts'
 
 const MAX_MESSAGE_LENGTH = 65_536
 const MAX_NAME_LENGTH = 256
 // GitHub logins, and the `[bot]` accounts apps commit as.
-const GITHUB_LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 const BACKFILL_LIMIT = 4
 const RETRY_MS = 5 * 60_000
 
@@ -46,7 +45,7 @@ export function parseGithubCommit(sha: string, body: unknown): CommitDetails | n
   return {
     message: truncate(item.commit.message, MAX_MESSAGE_LENGTH),
     authorName: name(item.commit.author?.name),
-    authorLogin: typeof login === 'string' && GITHUB_LOGIN.test(login) ? login : null,
+    authorLogin: typeof login === 'string' && LOGIN.test(login) ? login : null,
     authoredAt: timeOf(item.commit.author?.date),
     committedAt: timeOf(item.commit.committer?.date),
   }

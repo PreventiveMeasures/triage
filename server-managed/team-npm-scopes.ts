@@ -3,9 +3,9 @@
 // managers may read any. Hidden teams grant nothing, as for their content.
 import { MAX_TEAM_NPM_SCOPES, normalizeNpmScope } from '../common/managed/npm-packages.js'
 import type { Role } from '../common/managed/roles.ts'
-import { gathered, reviewsIn } from './dependency-reviews.ts'
-import { ManagedMutationError } from './management.ts'
-import type { ManagedSql } from './sql.ts'
+import { reviewsIn } from './dependency-reviews.ts'
+import { ManagedMutationError, sessionAdmin } from './management.ts'
+import { type ManagedSql, jsonRows } from './sql.ts'
 
 export const TEAM_NPM_SCOPE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_team_npm_scope (
@@ -58,10 +58,7 @@ export function teamNpmScopeMethods(db: ManagedSql): TeamNpmScopeStore {
       return result
     },
     async setTeamNpmScopes(sessionId, teamId, input) {
-      const user = await db.prepare(`SELECT u.role FROM managed_session s JOIN managed_user u ON u.id = s.user_id
-        WHERE s.id = ? AND s.expires_at > ?`).get(sessionId, Date.now()) as { role: string } | undefined
-      if (!user) throw new ManagedMutationError(401, 'unauthenticated')
-      if (user.role !== 'admin') throw new ManagedMutationError(403, 'forbidden')
+      await sessionAdmin(db, sessionId)
       const scopes = parseTeamNpmScopes(input)
       if (!await db.prepare('SELECT id FROM managed_team WHERE id = ?').get(teamId)) return null
       const current = (await db.prepare('SELECT scope FROM managed_team_npm_scope WHERE team_id = ?').all(teamId) as { scope: string }[]).map(row => row.scope)
@@ -102,5 +99,5 @@ async function npmReviewReader(db: ManagedSql, sessionId: string, viewerSessionI
         WHERE tu.user_id = v.id) x) AS scopes,
       CASE WHEN EXISTS (SELECT 1 FROM managed_team t JOIN managed_user u ON u.id = v.id WHERE t.id = ? AND ${reviewsIn(false)}) THEN 1 ELSE 0 END AS readsTeam
     FROM reader v`).get(sessionId, now, viewerSessionId, viewerSessionId, now, teamId) as { id: string; role: Role; scopes: unknown; readsTeam: unknown } | undefined
-  return row ? { id: row.id, role: row.role, scopes: gathered<string>(row.scopes), readsTeam: Number(row.readsTeam) === 1 } : null
+  return row ? { id: row.id, role: row.role, scopes: jsonRows<string>(row.scopes), readsTeam: Number(row.readsTeam) === 1 } : null
 }

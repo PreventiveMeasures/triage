@@ -5,6 +5,7 @@
 // every scan, as many repositories use the same few actions.
 import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, dockerfileFindings, keptSource, ownFilesOf, resolveAction,
   scanWorkflow, usesOfKey } from '../risk/index.js'
+import { SHA } from './github-values.ts'
 import type { OpenedRepository } from './repository-risk-read.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
@@ -107,8 +108,6 @@ export type ActionAnswers = Lru<{ at: number; answer: unknown }>
 export const answerWeight = ({ answer }: { at: number; answer: unknown }) => Array.isArray(answer) ? answer.length + 1
   : typeof answer === 'string' ? Math.ceil(answer.length / 1024) + 1 : ((answer as { branches?: unknown[] } | null)?.branches?.length ?? 0) + 1
 
-const isCommit = (text: string) => /^[\da-f]{40}$/u.test(text)
-
 // `source`, what it answers of a public repository kept for every scan, the
 // same whoever asks: of a commit while kept (but none, as one can be pushed
 // later), the rest, its advisories too, for RISK_KEPT_MS. A private one's,
@@ -139,8 +138,8 @@ function sharedSource(source: ActionsSource, answers: ActionAnswers): ActionsSou
     tag: (name, tag) => shared(name, keyOf('tag', name, tag), false, () => source.tag(name, tag)),
     branch: (name, branch) => shared(name, keyOf('branch', name, branch), false, () => source.branch(name, branch)),
     branches: name => shared(name, keyOf('branches', name), false, () => source.branches(name)),
-    contains: (name, base, sha) => shared(name, keyOf('contains', name, base, sha), isCommit(base), () => source.contains(name, base, sha)),
-    file: (name, path, commit) => shared(name, keyOf('file', name, path, commit), isCommit(commit), () => source.file(name, path, commit)),
+    contains: (name, base, sha) => shared(name, keyOf('contains', name, base, sha), SHA.test(base), () => source.contains(name, base, sha)),
+    file: (name, path, commit) => shared(name, keyOf('file', name, path, commit), SHA.test(commit), () => source.file(name, path, commit)),
     ...source.advisories && { advisories: (name: string, versions: string[], internal: boolean) =>
       shared(name, keyOf('advisories', name, ...versions), false, () => source.advisories!(name, versions, internal)) },
   }

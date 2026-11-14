@@ -10,7 +10,7 @@ import { ignoresOwnRepo } from '../common/finding-repo.js'
 import { appJwt, githubAppConfigured, installUrl, publicRepositoryName } from './github-app.ts'
 import { ISSUE_LOGIN_PATH } from './github-issue-oauth.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
-import { encodedPath } from './github-requests.ts'
+import { API_VERSION, USER_AGENT, encodedPath } from './github-requests.ts'
 import { TeamReportsError, loadTeamReports, recheckTeam, teamSnapshot } from './team-reports.ts'
 
 export const MAX_ISSUE_BODY_BYTES = 512_000
@@ -34,7 +34,7 @@ async function github(path: string, token: string, fetchImpl: typeof fetch, payl
     response = await fetchImpl(`https://api.github.com${path}`, {
       method: payload === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
       headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json',
-        'user-agent': 'deepview-triage', 'x-github-api-version': '2022-11-28', 'content-type': 'application/json' },
+        'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION, 'content-type': 'application/json' },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     })
   } catch { throw new IssueError(502, payload === undefined ? 'github-unavailable' : 'github-create-uncertain') }

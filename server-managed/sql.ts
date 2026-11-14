@@ -5,6 +5,11 @@ import type { ManagedDb } from './db-methods.ts'
 import { countStatement, timed } from './request-timing.ts'
 
 type MaybePromise<T> = T | Promise<T>
+
+// Rows a statement gathered into one JSON array value (json_group_array): its
+// text on SQLite, parsed already on Postgres, where none gather as NULL.
+export const jsonRows = <T>(value: unknown): T[] => value == null ? [] : (typeof value === 'string' ? JSON.parse(value) : value) as T[]
+
 export interface ManagedSql {
   prepare(sql: string): {
     get(...params: unknown[]): MaybePromise<unknown>

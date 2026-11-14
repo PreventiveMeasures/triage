@@ -8,6 +8,7 @@
 // without the server's token, and only about a version it answers for
 // without one (http.ts), each answer kept as npm-insights.ts keeps its own.
 import { Buffer } from 'node:buffer'
+import { SHA } from './github-values.ts'
 import { kept } from './kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { NPM_REGISTRY, askUpstreamJson } from './npm-packages.ts'
@@ -16,7 +17,6 @@ const ATTESTATIONS_API = `${NPM_REGISTRY}/-/npm/v1/attestations`
 const ATTESTATIONS_BYTES = 1024 * 1024
 // SLSA's v1 statement, as npm writes it now, and v0.2, as it first did.
 const SLSA = /^https:\/\/slsa\.dev\/provenance\/v(?:1|0\.2)$/u
-const COMMIT = /^[0-9a-f]{40}$/u
 const GITHUB_REPOSITORY = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)$/u
 
 // Where a version was built: its source `repository` (an https URL) and
@@ -55,7 +55,7 @@ function readStatement(predicateType: string, predicate: unknown): NpmProvenance
     if (!repository) return null
     const commit = text(field(source, 'digest', 'gitCommit'))
     return {
-      repository, commit: commit && COMMIT.test(commit) ? commit : null, workflow: text(field(workflow, 'path')),
+      repository, commit: commit && SHA.test(commit) ? commit : null, workflow: text(field(workflow, 'path')),
       ref: text(field(workflow, 'ref')) ?? sourceOf(field(source, 'uri')).ref, builder: https(field(predicate, 'runDetails', 'builder', 'id')),
       run: https(field(predicate, 'runDetails', 'metadata', 'invocationId')), logIndex: null, runner: null,
     }
@@ -69,7 +69,7 @@ function readStatement(predicateType: string, predicate: unknown): NpmProvenance
   const run = /^(\d+)-(\d+)$/u.exec(text(invocation) ?? '')
   const github = GITHUB_REPOSITORY.exec(repository)?.[1]
   return {
-    repository, commit: commit && COMMIT.test(commit) ? commit : null, workflow: text(field(config, 'entryPoint')), ref,
+    repository, commit: commit && SHA.test(commit) ? commit : null, workflow: text(field(config, 'entryPoint')), ref,
     builder: https(field(predicate, 'builder', 'id')),
     run: https(invocation) ?? (run && github ? `https://github.com/${github}/actions/runs/${run[1]}/attempts/${run[2]}` : null), logIndex: null, runner: null,
   }

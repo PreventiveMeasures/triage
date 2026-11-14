@@ -4,6 +4,7 @@ import type { SelectedRepo } from './db.ts'
 import { type GithubIdentity, READ_PERMISSIONS, githubRepoPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
 import { GithubApiError } from './github-errors.ts'
 import { encodedPath, githubJson, onTokenRejected, repoApi } from './github-requests.ts'
+import { SHA } from './github-values.ts'
 import { MAX_PACKAGE_BYTES, readConfigEntryPoints, readPackageEntryPoints } from './package-entry-points.ts'
 import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG } from './stasis-config.ts'
 import { readSolidityEntryPoints } from './solidity-entry-points.ts'
@@ -11,7 +12,6 @@ import { parseGithubCommit } from './bundle-commits.ts'
 import { appDependabotAlerts } from './dependabot-access.ts'
 
 const REFS_PAGE = 100
-const SHA = /^[a-f\d]{40}$/u
 
 // Each branch or tag GitHub lists, by its name and commit, those it names
 // one for.

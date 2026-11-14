@@ -21,8 +21,8 @@ import { GITHUB_AGENTS, agentOperated } from '../common/managed/github-agents.ts
 import { AGENT_BRANCH_PREFIXES } from './app-agents.ts'
 import { AGENT_ISSUE_FIELDS, AGENT_PULL_FIELDS, type IssueNode, type PullNode, issue, pull } from './repository-agents.ts'
 import { githubGraphql } from './github-graphql.ts'
-import { count, timeOf } from './github-values.ts'
-import { SHA, nextCursor } from './repository-history.ts'
+import { SHA, count, timeOf } from './github-values.ts'
+import { nextCursor } from './repository-history.ts'
 import { ISSUE_REASONS, type IssueReason } from './repository-issues.ts'
 
 // What the pull requests kept are read by, its version: bumped as what a

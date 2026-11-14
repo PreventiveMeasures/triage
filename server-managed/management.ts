@@ -1,9 +1,21 @@
 import type { AdminReport, BundleReuse, ManagedBundle, ManagedDb, ManagedRepo, RepoDataItem, RepoReportItem, ReportRecord, StoredUser } from './db-methods.ts'
 import { roleAtLeast } from '../common/managed/roles.ts'
+import type { ManagedSql } from './sql.ts'
 
 export class ManagedMutationError extends Error {
   status: number
   constructor(status: number, message: string) { super(message); this.status = status }
+}
+
+// The admin whose live session `sessionId` is, read in the caller's
+// transaction (link-reports.ts, repository-aliases.ts, team-npm-scopes.ts):
+// none refused 401, any other role 403.
+export async function sessionAdmin(db: ManagedSql, sessionId: string): Promise<{ id: string; login: string; role: string }> {
+  const user = await db.prepare(`SELECT u.id, u.login, u.role FROM managed_session s JOIN managed_user u ON u.id = s.user_id
+    WHERE s.id = ? AND s.expires_at > ?`).get(sessionId, Date.now()) as { id: string; login: string; role: string } | undefined
+  if (!user) throw new ManagedMutationError(401, 'unauthenticated')
+  if (user.role !== 'admin') throw new ManagedMutationError(403, 'forbidden')
+  return user
 }
 
 export type ContentMutation = { type: 'delete' } | { type: 'repo'; repoId: number | null; directory: string } | { type: 'visibility'; visible: boolean }

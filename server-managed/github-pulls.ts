@@ -3,6 +3,7 @@ import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import type { GithubMetadata, GithubRepositoryVisibility } from './github-metadata.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
+import { API_VERSION, USER_AGENT } from './github-requests.ts'
 
 type Metadata = Pick<GithubMetadata, 'title' | 'description' | 'status' | 'stateReason'>
 const MAX_GITHUB_LOOKUPS = 200
@@ -45,7 +46,7 @@ function githubRequest(token: string | null): RequestInit {
   return {
     headers: {
       ...(token ? { authorization: `Bearer ${token}` } : {}), accept: 'application/vnd.github+json',
-      'user-agent': 'deepview-triage', 'x-github-api-version': '2022-11-28',
+      'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
     },
     redirect: 'error',
   }

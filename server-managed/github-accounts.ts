@@ -2,8 +2,7 @@
 // repository's activity names its authors (repository-history.ts and the
 // Commits, Issues, Agents and Pulse tabs' readers).
 import { githubGraphql, notFound } from './github-graphql.ts'
-
-const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
+import { LOGIN } from './github-values.ts'
 
 // An account as GitHub names it: its login, else null, and its numeric id
 // where GitHub names one with it.

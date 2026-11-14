@@ -1,10 +1,11 @@
 import { type Advisory, type CacheStore, type Package, advisories } from '@preventive/upstream/advisories.js'
 import { type Client, HttpError, createClient } from '@preventive/upstream/github.js'
+import { USER_AGENT } from './github-requests.ts'
 
 export const ADVISORIES_TIMEOUT_MS = 30_000
 
 function advisoryGithubClient(token: string | null, signal: AbortSignal): Client {
-  const authenticated = createClient({ token, userAgent: 'deepview-triage' })
+  const authenticated = createClient({ token, userAgent: USER_AGENT })
   let client = authenticated
   // Published advisories, and whether a repository is public, remain
   // readable after a token is revoked. Reuse anonymous access for subsequent
@@ -14,7 +15,7 @@ function advisoryGithubClient(token: string | null, signal: AbortSignal): Client
     try { return await ask(current) } catch (error) {
       if (token === null || current !== authenticated || !(error instanceof HttpError) || error.status !== 401) throw error
       signal.throwIfAborted()
-      if (client === authenticated) client = createClient({ token: null, userAgent: 'deepview-triage' })
+      if (client === authenticated) client = createClient({ token: null, userAgent: USER_AGENT })
       return await ask(client)
     }
   }

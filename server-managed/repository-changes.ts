@@ -12,6 +12,7 @@
 
 import { GithubApiError } from './github-errors.ts'
 import { githubJson, repoApi } from './github-requests.ts'
+import { SHA } from './github-values.ts'
 import { eachOf } from './queue.ts'
 
 // Commits an answer tells at most, read of GitHub as many at once as
@@ -23,7 +24,6 @@ const CHANGES_PARALLEL = 6
 export const MAX_FILES = 300
 export const FILES_PAGE = 100
 const MAX_PATH = 4096
-const SHA = /^[a-f\d]{40}$/u
 
 type ChangeStatus = 'A' | 'M' | 'D' | 'R'
 // A file a commit changes: its path, its status, and a rename's path before.

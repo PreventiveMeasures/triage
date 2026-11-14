@@ -3,6 +3,10 @@
 // and the Issues, Agents and Pulse tabs' readers): any other value none.
 
 export const MAX_NAME = 256
+// A login of GitHub's: a user's, an organization's or a GitHub App's bot's.
+export const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
+// A commit's or a blob's id, as GitHub names one.
+export const SHA = /^[a-f\d]{40}$/u
 
 // A time GitHub names as an ISO 8601 date, in milliseconds since the epoch.
 export const timeOf = (value: unknown) => {

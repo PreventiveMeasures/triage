@@ -103,7 +103,7 @@ function binaryChanged(olds: NpmPackageFile[], news: NpmPackageFile[]): boolean 
 type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
 // A delta's key: the integrities of the version it is against, or none, and
 // of the version.
-const deltaKey = (base: string | null, other: string) => `${base ?? '(empty)'}\0${other}`
+export const deltaKey = (base: string | null, other: string) => `${base ?? '(empty)'}\0${other}`
 
 // The delta of `other` (its integrity, and how to read its files) against
 // `base`, or none, as held, else shared with one asked before it, else

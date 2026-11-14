@@ -11,6 +11,7 @@
 // whole, as it would for any file.
 import { createClient } from '@preventive/upstream/github.js'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
+import { USER_AGENT } from './github-requests.ts'
 import { type LockedPackage, patchedIn } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
 import { eachOf } from './queue.ts'
@@ -33,7 +34,7 @@ export async function lockfilesAt(fullName: string, token: string, sha: string, 
   const stored = await kept?.listings.read(sha)
   if (stored) { listings.set(key, stored); return stored }
   if (asked) asked.github = true
-  const { lockfiles } = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).findRepoLockfiles({ repo: fullName, sha }))
+  const { lockfiles } = await upstreamGithub(() => createClient({ token, userAgent: USER_AGENT }).findRepoLockfiles({ repo: fullName, sha }))
   const listed = lockfiles.flatMap(({ path, sha: blob }) => { const format = lockfileFormat(path); return format ? [{ path, format, sha: blob }] : [] })
   listings.set(key, listed)
   await kept?.listings.write(sha, listed)

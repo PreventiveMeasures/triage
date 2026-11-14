@@ -28,7 +28,8 @@
 // never changes either, and a push changing no lockfile changes none.
 import { createClient } from '@preventive/upstream/github.js'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
-import { githubJson, repoApi } from './github-requests.ts'
+import { USER_AGENT, githubJson, repoApi } from './github-requests.ts'
+import { SHA } from './github-values.ts'
 import { compareVersions, isExactVersion } from '@preventive/upstream/semver.js'
 import { type LockedPackage, isTestFixture, lockedPackages, patchedIn } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
@@ -54,7 +55,6 @@ const READ_PARALLEL = 4
 // told or read by others is told or read again, as those read before pnpm's
 // patches' files were.
 export const PULL_DEPENDENCIES_READ = 4
-const SHA = /^[a-f\d]{40}$/u
 
 type Format = 'npm' | 'pnpm' | 'yarn' | 'bun'
 
@@ -203,7 +203,7 @@ function lockfilesChanged(files: ChangedFile[]) {
 // The text of the file at `path` of repository `fullName` at `ref`; null
 // where GitHub has none there.
 export async function repositoryFile(fullName: string, token: string, path: string, ref: string): Promise<string | null> {
-  try { return await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).getRepoFile({ repo: fullName, path, ref })) } catch (err) {
+  try { return await upstreamGithub(() => createClient({ token, userAgent: USER_AGENT }).getRepoFile({ repo: fullName, path, ref })) } catch (err) {
     if (err instanceof GithubApiError && err.message === 'github-not-found') return null
     throw err
   }

@@ -6,6 +6,7 @@ import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedSession, ManagedUser, UserTokens } from './db.ts'
 import { randomToken, safeEqual } from './crypto.ts'
+import { API_VERSION, USER_AGENT } from './github-requests.ts'
 import { STATE_COOKIE, buildCookie, clearCookie, cookieName, createSession, parseCookies } from './session.ts'
 import { isViewing } from './view-as.ts'
 
@@ -219,7 +220,7 @@ export async function fetchIdentity(token: string, fetchImpl: typeof fetch): Pro
     res = await fetchImpl(GITHUB_USER_URL, {
       headers: {
         'authorization': `Bearer ${token}`, 'accept': 'application/vnd.github+json',
-        'user-agent': 'deepview-triage', 'x-github-api-version': '2022-11-28',
+        'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION,
       },
     })
   } catch { throw new OAuthError(502, 'github-user-unreachable') }

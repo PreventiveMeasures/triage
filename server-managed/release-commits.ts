@@ -7,8 +7,8 @@
 // the commit (repository-changes.ts repositoryChanges).
 import { type ChangesStore, type CommitChanges, repositoryChanges } from './repository-changes.ts'
 import { githubGraphql } from './github-graphql.ts'
-import { timeOf } from './github-values.ts'
-import { SHA, nextCursor } from './repository-history.ts'
+import { SHA, timeOf } from './github-values.ts'
+import { nextCursor } from './repository-history.ts'
 
 // The tags read, a page a query, the latest commits' first, as many pages as
 // TAG_PAGES; of the commits they name, as many as RELEASES_READ have their

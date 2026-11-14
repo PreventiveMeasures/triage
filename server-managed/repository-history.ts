@@ -17,7 +17,7 @@ import { GithubApiError } from './github-errors.ts'
 import { type GraphActor, accountOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
 import { githubGraphql } from './github-graphql.ts'
 import { githubJson, repoApi } from './github-requests.ts'
-import { MAX_NAME, nameOf, timeOf } from './github-values.ts'
+import { MAX_NAME, SHA, nameOf, timeOf } from './github-values.ts'
 import { inTurns } from './queue.ts'
 
 export const HISTORY_PAGE = 100
@@ -33,8 +33,6 @@ const ALL_TAGS = 100
 const REF_TIPS = 100
 const MAX_PARENTS = 8
 const MAX_SUBJECT = 1000
-// A commit's id, as GitHub names one.
-export const SHA = /^[a-f\d]{40}$/u
 
 // A commit, its author by name, address (`authorEmail`) and their account's
 // login and numeric id (`authorId`), and who it names beside them
@@ -199,7 +197,7 @@ export const commitsQuery = (count: number, alias: string, fields: string) => `q
   }
 }`
 // Its variables of `shas`: `$o<n>` the `n`th of them.
-export const commitIds =(shas: string[]) => Object.fromEntries(shas.map((sha, at) => [`o${at}`, sha]))
+export const commitIds = (shas: string[]) => Object.fromEntries(shas.map((sha, at) => [`o${at}`, sha]))
 
 // The latest commits of each tip, by its id, `b<n>` the `n`th's.
 const historiesQuery = (count: number) => `${commitsQuery(count, 'b', `history(first: ${ALL_DEPTH}) { pageInfo { hasNextPage } nodes { ...historyCommit } }`)}

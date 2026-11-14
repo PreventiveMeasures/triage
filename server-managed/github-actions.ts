@@ -5,6 +5,7 @@ import { createClient } from '@preventive/upstream/github.js'
 import type { ActionsSource } from '../risk/index.js'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
 import { encodedPath, githubJson, repoApi } from './github-requests.ts'
+import { SHA } from './github-values.ts'
 
 // How many pages of 100 tags are listed; a repository with more is told by
 // its tags one at a time.
@@ -50,13 +51,13 @@ export function githubActionsSource(token: string | null, fetchImpl: typeof fetc
       const listed = await githubJson(`${repoApi(name)}/branches?per_page=${BRANCHES_PAGE}`, token, fetchImpl)
       if (!Array.isArray(listed)) throw new GithubApiError(502, 'github-malformed')
       const branches = (listed as { name?: unknown; commit?: { sha?: unknown } }[]).flatMap(item => typeof item?.name === 'string'
-        && typeof item.commit?.sha === 'string' && /^[\da-f]{40}$/u.test(item.commit.sha) ? [{ branch: item.name, oid: item.commit.sha }] : [])
+        && typeof item.commit?.sha === 'string' && SHA.test(item.commit.sha) ? [{ branch: item.name, oid: item.commit.sha }] : [])
       return { branches, complete: listed.length < BRANCHES_PAGE }
     },
     // `base...sha`: `sha` is `base` or in its history where GitHub tells it
     // behind or identical, a commit of a fork in the same network too.
     async contains(name, base, sha) {
-      if (!/^[\da-f]{40}$/u.test(sha)) return null
+      if (!SHA.test(sha)) return null
       let compared
       try { compared = await githubJson(`${repoApi(name)}/compare/${encodedPath(base)}...${sha}?per_page=1`, token, fetchImpl) as { status?: unknown } } catch (error) {
         if (error instanceof GithubApiError && (error.status === 404 || error.message === 'github-status-422')) return null

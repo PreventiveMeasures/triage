@@ -15,6 +15,7 @@
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { isPatchHash, isPatchPath } from '../common/managed/npm-packages.js'
+import { SHA } from './github-values.ts'
 import { type Lru, lru } from './lru.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
 import { type GithubAsked, repositoryFile } from './pull-dependencies.ts'
@@ -29,7 +30,6 @@ export interface NpmPatch extends PatchSource { hash: string }
 const MAX_PATCH_BYTES = 8 * 1024 * 1024
 const FUZZ = 20
 
-const COMMIT = /^[\da-f]{40}$/u
 
 // The patch a request names, by its hash (`hash`), its repository's id
 // (`repoId`, a number or its digits), the commit and its file's path; null
@@ -38,7 +38,7 @@ const COMMIT = /^[\da-f]{40}$/u
 export function requestedPatch({ hash, repoId, commit, path }: { hash: unknown; repoId: unknown; commit: unknown; path: unknown }): NpmPatch | null | 'invalid' {
   if ([repoId, commit, path].every(field => field == null)) return null
   const id = typeof repoId === 'string' && /^[1-9]\d{0,15}$/u.test(repoId) ? Number(repoId) : repoId
-  if (!isPatchHash(hash) || !Number.isSafeInteger(id) || (id as number) <= 0 || typeof commit !== 'string' || !COMMIT.test(commit)
+  if (!isPatchHash(hash) || !Number.isSafeInteger(id) || (id as number) <= 0 || typeof commit !== 'string' || !SHA.test(commit)
     || !isPatchPath(path)) return 'invalid'
   return { hash, repoId: id as number, commit, path }
 }

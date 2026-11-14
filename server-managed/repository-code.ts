@@ -10,6 +10,7 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { encodeBrotli } from './brotli.ts'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
+import { SHA } from './github-values.ts'
 import type { KeptStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { MAX_NPM_JSON_LENGTH, NpmPackageError, npmFileRows } from './npm-packages.ts'
@@ -86,7 +87,6 @@ const KEPT_CODE_VERSION = 1
 // invocation a while uploading it: it is sent as ever, and read again the
 // next time.
 export const MAX_KEPT_CODE_BYTES = 64 * 1024 * 1024
-const COMMIT = /^[a-f\d]{40}$/u
 
 // A directory as kept: the repository by its id and name, the commit and the
 // directory, as its body names them; and the head they are kept at.
@@ -160,7 +160,7 @@ export function repositoryCodeKept(storage: CacheStorage, heads: KeptStore<KeptC
     // resolved to `commit` with `defaultBranch` GitHub's, reads and keeps
     // its directories.
     async at({ repoId, repo, commit }: Omit<KeptCodeAt, 'path'>, ref: string, defaultBranch: string): Promise<boolean> {
-      if (!COMMIT.test(commit)) return false
+      if (!SHA.test(commit)) return false
       const kept = await headOf(repoId)
       const atKept = kept?.commit === commit && kept.repo === repo
       if (ref !== '' && (defaultBranch === '' || ref !== `heads/${defaultBranch}`)) return atKept

@@ -14,7 +14,7 @@
 import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
 import { GithubApiError } from './github-errors.ts'
 import { type GraphqlError, githubGraphql } from './github-graphql.ts'
-import { count, nameOf, timeOf } from './github-values.ts'
+import { SHA, count, nameOf, timeOf } from './github-values.ts'
 import { touchesLockfile } from './pull-dependencies.ts'
 import { ITEM_THREADS, type ReviewNode, TILE_THREADS, pullReviews, reviewFields, reviewsRefused } from './pull-reviews.ts'
 
@@ -24,7 +24,6 @@ export const ISSUES_READ_VERSION = 4
 const MAX_LABELS = 20
 const MAX_TITLE = 1000
 const COLOR = /^[a-f\d]{6}$/iu
-const SHA = /^[a-f\d]{40}$/u
 // A page's cursor as GitHub gives it, to read on from: opaque, base64 or
 // base64url as it is now (`…rOrK_u7Q==`), passed back to GitHub alone, so any
 // printable one is, but none with spaces or control characters.

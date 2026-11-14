@@ -19,7 +19,6 @@ import { type ReviewVerdict, summarizeReview } from '../common/dependency-review
 export const REPOSITORY_DEPENDENCY_REVIEW_COLUMNS = [['dependency_review', 'INTEGER NOT NULL DEFAULT 0'],
   ['dependency_reviews_required', 'INTEGER NOT NULL DEFAULT 1'], ['dependency_review_since', 'TEXT'], ['dependency_review_lockfiles', 'TEXT']] as const
 export const MAX_REQUIRED_REVIEWS = 10
-export const SINCE_COMMIT = /^[a-f\d]{40}$/u
 
 export interface RepoDependencyReview { enabled: boolean; required: number; since: string | null; lockfiles: LockfileScope }
 // A review published of the version it is of: its package, version and

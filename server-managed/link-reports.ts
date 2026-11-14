@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { type StorageKey, unwrapStorageValue, wrapStorageValue } from '../server-common/storage-crypto.ts'
 import { parseLinkedFindings } from '../client/linked-findings.js'
 import type { ManagedSql } from './sql.ts'
-import { ManagedMutationError } from './management.ts'
+import { ManagedMutationError, sessionAdmin } from './management.ts'
 
 export const LINK_REPORT_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_link_report (
@@ -58,13 +58,6 @@ function parseLinkReport(content: string) {
 }
 export function linkReportMethods(db: ManagedSql, key: StorageKey | null): LinkReportStore {
   const map = (row: Omit<LinkReport, 'enabled'> & { enabled: number }): LinkReport => ({ ...row, enabled: row.enabled === 1 })
-  async function authorize(sessionId: string) {
-    const user = await db.prepare(`SELECT u.id, u.login, u.role FROM managed_session s JOIN managed_user u ON u.id = s.user_id
-      WHERE s.id = ? AND s.expires_at > ?`).get(sessionId, Date.now()) as { id: string; login: string; role: string } | undefined
-    if (!user) throw new ManagedMutationError(401, 'unauthenticated')
-    if (user.role !== 'admin') throw new ManagedMutationError(403, 'forbidden')
-    return user
-  }
   return {
     async listLegacyLinkReports() {
       return await db.prepare("SELECT id, filename FROM managed_report WHERE analyzer = 'links' ORDER BY id").all() as { id: string; filename: string }[]
@@ -95,7 +88,7 @@ export function linkReportMethods(db: ManagedSql, key: StorageKey | null): LinkR
       return (await db.prepare(`SELECT ${columns} FROM managed_link_report ORDER BY uploaded_at DESC, id`).all() as Parameters<typeof map>[0][]).map(map)
     },
     async getLinkReport(sessionId, id) {
-      await authorize(sessionId)
+      await sessionAdmin(db, sessionId)
       const row = await db.prepare(`SELECT ${columns}, encrypted_groups AS payload FROM managed_link_report WHERE id = ?`).get(id) as (Parameters<typeof map>[0] & { payload: string }) | undefined
       if (!row) throw new ManagedMutationError(404, 'no-link-report')
       const { payload, ...report } = row
@@ -109,7 +102,7 @@ export function linkReportMethods(db: ManagedSql, key: StorageKey | null): LinkR
       return rows.flatMap(row => decryptGroups(key, row.id, row.payload))
     },
     async importLinkReport(sessionId, filename, content) {
-      const user = await authorize(sessionId)
+      const user = await sessionAdmin(db, sessionId)
       if (!key) throw new ManagedMutationError(503, 'storage-encryption-required')
       const parsed = parseLinkReport(content)
       if (!parsed || parsed.skipped) throw new ManagedMutationError(400, 'invalid-link-report')
@@ -127,7 +120,7 @@ export function linkReportMethods(db: ManagedSql, key: StorageKey | null): LinkR
       } finally { plain.fill(0) }
     },
     async setLinkReportEnabled(sessionId, id, enabled) {
-      await authorize(sessionId)
+      await sessionAdmin(db, sessionId)
       if (!(await db.prepare('UPDATE managed_link_report SET enabled = ? WHERE id = ?').run(+enabled, id)).changes) throw new ManagedMutationError(404, 'no-link-report')
     },
   }

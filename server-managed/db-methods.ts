@@ -19,7 +19,7 @@ import { type BundleBuildLeaseStore, bundleBuildLeaseMethods } from './bundle-bu
 import { type UpstreamCacheStore, upstreamCacheMethods } from './upstream-cache.ts'
 import { type TeamAppSummaryStore, teamAppSummaryMethods } from './team-app-summaries.ts'
 import { type ImportTriageStore, importTriageMethods } from './import-triage.ts'
-import type { ManagedSql } from './sql.ts'
+import { type ManagedSql, jsonRows } from './sql.ts'
 import { type WorkspaceShareStore, workspaceShareMethods } from './workspace-shares.ts'
 import { ManagedMutationError, type ManagementStore, managementMethods } from './management.ts'
 import { type ManagementCatalogStore, managementCatalogMethods } from './management-catalog.ts'
@@ -586,10 +586,6 @@ type UserRow = { id: string; login: string; name: string | null; role: Role; cre
 
 // Whether a write changed any row.
 const anyChanged = (result: { changes: number | bigint }) => Number(result.changes) > 0
-
-// Rows a statement gathered into one JSON array value (json_group_array): its
-// text on SQLite, parsed already on Postgres, where none gather as NULL.
-const jsonRows = <T>(value: unknown): T[] => value == null ? [] : (typeof value === 'string' ? JSON.parse(value) : value) as T[]
 
 const REPORT_IN_TEAM_PATH_SQL = withinTeamPath('r.repo_directory')
 const BUNDLE_IN_TEAM_PATH_SQL = withinTeamPath('b.repo_directory')

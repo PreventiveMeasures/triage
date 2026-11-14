@@ -17,10 +17,10 @@ import { ACTOR, type GraphAccount, accountOf, actorOf } from './github-accounts.
 import { GithubApiError } from './github-errors.ts'
 import { githubGraphql } from './github-graphql.ts'
 import { githubJson, repoApi, shareGithubRead } from './github-requests.ts'
-import { count, nameOf, timeOf } from './github-values.ts'
+import { SHA, count, nameOf, timeOf } from './github-values.ts'
 import { coauthorsOf } from './commit-coauthors.ts'
 import { windowsOn } from './history-windows.ts'
-import { type HistoryCommit, type HistoryPages, SHA, historyFrom } from './repository-history.ts'
+import { type HistoryCommit, type HistoryPages, historyFrom } from './repository-history.ts'
 import { ISSUE_REASONS } from './repository-issues.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]

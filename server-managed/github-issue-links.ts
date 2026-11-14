@@ -3,6 +3,7 @@ import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import type { IssueTracking, ManagedIssue } from './managed-issues.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
+import { USER_AGENT } from './github-requests.ts'
 import { allowedRepositories, deadlineFetch, lookupFixes } from './github-pulls.ts'
 
 export type IssueFixUpdate = { findingId: string; issueUrl: string; previous: IssueTracking; next: IssueTracking; checkedAt: number }
@@ -214,7 +215,7 @@ export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, sna
     try {
       const response = await withinDeadline('https://api.github.com/graphql', {
         method: 'POST', redirect: 'error',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'deepview-triage' }, body: JSON.stringify({ query }),
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': USER_AGENT }, body: JSON.stringify({ query }),
       })
       if (!response.ok) break
       const body = await response.json() as { data?: typeof data; errors?: { path?: unknown[] }[] }
