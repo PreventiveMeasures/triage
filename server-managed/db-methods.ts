@@ -680,16 +680,41 @@ function userTeams(teams: UserTeamRows['teams'], scopes: UserTeamRows['scopes'],
   })
 }
 
-// A selected repository's row (RepoRow), and a bundle's (BundleRow).
+// A selected repository's row (RepoRow), and a bundle's (BundleRow) of `b`.
 const REPO_COLUMNS = `repo_id AS repoId, full_name AS fullName, is_private AS priv,
   installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
   added_by AS addedBy, added_at AS addedAt, active AS active`
-const BUNDLE_COLUMNS = `id, slug, integrity, filename, kind, byte_size AS byteSize,
-  uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, visible, uploaded_at AS uploadedAt, provenance,
-  build_conditions AS buildConditions`
+const bundleColumns = (b: string) => `${b}.id AS id, ${b}.slug AS slug, ${b}.integrity AS integrity, ${b}.filename AS filename,
+  ${b}.kind AS kind, ${b}.byte_size AS byteSize, ${b}.uploaded_by AS uploadedBy, ${b}.repo_id AS repoId, ${b}.repo_directory AS repoDirectory,
+  ${b}.visible AS visible, ${b}.uploaded_at AS uploadedAt, ${b}.provenance AS provenance, ${b}.build_conditions AS buildConditions`
+
+// What storedUser reads of `u`, a session's user (SessionRow); and a
+// snapshot's `viewer`, the user of the live session `?` at `?` read so.
+const SESSION_USER_COLUMNS = 'u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role'
+const VIEWER_SQL = `viewer AS (SELECT ${SESSION_USER_COLUMNS}
+  FROM managed_session s JOIN managed_user u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ?)`
+// The enabled link reports' rows, as linkRevisionOf reads them.
+const ENABLED_LINKS_SQL = `(SELECT json_group_array(json_object('id', id, 'sha256', sha256) ORDER BY id) FROM managed_link_report WHERE enabled = 1)`
+
+// Whether the manager `?` may read `row`, a report or bundle: their own
+// upload, or one a scope of theirs holds. Both placeholders take the user.
+const uploadedOrInScope = (row: string) => `(${row}.uploaded_by = ? OR ${inUserTeamScope('?', row)})`
+// The same, of the user its first placeholder takes too, any row where that
+// is NULL (an admin): its three placeholders as asManager gives them.
+const managerReads = (row: string) => `(? IS NULL OR ${uploadedOrInScope(row)})`
+const asManager = (userId?: string) => [userId ?? null, userId ?? null, userId ?? null]
+
+// Whether a scope of a non-hidden team of `user` holding bundle `b` shows
+// them its advisories, in the team `?` (any, where NULL; both placeholders
+// take it).
+const bundleAdvisories = (user: string) => `EXISTS (SELECT 1 FROM managed_team_repo tr
+  JOIN managed_team_user tu ON tu.team_id = tr.team_id
+  JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+  WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ${user} AND tu.view_security = 1
+    AND (? IS NULL OR tr.team_id = ?))`
 
 // Prepare every statement the store uses, returned as a bag the factory
-// destructures — keeps openSqliteManagedDb itself small (one place per query).
+// destructures — keeps createManagedMethods itself small (one place per query).
 function prepareStatements(db: ManagedSql) {
   return {
     // Identity refreshes preserve roles. Login can separately bootstrap the
@@ -713,8 +738,7 @@ function prepareStatements(db: ManagedSql) {
       `INSERT INTO managed_session (id, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
     ),
     selectOwnSessionStmt: db.prepare(
-      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey,
-              u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
+      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey, ${SESSION_USER_COLUMNS}
          FROM managed_session s
          JOIN managed_user u ON u.id = s.user_id
         WHERE s.id = ? AND s.expires_at > ? AND s.viewer_session IS NULL`,
@@ -729,8 +753,7 @@ function prepareStatements(db: ManagedSql) {
               id AS uid, login AS login, name AS name, avatar_url AS avatar, role AS role`,
     ),
     selectViewSessionStmt: db.prepare(
-      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey,
-              u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role,
+      `SELECT s.id AS id, s.csrf_token AS csrf, s.expires_at AS exp, s.upload_key AS uploadKey, ${SESSION_USER_COLUMNS},
               a.id AS viewerId, a.login AS viewerLogin, a.name AS viewerName
          FROM managed_session s
          JOIN managed_user u ON u.id = s.user_id
@@ -840,7 +863,7 @@ function prepareStatements(db: ManagedSql) {
          LEFT JOIN managed_user u ON u.id = r.uploaded_by
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
          LEFT JOIN managed_bundle b ON b.id = r.bundle_id
-        WHERE (? IS NULL OR r.uploaded_by = ? OR ${inUserTeamScope('?', 'r')})
+        WHERE ${managerReads('r')}
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
     findingCatalogReportsStmt: db.prepare(`SELECT id, byte_size AS byteSize FROM managed_report WHERE id > ? ORDER BY id LIMIT ?`),
@@ -861,11 +884,7 @@ function prepareStatements(db: ManagedSql) {
     // grants their teams give them (a JSON array); and the enabled link
     // reports (linkRevision).
     selectReportSnapshotStmt: db.prepare(
-      `WITH viewer AS (
-         SELECT u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
-           FROM managed_session s JOIN managed_user u ON u.id = s.user_id
-          WHERE s.id = ? AND s.expires_at > ?
-       ), requested AS (SELECT value AS id FROM json_each(?)), report_grants AS (
+      `WITH ${VIEWER_SQL}, requested AS (SELECT value AS id FROM json_each(?)), report_grants AS (
          SELECT r.id AS id, MAX(tu.view_dependencies) AS dependencies, MAX(tu.view_security) AS security
            FROM managed_report r JOIN requested q ON q.id = r.id
            JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
@@ -882,7 +901,7 @@ function prepareStatements(db: ManagedSql) {
                  LEFT JOIN report_grants g ON g.id = r.id
                 WHERE v.role = 'admin' OR (v.role = 'manage' AND r.uploaded_by = v.uid)
                    OR (g.id IS NOT NULL AND (v.role = 'manage' OR r.visible = 1))) AS reports,
-              (SELECT json_group_array(json_object('id', id, 'sha256', sha256) ORDER BY id) FROM managed_link_report WHERE enabled = 1) AS links
+              ${ENABLED_LINKS_SQL} AS links
          FROM viewer v`,
     ),
     // A team snapshot's reads in one statement, so one snapshot of the
@@ -892,11 +911,7 @@ function prepareStatements(db: ManagedSql) {
     // the team's repositories (each a JSON array); and the enabled link
     // reports (linkRevision).
     selectTeamSnapshotStmt: db.prepare(
-      `WITH viewer AS (
-         SELECT u.id AS uid, u.login AS login, u.name AS name, u.avatar_url AS avatar, u.role AS role
-           FROM managed_session s JOIN managed_user u ON u.id = s.user_id
-          WHERE s.id = ? AND s.expires_at > ?
-       )
+      `WITH ${VIEWER_SQL}
        SELECT v.uid AS uid, v.login AS login, v.name AS name, v.avatar AS avatar, v.role AS role,
               EXISTS(SELECT 1 FROM managed_team_user tu JOIN managed_team t ON t.id = tu.team_id
                       WHERE tu.user_id = v.uid AND tu.team_id = ? AND t.hidden = 0) AS member,
@@ -915,13 +930,13 @@ function prepareStatements(db: ManagedSql) {
               (SELECT json_group_array(json_object('repoId', tr.repo_id, 'github', sr.full_name, 'path', tr.path) ORDER BY tr.repo_id, tr.path)
                  FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
                 WHERE tr.team_id = ?) AS repositories,
-              (SELECT json_group_array(json_object('id', id, 'sha256', sha256) ORDER BY id) FROM managed_link_report WHERE enabled = 1) AS links
+              ${ENABLED_LINKS_SQL} AS links
          FROM viewer v`,
     ),
     reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
     reportsForBundleStmt: db.prepare(
       `SELECT r.id AS id, r.filename AS filename, r.bundle_id AS bundleId,
-              (? IS NULL OR r.uploaded_by = ? OR ${inUserTeamScope('?', 'r')}) AS readable
+              ${managerReads('r')} AS readable
          FROM managed_report r WHERE r.bundle_id = ? OR r.bundle_integrity = ?
         ORDER BY r.uploaded_at DESC, r.filename ASC, r.id ASC`,
     ),
@@ -1026,8 +1041,8 @@ function prepareStatements(db: ManagedSql) {
        WHERE id = :id AND (${BUNDLE_RENAMED_SQL} OR (:provenance = 'build' AND (provenance IS DISTINCT FROM 'build'
          OR build_conditions IS DISTINCT FROM COALESCE(build_conditions, :buildConditions))))`,
     ),
-    selectBundleByIntegrityStmt: db.prepare(`SELECT ${BUNDLE_COLUMNS} FROM managed_bundle WHERE integrity = ?`),
-    selectBundleStmt: db.prepare(`SELECT ${BUNDLE_COLUMNS} FROM managed_bundle WHERE id = ?`),
+    selectBundleByIntegrityStmt: db.prepare(`SELECT ${bundleColumns('b')} FROM managed_bundle b WHERE b.integrity = ?`),
+    selectBundleStmt: db.prepare(`SELECT ${bundleColumns('b')} FROM managed_bundle b WHERE b.id = ?`),
     selectBundlesStmt: db.prepare(
       `SELECT b.id AS id, b.slug AS slug, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
               b.byte_size AS byteSize, COALESCE(u.login, b.uploaded_by_login) AS uploadedByLogin,
@@ -1035,14 +1050,14 @@ function prepareStatements(db: ManagedSql) {
          FROM managed_bundle b
          LEFT JOIN managed_user u ON u.id = b.uploaded_by
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
-        WHERE (? IS NULL OR (b.uploaded_by = ? OR ${inUserTeamScope('?', 'b')}))
+        WHERE ${managerReads('b')}
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
     ),
     selectBundleReadableStmt: db.prepare(
-      `SELECT 1 FROM managed_bundle b WHERE b.id = ? AND (b.uploaded_by = ? OR ${inUserTeamScope('?', 'b')})`,
+      `SELECT 1 FROM managed_bundle b WHERE b.id = ? AND ${uploadedOrInScope('b')}`,
     ),
     selectReadableBundleIdsStmt: db.prepare(
-      `SELECT b.id FROM managed_bundle b WHERE b.id IN (SELECT value FROM json_each(?)) AND (b.uploaded_by = ? OR ${inUserTeamScope('?', 'b')})`,
+      `SELECT b.id FROM managed_bundle b WHERE b.id IN (SELECT value FROM json_each(?)) AND ${uploadedOrInScope('b')}`,
     ),
     selectRepoReadableStmt: db.prepare(
       `SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
@@ -1063,7 +1078,7 @@ function prepareStatements(db: ManagedSql) {
     // but haven't been linked yet (bundle uploaded after the report).
     linkReportsToBundleStmt: db.prepare(
       `UPDATE managed_report AS r SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL
-       AND (? IS NULL OR r.uploaded_by = ? OR ${inUserTeamScope('?', 'r')})`,
+       AND ${managerReads('r')}`,
     ),
     // OR IGNORE: a duplicate name (UNIQUE) is the "taken" signal (0 changes); the
     // uuid PK never collides.
@@ -1098,7 +1113,7 @@ function prepareStatements(db: ManagedSql) {
               (SELECT json_group_array(json_object('teamId', x.teamId, 'repoId', x.repoId, 'path', x.path, 'fullName', x.fullName)
                         ORDER BY x.teamId, x.repoId, x.path)
                  FROM (${USER_TEAM_SCOPES_SQL('v.id')}) AS x) AS scopes,
-              (SELECT json_group_array(json_object('id', id, 'sha256', sha256) ORDER BY id) FROM managed_link_report WHERE enabled = 1) AS links,
+              ${ENABLED_LINKS_SQL} AS links,
               (SELECT json_group_array(json_object('teamId', x.teamId, 'id', x.id, 'slug', x.slug, 'filename', x.filename, 'analyzer', x.analyzer,
                         'visible', x.visible, 'sha256', x.sha256, 'bundleId', x.bundleId, 'repoId', x.repoId, 'repoDirectory', x.repoDirectory,
                         'repoFullName', x.repoFullName, 'dependencies', x.dependencies, 'security', x.security, 'role', x.role)
@@ -1118,25 +1133,12 @@ function prepareStatements(db: ManagedSql) {
         WHERE tu.user_id = ?`,
     ),
     // A report is readable iff one of the user's team scopes contains it.
-    selectReportReadableStmt: db.prepare(
-      `SELECT 1 FROM managed_report r
-         JOIN managed_team_repo tr ON tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}
-         JOIN managed_team_user tu ON tu.team_id = tr.team_id
-        JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-        WHERE r.id = ? AND tu.user_id = ? LIMIT 1`,
-    ),
+    selectReportReadableStmt: db.prepare(`SELECT 1 FROM managed_report r WHERE r.id = ? AND ${inUserTeamScope('?', 'r')}`),
     selectReportViewStmt: db.prepare(
       `SELECT r.uploaded_by AS uploadedBy, r.visible AS visible, ${inUserTeamScope('?', 'r')} AS readable
          FROM managed_report r WHERE r.id = ?`,
     ),
-    selectBundleSecurityStmt: db.prepare(
-      `SELECT 1 FROM managed_bundle b
-         JOIN managed_team_repo tr ON tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL}
-         JOIN managed_team_user tu ON tu.team_id = tr.team_id
-        JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-        WHERE b.id = ? AND tu.user_id = ? AND tu.view_security = 1
-          AND (? IS NULL OR tr.team_id = ?) LIMIT 1`,
-    ),
+    selectBundleSecurityStmt: db.prepare(`SELECT 1 FROM managed_bundle b WHERE b.id = ? AND ${bundleAdvisories('?')}`),
     // A bundle access snapshot's reads in one statement, so one snapshot of
     // the database answers them all: the session's user, view sessions
     // included; the bundle, NULL where there is none; whether one of the
@@ -1146,19 +1148,9 @@ function prepareStatements(db: ManagedSql) {
     // asks, whether one in the team (any, where NULL) shows them its
     // advisories (selectBundleSecurityStmt).
     selectBundleAccessStmt: db.prepare(
-      `WITH viewer AS (
-         SELECT u.id AS uid, u.role AS role
-           FROM managed_session s JOIN managed_user u ON u.id = s.user_id
-          WHERE s.id = ? AND s.expires_at > ?
-       )
-       SELECT v.uid AS uid, v.role AS role, b.id AS id, b.slug AS slug, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
-              b.byte_size AS byteSize, b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.repo_directory AS repoDirectory, b.visible AS visible,
-              b.uploaded_at AS uploadedAt, b.provenance AS provenance, b.build_conditions AS buildConditions,
-              ${inUserTeamScope('v.uid', 'b')} AS granted,
-              (? = 1 AND EXISTS(SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-                       JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-                      WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = v.uid AND tu.view_security = 1
-                        AND (? IS NULL OR tr.team_id = ?))) AS security
+      `WITH ${VIEWER_SQL}
+       SELECT v.uid AS uid, v.role AS role, ${bundleColumns('b')},
+              ${inUserTeamScope('v.uid', 'b')} AS granted, (? = 1 AND ${bundleAdvisories('v.uid')}) AS security
          FROM viewer v LEFT JOIN managed_bundle b ON b.id = ?`,
     ),
     // The viewer's effective visibility permissions for a report: OR'd (MAX over
@@ -1204,7 +1196,7 @@ type RepoRow = {
   branch: string; cachedDefaultBranch: string | null; htmlUrl: string; addedBy: string | null; addedAt: number; active: number
 }
 
-// The repo-selection slice of ManagedDb, split out to keep openSqliteManagedDb
+// The repo-selection slice of ManagedDb, split out to keep createManagedMethods
 // within the per-function line budget. Closes over its prepared statements.
 function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
   const { upsertRepoStmt, deleteRepoStmt, deactivateRepoStmt, reactivateRepoStmt, selectReposStmt, selectAllReposStmt,
@@ -1341,7 +1333,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       return (await getReport(report.id))!
     },
     async listReports(userId?: string): Promise<AdminReport[]> {
-      const rows = (await selectReportsStmt.all(userId ?? null, userId ?? null, userId ?? null)) as ReportListRow[]
+      const rows = (await selectReportsStmt.all(...asManager(userId))) as ReportListRow[]
       return rows.map(r => ({ ...r, repoEmbedded: r.repoEmbedded === 1, visible: r.visible === 1 }))
     },
     async listFindingCatalogReports(after: string, limit: number): Promise<Pick<ReportRecord, 'id' | 'byteSize'>[]> {
@@ -1353,7 +1345,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       if (!session) return null
       const user = storedUser(session)
       if (user.role === 'none' || !session.member) return { user, teamId: null, reports: [], repositories: [] }
-      const whole = user.role === 'admin' || user.role === 'manage'
+      const whole = roleAtLeast(user.role, 'manage')
       const rows = jsonRows<CatalogReportRow & { id: string; byteSize: number; visible: number }>(session.reports)
       // Only privileged callers can receive a hidden row from this query. Give
       // that individual preview its own capacity; published report selections
@@ -1372,7 +1364,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       if (!session) return null
       const user = storedUser(session)
       if (user.role === 'none' || ids.length === 0) return { user, reports: [] }
-      const whole = user.role === 'admin' || user.role === 'manage'
+      const whole = roleAtLeast(user.role, 'manage')
       const reports = jsonRows<AccessRow>(session.reports).map(row => accessRecord(row, whole))
       return { user, linkRevision: linkRevisionOf(jsonRows(session.links)), reports }
     },
@@ -1381,7 +1373,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       return rows.map(row => row.filename)
     },
     async listReportsForBundle(bundleId: string, integrity: string, userId?: string): Promise<BundleReportItem[]> {
-      const rows = await stmts.reportsForBundleStmt.all(userId ?? null, userId ?? null, userId ?? null, bundleId, integrity) as
+      const rows = await stmts.reportsForBundleStmt.all(...asManager(userId), bundleId, integrity) as
         (Omit<BundleReportItem, 'readable'> & { readable: unknown })[]
       return rows.map(row => ({ id: row.id, filename: row.filename, bundleId: row.bundleId, readable: Boolean(row.readable) }))
     },
@@ -1582,7 +1574,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       return { bundle: mapBundle(row), canReadAdvisories: manager || Boolean(row.security) }
     },
     async listBundles(userId?: string): Promise<AdminBundle[]> {
-      const rows = (await selectBundlesStmt.all(userId ?? null, userId ?? null, userId ?? null)) as BundleListRow[]
+      const rows = (await selectBundlesStmt.all(...asManager(userId))) as BundleListRow[]
       return rows.map((r) => ({
         id: r.id, slug: r.slug, integrity: r.integrity, filename: r.filename, kind: r.kind, byteSize: r.byteSize,
         uploadedByLogin: r.uploadedByLogin, repoId: r.repoId, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory, visible: r.visible === 1,
@@ -1613,7 +1605,7 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       return anyChanged(await setBundleRepoStmt.run(repoId, repoId == null ? '' : directory ?? '', id))
     },
     async linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void> {
-      await linkReportsToBundleStmt.run(bundleId, integrity, userId ?? null, userId ?? null, userId ?? null)
+      await linkReportsToBundleStmt.run(bundleId, integrity, ...asManager(userId))
     },
   }
 }
@@ -1841,12 +1833,11 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       // one read: a user missing reads as no tokens, no encryption row as none.
       const read = (await stmts.selectTokensStateStmt.get(id)) as StoredTokens & Parameters<typeof storageStateOf>[0] & { userId: string | null; stateId: number | null }
       const state = storageStateOf(read.stateId == null ? undefined : read, key)
-      const row = read.userId == null ? undefined : read
-      if (row == null || row.access == null) return null
-      if (row.encrypted && !state) throw new Error('Encrypted tokens without storage encryption state')
-      if (!row.encrypted && state?.complete) throw new Error('Unexpected plaintext GitHub tokens')
-      const value = row.encrypted ? decodeStorageTokens(key!, id, row) : row
-      return { accessToken: value.access!, refreshToken: value.refresh, expiresAt: row.exp }
+      if (read.userId == null || read.access == null) return null
+      if (read.encrypted && !state) throw new Error('Encrypted tokens without storage encryption state')
+      if (!read.encrypted && state?.complete) throw new Error('Unexpected plaintext GitHub tokens')
+      const value = read.encrypted ? decodeStorageTokens(key!, id, read) : read
+      return { accessToken: value.access!, refreshToken: value.refresh, expiresAt: read.exp }
     },
     async getUserGithubId(id) {
       const row = (await selectGithubIdStmt.get(id)) as { githubId: number } | undefined

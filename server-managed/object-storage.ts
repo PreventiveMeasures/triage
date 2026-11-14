@@ -44,6 +44,13 @@ export function objectPath(key: string): string {
   return key
 }
 
+// A listing's page: `prefix` a directory of the managed namespace, `limit` a
+// count of at least one.
+export function validateStoragePage(prefix: string, limit: number): void {
+  if (!prefix.endsWith('/') || !Number.isInteger(limit) || limit < 1) throw new Error('Invalid storage page')
+  objectPath(`${prefix}validate`)
+}
+
 // Hash verification and migration may consume a stream before it can be used.
 // Reopen only the same object version, closing any concurrent replacement.
 export async function openObjectVersion(raw: RawObjectStorage, key: string, version: string, signal?: AbortSignal): Promise<RawObject | null> {

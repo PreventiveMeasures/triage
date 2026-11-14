@@ -61,28 +61,27 @@ const triageFields = `'triage:' || e.seq AS id, 'triage' AS kind,
   COALESCE(u.login, e.actor_login) AS actor, e.actor_id AS actorId,
   CASE WHEN e.color IS NULL AND e.triage IS NULL AND e.comment IS NULL AND e.fix IS NULL AND e.flagged IS NULL
     THEN 'cleared triage' ELSE 'updated triage' END AS action`
-const triage = `SELECT ${triageFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
-  FROM managed_finding_triage_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
 const commentFields = `'comment:' || e.seq AS id, 'triage' AS kind,
   COALESCE(u.login, e.actor_login) AS actor, e.actor_id AS actorId, e.action`
-const comments = `SELECT ${commentFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
-  FROM managed_finding_comment_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
-const adminSource = `${triage} UNION ALL ${comments} UNION ALL
+// The events of a finding trail (`table`), with `fields` and the context each
+// recorded.
+const recordedEvents = (fields: string, table: string) => `SELECT ${fields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
+  FROM ${table} e LEFT JOIN managed_user u ON u.id = e.actor_id`
+const adminSource = `${recordedEvents(triageFields, 'managed_finding_triage_event')}
+  UNION ALL ${recordedEvents(commentFields, 'managed_finding_comment_event')} UNION ALL
   SELECT id, kind, actor, actor_id AS actorId, action, repo, report_id AS reportId, report, NULL AS finding, at FROM managed_activity`
-// Keep the finite set of accessible findings outside the indexed event
-// lookup. Scanning all events against json_each for every row is quadratic.
-const managerSource = `SELECT ${triageFields},
+// The events of the accessible findings in a finding trail (`table`), with
+// `fields` and the context the server gives each finding. Keep the finite
+// set of accessible findings outside the indexed event lookup. Scanning all
+// events against json_each for every row is quadratic.
+const contextEvents = (fields: string, table: string) => `SELECT ${fields},
   json_extract(c.value, '$.repo') AS repo, json_extract(c.value, '$.reportId') AS reportId,
   json_extract(c.value, '$.report') AS report, e.finding_id AS finding, e.at
   FROM json_each(:contexts) c
-  CROSS JOIN managed_finding_triage_event e ON e.finding_id = json_extract(c.value, '$.finding')
-  LEFT JOIN managed_user u ON u.id = e.actor_id
-  UNION ALL SELECT ${commentFields},
-    json_extract(c.value, '$.repo') AS repo, json_extract(c.value, '$.reportId') AS reportId,
-    json_extract(c.value, '$.report') AS report, e.finding_id AS finding, e.at
-  FROM json_each(:contexts) c
-  CROSS JOIN managed_finding_comment_event e ON e.finding_id = json_extract(c.value, '$.finding')
-  LEFT JOIN managed_user u ON u.id = e.actor_id
+  CROSS JOIN ${table} e ON e.finding_id = json_extract(c.value, '$.finding')
+  LEFT JOIN managed_user u ON u.id = e.actor_id`
+const managerSource = `${contextEvents(triageFields, 'managed_finding_triage_event')}
+  UNION ALL ${contextEvents(commentFields, 'managed_finding_comment_event')}
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId,
     CASE WHEN a.kind = 'repository' THEN 'changed a report repository assignment' ELSE a.action END AS action,
     p.full_name AS repo, r.id AS reportId, r.filename AS report, NULL AS finding, a.at

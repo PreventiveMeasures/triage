@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream'
 import { Buffer } from 'node:buffer'
 import { type VercelBlobSdk, isNotFound, loadVercelBlobSdk } from '../server-common/vercel-blob.ts'
-import { type RawObjectStorage, objectPath } from './object-storage.ts'
+import { type RawObjectStorage, objectPath, validateStoragePage } from './object-storage.ts'
 
 // The SDK's abort option, where there is a signal to give it; and when a blob
 // was last written, now where the SDK does not say.
@@ -59,8 +59,7 @@ export async function openVercelObjectStorage(token: string, sdk?: VercelBlobSdk
     },
     async list(prefix, cursor, limit, signal) {
       signal?.throwIfAborted()
-      if (!prefix.endsWith('/') || !Number.isInteger(limit) || limit < 1) throw new Error('Invalid storage page')
-      objectPath(`${prefix}validate`)
+      validateStoragePage(prefix, limit)
       const page = await blobs.list({ prefix: `.managed/${prefix}`, token, limit, ...(cursor ? { cursor } : {}), ...abortable(signal) })
       if (page.hasMore && (!page.cursor || page.cursor === cursor)) throw new Error('Invalid blob pagination')
       return { objects: page.blobs.filter(blob => blob.pathname.startsWith(`.managed/${prefix}`)).map(blob => ({ key: blob.pathname.slice('.managed/'.length),

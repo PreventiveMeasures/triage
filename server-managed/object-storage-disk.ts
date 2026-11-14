@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { link, lstat, mkdir, open, readdir, rename, rm, rmdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { type ObjectPage, type RawObjectStorage, objectPath } from './object-storage.ts'
+import { type ObjectPage, type RawObjectStorage, objectPath, validateStoragePage } from './object-storage.ts'
 
 function missing(err: unknown): boolean { return (err as NodeJS.ErrnoException).code === 'ENOENT' }
 function version(info: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }): string {
@@ -62,8 +62,7 @@ async function listFiles(dir: string, prefix: string, cursor: string | null, lim
     // inventory can mark the shared migration complete.
     try { await syncDirectory(join(dir, key)) } catch (err) { if (!missing(err)) throw err }
   }
-  if (!prefix.endsWith('/') || !Number.isInteger(limit) || limit < 1) throw new Error('Invalid storage page')
-  objectPath(`${prefix}validate`)
+  validateStoragePage(prefix, limit)
   await visit(prefix)
   return { objects: objects.slice(0, limit), cursor: objects.length > limit ? objects[limit - 1]!.key : null }
 }

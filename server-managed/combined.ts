@@ -38,10 +38,6 @@ export async function init(mode: 'managed+e2e' | 'e2e+managed', { ui = true }: {
   e2e.httpServer.removeListener('request', next)
   e2e.httpServer.on('request', withReap(managed.handleRequest,
     { e2e: e2e.reap, managed: managed.reap }, { isShuttingDown: e2e.isShuttingDown }))
-  e2e.httpServer.once('listening', () => {
-    const address = e2e.httpServer.address()
-    const port = typeof address === 'object' && address ? address.port : config.port
-    logManagedStartup(config, port, mode)
-  })
+  e2e.httpServer.once('listening', () => { logManagedStartup(config, e2e.httpServer, mode) })
   return e2e.httpServer
 }
