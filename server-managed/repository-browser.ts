@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
-import { GithubApiError, type GithubIdentity, READ_PERMISSIONS, githubJson, githubRepoPermission, githubUserIdentity, onTokenRejected, repoAccessToken } from './github-app.ts'
+import { type GithubIdentity, READ_PERMISSIONS, githubRepoPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
+import { GithubApiError } from './github-errors.ts'
+import { encodedPath, githubJson, onTokenRejected, repoApi } from './github-requests.ts'
+import { SHA } from './github-values.ts'
 import { MAX_PACKAGE_BYTES, readConfigEntryPoints, readPackageEntryPoints } from './package-entry-points.ts'
 import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG } from './stasis-config.ts'
 import { readSolidityEntryPoints } from './solidity-entry-points.ts'
@@ -13,7 +16,7 @@ const REFS_PAGE = 100
 // Each branch or tag GitHub lists, by its name and commit, those it names
 // one for.
 const refCommits = (items: { name?: unknown; commit?: { sha?: unknown } }[]) => items.flatMap(item => typeof item?.name === 'string' && item.name
-  && typeof item.commit?.sha === 'string' && /^[a-f\d]{40}$/u.test(item.commit.sha) ? [{ name: item.name, sha: item.commit.sha }] : [])
+  && typeof item.commit?.sha === 'string' && SHA.test(item.commit.sha) ? [{ name: item.name, sha: item.commit.sha }] : [])
 
 // Each branch GitHub lists, by its name and commit. Branches are listed by
 // name, a full page of them leaving the default branch out where many come
@@ -21,8 +24,8 @@ const refCommits = (items: { name?: unknown; commit?: { sha?: unknown } }[]) => 
 async function branchCommits(read: (suffix: string) => Promise<unknown>, branches: { name?: unknown; commit?: { sha?: unknown } }[], defaultBranch: string) {
   const listed = refCommits(branches)
   if (!defaultBranch || branches.length < REFS_PAGE || listed.some(item => item.name === defaultBranch)) return listed
-  const ref = await read(`/git/ref/heads/${defaultBranch.split('/').map(encodeURIComponent).join('/')}`).catch(() => null) as { object?: { sha?: unknown } } | null
-  return typeof ref?.object?.sha === 'string' && /^[a-f\d]{40}$/u.test(ref.object.sha) ? [...listed, { name: defaultBranch, sha: ref.object.sha }] : listed
+  const ref = await read(`/git/ref/heads/${encodedPath(defaultBranch)}`).catch(() => null) as { object?: { sha?: unknown } } | null
+  return typeof ref?.object?.sha === 'string' && SHA.test(ref.object.sha) ? [...listed, { name: defaultBranch, sha: ref.object.sha }] : listed
 }
 
 export interface RepositoryEntry { name: string; path: string; type: 'dir' | 'file' | 'symlink' | 'submodule' }
@@ -36,7 +39,7 @@ export function scopedDirectory(path: string, scopes: (string | null)[]): Reposi
   return [...names].toSorted().map(name => ({ name, path: prefix + name, type: 'dir' }))
 }
 
-export interface RepositoryBrowserUser { githubUserId: number | null; token: string | null }
+interface RepositoryBrowserUser { githubUserId: number | null; token: string | null }
 
 function credentialFailure(err: unknown): err is GithubApiError {
   return err instanceof GithubApiError && ([401, 404].includes(err.status) || err.message === 'github-status-403')
@@ -69,9 +72,8 @@ onTokenRejected((token, fetchImpl) => {
 function verdictCache(config: ManagedConfig, user: RepositoryBrowserUser, repo: SelectedRepo, fetchImpl: typeof fetch): VerdictCache | null {
   const keepMs = config.repositoryAccessCacheMs
   if (!(keepMs > 0)) return null
-  let verdicts = accessVerdicts.get(fetchImpl)
-  if (!verdicts) { verdicts = new Map(); accessVerdicts.set(fetchImpl, verdicts) }
-  const kept = verdicts
+  const kept = accessVerdicts.get(fetchImpl) ?? new Map<string, AccessVerdict>()
+  accessVerdicts.set(fetchImpl, kept)
   // The token hashed with the rest, never kept as it is.
   const key = createHash('sha256').update(JSON.stringify([user.githubUserId, user.token, repo.repoId, repo.fullName.toLowerCase(), repo.installationId, config.githubAppId])).digest('hex')
   return {
@@ -133,8 +135,8 @@ export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryB
 // (readToken): how many and their bytes, or null where GitHub cuts the
 // listing short, as it does past 100,000 entries.
 export async function repositoryTreeFiles(fullName: string, token: string | null, tree: string, fetchImpl: typeof fetch = globalThis.fetch) {
-  if (!/^[a-f\d]{40}$/u.test(tree)) throw new GithubApiError(400, 'bad-tree')
-  const url = `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/git/trees/${tree}?recursive=1`
+  if (!SHA.test(tree)) throw new GithubApiError(400, 'bad-tree')
+  const url = `${repoApi(fullName)}/git/trees/${tree}?recursive=1`
   const data = await githubJson(url, token, fetchImpl) as { tree?: unknown; truncated?: unknown }
   if (!Array.isArray(data?.tree)) throw new GithubApiError(502, 'github-malformed')
   if (data.truncated === true) return null
@@ -155,7 +157,7 @@ type Access = { data: RepoMetadata; token: string | null; level: string | null }
 // installation's. What it told, the token reading it, and the level asked.
 async function askAccess(repo: SelectedRepo, start: string | null, userToken: string | null, installationToken: () => Promise<string | null>,
   getIdentity: () => Promise<GithubIdentity>, fetchImpl: typeof fetch): Promise<Access> {
-  const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
+  const base = repoApi(repo.fullName)
   let token = start
   const metadata = async () => {
     try { return await githubJson(base, token, fetchImpl) }
@@ -214,9 +216,9 @@ async function keptAccess(verdicts: VerdictCache | null, userToken: string | nul
   return { ...asked, data }
 }
 
-async function repositoryReader(repo: SelectedRepo, userToken: string | null, installationToken: () => Promise<string | null>, getIdentity: (fresh?: boolean) => Promise<GithubIdentity>, fetchImpl: typeof fetch,
+async function repositoryReader(repo: SelectedRepo, userToken: string | null, installationToken: () => Promise<string | null>, getIdentity: () => Promise<GithubIdentity>, fetchImpl: typeof fetch,
   verdicts: VerdictCache | null) {
-  const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
+  const base = repoApi(repo.fullName)
   // Public reads can use the signed-in user's quota without repository grants.
   // Nonpublic reads still require the repository App and the effective-user gate,
   // whose permission level is kept (`level`).
@@ -233,7 +235,7 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
   return {
     // Its visibility and the user's permission asked again, the user as
     // GitHub told them earlier in the request, not asked again.
-    recheckAccess: () => checkAccess(),
+    recheckAccess: checkAccess,
     // Server-only credential, selected by the same live visibility/permission
     // gate as directory browsing. Never included in an HTTP response.
     readToken: () => token,
@@ -267,10 +269,10 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
     // The first commit a listing from `sha` returns is that commit, without
     // the files GET /commits/:sha adds.
     async commitDetails(sha: string) {
-      return /^[a-f\d]{40}$/u.test(sha) ? parseGithubCommit(sha, await read(`/commits?sha=${sha}&per_page=1`)) : null
+      return SHA.test(sha) ? parseGithubCommit(sha, await read(`/commits?sha=${sha}&per_page=1`)) : null
     },
     async directory(path: string, commit: string) {
-      const data = await read(`/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(commit)}`)
+      const data = await read(`/contents/${encodedPath(path)}?ref=${encodeURIComponent(commit)}`)
       if (!Array.isArray(data)) throw new GithubApiError(400, 'not-a-directory')
       const entries: RepositoryEntry[] = []
       for (const item of data) {

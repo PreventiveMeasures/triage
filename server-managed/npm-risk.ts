@@ -38,15 +38,14 @@
 // unpacking up to two tarballs: one past them is refused as busy.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { buffer } from 'node:stream/consumers'
 import type { CacheStore } from '@preventive/upstream/npm.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, type NpmAssessment, assessNpm, npmReadyDownload, npmReadyDownloads } from '../risk/index.js'
+import { readBytes } from './blob-store.ts'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
-import { npmVersionStore } from './npm-kept.ts'
+import { npmVersionStore, pruneKept } from './npm-kept.ts'
 import { loadNpmTarball } from './npm-loads.ts'
 import { NpmPackageError, type NpmVersionDocument, npmTokenReads, readNpmPackument, readNpmVersion } from './npm-packages.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
-import { pruneKept } from './npm-kept.ts'
 import type { UpstreamCacheStore } from './upstream-cache.ts'
 
 const MEMORY_ENTRIES = 2000
@@ -113,6 +112,9 @@ export interface NpmRiskCache extends CacheStore {
 // that what is kept of it can be shared.
 export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: boolean): NpmRiskCache {
   const warn = (what: string, error: unknown) => { if (debug) console.warn(`managed: risk cache ${what} failed:`, error) }
+  // The rows under `prefix` kept `keptMs` before `at` removed, as rows under
+  // it are written (pruneKept).
+  const prune = (prefix: string, keptMs: number, at: number) => pruneKept(db, prefix, keptMs, at, error => { warn('prune', error) })
   const memoryKey = (type: string, key: string) => `${isPublic ? '' : 'private\0'}${type}\0${key}`
   // Whether a record of `type` is read of the database: unless it is one
   // kept in memory too (HOURLY) and there.
@@ -144,12 +146,12 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
       if (!isPublic || !IN_DATABASE.has(type)) { for (const [key, value] of entries) await cache.write(type, key, value); return }
       const at = Date.now()
       try { await db.setUpstreamCacheEntries(entries.map(([key, value]) => [`${type}/${key}`, JSON.stringify(value)]), at) } catch (error) { warn('write', error); return }
-      if (type === 'risk/npm/downloads') await pruneKept(db, `${type}/`, DOWNLOADS_KEPT_MS, at, error => { warn('prune', error) })
+      if (type === 'risk/npm/downloads') await prune(`${type}/`, DOWNLOADS_KEPT_MS, at)
     },
     async read(type, key) {
       if (type === 'npm/tarballs') return null
       try {
-        if (isPublic && type === 'risk/npm/assessments' && npmCache) return JSON.parse((await buffer((await npmCache.open(hashed(type, key))).stream)).toString('utf8'))
+        if (isPublic && type === 'risk/npm/assessments' && npmCache) return JSON.parse((await readBytes(await npmCache.open(hashed(type, key)))).toString('utf8'))
         if (ofDatabase(type, key)) return readOf(type, key, await db.getUpstreamCacheEntry(databaseKey(type, key)))
       } catch (error) { if (!(error instanceof CacheMissError)) warn('read', error); return null }
       return memory.get(memoryKey(type, key))?.value ?? null
@@ -162,7 +164,7 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
         if (isPublic && IN_DATABASE.has(type)) {
           const at = Date.now()
           await db.setUpstreamCacheEntry(databaseKey(type, key), JSON.stringify(value), at)
-          if (type === 'risk/npm/downloads') await pruneKept(db, `${type}/`, DOWNLOADS_KEPT_MS, at, error => { warn('prune', error) })
+          if (type === 'risk/npm/downloads') await prune(`${type}/`, DOWNLOADS_KEPT_MS, at)
           return
         }
         if (isPublic && HOURLY.has(type)) {
@@ -170,7 +172,7 @@ export function npmRiskCache({ db, npmCache, debug }: NpmRiskStores, isPublic: b
           if (json.length > HOURLY_LENGTH) return
           const at = Date.now()
           await db.setUpstreamCacheEntry(databaseKey(type, key), json, at)
-          await pruneKept(db, HOURLY_PREFIX, HOURLY_KEPT_MS, at, error => { warn('prune', error) })
+          await prune(HOURLY_PREFIX, HOURLY_KEPT_MS, at)
           return
         }
       } catch (error) { warn('write', error); return }

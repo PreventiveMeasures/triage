@@ -1,7 +1,7 @@
 // Where a request's time goes, told back in its Server-Timing header, which
 // DevTools shows beside the request: the database's statements and the time
 // spent in its operations (sql.ts), new pooled connections and their
-// handshakes (db-neon.ts), GitHub's calls (github-app.ts githubJson), and
+// handshakes (db-neon.ts), GitHub's calls (github-requests.ts githubJson), and
 // the whole, from the handler's start to its answer's head; an instance's
 // first request marked cold. Counts and durations alone, nothing of what was
 // asked; a streamed answer's head tells what was known as it was written.

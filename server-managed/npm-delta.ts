@@ -16,11 +16,11 @@
 // first's; and kept by both sides' integrities, in this instance and beyond
 // it (`kept`), what a version holds never changing. Access is the caller's
 // to check.
-import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
 import type { KeptStore } from './npm-kept.ts'
 import { type Lru, lru } from './lru.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
+import { workerTurns } from './worker-turns.ts'
 
 export interface NpmDelta { additions: number; deletions: number; typeless: { additions: number; deletions: number } | null; binary: boolean }
 
@@ -32,34 +32,18 @@ const MAX_TEXT_LENGTH = 64 * 1024 * 1024
 
 const deltas: Lru<NpmDelta> = lru(20_000)
 const working = new Map<string, Promise<NpmDelta>>()
-let active = 0
-const waiting: Array<() => void> = []
-
-async function turn(deadline: number): Promise<void> {
-  if (active < MAX_ACTIVE) { active++; return }
-  if (waiting.length >= MAX_WAITING) throw new NpmPackageError(429, 'delta-busy')
-  await new Promise<void>((resolve, reject) => {
-    const next = () => { clearTimeout(timer); resolve() }
-    const timer = setTimeout(() => {
-      waiting.splice(waiting.indexOf(next), 1)
-      reject(new NpmPackageError(504, 'delta-timeout'))
-    }, deadline - Date.now())
-    waiting.push(next)
-  })
-}
-function done() {
-  const next = waiting.shift()
-  if (next) next()
-  else active--
-}
+const workers = workerTurns({ what: 'package delta', active: MAX_ACTIVE, waiting: MAX_WAITING, error: NpmPackageError,
+  busy: 'delta-busy', timeout: 'delta-timeout', failed: 'delta-failed' })
 
 const lines = (told: unknown): told is { additions: number; deletions: number } => typeof told === 'object' && told !== null
   && Number.isSafeInteger((told as { additions?: unknown }).additions) && Number.isSafeInteger((told as { deletions?: unknown }).deletions)
 // A delta as kept, none where it isn't one, or was kept before it told of
 // binary files.
-const deltaOf = (told: unknown): NpmDelta | null => lines(told) && ((told as NpmDelta).typeless === null || lines((told as NpmDelta).typeless))
-  && typeof (told as NpmDelta).binary === 'boolean' ? { additions: told.additions, deletions: told.deletions, typeless: (told as NpmDelta).typeless,
-    binary: (told as NpmDelta).binary } : null
+function deltaOf(told: unknown): NpmDelta | null {
+  if (!lines(told)) return null
+  const { typeless, binary } = told as { typeless?: unknown; binary?: unknown }
+  return (typeless === null || lines(typeless)) && typeof binary === 'boolean' ? { additions: told.additions, deletions: told.deletions, typeless, binary } : null
+}
 
 type Counted = { additions: number; deletions: number; typeAdditions: number; typeDeletions: number; typeFiles: number }
 const isCounted = (told: unknown): told is Counted => typeof told === 'object' && told !== null
@@ -67,29 +51,9 @@ const isCounted = (told: unknown): told is Counted => typeof told === 'object' &
 
 // What the worker counts of `base` against `other`, each its text files' paths and texts.
 function counted(base: [string, string][], other: [string, string][], deadline: number): Promise<Counted> {
-  let worker: Worker
-  try {
-    worker = new Worker(new URL('./npm-delta-worker.js', import.meta.url), {
-      workerData: { base, other }, execArgv: ['--disable-warning=ExperimentalWarning'], resourceLimits: { maxOldGenerationSizeMb: 1536 },
-    })
-  } catch (err) {
-    console.warn('managed: a package delta could not start:', err)
-    throw new NpmPackageError(503, 'unavailable')
-  }
-  return new Promise((resolve, reject) => {
-    let answer: Counted | null = null, failure = new NpmPackageError(422, 'delta-failed')
-    const timer = setTimeout(() => { failure = new NpmPackageError(504, 'delta-timeout'); void worker.terminate() }, deadline - Date.now())
-    worker.once('message', (told: unknown) => {
-      if (isCounted(told)) answer = told
-      void worker.terminate()
-    })
-    worker.once('error', err => { console.warn('managed: a package delta failed:', err) })
-    worker.once('exit', () => {
-      clearTimeout(timer)
-      if (answer) resolve(answer)
-      else reject(failure)
-    })
-  })
+  return workers.run(new URL('./npm-delta-worker.js', import.meta.url), {
+    workerData: { base, other }, execArgv: ['--disable-warning=ExperimentalWarning'], resourceLimits: { maxOldGenerationSizeMb: 1536 },
+  }, told => (isCounted(told) ? told : null), deadline)
 }
 
 // A side's text files, by path, how long their texts are, and its other,
@@ -137,6 +101,9 @@ function binaryChanged(olds: NpmPackageFile[], news: NpmPackageFile[]): boolean 
 }
 
 type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
+// A delta's key: the integrities of the version it is against, or none, and
+// of the version.
+export const deltaKey = (base: string | null, other: string) => `${base ?? '(empty)'}\0${other}`
 
 // The delta of `other` (its integrity, and how to read its files) against
 // `base`, or none, as held, else shared with one asked before it, else
@@ -144,7 +111,7 @@ type Side = { integrity: string; files: () => Promise<NpmPackageFile[]> }
 // it is looked for, lest those asked together each look, find none, and work
 // it out.
 export function npmDelta(base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null = null): Promise<NpmDelta> {
-  const key = `${base?.integrity ?? '(empty)'}\0${other.integrity}`
+  const key = deltaKey(base?.integrity ?? null, other.integrity)
   const known = deltas.get(key)
   if (known) return Promise.resolve(known)
   const shared = working.get(key)
@@ -158,7 +125,7 @@ export function npmDelta(base: Side | null, other: Side, kept: KeptStore<NpmDelt
 // against, or none, and of the version) held or kept, by their keys
 // (npmDelta's), in one read of `kept` for those not held: none worked out.
 export async function keptNpmDeltas(sides: [string | null, string][], kept: KeptStore<NpmDelta>): Promise<Map<string, NpmDelta>> {
-  const keys = [...new Set(sides.map(([base, other]) => `${base ?? '(empty)'}\0${other}`))]
+  const keys = [...new Set(sides.map(([base, other]) => deltaKey(base, other)))]
   const found = new Map(keys.flatMap(key => { const known = deltas.get(key); return known ? [[key, known] as const] : [] }))
   const unheld = keys.filter(key => !found.has(key))
   for (const [key, row] of unheld.length > 0 ? await kept.readMany(unheld) : []) {
@@ -174,20 +141,18 @@ export async function keptNpmDeltas(sides: [string | null, string][], kept: Kept
 async function worked(key: string, base: Side | null, other: Side, kept: KeptStore<NpmDelta> | null): Promise<NpmDelta> {
   const known = deltaOf((await kept?.read(key))?.value)
   if (known) { deltas.set(key, known); return known }
-  await turn(Date.now() + DELTA_TIMEOUT_MS)
-  let binary, told
-  try {
+  const delta = await workers.inTurn(Date.now() + DELTA_TIMEOUT_MS, async (): Promise<NpmDelta> => {
     // Its turn held till both sides are read, or have failed.
     const [baseRead, otherRead] = await Promise.allSettled([base ? base.files() : Promise.resolve(null), other.files()])
     if (baseRead.status === 'rejected') throw baseRead.reason
     if (otherRead.status === 'rejected') throw otherRead.reason
     const [olds, news] = [texts(baseRead.value), texts(otherRead.value)]
     if (olds.length + news.length > MAX_TEXT_LENGTH) throw new NpmPackageError(413, 'package-too-large')
-    binary = binaryChanged(olds.binaries, news.binaries)
-    told = await counted(olds.read, news.read, Date.now() + DELTA_TIMEOUT_MS)
-  } finally { done() }
-  const delta = { additions: told.additions, deletions: told.deletions,
-    typeless: told.typeFiles > 0 ? { additions: told.additions - told.typeAdditions, deletions: told.deletions - told.typeDeletions } : null, binary }
+    const binary = binaryChanged(olds.binaries, news.binaries)
+    const told = await counted(olds.read, news.read, Date.now() + DELTA_TIMEOUT_MS)
+    return { additions: told.additions, deletions: told.deletions,
+      typeless: told.typeFiles > 0 ? { additions: told.additions - told.typeAdditions, deletions: told.deletions - told.typeDeletions } : null, binary }
+  })
   deltas.set(key, delta)
   await kept?.write(key, delta, Date.now())
   return delta

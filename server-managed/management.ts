@@ -1,17 +1,28 @@
 import type { AdminReport, BundleReuse, ManagedBundle, ManagedDb, ManagedRepo, RepoDataItem, RepoReportItem, ReportRecord, StoredUser } from './db-methods.ts'
 import { roleAtLeast } from '../common/managed/roles.ts'
+import type { ManagedSql } from './sql.ts'
 
 export class ManagedMutationError extends Error {
   status: number
   constructor(status: number, message: string) { super(message); this.status = status }
 }
 
+// The admin whose live session `sessionId` is, read in the caller's
+// transaction (link-reports.ts, repository-aliases.ts, team-npm-scopes.ts):
+// none refused 401, any other role 403.
+export async function sessionAdmin(db: ManagedSql, sessionId: string): Promise<{ id: string; login: string; role: string }> {
+  const user = await db.prepare(`SELECT u.id, u.login, u.role FROM managed_session s JOIN managed_user u ON u.id = s.user_id
+    WHERE s.id = ? AND s.expires_at > ?`).get(sessionId, Date.now()) as { id: string; login: string; role: string } | undefined
+  if (!user) throw new ManagedMutationError(401, 'unauthenticated')
+  if (user.role !== 'admin') throw new ManagedMutationError(403, 'forbidden')
+  return user
+}
+
 export type ContentMutation = { type: 'delete' } | { type: 'repo'; repoId: number | null; directory: string } | { type: 'visibility'; visible: boolean }
-export type ReportMutation = ContentMutation
 type RemovalRepo = Pick<ManagedRepo, 'repoId' | 'fullName' | 'addedAt'>
 type RemovalAnnotations = { reports: string; ids: string[] }
 export interface ManagementStore {
-  mutateReport(sessionId: string, id: string, change: ReportMutation): Promise<{ report: ReportRecord; user: StoredUser }>
+  mutateReport(sessionId: string, id: string, change: ContentMutation): Promise<{ report: ReportRecord; user: StoredUser }>
   mutateBundle(sessionId: string, id: string, change: ContentMutation): Promise<{ bundle: ManagedBundle; user: StoredUser }>
   // A repeated upload/build of stored bytes (see reuseBundle). Renames need the
   // access other bundle mutations need; a server build labels the row anyway.
@@ -47,7 +58,7 @@ export function managementMethods(db: ManagementDb): ManagementStore {
     if (user.role !== 'admin' && !await db.userCanReadRepoPath(user.id, change.repoId, change.directory)) throw new ManagedMutationError(403, 'repo-forbidden')
   }
   return {
-    async mutateReport(sessionId: string, id: string, change: ReportMutation) {
+    async mutateReport(sessionId: string, id: string, change: ContentMutation) {
       const user = await authorize(sessionId, 'manage')
       const report = await db.getReport(id)
       if (!report || (user.role !== 'admin' && report.uploadedBy !== user.id && !await db.userCanReadReport(user.id, id))) throw new ManagedMutationError(404, 'no-report')

@@ -5,6 +5,7 @@ import { agentSignals, trailerBlock } from '../common/managed/agent-tasks.ts'
 import { GITHUB_AGENTS, type GithubAgentId, emailAgent, githubAgent } from '../common/managed/github-agents.ts'
 import { APP_AGENTS } from './app-agents.ts'
 import { type NamedAccount, commitAccount } from './github-accounts.ts'
+import { nameOf } from './github-values.ts'
 
 export const MAX_COAUTHORS = 3
 // The rules who a commit names beside its author is read by (coauthorFacts),
@@ -12,13 +13,11 @@ export const MAX_COAUTHORS = 3
 // squashed pull requests) read again by these, once raised. The agents'
 // accounts, addresses and names are none of them (coauthorsOf).
 export const COAUTHORS_READ = 5
-const MAX_NAME = 256
-const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 
 // One who made a commit beside its author: by name and account, as its
 // author is, and the agent it is where known (common/managed/github-agents.ts),
 // by its account, its commits' address or name, or the marks it leaves.
-export interface Coauthor { name: string | null; login: string | null; id: number | null; agent?: string }
+interface Coauthor { name: string | null; login: string | null; id: number | null; agent?: string }
 
 // `Co-authored-by: <name> <address>` trailers, GitHub matching the key
 // regardless of case; Cursor's agents' links, as their work carries them;
@@ -62,7 +61,7 @@ export function coauthorFacts(message: unknown, listed: Maker[] | null = null): 
   const makers = listed ?? coauthorTrailers(text).map(({ name, email }) => ({ name, email, account: commitAccount({ email }) }))
   const signals = agentSignals([text], FINGERPRINTED)
   return {
-    named: makers.slice(0, MAX_NAMED).map(({ name, email, account }) => ({ name: textOf(name, MAX_NAME), email: textOf(email, MAX_NAME), login: account.login, id: account.id })),
+    named: makers.slice(0, MAX_NAMED).map(({ name, email, account }) => ({ name: nameOf(name), email: nameOf(email), login: account.login, id: account.id })),
     markedBy: [...signals.claude || signals.sessions.length > 0 ? ['claude'] : [], ...signals.tasks.length > 0 || signals.codex ? ['codex'] : [],
       ...CURSOR_AGENT.test(text) ? ['cursor'] : [], ...signals.agents],
   }
@@ -86,7 +85,7 @@ export function coauthorsOf({ authorName, authorEmail = null, authorLogin, autho
   const same = (a: Identity, b: Identity) => a.agent && b.agent ? a.agent === b.agent : a.login && b.login ? a.login === b.login
     : a.email && b.email ? a.email === b.email : a.name !== null && a.name === b.name
   const author: Maker = { name: authorName, email: authorEmail, account: { login: authorLogin, id: authorId } }
-  const seen = [identity(makerAgent(author), authorLogin, textOf(authorName, MAX_NAME), authorEmail)]
+  const seen = [identity(makerAgent(author), authorLogin, nameOf(authorName), authorEmail)]
   const coauthors: Coauthor[] = []
   const add = (coauthor: Coauthor, email: unknown = null) => {
     const who = identity(coauthor.agent ?? null, coauthor.login, coauthor.name, email)

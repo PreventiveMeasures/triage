@@ -74,21 +74,22 @@ function keptStore<T>(db: UpstreamCacheStore, type: string, keptMs: number, debu
     const kept: unknown = JSON.parse(row ?? 'null')
     return plainObject(kept) && typeof kept['at'] === 'number' && 'value' in kept ? { at: kept['at'], value: kept['value'] as T } : null
   }
+  // Those of `keys` kept among `rows`, by key.
+  const found = (keys: string[], rows: Map<string, string>) =>
+    new Map(keys.flatMap(key => { const kept = valueOf(rows.get(keyOf(key))); return kept ? [[key, kept] as const] : [] }))
   return {
     async read(key) {
       try { return valueOf(await db.getUpstreamCacheEntry(keyOf(key))) } catch (error) { warn('read', error); return null }
     },
     async readMany(keys) {
       try {
-        const rows = await db.getUpstreamCacheEntries(keys.map(keyOf))
-        return new Map(keys.flatMap(key => { const kept = valueOf(rows.get(keyOf(key))); return kept ? [[key, kept] as const] : [] }))
+        return found(keys, await db.getUpstreamCacheEntries(keys.map(keyOf)))
       } catch (error) { warn('read', error); return new Map() }
     },
     async readFirst(first, then) {
       try {
         const { first: answered, entries } = await db.getFirstUpstreamCacheEntries(first.map(keyOf), then.map(keyOf))
-        const asked = answered ? first : then
-        return { first: answered, found: new Map(asked.flatMap(key => { const kept = valueOf(entries.get(keyOf(key))); return kept ? [[key, kept] as const] : [] })) }
+        return { first: answered, found: found(answered ? first : then, entries) }
       } catch (error) { warn('read', error); return { first: false, found: new Map() } }
     },
     async write(key, value, at) {
@@ -160,7 +161,7 @@ export const githubTagStore = <T>(db: UpstreamCacheStore, debug = false): KeptSt
 // Pages of a repository's history (repository-history.ts historyFrom), by its
 // id and the commit each starts at, which never change: kept a month after
 // they were last read from GitHub.
-export const HISTORY_PAGE_KEPT_MS = 30 * 24 * 60 * 60_000
+const HISTORY_PAGE_KEPT_MS = 30 * 24 * 60 * 60_000
 export const historyPageStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/history', HISTORY_PAGE_KEPT_MS, debug)
 // The pull requests squashed into a repository's commits, by the commit
 // (repository-squashes.ts squashedPulls): kept as its history's pages are.
@@ -210,13 +211,13 @@ export const codeHeadStore = (db: UpstreamCacheStore, debug = false): KeptStore<
 // (pull-dependencies.ts), by the commits of its base and head, which never
 // change: kept as its history's pages are.
 export const pullDependencyStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'repository/pull-dependencies', HISTORY_PAGE_KEPT_MS, debug)
+// The lines a version changes against another, or none (npm-delta.ts), by
+// both sides' integrities, each kept HISTORY_PAGE_KEPT_MS.
+export const npmDeltaStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'npm/deltas', HISTORY_PAGE_KEPT_MS, debug)
 // The versions a repository's lockfiles locked at the commit its dependencies
 // are reviewed since (pull-dependency-reviews.ts reviewBaseline), by the
 // commit, which never change: kept as its history's pages are, never stored
 // as reviews.
-// The lines a version changes against another, or none (npm-delta.ts), by
-// both sides' integrities, each kept HISTORY_PAGE_KEPT_MS.
-export const npmDeltaStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'npm/deltas', HISTORY_PAGE_KEPT_MS, debug)
 export const reviewBaselineStore = (db: UpstreamCacheStore, debug = false): KeptStore<{ versions: string[]; unread: string[] }> =>
   keptStore<{ versions: string[]; unread: string[] }>(db, 'repository/review-baselines', HISTORY_PAGE_KEPT_MS, debug)
 // What a repository's dependency review read of GitHub (pull-dependencies.ts

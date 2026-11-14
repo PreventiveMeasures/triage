@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { reportRepoGithub } from '@preventive/report'
 import { type RepositoryAliasInput, matchRepositoryAlias, repositoryAliasNeedsFilePrefix } from '../common/managed/repository-alias.ts'
 import type { ManagedDb } from './db.ts'
-import { ManagedMutationError } from './management.ts'
+import { ManagedMutationError, sessionAdmin } from './management.ts'
 import { normalizeTeamPath } from './repo-path.ts'
 import type { ManagedSql } from './sql.ts'
 
@@ -49,12 +49,6 @@ function parseAlias(input: unknown): RepositoryAliasInput {
 }
 
 export function repositoryAliasMethods(db: ManagedSql): RepositoryAliasStore {
-  async function authorize(sessionId: string) {
-    const user = await db.prepare(`SELECT u.role FROM managed_session s JOIN managed_user u ON u.id = s.user_id
-      WHERE s.id = ? AND s.expires_at > ?`).get(sessionId, Date.now()) as { role: string } | undefined
-    if (!user) throw new ManagedMutationError(401, 'unauthenticated')
-    if (user.role !== 'admin') throw new ManagedMutationError(403, 'forbidden')
-  }
   async function listRepositoryAliases() {
     return await db.prepare(`SELECT id, old_repo AS oldRepo, old_path AS oldPath, repo_id AS repoId, new_path AS newPath
       FROM managed_repository_alias ORDER BY old_repo, old_path, id`).all() as RepositoryAlias[]
@@ -62,7 +56,7 @@ export function repositoryAliasMethods(db: ManagedSql): RepositoryAliasStore {
   return {
     listRepositoryAliases,
     async saveRepositoryAlias(sessionId, id, input) {
-      await authorize(sessionId)
+      await sessionAdmin(db, sessionId)
       const alias = parseAlias(input)
       if (!await db.prepare('SELECT repo_id FROM managed_selected_repo WHERE repo_id = ? AND active = 1').get(alias.repoId)) throw new ManagedMutationError(400, 'bad-repo')
       if (id && !await db.prepare('SELECT id FROM managed_repository_alias WHERE id = ?').get(id)) throw new ManagedMutationError(404, 'no-alias')
@@ -75,7 +69,7 @@ export function repositoryAliasMethods(db: ManagedSql): RepositoryAliasStore {
       return { id: key, ...alias }
     },
     async deleteRepositoryAlias(sessionId, id) {
-      await authorize(sessionId)
+      await sessionAdmin(db, sessionId)
       if (!(await db.prepare('DELETE FROM managed_repository_alias WHERE id = ?').run(id)).changes) throw new ManagedMutationError(404, 'no-alias')
     },
     async getRepositoryImportLocation(github, directory, filePrefix = '') {

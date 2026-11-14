@@ -3,7 +3,9 @@ import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import type { IssueTracking, ManagedIssue } from './managed-issues.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
-import { lookupFixes } from './github-pulls.ts'
+import { GITHUB_API, USER_AGENT } from './github-requests.ts'
+import { allowedRepositories, deadlineFetch, lookupFixes } from './github-pulls.ts'
+import { isId } from './github-values.ts'
 
 export type IssueFixUpdate = { findingId: string; issueUrl: string; previous: IssueTracking; next: IssueTracking; checkedAt: number }
 type Pull = { number: number; title: string; body: string | null; state: string; isDraft: boolean; createdAt: string;
@@ -23,6 +25,8 @@ type Duplicate = { repo: Repository; number: number } | null
 type Job = { repo: Repository; kind: 'pull' | 'issue'; number: number; aliases: string[];
   linked: boolean; cursor: string | null; pulls: Pull[]; complete: boolean; duplicateOf?: Duplicate | undefined }
 type Metadata = Exclude<GithubFixResult, { error: string }>
+// A batch's answer: each job's repository by its alias (metadataQuery).
+type Page = Record<string, { databaseId: number; nameWithOwner: string; item: Issue | Pull } | null>
 const pullFields = 'number title body state isDraft createdAt repository { databaseId nameWithOwner }'
 // A linked issue's: the issue it was closed as a duplicate of, and a page of
 // the pull requests linked to it.
@@ -64,9 +68,9 @@ function itemMetadata(item: Issue | Pull, kind: Job['kind']): Omit<Metadata, 'ur
 function duplicateOf(issue: Issue, allowed: Map<string, Repository>): Duplicate | undefined {
   if (issue.state !== 'CLOSED' || issue.stateReason !== 'DUPLICATE' || issue.duplicateOf == null) return null
   const { number, repository } = issue.duplicateOf
-  if (!Number.isSafeInteger(number) || (number as number) <= 0 || !isRepositoryReference(repository)) return undefined
+  if (!isId(number) || !isRepositoryReference(repository)) return undefined
   const repo = workspaceRepository(repository, allowed)
-  return repo ? { repo, number: number as number } : null
+  return repo ? { repo, number } : null
 }
 
 // `refused`: GitHub answered with an error on the issue's duplicate alone,
@@ -81,7 +85,7 @@ function readPage(job: Job, item: Issue | Pull, metadata: Map<string, Metadata>,
   if (duplicate === undefined) return false
   const connection = (item as Issue).closedByPullRequestsReferences
   if (!connection || !Array.isArray(connection.nodes) || typeof connection.pageInfo?.hasNextPage !== 'boolean'
-    || connection.nodes.some(pr => !pr || !Number.isSafeInteger(pr.number) || pr.number <= 0 || typeof pr.createdAt !== 'string'
+    || connection.nodes.some(pr => !pr || !isId(pr.number) || typeof pr.createdAt !== 'string'
       || !Number.isFinite(Date.parse(pr.createdAt)) || !itemMetadata(pr, 'pull') || typeof pr.isDraft !== 'boolean'
       || !isRepositoryReference(pr.repository))) return false
   job.duplicateOf = duplicate
@@ -171,19 +175,13 @@ function issueUpdates(jobs: Map<string, Job>, byIssue: Map<string, ManagedIssue[
   return updates
 }
 
-// Fetch issue details, linked PR states and manual Fix metadata in one batch.
-// Pagination, workspaces with over 200 distinct links, and issues closed as a
-// duplicate of one not yet read need further batches. A duplicate saved last
-// time is read in the first, as a redirect kept is: its URL among `urls`.
-// Live GraphQL results prove this viewer's access; never publish them into the
-// REST shared cache under an older public-visibility grant.
-export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, snapshot: TeamReportAccessSnapshot,
-  urls: string[], issues: ManagedIssue[], fetchImpl: typeof fetch = fetch): Promise<{ fixes: GithubFixResult[]; updates: IssueFixUpdate[] }> {
-  const checkedAt = Date.now(), signal = AbortSignal.timeout(10_000)
-  const allowed = new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github)).map(repo => [repo.github.toLowerCase(), repo]))
+// The jobs of `urls`, one for each pull request or issue of a workspace
+// repository (`allowed`) they name, its URLs its aliases, and the saved
+// `issues` by their issue's key (`byIssue`). Linked jobs are read with their
+// linked pull requests: the saved issues', and the duplicates they were
+// saved with.
+function jobsOf(urls: string[], issues: ManagedIssue[], allowed: Map<string, Repository>) {
   const jobs = new Map<string, Job>()
-  // The saved issues by their issue's key, and the issues read with their
-  // linked pull requests: theirs, and the duplicates they were saved with.
   const byIssue = new Map<string, ManagedIssue[]>(), linked = new Set<string>()
   for (const issue of issues) {
     const ref = parseGithubIssueUrl(issue.issueUrl)
@@ -201,41 +199,63 @@ export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, sna
     if (previous) { previous.aliases.push(url); continue }
     jobs.set(key, { repo, kind: ref.kind, number: ref.number, aliases: [url], linked: linked.has(key), cursor: null, pulls: [], complete: false })
   }
+  return { jobs, byIssue }
+}
+
+// GitHub's answer to `batch`'s query, asked with `token`: each job's
+// repository by its alias, and the aliases whose duplicate alone GitHub
+// refused (readPage); null where none was read, or what was is malformed.
+async function readBatch(batch: Job[], token: string, fetchImpl: typeof fetch): Promise<{ data: Page; refused: Set<string> } | null> {
+  const query = metadataQuery(batch)
+  try {
+    const response = await fetchImpl(`${GITHUB_API}/graphql`, {
+      method: 'POST', redirect: 'error',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': USER_AGENT }, body: JSON.stringify({ query }),
+    })
+    if (!response.ok) return null
+    const body = await response.json() as { data?: Page; errors?: { path?: unknown[] }[] }
+    // Errors attached to an alias invalidate that whole job, including its
+    // connection. Other aliases can succeed even if one issue was deleted.
+    // One on the issue it duplicates alone, which the viewer may be unable
+    // to read, leaves its status, and only what it redirects to unknown.
+    if (!body?.data || body.errors != null && (!Array.isArray(body.errors)
+      || body.errors.some(error => typeof error?.path?.[0] !== 'string' || !/^r\d+$/u.test(error.path[0])))) return null
+    const { data } = body, refused = new Set<string>()
+    for (const error of body.errors ?? []) {
+      const [alias, field, reference] = error.path! as string[]
+      if (field === 'item' && reference === 'duplicateOf') refused.add(alias!)
+      else data[alias!] = null
+    }
+    return { data, refused }
+  } catch { return null }
+}
+
+// Fetch issue details, linked PR states and manual Fix metadata in one batch.
+// Pagination, workspaces with over 200 distinct links, and issues closed as a
+// duplicate of one not yet read need further batches. A duplicate saved last
+// time is read in the first, as a redirect kept is: its URL among `urls`.
+// Live GraphQL results prove this viewer's access; never publish them into the
+// REST shared cache under an older public-visibility grant.
+export async function lookupIssueLinks(config: ManagedConfig, db: ManagedDb, snapshot: TeamReportAccessSnapshot,
+  urls: string[], issues: ManagedIssue[], fetchImpl: typeof fetch = fetch): Promise<{ fixes: GithubFixResult[]; updates: IssueFixUpdate[] }> {
+  const checkedAt = Date.now(), signal = AbortSignal.timeout(10_000)
+  const allowed = allowedRepositories(snapshot)
+  const { jobs, byIssue } = jobsOf(urls, issues, allowed)
   if (jobs.size === 0) return { fixes: [], updates: [] }
-  const withinDeadline: typeof fetch = (input, init) => { signal.throwIfAborted(); return fetchImpl(input, { ...init, signal }) }
+  const withinDeadline = deadlineFetch(fetchImpl, signal)
   const token = await ensureUserAccessToken(config, db, snapshot.user.id, checkedAt, withinDeadline)
   if (!token) return { fixes: await lookupFixes(config, db, snapshot, urls, withinDeadline), updates: [] }
   const metadata = new Map<string, Metadata>()
   let pending = [...jobs.values()]
   for (let page = 0; pending.length > 0 && page < 100 && !signal.aborted; page++) {
-    const batch = pending.slice(0, 200), query = metadataQuery(batch)
-    let data: Record<string, { databaseId: number; nameWithOwner: string; item: Issue | Pull } | null>
-    const refused = new Set<string>()
-    try {
-      const response = await withinDeadline('https://api.github.com/graphql', {
-        method: 'POST', redirect: 'error',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'deepview-triage' }, body: JSON.stringify({ query }),
-      })
-      if (!response.ok) break
-      const body = await response.json() as { data?: typeof data; errors?: { path?: unknown[] }[] }
-      // Errors attached to an alias invalidate that whole job, including its
-      // connection. Other aliases can succeed even if one issue was deleted.
-      // One on the issue it duplicates alone, which the viewer may be unable
-      // to read, leaves its status, and only what it redirects to unknown.
-      if (!body?.data || body.errors != null && (!Array.isArray(body.errors)
-        || body.errors.some(error => typeof error?.path?.[0] !== 'string' || !/^r\d+$/u.test(error.path[0])))) break
-      data = body.data
-      for (const error of body.errors ?? []) {
-        const [alias, field, reference] = error.path! as string[]
-        if (field === 'item' && reference === 'duplicateOf') refused.add(alias!)
-        else data[alias!] = null
-      }
-    } catch { break }
+    const batch = pending.slice(0, 200)
+    const answer = await readBatch(batch, token, withinDeadline)
+    if (!answer) break
     pending = pending.slice(batch.length)
     for (const [index, job] of batch.entries()) {
-      const repository = data[`r${index}`]
+      const repository = answer.data[`r${index}`]
       if (repository?.databaseId !== job.repo.repoId || typeof repository.nameWithOwner !== 'string' || repository.nameWithOwner.toLowerCase() !== job.repo.github.toLowerCase()) continue
-      if (readPage(job, repository.item, metadata, allowed, refused.has(`r${index}`))) pending.push(job)
+      if (readPage(job, repository.item, metadata, allowed, answer.refused.has(`r${index}`))) pending.push(job)
     }
     for (const job of duplicateJobs(jobs, byIssue.keys())) if (!pending.includes(job)) pending.push(job)
   }

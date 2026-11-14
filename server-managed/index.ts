@@ -142,7 +142,11 @@ async function assembleManagedApp(config: ManagedConfig, { ui = true, ...options
   return { handleRequest, reap, isShuttingDown, stop, close }
 }
 
-export function logManagedStartup(config: ManagedConfig, port: number, mode = 'managed'): void {
+// The startup lines, once `server` listens: its port, the configured one
+// where its address gives none.
+export function logManagedStartup(config: ManagedConfig, server: Server, mode = 'managed'): void {
+  const address = server.address()
+  const port = typeof address === 'object' && address ? address.port : config.port
   console.log([
     `DeepView managed server (${mode}):`,
     `  HTTP: http://${config.host}:${port}/`,
@@ -184,11 +188,7 @@ export async function init(config = loadManagedConfig(), options: Pick<ManagedAp
   function onClose(): void {
     if (!disposal) void dispose().catch(err => { console.error('Managed server cleanup failed:', err) })
   }
-  function onListening(): void {
-    const address = server.address()
-    const port = typeof address === 'object' && address ? address.port : config.port
-    logManagedStartup(config, port)
-  }
+  function onListening(): void { logManagedStartup(config, server) }
   server.on('error', onError)
   server.once('close', onClose)
   server.on('listening', onListening)

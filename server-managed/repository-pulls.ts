@@ -20,7 +20,10 @@ import { type AgentIssue, type AgentPull, labelAgents } from '../common/managed/
 import { GITHUB_AGENTS, agentOperated } from '../common/managed/github-agents.ts'
 import { AGENT_BRANCH_PREFIXES } from './app-agents.ts'
 import { AGENT_ISSUE_FIELDS, AGENT_PULL_FIELDS, type IssueNode, type PullNode, issue, pull } from './repository-agents.ts'
-import { githubGraphql } from './repository-history.ts'
+import { githubGraphql } from './github-graphql.ts'
+import { SHA, count, timeOf } from './github-values.ts'
+import { type Connection, nextCursor } from './repository-history.ts'
+import { ISSUE_REASONS, type IssueReason } from './repository-issues.ts'
 
 // What the pull requests kept are read by, its version: bumped as what a
 // page reads, or how one is told, changes, its pull requests read again
@@ -40,13 +43,7 @@ const TOP_UP_PAGE = 10
 const LIST_QUERIES = 5
 const MERGED_COMMITS = 100
 const LABEL_AGENTS = Object.keys(GITHUB_AGENTS)
-const SHA = /^[a-f\d]{40}$/u
 
-const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
 
 // A pull request as read: its row on the Agents tab, whether a GitHub App's
 // bot opened it (`bot`, GitHub's GraphQL API naming one by its app's login
@@ -65,8 +62,6 @@ export interface Merged { sha: string; at: number; agent: boolean; own?: string[
 // (`bot`, as a pull request's), when it was closed, and why (`reason`, as
 // GitHub tells it: completed, not planned or a duplicate).
 export type KeptIssue = AgentIssue & { bot?: true; closedAt: number | null; reason: IssueReason | null }
-export type IssueReason = 'completed' | 'not-planned' | 'duplicate'
-export const ISSUE_REASONS: Record<string, IssueReason> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
 // The pull requests or issues updated since a year's start (`since`) as
 // read so far (readList), the most recently updated first (`rows`); when the
 // newest read was last updated, those updated since read again (`through`,
@@ -107,7 +102,7 @@ const ISSUES_QUERY = `query($owner: String!, $name: String!, $after: String, $fi
 }`
 type ClosedNode = IssueNode & { stateReason?: unknown; closedAt?: unknown; author?: IssueNode['author'] & { __typename?: unknown } }
 const botOf = (author: { __typename?: unknown } | null | undefined) => author?.__typename === 'Bot' ? { bot: true as const } : {}
-type ListPage<Node> = { repository?: Record<string, { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (Node | null)[] } | null> | null }
+type ListPage<Node> = { repository?: Record<string, Connection<Node> | null> | null }
 
 const agentBranch = (name: unknown) => typeof name === 'string' && AGENT_BRANCH_PREFIXES.some(prefix => name.startsWith(prefix))
 // Whether a pull request is an agent's: by its branch, a label naming one,
@@ -187,7 +182,7 @@ async function readList<Node extends { updatedAt?: unknown }, Row extends { numb
   for (let queries = 0; queries < LIST_QUERIES; queries++) {
     const first = topping && queries === 0 ? TOP_UP_PAGE : LIST_PAGE
     const page = (await githubGraphql(spec.query, { owner, name, after, first }, token, fetchImpl) as ListPage<Node> | null)?.repository?.[spec.connection]
-    const end = page?.pageInfo?.hasNextPage !== true || typeof page.pageInfo.endCursor !== 'string'
+    const cursor = nextCursor(page?.pageInfo), end = cursor === null
     let crossed = false
     for (const node of page?.nodes ?? []) {
       const updated = timeOf(node?.updatedAt)
@@ -203,7 +198,7 @@ async function readList<Node extends { updatedAt?: unknown }, Row extends { numb
     // read; else as far as those read before reached. Read to the last
     // the repository has, every one of them.
     if (crossed || end) return result(from ?? stop, null, stop > since ? kept?.reach : undefined, (end && !crossed) || (whole && stop > since))
-    after = page!.pageInfo!.endCursor as string
+    after = cursor
     // Read as far back as `need`: finished, so far back, those updated
     // since read by the next as ever.
     if (need > since && to !== null && to < need) return result(Math.max(from ?? stop, kept?.through ?? Number.NEGATIVE_INFINITY), null, to)

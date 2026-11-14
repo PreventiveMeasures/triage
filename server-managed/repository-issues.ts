@@ -11,26 +11,27 @@
 // add is read (http.ts teamRepositoryDependencies). A nonpublic repository's
 // are read with its GitHub App's installation, which reads pull requests only
 // with their own permission (doc/code-viewer.md).
-import { GithubApiError } from './github-app.ts'
+import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
+import { GithubApiError } from './github-errors.ts'
+import { type GraphqlError, githubGraphql } from './github-graphql.ts'
+import { SHA, count, nameOf, timeOf } from './github-values.ts'
 import { touchesLockfile } from './pull-dependencies.ts'
-import { ACTOR, type GraphAccount, type GraphqlError, actorOf, githubGraphql } from './repository-history.ts'
 import { ITEM_THREADS, type ReviewNode, TILE_THREADS, pullReviews, reviewFields, reviewsRefused } from './pull-reviews.ts'
+import type { Connection } from './repository-history.ts'
 
-export const ISSUES_PAGE = 50
+const ISSUES_PAGE = 50
 // What a kept page or item was read as: kept ones read before differ.
 export const ISSUES_READ_VERSION = 4
 const MAX_LABELS = 20
 const MAX_TITLE = 1000
-const MAX_NAME = 256
 const COLOR = /^[a-f\d]{6}$/iu
-const SHA = /^[a-f\d]{40}$/u
 // A page's cursor as GitHub gives it, to read on from: opaque, base64 or
 // base64url as it is now (`…rOrK_u7Q==`), passed back to GitHub alone, so any
 // printable one is, but none with spaces or control characters.
 export const ISSUES_CURSOR = /^[!-~]{1,256}$/u
 
-export type IssuesKind = 'issues' | 'pulls'
-export type IssuesState = 'open' | 'closed'
+type IssuesKind = 'issues' | 'pulls'
+type IssuesState = 'open' | 'closed'
 
 const shared = `number title createdAt updatedAt closedAt author { ${ACTOR} } comments { totalCount } labels(first: ${MAX_LABELS}) { totalCount nodes { name color } }`
 const fields = {
@@ -64,37 +65,43 @@ type Node = ReviewNode & { number?: unknown; title?: unknown; createdAt?: unknow
   isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown; baseRefOid?: unknown
   commits?: { nodes?: { commit?: { statusCheckRollup?: { state?: unknown } | null } | null }[] }
   files?: { totalCount?: unknown; nodes?: ({ path?: unknown } | null)[] } | null }
-type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }
-  page?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (Node | null)[] } } | null }
+type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }; page?: Connection<Node> } | null }
 
-const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
-const nameOf = (value: unknown, max = MAX_NAME) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 const REVIEWS: Record<string, string> = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes', REVIEW_REQUIRED: 'required' }
 const CHECKS: Record<string, string> = { SUCCESS: 'success', FAILURE: 'failure', ERROR: 'failure', PENDING: 'pending', EXPECTED: 'pending' }
-const REASONS: Record<string, string> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
+// Why an issue was closed, as GitHub tells it: completed, not planned or a duplicate.
+export type IssueReason = 'completed' | 'not-planned' | 'duplicate'
+export const ISSUE_REASONS: Record<string, IssueReason> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
+
+// An issue or pull request by its number, title and author, as its tile and
+// the Pulse's lists (repository-pulse.ts) name it; null for one GitHub names
+// no number for.
+export function itemOf(node: { number?: unknown; title?: unknown; author?: GraphAccount } | null) {
+  if (!node || !Number.isSafeInteger(node.number) || (node.number as number) <= 0) return null
+  const author = actorOf(node.author)
+  return { number: node.number as number, title: nameOf(node.title, MAX_TITLE) ?? '', author: author.login, authorId: author.id }
+}
+// An issue's state as a tile tells it, and why it was closed; a pull
+// request's, and whether it is a draft.
+export const issueState = (state: unknown, reason: unknown) => ({ state: state === 'OPEN' ? 'open' : 'closed', reason: ISSUE_REASONS[String(reason)] ?? null })
+export const pullState = (state: unknown, draft: unknown) => ({ state: state === 'MERGED' ? 'merged' : state === 'OPEN' ? 'open' : 'closed', draft: draft === true })
 
 // An issue or pull request as a tile shows it; null for one GitHub names no
 // number for.
 function item(kind: IssuesKind, node: Node | null) {
-  if (!node || !Number.isSafeInteger(node.number) || (node.number as number) <= 0) return null
-  const author = actorOf(node.author)
+  const named = itemOf(node)
+  if (!node || !named) return null
   const labels = (node.labels?.nodes ?? []).flatMap(label => {
     const name = nameOf(label?.name)
     return name ? [{ name, color: typeof label?.color === 'string' && COLOR.test(label.color) ? label.color.toLowerCase() : null }] : []
   })
-  const common = { number: node.number as number, title: nameOf(node.title, MAX_TITLE) ?? '', author: author.login, authorId: author.id, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt),
+  const common = { ...named, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt),
     closedAt: timeOf(node.closedAt), comments: count(node.comments?.totalCount), labels, moreLabels: Math.max(0, count(node.labels?.totalCount) - labels.length) }
-  if (kind === 'issues') {
-    return { ...common, state: node.state === 'OPEN' ? 'open' : 'closed', reason: REASONS[String(node.stateReason)] ?? null }
-  }
+  if (kind === 'issues') return { ...common, ...issueState(node.state, node.stateReason) }
   const checks = node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state
   const listed = node.files?.nodes
   const paths = Array.isArray(listed) ? listed.flatMap(file => typeof file?.path === 'string' ? [file.path] : []) : null
-  return { ...common, state: node.state === 'MERGED' ? 'merged' : node.state === 'OPEN' ? 'open' : 'closed', draft: node.isDraft === true, mergedAt: timeOf(node.mergedAt),
+  return { ...common, ...pullState(node.state, node.isDraft), mergedAt: timeOf(node.mergedAt),
     review: REVIEWS[String(node.reviewDecision)] ?? null, checks: CHECKS[String(checks)] ?? null, additions: count(node.additions), deletions: count(node.deletions),
     head: nameOf(node.headRefName), base: nameOf(node.baseRefName),
     ...paths ? { touchesLockfile: touchesLockfile(paths, count(node.files?.totalCount)) } : {} }

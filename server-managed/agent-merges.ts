@@ -19,8 +19,8 @@ const REBASE_SKEW_MS = 10 * 60_000
 // Commits tab tells those squashed too, http.ts pulseMerges; none of one
 // kept before numbers were), and one rebased so (`pullRebases`), for the
 // commits pushed to the branch directly to be told (directCommits).
-export interface AgentMerges { merges: [string, number][]; rebases: Rebase[]; through: number | null; reach?: number
-  next: { after: string; from: number; stop: number; read: number; to?: number } | null; pulls?: [sha: string, at: number, number?: number][]; pullRebases?: Rebase[] }
+export interface AgentMerges extends Pick<PullList, 'through' | 'reach' | 'next'> { merges: [string, number][]; rebases: Rebase[]
+  pulls?: [sha: string, at: number, number?: number][]; pullRebases?: Rebase[] }
 // A pull request rebased onto the branch: its last commit there, when it was
 // merged, its latest commits' subjects, the oldest first, and how many more
 // it had than those read (`more`).

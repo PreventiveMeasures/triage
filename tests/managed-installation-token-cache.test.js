@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
 import { setImmediate } from 'node:timers/promises'
 import { test } from 'node:test'
-import { githubJson, repoAccessToken } from '../server-managed/github-app.ts'
+import { repoAccessToken } from '../server-managed/github-app.ts'
+import { githubJson } from '../server-managed/github-requests.ts'
 
 const privateKey = () => generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' })
 const config = { githubAppId: '1', githubAppPrivateKey: privateKey() }

@@ -10,13 +10,14 @@
 // is locked. GitHub having none of a lockfile it lists there fails the
 // whole, as it would for any file.
 import { createClient } from '@preventive/upstream/github.js'
-import { upstreamGithub } from './github-errors.ts'
-import { GithubApiError } from './github-app.ts'
+import { GithubApiError, upstreamGithub } from './github-errors.ts'
+import { USER_AGENT } from './github-requests.ts'
 import { type LockedPackage, patchedIn } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
-import { type GithubAsked, type ListedLockfile, type LockfileStore, eachOf, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
+import { eachOf } from './queue.ts'
+import { type GithubAsked, type ListedLockfile, type LockfileStore, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
 
-export const MAX_LOCKFILES = 100
+const MAX_LOCKFILES = 100
 const READ_AT_ONCE = 4
 
 export interface CommitLockfiles { lockfiles: { path: string; packages: LockedPackage[] }[]; unread: string[] }
@@ -33,7 +34,7 @@ export async function lockfilesAt(fullName: string, token: string, sha: string, 
   const stored = await kept?.listings.read(sha)
   if (stored) { listings.set(key, stored); return stored }
   if (asked) asked.github = true
-  const { lockfiles } = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).findRepoLockfiles({ repo: fullName, sha }))
+  const { lockfiles } = await upstreamGithub(() => createClient({ token, userAgent: USER_AGENT }).findRepoLockfiles({ repo: fullName, sha }))
   const listed = lockfiles.flatMap(({ path, sha: blob }) => { const format = lockfileFormat(path); return format ? [{ path, format, sha: blob }] : [] })
   listings.set(key, listed)
   await kept?.listings.write(sha, listed)

@@ -48,7 +48,7 @@ export function auditLockfiles(source: AuditSource, memory: Lru<{ at: number; au
 // The audit of a lockfile's `packages`, by its `key` as kept (`memory`, then
 // the source's), else asked and kept; null where it locks none to ask of, or
 // once `signal` aborts.
-export async function auditLockfile(source: AuditSource, memory: Lru<{ at: number; audit: Audit }>, signal: AbortSignal, key: string,
+async function auditLockfile(source: AuditSource, memory: Lru<{ at: number; audit: Audit }>, signal: AbortSignal, key: string,
   packages: readonly LockedPackage[]): Promise<Audit | null> {
   let kept = memory.get(key)
   if (!kept || !isFresh(kept)) {

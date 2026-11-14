@@ -15,6 +15,8 @@
 // the popup, which reads reviews' bodies.
 import { githubAgent } from '../common/managed/github-agents.ts'
 import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
+import type { GraphqlError } from './github-graphql.ts'
+import { SHA, timeOf } from './github-values.ts'
 
 const REVIEWERS = 20
 const REQUESTS = 10
@@ -28,7 +30,6 @@ const FIRST_COMMENTS = 5
 const LAST_COMMENTS = 20
 const MAX_TITLE = 200
 const MAX_PATH = 1000
-const COMMIT = /^[a-f\d]{40}$/u
 
 // The fields a pull request's reviews are read by, its threads' places and
 // links with them for its popup (`detail`). A team requested is no reviewer
@@ -48,7 +49,7 @@ export const reviewFields = (threads: number, detail: boolean) => `headRefOid
 // The fields read for reviews that GitHub may refuse alone, as it refuses an
 // App a pull request's checks: their pull request then shows no reviews.
 const REVIEW_PATHS = new Set(['latestReviews', 'reviewRequests', 'reviewThreads', 'firstComments', 'lastComments'])
-export const reviewsRefused = (error: { type?: unknown; path?: unknown } | null | undefined) => error?.type === 'FORBIDDEN' && Array.isArray(error.path)
+export const reviewsRefused = (error: GraphqlError) => error?.type === 'FORBIDDEN' && Array.isArray(error.path)
   && error.path.some(part => REVIEW_PATHS.has(part as string))
 
 type Comment = { author?: GraphAccount; body?: unknown; updatedAt?: unknown; createdAt?: unknown } | null
@@ -72,11 +73,7 @@ const ASKED = /^@codex\s+review\b/iu
 const FAILED = /^Codex Review: Something went wrong/u
 const WORKFLOW = /<!--\s*gh-aw-workflow-id:\s*([\w.-]{1,100})\s*-->/u
 
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
-const commitOf = (value: unknown) => typeof value === 'string' && COMMIT.test(value.toLowerCase()) ? value.toLowerCase() : null
+const commitOf = (value: unknown) => typeof value === 'string' && SHA.test(value.toLowerCase()) ? value.toLowerCase() : null
 const textOf = (value: unknown) => typeof value === 'string' ? value : ''
 const isCodex = (account: GraphAccount) => {
   const { login, id } = actorOf(account)

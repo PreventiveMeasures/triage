@@ -14,13 +14,11 @@
 // file's mode is left out, as the files it reads have none.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { createClient } from '@preventive/upstream/github.js'
 import { isPatchHash, isPatchPath } from '../common/managed/npm-packages.js'
-import { GithubApiError } from './github-app.ts'
-import { upstreamGithub } from './github-errors.ts'
+import { SHA } from './github-values.ts'
 import { type Lru, lru } from './lru.ts'
-import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
-import type { GithubAsked } from './pull-dependencies.ts'
+import { NpmPackageError, type NpmPackageFile, npmFileText, pathOrder } from './npm-packages.ts'
+import { type GithubAsked, repositoryFile } from './pull-dependencies.ts'
 
 // Where a patch is read: its file in a repository (by its id) at a commit,
 // from the repository's root; and the patch, by its hash besides.
@@ -29,10 +27,9 @@ export interface NpmPatch extends PatchSource { hash: string }
 
 // The most a patch's file may hold, and how many lines either side of where a
 // hunk says its lines are they are looked for.
-export const MAX_PATCH_BYTES = 8 * 1024 * 1024
+const MAX_PATCH_BYTES = 8 * 1024 * 1024
 const FUZZ = 20
 
-const COMMIT = /^[\da-f]{40}$/u
 
 // The patch a request names, by its hash (`hash`), its repository's id
 // (`repoId`, a number or its digits), the commit and its file's path; null
@@ -41,7 +38,7 @@ const COMMIT = /^[\da-f]{40}$/u
 export function requestedPatch({ hash, repoId, commit, path }: { hash: unknown; repoId: unknown; commit: unknown; path: unknown }): NpmPatch | null | 'invalid' {
   if ([repoId, commit, path].every(field => field == null)) return null
   const id = typeof repoId === 'string' && /^[1-9]\d{0,15}$/u.test(repoId) ? Number(repoId) : repoId
-  if (!isPatchHash(hash) || !Number.isSafeInteger(id) || (id as number) <= 0 || typeof commit !== 'string' || !COMMIT.test(commit)
+  if (!isPatchHash(hash) || !Number.isSafeInteger(id) || (id as number) <= 0 || typeof commit !== 'string' || !SHA.test(commit)
     || !isPatchPath(path)) return 'invalid'
   return { hash, repoId: id as number, commit, path }
 }
@@ -283,7 +280,7 @@ export function patchedFiles(files: NpmPackageFile[], patch: PatchedFile[]): Npm
     }
     byPath.set(file.path, next)
   }
-  return [...byPath].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+  return [...byPath].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => pathOrder(a.path, b.path))
 }
 
 // About the bytes a patch read takes: the characters of its paths and of the
@@ -310,13 +307,8 @@ export async function readPatch(fullName: string, token: string, patch: NpmPatch
   const known = patches.get(key)
   if (known) return known
   if (asked) asked.github = true
-  let text: string
-  try {
-    text = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).getRepoFile({ repo: fullName, path: patch.path, ref: patch.commit }))
-  } catch (err) {
-    if (err instanceof GithubApiError && err.message === 'github-not-found') throw new NpmPackageError(404, 'patch-not-found')
-    throw err
-  }
+  const text = await repositoryFile(fullName, token, patch.path, patch.commit)
+  if (text === null) throw new NpmPackageError(404, 'patch-not-found')
   if (Buffer.byteLength(text) > MAX_PATCH_BYTES) throw new NpmPackageError(413, 'patch-too-large')
   if (!isPatchOf(text, patch.hash)) throw new NpmPackageError(409, 'patch-mismatch')
   const files = parsePatch(text)

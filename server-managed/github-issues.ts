@@ -8,7 +8,10 @@ import { reportEntries, reportRepoGithub } from '@preventive/report'
 import { newIssueLabels } from '../common/github-issue-labels.js'
 import { ignoresOwnRepo } from '../common/finding-repo.js'
 import { appJwt, githubAppConfigured, installUrl, publicRepositoryName } from './github-app.ts'
-import { ISSUE_LOGIN_PATH, issueUserToken } from './github-issue-oauth.ts'
+import { ISSUE_LOGIN_PATH } from './github-issue-oauth.ts'
+import { ensureUserAccessToken } from './github-oauth.ts'
+import { GITHUB_API, encodedPath, githubHeaders } from './github-requests.ts'
+import { isId } from './github-values.ts'
 import { TeamReportsError, loadTeamReports, recheckTeam, teamSnapshot } from './team-reports.ts'
 
 export const MAX_ISSUE_BODY_BYTES = 512_000
@@ -29,10 +32,9 @@ export function parseIssueContext(raw: unknown): Context {
 async function github(path: string, token: string, fetchImpl: typeof fetch, payload?: unknown) {
   let response: Response
   try {
-    response = await fetchImpl(`https://api.github.com${path}`, {
+    response = await fetchImpl(`${GITHUB_API}${path}`, {
       method: payload === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
-      headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json',
-        'user-agent': 'deepview-triage', 'x-github-api-version': '2022-11-28', 'content-type': 'application/json' },
+      headers: { ...githubHeaders(token), 'content-type': 'application/json' },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     })
   } catch { throw new IssueError(502, payload === undefined ? 'github-unavailable' : 'github-create-uncertain') }
@@ -84,14 +86,14 @@ export async function prepareGithubIssue(config: ManagedConfig, db: ManagedDb, s
   if (!targetRepository || targetRepository.toLowerCase() !== context.repository.toLowerCase()) throw new IssueError(400, 'bad-issue-repository')
   const repository = snapshot.repositories.find(repo => repo.github.toLowerCase() === targetRepository.toLowerCase())
   if (!repository || !githubAppConfigured(config)) return { mode: 'form' as const, labels, recheck }
-  const path = `/repos/${targetRepository.split('/').map(encodeURIComponent).join('/')}`
+  const path = `/repos/${encodedPath(targetRepository)}`
   const installation = await github(`${path}/installation`, appJwt(config.githubAppId!, config.githubAppPrivateKey!), fetchImpl)
   if (installation.status === 404) return { mode: 'form' as const, labels, recheck }
   if (!installation.ok) throw new IssueError(502, 'github-unavailable')
   let installed: { permissions?: { issues?: string } }
   try { installed = await installation.json() } catch { throw new IssueError(502, 'github-unavailable') }
   if (installed?.permissions?.issues !== 'write') return { mode: 'permissions' as const, authorizationPath: installUrl(config), labels, recheck }
-  const token = await issueUserToken(config, db, session.userId, fetchImpl)
+  const token = await ensureUserAccessToken(config, db, session.userId, Date.now(), fetchImpl)
   if (!token) return { mode: 'authorize' as const, authorizationPath: ISSUE_LOGIN_PATH, labels, recheck }
   // All requested labels are optional, including security and operator labels.
   // Omit missing names rather than rejecting issue creation or creating labels.
@@ -133,7 +135,7 @@ export async function createGithubIssue(prepared: Awaited<ReturnType<typeof prep
   if (!response.ok) throw new IssueError(response.status === 422 ? 422 : 502, response.status >= 500 ? 'github-create-uncertain' : 'github-create-failed')
   let issue: { number?: unknown }
   try { issue = await response.json() } catch { throw new IssueError(502, 'github-create-uncertain') }
-  if (!Number.isSafeInteger(issue?.number) || Number(issue.number) <= 0) throw new IssueError(502, 'github-create-uncertain')
+  if (!isId(issue?.number)) throw new IssueError(502, 'github-create-uncertain')
   // Construct the URL from validated inputs, never an upstream redirect target.
   const number = Number(issue.number), url = `https://github.com${prepared.path.slice('/repos'.length)}/issues/${issue.number}`
   if (!await db.finishManagedIssue(findingId, requestId, url)) throw new IssueError(502, 'github-create-uncertain')

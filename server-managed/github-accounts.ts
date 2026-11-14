@@ -1,9 +1,8 @@
 // GitHub accounts as GitHub's REST and GraphQL APIs name them, where a
 // repository's activity names its authors (repository-history.ts and the
 // Commits, Issues, Agents and Pulse tabs' readers).
-import { githubGraphql } from './github-graphql.ts'
-
-const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
+import { githubGraphql, notFound } from './github-graphql.ts'
+import { LOGIN, isId } from './github-values.ts'
 
 // An account as GitHub names it: its login, else null, and its numeric id
 // where GitHub names one with it.
@@ -11,7 +10,7 @@ export interface NamedAccount { login: string | null; id: number | null }
 export function accountOf(account: { login?: unknown; id?: unknown } | null | undefined): NamedAccount {
   const login = typeof account?.login === 'string' && LOGIN.test(account.login) ? account.login : null
   const id = account?.id
-  return { login, id: login && Number.isSafeInteger(id) && (id as number) > 0 ? id as number : null }
+  return { login, id: login && isId(id) ? id : null }
 }
 
 // An actor (the author of an issue or a pull request, one who merged one) as
@@ -54,7 +53,7 @@ export async function linkNoreplyUsers(actors: (GraphActor | null | undefined)[]
   if (logins.length === 0) return
   const query = `query(${logins.map((_, at) => `$l${at}: String!`).join(', ')}) { ${logins.map((_, at) => `u${at}: user(login: $l${at}) { login databaseId }`).join(' ')} }`
   const data = await githubGraphql(query, Object.fromEntries(logins.map((login, at) => [`l${at}`, login])), token, fetchImpl,
-    error => error?.type === 'NOT_FOUND') as Record<string, GraphAccount> | null
+    notFound) as Record<string, GraphAccount> | null
   const users = new Map(logins.map((login, at) => [login, data?.[`u${at}`] ?? null]))
   for (const { actor, login } of unnamed) actor.user = users.get(login) ?? null
 }

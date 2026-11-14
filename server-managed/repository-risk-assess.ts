@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { NpmRiskError, SEVERITIES, type Severity } from '../risk/index.js'
 import { GithubApiError } from './github-errors.ts'
 import { NpmPackageError, type NpmVersionDocument } from './npm-packages.ts'
-import type { RepositoryRiskLine } from './repository-risk.ts'
+import type { RiskLine } from './repository-risk.ts'
 
 // An assessment refused as busy (`npm-busy`, by npm-risk.ts or the npm reads
 // beneath it), or that npm asked to ask later (risk's `upstream-busy`, as its
@@ -28,7 +28,6 @@ export function highestSeverity(findings: readonly { severity: Severity }[]): Se
 // Why a step failed, as a line says it: an error's code, and for a lockfile
 // refused, what of it its reader refused.
 export type RiskFailure = { error: string; detail?: string }
-type RiskLine = Extract<RepositoryRiskLine, { type: 'risk' }>
 
 // What an error is known by: a GitHub or npm failure's code, or `failed`;
 // GitHub not reached with what failed (githubUnreachable), while `doing` what
@@ -51,8 +50,12 @@ export type Assessment = { published: string | null; findings: { id: string; sev
 
 // What of a scan's source assessing a package asks (RepositoryRiskSource).
 export interface AssessingSource {
+  // npm's document of a version; an NpmPackageError where npm has none.
   version(name: string, version: string, signal: AbortSignal): Promise<NpmVersionDocument>
   assess(doc: NpmVersionDocument, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
+  // A version npm has no document of, as risk tells one npm removed: its
+  // malware alone, its package taken down by npm; an NpmRiskError where
+  // nothing tells of it (npm-risk.ts npmRiskRemoved).
   removed(name: string, version: string, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
 }
 

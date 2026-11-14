@@ -19,7 +19,7 @@ import type { KeptStore } from './npm-kept.ts'
 import { inTurns } from './queue.ts'
 import { type WorkflowsRead, lastingRead, readActions } from './repository-actions.ts'
 import { type RiskFailure, failureOf } from './repository-risk-assess.ts'
-import type { RepositoryRiskLine, RepositoryRiskRepo } from './repository-risk.ts'
+import type { LockfileLine, RepositoryRiskLine, RepositoryRiskRepo } from './repository-risk.ts'
 
 // The formats of npm's ecosystem, as findRepoLockfiles names them, and those
 // of them read here.
@@ -39,7 +39,6 @@ export type LockfileRead = { packages: LockedPackage[] } | RiskFailure
 // them to check again before they are told (`recheck`), or why they couldn't
 // be had.
 export type DependabotRead = { alerts: DependabotAlert[]; recheck?(): Promise<void> } | RiskFailure
-type LockfileLine = Extract<RepositoryRiskLine, { type: 'lockfile' }>
 export type RepositoryFailure = Extract<RepositoryRiskLine, { type: 'repo'; error: string }>
 
 // A repository opened at its default branch's head (`commit`): its lockfiles,
@@ -59,7 +58,7 @@ export interface OpenedRepository {
 
 // What a repository is read with: the scan's source and caches, and its
 // signal.
-export interface RepositoryReading<R extends RepositoryRiskRepo> {
+interface RepositoryReading<R extends RepositoryRiskRepo> {
   source: { open(repo: R): Promise<OpenedRepository>; listings?: KeptStore<ListedLockfile[]>; lockfiles?: KeptStore<LockfileRead>; actionFiles?: KeptStore<WorkflowsRead> }
   caches: { listings: Lru<ListedLockfile[]>; lockfiles: Lru<LockfileRead>; actionFiles: Lru<WorkflowsRead> }
   signal: AbortSignal
@@ -152,8 +151,9 @@ async function readDependabot(opened: OpenedRepository, paths: readonly string[]
 export async function readRepository<R extends RepositoryRiskRepo>(reading: RepositoryReading<R>, repo: R): Promise<RepositoryRead | RepositoryFailure | null> {
   const listed = await listLockfiles(reading, repo)
   if (!listed || 'type' in listed) return listed
-  const alerting = readDependabot(listed.opened, repo.paths)
-  const { opened } = listed, { workflows } = opened
+  const { opened } = listed
+  const alerting = readDependabot(opened, repo.paths)
+  const { workflows } = opened
   const acting = workflows ? keptRead(reading.caches.actionFiles, reading.source.actionFiles, `${repo.repoId}@${opened.commit}`,
     () => readActions({ workflows, file: path => opened.file(path) }), lastingRead) : Promise.resolve(null)
   acting.catch(() => {})
@@ -166,5 +166,5 @@ export async function readRepository<R extends RepositoryRiskRepo>(reading: Repo
   }
   const dependabot = await alerting
   const actions = await acting
-  return reading.signal.aborted ? null : { commit: listed.opened.commit, lockfiles, dependabot, actions, recheck: () => listed.opened.recheck() }
+  return reading.signal.aborted ? null : { commit: opened.commit, lockfiles, dependabot, actions, recheck: () => opened.recheck() }
 }

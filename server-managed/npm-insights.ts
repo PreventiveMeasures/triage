@@ -15,9 +15,11 @@ import type { Advisory, CacheStore } from '@preventive/upstream/advisories.js'
 import { type Client, HttpError, createClient } from '@preventive/upstream/github.js'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { isExactVersion } from '@preventive/upstream/semver.js'
+import { USER_AGENT, repoApi } from './github-requests.ts'
 import { kept } from './kept.ts'
 import { type NpmProvenance, keptNpmProvenance } from './npm-provenance.ts'
-import { NpmPackageError, askUpstreamJson, plainObject, readLimited } from './npm-packages.ts'
+import { plainObject } from './npm-manifest.ts'
+import { NpmPackageError, askUpstreamJson, readLimited } from './npm-packages.ts'
 
 const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range'
 // What npm's range API may answer for each package asked: a year of days is
@@ -33,6 +35,7 @@ const API_TIMEOUT_MS = 30_000
 const API_BYTES = 1024 * 1024
 const DAY_MS = 24 * 60 * 60_000
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, moderate: 2, low: 3 }
+const rank = (severity: string | undefined) => SEVERITY_RANK[severity ?? ''] ?? 4
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 const isDay = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(value) && !Number.isNaN(Date.parse(value))
@@ -168,11 +171,10 @@ export interface NpmGithubStats {
 // How many pull requests a repository has open: the last page of their list,
 // one a page, as its Link header names it, or the one page's length.
 async function countOpenPulls(repo: string, token: string | null): Promise<number | null> {
-  const path = repo.split('/').map(encodeURIComponent).join('/')
   let res: Response
   try {
-    res = await fetch(`https://api.github.com/repos/${path}/pulls?state=open&per_page=1`, {
-      headers: { accept: 'application/vnd.github+json', 'user-agent': 'deepview-triage', ...token && { authorization: `Bearer ${token}` } },
+    res = await fetch(`${repoApi(repo)}/pulls?state=open&per_page=1`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': USER_AGENT, ...token && { authorization: `Bearer ${token}` } },
       redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS),
     })
   } catch { return null }
@@ -198,7 +200,7 @@ const NONE = new Set([301, 302, 307, 308, 404])
 // again next time. Public is `visibility: 'public'`, as github-app.ts
 // requires: an internal repository answers `private: false`.
 async function publicRepo(repo: string, token: string | null): Promise<{ json: Record<string, unknown> & { full_name: string }; auth: string | null } | null> {
-  const ask = (auth: string | null) => createClient({ token: auth, userAgent: 'deepview-triage' }).getRepo({ repo, followRedirect: true }) as Promise<unknown>
+  const ask = (auth: string | null) => createClient({ token: auth, userAgent: USER_AGENT }).getRepo({ repo, followRedirect: true }) as Promise<unknown>
   let auth = token, json: unknown
   try { json = await ask(token) }
   catch (error) {
@@ -254,7 +256,7 @@ async function askTags(repo: string, sha: string, version: string, token: string
   const [owner, name] = repo.split('/')
   const json = await askUpstreamJson(GITHUB_GRAPHQL, {
     method: 'POST', limit: API_BYTES, absent: [],
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'deepview-triage' },
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': USER_AGENT },
     body: JSON.stringify({ query: TAGS_QUERY, variables: { owner, name, query: version } }),
   })
   const data = plainObject(json) ? json['data'] : null
@@ -268,8 +270,10 @@ async function askTags(repo: string, sha: string, version: string, token: string
     .filter(node => taggedCommit(node.target) === sha).map(node => node.name).toSorted()
 }
 
-// Null where no token asked: nothing to keep for a reader who has one.
+// Null where no token asked: nothing to keep for a reader who has one; kept
+// by the repository, the commit and the version asked.
 const commitTags = kept<string[] | null>(500, tags => tags !== null)
+const tagsKey = (repo: string, sha: string, version: string) => `${repo.toLowerCase()}\0${sha}\0${version}`
 
 // The tags of a public repository (owner/name) that point to `sha`, a
 // version's publish commit, among those naming its `version` (`v1.2.3`,
@@ -277,7 +281,7 @@ const commitTags = kept<string[] | null>(500, tags => tags !== null)
 // a token: the reader's own (`githubToken`, asked for only where the tags
 // aren't kept), where they have one; without, none are asked.
 export async function npmCommitTags(repo: string, sha: string, version: string, githubToken: () => Promise<string | null>): Promise<string[]> {
-  return await commitTags(`${repo.toLowerCase()}\0${sha}\0${version}`, async () => {
+  return await commitTags(tagsKey(repo, sha, version), async () => {
     const token = await githubToken()
     return token === null ? null : askTags(repo, sha, version, token)
   }) ?? []
@@ -349,7 +353,7 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     const unreached = github ?? named
     const last = unreached === null ? null : await lastListing(unreached)
     let untaken = false
-    const offline: Client = { ...createClient({ token: null, userAgent: 'deepview-triage' }),
+    const offline: Client = { ...createClient({ token: null, userAgent: USER_AGENT }),
       listRepoAdvisories: () => { untaken = true; return Promise.reject(new Error('GitHub can\'t be reached')) } }
     const listed = last && await ask(unreached, () => last.cache, { github: offline })
     if (last && listed?.status === 200) {
@@ -362,18 +366,23 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     }
   }
   if (result.status !== 200) throw new NpmPackageError(502, 'upstream-unavailable')
+  return { versions, repository, ...keptAt && { keptAt }, advisories: mergedAdvisories(result.body, versions) }
+}
+
+// Upstream's advisories as NpmAdvisory tells them, those covering none of
+// `versions` left out, the worst first. npm's registry answers an advisory
+// once a range it covers, and upstream answers the versions OSV's record of
+// it, or its repository, covers beyond npm's under the same id, in a row of
+// their own (as hermes-engine's GHSA-f5x2-xv93-4p23: npm's `<=0.4.3`, OSV's
+// fixed in 0.5.2): here it is one row, the first's (npm's, then OSV's, then
+// the repository's, as upstream orders them) with what it lacks taken from
+// the rest, its ranges joined as semver joins them, the versions and CWEs
+// they cover together, and the worst severity and highest score of them: a
+// version only the repository reports keeps the severity it gives.
+function mergedAdvisories(rows: Advisory[], versions: string[]): NpmAdvisory[] {
   const index = new Map(versions.map((version, i) => [version, i]))
-  // npm's registry answers an advisory once a range it covers, and upstream
-  // answers the versions OSV's record of it, or its repository, covers beyond
-  // npm's under the same id, in a row of their own (as hermes-engine's
-  // GHSA-f5x2-xv93-4p23: npm's `<=0.4.3`, OSV's fixed in 0.5.2): here it is
-  // one row, the first's (npm's, then OSV's, then the repository's, as
-  // upstream orders them) with what it lacks taken from the rest, its ranges
-  // joined as semver joins them, the versions and CWEs they cover together,
-  // and the worst severity and highest score of them: a version only the
-  // repository reports keeps the severity it gives.
   const merged = new Map<string, NpmAdvisory>()
-  for (const row of result.body) {
+  for (const row of rows) {
     const affected = row.versions.map(version => index.get(version)).filter(at => at !== undefined)
     const own: NpmAdvisory = {
       id: row.id, source: row.source, ...row.ghsa && { ghsa: row.ghsa }, ...row.url && { url: row.url }, ...row.title && { title: row.title },
@@ -387,16 +396,12 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     }
     const range = [known.range, row.range].filter(Boolean).join(' || ')
     const cvss = Math.max(known.cvss ?? -1, row.cvss ?? -1)
-    const rank = (severity: string | undefined) => SEVERITY_RANK[severity ?? ''] ?? 4
     const severity = rank(row.severity) < rank(known.severity) ? row.severity : known.severity
     merged.set(row.id, { ...own, ...known, ...range && { range }, ...severity && { severity }, ...cvss >= 0 && { cvss }, cwe: [...new Set([...known.cwe, ...row.cwe])],
       affected: [...known.affected, ...affected] })
   }
-  return {
-    versions, repository, ...keptAt && { keptAt },
-    advisories: [...merged.values()].map(row => ({ ...row, affected: [...new Set(row.affected)].toSorted((a, b) => a - b) })).filter(row => row.affected.length > 0)
-      .toSorted((a, b) => (SEVERITY_RANK[a.severity ?? ''] ?? 4) - (SEVERITY_RANK[b.severity ?? ''] ?? 4) || a.id.localeCompare(b.id)),
-  }
+  return [...merged.values()].map(row => ({ ...row, affected: [...new Set(row.affected)].toSorted((a, b) => a - b) })).filter(row => row.affected.length > 0)
+    .toSorted((a, b) => rank(a.severity) - rank(b.severity) || a.id.localeCompare(b.id))
 }
 
 const ADVISORY_LISTS = 100
@@ -440,7 +445,7 @@ export function npmKnown(name: string, version: string, isPrivate: boolean, repo
   const key = advisoryKeys.get(name)
   const list = key === undefined ? undefined : advisoryLists.peek(key)
   if (list?.versions.includes(version)) known.advisories = { name, ...list }
-  const tags = repo === null || sha === null ? [] : commitTags.peek(`${repo.toLowerCase()}\0${sha}\0${version}`)
+  const tags = repo === null || sha === null ? [] : commitTags.peek(tagsKey(repo, sha, version))
   if (tags) known.tags = { name, version, tags }
   const socket = isPrivate ? null : socketReports.peek(`${name}@${version}`)
   if (socket !== undefined) known.socket = { name, version, socket }

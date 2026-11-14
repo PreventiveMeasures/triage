@@ -5,6 +5,7 @@
 import { type BundleValidation, type ValidationPlan, followingMoves, validateBundle, validateRepository } from '@exodus/stasis/validate'
 import { createClient } from '@preventive/upstream/github.js'
 import { upstreamGithub } from './github-errors.ts'
+import { USER_AGENT } from './github-requests.ts'
 
 export { type BundleValidation, type PlannedBundle, validationPlan } from '@exodus/stasis/validate'
 
@@ -25,7 +26,7 @@ export const validateDependencies = (plan: ValidationPlan, reason: string, optio
 // `lockfileError`), not thrown.
 export function validateAtCommit(plan: ValidationPlan, { fullName, token, commit, directory }: { fullName: string; token: string; commit: string; directory: string },
   options: Options = {}): Promise<BundleValidation> {
-  const client = createClient({ token, userAgent: 'deepview-triage' })
+  const client = createClient({ token, userAgent: USER_AGENT })
   const repository = followingMoves(client, fullName)
   return upstreamGithub(() => validateRepository(plan, { repository, commit, directory },
     { ...options, strict: false, listTree: paths => client.listRepoTree({ repo: repository.name(), sha: commit, paths }) }))

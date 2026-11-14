@@ -6,7 +6,9 @@
 // leave one. What each commit changes is read as Replay reads it, kept by
 // the commit (repository-changes.ts repositoryChanges).
 import { type ChangesStore, type CommitChanges, repositoryChanges } from './repository-changes.ts'
-import { githubGraphql } from './repository-history.ts'
+import { githubGraphql } from './github-graphql.ts'
+import { SHA, timeOf } from './github-values.ts'
+import { type Connection, nextCursor } from './repository-history.ts'
 
 // The tags read, a page a query, the latest commits' first, as many pages as
 // TAG_PAGES; of the commits they name, as many as RELEASES_READ have their
@@ -17,7 +19,6 @@ const RELEASES_READ = 200
 // An annotated tag's target, its own target in turn, through as many as
 // TAG_DEPTH annotated tags.
 const TAG_DEPTH = 3
-const SHA = /^[a-f\d]{40}$/u
 const RELEASE_LOCKFILES = new Set(['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb'])
 const RELEASE_CHANGELOG = /^(?:changelog|changes|history|news|releases?)(?:[._-][^/]*)?\.(?:md|markdown)$/iu
 const CHANGESET = /(?:^|\/)\.changeset\/[^/]+\.md$/iu
@@ -32,19 +33,19 @@ const TAGS_QUERY = `query($owner: String!, $name: String!, $after: String) {
   }
 }`
 type TagTarget = { __typename?: unknown; oid?: unknown; committedDate?: unknown; target?: TagTarget | null } | null | undefined
-type TagsPage = { repository?: { refs?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: ({ target?: TagTarget } | null)[] } | null } | null }
+type TagsPage = { repository?: { refs?: Connection<{ target?: TagTarget }> | null } | null }
 
 // The commit a tag names, through its annotated tags, and when it was
 // committed; null for one naming no commit (a tree, a blob).
 function taggedCommit(target: TagTarget, depth = TAG_DEPTH): { oid: string; at: number } | null {
   if (target?.__typename === 'Tag' && depth > 0) return taggedCommit(target.target, depth - 1)
-  const at = typeof target?.committedDate === 'string' ? Date.parse(target.committedDate) : Number.NaN
-  return target?.__typename === 'Commit' && typeof target.oid === 'string' && SHA.test(target.oid) && Number.isSafeInteger(at) ? { oid: target.oid, at } : null
+  const at = timeOf(target?.committedDate)
+  return target?.__typename === 'Commit' && typeof target.oid === 'string' && SHA.test(target.oid) && at !== null ? { oid: target.oid, at } : null
 }
 
 // The commits the repository's tags name committed since `since`, the
 // latest first, as many pages of them as TAG_PAGES.
-export async function taggedCommits(fullName: string, token: string, since: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<Set<string>> {
+async function taggedCommits(fullName: string, token: string, since: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<Set<string>> {
   const [owner, name] = fullName.split('/') as [string, string]
   const tagged = new Set<string>()
   let after: string | null = null
@@ -53,8 +54,8 @@ export async function taggedCommits(fullName: string, token: string, since: numb
     const refs = page?.repository?.refs
     const commits = (refs?.nodes ?? []).flatMap(node => taggedCommit(node?.target) ?? [])
     for (const commit of commits) if (commit.at >= since) tagged.add(commit.oid)
-    if (refs?.pageInfo?.hasNextPage !== true || typeof refs.pageInfo.endCursor !== 'string' || commits.some(commit => commit.at < since)) break
-    after = refs.pageInfo.endCursor
+    after = nextCursor(refs?.pageInfo)
+    if (after === null || commits.some(commit => commit.at < since)) break
   }
   return tagged
 }

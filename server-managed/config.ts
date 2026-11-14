@@ -7,8 +7,7 @@ import { MAX_UPLOAD_BYTES } from './uploads.ts'
 import { parseStorageKey } from '../server-common/storage-crypto.ts'
 import { defaultCacheDir } from '@preventive/upstream/npm.js'
 import { RESERVED_COOKIES } from './session.ts'
-
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
+import { LOOPBACK_HOSTS } from '../server-common/origin.ts'
 
 export interface ManagedConfig {
   port: number

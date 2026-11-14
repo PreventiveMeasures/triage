@@ -32,10 +32,13 @@ import { type Maker, coauthorFacts, coauthorsOf } from './commit-coauthors.ts'
 import { APP_AGENTS } from './app-agents.ts'
 import { usesOfKey } from '../risk/index.js'
 import { actionsLines } from './repository-actions.ts'
+import { SHA } from './github-values.ts'
 
 const host = process.env['MANAGED_TEST_HOST'] ?? '127.0.0.1'
 const port = Number(process.env['MANAGED_TEST_PORT'] ?? 8766)
 const role = process.env['MANAGED_TEST_ROLE'] ?? 'admin'
+// An admin or a manager: one who manages content, hidden reports and bundles too.
+const manages = role === 'admin' || role === 'manage'
 
 // The real service will return the model ids and the effort levels it allows
 // for each model. Printable names are intentionally omitted: the client owns
@@ -167,12 +170,18 @@ reportFixtures.push({ ...reportFixtures[0]!, id: 'fixture-links', slug: 'fixture
   content: JSON.stringify([[{ id: 'managed-fixture-1' }, { id: 'managed-fixture-3' }]]),
 })
 
-const reports = new Map(reportFixtures.map((report) => [report.id, report.content]))
 const reportMetadata = reportFixtures.map(({ content: _content, ...metadata }) => ({
   ...metadata,
   repoFullName: repoById(metadata.repoId)?.fullName ?? null,
   uploadedAt: 1_758_000_000_000,
 }))
+
+// The IDs of a fixture report's findings, read as the managed server reads it.
+const findingIds = (report: { content: string; filename: string }) =>
+  (readManagedReport(report.content, report.filename).data.findings as { id: string }[]).map(finding => finding.id)
+// A fixture report's repository, as the managed server answers it beside the report.
+const reportRepo = (report: { repoId: number | null; repoDirectory: string }) =>
+  ({ github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory })
 
 const bundles = [
   {
@@ -255,12 +264,25 @@ const teamFixtures = [
   },
 ]
 
+// Whether a team's repository link reaches `item`: of its repository, within
+// its path, or of no directory there.
+function linkReaches(link: { repoId: number; path: string }, item: { repoId: number | null; repoDirectory?: string }): boolean {
+  return link.repoId === item.repoId
+    && (item.repoDirectory == null || !link.path || item.repoDirectory === link.path || item.repoDirectory.startsWith(link.path + '/'))
+}
+
 function canManageFixture(content: { repoId: number | null; repoDirectory?: string }): boolean {
-  return teamFixtures.some(team => team.memberIds.includes('fixture-user') && team.repoLinks.some(link => link.repoId === content.repoId
-    && (content.repoDirectory == null || !link.path || content.repoDirectory === link.path || content.repoDirectory.startsWith(link.path + '/'))))
+  return teamFixtures.some(team => team.memberIds.includes('fixture-user') && team.repoLinks.some(link => linkReaches(link, content)))
 }
 
 function repoById(id: number | null) { return id == null ? undefined : repositories.find((repo) => repo.id === id) }
+
+function reportById(id: string) { return reportFixtures.find(report => report.id === id) }
+
+// The connected repositories, as the admin pages offer them.
+const connectedRepos = () => repositories.filter(repo => repo.selected).map(repo => ({ repoId: repo.id, fullName: repo.fullName }))
+// A team's linked repository, named as the catalogs name it.
+const linkedRepo = (link: { repoId: number }) => ({ repoId: link.repoId, fullName: repoById(link.repoId)?.fullName ?? `repository-${link.repoId}` })
 
 function userById(id: string) {
   return users.find((user) => user.id === id)
@@ -287,30 +309,26 @@ async function handleProfile(req: IncomingMessage, res: ServerResponse, method: 
   if (!route) { sendJson(res, 404, { error: 'not-found' }); return }
   const unlink = route[1] == null ? null : decodeURIComponent(route[1])
   if (unlink != null) {
-    if (method !== 'DELETE') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+    if (method !== 'DELETE') { send405(res); return }
     const index = linkedAccounts.findIndex(account => account.id === unlink)
     if (index < 0) { sendJson(res, 404, { error: 'no-account' }); return }
     linkedAccounts.splice(index, 1)
     for (const key of ['name', 'avatar'] as const) if (profileChoice[key] === unlink) profileChoice[key] = null
   } else if (method === 'POST') {
-    let raw = ''
-    for await (const chunk of req) raw += String(chunk)
-    const body = JSON.parse(raw) as Partial<typeof profileChoice>
+    const body = await readJson(req) as Partial<typeof profileChoice>
     for (const key of ['name', 'avatar'] as const) {
       const value = body[key]
       if (value === undefined) continue
       if (value !== null && !linkedAccounts.some(account => account.id === value)) { sendJson(res, 404, { error: 'no-account' }); return }
       profileChoice[key] = value
     }
-  } else if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  } else if (method !== 'GET') { send405(res); return }
   sendJson(res, 200, { profile: fixtureProfile() })
 }
 
 function teamReportRefs(team: (typeof teamFixtures)[number]) {
   return team.reportIds
-    .map((id) => reportMetadata.find((report) => report.id === id))
-    .filter((report): report is (typeof reportMetadata)[number] => report != null)
-    .filter(report => report.visible || role === 'admin' || role === 'manage')
+    .flatMap(id => reportMetadata.filter(report => report.id === id && (report.visible || manages)))
     .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename, visible: report.visible, analyzer: report.analyzer, repoFullName: report.repoFullName, repoDirectory: report.repoDirectory }))
 }
 
@@ -319,9 +337,9 @@ const currentTeams = () => teamFixtures.map((team) => ({
   slug: team.slug,
   name: team.name,
   permissions: { dependencies: true, security: true },
-  repos: team.repoLinks.map(link => ({ repoId: link.repoId, fullName: repoById(link.repoId)?.fullName ?? `repository-${link.repoId}`, path: link.path || null })),
+  repos: team.repoLinks.map(link => ({ ...linkedRepo(link), path: link.path || null })),
   reports: teamReportRefs(team),
-  bundles: bundles.filter(bundle => bundle.visible || role === 'admin' || role === 'manage').filter((bundle) => team.repoLinks.some((link) => link.repoId === bundle.repoId && (!link.path || bundle.repoDirectory === link.path || bundle.repoDirectory.startsWith(link.path + '/')))).map((bundle) => ({ id: bundle.id, slug: bundle.slug, kind: bundle.kind, visible: bundle.visible, integrity: bundle.integrity, byteSize: bundle.byteSize, repoId: bundle.repoId!, repoDirectory: bundle.repoDirectory, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
+  bundles: bundles.filter(bundle => bundle.visible || manages).filter(bundle => team.repoLinks.some(link => linkReaches(link, bundle))).map((bundle) => ({ id: bundle.id, slug: bundle.slug, kind: bundle.kind, visible: bundle.visible, integrity: bundle.integrity, byteSize: bundle.byteSize, repoId: bundle.repoId!, repoDirectory: bundle.repoDirectory, filename: bundle.filename, repoFullName: repoById(bundle.repoId)?.fullName ?? '' })),
 }))
 
 function adminTeams() {
@@ -329,11 +347,7 @@ function adminTeams() {
     id: team.id,
     slug: team.slug,
     name: team.name,
-    repos: team.repoLinks.map((link) => ({
-      repoId: link.repoId,
-      fullName: repoById(link.repoId)?.fullName ?? `repository-${link.repoId}`,
-      path: link.path,
-    })),
+    repos: team.repoLinks.map((link) => ({ ...linkedRepo(link), path: link.path })),
     members: team.memberIds.map((id) => {
       const user = userById(id)
       return {
@@ -348,7 +362,7 @@ function adminTeams() {
 
 function handleAdminCatalog(url: URL, method: string, res: ServerResponse): boolean {
   if (url.pathname === '/api/admin/scan-results') {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
+    if (method !== 'GET') { send405(res); return true }
     // Scan-server results exist independently of saved/exported reports. These
     // IDs deliberately do not reference reportMetadata or its visibility flags.
     sendJson(res, 200, {
@@ -364,13 +378,13 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
     return true
   }
   if (url.pathname === '/api/admin/scan/models') {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
+    if (method !== 'GET') { send405(res); return true }
     sendJson(res, 200, { models: scanModels, defaultModel: DEFAULT_MANAGED_SCAN_MODEL })
     return true
   }
   if (url.pathname === '/api/admin/history') {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
-    if (role !== 'admin' && role !== 'manage') { sendJson(res, 403, { error: 'forbidden' }); return true }
+    if (method !== 'GET') { send405(res); return true }
+    if (!manages) { sendJson(res, 403, { error: 'forbidden' }); return true }
     const query = (url.searchParams.get('q') ?? '').toLowerCase()
     const kind = url.searchParams.get('kind') ?? 'all'
     const actor = url.searchParams.get('actor') ?? '', repo = url.searchParams.get('repo') ?? ''
@@ -391,13 +405,12 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
     return true
   }
   if (url.pathname === '/api/admin/repositories/impact') {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
+    if (method !== 'GET') { send405(res); return true }
     const repoId = Number(url.searchParams.get('repoId'))
     const repo = repoById(repoId)
     if (!repo) { sendJson(res, 404, { error: 'no-repo' }); return true }
     const attached = reportFixtures.filter((report) => report.repoId === repoId)
-    const ids = (items: typeof reportFixtures) => items.flatMap((report) =>
-      (readManagedReport(report.content, report.filename).data.findings as { id: string }[]).map((finding) => finding.id))
+    const ids = (items: typeof reportFixtures) => items.flatMap(findingIds)
     const otherIds = new Set(ids(reportFixtures.filter((report) => report.repoId !== repoId)))
     sendJson(res, 200, {
       repoId, fullName: repo.fullName,
@@ -484,13 +497,16 @@ const ISSUE_TITLES = ['Treemap labels overlap on narrow screens', 'History graph
   'The bundle picker forgets the last repository', 'Dark mode: tag chips are hard to read']
 const ISSUES_FIXTURE_PAGE = 20
 
+// Where the page the cursor `name` names starts. Cursors with a `_`, as
+// GitHub's base64url ones can have.
+const cursorAt = (url: URL, name: string) => Number(/^page_(\d+)$/u.exec(url.searchParams.get(name) ?? '')?.[1] ?? '0')
+
 function issuesFixture(url: URL, res: ServerResponse): void {
   const kind = url.searchParams.get('kind') === 'pulls' ? 'pulls' : 'issues'
   const all = issueTiles(kind, Date.now())
   const state = url.searchParams.get('state') === 'closed' ? 'closed' : 'open'
   const listed = all.filter(item => (item.state === 'open') === (state === 'open'))
-  // Cursors with a `_`, as GitHub's base64url ones can have.
-  const from = Number(/^page_(\d+)$/u.exec(url.searchParams.get('after') ?? '')?.[1] ?? '0')
+  const from = cursorAt(url, 'after')
   const end = from + ISSUES_FIXTURE_PAGE
   sendJson(res, 200, { kind, state, items: listed.slice(from, end), counts: { open: all.filter(item => item.state === 'open').length, closed: all.filter(item => item.state !== 'open').length },
     more: end < listed.length, after: end < listed.length ? `page_${end}` : null, users: REVIEW_USERS })
@@ -579,9 +595,10 @@ function itemFixture(url: URL, res: ServerResponse): void {
     return
   }
   for (const kind of ['pulls', 'issues'] as const) {
-    const tile = issueTiles(kind, now).find(item => item.number === number)
+    const tiles = issueTiles(kind, now)
+    const index = tiles.findIndex(item => item.number === number)
+    const tile = tiles[index]
     if (tile) {
-      const index = issueTiles(kind, now).findIndex(item => item.number === number)
       sendJson(res, 200, kind === 'pulls' ? { kind, ...tile, ...shared, labels: tile.labels, closes: [], commits: number % 5 + 1, files: number % 9 + 1, mergedBy: tile.state === 'merged' ? 'ada' : null,
         reviews: reviewsFixture(index, number, now, true), users: REVIEW_USERS }
         : { kind, ...tile, ...shared, labels: tile.labels, closedBy: [] })
@@ -740,12 +757,10 @@ const AGENT_FIXTURE_PAGE = { pulls: 10, commits: 20 }
 
 function agentsFixture(url: URL, res: ServerResponse): void {
   const { pulls, commits, issues, branches } = agentsData(Date.now())
-  // Cursors with a `_`, as GitHub's base64url ones can have.
-  const at = (name: string) => Number(/^page_(\d+)$/u.exec(url.searchParams.get(name) ?? '')?.[1] ?? '0')
   const first = !url.searchParams.has('pulls') && !url.searchParams.has('commits')
   const read = (list: object[], name: 'pulls' | 'commits') => {
     if (!first && !url.searchParams.has(name)) return { items: [], after: null }
-    const from = at(name)
+    const from = cursorAt(url, name)
     const end = from + AGENT_FIXTURE_PAGE[name]
     return { items: list.slice(from, end), after: end < list.length ? `page_${end}` : null }
   }
@@ -861,7 +876,7 @@ function historyFixture(url: URL, res: ServerResponse): void {
     return
   }
   const ref = url.searchParams.get('ref') ?? ''
-  const commit = /^[a-f\d]{40}$/u.test(ref) ? ref : 'a'.repeat(40)
+  const commit = SHA.test(ref) ? ref : 'a'.repeat(40)
   const path = url.searchParams.get('path') ?? ''
   // A whole repository's later pages on from the commits the client names.
   const from = path ? null : url.searchParams.get('from')?.split(',') ?? null
@@ -941,7 +956,7 @@ const codeFixtureFiles = (repoId: number) => repoId === 102 ? ['src/main.rs', 's
 function treeFixture(url: URL, res: ServerResponse, repoId: number): void {
   const commit = url.searchParams.get('commit') ?? ''
   const path = url.searchParams.get('path') ?? ''
-  if (!/^[a-f\d]{40}$/u.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!SHA.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
   replayChangesOf(commit)
   const files = path === 'vendor' ? VENDOR_TREE : (replayTrees.get(commit) ?? codeFixtureFiles(repoId)).filter(file => path === '' || file.startsWith(`${path}/`))
   setTimeout(() => sendJson(res, 200, { commit, path, files, sizes: files.map(fixtureSize), cut: false }), 400)
@@ -950,7 +965,7 @@ function treeFixture(url: URL, res: ServerResponse, repoId: number): void {
 function changesFixture(url: URL, res: ServerResponse): void {
   const shas = (url.searchParams.get('shas') ?? '').split(',')
   const path = url.searchParams.get('path') ?? ''
-  if (shas.length > 50 || !shas.every(sha => /^[a-f\d]{40}$/u.test(sha))) { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (shas.length > 50 || !shas.every(sha => SHA.test(sha))) { sendJson(res, 400, { error: 'bad-request' }); return }
   const within = (file: string) => path === '' || file.startsWith(`${path}/`)
   const changes = shas.map(sha => ({ sha, more: false, files: replayChangesOf(sha).flatMap(file => file[1] === 'R'
     ? within(file[0]) ? [within(file[2]!) ? file : [file[0], 'A']] : within(file[2]!) ? [[file[2]!, 'D']] : []
@@ -975,9 +990,9 @@ const fixtureLockfile = `${JSON.stringify({
 }, null, 2)}\n`
 
 function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerResponse): void {
-  if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  if (method !== 'GET') { send405(res); return }
   if (url.pathname.endsWith('/browsable')) {
-    sendJson(res, 200, { repos: repositories.filter(repo => repo.selected).map(repo => ({ repoId: repo.id, fullName: repo.fullName })) }); return
+    sendJson(res, 200, { repos: connectedRepos() }); return
   }
   const repo = repoById(Number(url.searchParams.get('repoId')))
   if (!repo?.selected) { sendJson(res, 404, { error: 'no-repository' }); return }
@@ -1031,27 +1046,19 @@ function handleRepositoryBrowserFixture(url: URL, method: string, res: ServerRes
 }
 
 async function connectAppFixture(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let raw = ''
-  for await (const chunk of req) raw += String(chunk)
-  const repo = repoById((JSON.parse(raw) as { repoId: number }).repoId)
+  const repo = repoById((await readJson(req) as { repoId: number }).repoId)
   if (!repo?.selected) { sendJson(res, 404, { error: 'repo-not-connected' }); return }
   repo.installed = true
   sendJson(res, 200, { connected: true })
 }
 
 async function createBundleFixture(req: IncomingMessage, res: ServerResponse, method: string): Promise<void> {
-  if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+  if (method !== 'POST') { send405(res); return }
   if (req.headers['x-csrf-token'] !== 'fixture-csrf-token') { sendJson(res, 403, { error: 'forbidden' }); return }
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    const bytes = Buffer.from(chunk)
-    size += bytes.length
-    if (size > 128 * 1024) { sendJson(res, 413, { error: 'too-large' }); return }
-    chunks.push(bytes)
-  }
+  const text = await readBody(req, res, 128 * 1024)
+  if (text === null) return
   try {
-    const input = parseBundleBuild(JSON.parse(Buffer.concat(chunks).toString()))
+    const input = parseBundleBuild(JSON.parse(text))
     const repo = repoById(input.repoId)
     if (!repo) { sendJson(res, 404, { error: 'no-repository' }); return }
     const id = randomUUID()
@@ -1068,9 +1075,7 @@ async function createBundleFixture(req: IncomingMessage, res: ServerResponse, me
 const teamNpmScopes = new Map<string, string[]>()
 
 async function setFixtureNpmScopes(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let raw = ''
-  for await (const chunk of req) raw += String(chunk)
-  const body = JSON.parse(raw) as { teamId?: string; scopes?: unknown }
+  const body = await readJson(req) as { teamId?: string; scopes?: unknown }
   if (!teamFixtures.some(team => team.id === body.teamId)) { sendJson(res, 404, { error: 'no-team' }); return }
   let scopes
   try { scopes = parseTeamNpmScopes(body.scopes) } catch (err) { sendJson(res, 400, { error: (err as Error).message }); return }
@@ -1080,13 +1085,14 @@ async function setFixtureNpmScopes(req: IncomingMessage, res: ServerResponse): P
 
 // The npm viewer's routes, and the Teams page's scope edits (admin only).
 function serveNpmFixture(req: IncomingMessage, url: URL, method: string, res: ServerResponse): boolean {
-  const done = (work: Promise<void>) => { work.catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-request' }) }); return true }
+  const done = (work: Promise<void>) => { work.catch(failingWith(res, 400, 'bad-request')); return true }
   if (url.pathname === '/api/admin/teams/set-npm-scopes') {
-    if (method !== 'POST' || role !== 'admin') { sendJson(res, method === 'POST' ? 403 : 405, { error: method === 'POST' ? 'forbidden' : 'method-not-allowed' }); return true }
+    if (method !== 'POST') { send405(res); return true }
+    if (role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return true }
     return done(setFixtureNpmScopes(req, res))
   }
   if (!['/api/npm/package', '/api/npm/versions', '/api/npm/download'].includes(url.pathname)) return false
-  if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return true }
+  if (method !== 'GET') { send405(res); return true }
   return done(serveFixtureNpm(url, res))
 }
 
@@ -1115,13 +1121,11 @@ async function serveFixtureNpm(url: URL, res: ServerResponse): Promise<void> {
 }
 
 async function setFixtureVisible(req: IncomingMessage, res: ServerResponse, bundle: boolean): Promise<void> {
-  let raw = ''
-  for await (const chunk of req) raw += String(chunk)
-  const body = JSON.parse(raw) as { bundleId?: string; reportId?: string; visible?: boolean }
+  const body = await readJson(req) as { bundleId?: string; reportId?: string; visible?: boolean }
   const item = bundle ? bundles.find(candidate => candidate.id === body.bundleId) : reportMetadata.find(candidate => candidate.id === body.reportId)
   if (!item || typeof body.visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
   item.visible = body.visible
-  for (const client of fixtureFeeds) client.write(`event: teams\ndata: ${JSON.stringify({ revision: teamCatalogRevision(currentTeams()) })}\n\n`)
+  for (const client of fixtureFeeds) client.write(teamsEvent())
   sendJson(res, 200, { ok: true, visible: body.visible })
 }
 
@@ -1130,7 +1134,7 @@ async function setFixtureVisible(req: IncomingMessage, res: ServerResponse, bund
 function serveReportLocation(url: URL, res: ServerResponse): boolean {
   const match = /^\/api\/admin\/reports\/([^/]+)\/location$/u.exec(url.pathname)
   if (!match) return false
-  const report = reportFixtures.find(candidate => candidate.id === decodeURIComponent(match[1]!))
+  const report = reportById(decodeURIComponent(match[1]!))
   if (report == null) { sendJson(res, 404, { error: 'not-found' }); return true }
   const data = readManagedReport(report.content, report.filename).data
   const github = report.repoEmbedded ? null : findingsRepository(data)
@@ -1280,11 +1284,30 @@ function serveRiskFixture(url: URL, method: string, res: ServerResponse): boolea
   return true
 }
 
+// The admin pages' listings, by their path, whatever the method.
+const ADMIN_LISTINGS = new Map<string, (url: URL) => unknown>([
+  ['/api/admin/users', () => ({ users })],
+  ['/api/admin/repositories', url => {
+    const scope = url.searchParams.get('scope') ?? 'connected'
+    const filtered = repositories
+      .filter((repo) => scope === 'connected'
+        ? repo.selected
+        : scope === 'installed' ? repo.installed : (!repo.private && !repo.installed))
+      .toSorted((a, b) => a.fullName.localeCompare(b.fullName))
+    return { repositories: filtered, connectedCount: connectedRepos().length, total: filtered.length, tokenMissing: false,
+      installUrl: 'https://github.com/apps/managed-fixtures/installations/new' }
+  }],
+  ['/api/admin/reports', () => ({ reports: reportMetadata, repos: connectedRepos() })],
+  ['/api/admin/bundles', () => ({ bundles: bundles.map((bundle) => ({ ...bundle, repoFullName: repoById(bundle.repoId)?.fullName ?? null })), repos: connectedRepos() })],
+  ['/api/admin/teams', () => ({ teams: adminTeams().map(team => ({ ...team, npmScopes: teamNpmScopes.get(team.id) ?? [] })), users, repos: connectedRepos(),
+    permissions: ['dependencies', 'security'] })],
+])
+
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
   const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|changes|tree|issues|agents|item|pulse)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   // The code viewer's reads are any team member's, as the server's are.
-  if (role === 'none' || (!repositoryBrowser && !['admin', 'manage'].includes(role)) || (adminOnly && role !== 'admin')) {
+  if (role === 'none' || (!repositoryBrowser && !manages) || (adminOnly && role !== 'admin')) {
     sendJson(res, 403, { error: 'forbidden' }); return
   }
   if (handleAdminCatalog(url, method, res)) return
@@ -1297,15 +1320,15 @@ async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: 
   }
   if (serveReportLocation(url, res) || serveRiskFixture(url, method, res)) return
   if (url.pathname.startsWith('/api/admin/reports/')) {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+    if (method !== 'GET') { send405(res); return }
     const id = decodeURIComponent(url.pathname.slice('/api/admin/reports/'.length))
-    const report = reports.get(id)
+    const report = reportById(id)
     if (report == null) { sendJson(res, 404, { error: 'not-found' }); return }
-    sendText(res, 200, report)
+    sendText(res, 200, report.content)
     return
   }
   if (url.pathname.startsWith('/api/admin/bundles/')) {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+    if (method !== 'GET') { send405(res); return }
     const id = decodeURIComponent(url.pathname.slice('/api/admin/bundles/'.length))
     const bundle = bundles.find((candidate) => candidate.id === id)
     if (bundle == null) { sendJson(res, 404, { error: 'not-found' }); return }
@@ -1319,66 +1342,51 @@ async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: 
     res.end(bytes)
     return
   }
-  if (url.pathname === '/api/admin/users') { sendJson(res, 200, { users }); return }
-  if (url.pathname === '/api/admin/repositories') {
-    const scope = url.searchParams.get('scope') ?? 'connected'
-    const filtered = repositories
-      .filter((repo) => scope === 'connected'
-        ? repo.selected
-        : scope === 'installed' ? repo.installed : (!repo.private && !repo.installed))
-      .toSorted((a, b) => a.fullName.localeCompare(b.fullName))
-    sendJson(res, 200, {
-      repositories: filtered,
-      connectedCount: repositories.filter((repo) => repo.selected).length,
-      total: filtered.length,
-      tokenMissing: false,
-      installUrl: 'https://github.com/apps/managed-fixtures/installations/new',
-    })
-    return
-  }
-  if (url.pathname === '/api/admin/reports') {
-    sendJson(res, 200, {
-      reports: reportMetadata,
-      repos: repositories.filter((repo) => repo.selected).map((repo) => ({ repoId: repo.id, fullName: repo.fullName })),
-    })
-    return
-  }
-  if (url.pathname === '/api/admin/bundles') {
-    sendJson(res, 200, {
-      bundles: bundles.map((bundle) => ({ ...bundle, repoFullName: repoById(bundle.repoId)?.fullName ?? null })),
-      repos: repositories.filter((repo) => repo.selected).map((repo) => ({ repoId: repo.id, fullName: repo.fullName })),
-    })
-    return
-  }
-  if (url.pathname === '/api/admin/teams') {
-    sendJson(res, 200, {
-      teams: adminTeams().map(team => ({ ...team, npmScopes: teamNpmScopes.get(team.id) ?? [] })),
-      users,
-      repos: repositories.filter((repo) => repo.selected).map((repo) => ({ repoId: repo.id, fullName: repo.fullName })),
-      permissions: ['dependencies', 'security'],
-    })
-    return
-  }
-  sendJson(res, 200, { ok: true })
+  const listing = ADMIN_LISTINGS.get(url.pathname)
+  sendJson(res, 200, listing ? listing(url) : { ok: true })
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  const text = JSON.stringify(body)
+  sendText(res, status, JSON.stringify(body), 'application/json; charset=utf-8')
+}
+
+function send405(res: ServerResponse): void {
+  sendJson(res, 405, { error: 'method-not-allowed' })
+}
+
+// What a handler's failure answers, where it has not answered yet.
+function failingWith(res: ServerResponse, status: number, error: string): () => void {
+  return () => { if (!res.headersSent) sendJson(res, status, { error }) }
+}
+
+function sendText(res: ServerResponse, status: number, text: string, type = 'text/plain; charset=utf-8'): void {
   res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
+    'content-type': type,
     'cache-control': 'no-store',
     'content-length': String(Buffer.byteLength(text)),
   })
   res.end(text)
 }
 
-function sendText(res: ServerResponse, status: number, text: string): void {
-  res.writeHead(status, {
-    'content-type': 'text/plain; charset=utf-8',
-    'cache-control': 'no-store',
-    'content-length': String(Buffer.byteLength(text)),
-  })
-  res.end(text)
+// A request's body's text, as much of it as `max` bytes: past them, answered
+// 413 and null.
+async function readBody(req: IncomingMessage, res: ServerResponse, max: number): Promise<string | null> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const bytes = Buffer.from(chunk)
+    size += bytes.length
+    if (size > max) { sendJson(res, 413, { error: 'too-large' }); return null }
+    chunks.push(bytes)
+  }
+  return Buffer.concat(chunks).toString()
+}
+
+// A request's body read as JSON.
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  let raw = ''
+  for await (const chunk of req) raw += String(chunk)
+  return JSON.parse(raw)
 }
 
 const triage = new Map<string, TriageEntryPatch | null>()
@@ -1386,28 +1394,23 @@ const comments: ManagedComment[] = [{
   id: 'fixture-comment-legacy', findingId: 'managed-fixture-1', body: 'An imported note without an author.',
   authorId: null, authorLogin: null, createdAt: null, updatedAt: null, version: 1,
 }]
+// Whether `req` may change triage or comments: the fixture user's role one
+// that triages, and the session's CSRF token sent.
+const mayTriage = (req: IncomingMessage) => ['admin', 'manage', 'triage'].includes(role) && req.headers['x-csrf-token'] === 'fixture-csrf-token'
 
 async function handleComments(req: IncomingMessage, res: ServerResponse, reportId: string, commentId: string | null): Promise<void> {
-  const report = reportFixtures.find(item => item.id === reportId)
+  const report = reportById(reportId)
   if (!report || !['admin', 'manage', 'triage', 'view'].includes(role)) { sendJson(res, 404, { error: 'no-report' }); return }
-  const ids = new Set((readManagedReport(report.content, report.filename).data.findings as { id: string }[]).map(finding => finding.id))
+  const ids = new Set(findingIds(report))
   if (req.method === 'GET' && commentId == null) {
     sendJson(res, 200, { comments: comments.filter(comment => ids.has(comment.findingId)) }); return
   }
-  if (commentId == null ? req.method !== 'POST' : req.method !== 'PATCH' && req.method !== 'DELETE') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
-  if (!['admin', 'manage', 'triage'].includes(role) || req.headers['x-csrf-token'] !== 'fixture-csrf-token') {
-    sendJson(res, 403, { error: 'forbidden' }); return
-  }
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_TRIAGE_BODY_BYTES) { sendJson(res, 413, { error: 'too-large' }); return }
-    chunks.push(buffer)
-  }
+  if (commentId == null ? req.method !== 'POST' : req.method !== 'PATCH' && req.method !== 'DELETE') { send405(res); return }
+  if (!mayTriage(req)) { sendJson(res, 403, { error: 'forbidden' }); return }
+  const text = await readBody(req, res, MAX_TRIAGE_BODY_BYTES)
+  if (text === null) return
   let raw: { body?: unknown; findingId?: string; version?: number }
-  try { raw = JSON.parse(Buffer.concat(chunks).toString()) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  try { raw = JSON.parse(text) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   const body = parseCommentBody(raw?.body)
   if (!body && req.method !== 'DELETE') { sendJson(res, 400, { error: 'bad-comment' }); return }
   if (commentId == null) {
@@ -1432,28 +1435,20 @@ async function handleComments(req: IncomingMessage, res: ServerResponse, reportI
 }
 
 async function handleTriage(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
-  const fixture = reportFixtures.find((report) => report.id === id)
+  const fixture = reportById(id)
   if (!fixture) { sendJson(res, 404, { error: 'not-found' }); return }
-  const ids = new Set<string>(readManagedReport(fixture.content, fixture.filename).data.findings.map((finding: { id: string }) => finding.id))
+  const ids = new Set(findingIds(fixture))
   if (req.method === 'GET') {
     sendJson(res, 200, { entries: Object.fromEntries([...triage].filter(([key]) => ids.has(key))) })
     return
   }
-  if (req.method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
-  if (!['admin', 'manage', 'triage'].includes(role) || req.headers['x-csrf-token'] !== 'fixture-csrf-token') {
-    sendJson(res, 403, { error: 'forbidden' }); return
-  }
-  const chunks: Buffer[] = []
-  let bytes = 0
+  if (req.method !== 'POST') { send405(res); return }
+  if (!mayTriage(req)) { sendJson(res, 403, { error: 'forbidden' }); return }
   let entries: unknown
   try {
-    for await (const chunk of req) {
-      const buffer = Buffer.from(chunk)
-      bytes += buffer.length
-      if (bytes > MAX_TRIAGE_BODY_BYTES) { sendJson(res, 413, { error: 'too-large' }); return }
-      chunks.push(buffer)
-    }
-    entries = JSON.parse(Buffer.concat(chunks).toString()).entries
+    const text = await readBody(req, res, MAX_TRIAGE_BODY_BYTES)
+    if (text === null) return
+    entries = JSON.parse(text).entries
   } catch { sendJson(res, 400, { error: 'bad-body' }); return }
   if (!entries || typeof entries !== 'object' || Array.isArray(entries) || Object.keys(entries).length > MAX_TRIAGE_ENTRIES) {
     sendJson(res, 400, { error: 'bad-entries' }); return
@@ -1475,10 +1470,9 @@ async function handleReportQuery(req: IncomingMessage, res: ServerResponse): Pro
   for await (const chunk of req) chunks.push(Buffer.from(chunk))
   const { ids } = JSON.parse(Buffer.concat(chunks).toString('utf8'))
   if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) { sendJson(res, 400, { error: 'bad-ids' }); return }
-  const selected = [...new Set(ids)].map(id => reportFixtures.find(report => report.id === id))
+  const selected = [...new Set(ids)].map(reportById)
   if (selected.some(report => !report)) { sendJson(res, 404, { error: 'no-report' }); return }
-  sendJson(res, 200, { reports: selected.map(report => ({ id: report!.id, data: readManagedReport(report!.content, report!.filename).data,
-    repo: { github: repoById(report!.repoId)?.fullName ?? null, directory: report!.repoDirectory } })) })
+  sendJson(res, 200, { reports: selected.map(report => ({ id: report!.id, data: readManagedReport(report!.content, report!.filename).data, repo: reportRepo(report!) })) })
 }
 
 function serveTeamReports(url: URL, res: ServerResponse): boolean {
@@ -1490,14 +1484,14 @@ function serveTeamReports(url: URL, res: ServerResponse): boolean {
   if (reportId !== null && !team.reports.some(report => report.id === reportId)) { sendJson(res, 404, { error: 'no-report' }); return true }
   const hidden = team.reports.find(report => report.id === reportId && !report.visible)
   const selected = hidden ? [hidden] : team.reports.filter(report => report.visible)
-  void sendTeamReports(url, res, match[2]!, reportId, selected).catch(() => { if (!res.headersSent) sendJson(res, 500, { error: 'fixture' }) })
+  void sendTeamReports(url, res, match[2]!, reportId, selected).catch(failingWith(res, 500, 'fixture'))
   return true
 }
 
 // A fixture report as the managed server reads it: every finding with an ID
 // (team-reports.ts buildTeamWorkspace).
 async function readTeamReport(id: string) {
-  const report = reportFixtures.find(item => item.id === id)!
+  const report = reportById(id)!
   const data = readManagedReport(report.content, report.filename).data as { tree?: Record<string, unknown> }
   await backfillFindingIds((reportEntries(data) ?? []).flat().filter((finding): finding is Record<string, unknown> => !!finding && typeof finding === 'object'))
   return { report, data }
@@ -1521,8 +1515,7 @@ async function sendTeamReports(url: URL, res: ServerResponse, route: string, rep
   }))
   if (route === 'trees') { sendJson(res, 200, { trees: Object.fromEntries(read.filter(({ tree }) => tree).map(({ report, tree }) => [report.id, tree])) }); return }
   // The board's, without the findings' detail, as the managed server sends it.
-  const whole = read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data,
-    repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory } }))
+  const whole = read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data, repo: reportRepo(report) }))
   const lite = url.searchParams.get('lite') === '1' ? liteWorkspace(whole, []) : { reports: whole, folded: false, lens: null }
   // Its findings' packages and repositories sent once each, as the managed server sends them.
   const values = findingValueIndex()
@@ -1530,6 +1523,8 @@ async function sendTeamReports(url: URL, res: ServerResponse, route: string, rep
 }
 
 const fixtureFeeds = new Set<ServerResponse>()
+// The feed's event telling the team catalog's revision.
+const teamsEvent = () => `event: teams\ndata: ${JSON.stringify({ revision: teamCatalogRevision(currentTeams()) })}\n\n`
 
 // Keep the fixture feed open and publish catalog changes after visibility edits.
 function serveFixtureFeed(path: string, res: ServerResponse): boolean {
@@ -1537,7 +1532,7 @@ function serveFixtureFeed(path: string, res: ServerResponse): boolean {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
   fixtureFeeds.add(res)
   // Each connection first tells the catalog, as the managed server's does.
-  res.write(`event: teams\ndata: ${JSON.stringify({ revision: teamCatalogRevision(currentTeams()) })}\n\n`)
+  res.write(teamsEvent())
   const heartbeat = setInterval(() => { res.write(': fixture\n\n') }, 20_000)
   heartbeat.unref()
   res.on('close', () => { clearInterval(heartbeat); fixtureFeeds.delete(res) })
@@ -1559,71 +1554,55 @@ function appAvatarFixture(url: URL, method: string, res: ServerResponse): boolea
   return true
 }
 
+// The reads answered by their path alone, GET only.
+const READS = new Map<string, () => unknown>([
+  ['/api/config', () => ({ mode: 'managed', managed: { loginPath: '/api/test/login', cookieName: 'managed_test_session' } })],
+  // The fixture is intentionally always signed in. This keeps the preview
+  // useful without pretending to implement an OAuth flow.
+  ['/api/auth/session', () => ({ user: { id: 'fixture-user', login: 'managed-preview', name: fixtureProfile().name, role }, csrfToken: 'fixture-csrf-token' })],
+  ['/api/teams', () => {
+    const teams = currentTeams()
+    return { teams, revision: teamCatalogRevision(teams) }
+  }],
+])
+
 function handle(req: IncomingMessage, res: ServerResponse): void {
   const method = req.method ?? 'GET', url = new URL(req.url ?? '/', `http://${host}`)
 
-  if (url.pathname === '/api/config') {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
-    sendJson(res, 200, {
-      mode: 'managed',
-      managed: { loginPath: '/api/test/login', cookieName: 'managed_test_session' },
-    })
-    return
-  }
-
-  // The fixture is intentionally always signed in. This keeps the preview
-  // useful without pretending to implement an OAuth flow.
-  if (url.pathname === '/api/auth/session') {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
-    sendJson(res, 200, {
-      user: { id: 'fixture-user', login: 'managed-preview', name: fixtureProfile().name, role },
-      csrfToken: 'fixture-csrf-token',
-    })
+  const read = READS.get(url.pathname)
+  if (read) {
+    if (method === 'GET') sendJson(res, 200, read())
+    else send405(res)
     return
   }
   if (url.pathname.startsWith('/api/auth/profile')) { void handleProfile(req, res, method, url.pathname).catch(() => sendJson(res, 400, { error: 'bad-request' })); return }
-  if (url.pathname === '/api/teams') {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
-    const teams = currentTeams()
-    sendJson(res, 200, { teams, revision: teamCatalogRevision(teams) }); return
-  }
   if (serveFixtureFeed(url.pathname, res) || serveBundleDependencyReview(url.pathname, res) || serveBundleValidation(url.pathname, method, res) || serveTeamReports(url, res) || serveNpmFixture(req, url, method, res) || appAvatarFixture(url, method, res)) return
   if (url.pathname === '/api/reports/query') {
-    if (method !== 'POST') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
-    void handleReportQuery(req, res).catch(() => { if (!res.headersSent) sendJson(res, 400, { error: 'bad-body' }) })
+    if (method !== 'POST') { send405(res); return }
+    void handleReportQuery(req, res).catch(failingWith(res, 400, 'bad-body'))
     return
   }
   if (url.pathname.startsWith('/api/reports/')) {
     const route = /^\/api\/reports\/([^/]+)\/comments(?:\/([^/]+))?$/u.exec(url.pathname)
-    if (route) {
-      void handleComments(req, res, route[1]!, route[2] ?? null).catch(() => {
-        if (!res.headersSent) sendJson(res, 500, { error: 'comments-failed' })
-      })
-      return
-    }
+    if (route) { void handleComments(req, res, route[1]!, route[2] ?? null).catch(failingWith(res, 500, 'comments-failed')); return }
     if (url.pathname.endsWith('/triage')) {
       const id = decodeURIComponent(url.pathname.slice('/api/reports/'.length, -'/triage'.length))
-      void handleTriage(req, res, id).catch(() => {
-        if (!res.headersSent) sendJson(res, 500, { error: 'triage-failed' })
-      })
+      void handleTriage(req, res, id).catch(failingWith(res, 500, 'triage-failed'))
       return
     }
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+    if (method !== 'GET') { send405(res); return }
     const id = decodeURIComponent(url.pathname.slice('/api/reports/'.length))
-    const report = reportFixtures.find((entry) => entry.id === id)
+    const report = reportById(id)
     if (report == null) { sendJson(res, 404, { error: 'not-found' }); return }
     res.setHeader('vary', 'Accept')
     res.setHeader('x-content-type-options', 'nosniff')
     if (acceptsReportMetadata(req.headers.accept)) {
-      sendJson(res, 200, {
-        data: readManagedReport(report.content, report.filename).data,
-        repo: { github: repoById(report.repoId)?.fullName ?? null, directory: report.repoDirectory },
-      })
+      sendJson(res, 200, { data: readManagedReport(report.content, report.filename).data, repo: reportRepo(report) })
     } else sendText(res, 200, report.content)
     return
   }
   if (url.pathname.startsWith('/api/avatar/')) {
-    if (method !== 'GET') { sendJson(res, 405, { error: 'method-not-allowed' }); return }
+    if (method !== 'GET') { send405(res); return }
     // A tiny same-origin SVG means the account menu can exercise its avatar
     // path without needing an image fixture or a CDN. Use the fixture user's
     // initials so the admin user list doesn't show four identical avatars.

@@ -7,13 +7,15 @@ import { createHash, createSign } from 'node:crypto'
 import { createClient } from '@preventive/upstream/github.js'
 import type { ManagedConfig } from './config.ts'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
-import { USER_AGENT, githubJson, onTokenRejected } from './github-requests.ts'
+import { GITHUB_API, USER_AGENT, githubJson, onTokenRejected, repoApi } from './github-requests.ts'
+import { isId } from './github-values.ts'
+import { eachOf } from './queue.ts'
 
-export { GithubApiError } from './github-errors.ts'
-export { githubJson, onTokenRejected } from './github-requests.ts'
-
-const GITHUB_API = 'https://api.github.com'
 const PER_PAGE = 100
+// Bound fan-out while keeping independent installations/permission checks off
+// one long serial critical path. eachOf preserves input order for
+// deterministic merges.
+const GITHUB_REQUESTS_AT_ONCE = 4
 const INSTALLATION_TOKEN_TTL_MS = 5 * 60_000
 const INSTALLATION_TOKEN_EXPIRY_MARGIN_MS = 60_000
 const MAX_INSTALLATION_TOKENS = 256
@@ -75,7 +77,7 @@ function parseRepo(raw: unknown, installationId: number | null): ConnectedRepo |
   if ((raw as { archived?: unknown }).archived === true) return null
   const id = (raw as { id?: unknown }).id
   const fullName = (raw as { full_name?: unknown }).full_name
-  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return null
+  if (!isId(id)) return null
   if (typeof fullName !== 'string' || fullName === '') return null
   const htmlUrl = (raw as { html_url?: unknown }).html_url
   const branch = (raw as { default_branch?: unknown }).default_branch
@@ -118,13 +120,8 @@ export async function fetchPublicRepository(fullName: string): Promise<Connected
 // a short page, deduped + sorted. With an identity-only token this returns the
 // user's PUBLIC repos. READ-ONLY.
 export async function listUserRepos(accessToken: string): Promise<ConnectedRepo[]> {
-  const byName = new Map<string, ConnectedRepo>()
   const body = await upstreamGithub(() => createClient({ token: accessToken, userAgent: USER_AGENT }).listUserRepos())
-  for (const r of body) {
-    const repo = parseRepo(r, null)
-    if (repo != null) byName.set(repo.fullName, repo)
-  }
-  return [...byName.values()].toSorted((a, b) => a.fullName.localeCompare(b.fullName))
+  return mergeRepos(body.flatMap(r => parseRepo(r, null) ?? []))
 }
 
 // ── PRIVATE: App installations via installation tokens ──
@@ -152,7 +149,7 @@ async function listInstallationIds(jwt: string, fetchImpl: typeof fetch): Promis
     if (!Array.isArray(body)) throw new GithubApiError(502, 'github-malformed')
     for (const inst of body) {
       const id = (inst as { id?: unknown }).id
-      if (typeof id === 'number' && Number.isSafeInteger(id) && id > 0) ids.push(id)
+      if (isId(id)) ids.push(id)
     }
     if (body.length < PER_PAGE) break
   }
@@ -203,19 +200,18 @@ export async function repositoryInstallation(config: ManagedConfig, repoId: numb
   const { githubAppId, githubAppPrivateKey } = config
   if (githubAppId == null || githubAppPrivateKey == null) throw new GithubApiError(503, 'github-app-not-configured')
   if (publicRepositoryName(fullName) !== fullName) throw new GithubApiError(409, 'repo-identity-changed')
-  const path = fullName.split('/').map(encodeURIComponent).join('/')
   const jwt = appJwt(githubAppId, githubAppPrivateKey)
   let raw
-  try { raw = await githubJson(`${GITHUB_API}/repos/${path}/installation`, jwt, fetchImpl) } catch (err) {
+  try { raw = await githubJson(`${repoApi(fullName)}/installation`, jwt, fetchImpl) } catch (err) {
     if (err instanceof GithubApiError && err.status === 404) return null
     throw err
   }
   const installation = raw as { id?: unknown; suspended_at?: unknown; permissions?: { contents?: unknown } } | null
   const id = installation?.id
-  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw new GithubApiError(502, 'github-malformed')
+  if (!isId(id)) throw new GithubApiError(502, 'github-malformed')
   if (installation?.suspended_at != null || !['read', 'write'].includes(String(installation?.permissions?.contents))) return null
   const token = await installationAccessToken(githubAppId, githubAppPrivateKey, id, fetchImpl)
-  const repo = parseRepo(await githubJson(`${GITHUB_API}/repos/${path}`, token, fetchImpl), id)
+  const repo = parseRepo(await githubJson(repoApi(fullName), token, fetchImpl), id)
   if (repo == null || repo.id !== repoId || repo.fullName.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(409, 'repo-identity-changed')
   return id
 }
@@ -224,13 +220,7 @@ export async function repositoryInstallation(config: ManagedConfig, repoId: numb
 // each tagged with the installation id that can read it.
 function repoPage(body: unknown, installationId: number): ConnectedRepo[] {
   const repositories = (body as { repositories?: unknown }).repositories
-  if (!Array.isArray(repositories)) return []
-  const out: ConnectedRepo[] = []
-  for (const r of repositories) {
-    const repo = parseRepo(r, installationId)
-    if (repo != null) out.push(repo)
-  }
-  return out
+  return Array.isArray(repositories) ? repositories.flatMap(r => parseRepo(r, installationId) ?? []) : []
 }
 
 // Every repository one installation can read, paginated by the page count from
@@ -254,25 +244,11 @@ export async function listInstalledRepos(config: ManagedConfig, fetchImpl: typeo
   const { githubAppId, githubAppPrivateKey } = config
   if (githubAppId == null || githubAppPrivateKey == null) return []
   const jwt = appJwt(githubAppId, githubAppPrivateKey)
-  const lists = await mapGithubRequests(await listInstallationIds(jwt, fetchImpl), async (id) => {
+  const lists = await eachOf(await listInstallationIds(jwt, fetchImpl), GITHUB_REQUESTS_AT_ONCE, async (id) => {
     const token = await installationAccessToken(githubAppId, githubAppPrivateKey, id, fetchImpl)
     return listInstallationRepos(token, id, fetchImpl)
   })
   return mergeRepos(...lists)
-}
-
-// Bound fan-out while keeping independent installations/permission checks off
-// one long serial critical path. Preserve input order for deterministic merges.
-async function mapGithubRequests<T, U>(items: T[], work: (item: T) => Promise<U>): Promise<U[]> {
-  const results: U[] = []
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++
-      results[index] = await work(items[index]!)
-    }
-  }))
-  return results
 }
 
 // A GitHub account, as GitHub's /user tells it.
@@ -288,16 +264,15 @@ export interface GithubIdentity { id: number; login: string }
 // else's access. All repo paths come from GitHub's installation catalogue.
 export async function githubUserIdentity(userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<GithubIdentity> {
   const identity = await githubJson(`${GITHUB_API}/user`, userToken, fetchImpl) as { id?: unknown; login?: unknown }
-  if (typeof identity?.login !== 'string' || !identity.login || typeof identity.id !== 'number' || !Number.isSafeInteger(identity.id) || identity.id <= 0) throw new GithubApiError(502, 'github-malformed')
+  if (typeof identity?.login !== 'string' || !identity.login || !isId(identity.id)) throw new GithubApiError(502, 'github-malformed')
   return { id: identity.id, login: identity.login }
 }
 
 // The permission's level (`admin`, `write`, `read`), as GitHub tells it of
 // `identity` alone; `none` where it tells of none, or of another account.
 export async function githubRepoPermission(fullName: string, token: string, identity: GithubIdentity, fetchImpl: typeof fetch = globalThis.fetch): Promise<string> {
-  const path = fullName.split('/').map(encodeURIComponent).join('/')
   try {
-    const body = await githubJson(`${GITHUB_API}/repos/${path}/collaborators/${encodeURIComponent(identity.login)}/permission`, token, fetchImpl) as { permission?: unknown; user?: { id?: unknown } }
+    const body = await githubJson(`${repoApi(fullName)}/collaborators/${encodeURIComponent(identity.login)}/permission`, token, fetchImpl) as { permission?: unknown; user?: { id?: unknown } }
     return body?.user?.id === identity.id && typeof body.permission === 'string' ? body.permission : 'none'
   } catch (err) {
     if (err instanceof GithubApiError && err.status === 404) return 'none'
@@ -308,14 +283,10 @@ export async function githubRepoPermission(fullName: string, token: string, iden
 // The levels that read a repository.
 export const READ_PERMISSIONS: ReadonlySet<string> = new Set(['read', 'write', 'admin'])
 
-export async function githubRepoReadPermission(fullName: string, token: string, identity: GithubIdentity, fetchImpl: typeof fetch = globalThis.fetch): Promise<boolean> {
-  return READ_PERMISSIONS.has(await githubRepoPermission(fullName, token, identity, fetchImpl))
-}
-
 export async function filterInstalledRepos(config: ManagedConfig, repositories: ConnectedRepo[], userToken: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<ConnectedRepo[]> {
   const identity = await githubUserIdentity(userToken, fetchImpl)
   const tokens = new Map<number, Promise<string | null>>()
-  const allowed = await mapGithubRequests(repositories, async (repo) => {
+  const allowed = await eachOf(repositories, GITHUB_REQUESTS_AT_ONCE, async (repo) => {
     // Internal repos may have private=false; missing visibility is not proof
     // of public access either. Only explicitly public repositories skip checks.
     if (repo.visibility === 'public') return true
@@ -327,7 +298,7 @@ export async function filterInstalledRepos(config: ManagedConfig, repositories: 
     }
     const accessToken = await token
     if (!accessToken) return false
-    return githubRepoReadPermission(repo.fullName, accessToken, identity, fetchImpl)
+    return READ_PERMISSIONS.has(await githubRepoPermission(repo.fullName, accessToken, identity, fetchImpl))
   })
   return repositories.filter((_, index) => allowed[index])
 }

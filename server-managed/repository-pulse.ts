@@ -13,11 +13,15 @@
 // week `weeks` weeks earlier, the pull requests merged and opened and the
 // issues closed and opened, how many and the latest of each.
 import { agentOperated, githubAgent } from '../common/managed/github-agents.ts'
-import { GithubApiError, githubJson } from './github-app.ts'
-import { shareGithubRead } from './github-requests.ts'
+import { ACTOR, type GraphAccount, accountOf } from './github-accounts.ts'
+import { GithubApiError } from './github-errors.ts'
+import { githubGraphql } from './github-graphql.ts'
+import { githubJson, repoApi, shareGithubRead } from './github-requests.ts'
+import { SHA, count, timeOf } from './github-values.ts'
 import { coauthorsOf } from './commit-coauthors.ts'
 import { windowsOn } from './history-windows.ts'
-import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accountOf, actorOf, githubGraphql, historyFrom } from './repository-history.ts'
+import { type HistoryCommit, type HistoryPages, historyFrom } from './repository-history.ts'
+import { issueState, itemOf, pullState } from './repository-issues.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
@@ -43,8 +47,6 @@ const YEAR_STARTS = 10
 // not always later than its parents': one dated before the year may have a
 // parent dated in it.
 const YEAR_SKEW_MS = 30 * DAY_MS
-const MAX_TITLE = 1000
-const SHA = /^[a-f\d]{40}$/u
 
 // GitHub still computing a statistic.
 export class StatsPending extends Error {
@@ -58,7 +60,7 @@ export class StatsPending extends Error {
 // agent made or co-authored (`agentDays`), and those pushed to the branch
 // directly (`directDays`, agent-merges.ts directCommits), which GitHub's
 // statistics don't count.
-export interface PulseWeek { week: number; days: number[]; commits: number; additions: number | null; deletions: number | null; dayLines?: [number, number][]
+interface PulseWeek { week: number; days: number[]; commits: number; additions: number | null; deletions: number | null; dayLines?: [number, number][]
   agentDays?: number[]; releaseDays?: number[]; directDays?: number[] }
 // A contributor, by their login and their account's numeric id (`id`, where
 // GitHub named it), else by the name their commits carry, and their weeks,
@@ -67,12 +69,12 @@ export interface PulseWeek { week: number; days: number[]; commits: number; addi
 // agents, releases, direct]`, `releases` those that release the repository,
 // `agents`, of the rest, those an agent took part in (withAgent), and
 // `direct` those pushed to the branch directly.
-export interface PulseContributor { login: string | null; id?: number | null; name: string | null; weeks: [number, number, number, number][]
+interface PulseContributor { login: string | null; id?: number | null; name: string | null; weeks: [number, number, number, number][]
   days?: [number, number, number, number, number, number, number][] }
 // A commit pushed to the branch directly, as Pulse lists it: its id, when it
 // was committed, its subject, its author, by account, else name, and what it
 // is: a release, else one an agent took part in, else one without.
-export interface PulseCommit { sha: string; at: number; subject: string; login: string | null; id: number | null; name: string | null
+interface PulseCommit { sha: string; at: number; subject: string; login: string | null; id: number | null; name: string | null
   kind: 'agent' | 'without' | 'release' }
 // Commits by day of the week and hour (`punch[day][hour]`, Sunday first), in
 // each commit's own time zone, and, counted from its commits, each period's
@@ -85,21 +87,15 @@ export interface PulseStats { weeks: PulseWeek[]; contributors: PulseContributor
   directCommits?: PulseCommit[]; from?: number }
 // The lines added and removed a week, and each contributor's, as GitHub's
 // statistics count them, `lines` false where it counts none.
-export interface PulseLines { weeks: [number, number, number][]; contributors: { login: string; weeks: [number, number, number][] }[]; lines: boolean }
+interface PulseLines { weeks: [number, number, number][]; contributors: { login: string; weeks: [number, number, number][] }[]; lines: boolean }
 // The days (`from`, `to`, both days, UTC; `to` none, on) and the authors (GitHub
 // logins, any of them) a period's pull requests and issues are narrowed to.
 export interface PulseNarrowing { from: number; to: number | null; authors: string[] }
 // The year's commits read so far: all of them, or as far back as asked
 // (`commits`, `from`), else how many (`read`), and whether past
 // YEAR_COMMITS (`tooMany`).
-export type YearCommits = { complete: true; commits: HistoryCommit[]; passed: HistoryCommit[]; from: number | null } | { complete: false; read: number; tooMany: boolean }
+type YearCommits = { complete: true; commits: HistoryCommit[]; passed: HistoryCommit[]; from: number | null } | { complete: false; read: number; tooMany: boolean }
 
-const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
-const repoApi = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
 const emptyPunch = () => Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
 
 // One statistic: its rows once GitHub has computed it, 'pending' while it
@@ -269,6 +265,34 @@ const withAgent = (commit: HistoryCommit, merges: ReadonlySet<string>, direct: R
   || githubAgent(commit.authorLogin, commit.authorId ?? null, commit.authorName) !== null || bot(commit.authorLogin, commit.authorName)
   || coauthorsOf(commit).some(coauthor => Boolean(coauthor.agent) || bot(coauthor.login, coauthor.name))
 
+// A contributor as commitStats counts them: by the login, id and name the
+// first of their commits listed names, every login they committed as
+// (`logins`), and their commits' counts, by week and by day, to which
+// addCounts adds those `made` at `at`.
+type Counts = Map<number, number[]>
+type Person = { login: string | null; logins: Set<string>; id: number | null; name: string | null; weeks: Counts; days: Counts; commits: number }
+const addCounts = (counts: Counts, at: number, made: number[]) => counts.set(at, made.map((value, index) => (counts.get(at)?.[index] ?? 0) + value))
+
+// A login one account committed as, those of its commits read before ids
+// were that account's; one more did, theirs apart, no one's. Those of
+// `people` counted so, out of it, each by its key the account it is.
+function mergedLogins(people: Map<string, Person>) {
+  const merged = new Map<string, Person>()
+  const accounts = Map.groupBy([...people.values()].filter(person => person.id !== null).flatMap(person => [...person.logins].map(login => ({ login, person }))),
+    ({ login }) => login)
+  for (const [key, person] of people) {
+    const [owner, ...others] = person.login !== null && person.id === null ? accounts.get(person.login.toLowerCase()) ?? [] : []
+    if (!owner || others.length > 0) continue
+    const account = owner.person
+    for (const [week, counts] of person.weeks) addCounts(account.weeks, week, counts)
+    for (const [day, counts] of person.days) addCounts(account.days, day, counts)
+    account.commits += person.commits
+    people.delete(key)
+    merged.set(key, account)
+  }
+  return merged
+}
+
 // The year from `first` (pulseSince(52, …)) of `commits`, as GitHub's
 // statistics count them, merges left out: a week a row, its commits each day
 // (UTC) and in all and the lines they added and removed, in all and each day,
@@ -291,14 +315,10 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
   const weeks = Array.from({ length: 52 }, (_, at) => ({ week: first + at * WEEK_MS, days: Array.from({ length: 7 }, () => 0), commits: 0, additions: 0, deletions: 0,
     dayLines: Array.from({ length: 7 }, () => [0, 0] as [number, number]), agentDays: Array.from({ length: 7 }, () => 0), releaseDays: Array.from({ length: 7 }, () => 0),
     directDays: Array.from({ length: 7 }, () => 0) }))
-  type Counts = Map<number, number[]>
-  const people = new Map<string, { login: string | null; logins: Set<string>; id: number | null; name: string | null; weeks: Counts; days: Counts; commits: number }>()
+  const people = new Map<string, Person>()
   const punches = Object.fromEntries(PULSE_WEEKS.map(span => [span, emptyPunch()]))
-  // Each commit's author, by the key their commits are counted by, and of a
-  // login an account took on, that account (`merged`).
+  // Each commit's author, by the key their commits are counted by.
   const keys = new Map<string, string>()
-  const merged = new Map<string, { login: string | null; id: number | null; name: string | null }>()
-  const add = (counts: Counts, at: number, made: number[]) => counts.set(at, made.map((value, index) => (counts.get(at)?.[index] ?? 0) + value))
   for (const commit of commits) {
     if (commit.parents.length > 1 || commit.committedAt === null || commit.committedAt < first) continue
     const at = Math.floor((commit.committedAt - first) / WEEK_MS)
@@ -326,25 +346,13 @@ export function commitStats(commits: HistoryCommit[], first: number, merges: Rea
     const person = people.get(key) ?? { login: commit.authorLogin, logins: new Set<string>(), id: commit.authorId ?? null, name: commit.authorName,
       weeks: new Map(), days: new Map(), commits: 0 }
     if (commit.authorLogin) person.logins.add(commit.authorLogin.toLowerCase())
-    add(person.weeks, week.week, [1, additions, deletions])
-    add(person.days, Math.floor(commit.committedAt / DAY_MS) * DAY_MS, [1, additions, deletions, agent ? 1 : 0, release ? 1 : 0, direct.has(commit.sha) ? 1 : 0])
+    addCounts(person.weeks, week.week, [1, additions, deletions])
+    addCounts(person.days, Math.floor(commit.committedAt / DAY_MS) * DAY_MS, [1, additions, deletions, agent ? 1 : 0, release ? 1 : 0, direct.has(commit.sha) ? 1 : 0])
     person.commits++
     people.set(key, person)
   }
-  // A login one account committed as, those of its commits read before ids
-  // were that account's; one more did, theirs apart, no one's.
-  const accounts = Map.groupBy([...people.values()].filter(person => person.id !== null).flatMap(person => [...person.logins].map(login => ({ login, person }))),
-    ({ login }) => login)
-  for (const [key, person] of people) {
-    const [owner, ...others] = person.login !== null && person.id === null ? accounts.get(person.login.toLowerCase()) ?? [] : []
-    if (!owner || others.length > 0) continue
-    const account = owner.person
-    for (const [week, counts] of person.weeks) add(account.weeks, week, counts)
-    for (const [day, counts] of person.days) add(account.days, day, counts)
-    account.commits += person.commits
-    people.delete(key)
-    merged.set(key, account)
-  }
+  // Of a login an account took on, that account.
+  const merged = mergedLogins(people)
   const rows = (counts: Counts) => [...counts].toSorted(([a], [b]) => a - b).map(([at, made]) => [at, ...made])
   const contributors = [...people.values()].toSorted((a, b) => b.commits - a.commits).slice(0, MAX_CONTRIBUTORS).map(({ login, id, name, weeks: theirs, days }) => ({
     login, id, name, weeks: rows(theirs) as [number, number, number, number][], days: rows(days) as [number, number, number, number, number, number, number][] }))
@@ -418,18 +426,16 @@ fragment issue on Issue { number title issueState: state stateReason createdAt c
 type SearchNode = { number?: unknown; title?: unknown; pullState?: unknown; issueState?: unknown; isDraft?: unknown; stateReason?: unknown
   createdAt?: unknown; mergedAt?: unknown; closedAt?: unknown; author?: GraphAccount } | null
 type Search = { issueCount?: unknown; nodes?: SearchNode[] } | null | undefined
-const REASONS: Record<string, string> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
 
 // An issue or pull request a search lists, as the popup's preview of it
 // takes one, `at` when it was merged, opened or closed.
 function listed(node: SearchNode, at: unknown) {
-  if (!node || !Number.isSafeInteger(node.number) || (node.number as number) <= 0) return null
-  const title = typeof node.title === 'string' ? node.title.trim().slice(0, MAX_TITLE) : ''
-  const author = actorOf(node.author)
-  const common = { number: node.number as number, title, author: author.login, authorId: author.id, at: timeOf(at), createdAt: timeOf(node.createdAt) }
+  const named = itemOf(node)
+  if (!node || !named) return null
+  const common = { ...named, at: timeOf(at), createdAt: timeOf(node.createdAt) }
   return node.pullState === undefined
-    ? { ...common, kind: 'issues', state: node.issueState === 'OPEN' ? 'open' : 'closed', reason: REASONS[String(node.stateReason)] ?? null }
-    : { ...common, kind: 'pulls', state: node.pullState === 'MERGED' ? 'merged' : node.pullState === 'OPEN' ? 'open' : 'closed', draft: node.isDraft === true }
+    ? { ...common, kind: 'issues', ...issueState(node.issueState, node.stateReason) }
+    : { ...common, kind: 'pulls', ...pullState(node.pullState, node.isDraft) }
 }
 
 // The pull requests merged and opened and the issues closed and opened since

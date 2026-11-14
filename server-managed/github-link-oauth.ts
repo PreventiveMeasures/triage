@@ -6,33 +6,24 @@
 import type { AvatarStore } from './avatar-store.ts'
 import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, ManagedSession } from './db.ts'
-import { randomToken, safeEqual } from './crypto.ts'
-import { LINK_STATE_COOKIE, buildCookie, clearCookie, cookieName, parseCookies } from './session.ts'
-import { OAuthError, cacheAvatar, exchangeCode, fetchIdentity } from './github-oauth.ts'
+import { LINK_STATE_COOKIE, clearCookie, cookieName } from './session.ts'
+import { OAuthError, cacheAvatar, exchangeCode, fetchIdentity, sessionAuthorization, sessionStateValid, stateCookieMatches } from './github-oauth.ts'
 import { ManagedMutationError } from './management.ts'
 
 export const LINK_LOGIN_PATH = '/api/oauth/github/link'
 // The profile page, where linking starts and its callback lands.
 const PROFILE_PATH = '/my/profile'
-const STATE_TTL_MS = 600_000
 
 export function isLinkOAuthCallback(config: ManagedConfig, query: URLSearchParams, cookie: string | undefined): boolean {
-  const expected = parseCookies(cookie).get(cookieName(config, LINK_STATE_COOKIE))?.split('.')[0]
-  return !!expected && safeEqual(query.get('state') ?? '', expected)
+  return stateCookieMatches(config, LINK_STATE_COOKIE, query, cookie)
 }
 
 // The state is bound to the session that started linking, so the account
 // links to the user who asked, never to whoever is signed in on return.
 export function linkLoginRedirect(config: ManagedConfig, session: ManagedSession, now = Date.now()): { location: string; setCookie: string } {
-  const state = randomToken()
-  const url = new URL('https://github.com/login/oauth/authorize')
-  url.searchParams.set('client_id', config.githubClientId)
-  url.searchParams.set('redirect_uri', config.oauthCallbackUrl)
-  url.searchParams.set('state', state)
-  url.searchParams.set('allow_signup', 'false')
+  const { url, setCookie } = sessionAuthorization(config, LINK_STATE_COOKIE, session, now)
   url.searchParams.set('prompt', 'select_account')
-  return { location: url.href, setCookie: buildCookie(cookieName(config, LINK_STATE_COOKIE), `${state}.${session.id}.${now}`,
-    { secure: config.cookieSecure, maxAgeS: STATE_TTL_MS / 1000, sameSite: 'Lax' }) }
+  return { location: url.href, setCookie }
 }
 
 // Back from GitHub: link the account that authorized, then land on the
@@ -44,12 +35,8 @@ export async function linkOAuthCallback(config: ManagedConfig, db: ManagedDb, se
 ): Promise<{ location: string; setCookie: string; linked: string | null }> {
   const setCookie = clearCookie(cookieName(config, LINK_STATE_COOKIE), config.cookieSecure)
   try {
-    const [expected, sessionId, timestamp] = (parseCookies(cookie).get(cookieName(config, LINK_STATE_COOKIE)) ?? '').split('.')
-    const code = query.get('code'), started = Number(timestamp), state = query.get('state')
-    if (!state || !expected || !safeEqual(state, expected) || sessionId !== session.id
-      || !timestamp || !Number.isFinite(started) || now < started || now - started > STATE_TTL_MS) {
-      throw new OAuthError(400, 'invalid-oauth-state')
-    }
+    if (!sessionStateValid(config, LINK_STATE_COOKIE, session, query, cookie, now)) throw new OAuthError(400, 'invalid-oauth-state')
+    const code = query.get('code')
     // Declined on GitHub's side, which sends an error in place of a code.
     if (!code) throw new OAuthError(400, query.get('error') ? 'github-authorization-declined' : 'invalid-oauth-state')
     const tokens = await exchangeCode(config, code, now, fetchImpl)

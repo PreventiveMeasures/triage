@@ -5,17 +5,12 @@ import { type StorageKey, decryptStorageStream, encryptStorageStream, wrapStorag
 import { ENCRYPTED_CACHE_PREFIX, type ObjectStorage, type RawObject, type RawObjectStorage, deleteObjects, objectPath, openObjectVersion } from './object-storage.ts'
 import { type StorageDb, type StorageEncryptionState, type StorageRow, type StorageRowKind, dataKeyIdentity, unwrapDataKey } from './storage-db.ts'
 import { PUBLIC_CACHE_PREFIX, inspectStorageObject, masterKeyCache, storageOwner, storageRowPaths, verifyStoragePayload } from './storage-payload.ts'
+import { readBytes } from './blob-store.ts'
 
 const STORAGE_WRITE_MS = 180_000
 export const STORAGE_UPLOAD_TTL_MS = 86_400_000
 export const STORAGE_DISABLED_TTL_MS = 5_000
 
-async function readBytes(stored: Awaited<ReturnType<ObjectStorage['open']>>): Promise<Buffer | null> {
-  if (!stored) return null
-  const parts: Buffer[] = []
-  try { for await (const part of stored.stream) parts.push(Buffer.from(part)); return Buffer.concat(parts) }
-  finally { stored.stream.destroy() }
-}
 function logicalKey(identity: string) {
   objectPath(identity)
   if (identity.startsWith(ENCRYPTED_CACHE_PREFIX)) throw new Error('Encrypted cache paths are internal')
@@ -226,7 +221,10 @@ export async function createEncryptedObjectStorage(raw: RawObjectStorage, db: St
   }
   return {
     open,
-    get: async identity => readBytes(await open(identity)),
+    async get(identity) {
+      const stored = await open(identity)
+      return stored ? readBytes(stored) : null
+    },
     async exists(identity) {
       logicalKey(identity)
       const owner = storageOwner(identity), state = await mode()

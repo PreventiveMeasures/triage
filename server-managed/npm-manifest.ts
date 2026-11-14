@@ -74,12 +74,11 @@ export function npmManifest(json: Record<string, unknown>): Record<string, unkno
     if (record && Object.keys(record).length > 0) pick[key] = record
   }
   if (json['hasInstallScript'] === true) pick['hasInstallScript'] = true
-  // Whether npm keeps a provenance statement for it (npm-provenance.ts).
-  if (plainObject(json['dist']) && plainObject(json['dist']['attestations']) && plainObject(json['dist']['attestations']['provenance'])) pick['provenance'] = true
+  if (hasProvenance(json['dist'])) pick['provenance'] = true
   // The scripts npm runs installing it from the registry; not `prepare`,
   // which runs only for a local or git install.
   const scripts = stringRecord(json['scripts'])
-  const install = scripts ? ['preinstall', 'install', 'postinstall'].filter(script => script in scripts) : []
+  const install = scripts ? INSTALL_SCRIPTS.filter(script => script in scripts) : []
   if (install.length > 0) pick['installScripts'] = Object.fromEntries(install.map(script => [script, scripts![script]]))
   // A GitLab project it names, as its provenance's source is matched with
   // the repository it names, GitHub's below.
@@ -105,10 +104,13 @@ const VERSION_FIELDS = ['name', 'version', 'description', 'license', 'homepage',
 const DIST_FIELDS = ['tarball', 'integrity', 'shasum', 'unpackedSize', 'fileCount']
 const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall']
 const picked = (json: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter(key => Object.hasOwn(json, key)).map(key => [key, json[key]]))
+// Whether a version's `dist` tells of a provenance statement npm keeps for it
+// (npm-provenance.ts).
+const hasProvenance = (dist: unknown) => plainObject(dist) && plainObject(dist['attestations']) && plainObject(dist['attestations']['provenance'])
 
 export function npmVersionFields(json: Record<string, unknown>): Record<string, unknown> {
   const dist = plainObject(json['dist']) ? json['dist'] : {}
-  const provenance = plainObject(dist['attestations']) && plainObject(dist['attestations']['provenance'])
+  const provenance = hasProvenance(dist)
   const scripts = picked(stringRecord(json['scripts']) ?? {}, INSTALL_SCRIPTS)
   return { ...picked(json, VERSION_FIELDS), dist: { ...picked(dist, DIST_FIELDS), ...provenance && { attestations: { provenance: {} } } },
     ...Object.keys(scripts).length > 0 && { scripts } }

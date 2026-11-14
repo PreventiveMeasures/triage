@@ -37,3 +37,17 @@ export function inTurns(count: number): <T>(work: () => Promise<T>) => Promise<T
     }
   }
 }
+
+// Runs `run` for each of `items`, as many at once as `parallel`, each's
+// result in its place.
+export async function eachOf<T, R>(items: T[], parallel: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = []
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, async () => {
+    while (next < items.length) {
+      const at = next++
+      results[at] = await run(items[at]!)
+    }
+  }))
+  return results
+}

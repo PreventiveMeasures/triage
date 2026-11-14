@@ -3,6 +3,7 @@ import type { ManagedConfig } from './config.ts'
 import type { ManagedDb, TeamReportAccessSnapshot } from './db.ts'
 import type { GithubMetadata, GithubRepositoryVisibility } from './github-metadata.ts'
 import { ensureUserAccessToken } from './github-oauth.ts'
+import { GITHUB_API, githubHeaders, repoApi } from './github-requests.ts'
 
 type Metadata = Pick<GithubMetadata, 'title' | 'description' | 'status' | 'stateReason'>
 const MAX_GITHUB_LOOKUPS = 200
@@ -12,7 +13,7 @@ const CLOSED_RECHECK_EVERY = 10
 const GITHUB_LOOKUP_TIMEOUT_MS = 10_000
 const GITHUB_METADATA_TTL_MS = 60_000
 const GITHUB_PUBLIC_VISIBILITY_TTL_MS = 60_000
-const GITHUB_PRIVATE_REPOSITORIES_URL = 'https://api.github.com/user/repos?visibility=private&per_page=100&page=1'
+const GITHUB_PRIVATE_REPOSITORIES_URL = `${GITHUB_API}/user/repos?visibility=private&per_page=100&page=1`
 
 type Repository = TeamReportAccessSnapshot['repositories'][number]
 type RepositoryPayload = { id?: unknown; full_name?: unknown; private?: unknown; visibility?: unknown; permissions?: { pull?: unknown } }
@@ -28,14 +29,30 @@ type RepositoryAccessContext = {
   includePrivateList?: boolean
 }
 
-function githubRequest(token: string | null): RequestInit {
-  return {
-    headers: {
-      ...(token ? { authorization: `Bearer ${token}` } : {}), accept: 'application/vnd.github+json',
-      'user-agent': 'deepview-triage', 'x-github-api-version': '2022-11-28',
-    },
-    redirect: 'error',
+// The workspace's repositories GitHub can name, by their lowercased names.
+export function allowedRepositories(snapshot: TeamReportAccessSnapshot): Map<string, Repository> {
+  return new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github)).map(repo => [repo.github.toLowerCase(), repo]))
+}
+
+// `fetchImpl`, each request of it cut short at `signal`, and none started past it.
+export function deadlineFetch(fetchImpl: typeof fetch, signal: AbortSignal): typeof fetch {
+  return (input, init) => {
+    signal.throwIfAborted()
+    return fetchImpl(input, { ...init, signal })
   }
+}
+
+function githubRequest(token: string | null): RequestInit {
+  return { headers: githubHeaders(token || null), redirect: 'error' }
+}
+
+// The repositories of `byId` that `visibility` found public, by the name they
+// have still: one renamed since is not known public.
+function foundPublic(visibility: GithubRepositoryVisibility[], byId: Map<number, Repository>): Repository[] {
+  return visibility.flatMap(entry => {
+    const repo = byId.get(entry.repoId)
+    return entry.public && repo?.github.toLowerCase() === entry.github.toLowerCase() ? [repo] : []
+  })
 }
 
 function repositoryMatches(repo: Repository, body: RepositoryPayload | null): boolean {
@@ -73,8 +90,7 @@ async function readableRepositories(repositories: Repository[], { db, visibility
       if (repo && !readable.has(repo.github) && repositoryMatches(repo, entry) && entry?.permissions?.pull === true) grant(repo, entry, checkedAt)
     }
   }
-  const formerlyPublic = new Set(visibility.filter(entry => entry.public
-    && byId.get(entry.repoId)?.github.toLowerCase() === entry.github.toLowerCase()).map(entry => entry.repoId))
+  const formerlyPublic = new Set(foundPublic(visibility, byId).map(repo => repo.repoId))
   const pending = unverified.filter(repo => !readable.has(repo.github) && (token || formerlyPublic.has(repo.repoId))).slice(0, checks.remaining)
   checks.remaining -= pending.length
   for (let i = 0; i < pending.length && !signal.aborted; i += 4) {
@@ -82,7 +98,7 @@ async function readableRepositories(repositories: Repository[], { db, visibility
       if (signal.aborted) return
       const checkedAt = Date.now()
       try {
-        const response = await fetchImpl(`https://api.github.com/repos/${repo.github}`, githubRequest(token))
+        const response = await fetchImpl(repoApi(repo.github), githubRequest(token))
         if (!response.ok) return
         const body = await response.json() as RepositoryPayload | null
         if (!signal.aborted && body && repositoryMatches(repo, body)
@@ -112,7 +128,7 @@ async function verifyPublicRefreshes(config: ManagedConfig, userId: string, repo
 // owner/repo/path taken from a Fix URL. Redirects cannot move the user token.
 async function fetchMetadata(ref: GithubFixRef, token: string | null, fetchImpl: typeof fetch): Promise<Metadata | null> {
   try {
-    const response = await fetchImpl(`https://api.github.com/repos/${ref.repo}/${ref.kind === 'pull' ? 'pulls' : 'issues'}/${ref.number}`, githubRequest(token))
+    const response = await fetchImpl(`${repoApi(ref.repo)}/${ref.kind === 'pull' ? 'pulls' : 'issues'}/${ref.number}`, githubRequest(token))
     if (!response.ok) return null
     const body = await response.json() as { number?: unknown; title?: unknown; body?: unknown; state?: unknown; merged?: unknown;
       draft?: unknown; base?: { repo?: { full_name?: unknown } }; repository_url?: unknown; pull_request?: unknown; state_reason?: unknown } | null
@@ -127,7 +143,7 @@ async function fetchMetadata(ref: GithubFixRef, token: string | null, fetchImpl:
       // The issues API also accepts PR numbers. Do not cache a PR as a closed
       // ordinary issue: only the pulls API can establish its merged state.
       if (body.pull_request != null || typeof body.repository_url !== 'string'
-        || body.repository_url.toLowerCase() !== `https://api.github.com/repos/${ref.repo}`.toLowerCase()) return null
+        || body.repository_url.toLowerCase() !== repoApi(ref.repo).toLowerCase()) return null
       status = body.state === 'closed' ? 'closed' : 'open'
     }
     const stateReason = ref.kind === 'issue' && status === 'closed' ? githubIssueClosedReason(body.state_reason) : null
@@ -165,7 +181,7 @@ function readsOf<Entry extends [string, GithubFixRef]>(entries: Entry[], metadat
 // Shared private metadata also requires this viewer's live GitHub access,
 // including for admins. Only recently verified public repos skip that check.
 export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot: TeamReportAccessSnapshot, urls: string[], fetchImpl: typeof fetch = globalThis.fetch): Promise<GithubFixResult[]> {
-  const allowed = new Map(snapshot.repositories.filter(repo => isGithubRepoName(repo.github)).map(repo => [repo.github.toLowerCase(), repo]))
+  const allowed = allowedRepositories(snapshot)
   const parsed = urls.map(parseGithubFixUrl)
   const jobs = new Map<string, GithubFixRef>()
   const keys = parsed.map(ref => {
@@ -178,19 +194,15 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
   if (jobs.size === 0) return []
   const now = Date.now()
   const signal = AbortSignal.timeout(GITHUB_LOOKUP_TIMEOUT_MS)
-  const fetchWithinDeadline: typeof fetch = (input, init) => {
-    signal.throwIfAborted()
-    return fetchImpl(input, { ...init, signal })
-  }
-  const repositories = [...new Map([...jobs.values()].map(ref => {
+  const fetchWithinDeadline = deadlineFetch(fetchImpl, signal)
+  const byId = new Map([...jobs.values()].map(ref => {
     const repo = allowed.get(ref.repo.toLowerCase())!
     return [repo.repoId, repo] as const
-  })).values()]
+  }))
+  const repositories = [...byId.values()]
   const visibility = await db.listGithubRepositoryVisibility(repositories.map(repo => repo.repoId))
-  const byId = new Map(repositories.map(repo => [repo.repoId, repo]))
-  const publicRepos = new Set(visibility.filter(entry => entry.public && entry.checkedAt <= now
-    && entry.checkedAt + GITHUB_PUBLIC_VISIBILITY_TTL_MS > now
-    && byId.get(entry.repoId)?.github.toLowerCase() === entry.github.toLowerCase()).map(entry => byId.get(entry.repoId)!.github))
+  const publicRepos = new Set(foundPublic(visibility.filter(entry => entry.checkedAt <= now
+    && entry.checkedAt + GITHUB_PUBLIC_VISIBILITY_TTL_MS > now), byId).map(repo => repo.github))
   let token = repositories.some(repo => !publicRepos.has(repo.github))
     ? await ensureUserAccessToken(config, db, snapshot.user.id, now, fetchWithinDeadline) : null
   const checks: RepositoryChecks = { remaining: MAX_GITHUB_LOOKUPS, verified: new Set() }
@@ -228,8 +240,7 @@ export async function lookupFixes(config: ManagedConfig, db: ManagedDb, snapshot
     // Another request may already have discovered a public -> private change
     // and written new private metadata. Honor that newer visibility observation.
     const current = await db.listGithubRepositoryVisibility(repositories.filter(repo => publicRepos.has(repo.github)).map(repo => repo.repoId))
-    const stillPublic = new Set(current.filter(entry => entry.public
-      && byId.get(entry.repoId)?.github.toLowerCase() === entry.github.toLowerCase()).map(entry => byId.get(entry.repoId)!.github))
+    const stillPublic = new Set(foundPublic(current, byId).map(repo => repo.github))
     for (const [key, ref] of authorized) if (publicRepos.has(ref.repo) && !stillPublic.has(ref.repo)) metadata.delete(key)
   }
   // The handler rechecks workspace access and saved Fix links before returning.

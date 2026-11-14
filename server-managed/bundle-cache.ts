@@ -9,12 +9,12 @@ import { bundleReasons } from '../common/bundle-reasons.js'
 import { sourcemapEdges } from '../common/bundle-sourcemap.js'
 import { type BundleAdvisoryInventory, bundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { decodeUtf8 } from '../common/utf8.js'
-import type { OpenedBlob } from './blob-store.ts'
+import { type OpenedBlob, readBytes } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
 import { CacheMissError } from './cache-storage.ts'
-import { SUMMARY_FILENAME, createBundleSummaryCache } from './bundle-summary-cache.ts'
+import { SUMMARY_FILENAME, createBundleSummaryCache, readCachedBytes } from './bundle-summary-cache.ts'
 
 const decompress = promisify(brotliDecompress)
 const MAX_DECODED_BYTES = 512 * 1024 * 1024
@@ -60,28 +60,25 @@ function encodePackageInventory(details: BundleDetails): Buffer {
     parts.push(part)
     return true
   }
-  function entries(rows: unknown[]) {
-    if (!append('[')) return false
+  // `items` as `write` writes each, a comma apart, between `open` and
+  // `close`: false once past the budget, as `append` is.
+  function list<T>(open: string, items: Iterable<T>, write: (item: T) => boolean, close: string) {
+    if (!append(open)) return false
     let first = true
-    for (const row of rows) {
-      if (!append(`${first ? '' : ','}${JSON.stringify(row)}`)) return false
+    for (const item of items) {
+      if (!append(first ? '' : ',') || !write(item)) return false
       first = false
     }
-    return append(']')
+    return append(close)
   }
+  const rows = (items: unknown[]) => list('[', items, row => append(JSON.stringify(row)), ']')
   function inventory(paths: Set<string> | null) {
     const { packages, skipped } = bundleAdvisoryInventory(details, paths)
-    return append('{"packages":') && entries(packages) && append(',"skipped":') && entries(skipped) && append('}')
+    return append('{"packages":') && rows(packages) && append(',"skipped":') && rows(skipped) && append('}')
   }
-  append('{"all":')
-  if (!inventory(null) || !append(',"reasons":{')) return Buffer.from('null')
-  let first = true
-  for (const [reason, paths] of bundleReasons(details)) {
-    if (!append(`${first ? '' : ','}${JSON.stringify(reason)}:`) || !inventory(paths)) return Buffer.from('null')
-    first = false
-  }
-  if (!append('}}')) return Buffer.from('null')
-  return Buffer.from(parts.join(''))
+  const whole = append('{"all":') && inventory(null)
+    && list(',"reasons":{', bundleReasons(details), ([reason, paths]) => append(`${JSON.stringify(reason)}:`) && inventory(paths), '}}')
+  return Buffer.from(whole ? parts.join('') : 'null')
 }
 
 // What a catalog sends of a bundle before it opens. A Stasis bundle's
@@ -104,9 +101,15 @@ function readSourcemapEdges(details: BundleDetails) {
   catch (err) { console.warn('managed: sourcemap edges failed:', err) }
 }
 
-async function build(record: BundleCacheRecord, storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
+// As readBundleDetails, thrown where the bundle's bytes are gone.
+async function storedDetails(record: BundleCacheRecord, store: BundleStore) {
   const details = await readBundleDetails(record, store)
   if (!details) throw new Error('Bundle bytes unavailable')
+  return details
+}
+
+async function build(record: BundleCacheRecord, storage: BundleCacheStorage, db: ManagedDb, store: BundleStore) {
+  const details = await storedDetails(record, store)
   readSourcemapEdges(details)
   const metadata = { ...await createBundleMetadata(details), id: record.id, filename: record.filename }
   const body = await encodeBrotli(Buffer.from(JSON.stringify(metadata)))
@@ -134,11 +137,7 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
   const pending = new Map<string, Promise<void>>()
   // The database deduplicates by integrity, so each hash has one persistent
   // bundle/cache directory, shared across teams and repeated uploads.
-  const summaries = createBundleSummaryCache(storage, async record => {
-    const details = await readBundleDetails(record, store)
-    if (!details) throw new Error('Bundle bytes unavailable')
-    return bundleSummary(details)
-  }, id => db.getBundle(id))
+  const summaries = createBundleSummaryCache(storage, async record => bundleSummary(await storedDetails(record, store)), id => db.getBundle(id))
   let queue = Promise.resolve()
   async function ensure(record: BundleCacheRecord): Promise<void> {
     const existing = pending.get(record.id)
@@ -175,29 +174,18 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
     // A sourcemap's edges as its metadata keeps them, read with the parser
     // once, for a derivative that reads the bundle itself (report previews).
     async sourcemapEdges(record: ManagedBundle): Promise<BundleDetails['edges']> {
-      const cached = await openCached(record, filename)
-      const chunks: Buffer[] = []
-      try { for await (const chunk of cached.stream) chunks.push(Buffer.from(chunk)) }
-      finally { cached.stream.destroy() }
-      const decoded = await decompress(Buffer.concat(chunks), { maxOutputLength: MAX_DECODED_BYTES })
+      const decoded = await decompress(await readBytes(await openCached(record, filename)), { maxOutputLength: MAX_DECODED_BYTES })
       return parseBundleMetadata(JSON.parse(decodeUtf8(decoded)), record.integrity).edges
     },
     async advisoryInventory(record: ManagedBundle, reason = ''): Promise<BundleAdvisoryInventory | null | undefined> {
       if (record.kind !== 'stasis') return { packages: [], skipped: [] }
       const cached = await openCached(record, packagesFilename)
-      try {
-        if (cached.size != null && cached.size > MAX_PACKAGE_INVENTORY_BYTES) return null
-        const chunks: Buffer[] = []
-        let size = 0
-        for await (const chunk of cached.stream) {
-          size += chunk.length
-          if (size > MAX_PACKAGE_INVENTORY_BYTES) return null
-          chunks.push(Buffer.from(chunk))
-        }
-        const inventory = JSON.parse(decodeUtf8(Buffer.concat(chunks)))
-        if (inventory === null) return null
-        return reason ? (Object.hasOwn(inventory.reasons, reason) ? inventory.reasons[reason] : undefined) : inventory.all
-      } finally { cached.stream.destroy() }
+      if (cached.size != null && cached.size > MAX_PACKAGE_INVENTORY_BYTES) { cached.stream.destroy(); return null }
+      const bytes = await readCachedBytes(cached, MAX_PACKAGE_INVENTORY_BYTES)
+      if (!bytes) return null
+      const inventory = JSON.parse(decodeUtf8(bytes))
+      if (inventory === null) return null
+      return reason ? (Object.hasOwn(inventory.reasons, reason) ? inventory.reasons[reason] : undefined) : inventory.all
     },
     async delete(id: string) {
       // Call after deleting the row. Waiting prevents an in-flight builder

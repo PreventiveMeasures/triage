@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { ManagedMutationError } from './management.ts'
 import type { PatchSource } from './npm-patch.ts'
-import type { ManagedSql } from './sql.ts'
+import { type ManagedSql, jsonRows } from './sql.ts'
 import { REVIEW_VERDICTS, type ReviewSummary, type ReviewVerdict, allowedReviewVerdicts, needsPackageJsonReview, summarizeReview } from '../common/dependency-reviews.js'
 
 // A review is of a version, as npm's registry has it, by its integrity; of
@@ -146,12 +146,6 @@ async function teams(db: ManagedSql, user: string): Promise<ReviewTeam[]> {
   return await db.prepare(`SELECT t.id, t.name FROM managed_team t JOIN managed_user u ON u.id = ?
     WHERE ${reviewsIn(true)} ORDER BY t.name, t.id`).all(user) as ReviewTeam[]
 }
-// A draft is begun or edited by one who publishes to some team; their own
-// published review revoked, or published to more teams, as `publish` checks
-// each, whoever they are now.
-async function requireReviewer(db: ManagedSql, user: string) {
-  if ((await teams(db, user)).length === 0) throw new ManagedMutationError(403, 'review-access-required')
-}
 
 type ReviewRow = Omit<DependencyReview, 'files' | 'entries' | 'teams' | 'patchSource' | keyof ReviewSummary> & { files: string | null; patchSource: string | null }
 async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Promise<DependencyReview[]> {
@@ -177,20 +171,22 @@ async function expandReviews(db: ManagedSql, rows: unknown[], user: string): Pro
   const [entriesOf, teamsOf] = [byReview(entries), byReview(linked)]
   return reviews.map(review => expanded(review, (entriesOf.get(review.id) ?? []) as ReviewEntry[], (teamsOf.get(review.id) ?? []) as ReviewTeam[]))
 }
+// A review's snapshot of its files, as its row keeps it: its paths, null for
+// a draft's; and its non-text files, none for a draft's, and null for one of
+// paths alone, as kept before they were told.
+export function snapshotOf(stored: string | null): { files: string[] | null; nonTextFiles: string[] | null } {
+  const snapshot = stored === null ? null : JSON.parse(stored) as string[] | { paths: string[]; nonTextFiles: string[] }
+  return { files: Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null, nonTextFiles: Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? [] }
+}
 // A review as its row, its entries and the teams its reader reads it in
 // tell it: its files' snapshot, its entries a file's each (fileEntries), and
 // what they sum up to; where its patch was read.
 function expanded(review: ReviewRow, entries: ReviewEntry[], readIn: ReviewTeam[]): DependencyReview {
-  const snapshot = review.files === null ? null : JSON.parse(review.files) as string[] | { paths: string[]; nonTextFiles: string[] }
-  const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
-  const nonTextFiles = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
+  const { files, nonTextFiles } = snapshotOf(review.files)
   const ownEntries = fileEntries(entries)
   return { ...review, patchSource: review.patchSource ? JSON.parse(review.patchSource) as PatchSource : null, files, nonTextFiles, entries: ownEntries,
     ...summarizeReview(ownEntries, files, nonTextFiles), teams: readIn }
 }
-// Rows gathered into one JSON array value (json_group_array): its text on
-// SQLite, parsed already on Postgres, where none gather as NULL.
-export const gathered = <T>(value: unknown): T[] => value == null ? [] : (typeof value === 'string' ? JSON.parse(value) : value) as T[]
 
 async function publish(db: ManagedSql, current: DependencyReview | undefined, user: string, change: Extract<ReviewChange, { action: 'publish' }>, now: number,
   tarballs: ReviewedTarballs | undefined) {
@@ -259,7 +255,7 @@ async function listTeam(db: ManagedSql, teamId: string, user: string, before: { 
   const reviews = rows.filter(row => row.id != null)
   const page = reviews.slice(0, 50)
   const last = page.at(-1)
-  return { reviews: page.map(({ reader: _reader, entries, teams: readIn, ...review }) => expanded(review, gathered(entries), gathered(readIn))),
+  return { reviews: page.map(({ reader: _reader, entries, teams: readIn, ...review }) => expanded(review, jsonRows(entries), jsonRows(readIn))),
     next: reviews.length > 50 && last ? { time: Number(last.publishedAt), id: last.id } : null }
 }
 
@@ -316,7 +312,10 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
     listDependencyReviews: (context, user, allBases = false) => listContext(db, context, user, allBases),
     async changeDependencyReview(context, sessionId, change, now, tarballs) {
       const user = await actor(db, sessionId)
-      if (change.action !== 'revoke' && change.action !== 'publish') await requireReviewer(db, user.id)
+      // A draft is begun or edited by one who publishes to some team; their own
+      // published review revoked, or published to more teams, as `publish` checks
+      // each, whoever they are now.
+      if (change.action !== 'revoke' && change.action !== 'publish' && (await teams(db, user.id)).length === 0) throw new ManagedMutationError(403, 'review-access-required')
       let id = change.reviewId
       let current: DependencyReview | undefined
       if (id) {

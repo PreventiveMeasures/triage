@@ -14,6 +14,7 @@ import { readBundleDetails } from './bundle-cache.ts'
 import type { BlobStore } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
 import type { ManagedBundle, ManagedDb, ReportRecord } from './db.ts'
+import { inTurns } from './queue.ts'
 
 const compress = promisify(gzip)
 const reportFormat = (filename: string) => extname(filename).toLowerCase()
@@ -81,24 +82,19 @@ async function lendSourcemapEdges(details: BundleDetails, bundle: ManagedBundle,
   if (edges) details.edges = edges
 }
 
-// Immutable report hashes share a derivative across duplicate uploads. Bundle
-// identity and visibility are part of the key: a broader viewer's sources must
-// never populate a restricted response. Group derivatives by hash and filename
-// format so each format's permissions can be removed after its last deletion.
 // The repositories that are ours, so that a finding's `repo` none of them is
 // left out (common/finding-repo.js isStrayRepo).
 async function oursFor(db: ManagedDb, repo: { github: string | null }): Promise<Set<string>> {
   return ourRepoSlugs([...(await db.listSelectedRepos()).map(selected => selected.fullName), repo.github])
 }
 
+// Immutable report hashes share a derivative across duplicate uploads. Bundle
+// identity and visibility are part of the key: a broader viewer's sources must
+// never populate a restricted response. Group derivatives by hash and filename
+// format so each format's permissions can be removed after its last deletion.
 export function createReportSourcesCache(storage: CacheStorage, db: ManagedDb, reports: BlobStore, bundles: BundleStore, sourcemapEdges?: SourcemapEdges) {
   const pending = new Map<string, { reportId: string; job: Promise<boolean> }>()
-  let queue = Promise.resolve()
-  function enqueue<T>(work: () => Promise<T>): Promise<T> {
-    const job = queue.then(work)
-    queue = job.then(() => undefined, () => undefined)
-    return job
-  }
+  const enqueue = inTurns(1)
   async function referenced(report: ReportRecord, bundle: ManagedBundle) {
     const names = await db.listReportFilenamesWithBundleHash(bundle.id, report.sha256)
     return names.some(name => reportFormat(name) === reportFormat(report.filename)) && await db.getBundle(bundle.id) != null

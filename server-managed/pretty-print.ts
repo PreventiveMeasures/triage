@@ -16,7 +16,7 @@ import { FILE_HASH, computeBundleFileHashes } from '../common/bundle-metadata.js
 import { bundleCompareFiles, bundleCompareSideScopes } from '../common/bundle-compare-inputs.js'
 import { bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { MAX_PRETTY_BYTES, needsPrettyPrint, prettyExtension } from '../common/pretty-print.js'
-import type { OpenedBlob } from './blob-store.ts'
+import { type OpenedBlob, readBytes } from './blob-store.ts'
 import { type BundleCacheStorage, readSizedBundleDetails } from './bundle-cache.ts'
 import type { BundleStore } from './bundle-store.ts'
 import { encodeBrotli } from './brotli.ts'
@@ -24,7 +24,8 @@ import { CacheMissError, type CacheStorage } from './cache-storage.ts'
 import type { ManagedBundle, ManagedDb } from './db.ts'
 import { keptBriefly } from './kept-briefly.ts'
 import { loadNpmFiles } from './npm-loads.ts'
-import { type NpmVersionDocument, npmFileText } from './npm-packages.ts'
+import { type NpmVersionDocument, npmFileText, pathOrder } from './npm-packages.ts'
+import { inTurns } from './queue.ts'
 
 // Part of every kept copy's name; bumped when what the formatter writes for
 // the same file changes, or what its check lets through, so copies written
@@ -121,7 +122,7 @@ export async function prettyBody(text: string, extension: string): Promise<Buffe
   return encodeBrotli(Buffer.from(result.code))
 }
 
-const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
+export const opened = (body: Buffer): OpenedBlob => ({ size: body.byteLength, stream: Readable.from([body]) })
 
 // A version's file's hash, by its bytes: those of a version's files loaded
 // a little while since are the same bytes (npm-loads.ts), hashed once.
@@ -139,9 +140,7 @@ const decompress = promisify(brotliDecompress)
 
 // A pretty-printed copy's text, from its Brotli-encoded bytes.
 export async function prettyText(copy: OpenedBlob): Promise<string> {
-  const chunks: Buffer[] = []
-  for await (const chunk of copy.stream) chunks.push(chunk as Buffer)
-  return (await decompress(Buffer.concat(chunks))).toString()
+  return (await decompress(await readBytes(copy))).toString()
 }
 
 // Every file of a version that needs pretty-printing (needsPrettyPrint), read
@@ -157,7 +156,7 @@ async function npmPrintable(doc: NpmVersionDocument): Promise<Array<PrettyReques
       if (text !== null && needsPrettyPrint(path, text)) files.push({ path, hash: await npmFileHash(bytes), extension, text })
     }
   } finally { load.release() }
-  return files.toSorted((a, b) => (a.path < b.path ? -1 : 1))
+  return files.toSorted((a, b) => pathOrder(a.path, b.path))
 }
 
 // A file's line (PrettyLine): the text of its copy, as `copy` has it, or why
@@ -210,7 +209,7 @@ export function compared(sides: readonly [ComparedSide, ComparedSide]): AsyncGen
   const changed = sides.flatMap((own, i) => {
     const other = sides[1 - i]!.hashes
     return own.files.filter(({ path, hash }) => (other.has(path) ? other.get(path) !== hash : !moved[1 - i]!.has(hash))).map(file => ({ own, file }))
-  }).toSorted((a, b) => (a.file.path < b.file.path ? -1 : a.file.path > b.file.path ? 1 : 0))
+  }).toSorted((a, b) => pathOrder(a.file.path, b.file.path))
   return (async function* () {
     const unkept: typeof changed = []
     for await (const [{ own, file }, line] of readAhead(changed, item => keptLine(item.file, () => item.own.kept(item.file)))) {
@@ -230,16 +229,6 @@ function sharing<T>(): (key: string, make: () => Promise<T>) => Promise<T> {
   return (key, make) => {
     let job = pending.get(key)
     if (!job) pending.set(key, job = make().finally(() => pending.delete(key)))
-    return job
-  }
-}
-
-// Work done one job at a time, in the order asked.
-function serial(): <T>(work: () => Promise<T>) => Promise<T> {
-  let queue = Promise.resolve()
-  return work => {
-    const job = queue.then(work)
-    queue = job.then(() => undefined, () => undefined)
     return job
   }
 }
@@ -316,7 +305,7 @@ export function stalePrettyRemover(npm: CacheStorage): (signal?: AbortSignal) =>
 // as ever.
 function detailsReader(store: BundleStore) {
   type Details = NonNullable<Awaited<ReturnType<typeof readSizedBundleDetails>>>['details']
-  const enqueue = serial(), share = sharing<Details>()
+  const enqueue = inTurns(1), share = sharing<Details>()
   const held = keptBriefly<Details>({ keptMs: DETAILS_KEPT_MS, maxBytes: MAX_KEPT_DETAILS_BYTES, maxEntries: MAX_KEPT_DETAILS })
   return (record: ManagedBundle): Promise<Details> => {
     const key = `${record.id} ${record.integrity}`

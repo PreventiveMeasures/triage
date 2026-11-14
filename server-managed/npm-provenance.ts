@@ -8,14 +8,15 @@
 // without the server's token, and only about a version it answers for
 // without one (http.ts), each answer kept as npm-insights.ts keeps its own.
 import { Buffer } from 'node:buffer'
+import { SHA } from './github-values.ts'
 import { kept } from './kept.ts'
-import { NPM_REGISTRY, askUpstreamJson, plainObject } from './npm-packages.ts'
+import { plainObject } from './npm-manifest.ts'
+import { NPM_REGISTRY, askUpstreamJson } from './npm-packages.ts'
 
 const ATTESTATIONS_API = `${NPM_REGISTRY}/-/npm/v1/attestations`
 const ATTESTATIONS_BYTES = 1024 * 1024
 // SLSA's v1 statement, as npm writes it now, and v0.2, as it first did.
 const SLSA = /^https:\/\/slsa\.dev\/provenance\/v(?:1|0\.2)$/u
-const COMMIT = /^[0-9a-f]{40}$/u
 const GITHUB_REPOSITORY = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)$/u
 
 // Where a version was built: its source `repository` (an https URL) and
@@ -43,6 +44,11 @@ function sourceOf(uri: unknown) {
 // What `keys` lead to in `value`, through objects and arrays.
 const field = (value: unknown, ...keys: string[]): unknown =>
   keys.reduce<unknown>((at, key) => plainObject(at) || Array.isArray(at) ? (at as Record<string, unknown>)[key] : undefined, value)
+// The list they lead to, none where it is none.
+const listAt = (value: unknown, ...keys: string[]): unknown[] => {
+  const list = field(value, ...keys)
+  return Array.isArray(list) ? list : []
+}
 
 // What a statement says of the build, as v1 or v0.2 says it; null where it
 // names no source repository.
@@ -54,7 +60,7 @@ function readStatement(predicateType: string, predicate: unknown): NpmProvenance
     if (!repository) return null
     const commit = text(field(source, 'digest', 'gitCommit'))
     return {
-      repository, commit: commit && COMMIT.test(commit) ? commit : null, workflow: text(field(workflow, 'path')),
+      repository, commit: commit && SHA.test(commit) ? commit : null, workflow: text(field(workflow, 'path')),
       ref: text(field(workflow, 'ref')) ?? sourceOf(field(source, 'uri')).ref, builder: https(field(predicate, 'runDetails', 'builder', 'id')),
       run: https(field(predicate, 'runDetails', 'metadata', 'invocationId')), logIndex: null, runner: null,
     }
@@ -68,7 +74,7 @@ function readStatement(predicateType: string, predicate: unknown): NpmProvenance
   const run = /^(\d+)-(\d+)$/u.exec(text(invocation) ?? '')
   const github = GITHUB_REPOSITORY.exec(repository)?.[1]
   return {
-    repository, commit: commit && COMMIT.test(commit) ? commit : null, workflow: text(field(config, 'entryPoint')), ref,
+    repository, commit: commit && SHA.test(commit) ? commit : null, workflow: text(field(config, 'entryPoint')), ref,
     builder: https(field(predicate, 'builder', 'id')),
     run: https(invocation) ?? (run && github ? `https://github.com/${github}/actions/runs/${run[1]}/attempts/${run[2]}` : null), logIndex: null, runner: null,
   }
@@ -92,8 +98,7 @@ async function askProvenance(name: string, version: string, integrity: string): 
   const json = await askUpstreamJson(`${ATTESTATIONS_API}/${name.replace('/', '%2f')}@${encodeURIComponent(version)}`,
     { headers: { accept: 'application/json' }, limit: ATTESTATIONS_BYTES })
   if (json === null) return null
-  const attestations: unknown[] = Array.isArray(field(json, 'attestations')) ? field(json, 'attestations') as unknown[] : []
-  const slsa = attestations.find(item => SLSA.test(text(field(item, 'predicateType')) ?? ''))
+  const slsa = listAt(json, 'attestations').find(item => SLSA.test(text(field(item, 'predicateType')) ?? ''))
   if (!slsa) return null
   // The statement, whatever its length (the answer is bounded as a whole),
   // unlike the fields read out of it.
@@ -104,8 +109,7 @@ async function askProvenance(name: string, version: string, integrity: string): 
   // version's integrity has it.
   const purl = `pkg:npm/${name.replace(/^@/u, '%40')}@${version}`
   const digest = /^sha512-(.+)$/u.exec(integrity)?.[1]
-  const subjects: unknown[] = Array.isArray(field(statement, 'subject')) ? field(statement, 'subject') as unknown[] : []
-  if (!digest || !subjects.some(subject => field(subject, 'name') === purl && field(subject, 'digest', 'sha512') === Buffer.from(digest, 'base64').toString('hex'))) return null
+  if (!digest || !listAt(statement, 'subject').some(subject => field(subject, 'name') === purl && field(subject, 'digest', 'sha512') === Buffer.from(digest, 'base64').toString('hex'))) return null
   const provenance = readStatement(text(field(slsa, 'predicateType'))!, field(statement, 'predicate'))
   const logIndex = Number(field(slsa, 'bundle', 'verificationMaterial', 'tlogEntries', '0', 'logIndex'))
   return provenance && { ...provenance, logIndex: Number.isSafeInteger(logIndex) && logIndex >= 0 ? logIndex : null, runner: runnerOf(field(slsa, 'bundle')) }

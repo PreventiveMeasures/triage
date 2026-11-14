@@ -3,25 +3,23 @@ import { bundleCommitHash } from '../common/bundle-commit.js'
 import type { BundleSummary } from './bundle-cache.ts'
 import type { ManagedDb } from './db.ts'
 import { type GithubCommit, githubCommitKey } from './github-metadata.ts'
+import { LOGIN, MAX_NAME, timeOf } from './github-values.ts'
 
 const MAX_MESSAGE_LENGTH = 65_536
-const MAX_NAME_LENGTH = 256
-// GitHub logins, and the `[bot]` accounts apps commit as.
-const GITHUB_LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 const BACKFILL_LIMIT = 4
 const RETRY_MS = 5 * 60_000
 
-export type CommitDetails = Omit<GithubCommit, 'key' | 'fetchedAt'>
+type CommitDetails = Omit<GithubCommit, 'key' | 'fetchedAt'>
 // What viewers see of a cached commit: its subject in place of the message.
-export type CatalogCommitDetails = Omit<CommitDetails, 'message'> & { subject: string }
+type CatalogCommitDetails = Omit<CommitDetails, 'message'> & { subject: string }
 // What a catalog sends with a bundle whose summary records a commit, when
 // the cache holds its details, tags pointing to it, or both. `github` is the
 // repository they were cached for: the one the bundle is stored at.
-export interface BundleCommitInfo { sha: string; github: string; tags: string[]; details: CatalogCommitDetails | null }
+interface BundleCommitInfo { sha: string; github: string; tags: string[]; details: CatalogCommitDetails | null }
 interface CatalogBundle { integrity: string; repoId: number | null; repoFullName: string | null }
 type Summaries = ReadonlyMap<string, { summary: BundleSummary | null }>
 export interface CatalogCommit { repoId: number; sha: string; key: string }
-export interface CommitReader { commitDetails(sha: string): Promise<CommitDetails | null> }
+interface CommitReader { commitDetails(sha: string): Promise<CommitDetails | null> }
 
 function truncate(value: string, max: number): string {
   if (value.length <= max) return value
@@ -30,12 +28,7 @@ function truncate(value: string, max: number): string {
 }
 
 function name(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? truncate(value.trim(), MAX_NAME_LENGTH) : null
-}
-
-function date(value: unknown): number | null {
-  const time = typeof value === 'string' ? Date.parse(value) : NaN
-  return Number.isSafeInteger(time) ? time : null
+  return typeof value === 'string' && value.trim() ? truncate(value.trim(), MAX_NAME) : null
 }
 
 // `body` is a GitHub list-commits page that starts at `sha`, so its first
@@ -50,9 +43,9 @@ export function parseGithubCommit(sha: string, body: unknown): CommitDetails | n
   return {
     message: truncate(item.commit.message, MAX_MESSAGE_LENGTH),
     authorName: name(item.commit.author?.name),
-    authorLogin: typeof login === 'string' && GITHUB_LOGIN.test(login) ? login : null,
-    authoredAt: date(item.commit.author?.date),
-    committedAt: date(item.commit.committer?.date),
+    authorLogin: typeof login === 'string' && LOGIN.test(login) ? login : null,
+    authoredAt: timeOf(item.commit.author?.date),
+    committedAt: timeOf(item.commit.committer?.date),
   }
 }
 

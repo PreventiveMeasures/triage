@@ -8,7 +8,7 @@
 // failing the review where it couldn't be read.
 export interface LockfileScope { mode: 'exclude' | 'include'; paths: string[] }
 export const EVERY_LOCKFILE: LockfileScope = { mode: 'exclude', paths: [] }
-export const MAX_SCOPED_LOCKFILES = 100
+const MAX_SCOPED_LOCKFILES = 100
 const MAX_PATH = 300
 
 // A path as one is named: relative, of `/`-separated names none of which is

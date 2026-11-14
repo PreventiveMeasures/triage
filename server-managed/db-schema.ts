@@ -12,6 +12,21 @@ export const VIEW_SESSION_INDEX = 'CREATE INDEX IF NOT EXISTS managed_session_vi
 export const REPO_UPLOAD_INDEXES = `CREATE INDEX IF NOT EXISTS managed_report_repo_idx ON managed_report(repo_id, repo_directory);
 CREATE INDEX IF NOT EXISTS managed_bundle_repo_idx ON managed_bundle(repo_id, repo_directory);`
 
+// Shared by listing, access checks, and permission aggregation. A team sees
+// reports rooted at its path or below it. Literal substring comparison keeps
+// separators, case, and SQL wildcard characters significant.
+export const withinTeamPath = (path: string) => `(tr.path IS NULL OR tr.path = ''
+  OR ${path} = tr.path
+  OR substr(${path}, 1, length(tr.path) + 1) = tr.path || '/')`
+
+// Whether a scope of a non-hidden team of `user` (a placeholder, or a column)
+// holds the repository directory of `row`, the alias of a row with repo_id
+// and repo_directory (withinTeamPath).
+export const inUserTeamScope = (user: string, row: string) => `EXISTS (SELECT 1 FROM managed_team_repo tr
+  JOIN managed_team_user tu ON tu.team_id = tr.team_id
+  JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
+  WHERE tu.user_id = ${user} AND tr.repo_id = ${row}.repo_id AND ${withinTeamPath(`${row}.repo_directory`)})`
+
 export const MANAGED_SCHEMA = `
 CREATE TABLE IF NOT EXISTS managed_user (
   id             TEXT PRIMARY KEY,

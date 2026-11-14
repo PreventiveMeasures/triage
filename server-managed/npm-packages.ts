@@ -21,8 +21,6 @@ import type { Role } from '../common/managed/roles.ts'
 import { npmManifest, npmVersionFields, plainObject, stringRecord } from './npm-manifest.ts'
 import { keepJson, readKeptJson, upstreamCachePath } from './upstream-cache.ts'
 
-export { npmManifest, plainObject }
-
 export const NPM_REGISTRY = 'https://registry.npmjs.org'
 const VERSION_DOCUMENT_BYTES = 8 * 1024 * 1024
 // Abbreviated packuments of packages with thousands of versions run to tens of MiB.
@@ -117,14 +115,22 @@ export async function readLimited(res: Response, limit: number): Promise<Buffer>
   return Buffer.concat(chunks)
 }
 
+// A registry document as npm wrote it, read as the JSON object it is: a 502
+// `upstream-invalid` where it isn't one.
+function documentOf(body: Buffer): Record<string, unknown> {
+  let json: unknown
+  try { json = JSON.parse(body.toString('utf8')) } catch { throw new NpmPackageError(502, 'upstream-invalid') }
+  if (!plainObject(json)) throw new NpmPackageError(502, 'upstream-invalid')
+  return json
+}
+
 // A registry document, or null where the registry has none for this caller:
 // 404, or 401/403 as it answers some private packages asked anonymously.
 // Credentials go only with `token`; nothing is cached on either side, but for
 // public whole documents (publicWholeDocument).
 async function registryDocument(url: string, { token, accept, limit, signal }: { token: string | null; accept: string; limit: number; signal: AbortSignal }): Promise<Record<string, unknown> | null> {
-  const json = await askUpstreamJson(url, { headers: { accept, ...(token ? { authorization: `Bearer ${token}` } : {}) }, limit, signal, absent: [401, 403, 404] })
-  if (json === null || plainObject(json)) return json
-  throw new NpmPackageError(502, 'upstream-invalid')
+  const body = await askUpstream(url, { headers: { accept, ...(token ? { authorization: `Bearer ${token}` } : {}) }, limit, signal, absent: [401, 403, 404] })
+  return body === null ? null : documentOf(body)
 }
 
 // Where public packages' whole documents are kept, off Vercel: the upstream
@@ -147,9 +153,7 @@ async function publicWholeDocument(name: string, url: string, { limit, signal }:
     if (path !== null && kept) await rm(path, { force: true }).catch(() => {})
     return null
   }
-  let json: unknown
-  try { json = JSON.parse(body.toString('utf8')) } catch { throw new NpmPackageError(502, 'upstream-invalid') }
-  if (!plainObject(json)) throw new NpmPackageError(502, 'upstream-invalid')
+  const json = documentOf(body)
   if (path !== null && etag !== null) await keepJson(path, etag, body)
   return json
 }
@@ -377,6 +381,10 @@ export function npmPublishTime(doc: Pick<NpmVersionDocument, 'name' | 'version' 
 
 export interface NpmPackageFile { path: string; bytes: Uint8Array }
 
+// Paths in the order a package's files are read in (readNpmTar), and
+// Compare's: by their UTF-16 code units, as a plain sort orders them.
+export const pathOrder = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0
+
 // How a tar stream is read (readNpmTar): how far its symlinks may climb above
 // it, and the entries, files and bytes it may hold, a package's unless given.
 export interface TarReading { symlinksAbove?: number; maxEntries?: number; maxFiles?: number; maxBytes?: number }
@@ -408,7 +416,7 @@ export function readNpmTar(tar: Uint8Array, { symlinksAbove = 0, maxEntries = MA
     files.set(path, data)
     if (files.size > maxFiles || total > maxBytes) throw new NpmPackageError(413, 'package-too-large')
   }
-  return [...files].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+  return [...files].map(([path, bytes]) => ({ path, bytes })).toSorted((a, b) => pathOrder(a.path, b.path))
 }
 
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })

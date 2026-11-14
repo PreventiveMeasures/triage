@@ -5,6 +5,7 @@
 // every scan, as many repositories use the same few actions.
 import { type ActionsSource, type ResolvedAction, type ScanOptions, type WorkflowScan, dockerfileFindings, keptSource, ownFilesOf, resolveAction,
   scanWorkflow, usesOfKey } from '../risk/index.js'
+import { SHA } from './github-values.ts'
 import type { OpenedRepository } from './repository-risk-read.ts'
 import type { Lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
@@ -22,7 +23,7 @@ const MAX_DEPTH = 4
 const RESOLVERS = 4
 
 // A file of a repository's Actions: its text, or why it couldn't be had.
-export type ActionsFile = { path: string; kind: 'workflow' | 'action' | 'dockerfile' } & ({ text: string } | RiskFailure)
+type ActionsFile = { path: string; kind: 'workflow' | 'action' | 'dockerfile' } & ({ text: string } | RiskFailure)
 export type WorkflowsRead = { files: ActionsFile[] } | RiskFailure
 
 // What a scan tells of them: the workflows' paths, each file's scan, and
@@ -35,7 +36,7 @@ export type ActionLine = { type: 'action' } & (ResolvedAction | { key: string } 
 export interface ActionRef { key: string; owner: string | null; depth: number }
 
 // What reading a repository's Actions asks of it.
-export type ActionsReading = Required<Pick<OpenedRepository, 'workflows' | 'file'>>
+type ActionsReading = Required<Pick<OpenedRepository, 'workflows' | 'file'>>
 
 // A file's text, or why not: one GitHub hasn't, or larger than read.
 async function readFile(reading: ActionsReading, path: string): Promise<{ text: string } | RiskFailure> {
@@ -107,13 +108,11 @@ export type ActionAnswers = Lru<{ at: number; answer: unknown }>
 export const answerWeight = ({ answer }: { at: number; answer: unknown }) => Array.isArray(answer) ? answer.length + 1
   : typeof answer === 'string' ? Math.ceil(answer.length / 1024) + 1 : ((answer as { branches?: unknown[] } | null)?.branches?.length ?? 0) + 1
 
-const isCommit = (text: string) => /^[\da-f]{40}$/u.test(text)
-
 // `source`, what it answers of a public repository kept for every scan, the
 // same whoever asks: of a commit while kept (but none, as one can be pushed
 // later), the rest, its advisories too, for RISK_KEPT_MS. A private one's,
 // or one missing, never.
-export function sharedSource(source: ActionsSource, answers: ActionAnswers): ActionsSource {
+function sharedSource(source: ActionsSource, answers: ActionAnswers): ActionsSource {
   const keyOf = (what: string, name: string, ...more: string[]) => [what, name.toLowerCase(), ...more].join('\0')
   const kept = (key: string, lasting = false) => {
     const at = answers.get(key)
@@ -139,14 +138,14 @@ export function sharedSource(source: ActionsSource, answers: ActionAnswers): Act
     tag: (name, tag) => shared(name, keyOf('tag', name, tag), false, () => source.tag(name, tag)),
     branch: (name, branch) => shared(name, keyOf('branch', name, branch), false, () => source.branch(name, branch)),
     branches: name => shared(name, keyOf('branches', name), false, () => source.branches(name)),
-    contains: (name, base, sha) => shared(name, keyOf('contains', name, base, sha), isCommit(base), () => source.contains(name, base, sha)),
-    file: (name, path, commit) => shared(name, keyOf('file', name, path, commit), isCommit(commit), () => source.file(name, path, commit)),
+    contains: (name, base, sha) => shared(name, keyOf('contains', name, base, sha), SHA.test(base), () => source.contains(name, base, sha)),
+    file: (name, path, commit) => shared(name, keyOf('file', name, path, commit), SHA.test(commit), () => source.file(name, path, commit)),
     ...source.advisories && { advisories: (name: string, versions: string[], internal: boolean) =>
       shared(name, keyOf('advisories', name, ...versions), false, () => source.advisories!(name, versions, internal)) },
   }
 }
 
-export interface ActionsResolving {
+interface ActionsResolving {
   source: ActionsSource
   signal: AbortSignal
   tell(line: ActionLine): void

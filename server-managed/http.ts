@@ -148,7 +148,7 @@ import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTip
   issueListStore, lockfileReadStore,
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
-import { type NpmDelta, keptNpmDeltas, npmDelta } from './npm-delta.ts'
+import { type NpmDelta, deltaKey, keptNpmDeltas, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedKeys, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
@@ -184,9 +184,10 @@ import { normalizeTeamPath } from './repo-path.ts'
 import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/managed/scan-models.ts'
 import { CONFIG_PATH, type ManagedSessionInfo, type ServerInfo } from '../common/server-info.ts'
 import { bundleCommitHash } from '../common/bundle-commit.js'
-import { GithubApiError, collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
+import { collectRepos, fetchPublicRepository, installUrl, publicRepositoryName, repositoryInstallation } from './github-app.ts'
 import { type TaggedRead, keepTaggedReadsIn } from './github-requests.ts'
-import { upstreamGithub } from './github-errors.ts'
+import { SHA, timeOf } from './github-values.ts'
+import { GithubApiError, upstreamGithub } from './github-errors.ts'
 import { createClient } from '@preventive/upstream/github.js'
 import type { ConnectedRepo } from './github-app.ts'
 import { canAddAnyPublicRepository, canAddRepositories, passesPublicRepositorySafeguard } from './repository-policy.ts'
@@ -235,9 +236,10 @@ import { type KnownMerges, type SquashedPull, type Squashes, squashedPulls } fro
 import { AGENTS_READ_VERSION, type AuthoredCommit, type BranchTip, type BranchTips, COMMITS_CURSOR, type CommitPulls, repositoryAgents } from './repository-agents.ts'
 import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
 import { type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits, type PullDependencies,
-  type PullDependencyStore, eachOf, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
+  type PullDependencyStore, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
+import { eachOf } from './queue.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
-import { MAX_REQUIRED_REVIEWS, type RepoDependencyReview, SINCE_COMMIT } from './repository-dependency-reviews.ts'
+import { MAX_REQUIRED_REVIEWS, type RepoDependencyReview } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, heldTo, reviewedIn, scopeOf } from './lockfile-scope.ts'
 import { type BundledVersion, bundleDependencies, installsBundle } from './bundle-dependency-reviews.ts'
 import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
@@ -350,6 +352,8 @@ const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PAT
   NPM_RENAME_DIFF_PATH, NPM_TYPE_ONLY_PATH, NPM_RISK_PATH, NPM_COMPARISON_PATH, NPM_DELTA_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
+// `res`'s connection dropped once the response goes NPM_RESPONSE_IDLE_MS unread.
+function dropIdle(res: ServerResponse): void { res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy()) }
 const MAX_TEAM_NAME = 100
 // Managed data routes, and with them the authentication routes, which an
 // admin's view as another user covers. Other paths fall through to a combined
@@ -379,10 +383,8 @@ async function handleWorkspaceFixes(res: ServerResponse, deps: ManagedHttpDeps, 
   const currentUrls = storedFixUrls(await deps.db.listTriageFixes(ids))
   if (await readWorkspaceSession(res, deps, cookie) == null) return
   await recheckTeam(deps.db, s.session.id, snapshot)
-  if (JSON.stringify(currentUrls) !== JSON.stringify(manualUrls)) {
-    sendJson(res, 404, { error: 'workspace-changed' }); return
-  }
-  if (result.updates.length > 0 && !await deps.db.applyManagedIssueFixes(s.session.id, snapshot, result.updates)) {
+  if (JSON.stringify(currentUrls) !== JSON.stringify(manualUrls)
+    || (result.updates.length > 0 && !await deps.db.applyManagedIssueFixes(s.session.id, snapshot, result.updates))) {
     sendJson(res, 404, { error: 'workspace-changed' }); return
   }
   sendJson(res, 200, { fixes: result.fixes })
@@ -488,8 +490,21 @@ export interface ManagedHttpDeps {
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
 
+// Work going on behind a request's answer: tracked, and on serverless its
+// invocation kept alive till it settles.
+function trackBehind(deps: ManagedHttpDeps, work: Promise<unknown>): void {
+  deps.track(work)
+  deps.waitUntil?.(work)
+}
+
 function send405(res: ServerResponse, allow: string): void {
   sendJson(res, 405, { error: 'method-not-allowed' }, { allow })
+}
+
+// A redirect, never kept, setting `setCookie`.
+function sendRedirect(res: ServerResponse, location: string, setCookie: string | string[]): void {
+  res.writeHead(302, { location, 'set-cookie': setCookie, 'cache-control': 'no-store' })
+  res.end()
 }
 
 function firstHeader(v: string | string[] | undefined): string | null {
@@ -507,7 +522,7 @@ function firstHeader(v: string | string[] | undefined): string | null {
 const USER_AVATAR_CACHE = 'private, max-age=300, stale-while-revalidate=86400'
 
 // `key` is the image chosen for `id`; one not cached falls back to `id`'s own.
-async function serveAvatar(req: IncomingMessage, res: ServerResponse, avatarStore: AvatarStore, id: string, key = id, cacheControl = USER_AVATAR_CACHE): Promise<void> {
+async function serveAvatar(req: IncomingMessage, res: ServerResponse, avatarStore: AvatarStore, id: string, key: string, cacheControl = USER_AVATAR_CACHE): Promise<void> {
   sendAvatar(req, res, await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id)), cacheControl)
 }
 
@@ -563,18 +578,25 @@ async function readBodyBytes(req: IncomingMessage, maxBytes: number): Promise<Bu
 
 // A file upload's content, opening a body the browser sealed to this session
 // (common/managed/upload-seal.ts). Link reports are never sent in parts; the
-// parts of one sent in them are deleted behind its answer.
-async function readUploadBody(req: IncomingMessage, deps: ManagedHttpDeps, session: ManagedSession, kind: UploadKind | 'links'): Promise<Buffer> {
-  const maxBytes = kind === 'bundles' ? deps.config.maxBundleBytes : deps.config.maxReportBytes
-  const sealed = req.headers[UPLOAD_SEAL_HEADER] !== undefined
-  const limit = sealed ? maxSealedBytes(maxBytes) : maxBytes
-  let bytes
-  if (kind === 'links' || req.headers['x-upload-id'] == null) bytes = await readBodyBytes(req, limit)
-  else if (deps.uploadStore) {
-    bytes = await readUpload(deps.uploadStore, req, session.id, kind, limit, cleanup => { deps.track(cleanup); deps.waitUntil?.(cleanup) })
+// parts of one sent in them are deleted behind its answer. Null, answered,
+// where it can't be read: 413 past its size, else 400.
+async function readUploadBody(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, kind: UploadKind | 'links'): Promise<Buffer | null> {
+  try {
+    const maxBytes = kind === 'bundles' ? deps.config.maxBundleBytes : deps.config.maxReportBytes
+    const sealed = req.headers[UPLOAD_SEAL_HEADER] !== undefined
+    const limit = sealed ? maxSealedBytes(maxBytes) : maxBytes
+    let bytes
+    if (kind === 'links' || req.headers['x-upload-id'] == null) bytes = await readBodyBytes(req, limit)
+    else if (deps.uploadStore) {
+      bytes = await readUpload(deps.uploadStore, req, session.id, kind, limit, cleanup => { trackBehind(deps, cleanup) })
+    }
+    else throw new Error('bad-upload')
+    return sealed ? await openSessionUpload(session.uploadKey, bytes, maxBytes) : bytes
+  } catch (err) {
+    const tooLarge = err instanceof Error && err.message === 'too-large'
+    sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'too-large' : 'bad-body' })
+    return null
   }
-  else throw new Error('bad-upload')
-  return sealed ? await openSessionUpload(session.uploadKey, bytes, maxBytes) : bytes
 }
 
 // GET /api/admin/uploads/key — the session's upload public key, created on
@@ -591,8 +613,8 @@ async function handleUploadKey(req: IncomingMessage, res: ServerResponse, deps: 
 async function handleUploadPart(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, path: string) {
   const cancel = req.method === 'DELETE'
   if (req.method !== 'POST' && !cancel) { send405(res, 'POST, DELETE'); return }
-  const s = await checkMutation(req, res, deps, cookie, { handed: true })
-  if (!s || !requireManageRole(res, s.user)) return
+  const s = await manageMutation(req, res, deps, cookie, { handed: true })
+  if (!s) return
   if (!deps.uploadStore) { sendJson(res, 404, { error: 'not-found' }); return }
   const match = /^\/api\/admin\/uploads\/(reports|bundles)\/([^/]+)(?:\/(0|[1-9][0-9]*))?$/u.exec(path)
   if (!match || (cancel ? match[3] !== undefined : match[3] === undefined)) { sendJson(res, 400, { error: 'bad-upload' }); return }
@@ -625,6 +647,24 @@ async function handleUploadPart(req: IncomingMessage, res: ServerResponse, deps:
 async function readJsonBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<unknown> {
   const buf = await readBodyBytes(req, maxBytes)
   return JSON.parse(buf.toString('utf8') || 'null')
+}
+
+// A mutation's JSON body (readJsonBody), for the fields it names to be read:
+// none of one that is no object (null, `false`, `0`, `""`, an array), which
+// is answered as one naming none. Null, answered 400, where it can't be read.
+async function readBodyFields(req: IncomingMessage, res: ServerResponse, maxBytes?: number): Promise<Record<string, unknown> | null> {
+  let body: unknown
+  try { body = await readJsonBody(req, maxBytes) } catch { sendJson(res, 400, { error: 'bad-body' }); return null }
+  return plainObject(body) ? body : {}
+}
+
+// A JSON body (readJsonBody) that is an object; null, answered 400, where it
+// is none.
+async function readBodyObject(req: IncomingMessage, res: ServerResponse, maxBytes?: number): Promise<Record<string, unknown> | null> {
+  const body = await readJsonBody(req, maxBytes).catch(() => null)
+  if (plainObject(body)) return body
+  sendJson(res, 400, { error: 'bad-body' })
+  return null
 }
 
 // The router enforces same-origin for every request. A mutation also needs an
@@ -679,12 +719,11 @@ async function handleViewAs(req: IncomingMessage, res: ServerResponse, deps: Man
     res.end(); return
   }
   if (method !== 'POST') { send405(res, 'POST, DELETE'); return }
-  const s = await checkMutation(req, res, deps, cookie)
+  const s = await adminMutation(req, res, deps, cookie)
   if (s == null) return
-  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const userId = (body as { userId?: unknown } | null)?.userId
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { userId } = body
   if (typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (userId === s.user.id) { sendJson(res, 400, { error: 'cannot-view-as-self' }); return }
   const target = await deps.db.getUser(userId)
@@ -710,8 +749,8 @@ async function handleProfile(req: IncomingMessage, res: ServerResponse, deps: Ma
   if (method !== 'POST') { send405(res, 'GET, POST'); return }
   const s = await profileMutation(req, res, deps, cookie)
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+  const body = await readBodyFields(req, res)
+  if (!body) return
   const choice = parseProfileChoice(body)
   if (choice == null) { sendJson(res, 400, { error: 'bad-request' }); return }
   await deps.db.setProfileChoice(s.session.id, choice, Date.now())
@@ -745,11 +784,11 @@ async function sendProfile(res: ServerResponse, deps: ManagedHttpDeps, userId: s
 
 // { name?, avatar? }, each a linked account's id or null; at least one.
 function parseProfileChoice(body: unknown): ProfileChoice | null {
-  if (body == null || typeof body !== 'object' || Array.isArray(body)) return null
+  if (!plainObject(body)) return null
   const choice: ProfileChoice = {}
   for (const key of ['name', 'avatar'] as const) {
     if (!Object.hasOwn(body, key)) continue
-    const value = (body as Record<string, unknown>)[key]
+    const value = body[key]
     if (value !== null && (typeof value !== 'string' || !isBlobId(value))) return null
     choice[key] = value
   }
@@ -761,13 +800,11 @@ function parseProfileChoice(body: unknown): ProfileChoice | null {
 // at least one admin).
 async function handleSetRole(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
-  const s = await checkMutation(req, res, deps, cookie, { handed: true })
+  const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const userId = (body as { userId?: unknown } | null)?.userId
-  const role = (body as { role?: unknown } | null)?.role
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { userId, role } = body
   if (typeof userId !== 'string' || !isRole(role)) { sendJson(res, 400, { error: 'bad-request' }); return }
   if (userId === s.user.id) { sendJson(res, 403, { error: 'cannot-change-own-role' }); return }
   const target = await deps.db.getUser(userId)
@@ -841,6 +878,13 @@ async function handleListModels(res: ServerResponse, deps: ManagedHttpDeps, cook
   sendJson(res, 200, { models: MANAGED_SCAN_MODELS, defaultModel: DEFAULT_MANAGED_SCAN_MODEL })
 }
 
+// A repository GitHub lists, as the repository list shows it: `selected`
+// where it is among those connected.
+const listedRepository = (repo: ConnectedRepo, selected: ReadonlySet<number>) => ({
+  id: repo.id, fullName: repo.fullName, private: repo.private, visibility: repo.visibility, htmlUrl: repo.htmlUrl,
+  installed: repo.installationId != null, selected: selected.has(repo.id),
+})
+
 // GET /api/admin/repositories — the connected repositories by default. The
 // potentially large GitHub discovery lists are opt-in (`scope=installed` or
 // `scope=public`). Return the complete catalogue for local search and organization
@@ -859,10 +903,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
     const selected = new Set((await deps.db.listSelectedRepos()).map((repo) => repo.repoId))
     sendJson(res, 200, {
       installUrl: installUrl(deps.config),
-      repositories: listing.repositories.map((repo) => ({
-        id: repo.id, fullName: repo.fullName, private: repo.private, visibility: repo.visibility, htmlUrl: repo.htmlUrl,
-        installed: repo.installationId != null, selected: selected.has(repo.id),
-      })),
+      repositories: listing.repositories.map(repo => listedRepository(repo, selected)),
       tokenMissing: listing.tokenMissing,
     })
     return
@@ -895,11 +936,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
       return
     }
     tokenMissing = listing.tokenMissing
-    repositories = listing.repositories
-      .map((r) => ({
-        id: r.id, fullName: r.fullName, private: r.private, visibility: r.visibility, htmlUrl: r.htmlUrl,
-        installed: r.installationId != null, selected: selected.has(r.id),
-      }))
+    repositories = listing.repositories.map(repo => listedRepository(repo, selected))
   }
   repositories.sort((a, b) => a.fullName.localeCompare(b.fullName))
   const total = repositories.length
@@ -968,9 +1005,9 @@ async function handleAddPublicRepository(req: IncomingMessage, res: ServerRespon
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
   if (!canAddAnyPublicRepository(s.user, await deps.db.getUserGithubId(s.user.id))) { sendJson(res, 403, { error: 'forbidden' }); return }
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const fullName = publicRepositoryName((body as { repository?: unknown } | null)?.repository)
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const fullName = publicRepositoryName(body['repository'])
   if (fullName == null) { sendJson(res, 400, { error: 'bad-repository' }); return }
   let repo
   try { repo = await fetchPublicRepository(fullName) } catch (err) {
@@ -991,9 +1028,9 @@ async function handleConnectRepositoryApp(req: IncomingMessage, res: ServerRespo
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const repoId = (body as { repoId?: unknown } | null)?.repoId
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { repoId } = body
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
   const repo = (await deps.db.listAllRepos()).find(row => row.repoId === repoId)
   if (repo == null) { sendJson(res, 404, { error: 'repo-not-connected' }); return }
@@ -1031,10 +1068,9 @@ async function handleSelectRepository(req: IncomingMessage, res: ServerResponse,
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const repoId = (body as { repoId?: unknown } | null)?.repoId
-  const selected = (body as { selected?: unknown } | null)?.selected
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { repoId, selected } = body
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof selected !== 'boolean') {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
@@ -1060,17 +1096,15 @@ async function handleRepositoryDependencyReview(req: IncomingMessage, res: Serve
   if ((req.method ?? 'GET') !== 'POST') { send405(res, 'POST'); return }
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: Record<string, unknown> | null
-  try { body = await readJsonBody(req) as Record<string, unknown> | null } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const repoId = body?.['repoId']
-  const enabled = body?.['enabled']
-  const required = body?.['required']
-  const since = body?.['since'] ?? null
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { repoId, enabled, required } = body
+  const since = body['since'] ?? null
   // The lockfiles it holds to, kept as they are where none is sent.
-  const lockfiles = body?.['lockfiles'] === undefined ? undefined : scopeOf(body['lockfiles'])
+  const lockfiles = body['lockfiles'] === undefined ? undefined : scopeOf(body['lockfiles'])
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof enabled !== 'boolean'
     || typeof required !== 'number' || !Number.isSafeInteger(required) || required < 1 || required > MAX_REQUIRED_REVIEWS
-    || (since !== null && (typeof since !== 'string' || !SINCE_COMMIT.test(since))) || lockfiles === null) {
+    || (since !== null && (typeof since !== 'string' || !SHA.test(since))) || lockfiles === null) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
   if (since !== null && deps.reviewedDependencies) { sendJson(res, 400, { error: 'since-unsupported' }); return }
@@ -1143,15 +1177,11 @@ async function handleRepositoryImpact(req: IncomingMessage, res: ServerResponse,
 // attached reports/bundles. The exact name + explicit acknowledgement are
 // checked server-side too; the UI's dialog is a usability guard, not the policy.
 async function handleRemoveRepository(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  const s = await checkMutation(req, res, deps, cookie, { handed: true })
+  const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const repoId = (body as { repoId?: unknown } | null)?.repoId
-  const fullName = (body as { fullName?: unknown } | null)?.fullName
-  const acknowledge = (body as { acknowledge?: unknown } | null)?.acknowledge
-  const deleteTriage = (body as { deleteTriage?: unknown } | null)?.deleteTriage
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { repoId, fullName, acknowledge, deleteTriage } = body
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || typeof fullName !== 'string' || acknowledge !== true || typeof deleteTriage !== 'boolean') {
     sendJson(res, 400, { error: 'confirmation-required' }); return
   }
@@ -1240,11 +1270,11 @@ async function resolveUploadRepoId(req: IncomingMessage, res: ServerResponse, de
 async function handleSetReportRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await manageMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const reportId = (body as { reportId?: unknown } | null)?.reportId
-  const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
-  const directory = (body as { directory?: unknown } | null)?.directory ?? ''
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { reportId } = body
+  const repoId = body['repoId'] ?? null
+  const directory = body['directory'] ?? ''
   if (typeof reportId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (repoId !== null && (typeof repoId !== 'number' || !Number.isSafeInteger(repoId))) { sendJson(res, 400, { error: 'bad-repo' }); return }
   const normalized = normalizeTeamPath(directory)
@@ -1261,10 +1291,9 @@ async function handleSetReportRepo(req: IncomingMessage, res: ServerResponse, de
 async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await manageMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const reportId = (body as { reportId?: unknown } | null)?.reportId
-  const visible = (body as { visible?: unknown } | null)?.visible
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { reportId, visible } = body
   if (typeof reportId !== 'string' || typeof visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
   const { report, user } = await deps.db.mutateReport(s.session.id, reportId, { type: 'visibility', visible })
   if (report.visible !== visible) await activity(deps, user, 'visibility', visible ? 'published a report' : 'hid a report', { reportId, report: report.filename, repo: await repositoryName(deps, report.repoId) })
@@ -1274,10 +1303,9 @@ async function handleSetReportVisible(req: IncomingMessage, res: ServerResponse,
 async function handleSetBundleVisible(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await manageMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const bundleId = (body as { bundleId?: unknown } | null)?.bundleId
-  const visible = (body as { visible?: unknown } | null)?.visible
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { bundleId, visible } = body
   if (typeof bundleId !== 'string' || typeof visible !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
   const { bundle, user } = await deps.db.mutateBundle(s.session.id, bundleId, { type: 'visibility', visible })
   if (bundle.visible !== visible) await activity(deps, user, 'visibility', visible ? 'published a bundle' : 'hid a bundle', { bundleId, report: bundle.filename, repo: await repositoryName(deps, bundle.repoId) })
@@ -1289,11 +1317,11 @@ async function handleSetBundleVisible(req: IncomingMessage, res: ServerResponse,
 async function handleSetBundleRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await manageMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const bundleId = (body as { bundleId?: unknown } | null)?.bundleId
-  const repoId = (body as { repoId?: unknown } | null)?.repoId ?? null
-  const normalized = normalizeTeamPath((body as { directory?: unknown } | null)?.directory ?? '')
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { bundleId } = body
+  const repoId = body['repoId'] ?? null
+  const normalized = normalizeTeamPath(body['directory'] ?? '')
   if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
   const directory = repoId == null ? '' : normalized.path ?? ''
   if (typeof bundleId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
@@ -1328,8 +1356,8 @@ async function resolveReportBundle(deps: ManagedHttpDeps, user: StoredUser, json
 }
 
 async function sendUploadedReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, report: ReportRecord, deduped: boolean): Promise<void> {
-  const current = await checkMutation(req, res, deps, cookie)
-  if (!current || !requireManageRole(res, current.user)) return
+  const current = await manageMutation(req, res, deps, cookie)
+  if (!current) return
   // Uploading known bytes cannot reveal another team's report or its source
   // bundle. The stored location/ownership wins over the upload headers.
   if (!(await canViewReport(deps, current.user, report.id))) { sendJson(res, 409, { error: 'report-conflict' }); return }
@@ -1351,20 +1379,13 @@ async function sendUploadedReport(req: IncomingMessage, res: ServerResponse, dep
 // insert failure or concurrent duplicate drops the orphan blob; an uncertain
 // commit retains it. 413 over the cap, 400 on empty.
 async function handleUploadReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  let s = await checkMutation(req, res, deps, cookie, { handed: true })
+  let s = await manageMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  if (!requireManageRole(res, s.user)) return
-  let bytes: Buffer
-  try {
-    bytes = await readUploadBody(req, deps, s.session, 'reports')
-  } catch (err) {
-    const tooLarge = err instanceof Error && err.message === 'too-large'
-    sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'too-large' : 'bad-body' })
-    return
-  }
+  const bytes = await readUploadBody(req, res, deps, s.session, 'reports')
+  if (!bytes) return
   // Shared storage reads may outlast a session or role change.
-  s = await checkMutation(req, res, deps, cookie)
-  if (!s || !requireManageRole(res, s.user)) return
+  s = await manageMutation(req, res, deps, cookie)
+  if (!s) return
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
   const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.json')
   const parsed = readManagedReport(bytes.toString('utf8'), filename)
@@ -1482,9 +1503,8 @@ async function handleGetReport(res: ServerResponse, deps: ManagedHttpDeps, cooki
 // same-origin + CSRF. Drops the row, then best-effort the bytes; 404 when there
 // was no such report.
 async function handleDeleteReport(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
-  const s = await checkMutation(req, res, deps, cookie, { handed: true })
+  const s = await manageMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  if (!requireManageRole(res, s.user)) return
   const { report, user } = await deps.db.mutateReport(s.session.id, id, { type: 'delete' })
   await deps.reportSourcesCache?.deleteReport(report).catch((err) => { console.warn('managed: report sources delete failed:', err) })
   await deps.reportStore.delete(id).catch((err) => { console.warn('managed: report bytes delete failed:', err) })
@@ -1514,6 +1534,12 @@ async function repositoryBrowserUser(deps: ManagedHttpDeps, userId: string) {
     deps.db.getUserGithubId(userId), ensureUserAccessToken(deps.config, deps.db, userId, Date.now()),
   ])
   return { githubUserId, token }
+}
+
+// The repository browser's reader of `repo` (repository-browser.ts), with
+// user `userId`'s own GitHub access.
+async function repositoryReader(deps: ManagedHttpDeps, userId: string, repo: SelectedRepo) {
+  return createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, userId)).reader(repo)
 }
 
 // After a catalog response: read the commit details it lacked with this
@@ -1580,13 +1606,20 @@ function scopeRepositoryContents(contents: RepositoryContents | null, virtualEnt
   } : {}) }
 }
 
+// The repository a read's query names by its id (`repoId`); null where it
+// names none.
+function askedRepoId(query: URLSearchParams): number | null {
+  const repoId = Number(query.get('repoId'))
+  return Number.isSafeInteger(repoId) && repoId > 0 ? repoId : null
+}
+
 // A browse's repository, revision and directory, as its query names them;
 // null, answered, where it names none.
 function repositoryQuery(res: ServerResponse, query: URLSearchParams) {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const normalized = normalizeTeamPath(query.get('path') ?? '')
   const ref = query.get('ref') ?? ''
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !normalized.ok || ref.length > 1024 || /\p{Cc}/u.test(ref)) {
+  if (repoId === null || !normalized.ok || ref.length > 1024 || /\p{Cc}/u.test(ref)) {
     sendJson(res, 400, { error: 'bad-request' }); return null
   }
   return { repoId, ref, path: normalized.path ?? '' }
@@ -1595,15 +1628,29 @@ function repositoryQuery(res: ServerResponse, query: URLSearchParams) {
 // The repository `repoId` as the reader may browse it at `path`: one of their
 // bundle repositories, and what their grants show of that directory
 // (`virtualEntries`, null where they reach all of it: scopedDirectory). Null,
-// answered, where it is none of theirs. Every team member (view or above)
-// reads the repositories their teams reach; the reader then checks their own
-// GitHub read permission (repository-browser.ts), on each read.
-async function authorizeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number, path: string, { handed = false } = {}) {
+// answered, where it is none of theirs, or, `whole`, where they reach only
+// some of that directory. Every team member (view or above) reads the
+// repositories their teams reach; the reader then checks their own GitHub
+// read permission (repository-browser.ts), on each read.
+async function authorizeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number, path: string, { handed = false, whole = false } = {}) {
   const s = await readWorkspaceSession(res, deps, cookie, { handed })
   if (!s) return null
   const access = repositoryAccessIn(await repositoryGrants(deps, s.user), repoId, path)
   if (!access) { sendJson(res, 404, { error: 'no-repository' }); return null }
+  if (whole && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
   return { ...access, user: s.user }
+}
+
+// What `authorize` answers once `reader` has read the repository `authorized`
+// names: the reader's GitHub access checked again, then their grants, and it
+// still the same repository; else null, answered.
+async function stillAuthorized<T extends { repo: SelectedRepo }>(res: ServerResponse, reader: RepositoryReader, authorize: () => Promise<T | null>,
+  authorized: SelectedRepo): Promise<T | null> {
+  await reader.recheckAccess()
+  const current = await authorize()
+  if (!current) return null
+  if (!sameRepository(current.repo, authorized)) { sendJson(res, 409, { error: 'repository-changed' }); return null }
+  return current
 }
 
 // What a reader's grants let them read of the repositories (bundleRepos's
@@ -1629,7 +1676,12 @@ const sameRepository = (current: SelectedRepo, authorized: SelectedRepo) =>
   JSON.stringify({ ...current, cachedDefaultBranch: authorized.cachedDefaultBranch }) === JSON.stringify(authorized)
 
 function sendGithubError(res: ServerResponse, err: GithubApiError) {
-  sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }, err.retryAfter == null ? {} : { 'retry-after': String(err.retryAfter) })
+  sendRefusal(res, githubRefusal(err))
+}
+// `err` answered where it is GitHub's failure (sendGithubError), else thrown on.
+function answerGithubFailure(res: ServerResponse, err: unknown): void {
+  if (!(err instanceof GithubApiError)) throw err
+  sendGithubError(res, err)
 }
 
 // Recheck repository/path grants after upstream reads, before returning names.
@@ -1650,8 +1702,7 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
   const access = await authorize(true)
   if (!access) return
   try {
-    const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id))
-    const reader = await browser.reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     // Microseconds, so overlapping browses practically never share a listing time.
     const observedUs = Math.round((performance.timeOrigin + performance.now()) * 1000)
     const trees = repositoryTreesOf(deps)
@@ -1667,17 +1718,14 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
     if (refs || tags.length > 0) {
       await deps.db.refreshGithubTags(access.repo.repoId, tags, refs && tagsComplete, observedUs).catch(err => { console.warn('managed: tag cache refresh failed:', err) })
     }
-    await reader.recheckAccess()
-    const current = await authorize()
-    if (!current) return
     // This request (or another reader) may have refreshed the shared hint.
-    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
+    const current = await stillAuthorized(res, reader, authorize, access.repo)
+    if (!current) return
     sendJson(res, 200, refs ? { ...listed, tagCommits, ...(withDefault ? {
       defaultContents: scopeRepositoryContents(revisions?.defaultContents ?? null, current.virtualEntries),
     } : {}) } : commitOnly ? contents : scopeRepositoryContents(contents as RepositoryContents, current.virtualEntries))
   } catch (err) {
-    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
-    throw err
+    answerGithubFailure(res, err)
   }
 }
 
@@ -1707,7 +1755,7 @@ const REPOSITORY_LISTINGS_HELD = 256
 const LISTING_READ = 1
 type TreeFiles = Awaited<ReturnType<typeof repositoryTreeFiles>>
 const repositoryTrees = new WeakMap<ManagedDb, { ids: Lru<string>; files: Lru<TreeFiles>; listings: Lru<DirectoryListing> }>()
-const treeId = (value: unknown): value is string => typeof value === 'string' && /^[a-f\d]{40}$/u.test(value)
+const treeId = (value: unknown): value is string => typeof value === 'string' && SHA.test(value)
 const treeFiles = (value: unknown): value is TreeFiles => value === null || (plainObject(value)
   && Number.isSafeInteger(value['files']) && (value['files'] as number) >= 0 && Number.isSafeInteger(value['bytes']) && (value['bytes'] as number) >= 0)
 const directoryListing = (value: unknown): value is DirectoryListing => plainObject(value) && Array.isArray(value['entries']) && typeof value['limited'] === 'boolean'
@@ -1747,38 +1795,25 @@ async function keptTree<T>(memory: Lru<T>, store: KeptStore<T>, key: string, kep
 function repositoryCodeKeptOf(deps: ManagedHttpDeps): RepositoryCodeKept | null {
   if (!deps.repositoryCodeStorage) return null
   const active = async (repoId: number) => (await deps.db.listSelectedRepos()).some(row => row.repoId === repoId)
-  return repositoryCodeKept(deps.repositoryCodeStorage, codeHeadStore(deps.db, deps.config.debug), active, work => {
-    deps.track(work)
-    deps.waitUntil?.(work)
-  }, deps.config.debug)
+  return repositoryCodeKept(deps.repositoryCodeStorage, codeHeadStore(deps.db, deps.config.debug), active, work => { trackBehind(deps, work) }, deps.config.debug)
 }
 
 async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const asked = repositoryQuery(res, query)
   if (!asked) return
   const { repoId, ref, path } = asked
-  const authorize = async (handed = false) => {
-    const access = await authorizeRepository(res, deps, cookie, repoId, path, { handed })
-    if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
-    return access
-  }
+  const authorize = (handed = false) => authorizeRepository(res, deps, cookie, repoId, path, { handed, whole: true })
   const access = await authorize(true)
   if (!access) return
   try {
-    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     const commit = await reader.commit(ref)
     const repo = access.repo.fullName
     const client = createClient({ token: reader.readToken() })
     // Access still held, and the same repository, before anything read is sent.
-    const fenced = async () => {
-      await reader.recheckAccess()
-      const current = await authorize()
-      if (!current) return false
-      if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return false }
-      return true
-    }
+    const fenced = async () => await stillAuthorized(res, reader, authorize, access.repo) !== null
     const send = (bytes: Buffer) => {
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       res.writeHead(200, {
         'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(bytes.byteLength),
         'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff',
@@ -1861,16 +1896,12 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   const starts = from === null ? null : historyStarts(from)
   if (!Number.isSafeInteger(page) || page < 1 || page > MAX_HISTORY_PAGE || (all && (path !== '' || (page > 1) !== (starts !== null)))
     || (from !== null && (starts === null || path !== '' || page === 1))) { sendJson(res, 400, { error: 'bad-request' }); return }
-  const authorize = async (handed = false) => {
-    const access = await authorizeRepository(res, deps, cookie, repoId, path, { handed })
-    if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
-    return access
-  }
+  const authorize = (handed = false) => authorizeRepository(res, deps, cookie, repoId, path, { handed, whole: true })
   const access = await authorize(true)
   if (!access) return
   let readingPulls: Promise<{ number: number; sha: string }[] | null> = Promise.resolve(null)
   try {
-    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     const repo = access.repo.fullName
     const token = reader.readToken()
     // With a token, as GraphQL reads them.
@@ -1926,20 +1957,13 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
     const none = { pulls: [] as SquashedPull[], pending: false }
     const [squashed, openPulls] = token && path === '' ? await Promise.all([
       pulseMerges(deps, repoId).catch(quiet(null)).then(known => squashedPulls(repo, token, listed, historySquashes(deps, repoId), SQUASH_WAIT_MS, globalThis.fetch, known)).then(read => {
-        if (read.behind) {
-          const behind = read.behind.catch(quiet(null))
-          deps.track(behind)
-          deps.waitUntil?.(behind)
-        }
+        if (read.behind) trackBehind(deps, read.behind.catch(quiet(null)))
         return read
       }, quiet(none)),
       readingPulls,
     ]) : [none, null]
     const { pulls } = squashed
-    await reader.recheckAccess()
-    const current = await authorize()
-    if (!current) return
-    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
+    if (!await stillAuthorized(res, reader, authorize, access.repo)) return
     // Each commit as the tab draws it, its co-authors with it, told by the
     // agents the app knows now (coauthorsOf): what Pulse counts of it (its
     // lines, its author's time) and the addresses kept not sent.
@@ -1949,8 +1973,7 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
       ...pulls.length > 0 ? { pulls: pulls.map(pull => ({ ...pull, commits: pull.commits.map(shown) })) } : {}, ...squashed.pending ? { pullsPending: true } : {},
       ...openPulls?.length ? { openPulls } : {} }))
   } catch (err) {
-    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
-    throw err
+    answerGithubFailure(res, err)
   } finally {
     // A failed history must not release the request's database lease while
     // its independent pull read is still writing to the cache.
@@ -1980,7 +2003,7 @@ async function handleRepositoryChanges(res: ServerResponse, deps: ManagedHttpDep
 // reads are (readForReplay).
 async function handleRepositoryTree(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const commit = query.get('commit') ?? ''
-  if (!/^[a-f\d]{40}$/u.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!SHA.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
   const store = historyTreeStore<CommitTree>(deps.db, deps.config.debug)
   await readForReplay(res, deps, cookie, query, async (fullName, token, repoId, path) => {
     const kept = { read: async (sha: string) => {
@@ -2001,24 +2024,16 @@ async function readForReplay(res: ServerResponse, deps: ManagedHttpDeps, cookie:
   const asked = repositoryQuery(res, query)
   if (!asked) return
   const { repoId, path } = asked
-  const authorize = async (handed = false) => {
-    const access = await authorizeRepository(res, deps, cookie, repoId, path, { handed })
-    if (access && access.virtualEntries !== null) { sendJson(res, 404, { error: 'no-directory' }); return null }
-    return access
-  }
+  const authorize = (handed = false) => authorizeRepository(res, deps, cookie, repoId, path, { handed, whole: true })
   const access = await authorize(true)
   if (!access) return
   try {
-    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     const body = await read(access.repo.fullName, reader.readToken(), repoId, path)
-    await reader.recheckAccess()
-    const current = await authorize()
-    if (!current) return
-    if (!sameRepository(current.repo, access.repo)) { sendJson(res, 409, { error: 'repository-changed' }); return }
+    if (!await stillAuthorized(res, reader, authorize, access.repo)) return
     sendJson(res, 200, body)
   } catch (err) {
-    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
-    throw err
+    answerGithubFailure(res, err)
   }
 }
 
@@ -2125,9 +2140,7 @@ async function keptAnswer<T extends object>(deps: ManagedHttpDeps, key: string, 
   if (held && !now) {
     if (age >= REPOSITORY_READ_FRESH_MS && !repositoryRereads.has(key)) {
       // Its failure leaves the kept answer sent until it is a day old, so it is said.
-      const behind = reread().catch((err: unknown) => { console.warn('managed: repository read failed:', err) })
-      deps.track(behind)
-      deps.waitUntil?.(behind)
+      trackBehind(deps, reread().catch((err: unknown) => { console.warn('managed: repository read failed:', err) }))
     }
     return { value: held.value as T, kept: true, at: held.at }
   }
@@ -2158,7 +2171,7 @@ const today = () => `\0${Math.floor(Date.now() / (24 * 60 * 60_000))}`
 // neither), and with `marks`, only those telling the marks agents left on
 // its commits by the rules they are read by now (app-agents.ts
 // AGENT_MARKS_READ), as the Agents tab reads them; the rest read again.
-function historyPages(deps: ManagedHttpDeps, repoId: number, graphql = false, marks = false): HistoryPages {
+function historyPages(deps: ManagedHttpDeps, repoId: number, graphql: boolean, marks = false): HistoryPages {
   const store = historyPageStore<HistoryCommit[]>(deps.db, deps.config.debug)
   const keyOf = (top: string) => `${repoId}\0${COAUTHORS_READ}\0${top}`
   const told = (tops: string[], kept: Map<string, { value: HistoryCommit[] }>) => new Map(tops.flatMap(top => {
@@ -2271,7 +2284,7 @@ const keptIssues = (deps: ManagedHttpDeps, repoId: number, fullName: string, tok
 // What is kept by `key` (keptAnswer), read now where it was read
 // REPOSITORY_READ_FRESH_MS ago or longer, not behind: for an answer that is
 // kept as fresh itself, as told of it (the Agents tab's).
-async function currentAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>, stamp: Stamp | null = null) {
+async function currentAnswer<T extends object>(deps: ManagedHttpDeps, key: string, read: () => Promise<T>, stamp: Stamp) {
   const stored = await repositoryReadStore(deps.db, deps.config.debug).read(key)
   return keptAnswer(deps, key, read, undefined, !stored || Date.now() - stored.at >= REPOSITORY_READ_FRESH_MS, stamp)
 }
@@ -2285,7 +2298,7 @@ async function defaultTip(deps: ManagedHttpDeps, repoId: number, fullName: strin
   const heads = await repositoryReadStore(deps.db, deps.config.debug).read(`${repoId}\0heads`)
   const all = heads && Date.now() - heads.at < REPOSITORY_READ_FRESH_MS ? heads.value as AllHeads : null
   const tip = all?.heads.find(head => head.name === all.defaultBranch)?.sha
-  if (typeof tip === 'string' && /^[a-f\d]{40}$/u.test(tip)) return { sha: tip, kept: true }
+  if (typeof tip === 'string' && SHA.test(tip)) return { sha: tip, kept: true }
   const head = async () => ({ sha: await defaultHead(fullName, token) })
   const stamp = stampOf(deps, repoId, fullName, token)
   const read = await (current ? currentAnswer(deps, `${repoId}\0pulse-head`, head, stamp) : keptAnswer(deps, `${repoId}\0pulse-head`, head, undefined, false, stamp))
@@ -2338,10 +2351,9 @@ function historySquashes(deps: ManagedHttpDeps, repoId: number): Squashes {
 // `readAt`, when it was read from GitHub, one kept as old as it was kept, so
 // that a reader holding two reads of the same can tell the later.
 async function readWholeRepository(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, repoId: number,
-  read: (fullName: string, token: string) => Promise<object>, key: string | null = null, readAt = false, stamped = false): Promise<void> {
+  read: (fullName: string, token: string) => Promise<object>, key: string, readAt = false, stamped = false): Promise<void> {
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
-    const { value, kept, at } = key === null ? { value: await read(fullName, token), kept: false, at: Date.now() }
-      : await keptAnswer(deps, `${repoId}\0${key}`, () => read(fullName, token), undefined, false, stamped ? stampOf(deps, repoId, fullName, token) : null)
+    const { value, kept, at } = await keptAnswer(deps, `${repoId}\0${key}`, () => read(fullName, token), undefined, false, stamped ? stampOf(deps, repoId, fullName, token) : null)
     return { value: readAt ? { ...value, readAt: at } : value, kept }
   })
 }
@@ -2369,6 +2381,9 @@ const refusal = (status: number, error: string, retryAfter?: number | null): Ref
 function sendRefusal(res: ServerResponse, { status, error, retryAfter }: Refusal) {
   sendJson(res, status, { error }, retryAfter == null ? {} : { 'retry-after': String(retryAfter) })
 }
+// GitHub's failure `err`, as a request is refused for it: a token GitHub
+// rejects told as GitHub failing (502), never as the reader's session refused.
+const githubRefusal = (err: GithubApiError) => refusal(err.status === 401 ? 502 : err.status, err.message, err.retryAfter)
 // The whole of repository `repoId`, where the session `cookie` names may
 // read all of it, and who reads it; else why not: none of it
 // (`no-repository`), or only some (`no-directory`).
@@ -2391,7 +2406,7 @@ function wholeAccessIn(grants: Awaited<ReturnType<typeof repositoryGrants>>, use
 async function readWholeRepositoryOf<T>(deps: ManagedHttpDeps, access: WholeAccess, answer: (fullName: string, token: string, user: StoredUser) => Promise<{ value: T; kept: boolean }>,
   reauthorize: () => Promise<WholeAccess | Refusal>): Promise<{ value: T; kept: boolean } | Refusal> {
   try {
-    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     const token = reader.readToken()
     if (!token) return refusal(403, 'github-token-required')
     const answered = await answer(access.repo.fullName, token, access.user)
@@ -2402,7 +2417,7 @@ async function readWholeRepositoryOf<T>(deps: ManagedHttpDeps, access: WholeAcce
     if (!sameRepository(current.repo, access.repo)) return refusal(409, 'repository-changed')
     return answered
   } catch (err) {
-    if (err instanceof GithubApiError) return refusal(err.status === 401 ? 502 : err.status, err.message, err.retryAfter)
+    if (err instanceof GithubApiError) return githubRefusal(err)
     throw err
   }
 }
@@ -2430,14 +2445,14 @@ const patchFields = (field: (key: string) => unknown) => requestedPatch({ hash: 
 // open pull requests' commits, which they never tell (teamOpenPulls reads
 // them).
 async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const kind = query.get('kind')
   const state = query.get('state') ?? 'open'
   const after = query.get('after')
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
+  if (repoId === null || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
     || (after !== null && !ISSUES_CURSOR.test(after))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
-    const { value: { commits: _commits, ...page }, kept, at } = await keptAnswer(deps, `${repoId}\0issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}`,
+    const { value: { commits: _commits, ...page }, kept, at } = await keptAnswer(deps, issuesKey(repoId, kind, state, after),
       async () => ({ kind, state, ...await repositoryIssues(fullName, token, kind, state, after) }), undefined, false,
       // An issue's tile tells nothing its update time doesn't move with; a
       // pull request's, its checks.
@@ -2445,6 +2460,9 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
     return { value: { ...page, readAt: at }, kept }
   })
 }
+// What GET issues keeps a page of a repository's `kind` by, `state` ones on
+// from the cursor `after` names.
+const issuesKey = (repoId: number, kind: string, state: string, after: string | null) => `${repoId}\0issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}`
 
 // GET /api/admin/repositories/agents: what the code viewer's Agents tab
 // reconstructs agents' sessions from (repository-agents.ts): a page
@@ -2453,9 +2471,9 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
 // `commits`, the first page, naming neither, with issues and branches. They
 // are the whole repository's (readWholeRepository).
 async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const cursors = { pulls: query.get('pulls'), commits: query.get('commits') }
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || (cursors.pulls !== null && !ISSUES_CURSOR.test(cursors.pulls))
+  if (repoId === null || (cursors.pulls !== null && !ISSUES_CURSOR.test(cursors.pulls))
     || (cursors.commits !== null && !COMMITS_CURSOR.test(cursors.commits))) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
@@ -2471,17 +2489,17 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
 // `number`, as the code viewer's popup for it shows it (repository-issues.ts
 // repositoryItem). It is the whole repository's (readWholeRepository).
 async function handleRepositoryItem(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
-  const number = itemNumber(query)
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || number === null) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const repoId = askedRepoId(query)
+  const number = itemNumber(query.get('number'))
+  if (repoId === null || number === null) { sendJson(res, 400, { error: 'bad-request' }); return }
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryItem(fullName, token, number), `item\0${ISSUES_READ_VERSION}\0${number}`, true)
 }
 
-// The issue's or pull request's number a request names, as GraphQL takes one
+// The issue's or pull request's number `text` names, as GraphQL takes one
 // (an Int, at most 2³¹ − 1); null for none.
-function itemNumber(query: URLSearchParams): number | null {
-  const number = Number(query.get('number'))
-  return /^[1-9]\d{0,9}$/u.test(query.get('number') ?? '') && number <= 2 ** 31 - 1 ? number : null
+function itemNumber(text: string | null): number | null {
+  const number = Number(text)
+  return /^[1-9]\d{0,9}$/u.test(text ?? '') && number <= 2 ** 31 - 1 ? number : null
 }
 
 // GET /api/admin/repositories/pull-dependencies: the package versions pull
@@ -2501,27 +2519,37 @@ function itemNumber(query: URLSearchParams): number | null {
 const MAX_ASKED_PULLS = 20
 const PULLS_AT_ONCE = 3
 async function handleRepositoryPullDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const review = query.get('review') === '1'
   // As an open one's tile on the Pull requests tab asks (`listed=1`): each
   // by the commits the page it is of names, where one kept names them
   // (keptPullCommits); else by its number, kept a while, as a popup's.
   const tiles = query.get('listed') === '1'
   const listed = query.get('numbers')
-  const numbers = listed === null ? [itemNumber(query)] : listed.split(',').map(text => itemNumber(new URLSearchParams({ number: text })))
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || numbers.length > MAX_ASKED_PULLS || numbers.some(number => number === null) || new Set(numbers).size < numbers.length
+  const numbers = listed === null ? [itemNumber(query.get('number'))] : listed.split(',').map(text => itemNumber(text))
+  if (repoId === null || numbers.length > MAX_ASKED_PULLS || numbers.some(number => number === null) || new Set(numbers).size < numbers.length
     || !['1', null].includes(query.get('review')) || !['1', null].includes(query.get('listed'))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
     const commits = tiles ? await keptPullCommits(deps, repoId, numbers as number[]) : new Map<number, PullCommits>()
     if (listed === null) return pullDependencyAnswer(deps, fullName, token, user, repoId, numbers[0]!, review, commits.get(numbers[0]!))
-    const answers = await eachOf(numbers as number[], PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, review, commits.get(number))
-      .catch((err: unknown) => {
+    const answers = await pullDependencyAnswers(deps, fullName, token, user, repoId, numbers as number[], review, commits)
+    return { value: { pulls: answers.value }, kept: answers.kept }
+  })
+}
+
+// Pull requests `numbers`' answers (pullDependencyAnswer), as many read at
+// once as PULLS_AT_ONCE, by the commits `commits` names of each where it
+// does, else `{ number, error }` where GitHub fails it; and whether all of
+// them were kept.
+async function pullDependencyAnswers(deps: ManagedHttpDeps, fullName: string, token: string, user: StoredUser, repoId: number, numbers: number[], review: boolean,
+  commits: Map<number, PullCommits> | undefined) {
+  const answers = await eachOf(numbers, PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, review, commits?.get(number))
+    .catch((err: unknown) => {
       // GitHub asked, though it failed: its access asked again after.
       if (err instanceof GithubApiError) return { value: { number, error: err.message }, kept: false }
       throw err
     }))
-    return { value: { pulls: answers.map(({ value }) => value) }, kept: answers.every(({ kept }) => kept) }
-  })
+  return { value: answers.map(({ value }) => value), kept: answers.every(({ kept }) => kept) }
 }
 
 // Pull request `number`'s answer, as the endpoint gives it, and whether all
@@ -2576,8 +2604,8 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
 // its access not asked again, where its head was kept and its lockfiles and
 // baseline held or kept (lockfileKept), GitHub asked for none of them.
 async function handleRepositoryBranchDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
-  if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const repoId = askedRepoId(query)
+  if (repoId === null) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, (fullName, token, user) => branchDependencyAnswer(deps, fullName, token, user, repoId),
     async () => (await deps.db.repoDependencyReview(repoId))?.enabled ? null : { review: null })
 }
@@ -2615,8 +2643,8 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
 // paths, with their formats, at its head, as its pulse reads it, for its
 // settings to name those it holds to (lockfile-scope.ts).
 async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
-  if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const repoId = askedRepoId(query)
+  if (repoId === null) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const head = (await defaultTip(deps, repoId, fullName, token)).sha
     return { value: { head, lockfiles: head ? (await lockfilesAt(fullName, token, head, lockfileKept(deps, repoId))).map(({ path, format }) => ({ path, format })) : [] }, kept: false }
@@ -2725,14 +2753,8 @@ async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAc
   for (let at = 0; at < numbers.length; at += TEAM_PULLS_TOGETHER) {
     if (Date.now() > deadline) return false
     const batch = numbers.slice(at, at + TEAM_PULLS_TOGETHER)
-    const pulled = await readWholeRepositoryOf(deps, access, async (fullName, token, user) => {
-      const answers = await eachOf(batch, PULLS_AT_ONCE, number => pullDependencyAnswer(deps, fullName, token, user, repoId, number, true, commits?.get(number)).catch((err: unknown) => {
-        // GitHub asked, though it failed: its access asked again after.
-        if (err instanceof GithubApiError) return { value: { number, error: err.message }, kept: false }
-        throw err
-      }))
-      return { value: answers.map(({ value }) => value), kept: answers.every(({ kept }) => kept) }
-    }, reauthorize)
+    const pulled = await readWholeRepositoryOf(deps, access, (fullName, token, user) => pullDependencyAnswers(deps, fullName, token, user, repoId, batch, true, commits),
+      reauthorize)
     const dependencies = 'error' in pulled ? batch.map(number => ({ number, error: pulled.error })) : pulled.value
     if (!await send({ repoId, dependencies, ...await withDeltas(deps, dependencies) })) return false
   }
@@ -2742,9 +2764,6 @@ const withDeltas = async (deps: ManagedHttpDeps, answers: object[]) => {
   const deltas = await teamDeltas(deps, answers)
   return deltas.length > 0 ? { deltas } : {}
 }
-
-// A commit's or a blob's id, as GitHub names one.
-const OBJECT_ID = /^[a-f\d]{40}$/u
 
 // A repository's open pull requests, as many pages of them as
 // TEAM_PULL_PAGES, each read and kept as GET issues reads it; each's base's
@@ -2756,7 +2775,7 @@ async function teamOpenPulls(deps: ManagedHttpDeps, repoId: number, fullName: st
   let after: string | null = null, kept = true
   for (let page = 0; page < TEAM_PULL_PAGES; page++) {
     const cursor = after
-    const answer = await keptAnswer(deps, openPullsKey(repoId, cursor), async () => ({ kind: 'pulls', state: 'open', ...await repositoryIssues(fullName, token, 'pulls', 'open', cursor) }))
+    const answer = await keptAnswer(deps, issuesKey(repoId, 'pulls', 'open', cursor), async () => ({ kind: 'pulls', state: 'open', ...await repositoryIssues(fullName, token, 'pulls', 'open', cursor) }))
     kept &&= answer.kept
     const value = answer.value as OpenPullsPage
     items.push(...(Array.isArray(value.items) ? value.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0))
@@ -2767,13 +2786,12 @@ async function teamOpenPulls(deps: ManagedHttpDeps, repoId: number, fullName: st
   return { items, commits, more: true, kept }
 }
 type OpenPullsPage = { items?: unknown; more?: unknown; after?: unknown; commits?: unknown }
-const openPullsKey = (repoId: number, cursor: string | null) => `${repoId}\0issues\0${ISSUES_READ_VERSION}\0pulls\0open\0${cursor ?? ''}`
 // Each open pull request's base's and head's commits a page of them names,
 // into `commits` by its number.
 function pageCommits(page: OpenPullsPage, commits: Map<number, PullCommits>) {
   for (const pull of Array.isArray(page.commits) ? page.commits as { number?: unknown; base?: unknown; head?: unknown }[] : []) {
     const { number, base, head } = pull ?? {}
-    if (Number.isSafeInteger(number) && typeof base === 'string' && OBJECT_ID.test(base) && typeof head === 'string' && OBJECT_ID.test(head)) {
+    if (Number.isSafeInteger(number) && typeof base === 'string' && SHA.test(base) && typeof head === 'string' && SHA.test(head)) {
       commits.set(number as number, { base, head })
     }
   }
@@ -2789,7 +2807,7 @@ async function keptPullCommits(deps: ManagedHttpDeps, repoId: number, numbers: n
   const commits = new Map<number, PullCommits>()
   let after: string | null = null
   for (let page = 0; page < TEAM_PULL_PAGES && numbers.some(number => !commits.has(number)); page++) {
-    const stored = await store.read(openPullsKey(repoId, after))
+    const stored = await store.read(issuesKey(repoId, 'pulls', 'open', after))
     if (!stored || Date.now() - stored.at >= REPOSITORY_READ_KEPT_MS) break
     const value = stored.value as OpenPullsPage
     pageCommits(value, commits)
@@ -2824,7 +2842,7 @@ async function teamDeltas(deps: ManagedHttpDeps, answers: object[]) {
   const integrity = (name: string, version: string) => {
     const hit = kept.get(`${name}@${version}`)
     const dist = hit && Date.now() - hit.at < VERSION_KEPT_MS ? hit.json['dist'] : null
-    return typeof dist === 'object' && dist !== null && typeof (dist as { integrity?: unknown }).integrity === 'string' ? (dist as { integrity: string }).integrity : null
+    return plainObject(dist) && typeof dist['integrity'] === 'string' ? dist['integrity'] : null
   }
   const sides = [...asked.values()].flatMap(([name, version, base]) => {
     const against = base === '(empty)' ? null : integrity(name, base), other = integrity(name, version)
@@ -2833,7 +2851,7 @@ async function teamDeltas(deps: ManagedHttpDeps, answers: object[]) {
   if (sides.length === 0) return []
   const counted = await keptNpmDeltas(sides.map(({ key }) => key), npmDeltaStore<NpmDelta>(deps.db, deps.config.debug))
   return sides.flatMap(({ name, version, base, key: [against, other] }) => {
-    const delta = counted.get(`${against ?? '(empty)'}\0${other}`)
+    const delta = counted.get(deltaKey(against, other))
     return delta ? [[name, version, base, delta]] : []
   })
 }
@@ -2889,7 +2907,7 @@ function lockfileKept(deps: ManagedHttpDeps, repoId: number): LockfileStore {
       async read(commit) {
         const value: unknown = (await listings.read(keyOf(commit)))?.value
         return Array.isArray(value) && value.every(item => typeof item?.path === 'string' && typeof item.format === 'string' && lockfileFormat(item.path) === item.format
-          && typeof item.sha === 'string' && OBJECT_ID.test(item.sha)) ? value : null
+          && typeof item.sha === 'string' && SHA.test(item.sha)) ? value : null
       },
       write: (commit, listed) => listings.write(keyOf(commit), listed, Date.now()),
     },
@@ -2912,9 +2930,9 @@ function lockfileKept(deps: ManagedHttpDeps, repoId: number): LockfileStore {
 // `pending`, for the client to ask again. They are the whole repository's
 // (readWholeRepository).
 async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const weeks = Number(query.get('weeks') ?? '4')
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (repoId === null || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const year = pulseYearRead(deps, repoId, fullName, token, weeks)
     const [period, counted] = await Promise.all([
@@ -2952,8 +2970,7 @@ function pulseYearRead(deps: ManagedHttpDeps, repoId: number, fullName: string, 
   reads.set(key, year)
   const settled = year.reading.catch((err: unknown) => { console.warn('managed: pulse year read failed:', err) })
     .finally(() => { if (reads.get(key) === year) reads.delete(key) })
-  deps.track(settled)
-  deps.waitUntil?.(settled)
+  trackBehind(deps, settled)
   return year
 }
 
@@ -2994,10 +3011,7 @@ const PULSE_LAST_MS = 28 * 24 * 60 * 60_000
 const PULSE_DAY = /^\d{4}-\d{2}-\d{2}$/u
 const GITHUB_LOGIN = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}(?:\[bot\])?$/iu
 const PULSE_AUTHORS = 10
-const pulseDay = (value: string | null) => {
-  const at = value !== null && PULSE_DAY.test(value) ? Date.parse(`${value}T00:00:00Z`) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
+const pulseDay = (value: string | null) => value !== null && PULSE_DAY.test(value) ? timeOf(`${value}T00:00:00Z`) : null
 
 // The pull requests and issues of a period of `weeks` weeks, narrowed as
 // asked (`narrowing`), as the Pulse shows them: of those kept
@@ -3023,13 +3037,13 @@ async function pulseActivity(deps: ManagedHttpDeps, repoId: number, fullName: st
 // `from`) and the GitHub accounts a picked contributor committed as
 // (`authors`), as repositoryActivity reads them, kept apart for each.
 async function handleRepositoryPulseItems(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const weeks = Number(query.get('weeks') ?? '4')
   const [from, to] = [pulseDay(query.get('from')), query.has('to') ? pulseDay(query.get('to')) : null]
   const logins = (query.get('authors') ?? '').split(',').filter(Boolean)
   // Each once, whatever its case, as GitHub matches logins.
   const authors = [...new Set(logins.map(login => login.toLowerCase()))].toSorted()
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks) || from === null || (query.has('to') && (to === null || to < from))
+  if (repoId === null || !PULSE_WEEKS.includes(weeks) || from === null || (query.has('to') && (to === null || to < from))
     || authors.length > PULSE_AUTHORS || !logins.every(login => GITHUB_LOGIN.test(login))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const narrowing = { from, to, authors }
@@ -3039,7 +3053,7 @@ async function handleRepositoryPulseItems(res: ServerResponse, deps: ManagedHttp
   })
 }
 
-async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, weeks = 52, progress: { commits: number } | null = null) {
+async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string, weeks: number, progress: { commits: number }) {
   const now = Date.now()
   const first = pulseSince(52, now)
   // As far back as a period of `weeks` weeks needs the year read whole: its
@@ -3123,7 +3137,7 @@ async function pulseCommits(deps: ManagedHttpDeps, repoId: number, fullName: str
   if (!tooMany && held && 'tooMany' in held) await store.write(tooManyKey, { within: first }, Date.now())
   if (need > tooManyWithin) {
     const [year, read] = await Promise.all([yearCommits(fullName, token, sha, first, historyPages(deps, repoId, true), globalThis.fetch, need,
-      commits => { if (progress) progress.commits = commits }), attribution(need)])
+      commits => { progress.commits = commits }), attribution(need)])
     await store.write(mergesKey, read, Date.now())
     if (year.complete) {
       if (readTo(read) >= need) return { stats: await last(), reading: null, pulls: read.next?.read ?? 0, pending: false, kept: false }
@@ -3151,6 +3165,13 @@ function prebuildBundle(deps: ManagedHttpDeps, id: string) {
   })().catch(err => console.warn('managed: bundle cache build failed:', err)))
 }
 
+// `stream` as the body of a response whose head is written: none of it for
+// a HEAD, and the response cut short where it fails midway.
+async function sendBody(req: IncomingMessage, res: ServerResponse, stream: OpenedBlob['stream']) {
+  if (req.method === 'HEAD') { stream.destroy(); res.end(); return }
+  try { await pipeline(stream, res) } catch { res.destroy() }
+}
+
 // Brotli-encoded bytes as they are: the browser's HTTP stack decompresses
 // them without a Brotli JS dependency.
 async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: OpenedBlob, contentType: string, headers: Record<string, string> = {}) {
@@ -3159,8 +3180,7 @@ async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: Open
     ...(blob.size == null ? {} : { 'content-length': String(blob.size) }), 'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
   })
-  if (req.method === 'HEAD') { blob.stream.destroy(); res.end(); return }
-  try { await pipeline(blob.stream, res) } catch { res.destroy() }
+  await sendBody(req, res, blob.stream)
 }
 
 
@@ -3334,38 +3354,48 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
 // was asked for and its source was found to have, for the viewer to check.
 const prettySource = ({ hash }: PrettyRequest): Record<string, string> => ({ 'x-source-hash': hash })
 
+// A bundle's derivative that failed, answered: as pretty-print.ts refused
+// it, else as its bundle unreadable.
+function sendBundleFailure(res: ServerResponse, err: unknown) {
+  sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' })
+}
+
 // GET /api/bundles/:id/{metadata,contents,pretty}: what `open` reads of the
 // bundle, already encoded; it is absent where its cache is.
 async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string,
   open: ((rec: ManagedBundle) => Promise<OpenedBlob>) | undefined, contentType = 'application/json', headers: Record<string, string> = {}) {
-  const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
-  if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  const rec = access.bundle
-  if (!rec) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  const rec = await readableBundle(res, deps, session, id)
+  if (!rec) return
   if (!open) { sendJson(res, 503, { error: 'unavailable' }); return }
   let cached
   try { cached = await open(rec) }
-  catch (err) { sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' }); return }
+  catch (err) { sendBundleFailure(res, err); return }
   // A cold build can outlast a session or membership change.
-  const current = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
-  if (!current?.bundle) {
-    cached.stream.destroy()
-    sendJson(res, current ? 404 : 401, { error: current ? 'no-bundle' : 'unauthenticated' })
-    return
-  }
-  await sendEncoded(req, res, cached, contentType, headers)
+  if (await readableBundle(res, deps, session, id)) await sendEncoded(req, res, cached, contentType, headers)
+  else cached.stream.destroy()
 }
 
-// Two bundles a reader asks about together, where they may read both, else
-// null, told as 401 or 404: asked before what is worked out of them and
-// again before it is sent.
-function bothBundles(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, otherId: string) {
-  return async () => {
+// What `work` makes of the pretty-printed copies (503 where none are kept)
+// of two bundles a reader asks about together, where they may read both,
+// else told as 401 or 404: asked before it is made and again before it is
+// sent; its failure answered as a bundle's derivative's is.
+async function sendOfBothBundles(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, otherId: string,
+  work: (cache: PrettyCache, records: readonly [ManagedBundle, ManagedBundle]) => Promise<OpenedBlob>) {
+  const readable = async () => {
     const [base, other] = await Promise.all([id, otherId].map(bundle => deps.db.getBundleAccessSnapshot(session.id, Date.now(), bundle)))
     if (!base || !other) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     if (!base.bundle || !other.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
     return [base.bundle, other.bundle] as const
   }
+  const records = await readable()
+  if (!records) return
+  const { prettyCache } = deps
+  if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+  let body
+  try { body = await work(prettyCache, records) }
+  catch (err) { sendBundleFailure(res, err); return }
+  if (await readable()) await sendEncoded(req, res, body, 'application/json')
+  else body.stream.destroy()
 }
 
 // GET /api/bundles/:id/rename-diff: one of its JavaScript files diffed with
@@ -3374,20 +3404,8 @@ function bothBundles(res: ServerResponse, deps: ManagedHttpDeps, session: Manage
 async function handleBundleRenameDiff(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
   const otherId = params.get('other') ?? '', request = renameDiffRequest(params)
   if (!request || !/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-file' }); return }
-  const readable = bothBundles(res, deps, session, id, otherId)
-  const records = await readable()
-  if (!records) return
-  const { prettyCache } = deps
-  if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-  let diff
-  try {
-    diff = await renameDiffOf(request, async () => [await prettyText(await prettyCache.bundle(records[0], request.base)),
-      await prettyText(await prettyCache.bundle(records[1], request.other))])
-  } catch (err) {
-    sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' }); return
-  }
-  if (await readable()) await sendEncoded(req, res, diff, 'application/json')
-  else diff.stream.destroy()
+  await sendOfBothBundles(req, res, deps, session, id, otherId, (cache, [base, other]) => renameDiffOf(request, async () => [
+    await prettyText(await cache.bundle(base, request.base)), await prettyText(await cache.bundle(other, request.other))]))
 }
 
 // GET /api/bundles/:id/comparison?other=: its files paired with the `other`
@@ -3397,16 +3415,8 @@ async function handleBundleRenameDiff(req: IncomingMessage, res: ServerResponse,
 async function handleBundleComparison(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
   const otherId = params.get('other') ?? ''
   if (!/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-bundle' }); return }
-  const readable = bothBundles(res, deps, session, id, otherId)
-  const records = await readable()
-  if (!records) return
-  const { prettyCache } = deps
-  if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-  let body
-  try { body = await comparisonBody(await prettyCache.bundleDetails(records[0]), await prettyCache.bundleDetails(records[1]), params.get('scope') ?? '') }
-  catch (err) { sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' }); return }
-  if (await readable()) await sendEncoded(req, res, body, 'application/json')
-  else body.stream.destroy()
+  await sendOfBothBundles(req, res, deps, session, id, otherId, async (cache, [base, other]) =>
+    comparisonBody(await cache.bundleDetails(base), await cache.bundleDetails(other), params.get('scope') ?? ''))
 }
 
 // GET /api/bundles/:id/pretty?other=: the files that changed between it and
@@ -3426,7 +3436,7 @@ async function handleBundleChanges(res: ServerResponse, deps: ManagedHttpDeps, s
   if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
   let lines
   try { lines = await linesOf(deps.prettyCache, base.bundle, other.bundle) }
-  catch (err) { sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' }); return }
+  catch (err) { sendBundleFailure(res, err); return }
   await sendLines(res, lines, async () => (await access()).every(snapshot => snapshot?.bundle))
 }
 
@@ -3528,7 +3538,7 @@ async function handleBundleDependencyReview(res: ServerResponse, deps: ManagedHt
   if (inventory === null) { sendJson(res, 413, { error: 'payload-too-large' }); return }
   const bundled = (inventory?.packages ?? []).filter(pkg => pkg.ecosystem === 'npm').flatMap(pkg => pkg.versions.map(version => ({ name: pkg.name, version })))
   // Its commit as GitHub names one, of SHA-1.
-  if (!commit || !/^[a-f\d]{40}$/u.test(commit) || bundled.length === 0) { none(); return }
+  if (!commit || !SHA.test(commit) || bundled.length === 0) { none(); return }
   const read = await readWholeRepositoryOf(deps, access, (fullName, token, user) => bundleDependencyAnswer(deps, fullName, token, user, repoId, setting,
     { commit: commit!, directory: record.repoDirectory, bundled }), () => wholeRepositoryAccess(deps, cookie, repoId))
   if ('error' in read) { sendRefusal(res, read); return }
@@ -3625,7 +3635,7 @@ async function bundleValidation(deps: ManagedHttpDeps, cookie: string | undefine
   const plan = details?.bundle ? validationPlan(details.bundle as PlannedBundle) : null
   if (!plan) return refusal(422, 'bundle-unavailable')
   const stamp = (details!.bundle as { repo?: { commit?: unknown; directory?: unknown } } | undefined)?.repo
-  const commit = typeof stamp?.commit === 'string' && /^[a-f\d]{40}$/u.test(stamp.commit) ? stamp.commit : null
+  const commit = typeof stamp?.commit === 'string' && SHA.test(stamp.commit) ? stamp.commit : null
   // Where it was built, as its stamp says, else where it is kept.
   const directory = stampedDirectory(typeof stamp?.directory === 'string' ? stamp : { directory: record.repoDirectory })
   const options = { deadline: Date.now() + VALIDATION_MS }
@@ -3698,7 +3708,7 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
     const access = await authorize(input.directory)
     if (!access) return
     await withBundleBuildLease(deps.db, access.user.id, controller.signal, async signal => {
-      const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+      const reader = await repositoryReader(deps, access.user.id, access.repo)
       signal.throwIfAborted()
       // Catalogs then show the built bundle's commit details from the cache.
       const commitCached = cacheCommitDetails(deps.db, reader, input.repoId, input.commit)
@@ -3711,9 +3721,7 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
       await reader.recheckAccess()
       const current = await authorize(built.directory)
       if (!current) return
-      if (JSON.stringify({ ...current.repo, cachedDefaultBranch: access.repo.cachedDefaultBranch }) !== JSON.stringify(access.repo)) {
-        throw new BundleBuildError(409, 'repository-changed')
-      }
+      if (!sameRepository(current.repo, access.repo)) throw new BundleBuildError(409, 'repository-changed')
       signal.throwIfAborted()
       await storeUploadedBundle(req, res, deps, cookie, current, built.bytes, input.repoId, built.directory, built.filename, 'build',
         bundleIntegrity(built.bytes), input.conditions)
@@ -3721,11 +3729,7 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
   } catch (error) {
     if (res.destroyed || controller.signal.aborted) return
     if (error instanceof BundleBuildError) { sendJson(res, error.status, { error: error.code }); return }
-    if (error instanceof GithubApiError) {
-      sendJson(res, error.status === 401 ? 502 : error.status, { error: error.message }, error.retryAfter == null ? {} : { 'retry-after': String(error.retryAfter) })
-      return
-    }
-    throw error
+    answerGithubFailure(res, error)
   } finally { res.off('close', onClose) }
 }
 
@@ -3739,20 +3743,13 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
 // After storing, any reports that declared this integrity but weren't linked yet
 // get attached (auto-link). 413 over the cap, 400 on empty.
 async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
-  let s = await checkMutation(req, res, deps, cookie, { handed: true })
+  let s = await manageMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  if (!requireManageRole(res, s.user)) return
-  let bytes: Buffer
-  try {
-    bytes = await readUploadBody(req, deps, s.session, 'bundles')
-  } catch (err) {
-    const tooLarge = err instanceof Error && err.message === 'too-large'
-    sendJson(res, tooLarge ? 413 : 400, { error: tooLarge ? 'too-large' : 'bad-body' })
-    return
-  }
+  const bytes = await readUploadBody(req, res, deps, s.session, 'bundles')
+  if (!bytes) return
   // Shared storage reads may outlast a session or role change.
-  s = await checkMutation(req, res, deps, cookie)
-  if (!s || !requireManageRole(res, s.user)) return
+  s = await manageMutation(req, res, deps, cookie)
+  if (!s) return
   if (bytes.length === 0) { sendJson(res, 400, { error: 'empty' }); return }
   const repo = await resolveUploadRepoId(req, res, deps)
   if (!repo.ok) return
@@ -3784,8 +3781,8 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
         inferredLocation = true
       }
     }
-    s = await checkMutation(req, res, deps, cookie)
-    if (!s || !requireManageRole(res, s.user)) return
+    s = await manageMutation(req, res, deps, cookie)
+    if (!s) return
   }
   const normalized = normalizeTeamPath(rawDirectory)
   if (!normalized.ok) { sendJson(res, 400, { error: 'bad-directory' }); return }
@@ -3804,7 +3801,7 @@ async function handleUploadBundle(req: IncomingMessage, res: ServerResponse, dep
 // again, one inserted since meeting the insert's UNIQUE below as a race does.
 async function storeUploadedBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined,
   s: { session: ManagedSession; user: StoredUser }, bytes: Buffer, repoId: number | null, directory: string, filename: string,
-  provenance: BundleProvenance, integrity = bundleIntegrity(bytes), buildConditions: BundleBuildConditions | null = null, absent = false): Promise<void> {
+  provenance: BundleProvenance, integrity: string, buildConditions: BundleBuildConditions | null, absent = false): Promise<void> {
   const kind = bundleKind(filename)
   const reuse = { provenance, filename, kind, buildConditions }
   const existing = absent ? null : await deps.db.getBundleByIntegrity(integrity)
@@ -3841,10 +3838,8 @@ async function storeUploadedBundle(req: IncomingMessage, res: ServerResponse, de
 // HTTP Brotli decoding to restore the uploaded .map bytes. 404 no such
 // bundle; 503 row-without-bytes (store desync).
 async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string): Promise<void> {
-  const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
-  if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return }
-  const rec = access.bundle
-  if (rec == null) { sendJson(res, 404, { error: 'no-bundle' }); return }
+  const rec = await readableBundle(res, deps, session, id)
+  if (!rec) return
   const stored = await deps.bundleStore.open(id, rec.kind)
   if (stored == null) { sendJson(res, 503, { error: 'unavailable' }); return }
   const current = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
@@ -3860,8 +3855,7 @@ async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: 
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
-  if (req.method === 'HEAD') { stored.stream.destroy(); res.end(); return }
-  try { await pipeline(stored.stream, res) } catch { res.destroy() }
+  await sendBody(req, res, stored.stream)
 }
 
 // GET /api/admin/bundles/<id>/usage — the reports that name a bundle, read
@@ -3890,9 +3884,8 @@ async function handleBundleUsage(res: ServerResponse, deps: ManagedHttpDeps, coo
 // the FK; their bundle_integrity stays, so a re-upload re-links), then the bytes
 // best-effort. 404 when there was no such bundle.
 async function handleDeleteBundle(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id: string): Promise<void> {
-  const s = await checkMutation(req, res, deps, cookie, { handed: true })
+  const s = await manageMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  if (!requireManageRole(res, s.user)) return
   const { bundle, user } = await deps.db.mutateBundle(s.session.id, id, { type: 'delete' })
   await deps.bundleCache?.delete(id).catch((err) => { console.warn('managed: bundle cache delete failed:', err) })
   await deps.reportSourcesCache?.deleteBundle(id).catch((err) => { console.warn('managed: report sources delete failed:', err) })
@@ -4000,12 +3993,11 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
     ...(cached.size == null ? {} : { 'content-length': String(cached.size) }), 'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
   })
-  if (req.method === 'HEAD') { cached.stream.destroy(); res.end(); return }
-  try { await pipeline(cached.stream, res) } catch { res.destroy() }
+  await sendBody(req, res, cached.stream)
 }
 
 async function reportIds(data: unknown): Promise<Set<string>> {
-  const findings = (reportEntries(data) ?? []).flat().filter((f): f is Record<string, unknown> => f !== null && typeof f === 'object' && !Array.isArray(f))
+  const findings = (reportEntries(data) ?? []).flat().filter(plainObject)
   await backfillFindingIds(findings)
   return new Set(findings.flatMap(f => typeof f['id'] === 'string' ? [f['id']] : []))
 }
@@ -4013,21 +4005,19 @@ async function reportIds(data: unknown): Promise<Set<string>> {
 async function handleDeduplication(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id?: string): Promise<void> {
   const method = req.method ?? 'GET'
   if (!(id ? ['GET', 'PATCH'] : ['GET', 'POST']).includes(method)) { send405(res, id ? 'GET, PATCH' : 'GET, POST'); return }
-  const s = method === 'GET' ? await readSession(deps.config, deps.db, cookie, Date.now(), { handed: true }) : await checkMutation(req, res, deps, cookie, { handed: true })
-  if (!s) { if (method === 'GET') sendJson(res, 401, { error: 'unauthenticated' }); return }
-  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
+  const s = method === 'GET' ? await readAdminSession(res, deps, cookie, { handed: true }) : await adminMutation(req, res, deps, cookie, { handed: true })
+  if (!s) return
   if (method === 'GET') { sendJson(res, 200, id ? await deps.db.getLinkReport(s.session.id, id) : { reports: await deps.db.listLinkReports() }); return }
   if (id) {
-    let body
-    try { body = await readJsonBody(req, 1024) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-    const enabled = (body as { enabled?: unknown } | null)?.enabled
+    const body = await readBodyFields(req, res, 1024)
+    if (!body) return
+    const { enabled } = body
     if (typeof enabled !== 'boolean') { sendJson(res, 400, { error: 'bad-enabled' }); return }
     await deps.db.setLinkReportEnabled(s.session.id, id, enabled)
     sendJson(res, 200, { ok: true }); return
   }
-  let bytes: Buffer
-  try { bytes = await readUploadBody(req, deps, s.session, 'links') }
-  catch (error) { const large = error instanceof Error && error.message === 'too-large'; sendJson(res, large ? 413 : 400, { error: large ? 'too-large' : 'bad-body' }); return }
+  const bytes = await readUploadBody(req, res, deps, s.session, 'links')
+  if (!bytes) return
   const filename = sanitizeFilename(firstHeader(req.headers['x-report-filename']), 'report.link.json')
   const result = await deps.db.importLinkReport(s.session.id, filename, bytes.toString('utf8'))
   sendJson(res, result.reused ? 200 : 201, { ...result.report, deduped: result.reused })
@@ -4036,9 +4026,8 @@ async function handleDeduplication(req: IncomingMessage, res: ServerResponse, de
 async function handleRepositoryAliases(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, id?: string): Promise<void> {
   const method = req.method ?? 'GET'
   if (!(id ? ['PATCH', 'DELETE'] : ['GET', 'POST']).includes(method)) { send405(res, id ? 'PATCH, DELETE' : 'GET, POST'); return }
-  const s = method === 'GET' ? await readAdminSession(res, deps, cookie, { handed: true }) : await checkMutation(req, res, deps, cookie, { handed: true })
+  const s = method === 'GET' ? await readAdminSession(res, deps, cookie, { handed: true }) : await adminMutation(req, res, deps, cookie, { handed: true })
   if (!s) return
-  if (s.user.role !== 'admin') { sendJson(res, 403, { error: 'forbidden' }); return }
   if (method === 'GET') {
     sendJson(res, 200, { aliases: await deps.db.listRepositoryAliases(), repos: await deps.db.listAllRepos() }); return
   }
@@ -4157,9 +4146,9 @@ const REPORT_QUERY_IN_FLIGHT_BYTES = 64 * 1024 * 1024
 async function handleQueryReports(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await readManageSession(res, deps, cookie, { handed: true })
   if (!s) return
-  let body
-  try { body = await readJsonBody(req, 1024 * 1024) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const raw = (body as { ids?: unknown } | null)?.ids
+  const body = await readBodyFields(req, res, 1024 * 1024)
+  if (!body) return
+  const raw = body['ids']
   if (!Array.isArray(raw) || raw.some(id => typeof id !== 'string' || !id || id.length > 256)) {
     sendJson(res, 400, { error: 'bad-ids' }); return
   }
@@ -4273,7 +4262,7 @@ async function canTriageReport(deps: ManagedHttpDeps, user: StoredUser, reportId
 // workspace. Privileged users retain report-scoped access and the same stable
 // ID derivation. Both paths store/read annotations by finding ID alone.
 const VISIBLE_IDS_CACHE_MAX = 256
-const visibleIdsCaches = new WeakMap<ManagedHttpDeps, Map<string, Set<string>>>()
+const visibleIdsCaches = new WeakMap<ManagedHttpDeps, Lru<Set<string>>>()
 async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, reportId: string, sessionId: string, teamId: string | null): Promise<Set<string>> {
   if (!roleAtLeast(user.role, 'manage')) {
     if (!teamId) throw new TeamReportsError(404, 'no-team')
@@ -4288,9 +4277,9 @@ async function visibleFindingIds(deps: ManagedHttpDeps, user: StoredUser, report
 async function reportFindingIds(deps: ManagedHttpDeps, rec: { id: string; sha256: string; filename: string }, github: string | null): Promise<Set<string>> {
   const key = JSON.stringify([rec.id, rec.sha256, rec.filename, { github }])
   let cache = visibleIdsCaches.get(deps)
-  if (cache == null) { cache = new Map(); visibleIdsCaches.set(deps, cache) }
+  if (cache == null) { cache = lru(VISIBLE_IDS_CACHE_MAX); visibleIdsCaches.set(deps, cache) }
   const hit = cache.get(key)
-  if (hit != null) { cache.delete(key); cache.set(key, hit); return hit }
+  if (hit != null) return hit
   const bytes = await deps.reportStore.get(rec.id)
   if (bytes == null) return new Set()
   const { data } = readManagedReport(bytes.toString('utf8'), rec.filename)
@@ -4298,11 +4287,6 @@ async function reportFindingIds(deps: ManagedHttpDeps, rec: { id: string; sha256
   // The ids the team workspace derives (teamFindingIds), from the one parse.
   const ids = await reportIds(data)
   ids.delete('')
-  while (cache.size >= VISIBLE_IDS_CACHE_MAX) {
-    const oldest = cache.keys().next().value
-    if (oldest === undefined) break
-    cache.delete(oldest)
-  }
   cache.set(key, ids)
   return ids
 }
@@ -4368,10 +4352,10 @@ async function handleSetReportTriage(req: IncomingMessage, res: ServerResponse, 
   const s = await checkMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
   if (!(await canTriageReport(deps, s.user, id))) { sendJson(res, 404, { error: 'no-report' }); return }
-  let body: unknown
-  try { body = await readJsonBody(req, MAX_TRIAGE_BODY_BYTES) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const raw = (body as { entries?: unknown } | null)?.entries
-  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const body = await readBodyFields(req, res, MAX_TRIAGE_BODY_BYTES)
+  if (!body) return
+  const raw = body['entries']
+  if (!plainObject(raw)) { sendJson(res, 400, { error: 'bad-request' }); return }
   const pairs = Object.entries(raw)
   if (pairs.length > MAX_TRIAGE_ENTRIES) { sendJson(res, 400, { error: 'too-many-entries' }); return }
   const parsed: [string, TriageEntryPatch | null][] = []
@@ -4429,7 +4413,7 @@ async function handleImportTriage(req: IncomingMessage, res: ServerResponse, dep
   if (!body || typeof body !== 'object') { sendJson(res, 400, { error: 'bad-body' }); return }
   const reading = body.entries === undefined
   const raw = body.entries
-  if (!reading && (!raw || typeof raw !== 'object' || Array.isArray(raw))) { sendJson(res, 400, { error: 'bad-entries' }); return }
+  if (!reading && !plainObject(raw)) { sendJson(res, 400, { error: 'bad-entries' }); return }
   const ids = reading ? body.findingIds : Object.keys(raw!)
   if (!Array.isArray(ids) || ids.length > MAX_TRIAGE_ENTRIES || ids.some(value => typeof value !== 'string' || !value || value.length > MAX_FINDING_ID)) {
     sendJson(res, 400, { error: 'bad-finding-ids' }); return
@@ -4437,7 +4421,7 @@ async function handleImportTriage(req: IncomingMessage, res: ServerResponse, dep
   const parsed: [string, TriageEntryPatch | null][] = []
   const expected = body.expected as Record<string, string> | null
   if (!reading) {
-    if (!expected || typeof expected !== 'object' || Array.isArray(expected)) { sendJson(res, 400, { error: 'bad-expected' }); return }
+    if (!plainObject(expected)) { sendJson(res, 400, { error: 'bad-expected' }); return }
     for (const [findingId, value] of Object.entries(raw!)) {
       const patch = parseTriageEntryPatch(value)
       if (patch === 'invalid' || !/^[a-f\d]{64}$/u.test(expected[findingId] ?? '')) { sendJson(res, 400, { error: 'bad-entry' }); return }
@@ -4524,9 +4508,9 @@ async function handleListTeams(res: ServerResponse, deps: ManagedHttpDeps, cooki
 async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const rawName = (body as { name?: unknown } | null)?.name
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const rawName = body['name']
   const name = typeof rawName === 'string' ? rawName.trim() : ''
   if (name === '' || name.length > MAX_TEAM_NAME) { sendJson(res, 400, { error: 'bad-name' }); return }
   const id = randomUUID()
@@ -4541,10 +4525,9 @@ async function handleCreateTeam(req: IncomingMessage, res: ServerResponse, deps:
 async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const teamId = (body as { teamId?: unknown } | null)?.teamId
-  const rawName = (body as { name?: unknown } | null)?.name
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { teamId, name: rawName } = body
   const name = typeof rawName === 'string' ? rawName.trim() : ''
   if (typeof teamId !== 'string' || name === '' || name.length > MAX_TEAM_NAME) { sendJson(res, 400, { error: 'bad-name' }); return }
   const team = await deps.db.getTeam(teamId)
@@ -4560,10 +4543,9 @@ async function handleRenameTeam(req: IncomingMessage, res: ServerResponse, deps:
 async function handleSetTeamHidden(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const teamId = (body as { teamId?: unknown } | null)?.teamId
-  const hidden = (body as { hidden?: unknown } | null)?.hidden
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { teamId, hidden } = body
   if (typeof teamId !== 'string' || typeof hidden !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
   const team = await deps.db.getTeam(teamId)
   if (await readAdminSession(res, deps, cookie) == null) return
@@ -4576,9 +4558,9 @@ async function handleSetTeamHidden(req: IncomingMessage, res: ServerResponse, de
 async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const teamId = (body as { teamId?: unknown } | null)?.teamId
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { teamId } = body
   if (typeof teamId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   const team = await deps.db.getTeam(teamId)
   if (await readAdminSession(res, deps, cookie) == null) return
@@ -4593,14 +4575,13 @@ async function handleDeleteTeam(req: IncomingMessage, res: ServerResponse, deps:
 async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const teamId = (body as { teamId?: unknown } | null)?.teamId
-  const repoId = (body as { repoId?: unknown } | null)?.repoId
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { teamId, repoId } = body
   if (typeof teamId !== 'string' || typeof repoId !== 'number' || !Number.isSafeInteger(repoId)) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
-  const path = normalizeTeamPath((body as { path?: unknown }).path)
+  const path = normalizeTeamPath(body['path'])
   if (!path.ok) { sendJson(res, 400, { error: 'bad-path' }); return }
   const team = (await deps.db.listTeams()).find(row => row.id === teamId)
   if (team == null) { sendJson(res, 404, { error: 'no-team' }); return }
@@ -4618,12 +4599,10 @@ async function handleSetTeamRepo(req: IncomingMessage, res: ServerResponse, deps
 async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const teamId = (body as { teamId?: unknown } | null)?.teamId
-  const repoId = (body as { repoId?: unknown } | null)?.repoId
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { teamId, repoId, path: rawPath } = body
   if (typeof teamId !== 'string' || typeof repoId !== 'number' || !Number.isSafeInteger(repoId)) { sendJson(res, 400, { error: 'bad-request' }); return }
-  const rawPath = (body as { path?: unknown }).path
   if (rawPath !== undefined && rawPath !== null && typeof rawPath !== 'string') { sendJson(res, 400, { error: 'bad-path' }); return }
   const path = normalizeTeamPath(rawPath)
   if (!path.ok) { sendJson(res, 400, { error: 'bad-path' }); return }
@@ -4638,10 +4617,9 @@ async function handleRemoveTeamRepo(req: IncomingMessage, res: ServerResponse, d
 async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const teamId = (body as { teamId?: unknown } | null)?.teamId
-  const userId = (body as { userId?: unknown } | null)?.userId
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { teamId, userId } = body
   if (typeof teamId !== 'string' || typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   const team = (await deps.db.listTeams()).find(row => row.id === teamId)
   if (team == null) { sendJson(res, 404, { error: 'no-team' }); return }
@@ -4661,10 +4639,9 @@ async function handleSetTeamMember(req: IncomingMessage, res: ServerResponse, de
 async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const teamId = (body as { teamId?: unknown } | null)?.teamId
-  const userId = (body as { userId?: unknown } | null)?.userId
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { teamId, userId } = body
   if (typeof teamId !== 'string' || typeof userId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   if (await readAdminSession(res, deps, cookie) == null) return
   if (!(await deps.db.removeTeamMember(teamId, userId))) { sendJson(res, 404, { error: 'not-member' }); return }
@@ -4677,10 +4654,11 @@ async function handleRemoveTeamMember(req: IncomingMessage, res: ServerResponse,
 async function handleSetTeamDependencyReview(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (!s) return
-  let body
-  try { body = await readJsonBody(req) as { teamId?: unknown; enabled?: unknown } } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  if (typeof body?.teamId !== 'string' || typeof body?.enabled !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
-  if (!await deps.db.setTeamDependencyReview(s.session.id, body.teamId, body.enabled)) { sendJson(res, 404, { error: 'no-team' }); return }
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { teamId, enabled } = body
+  if (typeof teamId !== 'string' || typeof enabled !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (!await deps.db.setTeamDependencyReview(s.session.id, teamId, enabled)) { sendJson(res, 404, { error: 'no-team' }); return }
   sendJson(res, 200, { ok: true })
 }
 
@@ -4689,12 +4667,12 @@ async function handleSetTeamDependencyReview(req: IncomingMessage, res: ServerRe
 async function handleSetTeamNpmScopes(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined): Promise<void> {
   const s = await adminMutation(req, res, deps, cookie, { handed: true })
   if (s == null) return
-  let body: unknown
-  try { body = await readJsonBody(req) } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  const teamId = (body as { teamId?: unknown } | null)?.teamId
+  const body = await readBodyFields(req, res)
+  if (!body) return
+  const { teamId } = body
   if (typeof teamId !== 'string') { sendJson(res, 400, { error: 'bad-request' }); return }
   const team = await deps.db.getTeam(teamId)
-  const changed = await deps.db.setTeamNpmScopes(s.session.id, teamId, (body as { scopes?: unknown }).scopes)
+  const changed = await deps.db.setTeamNpmScopes(s.session.id, teamId, body['scopes'])
   if (changed == null) { sendJson(res, 404, { error: 'no-team' }); return }
   const parts = [changed.added.length > 0 ? `added ${changed.added.join(', ')}` : '', changed.removed.length > 0 ? `removed ${changed.removed.join(', ')}` : ''].filter(Boolean)
   if (parts.length > 0) await activity(deps, s.user, 'access', `changed team ${team?.name ?? teamId}'s npm scopes: ${parts.join('; ')}`)
@@ -4731,6 +4709,15 @@ function found<T>(value: T | null | undefined): T {
   return value
 }
 
+// The review a page of reviews goes on below (`beforeTime`, `beforeId`):
+// none for the first page; 'invalid' where the query names it otherwise.
+function reviewCursor(query: URLSearchParams): { time: number; id: string } | null | 'invalid' {
+  const id = query.get('beforeId'), time = query.get('beforeTime')
+  if (time === null && id === null) return null
+  if (time === null || !/^\d+$/u.test(time) || !Number.isSafeInteger(Number(time)) || !id || id.length > 100) return 'invalid'
+  return { time: Number(time), id }
+}
+
 // Version documents a list of reviews reads at once: each holds a version
 // document's room in what npm's reads may hold at once (npm-packages.ts),
 // which refuses past thirty-two of them.
@@ -4738,17 +4725,17 @@ const REVIEW_READS_AT_ONCE = 8
 
 // Lists must enforce the same target and base access as the review itself,
 // including permission changes while the registry requests are in flight;
-// first as `session`, the one the request read just now, where given. A
-// team's (`teamId`) only to one who still reads its reviews there, asked
-// again with the rest (npmReviewReader).
+// first as `session`, the one the request read just now. A team's
+// (`teamId`) only to one who still reads its reviews there, asked again
+// with the rest (npmReviewReader).
 async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, user: string, reviews: T[],
-  session?: { id: string; role: NpmReader['role'] }, teamId?: string): Promise<T[] | null> {
+  session: { id: string; role: NpmReader['role'] }, teamId?: string): Promise<T[] | null> {
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
   try {
     const names = reviews.flatMap(review => [review.package, ...review.basePackage ? [review.basePackage] : []])
-    const reader = session ? await npmReaderOf(deps, session, names) : await npmReader(deps, cookie, names)
+    const reader = await npmReaderOf(deps, session, names)
     if (!reader || reader.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     // Public versions' documents as the viewer keeps them (npm-kept.ts), a
     // day, all read of the database at once: a list asks npm for none it read
@@ -4802,6 +4789,43 @@ async function npmReviewPublicationLimit(deps: ManagedHttpDeps, reader: NpmReade
   return npmReviewVerdictLimit(doc, list, socket, risk)
 }
 
+// The change a POST of reviews asks for, as its `body` names it: a review
+// started, an entry saved, a set published, continued or revoked. Null,
+// answered 400, where it names none.
+function reviewChange(res: ServerResponse, body: Record<string, unknown>): ReviewChange | null {
+  const action = body['action'], reviewId = body['reviewId'] ?? null, revision = body['revision'] ?? null
+  if (typeof action !== 'string' || !['start', 'save', 'publish', 'continue', 'revoke'].includes(action)
+    || (reviewId !== null && (typeof reviewId !== 'string' || reviewId.length === 0 || reviewId.length > 100 || !Number.isSafeInteger(revision) || Number(revision) < 1))
+    || (!['save', 'start'].includes(action) && reviewId === null) || (action === 'start' && reviewId !== null)) { sendJson(res, 400, { error: 'bad-review' }); return null }
+  if (action === 'start') return { action, reviewId: null, revision: null }
+  if (action === 'publish') {
+    const teamIds = body['teamIds']
+    if (!Array.isArray(teamIds) || teamIds.length === 0 || teamIds.length > 100 || teamIds.some(id => typeof id !== 'string' || id.length > 100)) {
+      sendJson(res, 400, { error: 'bad-review-teams' }); return null
+    }
+    const finalComment = body['finalComment'] ?? '', finalStatus = body['finalStatus'] ?? null
+    if (typeof finalComment !== 'string' || finalComment.length > 20000 || finalStatus !== null
+      && (typeof finalStatus !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(finalStatus))) {
+      sendJson(res, 400, { error: 'bad-final-verdict' }); return null
+    }
+    return { action, reviewId: reviewId as string, revision: revision as number, teamIds, files: [], nonTextFiles: [],
+      final: finalStatus === null ? null : { status: finalStatus as ReviewInput['status'] & string, comment: finalComment } }
+  }
+  if (action === 'continue' || action === 'revoke') return { action, reviewId: reviewId as string, revision: revision as number }
+  const file = body['file']
+  const comment = body['comment']
+  const status = body['status'] ?? null
+  const entryId = body['entryId'] ?? null
+  if (typeof file !== 'string' || !file || file.length > 4096 || file.includes('\0')
+    || (entryId !== null && (typeof entryId !== 'string' || entryId.length === 0 || entryId.length > 100))
+    || typeof comment !== 'string' || comment.length > 20000
+    || (status !== null && (typeof status !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(status))) || (status === null && entryId === null)) {
+    sendJson(res, 400, { error: 'bad-review' }); return null
+  }
+  return { action: 'save', reviewId: reviewId as string | null, revision: revision as number | null, entryId: entryId as string | null,
+    entry: { file, comment, status: status as ReviewInput['status'] } }
+}
+
 // Reviews are scoped to the bytes actually displayed, including the base:
 // each change but a revocation loads both versions' files, of tarballs held
 // to their integrity and to their shasum where npm tells one (npm-loads.ts),
@@ -4817,14 +4841,8 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   const session = mutation ? await checkMutation(req, res, deps, cookie, { handed: true }) : await readSession(deps.config, deps.db, cookie, Date.now(), { handed: true })
   if (!session) { if (!mutation) sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!roleAtLeast(session.user.role, mutation ? 'triage' : 'view')) { sendJson(res, 403, { error: 'forbidden' }); return }
-  let body: Record<string, unknown> = {}
-  if (mutation) {
-    try {
-      const raw = await readJsonBody(req, 128 * 1024)
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('bad-body')
-      body = raw as Record<string, unknown>
-    } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  }
+  const body: Record<string, unknown> | null = mutation ? await readBodyObject(req, res, 128 * 1024) : {}
+  if (!body) return
   const field = (key: string) => mutation ? body[key] : params.get(key)
   const name = field('package')
   const version = field('version')
@@ -4846,40 +4864,10 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     basePackage: basePackage as string | null, baseVersion: baseVersion as string | null, baseIntegrity: baseIntegrity as string | null }
   let change: ReviewChange | null = null
   if (mutation) {
-    const action = body['action'], reviewId = body['reviewId'] ?? null, revision = body['revision'] ?? null
-    if (typeof action !== 'string' || !['start', 'save', 'publish', 'continue', 'revoke'].includes(action)
-      || (reviewId !== null && (typeof reviewId !== 'string' || reviewId.length === 0 || reviewId.length > 100 || !Number.isSafeInteger(revision) || Number(revision) < 1))
-      || (!['save', 'start'].includes(action) && reviewId === null) || (action === 'start' && reviewId !== null)) { sendJson(res, 400, { error: 'bad-review' }); return }
-    if (action === 'start') change = { action, reviewId: null, revision: null }
-    else if (action === 'publish') {
-      const teamIds = body['teamIds']
-      if (!Array.isArray(teamIds) || teamIds.length === 0 || teamIds.length > 100 || teamIds.some(id => typeof id !== 'string' || id.length > 100)) {
-        sendJson(res, 400, { error: 'bad-review-teams' }); return
-      }
-      const finalComment = body['finalComment'] ?? '', finalStatus = body['finalStatus'] ?? null
-      if (typeof finalComment !== 'string' || finalComment.length > 20000 || finalStatus !== null
-        && (typeof finalStatus !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(finalStatus))) {
-        sendJson(res, 400, { error: 'bad-final-verdict' }); return
-      }
-      change = { action, reviewId: reviewId as string, revision: revision as number, teamIds, files: [], nonTextFiles: [],
-        final: finalStatus === null ? null : { status: finalStatus as ReviewInput['status'] & string, comment: finalComment } }
-    } else if (action === 'continue' || action === 'revoke') change = { action, reviewId: reviewId as string, revision: revision as number }
-    else {
-      const file = body['file']
-      const comment = body['comment']
-      const status = body['status'] ?? null
-      const entryId = body['entryId'] ?? null
-      if (typeof file !== 'string' || !file || file.length > 4096 || file.includes('\0')
-        || (entryId !== null && (typeof entryId !== 'string' || entryId.length === 0 || entryId.length > 100))
-        || typeof comment !== 'string' || comment.length > 20000
-        || (status !== null && (typeof status !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(status))) || (status === null && entryId === null)) {
-        sendJson(res, 400, { error: 'bad-review' }); return
-      }
-      change = { action: 'save', reviewId: reviewId as string | null, revision: revision as number | null, entryId: entryId as string | null,
-        entry: { file, comment, status: status as ReviewInput['status'] } }
-    }
+    change = reviewChange(res, body)
+    if (!change) return
     // Each change but a revocation reads a patched version's patch.
-    if (patchHash !== null && action !== 'revoke' && !patch) { sendJson(res, 400, { error: 'bad-review-context' }); return }
+    if (patchHash !== null && change.action !== 'revoke' && !patch) { sendJson(res, 400, { error: 'bad-review-context' }); return }
   }
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
@@ -4964,6 +4952,12 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
 // who may still read it, none told to one whose session is gone.
 const MAX_ASKED_DELTAS = 50
 const DELTAS_AT_ONCE = 2
+// A version as npmDelta takes it: its integrity, and its files, loaded as
+// they are asked for and released once read.
+const deltaSide = (doc: NpmVersionDocument) => ({ integrity: doc.dist.integrity, files: async () => {
+  const load = loadNpmFiles(doc)
+  try { return await load.result } finally { load.release() }
+} })
 async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, params: URLSearchParams): Promise<void> {
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   let asked: unknown = null
@@ -4975,7 +4969,7 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
   res.once('close', () => { if (!res.writableEnded) controller.abort() })
-  res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+  dropIdle(res)
   const kept = npmDeltaStore<NpmDelta>(deps.db, deps.config.debug), keptVersions = npmVersionStore(deps.db, deps.config.debug)
   const out = openLines(res)
   let stopped = false
@@ -4989,11 +4983,7 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
       const [doc, old] = await Promise.all([readNpmVersion(name, version, privileged, controller.signal, together).then(found),
         otherVersion === '(empty)' ? null : readNpmVersion(name, otherVersion, privileged, controller.signal, together).then(found)])
       isPrivate = doc.private || old?.private === true
-      const side = (of: NpmVersionDocument) => ({ integrity: of.dist.integrity, files: async () => {
-        const load = loadNpmFiles(of)
-        try { return await load.result } finally { load.release() }
-      } })
-      line = { ...asOne, ...await npmDelta(old ? side(old) : null, side(doc), kept) }
+      line = { ...asOne, ...await npmDelta(old ? deltaSide(old) : null, deltaSide(doc), kept) }
     } catch (err) {
       if (controller.signal.aborted) return
       if (!(err instanceof NpmPackageError)) console.warn('managed: a package delta failed:', err)
@@ -5139,7 +5129,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const assessment = await npmRisk(doc, otherSpec === '' ? 'pick' : old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, fromEmpty: otherSpec === '(empty)',
         ownScope: listed => deps.db.hasTeamNpmScope(listed), privileged, signal: controller.signal })
       // What it tells is read of both versions: private where either is.
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       await reply(doc.private || old?.private === true, { ...assessment })
       return
     }
@@ -5149,12 +5139,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // (npm-delta.ts), as a list of versions wanting reviews tells them.
     if (path === NPM_DELTA_PATH) {
       const old = otherSpec === '(empty)' ? null : await otherDoc()
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
-      const side = (version: NpmVersionDocument) => ({ integrity: version.dist.integrity, files: async () => {
-        const load = loadNpmFiles(version)
-        try { return await load.result } finally { load.release() }
-      } })
-      const delta = await npmDelta(old ? side(old) : null, side(doc), npmDeltaStore<NpmDelta>(deps.db, deps.config.debug))
+      dropIdle(res)
+      const delta = await npmDelta(old ? deltaSide(old) : null, deltaSide(doc), npmDeltaStore<NpmDelta>(deps.db, deps.config.debug))
       await reply(doc.private || old?.private === true, { name, version: doc.version, otherVersion: old?.version ?? null, ...delta })
       return
     }
@@ -5169,7 +5155,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const old = otherSpec === '(empty)' ? null : await otherDoc()
       const patched = patch ? await npmPatchOf(deps, cookie, patch) : null
       if (patched && 'error' in patched) { sendRefusal(res, patched); return }
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       const loads = [doc, ...old ? [old] : []].map(loadNpmFiles)
       let body
       try {
@@ -5213,7 +5199,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
         : path === NPM_TYPE_ONLY_PATH ? typeOnlyFiles(sides!) : sides ? compared(sides) : await deps.prettyCache.npmAll(doc)
       const isPrivate = doc.private || other?.private === true
       if (!(await recheck(isPrivate))) return
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       await sendLines(res, lines, async () => {
         const current = await npmReader(deps, cookie, isPrivate ? [name] : [])
         return current != null && (!isPrivate || canReadPrivateNpm(current, name))
@@ -5229,7 +5215,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const diff = await renameDiffOf(diffed, async () => [await prettyText(await prettyCache.npm(doc, diffed.base)),
         await prettyText(await prettyCache.npm(other, diffed.other))], !doc.private && !other.private)
       if (!(await recheck(doc.private || other.private))) { diff.stream.destroy(); return }
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       await sendEncoded(req, res, diff, 'application/json')
       return
     }
@@ -5243,7 +5229,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       let body
       try { body = await patchedVersionBody(doc, patch, patchedFiles(await load.result, patched.files)) } finally { load.release() }
       if (!(await recheck(doc.private))) { body.stream.destroy(); return }
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       await sendEncoded(req, res, body, 'application/json')
       return
     }
@@ -5276,7 +5262,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     res.once('close', load.release)
     const bytes = await load.result
     if (!(await recheck(doc.private))) return
-    res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+    dropIdle(res)
     res.writeHead(200, {
       ...download
         ? { 'content-type': 'application/gzip', 'content-disposition': attachmentDisposition(npmTarballFilename(doc.name, doc.version)) }
@@ -5299,9 +5285,8 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
   const method = req.method ?? 'GET'
   const allowed = id ? ['PATCH', 'DELETE'] : ['GET', 'POST', 'DELETE']
   if (!allowed.includes(method)) { send405(res, allowed.join(', ')); return }
-  const s = method === 'GET' ? await readSession(deps.config, deps.db, cookie, Date.now(), { handed: true }) : await checkMutation(req, res, deps, cookie, { handed: true })
-  if (!s) { if (method === 'GET') sendJson(res, 401, { error: 'unauthenticated' }); return }
-  if (!requireManageRole(res, s.user)) return
+  const s = method === 'GET' ? await readManageSession(res, deps, cookie, { handed: true }) : await manageMutation(req, res, deps, cookie, { handed: true })
+  if (!s) return
   const { db } = deps
   if (method === 'GET') {
     const shares = await db.listWorkspaceShares(s.session.id, Date.now(), teamId)
@@ -5325,12 +5310,21 @@ async function handleWorkspaceShare(req: IncomingMessage, res: ServerResponse, d
   sendJson(res, 200, method === 'POST' ? { id: shareId, path: `/team/${team.slug}#public=${shareId.slice(0, 8)}.${token}` } : { ok: true })
 }
 
+// The repositories' reads that are GETs of their query alone, by their paths.
+const REPOSITORY_QUERY_READS = new Map<string, (res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams) => Promise<void>>([
+  [REPO_RISK_PATH, handleRepositoryRisk], [REPO_CODE_PATH, handleRepositoryCode], [REPO_HISTORY_PATH, handleRepositoryHistory],
+  [REPO_CHANGES_PATH, handleRepositoryChanges], [REPO_TREE_PATH, handleRepositoryTree], [REPO_ISSUES_PATH, handleRepositoryIssues],
+  [REPO_AGENTS_PATH, handleRepositoryAgents], [REPO_ITEM_PATH, handleRepositoryItem], [REPO_PULL_DEPENDENCIES_PATH, handleRepositoryPullDependencies],
+  [REPO_BRANCH_DEPENDENCIES_PATH, handleRepositoryBranchDependencies], [REPO_LOCKFILES_PATH, handleRepositoryLockfiles],
+  [REPO_PULSE_PATH, handleRepositoryPulse], [REPO_PULSE_ITEMS_PATH, handleRepositoryPulseItems],
+])
+
 export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
   const { config, db, avatarStore, isShuttingDown, track } = deps
   const repositoryDiscovery = new RepositoryDiscovery(config)
   // Kept reads' prunes run behind their writes: tracked, so the database
   // outlives them, and on serverless kept alive past the answer.
-  ownKeptPrunes(db, prune => { track(prune); deps.waitUntil?.(prune) })
+  ownKeptPrunes(db, prune => { trackBehind(deps, prune) })
   // GitHub's tagged answers kept beyond this process, for an instance
   // starting anew to ask again If-None-Match (github-requests.ts).
   const tags = githubTagStore<TaggedRead>(db, config.debug)
@@ -5365,8 +5359,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === LOGIN_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const { location, setCookie } = buildLoginRedirect(config)
-      res.writeHead(302, { location, 'set-cookie': setCookie, 'cache-control': 'no-store' })
-      res.end()
+      sendRedirect(res, location, setCookie)
       return
     }
     // OAuth: callback (the GitHub hook) → mint a session, land on the app.
@@ -5379,43 +5372,31 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
           if (!s) return
           const result = await linkOAuthCallback(config, db, s.session, url.searchParams, cookie, { avatarStore })
           if (result.linked != null) await activity(deps, s.user, 'access', `linked GitHub account @${result.linked}`)
-          res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
-          res.end(); return
+          sendRedirect(res, result.location, result.setCookie); return
         }
         if (isIssueOAuthCallback(config, url.searchParams, cookie)) {
           if (viewing) { sendViewOnly(res); return }
           const s = await readWorkspaceSession(res, deps, cookie)
           if (!s) return
           const result = await issueOAuthCallback(config, db, s.session, url.searchParams, cookie)
-          res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
-          res.end(); return
+          sendRedirect(res, result.location, result.setCookie); return
         }
         const result = await handleCallback(url.searchParams, cookie, { config, db, avatarStore })
         // A new sign-in never resumes an earlier view.
         const setCookies = viewing ? [...result.setCookies, clearViewCookie(config)] : result.setCookies
-        res.writeHead(302, { location: result.location, 'set-cookie': setCookies, 'cache-control': 'no-store' })
-        res.end()
+        sendRedirect(res, result.location, setCookies)
       } catch (err) {
         if (err instanceof OAuthError) sendJson(res, err.status, { error: err.message })
         else throw err
       }
       return
     }
-    if (path === ISSUE_LOGIN_PATH) {
+    if (path === ISSUE_LOGIN_PATH || path === LINK_LOGIN_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readWorkspaceSession(res, deps, cookie)
       if (!s) return
-      const result = issueLoginRedirect(config, s.session)
-      res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
-      res.end(); return
-    }
-    if (path === LINK_LOGIN_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      const s = await readWorkspaceSession(res, deps, cookie)
-      if (!s) return
-      const result = linkLoginRedirect(config, s.session)
-      res.writeHead(302, { location: result.location, 'set-cookie': result.setCookie, 'cache-control': 'no-store' })
-      res.end(); return
+      const result = path === ISSUE_LOGIN_PATH ? issueLoginRedirect(config, s.session) : linkLoginRedirect(config, s.session)
+      sendRedirect(res, result.location, result.setCookie); return
     }
     if (path === PROFILE_PATH) { await handleProfile(req, res, deps, cookie); return }
     const unlink = /^\/api\/auth\/profile\/accounts\/([a-f\d-]{36})$/iu.exec(path)
@@ -5495,9 +5476,10 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'POST') { send405(res, 'POST'); return }
       await handleRemoveRepository(req, res, deps, cookie); return
     }
-    if (path === REPO_RISK_PATH) {
+    const repositoryRead = REPOSITORY_QUERY_READS.get(path)
+    if (repositoryRead) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryRisk(res, deps, cookie, url.searchParams); return
+      await repositoryRead(res, deps, cookie, url.searchParams); return
     }
     if (path === BROWSABLE_REPOS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
@@ -5506,54 +5488,6 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === REPO_REFS_PATH || path === REPO_CONTENTS_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       await handleRepositoryBrowser(res, deps, cookie, url.searchParams, path === REPO_REFS_PATH); return
-    }
-    if (path === REPO_CODE_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryCode(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_HISTORY_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryHistory(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_CHANGES_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryChanges(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_TREE_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryTree(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_ISSUES_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryIssues(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_AGENTS_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryAgents(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_ITEM_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryItem(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_PULL_DEPENDENCIES_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryPullDependencies(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_BRANCH_DEPENDENCIES_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryBranchDependencies(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_LOCKFILES_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryLockfiles(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_PULSE_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryPulse(res, deps, cookie, url.searchParams); return
-    }
-    if (path === REPO_PULSE_ITEMS_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleRepositoryPulseItems(res, deps, cookie, url.searchParams); return
     }
     if (path === ADMIN_REPOS_PATH) { await handleListRepositories(req, res, deps, cookie, repositoryDiscovery); return }
     if (path === SELECT_REPO_PATH) { await handleSelectRepository(req, res, deps, cookie); return }
@@ -5778,12 +5712,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'POST') { send405(res, 'POST'); return }
       const s = await checkMutation(req, res, deps, cookie, { handed: true })
       if (!s) return
-      let body: Record<string, unknown>
-      try {
-        const raw = await readJsonBody(req, 4096)
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('bad-body')
-        body = raw as Record<string, unknown>
-      } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+      const body = await readBodyObject(req, res)
+      if (!body) return
       const id = body['reviewId'], revision = body['revision']
       if (typeof id !== 'string' || !id || id.length > 100 || !Number.isSafeInteger(revision) || Number(revision) < 1) {
         sendJson(res, 400, { error: 'bad-review' }); return
@@ -5794,11 +5724,9 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === '/api/npm/reviews/mine') {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = workspaceSession!
-      const id = url.searchParams.get('beforeId'), time = url.searchParams.get('beforeTime')
-      if ((time !== null || id !== null) && (time === null || !/^\d+$/u.test(time) || !Number.isSafeInteger(Number(time)) || !id || id.length > 100)) {
-        sendJson(res, 400, { error: 'bad-review-cursor' }); return
-      }
-      const page = await deps.db.listOwnDependencyReviews(s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
+      const cursor = reviewCursor(url.searchParams)
+      if (cursor === 'invalid') { sendJson(res, 400, { error: 'bad-review-cursor' }); return }
+      const page = await deps.db.listOwnDependencyReviews(s.user.id, cursor)
       const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews, s.user)
       if (reviews) sendJson(res, 200, { ...page, reviews: await withFormatted(deps.reviewedDependencies ?? null, s.user.id, reviews) })
       return
@@ -5808,12 +5736,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     if (path === '/api/npm/reviews/team') {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = workspaceSession!
-      const id = url.searchParams.get('beforeId'), teamId = url.searchParams.get('teamId'), time = url.searchParams.get('beforeTime')
+      const teamId = url.searchParams.get('teamId')
       if (!teamId || teamId.length > 100) { sendJson(res, 400, { error: 'bad-team' }); return }
-      if ((time !== null || id !== null) && (time === null || !/^\d+$/u.test(time) || !Number.isSafeInteger(Number(time)) || !id || id.length > 100)) {
-        sendJson(res, 400, { error: 'bad-review-cursor' }); return
-      }
-      const page = await deps.db.listTeamDependencyReviews(teamId, s.user.id, time !== null && id !== null ? { time: Number(time), id } : null)
+      const cursor = reviewCursor(url.searchParams)
+      if (cursor === 'invalid') { sendJson(res, 400, { error: 'bad-review-cursor' }); return }
+      const page = await deps.db.listTeamDependencyReviews(teamId, s.user.id, cursor)
       if (!page) { sendJson(res, 404, { error: 'no-team' }); return }
       // Its access asked again, as it may have been taken while npm was read.
       const reviews = await readableNpmReviews(res, deps, cookie, s.user.id, page.reviews, s.user, teamId)

@@ -11,6 +11,8 @@
 import { isExactVersion, satisfies, validRange } from '@preventive/upstream/semver.js'
 import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import { GithubApiError, githubUnreachable, throwGithubResponseError } from './github-errors.ts'
+import { GITHUB_API, encodedPath, githubHeaders, repoApi } from './github-requests.ts'
+import { LOGIN, isId } from './github-values.ts'
 import type { LockedPackage } from './locked-packages.ts'
 
 // An alert, as GitHub has it: its `number` in its repository and its page
@@ -42,9 +44,6 @@ export interface DependabotAlert {
 // `not_used` or `tolerable_risk`; `at` as GitHub writes it (ISO 8601).
 export interface AlertDismissal { auto?: true; reason?: string; at?: string; by?: string; comment?: string }
 
-const API = 'https://api.github.com'
-const API_VERSION = '2022-11-28'
-const USER_AGENT = 'deepview-triage'
 const PER_PAGE = 100
 // Up to how many pages a listing asks: 2,000 alerts of npm's in a repository,
 // past which the rest are left out; where open and dismissed ones are more,
@@ -62,7 +61,6 @@ const isRepoPath = (path: unknown): path is string => typeof path === 'string' &
 // The states asked: a fixed alert's dependency is no longer what it was.
 const STATES = ['open', 'dismissed', 'auto_dismissed']
 const REASONS = new Set(['fix_started', 'inaccurate', 'no_bandwidth', 'not_used', 'tolerable_risk'])
-const LOGIN = /^[\dA-Za-z](?:[\dA-Za-z-]{0,38})(?:\[bot\])?$/u
 
 const text = (value: unknown, most = 500) => typeof value === 'string' && value.trim() ? value.trim().slice(0, most) : undefined
 
@@ -80,7 +78,7 @@ function dismissalOf(state: string, raw: Record<string, any>): AlertDismissal {
 function alertOf(fullName: string, raw: unknown): DependabotAlert | null {
   if (raw == null || typeof raw !== 'object') return null
   const { number, state, dependency, security_advisory: advisory, security_vulnerability: vulnerability } = raw as Record<string, any>
-  if (!Number.isSafeInteger(number) || number <= 0 || !STATES.includes(state)) return null
+  if (!isId(number) || !STATES.includes(state)) return null
   const ghsa = advisory?.ghsa_id, manifest = dependency?.manifest_path, name = dependency?.package?.name
   if (dependency?.package?.ecosystem !== 'npm' || !isNpmPackageName(name) || !isRepoPath(manifest) || typeof ghsa !== 'string' || !GHSA.test(ghsa)) return null
   const severity = SEVERITIES.get(vulnerability?.severity ?? advisory?.severity)
@@ -88,7 +86,7 @@ function alertOf(fullName: string, raw: unknown): DependabotAlert | null {
   const ids = Array.isArray(advisory?.identifiers) ? advisory.identifiers as { value?: unknown }[] : []
   const cwes = Array.isArray(advisory?.cwes) ? advisory.cwes as { cwe_id?: unknown }[] : []
   return {
-    number, url: `https://github.com/${fullName.split('/').map(encodeURIComponent).join('/')}/security/dependabot/${number}`, manifest, name, ghsa,
+    number, url: `https://github.com/${encodedPath(fullName)}/security/dependabot/${number}`, manifest, name, ghsa,
     aliases: [...new Set(ids.flatMap(id => typeof id?.value === 'string' && /^[\w.:-]{1,64}$/u.test(id.value) && id.value !== ghsa ? [id.value] : []))],
     ...title === undefined ? {} : { title }, ...severity === undefined ? {} : { severity },
     ...range === undefined ? {} : { range }, ...patched === undefined ? {} : { patched },
@@ -105,7 +103,7 @@ function nextPage(link: string | null): [string, string] | null {
   if (!next) return null
   let url
   try { url = new URL(next) } catch { return null }
-  if (url.origin !== API) return null
+  if (url.origin !== GITHUB_API) return null
   const after = url.searchParams.get('after'), page = url.searchParams.get('page')
   return after ? ['after', after] : page && /^\d{1,4}$/u.test(page) ? ['page', page] : null
 }
@@ -119,10 +117,7 @@ async function askPage(url: string, token: string, fetchImpl: typeof fetch): Pro
   const started = Date.now()
   let res: Response
   try {
-    res = await fetchImpl(url, {
-      signal: AbortSignal.timeout(PAGE_TIMEOUT_MS), redirect: 'error',
-      headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': USER_AGENT, 'x-github-api-version': API_VERSION },
-    })
+    res = await fetchImpl(url, { signal: AbortSignal.timeout(PAGE_TIMEOUT_MS), redirect: 'error', headers: githubHeaders(token) })
   } catch (error) { throw githubUnreachable(error, started) }
   if (res.status === 403) {
     const message = (await res.clone().json().catch(() => null) as { message?: unknown } | null)?.message
@@ -143,7 +138,7 @@ async function askPage(url: string, token: string, fetchImpl: typeof fetch): Pro
 // `fullName`'s alerts in `states`, MAX_PAGES at most, in GitHub's order (the
 // newest first), and whether that is all of them.
 async function listAlerts(fullName: string, states: readonly string[], token: string, fetchImpl: typeof fetch) {
-  const base = `${API}/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/dependabot/alerts`
+  const base = `${repoApi(fullName)}/dependabot/alerts`
   const alerts: DependabotAlert[] = []
   const seen = new Set<number>()
   let cursor: [string, string] | null = null

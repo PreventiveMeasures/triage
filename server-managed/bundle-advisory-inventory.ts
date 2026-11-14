@@ -3,7 +3,7 @@ import { packageRepo } from '@exodus/stasis-core/bundle-util'
 import type { Package } from '@preventive/upstream/advisories.js'
 import type { BundleDetails } from '../common/bundle-metadata.js'
 
-export interface SkippedAdvisoryPackage {
+interface SkippedAdvisoryPackage {
   ecosystem: string
   name: string
   version: string

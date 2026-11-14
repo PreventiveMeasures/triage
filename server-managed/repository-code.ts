@@ -10,6 +10,7 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { encodeBrotli } from './brotli.ts'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
+import { SHA } from './github-values.ts'
 import type { KeptStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { MAX_NPM_JSON_LENGTH, NpmPackageError, npmFileRows } from './npm-packages.ts'
@@ -36,12 +37,12 @@ export function repositoryCodeFits(files: RepositoryCodeFiles | null): files is 
 }
 
 // A directory's files' count and bytes, as GitHub lists its tree.
-export interface RepositoryCodeFiles { files: number; bytes: number }
+interface RepositoryCodeFiles { files: number; bytes: number }
 
 // The directory read: the repository by its id and name, the commit, the
 // directory (`''` for the root), its tree's id, and its files as listed,
 // which weigh its load among the active ones.
-export interface RepositoryCodeInput { repoId: number; repo: string; commit: string; path: string; tree: string; listed: RepositoryCodeFiles }
+interface RepositoryCodeInput { repoId: number; repo: string; commit: string; path: string; tree: string; listed: RepositoryCodeFiles }
 
 // A package's refusals, as a directory's: past the bounds, or an archive
 // @preventive/archive refuses, as it does one holding a symlink that climbs
@@ -86,11 +87,10 @@ const KEPT_CODE_VERSION = 1
 // invocation a while uploading it: it is sent as ever, and read again the
 // next time.
 export const MAX_KEPT_CODE_BYTES = 64 * 1024 * 1024
-const COMMIT = /^[a-f\d]{40}$/u
 
 // A directory as kept: the repository by its id and name, the commit and the
 // directory, as its body names them; and the head they are kept at.
-export type KeptCodeAt = Pick<RepositoryCodeInput, 'repoId' | 'repo' | 'commit' | 'path'>
+type KeptCodeAt = Pick<RepositoryCodeInput, 'repoId' | 'repo' | 'commit' | 'path'>
 type KeptCodeHead = Pick<KeptCodeAt, 'commit' | 'repo'>
 // Under the repository, then the commit, so either goes by its prefix; the
 // repository's name and the directory hashed, as a key's parts are names.
@@ -160,7 +160,7 @@ export function repositoryCodeKept(storage: CacheStorage, heads: KeptStore<KeptC
     // resolved to `commit` with `defaultBranch` GitHub's, reads and keeps
     // its directories.
     async at({ repoId, repo, commit }: Omit<KeptCodeAt, 'path'>, ref: string, defaultBranch: string): Promise<boolean> {
-      if (!COMMIT.test(commit)) return false
+      if (!SHA.test(commit)) return false
       const kept = await headOf(repoId)
       const atKept = kept?.commit === commit && kept.repo === repo
       if (ref !== '' && (defaultBranch === '' || ref !== `heads/${defaultBranch}`)) return atKept

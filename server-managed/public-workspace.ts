@@ -24,6 +24,18 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   sendJson(res, status, body, { 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer' })
 }
 
+// A blob sent as the response, the link checked again first (handlePublicWorkspace).
+type Stream = (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>
+
+// What `work` answers, or undefined where it fails as a PrettyError, which is
+// answered as its status tells.
+async function prettyOr<T>(res: ServerResponse, work: () => Promise<T>): Promise<T | undefined> {
+  try { return await work() } catch (err) {
+    if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return undefined }
+    throw err
+  }
+}
+
 // Called before ALL other routing, including OAuth, discovery, static and the
 // combined server fallback. A supplied capability never inherits cookie auth.
 export async function handlePublicWorkspace(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, url: URL): Promise<void> {
@@ -53,7 +65,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
     } })
     await backfillBundleSummaries(snapshot.team.bundles, deps.bundleCache)
   }
-  const stream = async (stored: OpenedBlob, encoding: string | null, contentType = 'application/json') => {
+  const stream: Stream = async (stored, encoding, contentType = 'application/json') => {
     try { await recheck() } catch (error) { stored.stream.destroy(); throw error }
     res.writeHead(200, { 'content-type': contentType, 'cache-control': 'private, no-store',
       'x-content-type-options': 'nosniff', ...(encoding ? { 'content-encoding': encoding } : {}),
@@ -99,14 +111,15 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
     const entries = Object.fromEntries((await deps.db.listTriage([...visible.ids])).map(row => [row.findingId, triageWireEntry(row)]))
     await send({ entries }); return
   }
-  const bundle = snapshot.bundles.find(item => item.id === bundleRoute![1])
+  const id = bundleRoute![1]!, part = bundleRoute![2]!
+  const bundle = snapshot.bundles.find(item => item.id === id)
   if (!bundle) { json(res, 404, { error: 'no-bundle' }); return }
-  if (bundleRoute![2] === 'advisories' && !snapshot.permissions.security) { json(res, 403, { error: 'security-access-required' }); return }
-  if (bundleRoute![2] === 'rename-diff' || bundleRoute![2] === 'type-only' || bundleRoute![2] === 'comparison' || (bundleRoute![2] === 'pretty' && url.searchParams.has('other'))) {
+  if (part === 'advisories' && !snapshot.permissions.security) { json(res, 403, { error: 'security-access-required' }); return }
+  if (part === 'rename-diff' || part === 'type-only' || part === 'comparison' || (part === 'pretty' && url.searchParams.has('other'))) {
     if (method !== 'GET') { json(res, 405, { error: 'method-not-allowed' }); return }
-    await serveCompared(res, deps, bundle, snapshot.bundles.find(item => item.id === url.searchParams.get('other')), bundleRoute![2], url, recheck, stream); return
+    await serveCompared(res, deps, bundle, snapshot.bundles.find(item => item.id === url.searchParams.get('other')), part, url, recheck, stream); return
   }
-  await serveBundle(res, deps, bundle, bundleRoute![2]!, url, recheck, stream)
+  await serveBundle(res, deps, bundle, part, url, recheck, stream)
 }
 
 // What a bundle is compared with `other`, another of the link's bundles, by:
@@ -114,46 +127,35 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
 // with renamed names hidden; or the files that changed between them, or the
 // pairs of those, or those that changed in types alone, a line each.
 function serveCompared(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, part: string, url: URL,
-  recheck: () => Promise<void>, stream: (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>) {
+  recheck: () => Promise<void>, stream: Stream) {
   if (part === 'comparison') return serveComparison(res, deps, bundle, other, url, stream)
   if (part === 'rename-diff' && url.searchParams.has('path')) return serveRenameDiff(res, deps, bundle, other, url, stream)
-  return serveChanges(res, deps, bundle, other, recheck, part === 'pretty' ? compared : part === 'type-only' ? typeOnlyFiles : renamedPairs,
-    part === 'pretty' ? '' : url.searchParams.get('scope') ?? '')
+  if (part === 'pretty') return serveChanges(res, deps, bundle, other, recheck, compared, '')
+  return serveChanges(res, deps, bundle, other, recheck, part === 'type-only' ? typeOnlyFiles : renamedPairs, url.searchParams.get('scope') ?? '')
 }
 
 // One of a bundle's JavaScript files diffed with one of `other`, another of
 // the link's bundles (rename-diff.ts).
-async function serveRenameDiff(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, url: URL,
-  stream: (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>) {
+async function serveRenameDiff(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, url: URL, stream: Stream) {
   const request = renameDiffRequest(url.searchParams)
   if (!request) { json(res, 400, { error: 'bad-file' }); return }
   if (!other) { json(res, 404, { error: 'no-bundle' }); return }
   const { prettyCache } = deps
   if (!prettyCache) { json(res, 503, { error: 'unavailable' }); return }
-  let diff
-  try {
-    diff = await renameDiffOf(request, async () => [await prettyText(await prettyCache.bundle(bundle, request.base)),
-      await prettyText(await prettyCache.bundle(other, request.other))])
-  } catch (err) {
-    if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
-    throw err
-  }
+  const diff = await prettyOr(res, () => renameDiffOf(request, async () => [await prettyText(await prettyCache.bundle(bundle, request.base)),
+    await prettyText(await prettyCache.bundle(other, request.other))]))
+  if (diff === undefined) return
   await stream(diff, 'br')
 }
 
 // A bundle's files paired with `other`'s, another of the link's bundles, as
 // Compare pairs them (comparison.ts), within a reason `scope` where given.
-async function serveComparison(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, url: URL,
-  stream: (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>) {
+async function serveComparison(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, url: URL, stream: Stream) {
   if (!other) { json(res, 404, { error: 'no-bundle' }); return }
   const { prettyCache } = deps
   if (!prettyCache) { json(res, 503, { error: 'unavailable' }); return }
-  let body
-  try { body = await comparisonBody(await prettyCache.bundleDetails(bundle), await prettyCache.bundleDetails(other), url.searchParams.get('scope') ?? '') }
-  catch (err) {
-    if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
-    throw err
-  }
+  const body = await prettyOr(res, async () => comparisonBody(await prettyCache.bundleDetails(bundle), await prettyCache.bundleDetails(other), url.searchParams.get('scope') ?? ''))
+  if (body === undefined) return
   await stream(body, 'br')
 }
 
@@ -165,19 +167,16 @@ async function serveComparison(res: ServerResponse, deps: ManagedHttpDeps, bundl
 async function serveChanges(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, other: ManagedBundle | undefined, recheck: () => Promise<void>,
   linesOf: (sides: [ComparedSide, ComparedSide]) => AsyncIterable<unknown>, scope: string) {
   if (!other) { json(res, 404, { error: 'no-bundle' }); return }
-  if (!deps.prettyCache) { json(res, 503, { error: 'unavailable' }); return }
-  let lines
-  try { lines = linesOf(await deps.prettyCache.bundleSides(bundle, other, scope)) }
-  catch (err) {
-    if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
-    throw err
-  }
+  const { prettyCache } = deps
+  if (!prettyCache) { json(res, 503, { error: 'unavailable' }); return }
+  const lines = await prettyOr(res, async () => linesOf(await prettyCache.bundleSides(bundle, other, scope)))
+  if (lines === undefined) return
   await recheck()
   await sendLines(res, lines, () => recheck().then(() => true, () => false))
 }
 
 async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: ManagedBundle, part: string, url: URL,
-  recheck: () => Promise<void>, stream: (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>) {
+  recheck: () => Promise<void>, stream: Stream) {
   if (part === 'download') {
     const stored = await deps.bundleStore.open(bundle.id, bundle.kind)
     if (!stored) { json(res, 503, { error: 'unavailable' }); return }
@@ -186,13 +185,10 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
   if (part === 'pretty') {
     const file = prettyRequest(url.searchParams)
     if (!file) { json(res, 400, { error: 'bad-file' }); return }
-    if (!deps.prettyCache) { json(res, 503, { error: 'unavailable' }); return }
-    let pretty
-    try { pretty = await deps.prettyCache.bundle(bundle, file) }
-    catch (err) {
-      if (err instanceof PrettyError) { json(res, err.status, { error: err.message }); return }
-      throw err
-    }
+    const { prettyCache } = deps
+    if (!prettyCache) { json(res, 503, { error: 'unavailable' }); return }
+    const pretty = await prettyOr(res, () => prettyCache.bundle(bundle, file))
+    if (pretty === undefined) return
     await stream(pretty, 'br', 'text/plain; charset=utf-8'); return
   }
   if (!deps.bundleCache) { json(res, 503, { error: 'unavailable' }); return }
@@ -219,7 +215,7 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
 }
 
 async function sources(res: ServerResponse, deps: ManagedHttpDeps, snapshot: WorkspaceShareSnapshot,
-  id: string, paths: Set<string>, recheck: () => Promise<void>, stream: (stored: OpenedBlob, encoding: string | null) => Promise<void>) {
+  id: string, paths: Set<string>, recheck: () => Promise<void>, stream: Stream) {
   const report = await deps.db.getReport(id)
   const bundle = report?.bundleId ? await deps.db.getBundle(report.bundleId) : null
   const empty = async () => { await recheck(); res.writeHead(204, { 'cache-control': 'private, no-store' }); res.end() }

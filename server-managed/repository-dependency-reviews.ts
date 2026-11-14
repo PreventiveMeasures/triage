@@ -13,13 +13,12 @@
 // or Accept with nits).
 import type { ManagedSql } from './sql.ts'
 import { type LockfileScope, scopeText, storedScope } from './lockfile-scope.ts'
-import { reviewsIn } from './dependency-reviews.ts'
+import { reviewsIn, snapshotOf } from './dependency-reviews.ts'
 import { type ReviewVerdict, summarizeReview } from '../common/dependency-reviews.js'
 
 export const REPOSITORY_DEPENDENCY_REVIEW_COLUMNS = [['dependency_review', 'INTEGER NOT NULL DEFAULT 0'],
   ['dependency_reviews_required', 'INTEGER NOT NULL DEFAULT 1'], ['dependency_review_since', 'TEXT'], ['dependency_review_lockfiles', 'TEXT']] as const
 export const MAX_REQUIRED_REVIEWS = 10
-export const SINCE_COMMIT = /^[a-f\d]{40}$/u
 
 export interface RepoDependencyReview { enabled: boolean; required: number; since: string | null; lockfiles: LockfileScope }
 // A review published of the version it is of: its package, version and
@@ -92,19 +91,13 @@ async function publishedReviews(db: ManagedSql, repoId: number, versions: Review
         basePackage: string | null; baseVersion: string | null; files: string | null; status: ReviewVerdict; publishedAt: number }[])
       .filter(row => keys.has(`${row.package}@${row.version}`))
     if (rows.length === 0) continue
-    const entries = new Map<string, { file: string; status: ReviewVerdict | null }[]>()
-    for (const { reviewId, ...entry } of await db.prepare(`SELECT review_id AS reviewId, file, status FROM managed_dependency_file_review
-      WHERE review_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as { reviewId: string; file: string; status: ReviewVerdict | null }[]) {
-      const of = entries.get(reviewId)
-      if (of) of.push(entry)
-      else entries.set(reviewId, [entry])
-    }
+    const read = await db.prepare(`SELECT review_id AS reviewId, file, status FROM managed_dependency_file_review
+      WHERE review_id IN (${rows.map(() => '?').join(',')})`).all(...rows.map(row => row.id)) as { reviewId: string; file: string; status: ReviewVerdict | null }[]
+    const entries = Map.groupBy(read, entry => entry.reviewId)
     for (const row of rows) {
-      const snapshot = row.files === null ? null : JSON.parse(row.files) as string[] | { paths: string[]; nonTextFiles: string[] }
       // A snapshot of paths alone, before non-text files were told, can't be full.
-      const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
-      const nonText = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
-      const full = summarizeReview(entries.get(row.id) ?? [], files, nonText).coverage === 'full'
+      const { files, nonTextFiles } = snapshotOf(row.files)
+      const full = summarizeReview(entries.get(row.id) ?? [], files, nonTextFiles).coverage === 'full'
       found.push({ id: row.id, package: row.package, version: row.version, integrity: row.integrity, ...row.patchHash ? { patchHash: row.patchHash } : {},
         basePackage: row.basePackage, baseVersion: row.baseVersion,
         reviewer: row.userId ?? `login:${row.userLogin.toLowerCase()}`, login: row.userLogin, status: row.status, full, time: Number(row.publishedAt) })

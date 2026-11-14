@@ -47,21 +47,15 @@ export function installsBundle(path: string, directory: string): boolean {
 // how many versions it bundles (`versions`), each once.
 export function bundleDependencies(bundled: BundledVersion[], read: CommitLockfiles, commit: string) {
   const versions = [...new Map(bundled.map(one => [`${one.name}@${one.version}`, one])).values()]
-  const byDirectory = new Map<string, string[]>()
-  for (const { path } of read.lockfiles) byDirectory.set(directoryOf(path), [...byDirectory.get(directoryOf(path)) ?? [], path])
+  const byDirectory = Map.groupBy(read.lockfiles.map(({ path }) => path), directoryOf)
   // Each directory's versions by their name and version, the nearest first.
-  const nearest = [...byDirectory].toSorted(([a], [b]) => depth(b) - depth(a)).map(([dir, paths]) => {
-    const locked = new Map<string, LockedPackage[]>()
-    for (const pkg of lockedIn(read, path => directoryOf(path) === dir).packages) {
-      const key = `${pkg.name}@${pkg.version ?? ''}`
-      locked.set(key, [...locked.get(key) ?? [], pkg])
-    }
-    return { paths, locked }
-  })
+  const nearest = [...byDirectory].toSorted(([a], [b]) => depth(b) - depth(a)).map(([dir, paths]) =>
+    ({ paths, locked: Map.groupBy(lockedIn(read, path => directoryOf(path) === dir).packages, pkg => `${pkg.name}@${pkg.version ?? ''}`) }))
   const found = new Map<string, LockedPackage>()
   const unlocked: BundledVersion[] = []
   for (const one of versions) {
-    const variants = nearest.find(({ locked }) => locked.has(`${one.name}@${one.version}`))?.locked.get(`${one.name}@${one.version}`)
+    const key = `${one.name}@${one.version}`
+    const variants = nearest.find(({ locked }) => locked.has(key))?.locked.get(key)
     if (!variants) { unlocked.push(one); continue }
     for (const pkg of variants) if (!found.has(lockedWith(pkg))) found.set(lockedWith(pkg), pkg)
   }

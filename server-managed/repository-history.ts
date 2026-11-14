@@ -13,12 +13,12 @@ import { type AgentSignals, agentSignals } from '../common/managed/agent-tasks.t
 import { githubAgent } from '../common/managed/github-agents.ts'
 import { AGENT_MARKS_READ, APP_AGENTS } from './app-agents.ts'
 import { type CommitFacts, MAX_COAUTHORS, type Maker, coauthorFacts, coauthorTrailers } from './commit-coauthors.ts'
-import { GithubApiError, githubJson } from './github-app.ts'
+import { GithubApiError } from './github-errors.ts'
 import { type GraphActor, accountOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
 import { githubGraphql } from './github-graphql.ts'
-
-export { ACTOR, type GraphAccount, type GraphActor, type NamedAccount, accountOf, actorOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
-export { type GraphqlError, githubGraphql } from './github-graphql.ts'
+import { githubJson, repoApi } from './github-requests.ts'
+import { MAX_NAME, SHA, nameOf, timeOf } from './github-values.ts'
+import { inTurns } from './queue.ts'
 
 export const HISTORY_PAGE = 100
 // The deepest page read, as far as Older commits goes.
@@ -33,8 +33,6 @@ const ALL_TAGS = 100
 const REF_TIPS = 100
 const MAX_PARENTS = 8
 const MAX_SUBJECT = 1000
-const MAX_NAME = 256
-const SHA = /^[a-f\d]{40}$/u
 
 // A commit, its author by name, address (`authorEmail`) and their account's
 // login and numeric id (`authorId`), and who it names beside them
@@ -48,16 +46,10 @@ const SHA = /^[a-f\d]{40}$/u
 // (coauthorsOf, historyMarks), never kept.
 export interface HistoryCommit extends CommitFacts { sha: string; parents: string[]; subject: string; committedAt: number | null; additions?: number | null
   deletions?: number | null; authoredAt?: number | null; authorZone?: number | null; marks?: AgentSignals; marked?: number }
-export interface HistoryRef { name: string; sha: string }
-
-const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
+interface HistoryRef { name: string; sha: string }
 
 // The address Claude's own commits are authored with.
-export const CLAUDE_EMAIL = 'noreply@anthropic.com'
+const CLAUDE_EMAIL = 'noreply@anthropic.com'
 
 const marking = (marks: AgentSignals) => marks.claude || marks.codex || marks.agents.length > 0 || marks.sessions.length > 0 || marks.tasks.length > 0
 
@@ -86,7 +78,8 @@ const lineCount = (value: unknown) => Number.isSafeInteger(value) && (value as n
 // The minutes east of UTC an ISO 8601 time is given in: `Z` none.
 const zoneOf = (value: unknown) => {
   const zone = typeof value === 'string' ? /(?:Z|([+-])(\d{2}):?(\d{2}))$/u.exec(value) : null
-  return zone ? zone[1] ? (zone[1] === '-' ? -1 : 1) * (Number(zone[2]) * 60 + Number(zone[3])) : 0 : null
+  if (!zone) return null
+  return zone[1] ? (zone[1] === '-' ? -1 : 1) * (Number(zone[2]) * 60 + Number(zone[3])) : 0
 }
 
 // A commit as the Commits tab reads it, its subject the message's first
@@ -105,8 +98,8 @@ function historyCommit(sha: unknown, parents: unknown[], message: unknown, autho
     sha,
     parents: parents.filter((parent): parent is string => typeof parent === 'string' && SHA.test(parent)).slice(0, MAX_PARENTS),
     subject: typeof message === 'string' ? message.replaceAll('\r\n', '\n').split('\n', 1)[0]!.trim().slice(0, MAX_SUBJECT) : '',
-    authorName: textOf(author.name, MAX_NAME),
-    authorEmail: textOf(author.email, MAX_NAME),
+    authorName: nameOf(author.name),
+    authorEmail: nameOf(author.email),
     authorLogin: author.account.login,
     authorId: author.account.id,
     ...coauthorFacts(message, listed),
@@ -123,8 +116,6 @@ type RestCommit = { sha?: unknown; parents?: { sha?: unknown }[]; author?: { log
 const restCommit = (item: RestCommit, listed: Maker[] | null = null) => historyCommit(item?.sha, Array.isArray(item?.parents) ? item.parents.map(parent => parent?.sha) : [],
   item?.commit?.message, { name: item?.commit?.author?.name, email: item?.commit?.author?.email, account: accountOf(item?.author) }, item?.commit?.committer?.date,
   null, listed)
-
-const repoApi = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
 
 // A page of the commits `commit` reaches, newest first as GitHub lists them,
 // those touching `path` alone where it names a directory; `more` where a
@@ -198,13 +189,18 @@ export const COMMIT_FRAGMENT = `fragment historyCommit on Commit { oid message c
   authors(first: ${MAX_COAUTHORS + 1}) { nodes { name email user { login databaseId } } } parents(first: ${MAX_PARENTS}) { nodes { oid } } }`
 // A query's variables `$<prefix><n>` of `type`, as many as `count`.
 export const variablesOf = (prefix: string, count: number, type: string) => Array.from({ length: count }, (_, at) => `$${prefix}${at}: ${type}`).join(', ')
+// A query of commits by their ids, `$o<n>` the `n`th's (commitIds), each read
+// by `fields`, `<alias><n>` the `n`th.
+export const commitsQuery = (count: number, alias: string, fields: string) => `query($owner: String!, $name: String!, ${variablesOf('o', count, 'GitObjectID!')}) {
+  repository(owner: $owner, name: $name) {
+    ${Array.from({ length: count }, (_, at) => `${alias}${at}: object(oid: $o${at}) { ... on Commit { ${fields} } }`).join('\n    ')}
+  }
+}`
+// Its variables of `shas`: `$o<n>` the `n`th of them.
+export const commitIds = (shas: string[]) => Object.fromEntries(shas.map((sha, at) => [`o${at}`, sha]))
 
 // The latest commits of each tip, by its id, `b<n>` the `n`th's.
-const historiesQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('o', count, 'GitObjectID!')}) {
-  repository(owner: $owner, name: $name) {
-    ${Array.from({ length: count }, (_, at) => `b${at}: object(oid: $o${at}) { ... on Commit { history(first: ${ALL_DEPTH}) { pageInfo { hasNextPage } nodes { ...historyCommit } } } }`).join('\n    ')}
-  }
-}
+const historiesQuery = (count: number) => `${commitsQuery(count, 'b', `history(first: ${ALL_DEPTH}) { pageInfo { hasNextPage } nodes { ...historyCommit } }`)}
 ${COMMIT_FRAGMENT}`
 
 export type GraphCommit = { oid?: unknown; message?: unknown; committedDate?: unknown; additions?: unknown; deletions?: unknown
@@ -212,9 +208,16 @@ export type GraphCommit = { oid?: unknown; message?: unknown; committedDate?: un
   parents?: { nodes?: { oid?: unknown }[] } }
 type GraphTarget = { __typename?: unknown; oid?: unknown; committedDate?: unknown; target?: GraphTarget | null }
 type GraphRef = { name?: unknown; target?: GraphTarget | null }
-type HeadsPage = { repository?: { defaultBranchRef?: GraphRef | null
-  branches?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: GraphRef[] }; tags?: { nodes?: GraphRef[] } } | null }
+type HeadsPage = { repository?: { defaultBranchRef?: GraphRef | null; branches?: Connection<GraphRef>; tags?: { nodes?: GraphRef[] } } | null }
 type Histories = { repository?: Record<string, { history?: { pageInfo?: { hasNextPage?: unknown }; nodes?: GraphCommit[] } } | null> | null }
+
+// A page of a connection, as GitHub's GraphQL API answers one: whether
+// another follows and where, and its nodes.
+export type Connection<T> = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (T | null)[] }
+// Where a connection's next page starts, as its page tells it; null where
+// none follows.
+export const nextCursor = (page: { hasNextPage?: unknown; endCursor?: unknown } | null | undefined) =>
+  page?.hasNextPage === true && typeof page.endCursor === 'string' ? page.endCursor : null
 
 // The repository's branches, as many as MAX_HEAD_PAGES of them list, each
 // with its tip's time, its default branch and latest tags (an annotated tag
@@ -232,9 +235,8 @@ async function repositoryHeads(owner: string, name: string, token: string, fetch
       const sha = ref?.target?.oid
       if (typeof ref?.name === 'string' && ref.name && typeof sha === 'string' && SHA.test(sha)) heads.push({ name: ref.name.slice(0, MAX_NAME), sha, at: timeOf(ref.target?.committedDate) })
     }
-    const next = repository.branches?.pageInfo
-    if (next?.hasNextPage !== true || typeof next.endCursor !== 'string') return { heads, repository: first, cut: false }
-    after = next.endCursor
+    after = nextCursor(repository.branches?.pageInfo)
+    if (after === null) return { heads, repository: first, cut: false }
   }
   return { heads, repository: first, cut: true }
 }
@@ -259,7 +261,7 @@ async function readPages(fullName: string, token: string | null, tops: string[],
   }
   const [owner, name] = fullName.split('/') as [string, string]
   await inBatches(tops, PAGES_PER_QUERY, PAGES_PARALLEL, async batch => {
-    const data = await githubGraphql(historiesQuery(batch.length), { owner, name, ...Object.fromEntries(batch.map((sha, at) => [`o${at}`, sha])) }, token, fetchImpl) as Histories
+    const data = await githubGraphql(historiesQuery(batch.length), { owner, name, ...commitIds(batch) }, token, fetchImpl) as Histories
     const nodes = batch.map((_, at) => data?.repository?.[`b${at}`]?.history?.nodes ?? [])
     await linkNoreplyUsers(nodes.flat().flatMap(commitActors), token, fetchImpl)
     await Promise.all(batch.map((top, at) => got(top, nodes[at]!.flatMap(node => graphCommit(node) ?? []))))
@@ -330,7 +332,7 @@ export type AllHeads = { heads: (HistoryRef & { at: number | null })[]; defaultB
 export async function repositoryAllHeads(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<AllHeads> {
   const [owner, name] = fullName.split('/') as [string, string]
   const { heads, repository, cut } = await repositoryHeads(owner, name, token, fetchImpl)
-  const defaultBranch = textOf(repository?.defaultBranchRef?.name, MAX_NAME)
+  const defaultBranch = nameOf(repository?.defaultBranchRef?.name)
   // The default branch, where its name sorts past the heads read.
   const defaultTip = repository?.defaultBranchRef?.target?.oid
   if (defaultBranch && typeof defaultTip === 'string' && SHA.test(defaultTip) && !heads.some(head => head.name === defaultBranch)) {
@@ -379,27 +381,21 @@ const SLOW = new Set(['github-timeout', 'github-status-502', 'github-status-504'
 // so that what they read is kept.
 export async function inBatches<T>(items: T[], size: number, parallel: number, run: (batch: T[]) => Promise<void>) {
   const failed: unknown[] = []
-  const waiting: (() => void)[] = []
-  let halved = 0, running = 0
-  const turn = () => {
-    if (running < parallel) { running++; return Promise.resolve() }
-    return new Promise<void>(resolve => { waiting.push(resolve) })
-  }
-  // A turn done, handed to the batch waiting longest.
-  const done = () => {
-    const next = waiting.shift()
-    if (next) next()
-    else running--
-  }
+  const inTurn = inTurns(parallel)
+  let halved = 0
   const attempt = async (batch: T[]): Promise<void> => {
-    await turn()
-    try {
-      if (failed.length === 0) await run(batch)
-      return
-    } catch (err) {
-      if (batch.length === 1 || halved >= 2 * parallel || !(err instanceof GithubApiError && SLOW.has(err.message))) { failed.push(err); return }
-      halved++
-    } finally { done() }
+    // Whether it is run again in halves, once its turn is done.
+    const halve = await inTurn(async () => {
+      try {
+        if (failed.length === 0) await run(batch)
+        return false
+      } catch (err) {
+        if (batch.length === 1 || halved >= 2 * parallel || !(err instanceof GithubApiError && SLOW.has(err.message))) { failed.push(err); return false }
+        halved++
+        return true
+      }
+    })
+    if (!halve) return
     const half = Math.ceil(batch.length / 2)
     await Promise.all([attempt(batch.slice(0, half)), attempt(batch.slice(half))])
   }

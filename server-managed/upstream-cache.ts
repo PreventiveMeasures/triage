@@ -47,10 +47,12 @@ export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
     SELECT cache_key, value, 1 AS in_first FROM found
     UNION ALL SELECT cache_key, value, 0 AS in_first FROM managed_upstream_cache
       WHERE cache_key IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM found)`)
-  // A slower concurrent audit cannot replace a newer listing with an older one.
-  const set = db.prepare(`INSERT INTO managed_upstream_cache (cache_key, value, cached_at) VALUES (?, ?, ?)
+  // The statement keeping as many as `rows` at once. A slower concurrent audit
+  // cannot replace a newer listing with an older one.
+  const insert = (rows: number) => db.prepare(`INSERT INTO managed_upstream_cache (cache_key, value, cached_at) VALUES ${Array.from({ length: rows }, () => '(?, ?, ?)').join(', ')}
     ON CONFLICT (cache_key) DO UPDATE SET value = excluded.value, cached_at = excluded.cached_at
     WHERE managed_upstream_cache.cached_at <= excluded.cached_at`)
+  const set = insert(1)
   const remove = db.prepare('DELETE FROM managed_upstream_cache WHERE cache_key LIKE ? AND cached_at < ?')
   // setUpstreamCacheEntries's, by how many it keeps at once.
   const setMany = new Map<number, ReturnType<ManagedSql['prepare']>>()
@@ -76,11 +78,7 @@ export function upstreamCacheMethods(db: ManagedSql): UpstreamCacheStore {
       const rows = [...new Map(entries)]
       if (rows.length === 0) return
       let many = setMany.get(rows.length)
-      if (!many) {
-        setMany.set(rows.length, many = db.prepare(`INSERT INTO managed_upstream_cache (cache_key, value, cached_at) VALUES ${rows.map(() => '(?, ?, ?)').join(', ')}
-          ON CONFLICT (cache_key) DO UPDATE SET value = excluded.value, cached_at = excluded.cached_at
-          WHERE managed_upstream_cache.cached_at <= excluded.cached_at`))
-      }
+      if (!many) setMany.set(rows.length, many = insert(rows.length))
       await many.run(...rows.flatMap(([key, value]) => [key, value, cachedAt]))
     },
     async deleteUpstreamCacheEntries(prefix, before) {

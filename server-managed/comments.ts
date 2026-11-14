@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { type ManagedComment, canDeleteComment } from '../common/managed/comments.ts'
-import type { ManagedSql } from './sql.ts'
+import { type ManagedSql, sqliteTransaction } from './sql.ts'
 
 export interface CommentInput {
   findingId: string
@@ -54,17 +54,10 @@ export function initCommentMethods(db: DatabaseSync): void {
   // Preserve legacy text without guessing an author. Clearing the old column
   // in the same transaction makes the migration safe to restart. Use a fresh
   // ID so a later legacy-server write cannot collide with an earlier import.
-  db.exec('BEGIN')
-  try {
-    db.exec(`INSERT INTO managed_finding_comment (id, finding_id, body, created_at, updated_at)
+  sqliteTransaction(db, 'BEGIN', () => db.exec(`INSERT INTO managed_finding_comment (id, finding_id, body, created_at, updated_at)
       SELECT 'legacy:' || lower(hex(randomblob(16))), finding_id, comment, updated_at, updated_at
       FROM managed_finding_triage WHERE comment IS NOT NULL AND comment != '';
-      UPDATE managed_finding_triage SET comment = NULL WHERE comment IS NOT NULL;`)
-    db.exec('COMMIT')
-  } catch (err) {
-    db.exec('ROLLBACK')
-    throw err
-  }
+      UPDATE managed_finding_triage SET comment = NULL WHERE comment IS NOT NULL;`))
 }
 
 export function commentMethods(db: ManagedSql): CommentStore {
@@ -110,12 +103,10 @@ export function commentMethods(db: ManagedSql): CommentStore {
     async editComment(id, authorId, authorLogin, body, version, reportId, now) {
       // Identity/version checks and the event share the operation transaction.
       const current = await read(id)
-      if (!current || current.authorId !== authorId || current.version !== version || current.body === body) {
-        if (!current) return null
-        if (current.authorId !== authorId) return 'forbidden'
-        if (current.version !== version) return 'conflict'
-        return current
-      }
+      if (!current) return null
+      if (current.authorId !== authorId) return 'forbidden'
+      if (current.version !== version) return 'conflict'
+      if (current.body === body) return current
       await update.run(body, now, id, authorId, version)
       await event.run(id, current.findingId, authorId, authorLogin, 'edited a comment', now, reportId, reportId, reportId)
       return (await read(id))!
@@ -123,11 +114,9 @@ export function commentMethods(db: ManagedSql): CommentStore {
     async deleteComment(id, actorId, actorLogin, version, reportId, now) {
       const current = await read(id)
       const role = (await userRole.get(actorId) as { role: string } | undefined)?.role ?? 'none'
-      const allowed = current != null && canDeleteComment(current, { id: actorId, role })
-      if (!current || !allowed || current.version !== version) {
-        if (!current) return null
-        return allowed ? 'conflict' : 'forbidden'
-      }
+      if (!current) return null
+      if (!canDeleteComment(current, { id: actorId, role })) return 'forbidden'
+      if (current.version !== version) return 'conflict'
       await remove.run(id, current.authorId, current.authorId, version)
       await event.run(id, current.findingId, actorId, actorLogin, 'deleted a comment', now, reportId, reportId, reportId)
       return 'deleted'
@@ -138,14 +127,10 @@ export function commentMethods(db: ManagedSql): CommentStore {
 function migrateCommentDates(db: DatabaseSync): void {
   const columns = db.prepare('PRAGMA table_info(managed_finding_comment)').all() as { name: string; notnull: number }[]
   if (!columns.some(column => ['created_at', 'updated_at'].includes(column.name) && column.notnull)) return
-  db.exec('BEGIN')
-  try {
-    db.exec(`CREATE TABLE managed_finding_comment_nullable_dates (${COMMENT_COLUMNS}) STRICT;
+  sqliteTransaction(db, 'BEGIN', () => db.exec(`CREATE TABLE managed_finding_comment_nullable_dates (${COMMENT_COLUMNS}) STRICT;
       INSERT INTO managed_finding_comment_nullable_dates (id, finding_id, body, author_id, author_login, created_at, updated_at, version)
         SELECT id, finding_id, body, author_id, author_login, created_at, updated_at, version FROM managed_finding_comment;
       DROP TABLE managed_finding_comment;
       ALTER TABLE managed_finding_comment_nullable_dates RENAME TO managed_finding_comment;
-      CREATE INDEX finding_comment_finding_idx ON managed_finding_comment(finding_id, created_at, id);`)
-    db.exec('COMMIT')
-  } catch (err) { db.exec('ROLLBACK'); throw err }
+      CREATE INDEX finding_comment_finding_idx ON managed_finding_comment(finding_id, created_at, id);`))
 }

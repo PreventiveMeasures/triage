@@ -3,7 +3,8 @@
 // legacy entries. Never copy annotation bodies or credentials into this feed.
 import { randomUUID } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import type { ManagedSql } from './sql.ts'
+import { type ManagedSql, sqliteTransaction } from './sql.ts'
+import { inUserTeamScope } from './db-schema.ts'
 
 export interface ActivityInput {
   kind: 'access' | 'repository' | 'visibility' | 'delete'
@@ -60,57 +61,45 @@ const triageFields = `'triage:' || e.seq AS id, 'triage' AS kind,
   COALESCE(u.login, e.actor_login) AS actor, e.actor_id AS actorId,
   CASE WHEN e.color IS NULL AND e.triage IS NULL AND e.comment IS NULL AND e.fix IS NULL AND e.flagged IS NULL
     THEN 'cleared triage' ELSE 'updated triage' END AS action`
-const triage = `SELECT ${triageFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
-  FROM managed_finding_triage_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
 const commentFields = `'comment:' || e.seq AS id, 'triage' AS kind,
   COALESCE(u.login, e.actor_login) AS actor, e.actor_id AS actorId, e.action`
-const comments = `SELECT ${commentFields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
-  FROM managed_finding_comment_event e LEFT JOIN managed_user u ON u.id = e.actor_id`
-const adminSource = `${triage} UNION ALL ${comments} UNION ALL
+// The events of a finding trail (`table`), with `fields` and the context each
+// recorded.
+const recordedEvents = (fields: string, table: string) => `SELECT ${fields}, e.repo, e.report_id AS reportId, e.report, e.finding_id AS finding, e.at
+  FROM ${table} e LEFT JOIN managed_user u ON u.id = e.actor_id`
+const adminSource = `${recordedEvents(triageFields, 'managed_finding_triage_event')}
+  UNION ALL ${recordedEvents(commentFields, 'managed_finding_comment_event')} UNION ALL
   SELECT id, kind, actor, actor_id AS actorId, action, repo, report_id AS reportId, report, NULL AS finding, at FROM managed_activity`
-// Keep the finite set of accessible findings outside the indexed event
-// lookup. Scanning all events against json_each for every row is quadratic.
-const managerSource = `SELECT ${triageFields},
+// The events of the accessible findings in a finding trail (`table`), with
+// `fields` and the context the server gives each finding. Keep the finite
+// set of accessible findings outside the indexed event lookup. Scanning all
+// events against json_each for every row is quadratic.
+const contextEvents = (fields: string, table: string) => `SELECT ${fields},
   json_extract(c.value, '$.repo') AS repo, json_extract(c.value, '$.reportId') AS reportId,
   json_extract(c.value, '$.report') AS report, e.finding_id AS finding, e.at
   FROM json_each(:contexts) c
-  CROSS JOIN managed_finding_triage_event e ON e.finding_id = json_extract(c.value, '$.finding')
-  LEFT JOIN managed_user u ON u.id = e.actor_id
-  UNION ALL SELECT ${commentFields},
-    json_extract(c.value, '$.repo') AS repo, json_extract(c.value, '$.reportId') AS reportId,
-    json_extract(c.value, '$.report') AS report, e.finding_id AS finding, e.at
-  FROM json_each(:contexts) c
-  CROSS JOIN managed_finding_comment_event e ON e.finding_id = json_extract(c.value, '$.finding')
-  LEFT JOIN managed_user u ON u.id = e.actor_id
+  CROSS JOIN ${table} e ON e.finding_id = json_extract(c.value, '$.finding')
+  LEFT JOIN managed_user u ON u.id = e.actor_id`
+const managerSource = `${contextEvents(triageFields, 'managed_finding_triage_event')}
+  UNION ALL ${contextEvents(commentFields, 'managed_finding_comment_event')}
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId,
     CASE WHEN a.kind = 'repository' THEN 'changed a report repository assignment' ELSE a.action END AS action,
     p.full_name AS repo, r.id AS reportId, r.filename AS report, NULL AS finding, a.at
   FROM managed_activity a JOIN managed_report r ON r.id = a.report_id
   LEFT JOIN managed_selected_repo p ON p.repo_id = r.repo_id
-  WHERE EXISTS (
-    SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-    JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-    WHERE tu.user_id = :userId AND tr.repo_id = r.repo_id AND ${withinTeamPath('r.repo_directory')}
-  )
+  WHERE ${inUserTeamScope(':userId', 'r')}
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId,
     CASE WHEN a.kind = 'repository' THEN 'changed a bundle repository assignment' ELSE a.action END AS action,
     p.full_name AS repo, NULL AS reportId, b.filename AS report, NULL AS finding, a.at
   FROM managed_activity a JOIN managed_bundle b ON b.id = a.bundle_id
   LEFT JOIN managed_selected_repo p ON p.repo_id = b.repo_id
-  WHERE a.report_id IS NULL AND EXISTS (
-    SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-    JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-    WHERE tu.user_id = :userId AND tr.repo_id = b.repo_id AND ${withinTeamPath('b.repo_directory')}
-  )
+  WHERE a.report_id IS NULL AND ${inUserTeamScope(':userId', 'b')}
   UNION ALL SELECT a.id, a.kind, a.actor, a.actor_id AS actorId, a.action, a.repo, a.report_id AS reportId,
     a.report, NULL AS finding, a.at FROM managed_activity a
   WHERE a.kind = 'delete' AND (a.report_id IS NOT NULL OR a.bundle_id IS NOT NULL)
     AND NOT EXISTS (SELECT 1 FROM managed_report WHERE id = a.report_id)
     AND NOT EXISTS (SELECT 1 FROM managed_bundle WHERE id = a.bundle_id)
-    AND EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-      JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-      WHERE tu.user_id = :userId AND tr.repo_id = a.repo_id
-      AND ${withinTeamPath('a.repo_directory')})`
+    AND ${inUserTeamScope(':userId', 'a')}`
 
 export const ACTIVITY_SCHEMA = `
     CREATE TABLE IF NOT EXISTS managed_activity (
@@ -160,9 +149,7 @@ export function activityMethods(db: ManagedSql): ActivityStore {
   const manager = activityStatements(db, managerSource)
   const reports = db.prepare(`SELECT r.id AS reportId, r.filename AS report, p.full_name AS repo
     FROM managed_report r JOIN managed_selected_repo p ON p.repo_id = r.repo_id
-    WHERE EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-      JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-      WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${withinTeamPath('r.repo_directory')})
+    WHERE ${inUserTeamScope('?', 'r')}
     ORDER BY r.uploaded_at DESC, r.id`)
   return {
     async recordActivity(entry, at) {
@@ -226,17 +213,11 @@ function activityStatements(db: ManagedSql, source: string) {
   }
 }
 
-// Literal path comparison preserves separators, case and SQL wildcard chars.
-function withinTeamPath(path: string): string {
-  return `(tr.path IS NULL OR tr.path = '' OR ${path} = tr.path OR substr(${path}, 1, length(tr.path) + 1) = tr.path || '/')`
-}
-
 function migrateActivityScope(db: DatabaseSync): void {
   const columns = new Set((db.prepare('PRAGMA table_info(managed_activity)').all() as { name: string }[]).map(column => column.name))
   const missing = [['bundle_id', 'TEXT'], ['repo_id', 'INTEGER'], ['repo_directory', 'TEXT'], ['actor_id', 'TEXT']].filter(([name]) => !columns.has(name!))
   if (missing.length === 0) return
-  db.exec('BEGIN')
-  try {
+  sqliteTransaction(db, 'BEGIN', () => {
     for (const [name, type] of missing) db.exec(`ALTER TABLE managed_activity ADD COLUMN ${name} ${type}`)
     if (!columns.has('bundle_id') || !columns.has('actor_id')) {
       db.exec('DROP TRIGGER IF EXISTS managed_report_activity; DROP TRIGGER IF EXISTS managed_bundle_activity;')
@@ -253,6 +234,5 @@ function migrateActivityScope(db: DatabaseSync): void {
     }
     // Legacy deletions/assignments without a durable target/scope remain
     // admin-only; neither filenames nor repository names authorize access.
-    db.exec('COMMIT')
-  } catch (err) { db.exec('ROLLBACK'); throw err }
+  })
 }

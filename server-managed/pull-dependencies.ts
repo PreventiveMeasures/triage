@@ -27,17 +27,19 @@
 // this instance where its reader keeps it (LockfileStore): what a blob holds
 // never changes either, and a push changing no lockfile changes none.
 import { createClient } from '@preventive/upstream/github.js'
-import { GithubApiError, githubJson } from './github-app.ts'
-import { upstreamGithub } from './github-errors.ts'
+import { GithubApiError, upstreamGithub } from './github-errors.ts'
+import { USER_AGENT, githubJson, repoApi } from './github-requests.ts'
+import { SHA } from './github-values.ts'
 import { compareVersions, isExactVersion } from '@preventive/upstream/semver.js'
 import { type LockedPackage, isTestFixture, lockedPackages, patchedIn } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
+import { eachOf } from './queue.ts'
 import { type ChangedFile, commitChanges } from './repository-changes.ts'
 
 // The files of a pull request read from its own list past those compared,
 // FILES_PAGE a page, as many as GitHub lists (3,000).
 const FILES_PAGE = 100
-export const PULL_FILES = 3000
+const PULL_FILES = 3000
 // The directories whose lockfiles are read, those past them left out
 // (`cut`), and the packages told new of each, those past them counted.
 export const MAX_DIRECTORIES = 20
@@ -53,7 +55,6 @@ const READ_PARALLEL = 4
 // told or read by others is told or read again, as those read before pnpm's
 // patches' files were.
 export const PULL_DEPENDENCIES_READ = 4
-const SHA = /^[a-f\d]{40}$/u
 
 type Format = 'npm' | 'pnpm' | 'yarn' | 'bun'
 
@@ -138,14 +139,12 @@ export interface GithubAsked { github: boolean }
 const readKey = (ref: string, { path, format, sha }: { path: string; format: Format; sha?: string }) =>
   sha ? `blob\0${format}\0${sha}` : `commit\0${ref}\0${path}`
 
-const api = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
-
 // The pull request's base's and head's commits, as GitHub has them now: its
 // base's moving on as it does, its head's with each push, both kept once it
 // is merged or closed.
 export interface PullCommits { base: string; head: string }
 async function pullCommits(fullName: string, token: string, number: number, fetchImpl: typeof fetch): Promise<PullCommits> {
-  const pull = await githubJson(`${api(fullName)}/pulls/${number}`, token, fetchImpl) as
+  const pull = await githubJson(`${repoApi(fullName)}/pulls/${number}`, token, fetchImpl) as
     { number?: unknown; base?: { sha?: unknown; repo?: { full_name?: unknown } | null }; head?: { sha?: unknown } } | null
   const base = pull?.base?.sha, head = pull?.head?.sha, repo = pull?.base?.repo?.full_name
   if (pull?.number !== number || typeof base !== 'string' || !SHA.test(base) || typeof head !== 'string' || !SHA.test(head)
@@ -160,7 +159,7 @@ async function pullCommits(fullName: string, token: string, number: number, fetc
 // now: null where they are no longer `base` and `head` (`current`).
 async function pullFiles(fullName: string, token: string, number: number, base: string, head: string, fetchImpl: typeof fetch,
   current: () => Promise<boolean>) {
-  const compared = await githubJson(`${api(fullName)}/compare/${base}...${head}?per_page=1`, token, fetchImpl) as { merge_base_commit?: { sha?: unknown } } | null
+  const compared = await githubJson(`${repoApi(fullName)}/compare/${base}...${head}?per_page=1`, token, fetchImpl) as { merge_base_commit?: { sha?: unknown } } | null
   const mergeBase = compared?.merge_base_commit?.sha
   if (typeof mergeBase !== 'string' || !SHA.test(mergeBase)) throw new GithubApiError(502, 'github-malformed')
   const { files, more } = commitChanges(compared)
@@ -168,7 +167,7 @@ async function pullFiles(fullName: string, token: string, number: number, base: 
   if (!await current()) return null
   const listed: ChangedFile[] = []
   for (let page = 1; listed.length < PULL_FILES; page++) {
-    const data = await githubJson(`${api(fullName)}/pulls/${number}/files?per_page=${FILES_PAGE}&page=${page}`, token, fetchImpl)
+    const data = await githubJson(`${repoApi(fullName)}/pulls/${number}/files?per_page=${FILES_PAGE}&page=${page}`, token, fetchImpl)
     if (!Array.isArray(data)) throw new GithubApiError(502, 'github-malformed')
     listed.push(...commitChanges({ files: data }).files)
     if (data.length < FILES_PAGE) return { mergeBase, files: listed, cut: false }
@@ -201,6 +200,15 @@ function lockfilesChanged(files: ChangedFile[]) {
     omitted: all.slice(MAX_DIRECTORIES).flatMap(([, directory]) => [...directory.paths]).toSorted() }
 }
 
+// The text of the file at `path` of repository `fullName` at `ref`; null
+// where GitHub has none there.
+export async function repositoryFile(fullName: string, token: string, path: string, ref: string): Promise<string | null> {
+  try { return await upstreamGithub(() => createClient({ token, userAgent: USER_AGENT }).getRepoFile({ repo: fullName, path, ref })) } catch (err) {
+    if (err instanceof GithubApiError && err.message === 'github-not-found') return null
+    throw err
+  }
+}
+
 // A lockfile's packages at `ref`, as read in this instance, else as kept
 // beyond it (`kept`), else shared with a read of it with the same token still
 // under way, else of GitHub, and kept; a lockfile its reader refuses, why,
@@ -230,13 +238,8 @@ async function readOf(fullName: string, token: string, ref: string, { path, form
   kept: LockfileStore | null): Promise<{ read: LockfileRead; github: boolean }> {
   const stored = await kept?.lockfiles.read(key)
   if (stored) { lockfileReads.set(`${fullName}\0${key}`, stored); return { read: stored, github: false } }
-  let text: string
-  try {
-    text = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).getRepoFile({ repo: fullName, path, ref }))
-  } catch (err) {
-    if (err instanceof GithubApiError && err.message === 'github-not-found') return { read: { error: 'github-not-found' }, github: true }
-    throw err
-  }
+  const text = await repositoryFile(fullName, token, path, ref)
+  if (text === null) return { read: { error: 'github-not-found' }, github: true }
   let read: LockfileRead
   try { read = { packages: lockedPackages(format, text, { review: true }) } } catch (error) {
     read = { error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} }
@@ -244,20 +247,6 @@ async function readOf(fullName: string, token: string, ref: string, { path, form
   lockfileReads.set(`${fullName}\0${key}`, read)
   await kept?.lockfiles.write(key, read)
   return { read, github: true }
-}
-
-// Runs `run` for each of `items`, as many at once as `parallel`, each's
-// result in its place.
-export async function eachOf<T, R>(items: T[], parallel: number, run: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = []
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, async () => {
-    while (next < items.length) {
-      const at = next++
-      results[at] = await run(items[at]!)
-    }
-  }))
-  return results
 }
 
 // Versions by semver, the highest first, any semver can't read after them.
@@ -283,7 +272,7 @@ export const lockedWith = (pkg: LockedPackage) => `${lockedAs(pkg)}\0${pkg.integ
 // them.
 function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[]): DirectoryDependencies {
   const failed = [...before, ...after].find(read => 'error' in read)
-  if (failed && 'error' in failed) return { paths, error: failed.error, ...failed.detail ? { detail: failed.detail } : {} }
+  if (failed) return { paths, error: failed.error, ...failed.detail ? { detail: failed.detail } : {} }
   const known = new Set<string>()
   const versions = new Map<string, Set<string>>()
   for (const pkg of before.flatMap(read => 'packages' in read ? read.packages : [])) {

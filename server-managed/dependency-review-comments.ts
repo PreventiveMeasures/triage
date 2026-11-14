@@ -7,7 +7,9 @@
 // only caller of the hook); and is told of none where it answers nothing, or
 // fails, which is logged.
 import type { DependencyReview, DependencyReviewStore } from './dependency-reviews.ts'
-import { type PullDependencies, eachOf } from './pull-dependencies.ts'
+import type { PullDependencies } from './pull-dependencies.ts'
+import { comparedWith, reviewsByVersion, reviewsOf } from './pull-dependency-reviews.ts'
+import { eachOf } from './queue.ts'
 import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
 import type { DependencyReviewEntry, ReviewedDependencies } from './reviewed-dependencies.ts'
 
@@ -63,23 +65,15 @@ export function withFormatted<T extends DependencyReview>(reviewed: ReviewedDepe
 
 // The ids of those of `reviews` `user` published of the versions `told`
 // adds, as its lockfiles lock each: of its version, of an integrity it is
-// locked with and of its patch, whole or compared with a version it was.
+// locked with and of its patch, whole or compared with a version it was
+// (pull-dependency-reviews.ts reviewsOf, comparedWith).
 function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string): Set<string> {
   // Theirs by the version they are of, each version probed once.
-  const theirs = new Map<string, PublishedReview[]>()
-  for (const review of reviews) {
-    if (review.id === undefined || review.reviewer !== user) continue
-    const key = `${review.package}@${review.version}`
-    theirs.set(key, [...theirs.get(key) ?? [], review])
-  }
+  const theirs = reviewsByVersion(reviews.filter(review => review.id !== undefined && review.reviewer === user))
   const mine = new Set<string>()
   if (theirs.size === 0) return mine
   for (const pkg of told.lockfiles.flatMap(dir => 'added' in dir ? dir.added : [])) {
-    const hashes = new Set((pkg.integrity ?? '').split(/\s+/u).filter(Boolean))
-    for (const review of theirs.get(`${pkg.name}@${pkg.version}`) ?? []) {
-      if (!hashes.has(review.integrity) || (review.patchHash ?? '') !== (pkg.patchHash ?? '')) continue
-      if (review.basePackage === null || (review.basePackage === pkg.name && (pkg.was ?? []).includes(review.baseVersion ?? ''))) mine.add(review.id!)
-    }
+    for (const review of reviewsOf(pkg, theirs)) if (comparedWith(review, pkg, pkg.was ?? [])) mine.add(review.id!)
   }
   return mine
 }

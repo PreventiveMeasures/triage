@@ -13,7 +13,7 @@ export class BundleBuildError extends Error {
   constructor(status: number, code: string) { super(code); this.status = status; this.code = code }
 }
 
-export interface BundleBuildInput {
+interface BundleBuildInput {
   repoId: number
   commit: string
   entries: string[]
@@ -105,8 +105,8 @@ export function githubBundleFilename(github: string, directory: string, commit: 
   return `${repo}.${dir}${tail}`
 }
 
-export interface BuiltBundle { bytes: Buffer; directory: string; filename: string }
-export interface BuildRequest {
+interface BuiltBundle { bytes: Buffer; directory: string; filename: string }
+interface BuildRequest {
   input: BundleBuildInput; github: string; token: string | null; maxBytes: number; scopes: (string | null)[]
   // Upstream's disk cache for what a build fetches (setCacheDir), or null for
   // none, as on Vercel. Resolved here: the worker's env holds NPM_TOKEN alone.
@@ -203,8 +203,7 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
         reject(new BundleBuildError(status, code))
       }
       const timer = setTimeout(() => fail(504, 'build-timeout'), BUNDLE_BUILD_TIMEOUT_MS)
-      const abort = () => fail(signal.reason instanceof BundleBuildError ? signal.reason.status : 499,
-        signal.reason instanceof BundleBuildError ? signal.reason.code : 'build-cancelled')
+      const abort = () => signal.reason instanceof BundleBuildError ? fail(signal.reason.status, signal.reason.code) : fail(499, 'build-cancelled')
       signal.addEventListener('abort', abort, { once: true })
       // The worker's memory and notes are the log's alone: the response tells
       // the bundle, or the error's code, and nothing of them.

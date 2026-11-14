@@ -86,7 +86,7 @@ async function projectDirectory(input, github, client) {
   // Input validation permits either JS/TS entries or Solidity entries, never a mix.
   const manifests = input.entries[0].endsWith('.sol') ? ['foundry.toml', 'soldeer.toml', 'soldeer.lock'] : ['package.json']
   if (!input.directory) return ''
-  for (let directory = input.directory; ; directory = posix.dirname(directory).replace(/^\.$/u, '')) {
+  for (let directory = input.directory; ; directory = parentOf(directory)) {
     const entries = await directoryListing(input, github, client, directory)
     if (entries?.some(entry => manifests.includes(entry.path) && regularFile(entry))) return directory
     if (!directory) return input.directory
@@ -191,6 +191,9 @@ export function buildErrorCode(error, message) {
   return /no packageManager given|lockfile installs|no (?:pnpm-lock\.yaml|yarn\.lock|package-lock\.json|soldeer\.lock) found in /u.test(message) ? 'build-lockfile' : 'build-failed'
 }
 
+// The status a failed build answers with, by its code: 422 for any other.
+const FAILED_STATUS = new Map([['too-large', 413], ['build-scope', 403], ['bad-conditions', 400]])
+
 // The worker's memory as the build log keeps it, in MiB: the process's
 // resident set (the server's with it), and this worker's own heap, used (what
 // is garbage not yet collected among it) and held, what is bound to its
@@ -224,7 +227,7 @@ if (parentPort && workerData?.type === 'managed-bundle-build') {
   } catch (error) {
     const diagnostic = bundleBuildDiagnostic(error, workerData.token)
     const code = buildErrorCode(error, diagnostic.message)
-    send({ error: code, status: code === 'too-large' ? 413 : code === 'build-scope' ? 403 : code === 'bad-conditions' ? 400 : 422, diagnostic, memory: memoryOf() })
+    send({ error: code, status: FAILED_STATUS.get(code) ?? 422, diagnostic, memory: memoryOf() })
   } finally {
     clearInterval(reporting)
   }

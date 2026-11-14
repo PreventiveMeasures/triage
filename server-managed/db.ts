@@ -19,12 +19,11 @@ import { UPSTREAM_CACHE_SCHEMA } from './upstream-cache.ts'
 import { TEAM_APP_SUMMARY_SCHEMA } from './team-app-summaries.ts'
 import { managedTableRenames } from './db-table-names.ts'
 import { type ManagedDb, type ManagedDbOptions, createManagedMethods } from './db-methods.ts'
-import { createSqliteDriver, scopeManagedMethods } from './sql.ts'
+import { createSqliteDriver, scopeManagedMethods, sqliteTransaction } from './sql.ts'
 export type * from './db-methods.ts'
 
 function migrateManagedTableNames(db: DatabaseSync): void {
-  db.exec('BEGIN IMMEDIATE')
-  try {
+  sqliteTransaction(db, 'BEGIN IMMEDIATE', () => {
     db.exec('CREATE TABLE IF NOT EXISTS managed_schema_version (version INTEGER PRIMARY KEY) STRICT;')
     if (!db.prepare('SELECT version FROM managed_schema_version WHERE version = 3').get()) {
       const rows = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as { name: string }[]
@@ -33,17 +32,14 @@ function migrateManagedTableNames(db: DatabaseSync): void {
       }
       db.exec('INSERT INTO managed_schema_version VALUES (3)')
     }
-    db.exec('COMMIT')
-  } catch (err) { db.exec('ROLLBACK'); throw err }
+  })
 }
 
 // Preserve the legacy single-path links while adding path to their identity.
 function migrateTeamRepoPaths(db: DatabaseSync): void {
   const columns = db.prepare('PRAGMA table_info(managed_team_repo)').all() as { name: string; pk: number }[]
   if (columns.some(column => column.name === 'path' && column.pk === 3)) return
-  db.exec('BEGIN IMMEDIATE')
-  try {
-    db.exec(`CREATE TABLE managed_team_repo_paths (
+  sqliteTransaction(db, 'BEGIN IMMEDIATE', () => db.exec(`CREATE TABLE managed_team_repo_paths (
       team_id TEXT NOT NULL REFERENCES managed_team(id) ON DELETE CASCADE,
       repo_id INTEGER NOT NULL REFERENCES managed_selected_repo(repo_id) ON DELETE CASCADE,
       path TEXT NOT NULL DEFAULT '', PRIMARY KEY (team_id, repo_id, path)
@@ -51,9 +47,7 @@ function migrateTeamRepoPaths(db: DatabaseSync): void {
     INSERT INTO managed_team_repo_paths SELECT team_id, repo_id, COALESCE(path, '') FROM managed_team_repo;
     DROP TABLE managed_team_repo;
     ALTER TABLE managed_team_repo_paths RENAME TO managed_team_repo;
-    CREATE INDEX team_repo_repo_idx ON managed_team_repo(repo_id);`)
-    db.exec('COMMIT')
-  } catch (err) { db.exec('ROLLBACK'); throw err }
+    CREATE INDEX team_repo_repo_idx ON managed_team_repo(repo_id);`))
 }
 
 // Add `column` to `table` if it's missing (a lightweight migration for DBs that
