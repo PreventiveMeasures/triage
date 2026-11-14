@@ -2239,6 +2239,13 @@ test('teams API: admin gating, create (409 dup), repo/member links + perms, CSRF
   assert.equal(created.statusCode, 201)
   const teamId = JSON.parse(created.body).id
   assert.equal((await upload(T, aCk, csrf, JSON.stringify({ name: 'Blue' }))).statusCode, 409) // dup
+  // A body that is JSON but no object names no field: answered as one naming none.
+  for (const body of ['false', '0', '""', 'null', '[]']) {
+    const answer = await upload(T, aCk, csrf, body)
+    assert.equal(answer.statusCode, 400, body)
+    assert.deepEqual(JSON.parse(answer.body), { error: 'bad-name' }, body)
+    assert.equal((await upload('/api/admin/teams/rename', aCk, csrf, body)).statusCode, 400, body)
+  }
 
   // rename: CSRF + validation, 409 onto another team's name, 404 unknown, 200 ok
   assert.equal((await upload(T, aCk, csrf, JSON.stringify({ name: 'Crimson' }))).statusCode, 201) // a second team to clash with

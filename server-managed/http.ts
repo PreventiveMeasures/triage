@@ -650,10 +650,12 @@ async function readJsonBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES
 }
 
 // A mutation's JSON body (readJsonBody), for the fields it names to be read:
-// none of a null one, nor of one not an object. Null, answered 400, where it
-// can't be read.
+// none of one that is no object (null, `false`, `0`, `""`, an array), which
+// is answered as one naming none. Null, answered 400, where it can't be read.
 async function readBodyFields(req: IncomingMessage, res: ServerResponse, maxBytes?: number): Promise<Record<string, unknown> | null> {
-  try { return (await readJsonBody(req, maxBytes) ?? {}) as Record<string, unknown> } catch { sendJson(res, 400, { error: 'bad-body' }); return null }
+  let body: unknown
+  try { body = await readJsonBody(req, maxBytes) } catch { sendJson(res, 400, { error: 'bad-body' }); return null }
+  return plainObject(body) ? body : {}
 }
 
 // A JSON body (readJsonBody) that is an object; null, answered 400, where it
