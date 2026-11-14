@@ -1304,7 +1304,7 @@ const ADMIN_LISTINGS = new Map<string, (url: URL) => unknown>([
 ])
 
 async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: ServerResponse): Promise<void> {
-  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|changes|tree|issues|agents|item|pulse)$/u.test(url.pathname)
+  const repositoryBrowser = /^\/api\/admin\/repositories\/(?:browsable|refs|contents|code|history|changes|tree|issues|agents|item|pulse|pulse\/items)$/u.test(url.pathname)
   const adminOnly = !repositoryBrowser && /^\/api\/admin\/(?:users|set-role|repositories|teams)(?:\/|$)/u.test(url.pathname)
   // The code viewer's reads are any team member's, as the server's are.
   if (role === 'none' || (!repositoryBrowser && !manages) || (adminOnly && role !== 'admin')) {

@@ -45,6 +45,18 @@ test('managed preview triage persists in memory and stays scoped to the requeste
     assert.equal((await get('actor=user:fixture-alex&repo=example%2Fworker-service')).total, 0)
     assert.equal((await get('actor=unknown')).total, 0)
   })
+  await t.test('preview Pulse answers its narrowed lists at /pulse/items', async () => {
+    const { repos } = await (await fetch(new URL('/api/admin/repositories/browsable', base))).json()
+    const repoId = repos[0].repoId
+    const from = new Date(Date.now() - 28 * 86_400_000).toISOString().slice(0, 10)
+    const res = await fetch(new URL(`/api/admin/repositories/pulse/items?repoId=${repoId}&weeks=4&from=${from}`, base))
+    assert.equal(res.status, 200)
+    const items = await res.json()
+    assert.equal(items.weeks, 4)
+    assert.ok(!('stats' in items), 'the narrowed lists alone, no statistics')
+    for (const list of ['merged', 'opened', 'closed', 'created']) assert.ok(Array.isArray(items[list]?.items), list)
+    assert.equal((await fetch(new URL(`/api/admin/repositories/pulse/items?repoId=${repoId}&weeks=5`, base))).status, 400)
+  })
   await t.test('fixture slugs support managed team and report navigation', async fixtureTest => {
     const networkFetch = globalThis.fetch
     fixtureTest.mock.method(globalThis, 'fetch', (url, options) => networkFetch(new URL(url, base), options))
