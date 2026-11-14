@@ -25,6 +25,7 @@ import { ManagedMutationError, type ManagementStore, managementMethods } from '.
 import { type ManagementCatalogStore, managementCatalogMethods } from './management-catalog.ts'
 import { type StorageKey } from '../server-common/storage-crypto.ts'
 import { type StorageDb, type StoredTokens, decodeStorageTokens, encodeStorageTokens, storageMethods, storageState, storageStateColumns, storageStateOf, validateStorageUpload } from './storage-db.ts'
+import { inUserTeamScope, withinTeamPath } from './db-schema.ts'
 
 // A managed user identity (the subset of GitHub's `GET /user` we keep). Input
 // to the upsert; `githubUserId` is the provider lookup key, never exposed to
@@ -570,30 +571,28 @@ type SessionRow = {
   uid: string; login: string; name: string | null; avatar: string | null; role: Role
 }
 type ViewSessionRow = SessionRow & { viewerId: string; viewerLogin: string; viewerName: string | null }
+const storedUser = (row: Pick<SessionRow, 'uid' | 'login' | 'name' | 'avatar' | 'role'>): StoredUser =>
+  ({ id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role })
 const ownSession = (row: SessionRow) => ({
   session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey },
-  user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
+  user: storedUser(row),
 })
-const viewSession = (row: ViewSessionRow) => ({
-  session: { id: row.id, userId: row.uid, csrfToken: row.csrf, expiresAt: row.exp, uploadKey: row.uploadKey,
-    viewer: { id: row.viewerId, login: row.viewerLogin, name: row.viewerName } },
-  user: { id: row.uid, login: row.login, name: row.name, avatarUrl: row.avatar, role: row.role },
-})
+const viewSession = (row: ViewSessionRow) => {
+  const { session, user } = ownSession(row)
+  return { session: { ...session, viewer: { id: row.viewerId, login: row.viewerLogin, name: row.viewerName } }, user }
+}
 
 type UserRow = { id: string; login: string; name: string | null; role: Role; created: number; lastSeen: number | null; lastActivity: number | null }
+
+// Whether a write changed any row.
+const anyChanged = (result: { changes: number | bigint }) => Number(result.changes) > 0
 
 // Rows a statement gathered into one JSON array value (json_group_array): its
 // text on SQLite, parsed already on Postgres, where none gather as NULL.
 const jsonRows = <T>(value: unknown): T[] => value == null ? [] : (typeof value === 'string' ? JSON.parse(value) : value) as T[]
 
-// Shared by listing, access checks, and permission aggregation. A team sees
-// reports rooted at its path or below it. Literal substring comparison keeps
-// separators, case, and SQL wildcard characters significant.
-const REPORT_IN_TEAM_PATH_SQL = `(tr.path IS NULL OR tr.path = ''
-  OR r.repo_directory = tr.path
-  OR substr(r.repo_directory, 1, length(tr.path) + 1) = tr.path || '/')`
-
-const BUNDLE_IN_TEAM_PATH_SQL = REPORT_IN_TEAM_PATH_SQL.replaceAll('r.repo_directory', 'b.repo_directory')
+const REPORT_IN_TEAM_PATH_SQL = withinTeamPath('r.repo_directory')
+const BUNDLE_IN_TEAM_PATH_SQL = withinTeamPath('b.repo_directory')
 
 // What a user's team catalog reads (listTeamsForUser), for `user`: a
 // placeholder, or a column of a statement reading it with more. Their teams,
@@ -666,33 +665,32 @@ function reportCatalogKey(r: CatalogReportRow, role: string, links: string): str
 
 // A user's team catalog from its rows, `links` the link reports' revision.
 function userTeams(teams: UserTeamRows['teams'], scopes: UserTeamRows['scopes'], links: string, reports: UserTeamRows['reports'], bundles: UserTeamRows['bundles']): UserTeam[] {
-  const reportsByTeam = new Map<string, UserTeamReport[]>()
-  for (const r of reports) {
-    const list = reportsByTeam.get(r.teamId) ?? []
-    list.push({ id: r.id, slug: r.slug, filename: r.filename, visible: r.visible === 1, analyzer: r.analyzer, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory,
-      cacheKey: reportCatalogKey(r, r.role, links) })
-    reportsByTeam.set(r.teamId, list)
-  }
-  const bundlesByTeam = new Map<string, UserTeamBundle[]>()
-  for (const b of bundles) {
-    const list = bundlesByTeam.get(b.teamId) ?? []
-    list.push({ id: b.id, slug: b.slug, integrity: b.integrity, filename: b.filename, visible: b.visible === 1,
-      kind: b.kind, byteSize: b.byteSize, repoId: b.repoId, repoDirectory: b.repoDirectory, repoFullName: b.repoFullName, provenance: b.provenance })
-    bundlesByTeam.set(b.teamId, list)
-  }
-  return teams.map((t) => ({
-    id: t.id, slug: t.slug, name: t.name,
-    ...(t.dependencyReview === 1 ? { dependencyReview: true } : {}),
-    permissions: { dependencies: t.dependencies === 1, security: t.security === 1 },
-    cacheKey: createHash('sha256').update(JSON.stringify([
-      t.dependencies, t.security, links, scopes.filter(scope => scope.teamId === t.id),
-    ])).digest('base64url'),
-    repos: scopes.filter(scope => scope.teamId === t.id).map(scope => ({ repoId: scope.repoId, fullName: scope.fullName, path: scope.path || null }))
-      .toSorted((a, b) => a.fullName.localeCompare(b.fullName) || (a.path ?? '').localeCompare(b.path ?? '')),
-    reports: reportsByTeam.get(t.id) ?? [],
-    bundles: bundlesByTeam.get(t.id) ?? [],
-  }))
+  const reportsByTeam = Map.groupBy(reports, r => r.teamId)
+  const bundlesByTeam = Map.groupBy(bundles, b => b.teamId)
+  return teams.map((t) => {
+    const teamScopes = scopes.filter(scope => scope.teamId === t.id)
+    return {
+      id: t.id, slug: t.slug, name: t.name,
+      ...(t.dependencyReview === 1 ? { dependencyReview: true } : {}),
+      permissions: { dependencies: t.dependencies === 1, security: t.security === 1 },
+      cacheKey: createHash('sha256').update(JSON.stringify([t.dependencies, t.security, links, teamScopes])).digest('base64url'),
+      repos: teamScopes.map(scope => ({ repoId: scope.repoId, fullName: scope.fullName, path: scope.path || null }))
+        .toSorted((a, b) => a.fullName.localeCompare(b.fullName) || (a.path ?? '').localeCompare(b.path ?? '')),
+      reports: (reportsByTeam.get(t.id) ?? []).map(r => ({ id: r.id, slug: r.slug, filename: r.filename, visible: r.visible === 1,
+        analyzer: r.analyzer, repoFullName: r.repoFullName, repoDirectory: r.repoDirectory, cacheKey: reportCatalogKey(r, r.role, links) })),
+      bundles: (bundlesByTeam.get(t.id) ?? []).map(b => ({ id: b.id, slug: b.slug, integrity: b.integrity, filename: b.filename, visible: b.visible === 1,
+        kind: b.kind, byteSize: b.byteSize, repoId: b.repoId, repoDirectory: b.repoDirectory, repoFullName: b.repoFullName, provenance: b.provenance })),
+    }
+  })
 }
+
+// A selected repository's row (RepoRow), and a bundle's (BundleRow).
+const REPO_COLUMNS = `repo_id AS repoId, full_name AS fullName, is_private AS priv,
+  installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
+  added_by AS addedBy, added_at AS addedAt, active AS active`
+const BUNDLE_COLUMNS = `id, slug, integrity, filename, kind, byte_size AS byteSize,
+  uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, visible, uploaded_at AS uploadedAt, provenance,
+  build_conditions AS buildConditions`
 
 // Prepare every statement the store uses, returned as a bag the factory
 // destructures — keeps openSqliteManagedDb itself small (one place per query).
@@ -823,19 +821,9 @@ function prepareStatements(db: ManagedSql) {
       SELECT finding_id FROM managed_finding_triage WHERE finding_id IN (SELECT value FROM json_each(?))
       UNION SELECT finding_id FROM managed_finding_comment WHERE finding_id IN (SELECT value FROM json_each(?))
       UNION SELECT finding_id FROM managed_finding_comment_event WHERE finding_id IN (SELECT value FROM json_each(?))) AS annotations`),
-    selectReposStmt: db.prepare(
-      `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
-              installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
-              added_by AS addedBy, added_at AS addedAt, active AS active
-         FROM managed_selected_repo WHERE active = 1 ORDER BY full_name ASC`,
-    ),
+    selectReposStmt: db.prepare(`SELECT ${REPO_COLUMNS} FROM managed_selected_repo WHERE active = 1 ORDER BY full_name ASC`),
     selectRepoFullNameStmt: db.prepare(`SELECT full_name AS fullName FROM managed_selected_repo WHERE repo_id = ?`),
-    selectAllReposStmt: db.prepare(
-      `SELECT repo_id AS repoId, full_name AS fullName, is_private AS priv,
-              installation_id AS installId, default_branch AS branch, cached_default_branch AS cachedDefaultBranch, html_url AS htmlUrl,
-              added_by AS addedBy, added_at AS addedAt, active AS active
-         FROM managed_selected_repo ORDER BY full_name ASC`,
-    ),
+    selectAllReposStmt: db.prepare(`SELECT ${REPO_COLUMNS} FROM managed_selected_repo ORDER BY full_name ASC`),
     insertReportStmt: db.prepare(
       `WITH candidate(id, slug) AS (VALUES (?, ?))
        INSERT INTO managed_report (id, slug, filename, content_type, byte_size, sha256, uploaded_by, uploaded_by_login, repo_id, repo_directory, repo_embedded, analyzer, visible, bundle_id, bundle_integrity, uploaded_at, data_key, storage_encrypted)
@@ -856,10 +844,7 @@ function prepareStatements(db: ManagedSql) {
          LEFT JOIN managed_user u ON u.id = r.uploaded_by
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
          LEFT JOIN managed_bundle b ON b.id = r.bundle_id
-        WHERE (? IS NULL OR r.uploaded_by = ? OR EXISTS (
-          SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-          WHERE tr.repo_id = r.repo_id AND tu.user_id = ? AND ${REPORT_IN_TEAM_PATH_SQL}))
+        WHERE (? IS NULL OR r.uploaded_by = ? OR ${inUserTeamScope('?', 'r')})
         ORDER BY r.uploaded_at DESC, r.filename ASC`,
     ),
     findingCatalogReportsStmt: db.prepare(`SELECT id, byte_size AS byteSize FROM managed_report WHERE id > ? ORDER BY id LIMIT ?`),
@@ -940,10 +925,7 @@ function prepareStatements(db: ManagedSql) {
     reportFilenamesWithBundleHashStmt: db.prepare(`SELECT DISTINCT filename FROM managed_report WHERE bundle_id = ? AND sha256 = ?`),
     reportsForBundleStmt: db.prepare(
       `SELECT r.id AS id, r.filename AS filename, r.bundle_id AS bundleId,
-              (? IS NULL OR r.uploaded_by = ? OR EXISTS(SELECT 1 FROM managed_team_repo tr
-                 JOIN managed_team_user tu ON tu.team_id = tr.team_id
-                 JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-                WHERE tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL} AND tu.user_id = ?)) AS readable
+              (? IS NULL OR r.uploaded_by = ? OR ${inUserTeamScope('?', 'r')}) AS readable
          FROM managed_report r WHERE r.bundle_id = ? OR r.bundle_integrity = ?
         ORDER BY r.uploaded_at DESC, r.filename ASC, r.id ASC`,
     ),
@@ -1048,18 +1030,8 @@ function prepareStatements(db: ManagedSql) {
        WHERE id = :id AND (${BUNDLE_RENAMED_SQL} OR (:provenance = 'build' AND (provenance IS DISTINCT FROM 'build'
          OR build_conditions IS DISTINCT FROM COALESCE(build_conditions, :buildConditions))))`,
     ),
-    selectBundleByIntegrityStmt: db.prepare(
-      `SELECT id, slug, integrity, filename, kind, byte_size AS byteSize,
-              uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, visible, uploaded_at AS uploadedAt, provenance,
-              build_conditions AS buildConditions
-         FROM managed_bundle WHERE integrity = ?`,
-    ),
-    selectBundleStmt: db.prepare(
-      `SELECT id, slug, integrity, filename, kind, byte_size AS byteSize,
-              uploaded_by AS uploadedBy, repo_id AS repoId, repo_directory AS repoDirectory, visible, uploaded_at AS uploadedAt, provenance,
-              build_conditions AS buildConditions
-         FROM managed_bundle WHERE id = ?`,
-    ),
+    selectBundleByIntegrityStmt: db.prepare(`SELECT ${BUNDLE_COLUMNS} FROM managed_bundle WHERE integrity = ?`),
+    selectBundleStmt: db.prepare(`SELECT ${BUNDLE_COLUMNS} FROM managed_bundle WHERE id = ?`),
     selectBundlesStmt: db.prepare(
       `SELECT b.id AS id, b.slug AS slug, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
               b.byte_size AS byteSize, COALESCE(u.login, b.uploaded_by_login) AS uploadedByLogin,
@@ -1067,23 +1039,14 @@ function prepareStatements(db: ManagedSql) {
          FROM managed_bundle b
          LEFT JOIN managed_user u ON u.id = b.uploaded_by
          LEFT JOIN managed_selected_repo sr ON sr.repo_id = b.repo_id
-        WHERE (? IS NULL OR (b.uploaded_by = ? OR EXISTS (
-          SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-          WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?)))
+        WHERE (? IS NULL OR (b.uploaded_by = ? OR ${inUserTeamScope('?', 'b')}))
         ORDER BY b.uploaded_at DESC, b.filename ASC`,
     ),
     selectBundleReadableStmt: db.prepare(
-      `SELECT 1 FROM managed_bundle b WHERE b.id = ? AND (b.uploaded_by = ? OR EXISTS (
-          SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-          WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?))`,
+      `SELECT 1 FROM managed_bundle b WHERE b.id = ? AND (b.uploaded_by = ? OR ${inUserTeamScope('?', 'b')})`,
     ),
     selectReadableBundleIdsStmt: db.prepare(
-      `SELECT b.id FROM managed_bundle b WHERE b.id IN (SELECT value FROM json_each(?)) AND (b.uploaded_by = ? OR EXISTS (
-          SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-          JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-          WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = ?))`,
+      `SELECT b.id FROM managed_bundle b WHERE b.id IN (SELECT value FROM json_each(?)) AND (b.uploaded_by = ? OR ${inUserTeamScope('?', 'b')})`,
     ),
     selectRepoReadableStmt: db.prepare(
       `SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
@@ -1104,9 +1067,7 @@ function prepareStatements(db: ManagedSql) {
     // but haven't been linked yet (bundle uploaded after the report).
     linkReportsToBundleStmt: db.prepare(
       `UPDATE managed_report AS r SET bundle_id = ? WHERE bundle_integrity = ? AND bundle_id IS NULL
-       AND (? IS NULL OR r.uploaded_by = ? OR EXISTS (SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-         JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-         WHERE tu.user_id = ? AND tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL}))`,
+       AND (? IS NULL OR r.uploaded_by = ? OR ${inUserTeamScope('?', 'r')})`,
     ),
     // OR IGNORE: a duplicate name (UNIQUE) is the "taken" signal (0 changes); the
     // uuid PK never collides.
@@ -1169,11 +1130,7 @@ function prepareStatements(db: ManagedSql) {
         WHERE r.id = ? AND tu.user_id = ? LIMIT 1`,
     ),
     selectReportViewStmt: db.prepare(
-      `SELECT r.uploaded_by AS uploadedBy, r.visible AS visible,
-              EXISTS(SELECT 1 FROM managed_team_repo tr
-                       JOIN managed_team_user tu ON tu.team_id = tr.team_id
-                       JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-                      WHERE tr.repo_id = r.repo_id AND ${REPORT_IN_TEAM_PATH_SQL} AND tu.user_id = ?) AS readable
+      `SELECT r.uploaded_by AS uploadedBy, r.visible AS visible, ${inUserTeamScope('?', 'r')} AS readable
          FROM managed_report r WHERE r.id = ?`,
     ),
     selectBundleSecurityStmt: db.prepare(
@@ -1201,9 +1158,7 @@ function prepareStatements(db: ManagedSql) {
        SELECT v.uid AS uid, v.role AS role, b.id AS id, b.slug AS slug, b.integrity AS integrity, b.filename AS filename, b.kind AS kind,
               b.byte_size AS byteSize, b.uploaded_by AS uploadedBy, b.repo_id AS repoId, b.repo_directory AS repoDirectory, b.visible AS visible,
               b.uploaded_at AS uploadedAt, b.provenance AS provenance, b.build_conditions AS buildConditions,
-              EXISTS(SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
-                       JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
-                      WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = v.uid) AS granted,
+              ${inUserTeamScope('v.uid', 'b')} AS granted,
               (? = 1 AND EXISTS(SELECT 1 FROM managed_team_repo tr JOIN managed_team_user tu ON tu.team_id = tr.team_id
                        JOIN managed_team t ON t.id = tu.team_id AND t.hidden = 0
                       WHERE tr.repo_id = b.repo_id AND ${BUNDLE_IN_TEAM_PATH_SQL} AND tu.user_id = v.uid AND tu.view_security = 1
@@ -1272,13 +1227,13 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
       )
     },
     async cacheRepoDefaultBranch(repo: SelectedRepo, branch: string | null): Promise<boolean> {
-      return Number((await stmts.cacheRepoDefaultBranchStmt.run(branch, repo.repoId, repo.fullName, repo.addedAt)).changes) > 0
+      return anyChanged(await stmts.cacheRepoDefaultBranchStmt.run(branch, repo.repoId, repo.fullName, repo.addedAt))
     },
     async deselectRepo(repoId: number): Promise<boolean> {
-      return Number((await deleteRepoStmt.run(repoId)).changes) > 0
+      return anyChanged(await deleteRepoStmt.run(repoId))
     },
     async connectRepoInstallation(repo: SelectedRepo, installationId: number, sessionId: string, now: number): Promise<boolean> {
-      return Number((await stmts.connectRepoInstallationStmt.run(installationId, now, repo.repoId, repo.fullName, repo.addedAt, sessionId, now)).changes) > 0
+      return anyChanged(await stmts.connectRepoInstallationStmt.run(installationId, now, repo.repoId, repo.fullName, repo.addedAt, sessionId, now))
     },
     async listSelectedRepos(): Promise<SelectedRepo[]> {
       const rows = (await selectReposStmt.all()) as RepoRow[]
@@ -1292,13 +1247,13 @@ function selectedRepoMethods(stmts: ReturnType<typeof prepareStatements>) {
       return ((await stmts.selectRepoFullNameStmt.get(repoId)) as { fullName: string } | undefined)?.fullName ?? null
     },
     async deactivateRepo(repoId: number): Promise<boolean> {
-      return Number((await deactivateRepoStmt.run(repoId)).changes) > 0
+      return anyChanged(await deactivateRepoStmt.run(repoId))
     },
     async reactivateRepo(repoId: number): Promise<boolean> {
-      return Number((await reactivateRepoStmt.run(repoId)).changes) > 0
+      return anyChanged(await reactivateRepoStmt.run(repoId))
     },
     async deleteRepo(repoId: number): Promise<boolean> {
-      return Number((await deleteRepoStmt.run(repoId)).changes) > 0
+      return anyChanged(await deleteRepoStmt.run(repoId))
     },
     async listReportsForRepo(repoId: number): Promise<RepoReportItem[]> {
       return (await selectReportsForRepoStmt.all(repoId)) as unknown as RepoReportItem[]
@@ -1330,6 +1285,17 @@ type ReportRow = {
   bundleId: string | null
 }
 
+// A report as an access snapshot read it, and as the snapshot gives it: with
+// every permission where the reader's role sees `whole` reports.
+type AccessRow = Pick<ReportAccessRecord, 'id' | 'filename' | 'byteSize' | 'sha256'> & {
+  repoDirectory: string; repoFullName: string | null; dependencies: number; security: number
+}
+const accessRecord = (row: AccessRow, whole: boolean): ReportAccessRecord => ({
+  id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
+  repo: { github: row.repoFullName, directory: row.repoDirectory },
+  permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },
+})
+
 // Byte storage may outlast a logout or grant change. HTTP uploads reauthorize
 // inside the metadata writer transaction after their bytes have been stored.
 async function authorizeUpload(stmts: ReturnType<typeof prepareStatements>, sessionId: string | undefined,
@@ -1360,7 +1326,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
     await insertReportStmt.run(
       report.id, preferredSlug(report.id), report.filename, report.contentType, report.byteSize,
       report.sha256, report.uploadedBy, report.uploadedByLogin ?? null, report.repoId,
-      report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible == null ? 0 : report.visible ? 1 : 0, report.bundleId ?? null,
+      report.repoDirectory ?? '', report.repoEmbedded ? 1 : 0, report.analyzer ?? null, report.visible ? 1 : 0, report.bundleId ?? null,
       report.bundleIntegrity ?? null, now, report.dataKey ?? null, report.dataKey ? 1 : 0,
     )
   }
@@ -1380,14 +1346,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
     },
     async listReports(userId?: string): Promise<AdminReport[]> {
       const rows = (await selectReportsStmt.all(userId ?? null, userId ?? null, userId ?? null)) as ReportListRow[]
-      return rows.map((r) => ({
-        id: r.id, slug: r.slug, filename: r.filename, contentType: r.contentType, byteSize: r.byteSize,
-        sha256: r.sha256, uploadedByLogin: r.uploadedByLogin,
-        repoId: r.repoId, repoFullName: r.repoFullName,
-        repoDirectory: r.repoDirectory, repoEmbedded: r.repoEmbedded === 1, analyzer: r.analyzer, visible: r.visible === 1,
-        bundleId: r.bundleId, bundleFilename: r.bundleFilename, bundleIntegrity: r.bundleIntegrity,
-        uploadedAt: r.uploadedAt,
-      }))
+      return rows.map(r => ({ ...r, repoEmbedded: r.repoEmbedded === 1, visible: r.visible === 1 }))
     },
     async listFindingCatalogReports(after: string, limit: number): Promise<Pick<ReportRecord, 'id' | 'byteSize'>[]> {
       return await stmts.findingCatalogReportsStmt.all(after, limit) as Pick<ReportRecord, 'id' | 'byteSize'>[]
@@ -1396,7 +1355,7 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       const session = await stmts.selectTeamSnapshotStmt.get(sessionId, now, teamId, teamId, reportId, teamId) as
         SessionRow & { member: unknown; reports: unknown; repositories: unknown; links: unknown } | undefined
       if (!session) return null
-      const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
+      const user = storedUser(session)
       if (user.role === 'none' || !session.member) return { user, teamId: null, reports: [], repositories: [] }
       const whole = user.role === 'admin' || user.role === 'manage'
       const rows = jsonRows<CatalogReportRow & { id: string; byteSize: number; visible: number }>(session.reports)
@@ -1407,28 +1366,19 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       const selected = hidden ? [hidden] : rows
       const repositories = jsonRows<TeamReportAccessSnapshot['repositories'][number]>(session.repositories)
       const links = linkRevisionOf(jsonRows(session.links))
-      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, linkRevision: links, reports: selected.map(row => ({
-        id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
-        repo: { github: row.repoFullName, directory: row.repoDirectory },
-        permissions: { dependencies: whole || row.dependencies === 1, security: whole || row.security === 1 },
-      })), catalogKeys: Object.fromEntries(selected.map(row => [row.id, reportCatalogKey(row, user.role, links)])) }
+      return { user, teamId, reportId, hiddenReportId: hidden?.id ?? null, repositories, linkRevision: links,
+        reports: selected.map(row => accessRecord(row, whole)),
+        catalogKeys: Object.fromEntries(selected.map(row => [row.id, reportCatalogKey(row, user.role, links)])) }
     },
     async getReportAccessSnapshot(sessionId: string, now: number, ids: readonly string[]): Promise<ReportAccessSnapshot | null> {
       const session = await stmts.selectReportSnapshotStmt.get(sessionId, now, JSON.stringify([...new Set(ids)])) as
         SessionRow & { reports: unknown; links: unknown } | undefined
       if (!session) return null
-      const user: StoredUser = { id: session.uid, login: session.login, name: session.name, avatarUrl: session.avatar, role: session.role }
+      const user = storedUser(session)
       if (user.role === 'none' || ids.length === 0) return { user, reports: [] }
-      const admin = user.role === 'admin', manage = user.role === 'manage'
-      const rows = jsonRows<{
-        id: string; filename: string; byteSize: number; sha256: string; repoDirectory: string
-        repoFullName: string | null; dependencies: number; security: number
-      }>(session.reports)
-      return { user, linkRevision: linkRevisionOf(jsonRows(session.links)), reports: rows.map(row => ({
-        id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
-        repo: { github: row.repoFullName, directory: row.repoDirectory },
-        permissions: { dependencies: admin || manage || row.dependencies === 1, security: admin || manage || row.security === 1 },
-      })) }
+      const whole = user.role === 'admin' || user.role === 'manage'
+      const reports = jsonRows<AccessRow>(session.reports).map(row => accessRecord(row, whole))
+      return { user, linkRevision: linkRevisionOf(jsonRows(session.links)), reports }
     },
     async listReportFilenamesWithBundleHash(bundleId: string, sha256: string): Promise<string[]> {
       const rows = (await stmts.reportFilenamesWithBundleHashStmt.all(bundleId, sha256)) as { filename: string }[]
@@ -1440,13 +1390,13 @@ function reportMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       return rows.map(row => ({ id: row.id, filename: row.filename, bundleId: row.bundleId, readable: Boolean(row.readable) }))
     },
     async deleteReport(id: string): Promise<boolean> {
-      return Number((await deleteReportStmt.run(id)).changes) > 0
+      return anyChanged(await deleteReportStmt.run(id))
     },
     async setReportRepo(id: string, repoId: number | null, repoDirectory = ''): Promise<boolean> {
-      return Number((await setReportRepoStmt.run(repoId, repoId == null ? '' : repoDirectory, id)).changes) > 0
+      return anyChanged(await setReportRepoStmt.run(repoId, repoId == null ? '' : repoDirectory, id))
     },
     async setReportVisible(id: string, visible: boolean): Promise<boolean> {
-      return Number((await setReportVisibleStmt.run(visible ? 1 : 0, id)).changes) > 0
+      return anyChanged(await setReportVisibleStmt.run(visible ? 1 : 0, id))
     },
   }
 }
@@ -1456,12 +1406,17 @@ type TriageDbRow = {
   comment: string | null; fix: string | null; flagged: number | null
   updatedByLogin: string | null; updatedAt: number
 }
-const triageRow = (r: TriageDbRow): TriageRow => ({
-  findingId: r.findingId, color: r.color, triage: r.triage, comment: r.comment, fix: r.fix,
-  flagged: r.flagged == null ? null : r.flagged === 1,
-  updatedByLogin: r.updatedByLogin, updatedAt: r.updatedAt,
-})
+const triageRow = (r: TriageDbRow): TriageRow => ({ ...r, flagged: r.flagged == null ? null : r.flagged === 1 })
 type TriageStateDbRow = { color: string | null; triage: string | null; comment: string | null; fix: string | null; flagged: number | null }
+// An entry as its row stores it. `flagged: false` is a real value (the
+// explicit un-flag tombstone), so it is 0 here and only null/absent maps to NULL.
+function triageState(entry: TriageEntryPatch | null): TriageStateDbRow {
+  const e = entry ?? {}
+  return { color: e.color ?? null, triage: e.triage ?? null, comment: e.comment ?? null,
+    fix: e.fix ?? null, flagged: e.flagged == null ? null : (e.flagged ? 1 : 0) }
+}
+const sameTriageState = (a: TriageStateDbRow, b: TriageStateDbRow) =>
+  a.color === b.color && a.triage === b.triage && a.comment === b.comment && a.fix === b.fix && a.flagged === b.flagged
 type TriageEventDbRow = TriageStateDbRow & {
   seq: number; findingId: string; batchId: string; actorId: string | null; actorLogin: string | null; actorName: string | null; at: number
 }
@@ -1478,16 +1433,9 @@ function triageMethods(stmts: ReturnType<typeof prepareStatements>, historyLimit
   const { upsertTriageStmt, selectTriageStmt, selectTriageStateStmt, insertTriageEventStmt, trimTriageEventsStmt, selectTriageHistoryStmt,
     deleteTriageStmt, deleteTriageHistoryStmt, deleteCommentsStmt, deleteCommentHistoryStmt, countAnnotationsStmt } = stmts
   async function writeEntry(findingId: string, entry: TriageEntryPatch | null, batchId: string, updatedBy: string | null, updatedByLogin: string | null, now: number, reportId: string | null = null): Promise<void> {
-    const e = entry ?? {}
-    // `flagged: false` is a real value (the explicit un-flag tombstone), so it
-    // is 0 here and only null/absent maps to NULL.
-    const next: TriageStateDbRow = {
-      color: e.color ?? null, triage: e.triage ?? null, comment: e.comment ?? null,
-      fix: e.fix ?? null, flagged: e.flagged == null ? null : (e.flagged ? 1 : 0),
-    }
+    const next = triageState(entry)
     const cur = (await selectTriageStateStmt.get(findingId)) as TriageStateDbRow | undefined
-    if (cur != null && cur.color === next.color && cur.triage === next.triage && cur.comment === next.comment
-      && cur.fix === next.fix && cur.flagged === next.flagged) return
+    if (cur != null && sameTriageState(cur, next)) return
     await upsertTriageStmt.run(findingId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now)
     await insertTriageEventStmt.run(findingId, batchId, next.color, next.triage, next.comment, next.fix, next.flagged, updatedBy, updatedByLogin, now, reportId, reportId, reportId)
     if (historyLimit > 0) await trimTriageEventsStmt.run(findingId, findingId, historyLimit)
@@ -1512,12 +1460,7 @@ function triageMethods(stmts: ReturnType<typeof prepareStatements>, historyLimit
     },
     async listTriageHistory(findingId: string, limit: number): Promise<TriageEventRow[]> {
       const rows = (await selectTriageHistoryStmt.all(findingId, limit)) as TriageEventDbRow[]
-      return rows.map((r) => ({
-        seq: r.seq, findingId: r.findingId, batchId: r.batchId,
-        color: r.color, triage: r.triage, comment: r.comment, fix: r.fix,
-        flagged: r.flagged == null ? null : r.flagged === 1,
-        actorId: r.actorId, actorLogin: r.actorLogin, actorName: r.actorName, at: r.at,
-      }))
+      return rows.map(r => ({ ...r, flagged: r.flagged == null ? null : r.flagged === 1 }))
     },
     async listTriageFixes(findingIds: readonly string[]): Promise<string[]> {
       if (findingIds.length === 0) return []
@@ -1544,10 +1487,8 @@ function triageMethods(stmts: ReturnType<typeof prepareStatements>, historyLimit
       const current = new Map((await selectTriageStmt.all(JSON.stringify(entries.map(([id]) => id))) as TriageDbRow[])
         .map(row => [row.findingId, row]))
       const changed = entries.flatMap(([id, entry]) => {
-        const e = entry ?? {}, previous = current.get(id)
-        const next = { color: e.color ?? null, triage: e.triage ?? null, comment: e.comment ?? null,
-          fix: e.fix ?? null, flagged: e.flagged == null ? null : e.flagged ? 1 : 0 }
-        if (previous && Object.entries(next).every(([key, value]) => previous[key as keyof TriageStateDbRow] === value)) return []
+        const next = triageState(entry), previous = current.get(id)
+        if (previous && sameTriageState(previous, next)) return []
         return [[id, next.color, next.triage, next.comment, next.fix, next.flagged]]
       })
       // Bound SQL parameters while keeping the entire batch/history atomic.
@@ -1619,8 +1560,8 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       )
     },
     async reuseBundle(id: string, { provenance, filename, kind, rename, buildConditions }: BundleReuse): Promise<boolean> {
-      return Number((await stmts.reuseBundleStmt.run({ id, provenance, filename, kind, rename: rename ? 1 : 0,
-        buildConditions: buildConditions == null ? null : JSON.stringify(buildConditions) })).changes) > 0
+      return anyChanged(await stmts.reuseBundleStmt.run({ id, provenance, filename, kind, rename: rename ? 1 : 0,
+        buildConditions: buildConditions == null ? null : JSON.stringify(buildConditions) }))
     },
     getBundleByIntegrity,
     // The distinct method name selects a writer-locked reconciliation scope.
@@ -1667,13 +1608,13 @@ function bundleMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedS
       return (await selectRepoPathReadableStmt.get(directory, repoId, userId)) != null
     },
     async deleteBundle(id: string): Promise<boolean> {
-      return Number((await deleteBundleStmt.run(id)).changes) > 0
+      return anyChanged(await deleteBundleStmt.run(id))
     },
     async setBundleVisible(id: string, visible: boolean): Promise<boolean> {
-      return Number((await stmts.setBundleVisibleStmt.run(visible ? 1 : 0, id)).changes) > 0
+      return anyChanged(await stmts.setBundleVisibleStmt.run(visible ? 1 : 0, id))
     },
     async setBundleRepo(id: string, repoId: number | null, directory?: string): Promise<boolean> {
-      return Number((await setBundleRepoStmt.run(repoId, repoId == null ? '' : directory ?? '', id)).changes) > 0
+      return anyChanged(await setBundleRepoStmt.run(repoId, repoId == null ? '' : directory ?? '', id))
     },
     async linkReportsToBundle(integrity: string, bundleId: string, userId?: string): Promise<void> {
       await linkReportsToBundleStmt.run(bundleId, integrity, userId ?? null, userId ?? null, userId ?? null)
@@ -1695,9 +1636,9 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
     selectReportPermsStmt, selectUserOptionsStmt, selectTeamReposStmt, selectTeamMembersStmt,
     upsertTeamRepoStmt, deleteTeamRepoStmt, deleteTeamRepoPathStmt, upsertTeamMemberStmt, deleteTeamMemberStmt,
   } = stmts
-  const methods = {
+  return {
     async createTeam(id: string, name: string, now: number): Promise<boolean> {
-      return Number((await insertTeamStmt.run(id, preferredSlug(id), name, now, now)).changes) > 0
+      return anyChanged(await insertTeamStmt.run(id, preferredSlug(id), name, now, now))
     },
     async renameTeam(id: string, name: string, now: number): Promise<'ok' | 'name-taken' | 'not-found'> {
       // The operation transaction serializes the existence/name checks and rename.
@@ -1708,10 +1649,10 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
       return 'ok'
     },
     async deleteTeam(id: string): Promise<boolean> {
-      return Number((await deleteTeamStmt.run(id)).changes) > 0
+      return anyChanged(await deleteTeamStmt.run(id))
     },
     async setTeamHidden(id: string, hidden: boolean, now: number): Promise<boolean> {
-      return Number((await setTeamHiddenStmt.run(hidden ? 1 : 0, now, id)).changes) > 0
+      return anyChanged(await setTeamHiddenStmt.run(hidden ? 1 : 0, now, id))
     },
     async getTeam(id: string): Promise<{ id: string; slug: string; name: string; hidden: boolean } | null> {
       const row = (await selectTeamStmt.get(id)) as TeamRow | undefined
@@ -1759,23 +1700,14 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
     },
     async listTeams(): Promise<AdminTeam[]> {
       const teams = (await selectTeamsStmt.all()) as TeamRow[]
-      const reposByTeam = new Map<string, TeamRepoLink[]>()
-      for (const r of (await selectTeamReposStmt.all()) as TeamRepoRow[]) {
-        const list = reposByTeam.get(r.teamId) ?? []
-        list.push({ repoId: r.repoId, fullName: r.fullName, path: r.path })
-        reposByTeam.set(r.teamId, list)
-      }
-      const membersByTeam = new Map<string, TeamMember[]>()
-      for (const m of (await selectTeamMembersStmt.all()) as TeamMemberRow[]) {
-        const list = membersByTeam.get(m.teamId) ?? []
-        list.push({ userId: m.userId, login: m.login, dependencies: m.viewDependencies === 1, security: m.viewSecurity === 1 })
-        membersByTeam.set(m.teamId, list)
-      }
+      const reposByTeam = Map.groupBy((await selectTeamReposStmt.all()) as TeamRepoRow[], r => r.teamId)
+      const membersByTeam = Map.groupBy((await selectTeamMembersStmt.all()) as TeamMemberRow[], m => m.teamId)
       return teams.map((t) => ({
         id: t.id, slug: t.slug, name: t.name,
         hidden: t.hidden === 1,
-        repos: reposByTeam.get(t.id) ?? [],
-        members: membersByTeam.get(t.id) ?? [],
+        repos: (reposByTeam.get(t.id) ?? []).map(r => ({ repoId: r.repoId, fullName: r.fullName, path: r.path })),
+        members: (membersByTeam.get(t.id) ?? []).map(m => ({ userId: m.userId, login: m.login,
+          dependencies: m.viewDependencies === 1, security: m.viewSecurity === 1 })),
       }))
     },
     async setTeamRepo(teamId: string, repoId: number, path: string | null): Promise<void> {
@@ -1786,16 +1718,15 @@ function teamMethods(stmts: ReturnType<typeof prepareStatements>, db: ManagedSql
     },
     async removeTeamRepo(teamId: string, repoId: number, path?: string | null): Promise<boolean> {
       const result = path === undefined ? (await deleteTeamRepoStmt.run(teamId, repoId)) : (await deleteTeamRepoPathStmt.run(teamId, repoId, path ?? ''))
-      return Number(result.changes) > 0
+      return anyChanged(result)
     },
     async setTeamMember(teamId: string, userId: string, perms: TeamUserPermissions): Promise<void> {
       await upsertTeamMemberStmt.run(teamId, userId, perms.dependencies ? 1 : 0, perms.security ? 1 : 0)
     },
     async removeTeamMember(teamId: string, userId: string): Promise<boolean> {
-      return Number((await deleteTeamMemberStmt.run(teamId, userId)).changes) > 0
+      return anyChanged(await deleteTeamMemberStmt.run(teamId, userId))
     },
   }
-  return methods
 }
 
 // `triageHistoryLimit`: events kept per finding in the triage trail; 0 (the
@@ -1868,7 +1799,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
       return row == null ? null : ownSession(row)
     },
     async createViewSession(view, now) {
-      if (Number((await insertViewSessionStmt.run(view.id, view.csrfToken, now, view.userId, view.viewerSessionId, now)).changes) === 0) return false
+      if (!anyChanged(await insertViewSessionStmt.run(view.id, view.csrfToken, now, view.userId, view.viewerSessionId, now))) return false
       await deleteOtherViewsStmt.run(view.viewerSessionId, view.id)
       return true
     },
@@ -1902,7 +1833,7 @@ export function createManagedMethods(db: ManagedSql, options: ManagedDbOptions =
     },
     async setUserRole(id, role) {
       if (role !== 'admin') await deleteDemotedViewsStmt.run(id)
-      return Number((await updateRoleStmt.run(role, Date.now(), id)).changes) > 0
+      return anyChanged(await updateRoleStmt.run(role, Date.now(), id))
     },
     async setUserTokens(id, tokens) {
       const state = await storageState(db, key)

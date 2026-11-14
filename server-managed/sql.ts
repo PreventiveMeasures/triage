@@ -51,6 +51,19 @@ export function scopeManagedMethods(methods: ManagedDb, driver: ManagedSqlDriver
   return Object.fromEntries(entries) as ManagedDb
 }
 
+// A SQLite bootstrap step's own transaction, begun by `begin`, rolled back
+// where `work` (or its commit) throws.
+export function sqliteTransaction(db: DatabaseSync, begin: 'BEGIN' | 'BEGIN IMMEDIATE', work: () => void): void {
+  db.exec(begin)
+  try {
+    work()
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    throw err
+  }
+}
+
 export function createSqliteDriver(db: DatabaseSync): ManagedSqlDriver {
   let queue = Promise.resolve()
   let closed = false

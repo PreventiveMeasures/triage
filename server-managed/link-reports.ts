@@ -151,12 +151,6 @@ export function mergeLinkGroups(groups: readonly string[][], present?: ReadonlyS
     const first = root(ids[0]!)
     for (const id of ids.slice(1)) { const other = root(id); if (other !== first) parents.set(other, first) }
   }
-  const merged = new Map<string, string[]>()
-  for (const id of parents.keys()) {
-    if (present && !present.has(id)) continue
-    const key = root(id)
-    const ids = merged.get(key) ?? []
-    ids.push(id); merged.set(key, ids)
-  }
-  return [...merged.values()].filter(ids => ids.length >= 2)
+  const shown = [...parents.keys()].filter(id => !present || present.has(id))
+  return [...Map.groupBy(shown, root).values()].filter(ids => ids.length >= 2)
 }

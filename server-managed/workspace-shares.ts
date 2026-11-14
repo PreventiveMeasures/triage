@@ -139,8 +139,7 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
     async getWorkspaceShare(tokenHash) {
       const grant = await q.share.get(tokenHash) as { id: string; slug: string; name: string; dependencies: number; security: number } | undefined
       if (!grant) return null
-      const { dependencies, security, ...team } = grant
-      const permissions = { dependencies: dependencies === 1, security: security === 1 }
+      const { permissions, ...team } = shareInfo(grant)
       const rows = await q.reports.all(team.id) as { id: string; slug: string; filename: string; analyzer: string | null; byteSize: number; sha256: string; directory: string; github: string }[]
       const links = await linkRevision(db)
       const bundleRows = (await q.bundles.all(team.id) as (Omit<ManagedBundle, 'buildConditions'> & { buildConditions: string | null; repoFullName: string })[])

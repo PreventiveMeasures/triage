@@ -51,14 +51,23 @@ async function currentSchema(db: PgConnection): Promise<boolean> {
   }
 }
 
+// Whether migration `version` is recorded, in the bootstrap's transaction.
+async function recorded(db: PgConnection, version: number): Promise<boolean> {
+  return (await db.query(`SELECT version FROM managed_schema_version WHERE version = ${version}`)).rows.length > 0
+}
+
+// An ALTER TABLE's clauses adding each of `columns` it lacks.
+const addColumns = (columns: readonly (readonly [string, string])[]) =>
+  columns.map(([column, type]) => `ADD COLUMN IF NOT EXISTS ${column} ${type}`).join(', ')
+
 async function migrateRepositoryDefaultCache(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 12')).rows.length > 0) return
+  if (await recorded(db, 12)) return
   await db.query('ALTER TABLE managed_selected_repo ADD COLUMN IF NOT EXISTS cached_default_branch TEXT')
   await db.query('INSERT INTO managed_schema_version VALUES (12)')
 }
 
 async function migrateBundleBuildLeases(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 13')).rows.length > 0) return
+  if (await recorded(db, 13)) return
   await db.query(postgresSchema(BUNDLE_BUILD_LEASE_SCHEMA))
   await db.query('INSERT INTO managed_schema_version VALUES (13)')
 }
@@ -71,7 +80,7 @@ async function migrateGithubMetadata(db: PgConnection): Promise<void> {
 }
 
 async function migrateBundleVisibility(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 15')).rows.length === 0) {
+  if (!await recorded(db, 15)) {
     await db.query('ALTER TABLE managed_bundle ADD COLUMN IF NOT EXISTS visible INTEGER NOT NULL DEFAULT 1')
     await db.query('INSERT INTO managed_schema_version VALUES (15)')
   }
@@ -88,13 +97,13 @@ async function migrateRepositoryAliases(db: PgConnection): Promise<void> {
 }
 
 async function migrateHiddenTeams(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 18')).rows.length > 0) return
+  if (await recorded(db, 18)) return
   await db.query('ALTER TABLE managed_team ADD COLUMN IF NOT EXISTS hidden INTEGER NOT NULL DEFAULT 0')
   await db.query('INSERT INTO managed_schema_version VALUES (18)')
 }
 
 async function migrateIssueFixes(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 19')).rows.length > 0) return
+  if (await recorded(db, 19)) return
   await db.query('ALTER TABLE managed_finding_issue ADD COLUMN IF NOT EXISTS auto_fix_url TEXT, ADD COLUMN IF NOT EXISTS auto_fix_checked_at BIGINT')
   await db.query(postgresSchema(revisionSchema(true)))
   await db.query('INSERT INTO managed_schema_version VALUES (19)')
@@ -102,53 +111,53 @@ async function migrateIssueFixes(db: PgConnection): Promise<void> {
 
 // Existing rows stay NULL (unknown): some may have been built on the server.
 async function migrateBundleProvenance(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 20')).rows.length > 0) return
+  if (await recorded(db, 20)) return
   await db.query('ALTER TABLE managed_bundle ADD COLUMN IF NOT EXISTS provenance TEXT')
   await createUploadTrigger(db, 'bundle', false)
   await db.query('INSERT INTO managed_schema_version VALUES (20)')
 }
 
 async function migrateUpstreamCache(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 21')).rows.length > 0) return
+  if (await recorded(db, 21)) return
   await db.query(postgresSchema(UPSTREAM_CACHE_SCHEMA))
   await db.query('INSERT INTO managed_schema_version VALUES (21)')
 }
 
 // Existing builds stay NULL: their conditions were never recorded.
 async function migrateBundleBuildConditions(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 22')).rows.length > 0) return
+  if (await recorded(db, 22)) return
   await db.query('ALTER TABLE managed_bundle ADD COLUMN IF NOT EXISTS build_conditions TEXT')
   await db.query('INSERT INTO managed_schema_version VALUES (22)')
 }
 
 // Existing sessions create their upload key on first use.
 async function migrateSessionUploadKeys(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 23')).rows.length > 0) return
+  if (await recorded(db, 23)) return
   await db.query('ALTER TABLE managed_session ADD COLUMN IF NOT EXISTS upload_key TEXT')
   await db.query('INSERT INTO managed_schema_version VALUES (23)')
 }
 
 async function migrateViewSessions(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 24')).rows.length > 0) return
+  if (await recorded(db, 24)) return
   await db.query('ALTER TABLE managed_session ADD COLUMN IF NOT EXISTS viewer_session TEXT REFERENCES managed_session(id) ON DELETE CASCADE')
   await db.query(VIEW_SESSION_INDEX)
   await db.query('INSERT INTO managed_schema_version VALUES (24)')
 }
 
 async function migrateGithubCommits(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 25')).rows.length > 0) return
+  if (await recorded(db, 25)) return
   await db.query(postgresSchema(GITHUB_COMMIT_SCHEMA))
   await db.query('INSERT INTO managed_schema_version VALUES (25)')
 }
 
 async function migrateTeamNpmScopes(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 26')).rows.length > 0) return
+  if (await recorded(db, 26)) return
   await db.query(postgresSchema(TEAM_NPM_SCOPE_SCHEMA))
   await db.query('INSERT INTO managed_schema_version VALUES (26)')
 }
 
 async function migrateDependencyReviews(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 27')).rows.length > 0) return
+  if (await recorded(db, 27)) return
   await db.query('ALTER TABLE managed_team ADD COLUMN IF NOT EXISTS dependency_review INTEGER NOT NULL DEFAULT 0')
   await db.query(postgresSchema(DEPENDENCY_REVIEW_SCHEMA))
   await db.query('INSERT INTO managed_schema_version VALUES (27)')
@@ -156,16 +165,16 @@ async function migrateDependencyReviews(db: PgConnection): Promise<void> {
 
 // Existing names are the sign-in accounts' own: none was chosen yet.
 async function migrateGithubLinks(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 28')).rows.length > 0) return
+  if (await recorded(db, 28)) return
   await db.query(postgresSchema(GITHUB_LINK_SCHEMA))
-  await db.query(`ALTER TABLE managed_user ${GITHUB_LINK_USER_COLUMNS.map(([column, type]) => `ADD COLUMN IF NOT EXISTS ${column} ${type}`).join(', ')}`)
+  await db.query(`ALTER TABLE managed_user ${addColumns(GITHUB_LINK_USER_COLUMNS)}`)
   await db.query('UPDATE managed_user SET github_name = name')
   await db.query('INSERT INTO managed_schema_version VALUES (28)')
 }
 
 async function migrateRepositoryDependencyReviews(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 29')).rows.length > 0) return
-  await db.query(`ALTER TABLE managed_selected_repo ${REPOSITORY_DEPENDENCY_REVIEW_COLUMNS.map(([column, type]) => `ADD COLUMN IF NOT EXISTS ${column} ${type}`).join(', ')}`)
+  if (await recorded(db, 29)) return
+  await db.query(`ALTER TABLE managed_selected_repo ${addColumns(REPOSITORY_DEPENDENCY_REVIEW_COLUMNS)}`)
   await db.query('INSERT INTO managed_schema_version VALUES (29)')
 }
 
@@ -173,14 +182,14 @@ async function migrateRepositoryDependencyReviews(db: PgConnection): Promise<voi
 // added since 29 added there too; and a team's published reviews, listed by
 // it, indexed so.
 async function migrateRepositoryDependencyReviewLockfiles(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 30')).rows.length > 0) return
-  await db.query(`ALTER TABLE managed_selected_repo ${REPOSITORY_DEPENDENCY_REVIEW_COLUMNS.map(([column, type]) => `ADD COLUMN IF NOT EXISTS ${column} ${type}`).join(', ')}`)
+  if (await recorded(db, 30)) return
+  await db.query(`ALTER TABLE managed_selected_repo ${addColumns(REPOSITORY_DEPENDENCY_REVIEW_COLUMNS)}`)
   await db.query('CREATE INDEX IF NOT EXISTS managed_dependency_review_team_idx ON managed_dependency_review_team(team_id, review_id)')
   await db.query('INSERT INTO managed_schema_version VALUES (30)')
 }
 
 async function migrateRepoUploadIndexes(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 31')).rows.length > 0) return
+  if (await recorded(db, 31)) return
   await db.query(REPO_UPLOAD_INDEXES)
   await db.query('INSERT INTO managed_schema_version VALUES (31)')
 }
@@ -188,8 +197,8 @@ async function migrateRepoUploadIndexes(db: PgConnection): Promise<void> {
 // The shasums of the tarballs a dependency review reads, none known of
 // those written before.
 async function migrateDependencyReviewShasums(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 32')).rows.length > 0) return
-  await db.query(`ALTER TABLE managed_dependency_review ${DEPENDENCY_REVIEW_COLUMNS.map(([column, type]) => `ADD COLUMN IF NOT EXISTS ${column} ${type}`).join(', ')}`)
+  if (await recorded(db, 32)) return
+  await db.query(`ALTER TABLE managed_dependency_review ${addColumns(DEPENDENCY_REVIEW_COLUMNS)}`)
   await db.query('INSERT INTO managed_schema_version VALUES (32)')
 }
 
@@ -197,14 +206,14 @@ async function migrateDependencyReviewShasums(db: PgConnection): Promise<void> {
 // those written before; each author's one draft of a comparison held to its
 // patch too.
 async function migrateDependencyReviewPatches(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 33')).rows.length > 0) return
-  await db.query(`ALTER TABLE managed_dependency_review ${DEPENDENCY_REVIEW_COLUMNS.map(([column, type]) => `ADD COLUMN IF NOT EXISTS ${column} ${type}`).join(', ')}`)
+  if (await recorded(db, 33)) return
+  await db.query(`ALTER TABLE managed_dependency_review ${addColumns(DEPENDENCY_REVIEW_COLUMNS)}`)
   await db.query(DEPENDENCY_REVIEW_INDEXES)
   await db.query('INSERT INTO managed_schema_version VALUES (33)')
 }
 
 async function migrateTeamAppSummaries(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 34')).rows.length > 0) return
+  if (await recorded(db, 34)) return
   await db.query(postgresSchema(TEAM_APP_SUMMARY_SCHEMA))
   await db.query('INSERT INTO managed_schema_version VALUES (34)')
 }
@@ -212,7 +221,7 @@ async function migrateTeamAppSummaries(db: PgConnection): Promise<void> {
 // The issue a saved one was closed as a duplicate of, none known of those
 // checked before.
 async function migrateIssueDuplicates(db: PgConnection): Promise<void> {
-  if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 35')).rows.length > 0) return
+  if (await recorded(db, 35)) return
   await db.query('ALTER TABLE managed_finding_issue ADD COLUMN IF NOT EXISTS duplicate_of_url TEXT')
   await db.query('INSERT INTO managed_schema_version VALUES (35)')
 }
@@ -223,8 +232,8 @@ async function initialize(db: PgConnection): Promise<void> {
   try {
     await db.query(LOCK)
     await db.query('CREATE TABLE IF NOT EXISTS managed_schema_version (version INTEGER PRIMARY KEY)')
-    const initialized = (await db.query('SELECT version FROM managed_schema_version WHERE version = 1')).rows.length > 0
-    const prefixed = (await db.query('SELECT version FROM managed_schema_version WHERE version = 3')).rows.length > 0
+    const initialized = await recorded(db, 1)
+    const prefixed = await recorded(db, 3)
     if (initialized && !prefixed) {
       const { rows } = await db.query("SELECT relname AS name FROM pg_class WHERE relkind IN ('r', 'p') AND pg_table_is_visible(oid)")
       for (const [from, to] of managedTableRenames(new Set(rows.map(row => String(row['name']))))) {
@@ -242,22 +251,22 @@ async function initialize(db: PgConnection): Promise<void> {
       for (const type of ['report', 'bundle']) await createUploadTrigger(db, type)
       await db.query('INSERT INTO managed_schema_version VALUES (1)')
     }
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 2')).rows.length === 0) {
+    if (!await recorded(db, 2)) {
       await db.query('CREATE INDEX IF NOT EXISTS managed_report_bundle_hash_idx ON managed_report(bundle_id, sha256)')
       await db.query('INSERT INTO managed_schema_version VALUES (2)')
     }
     if (!prefixed) await db.query('INSERT INTO managed_schema_version VALUES (3)')
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 4')).rows.length === 0) {
+    if (!await recorded(db, 4)) {
       await db.query(postgresSchema(WORKSPACE_SHARE_SCHEMA))
       await db.query('INSERT INTO managed_schema_version VALUES (4)')
     }
     await migrateGithubMetadata(db)
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 5')).rows.length === 0) {
+    if (!await recorded(db, 5)) {
       await db.query(`ALTER TABLE managed_workspace_share ADD COLUMN IF NOT EXISTS dependencies INTEGER NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS security INTEGER NOT NULL DEFAULT 0`)
       await db.query('INSERT INTO managed_schema_version VALUES (5)')
     }
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 6')).rows.length === 0) {
+    if (!await recorded(db, 6)) {
       await db.query('ALTER TABLE managed_bundle ADD COLUMN IF NOT EXISTS slug TEXT')
       const { rows } = await db.query('SELECT id, slug FROM managed_bundle ORDER BY id')
       for (const row of allocateMissingSlugs(rows as { id: string; slug: string | null }[])) {
@@ -267,15 +276,15 @@ async function initialize(db: PgConnection): Promise<void> {
         CREATE UNIQUE INDEX IF NOT EXISTS managed_bundle_slug_idx ON managed_bundle(slug);
         INSERT INTO managed_schema_version VALUES (6)`)
     }
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 7')).rows.length === 0) {
+    if (!await recorded(db, 7)) {
       await db.query("ALTER TABLE managed_bundle ADD COLUMN IF NOT EXISTS repo_directory TEXT NOT NULL DEFAULT ''")
       await db.query('INSERT INTO managed_schema_version VALUES (7)')
     }
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 8')).rows.length === 0) {
+    if (!await recorded(db, 8)) {
       await db.query('CREATE INDEX IF NOT EXISTS managed_report_hash_idx ON managed_report(sha256, uploaded_at, id)')
       await db.query('INSERT INTO managed_schema_version VALUES (8)')
     }
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 9')).rows.length === 0) {
+    if (!await recorded(db, 9)) {
       await db.query(postgresSchema(STORAGE_SCHEMA))
       for (const table of ['managed_report', 'managed_bundle']) {
         await db.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS data_key TEXT, ADD COLUMN IF NOT EXISTS storage_encrypted INTEGER NOT NULL DEFAULT 0`)
@@ -284,10 +293,10 @@ async function initialize(db: PgConnection): Promise<void> {
       await db.query('INSERT INTO managed_schema_version VALUES (9)')
     }
     await db.query(postgresSchema(LINK_REPORT_SCHEMA))
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 10')).rows.length === 0) {
+    if (!await recorded(db, 10)) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (10)')
     }
-    if ((await db.query('SELECT version FROM managed_schema_version WHERE version = 11')).rows.length === 0) {
+    if (!await recorded(db, 11)) {
       await db.query(postgresSchema(revisionSchema(true)) + '; INSERT INTO managed_schema_version VALUES (11)')
     }
     for (const migrate of [migrateRepositoryDefaultCache, migrateBundleBuildLeases, migrateBundleVisibility, migrateLinkReports, migrateRepositoryAliases, migrateHiddenTeams, migrateIssueFixes, migrateBundleProvenance, migrateUpstreamCache, migrateBundleBuildConditions, migrateSessionUploadKeys, migrateViewSessions, migrateGithubCommits, migrateTeamNpmScopes, migrateDependencyReviews, migrateGithubLinks, migrateRepositoryDependencyReviews,
@@ -317,8 +326,10 @@ async function createUploadTrigger(db: PgConnection, type: string, createTrigger
   }
 }
 
+type RequestConnection = { connection?: PgConnection; queue: Promise<unknown>; ended: boolean }
+
 function requestConnections(connect: PgConnect) {
-  const requests = new AsyncLocalStorage<{ connection?: PgConnection; queue: Promise<unknown>; ended: boolean }>()
+  const requests = new AsyncLocalStorage<RequestConnection>()
   async function withConnection<T>(work: (db: PgConnection) => Promise<T>): Promise<T> {
     const request = requests.getStore()
     if (!request || request.ended) {
@@ -345,7 +356,7 @@ function requestConnections(connect: PgConnect) {
   }
   async function withRequest<T>(work: () => Promise<T>): Promise<T> {
     if (requests.getStore()) return work()
-    const request: { connection?: PgConnection; queue: Promise<unknown>; ended: boolean } = { queue: Promise.resolve(), ended: false }
+    const request: RequestConnection = { queue: Promise.resolve(), ended: false }
     let failed = false
     try { return await requests.run(request, work) }
     catch (error) { failed = true; throw error }

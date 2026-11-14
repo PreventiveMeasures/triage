@@ -3,7 +3,7 @@ import { parseManagedRoute } from '../common/managed/routes.js'
 
 // A deep page URL must still resolve every asset at the app root. Preload
 // headers resolve against the request URL, so their hrefs must be absolute too.
-export function managedPageHtml(html: string): string {
+function managedPageHtml(html: string): string {
   return html.replaceAll(/(href|src)="\.\//gu, '$1="/')
 }
 

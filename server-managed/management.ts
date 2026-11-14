@@ -7,11 +7,10 @@ export class ManagedMutationError extends Error {
 }
 
 export type ContentMutation = { type: 'delete' } | { type: 'repo'; repoId: number | null; directory: string } | { type: 'visibility'; visible: boolean }
-export type ReportMutation = ContentMutation
 type RemovalRepo = Pick<ManagedRepo, 'repoId' | 'fullName' | 'addedAt'>
 type RemovalAnnotations = { reports: string; ids: string[] }
 export interface ManagementStore {
-  mutateReport(sessionId: string, id: string, change: ReportMutation): Promise<{ report: ReportRecord; user: StoredUser }>
+  mutateReport(sessionId: string, id: string, change: ContentMutation): Promise<{ report: ReportRecord; user: StoredUser }>
   mutateBundle(sessionId: string, id: string, change: ContentMutation): Promise<{ bundle: ManagedBundle; user: StoredUser }>
   // A repeated upload/build of stored bytes (see reuseBundle). Renames need the
   // access other bundle mutations need; a server build labels the row anyway.
@@ -47,7 +46,7 @@ export function managementMethods(db: ManagementDb): ManagementStore {
     if (user.role !== 'admin' && !await db.userCanReadRepoPath(user.id, change.repoId, change.directory)) throw new ManagedMutationError(403, 'repo-forbidden')
   }
   return {
-    async mutateReport(sessionId: string, id: string, change: ReportMutation) {
+    async mutateReport(sessionId: string, id: string, change: ContentMutation) {
       const user = await authorize(sessionId, 'manage')
       const report = await db.getReport(id)
       if (!report || (user.role !== 'admin' && report.uploadedBy !== user.id && !await db.userCanReadReport(user.id, id))) throw new ManagedMutationError(404, 'no-report')

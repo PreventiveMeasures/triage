@@ -1,19 +1,11 @@
 // Compress before the object-storage encryption boundary. Separate paths let
 // legacy arbitrary report bytes remain readable without format sniffing.
-import { Buffer } from 'node:buffer'
+import type { Buffer } from 'node:buffer'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createBrotliDecompress } from 'node:zlib'
-import type { BlobStore, OpenedBlob } from './blob-store.ts'
+import { type BlobStore, type OpenedBlob, readBytes } from './blob-store.ts'
 import { encodeBrotli } from './brotli.ts'
-
-async function readBytes(stored: OpenedBlob): Promise<Buffer> {
-  const parts: Buffer[] = []
-  try {
-    for await (const part of stored.stream) parts.push(Buffer.from(part))
-    return Buffer.concat(parts)
-  } finally { stored.stream.destroy() }
-}
 
 // Ids whose original copy is known gone, at most this many.
 const COMPRESSED_ONLY_MAX = 16_384

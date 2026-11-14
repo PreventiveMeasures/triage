@@ -5,6 +5,7 @@ import { Buffer } from 'node:buffer'
 import { createHash, generateKeyPairSync } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 import type { BlobStore } from './blob-store.ts'
+import { isBlobId } from './object-storage.ts'
 import { maxSealedBytes, openUpload } from '../common/managed/upload-seal.ts'
 
 export const UPLOAD_CHUNK_BYTES = 3 * 1024 * 1024
@@ -12,7 +13,6 @@ export const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 // Staged parts may carry a sealed body, slightly larger than its content.
 const MAX_STAGED_BYTES = maxSealedBytes(MAX_UPLOAD_BYTES)
 const MAX_UPLOAD_PARTS = Math.ceil(MAX_STAGED_BYTES / UPLOAD_CHUNK_BYTES)
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
 export type UploadKind = 'reports' | 'bundles'
 
 function partId(session: string, kind: UploadKind, id: string, index: number): string {
@@ -21,11 +21,11 @@ function partId(session: string, kind: UploadKind, id: string, index: number): s
 }
 
 export function validUploadPart(id: string, index: number, maxBytes: number): boolean {
-  return UUID.test(id) && Number.isSafeInteger(index) && index >= 0 && index < Math.ceil(Math.min(maxSealedBytes(maxBytes), MAX_STAGED_BYTES) / UPLOAD_CHUNK_BYTES)
+  return isBlobId(id) && Number.isSafeInteger(index) && index >= 0 && index < Math.ceil(Math.min(maxSealedBytes(maxBytes), MAX_STAGED_BYTES) / UPLOAD_CHUNK_BYTES)
 }
 
 export function validUpload(id: string, count: number): boolean {
-  return UUID.test(id) && Number.isSafeInteger(count) && count > 0
+  return isBlobId(id) && Number.isSafeInteger(count) && count > 0
 }
 
 // Limit cleanup to indices that any configured server could have accepted,
