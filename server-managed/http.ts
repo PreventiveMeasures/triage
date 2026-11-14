@@ -865,6 +865,13 @@ async function handleListModels(res: ServerResponse, deps: ManagedHttpDeps, cook
   sendJson(res, 200, { models: MANAGED_SCAN_MODELS, defaultModel: DEFAULT_MANAGED_SCAN_MODEL })
 }
 
+// A repository GitHub lists, as the repository list shows it: `selected`
+// where it is among those connected.
+const listedRepository = (repo: ConnectedRepo, selected: ReadonlySet<number>) => ({
+  id: repo.id, fullName: repo.fullName, private: repo.private, visibility: repo.visibility, htmlUrl: repo.htmlUrl,
+  installed: repo.installationId != null, selected: selected.has(repo.id),
+})
+
 // GET /api/admin/repositories — the connected repositories by default. The
 // potentially large GitHub discovery lists are opt-in (`scope=installed` or
 // `scope=public`). Return the complete catalogue for local search and organization
@@ -883,10 +890,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
     const selected = new Set((await deps.db.listSelectedRepos()).map((repo) => repo.repoId))
     sendJson(res, 200, {
       installUrl: installUrl(deps.config),
-      repositories: listing.repositories.map((repo) => ({
-        id: repo.id, fullName: repo.fullName, private: repo.private, visibility: repo.visibility, htmlUrl: repo.htmlUrl,
-        installed: repo.installationId != null, selected: selected.has(repo.id),
-      })),
+      repositories: listing.repositories.map(repo => listedRepository(repo, selected)),
       tokenMissing: listing.tokenMissing,
     })
     return
@@ -919,11 +923,7 @@ async function handleListRepositories(req: IncomingMessage, res: ServerResponse,
       return
     }
     tokenMissing = listing.tokenMissing
-    repositories = listing.repositories
-      .map((r) => ({
-        id: r.id, fullName: r.fullName, private: r.private, visibility: r.visibility, htmlUrl: r.htmlUrl,
-        installed: r.installationId != null, selected: selected.has(r.id),
-      }))
+    repositories = listing.repositories.map(repo => listedRepository(repo, selected))
   }
   repositories.sort((a, b) => a.fullName.localeCompare(b.fullName))
   const total = repositories.length
@@ -3321,8 +3321,8 @@ async function handleRepositoryRisk(res: ServerResponse, deps: ManagedHttpDeps, 
 // was asked for and its source was found to have, for the viewer to check.
 const prettySource = ({ hash }: PrettyRequest): Record<string, string> => ({ 'x-source-hash': hash })
 
-// What a bundle's derivative failed of: as pretty-print.ts refused it, else
-// its bundle unreadable.
+// A bundle's derivative that failed, answered: as pretty-print.ts refused
+// it, else as its bundle unreadable.
 function sendBundleFailure(res: ServerResponse, err: unknown) {
   sendJson(res, err instanceof PrettyError ? err.status : 422, { error: err instanceof PrettyError ? err.message : 'bundle-unavailable' })
 }
