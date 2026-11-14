@@ -3,11 +3,9 @@ import { bundleCommitHash } from '../common/bundle-commit.js'
 import type { BundleSummary } from './bundle-cache.ts'
 import type { ManagedDb } from './db.ts'
 import { type GithubCommit, githubCommitKey } from './github-metadata.ts'
-import { LOGIN, timeOf } from './github-values.ts'
+import { LOGIN, MAX_NAME, timeOf } from './github-values.ts'
 
 const MAX_MESSAGE_LENGTH = 65_536
-const MAX_NAME_LENGTH = 256
-// GitHub logins, and the `[bot]` accounts apps commit as.
 const BACKFILL_LIMIT = 4
 const RETRY_MS = 5 * 60_000
 
@@ -30,7 +28,7 @@ function truncate(value: string, max: number): string {
 }
 
 function name(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? truncate(value.trim(), MAX_NAME_LENGTH) : null
+  return typeof value === 'string' && value.trim() ? truncate(value.trim(), MAX_NAME) : null
 }
 
 // `body` is a GitHub list-commits page that starts at `sha`, so its first

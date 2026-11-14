@@ -15,6 +15,8 @@ const PREVIOUS_SUMMARY_FILENAME = 'v4-summary.json'
 const RETRY_MS = 5 * 60_000
 const BACKFILL_LIMIT = 4
 type CachedSummary = BundleSummary | { retryAt: number } | { previous: BundleSummary }
+// Whether a summary is kept of a bundle: a Stasis bundle's or a sourcemap's.
+const summarized = (record: BundleCacheRecord) => record.kind === 'stasis' || record.kind === 'sourcemap'
 
 async function readCurrentSummary(storage: BundleCacheStorage, id: string): Promise<CachedSummary> {
   try { return await readSummary(storage, id, SUMMARY_FILENAME) }
@@ -92,9 +94,9 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
     catch { await publish(record, { retryAt: Date.now() + RETRY_MS }).catch(() => {}) }
   }
   async function summaryStatus(record: BundleCacheRecord) {
-    const value = ['stasis', 'sourcemap'].includes(record.kind ?? '') ? await read(record) : null
-    return { summary: !value || 'retryAt' in value ? null : 'previous' in value ? value.previous : value,
-      summaryRetryAt: value && 'retryAt' in value ? value.retryAt : null }
+    const value = summarized(record) ? await read(record) : null
+    if (!value || 'retryAt' in value) return { summary: null, summaryRetryAt: value?.retryAt ?? null }
+    return { summary: 'previous' in value ? value.previous : value, summaryRetryAt: null }
   }
   async function backfill(records: readonly BundleCacheRecord[]) {
     // Start after the catalog has been sent. Keep this work awaited by the
@@ -102,7 +104,7 @@ export function createBundleSummaryCache(storage: BundleCacheStorage, build: (re
     await setImmediate()
     let attempts = 0
     for (const record of records) {
-      if (!['stasis', 'sourcemap'].includes(record.kind ?? '')) continue
+      if (!summarized(record)) continue
       const cached = await read(record).catch(() => null)
       if (cached && !('previous' in cached) && (!('retryAt' in cached) || cached.retryAt > Date.now())) continue
       if (!await exists(record.id)) continue

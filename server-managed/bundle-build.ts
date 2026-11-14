@@ -203,8 +203,7 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
         reject(new BundleBuildError(status, code))
       }
       const timer = setTimeout(() => fail(504, 'build-timeout'), BUNDLE_BUILD_TIMEOUT_MS)
-      const abort = () => fail(signal.reason instanceof BundleBuildError ? signal.reason.status : 499,
-        signal.reason instanceof BundleBuildError ? signal.reason.code : 'build-cancelled')
+      const abort = () => signal.reason instanceof BundleBuildError ? fail(signal.reason.status, signal.reason.code) : fail(499, 'build-cancelled')
       signal.addEventListener('abort', abort, { once: true })
       // The worker's memory and notes are the log's alone: the response tells
       // the bundle, or the error's code, and nothing of them.
