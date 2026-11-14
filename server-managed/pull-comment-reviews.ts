@@ -72,7 +72,7 @@ async function inlineComments(review: Node, room: number, token: string, fetchIm
 // Pull request `number`'s comments, its reviews' and those on its diff, each
 // review's all of them, and whether it is open, as kept, else read of GitHub
 // a page at a time.
-export async function pullComments(fullName: string, token: string, number: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<PullComments> {
+async function pullComments(fullName: string, token: string, number: number, fetchImpl: typeof fetch = globalThis.fetch): Promise<PullComments> {
   const key = `${fullName}\0${number}`
   const known = comments.get(key)
   if (known && Date.now() - known.at < KEPT_MS) return known

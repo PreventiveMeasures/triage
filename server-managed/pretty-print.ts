@@ -25,6 +25,7 @@ import type { ManagedBundle, ManagedDb } from './db.ts'
 import { keptBriefly } from './kept-briefly.ts'
 import { loadNpmFiles } from './npm-loads.ts'
 import { type NpmVersionDocument, npmFileText } from './npm-packages.ts'
+import { inTurns } from './queue.ts'
 
 // Part of every kept copy's name; bumped when what the formatter writes for
 // the same file changes, or what its check lets through, so copies written
@@ -234,16 +235,6 @@ function sharing<T>(): (key: string, make: () => Promise<T>) => Promise<T> {
   }
 }
 
-// Work done one job at a time, in the order asked.
-function serial(): <T>(work: () => Promise<T>) => Promise<T> {
-  let queue = Promise.resolve()
-  return work => {
-    const job = queue.then(work)
-    queue = job.then(() => undefined, () => undefined)
-    return job
-  }
-}
-
 async function keep(put: () => Promise<void>) {
   try { await put() } catch (err) { console.warn('managed: pretty-print cache write failed:', err) }
 }
@@ -316,7 +307,7 @@ export function stalePrettyRemover(npm: CacheStorage): (signal?: AbortSignal) =>
 // as ever.
 function detailsReader(store: BundleStore) {
   type Details = NonNullable<Awaited<ReturnType<typeof readSizedBundleDetails>>>['details']
-  const enqueue = serial(), share = sharing<Details>()
+  const enqueue = inTurns(1), share = sharing<Details>()
   const held = keptBriefly<Details>({ keptMs: DETAILS_KEPT_MS, maxBytes: MAX_KEPT_DETAILS_BYTES, maxEntries: MAX_KEPT_DETAILS })
   return (record: ManagedBundle): Promise<Details> => {
     const key = `${record.id} ${record.integrity}`

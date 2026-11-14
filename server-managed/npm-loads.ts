@@ -79,7 +79,7 @@ export function sharedLoad<T>(key: string, work: () => Promise<T>, busy: string,
   if (!load) {
     if (!slots.has(slot) && placesTaken() + places > MAX_ACTIVE_LOADS) return refused(429, busy)
     const created: Load = { job: work(), readers: 0, settled: false, slot }
-    const finish = () => { settle(key, created) }
+    const finish = () => { created.settled = true; done(key, created) }
     created.job.then(finish, finish)
     loads.set(key, created)
     const taken = slots.get(slot)
@@ -98,11 +98,6 @@ export function sharedLoad<T>(key: string, work: () => Promise<T>, busy: string,
       done(key, held)
     },
   }
-}
-
-function settle(key: string, load: Load) {
-  load.settled = true
-  done(key, load)
 }
 
 // A load gone from the active ones, and its place with it, once its work is
@@ -164,7 +159,7 @@ async function downloadTarball(url: string, isPrivate: boolean): Promise<Buffer>
 // document names are the tarball that reader may download, wherever they
 // were kept and whoever fetched them.
 async function readTarball(doc: NpmVersionDocument): Promise<Uint8Array> {
-  const expected = sha512Of(doc.dist.integrity), shasum = doc.dist.shasum ?? null, url = doc.dist.tarball
+  const expected = sha512Of(doc.dist.integrity), shasum = doc.dist.shasum, url = doc.dist.tarball
   if (!url.startsWith(`${NPM_REGISTRY}/${doc.name}/-/`) || URL.parse(url)?.href !== url || expected === null
     || (shasum !== null && !/^[\da-f]{40}$/u.test(shasum))) throw new NpmPackageError(502, 'upstream-invalid')
   const kept = tarballCache === null ? null : upstreamCachePath(tarballCache, 'npm/tarballs', `${doc.name}@${doc.version}.tgz`)

@@ -38,7 +38,7 @@ import { type ChangedFile, commitChanges } from './repository-changes.ts'
 // The files of a pull request read from its own list past those compared,
 // FILES_PAGE a page, as many as GitHub lists (3,000).
 const FILES_PAGE = 100
-export const PULL_FILES = 3000
+const PULL_FILES = 3000
 // The directories whose lockfiles are read, those past them left out
 // (`cut`), and the packages told new of each, those past them counted.
 export const MAX_DIRECTORIES = 20
@@ -138,7 +138,6 @@ export interface GithubAsked { github: boolean }
 // path.
 const readKey = (ref: string, { path, format, sha }: { path: string; format: Format; sha?: string }) =>
   sha ? `blob\0${format}\0${sha}` : `commit\0${ref}\0${path}`
-
 
 // The pull request's base's and head's commits, as GitHub has them now: its
 // base's moving on as it does, its head's with each push, both kept once it

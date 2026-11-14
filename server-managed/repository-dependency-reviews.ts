@@ -13,7 +13,7 @@
 // or Accept with nits).
 import type { ManagedSql } from './sql.ts'
 import { type LockfileScope, scopeText, storedScope } from './lockfile-scope.ts'
-import { reviewsIn } from './dependency-reviews.ts'
+import { reviewsIn, snapshotOf } from './dependency-reviews.ts'
 import { type ReviewVerdict, summarizeReview } from '../common/dependency-reviews.js'
 
 export const REPOSITORY_DEPENDENCY_REVIEW_COLUMNS = [['dependency_review', 'INTEGER NOT NULL DEFAULT 0'],
@@ -100,11 +100,9 @@ async function publishedReviews(db: ManagedSql, repoId: number, versions: Review
       else entries.set(reviewId, [entry])
     }
     for (const row of rows) {
-      const snapshot = row.files === null ? null : JSON.parse(row.files) as string[] | { paths: string[]; nonTextFiles: string[] }
       // A snapshot of paths alone, before non-text files were told, can't be full.
-      const files = Array.isArray(snapshot) ? snapshot : snapshot?.paths ?? null
-      const nonText = Array.isArray(snapshot) ? null : snapshot?.nonTextFiles ?? []
-      const full = summarizeReview(entries.get(row.id) ?? [], files, nonText).coverage === 'full'
+      const { files, nonTextFiles } = snapshotOf(row.files)
+      const full = summarizeReview(entries.get(row.id) ?? [], files, nonTextFiles).coverage === 'full'
       found.push({ id: row.id, package: row.package, version: row.version, integrity: row.integrity, ...row.patchHash ? { patchHash: row.patchHash } : {},
         basePackage: row.basePackage, baseVersion: row.baseVersion,
         reviewer: row.userId ?? `login:${row.userLogin.toLowerCase()}`, login: row.userLogin, status: row.status, full, time: Number(row.publishedAt) })

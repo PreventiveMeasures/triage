@@ -39,9 +39,11 @@ const lines = (told: unknown): told is { additions: number; deletions: number } 
   && Number.isSafeInteger((told as { additions?: unknown }).additions) && Number.isSafeInteger((told as { deletions?: unknown }).deletions)
 // A delta as kept, none where it isn't one, or was kept before it told of
 // binary files.
-const deltaOf = (told: unknown): NpmDelta | null => lines(told) && ((told as NpmDelta).typeless === null || lines((told as NpmDelta).typeless))
-  && typeof (told as NpmDelta).binary === 'boolean' ? { additions: told.additions, deletions: told.deletions, typeless: (told as NpmDelta).typeless,
-    binary: (told as NpmDelta).binary } : null
+function deltaOf(told: unknown): NpmDelta | null {
+  if (!lines(told)) return null
+  const { typeless, binary } = told as { typeless?: unknown; binary?: unknown }
+  return (typeless === null || lines(typeless)) && typeof binary === 'boolean' ? { additions: told.additions, deletions: told.deletions, typeless, binary } : null
+}
 
 type Counted = { additions: number; deletions: number; typeAdditions: number; typeDeletions: number; typeFiles: number }
 const isCounted = (told: unknown): told is Counted => typeof told === 'object' && told !== null

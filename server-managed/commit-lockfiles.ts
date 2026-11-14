@@ -16,7 +16,7 @@ import { type Lru, lru } from './lru.ts'
 import { eachOf } from './queue.ts'
 import { type GithubAsked, type ListedLockfile, type LockfileStore, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
 
-export const MAX_LOCKFILES = 100
+const MAX_LOCKFILES = 100
 const READ_AT_ONCE = 4
 
 export interface CommitLockfiles { lockfiles: { path: string; packages: LockedPackage[] }[]; unread: string[] }

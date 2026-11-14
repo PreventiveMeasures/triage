@@ -35,6 +35,7 @@ const API_TIMEOUT_MS = 30_000
 const API_BYTES = 1024 * 1024
 const DAY_MS = 24 * 60 * 60_000
 const SEVERITY_RANK: Record<string, number> = { critical: 0, high: 1, moderate: 2, low: 3 }
+const rank = (severity: string | undefined) => SEVERITY_RANK[severity ?? ''] ?? 4
 
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 const isDay = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(value) && !Number.isNaN(Date.parse(value))
@@ -388,7 +389,6 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
     }
     const range = [known.range, row.range].filter(Boolean).join(' || ')
     const cvss = Math.max(known.cvss ?? -1, row.cvss ?? -1)
-    const rank = (severity: string | undefined) => SEVERITY_RANK[severity ?? ''] ?? 4
     const severity = rank(row.severity) < rank(known.severity) ? row.severity : known.severity
     merged.set(row.id, { ...own, ...known, ...range && { range }, ...severity && { severity }, ...cvss >= 0 && { cvss }, cwe: [...new Set([...known.cwe, ...row.cwe])],
       affected: [...known.affected, ...affected] })
@@ -396,7 +396,7 @@ async function askAdvisories(name: string, versions: string[], { githubToken, re
   return {
     versions, repository, ...keptAt && { keptAt },
     advisories: [...merged.values()].map(row => ({ ...row, affected: [...new Set(row.affected)].toSorted((a, b) => a - b) })).filter(row => row.affected.length > 0)
-      .toSorted((a, b) => (SEVERITY_RANK[a.severity ?? ''] ?? 4) - (SEVERITY_RANK[b.severity ?? ''] ?? 4) || a.id.localeCompare(b.id)),
+      .toSorted((a, b) => rank(a.severity) - rank(b.severity) || a.id.localeCompare(b.id)),
   }
 }
 

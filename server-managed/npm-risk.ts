@@ -42,11 +42,10 @@ import { buffer } from 'node:stream/consumers'
 import type { CacheStore } from '@preventive/upstream/npm.js'
 import { DEFAULT_MINIMUM_RELEASE_AGE, type NpmAssessment, assessNpm, npmReadyDownload, npmReadyDownloads } from '../risk/index.js'
 import { CacheMissError, type CacheStorage } from './cache-storage.ts'
-import { npmVersionStore } from './npm-kept.ts'
+import { npmVersionStore, pruneKept } from './npm-kept.ts'
 import { loadNpmTarball } from './npm-loads.ts'
 import { NpmPackageError, type NpmVersionDocument, npmTokenReads, readNpmPackument, readNpmVersion } from './npm-packages.ts'
 import { npmPackageScope } from '../common/managed/npm-packages.js'
-import { pruneKept } from './npm-kept.ts'
 import type { UpstreamCacheStore } from './upstream-cache.ts'
 
 const MEMORY_ENTRIES = 2000

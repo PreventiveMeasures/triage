@@ -16,8 +16,7 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { createClient } from '@preventive/upstream/github.js'
 import { isPatchHash, isPatchPath } from '../common/managed/npm-packages.js'
-import { GithubApiError } from './github-errors.ts'
-import { upstreamGithub } from './github-errors.ts'
+import { GithubApiError, upstreamGithub } from './github-errors.ts'
 import { type Lru, lru } from './lru.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
 import type { GithubAsked } from './pull-dependencies.ts'
@@ -29,7 +28,7 @@ export interface NpmPatch extends PatchSource { hash: string }
 
 // The most a patch's file may hold, and how many lines either side of where a
 // hunk says its lines are they are looked for.
-export const MAX_PATCH_BYTES = 8 * 1024 * 1024
+const MAX_PATCH_BYTES = 8 * 1024 * 1024
 const FUZZ = 20
 
 const COMMIT = /^[\da-f]{40}$/u
