@@ -18,7 +18,7 @@ import { count, nameOf, timeOf } from './github-values.ts'
 import { touchesLockfile } from './pull-dependencies.ts'
 import { ITEM_THREADS, type ReviewNode, TILE_THREADS, pullReviews, reviewFields, reviewsRefused } from './pull-reviews.ts'
 
-export const ISSUES_PAGE = 50
+const ISSUES_PAGE = 50
 // What a kept page or item was read as: kept ones read before differ.
 export const ISSUES_READ_VERSION = 4
 const MAX_LABELS = 20
@@ -30,8 +30,8 @@ const SHA = /^[a-f\d]{40}$/u
 // printable one is, but none with spaces or control characters.
 export const ISSUES_CURSOR = /^[!-~]{1,256}$/u
 
-export type IssuesKind = 'issues' | 'pulls'
-export type IssuesState = 'open' | 'closed'
+type IssuesKind = 'issues' | 'pulls'
+type IssuesState = 'open' | 'closed'
 
 const shared = `number title createdAt updatedAt closedAt author { ${ACTOR} } comments { totalCount } labels(first: ${MAX_LABELS}) { totalCount nodes { name color } }`
 const fields = {
@@ -70,7 +70,9 @@ type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCo
 
 const REVIEWS: Record<string, string> = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes', REVIEW_REQUIRED: 'required' }
 const CHECKS: Record<string, string> = { SUCCESS: 'success', FAILURE: 'failure', ERROR: 'failure', PENDING: 'pending', EXPECTED: 'pending' }
-const REASONS: Record<string, string> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
+// Why an issue was closed, as GitHub tells it: completed, not planned or a duplicate.
+export type IssueReason = 'completed' | 'not-planned' | 'duplicate'
+export const ISSUE_REASONS: Record<string, IssueReason> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
 
 // An issue or pull request as a tile shows it; null for one GitHub names no
 // number for.
@@ -84,7 +86,7 @@ function item(kind: IssuesKind, node: Node | null) {
   const common = { number: node.number as number, title: nameOf(node.title, MAX_TITLE) ?? '', author: author.login, authorId: author.id, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt),
     closedAt: timeOf(node.closedAt), comments: count(node.comments?.totalCount), labels, moreLabels: Math.max(0, count(node.labels?.totalCount) - labels.length) }
   if (kind === 'issues') {
-    return { ...common, state: node.state === 'OPEN' ? 'open' : 'closed', reason: REASONS[String(node.stateReason)] ?? null }
+    return { ...common, state: node.state === 'OPEN' ? 'open' : 'closed', reason: ISSUE_REASONS[String(node.stateReason)] ?? null }
   }
   const checks = node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state
   const listed = node.files?.nodes

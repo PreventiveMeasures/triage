@@ -17,10 +17,11 @@ import { ACTOR, type GraphAccount, accountOf, actorOf } from './github-accounts.
 import { GithubApiError } from './github-errors.ts'
 import { githubGraphql } from './github-graphql.ts'
 import { githubJson, repoApi, shareGithubRead } from './github-requests.ts'
-import { count, timeOf } from './github-values.ts'
+import { count, nameOf, timeOf } from './github-values.ts'
 import { coauthorsOf } from './commit-coauthors.ts'
 import { windowsOn } from './history-windows.ts'
-import { type HistoryCommit, type HistoryPages, historyFrom } from './repository-history.ts'
+import { type HistoryCommit, type HistoryPages, SHA, historyFrom } from './repository-history.ts'
+import { ISSUE_REASONS } from './repository-issues.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
@@ -47,7 +48,6 @@ const YEAR_STARTS = 10
 // parent dated in it.
 const YEAR_SKEW_MS = 30 * DAY_MS
 const MAX_TITLE = 1000
-const SHA = /^[a-f\d]{40}$/u
 
 // GitHub still computing a statistic.
 export class StatsPending extends Error {
@@ -61,7 +61,7 @@ export class StatsPending extends Error {
 // agent made or co-authored (`agentDays`), and those pushed to the branch
 // directly (`directDays`, agent-merges.ts directCommits), which GitHub's
 // statistics don't count.
-export interface PulseWeek { week: number; days: number[]; commits: number; additions: number | null; deletions: number | null; dayLines?: [number, number][]
+interface PulseWeek { week: number; days: number[]; commits: number; additions: number | null; deletions: number | null; dayLines?: [number, number][]
   agentDays?: number[]; releaseDays?: number[]; directDays?: number[] }
 // A contributor, by their login and their account's numeric id (`id`, where
 // GitHub named it), else by the name their commits carry, and their weeks,
@@ -70,12 +70,12 @@ export interface PulseWeek { week: number; days: number[]; commits: number; addi
 // agents, releases, direct]`, `releases` those that release the repository,
 // `agents`, of the rest, those an agent took part in (withAgent), and
 // `direct` those pushed to the branch directly.
-export interface PulseContributor { login: string | null; id?: number | null; name: string | null; weeks: [number, number, number, number][]
+interface PulseContributor { login: string | null; id?: number | null; name: string | null; weeks: [number, number, number, number][]
   days?: [number, number, number, number, number, number, number][] }
 // A commit pushed to the branch directly, as Pulse lists it: its id, when it
 // was committed, its subject, its author, by account, else name, and what it
 // is: a release, else one an agent took part in, else one without.
-export interface PulseCommit { sha: string; at: number; subject: string; login: string | null; id: number | null; name: string | null
+interface PulseCommit { sha: string; at: number; subject: string; login: string | null; id: number | null; name: string | null
   kind: 'agent' | 'without' | 'release' }
 // Commits by day of the week and hour (`punch[day][hour]`, Sunday first), in
 // each commit's own time zone, and, counted from its commits, each period's
@@ -88,14 +88,14 @@ export interface PulseStats { weeks: PulseWeek[]; contributors: PulseContributor
   directCommits?: PulseCommit[]; from?: number }
 // The lines added and removed a week, and each contributor's, as GitHub's
 // statistics count them, `lines` false where it counts none.
-export interface PulseLines { weeks: [number, number, number][]; contributors: { login: string; weeks: [number, number, number][] }[]; lines: boolean }
+interface PulseLines { weeks: [number, number, number][]; contributors: { login: string; weeks: [number, number, number][] }[]; lines: boolean }
 // The days (`from`, `to`, both days, UTC; `to` none, on) and the authors (GitHub
 // logins, any of them) a period's pull requests and issues are narrowed to.
 export interface PulseNarrowing { from: number; to: number | null; authors: string[] }
 // The year's commits read so far: all of them, or as far back as asked
 // (`commits`, `from`), else how many (`read`), and whether past
 // YEAR_COMMITS (`tooMany`).
-export type YearCommits = { complete: true; commits: HistoryCommit[]; passed: HistoryCommit[]; from: number | null } | { complete: false; read: number; tooMany: boolean }
+type YearCommits = { complete: true; commits: HistoryCommit[]; passed: HistoryCommit[]; from: number | null } | { complete: false; read: number; tooMany: boolean }
 
 const emptyPunch = () => Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
 
@@ -415,17 +415,15 @@ fragment issue on Issue { number title issueState: state stateReason createdAt c
 type SearchNode = { number?: unknown; title?: unknown; pullState?: unknown; issueState?: unknown; isDraft?: unknown; stateReason?: unknown
   createdAt?: unknown; mergedAt?: unknown; closedAt?: unknown; author?: GraphAccount } | null
 type Search = { issueCount?: unknown; nodes?: SearchNode[] } | null | undefined
-const REASONS: Record<string, string> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
 
 // An issue or pull request a search lists, as the popup's preview of it
 // takes one, `at` when it was merged, opened or closed.
 function listed(node: SearchNode, at: unknown) {
   if (!node || !Number.isSafeInteger(node.number) || (node.number as number) <= 0) return null
-  const title = typeof node.title === 'string' ? node.title.trim().slice(0, MAX_TITLE) : ''
   const author = actorOf(node.author)
-  const common = { number: node.number as number, title, author: author.login, authorId: author.id, at: timeOf(at), createdAt: timeOf(node.createdAt) }
+  const common = { number: node.number as number, title: nameOf(node.title, MAX_TITLE) ?? '', author: author.login, authorId: author.id, at: timeOf(at), createdAt: timeOf(node.createdAt) }
   return node.pullState === undefined
-    ? { ...common, kind: 'issues', state: node.issueState === 'OPEN' ? 'open' : 'closed', reason: REASONS[String(node.stateReason)] ?? null }
+    ? { ...common, kind: 'issues', state: node.issueState === 'OPEN' ? 'open' : 'closed', reason: ISSUE_REASONS[String(node.stateReason)] ?? null }
     : { ...common, kind: 'pulls', state: node.pullState === 'MERGED' ? 'merged' : node.pullState === 'OPEN' ? 'open' : 'closed', draft: node.isDraft === true }
 }
 

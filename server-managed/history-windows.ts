@@ -8,7 +8,7 @@
 import { linkNoreplyUsers } from './github-accounts.ts'
 import { githubGraphql } from './github-graphql.ts'
 import { COMMIT_FRAGMENT, type GraphCommit, HISTORY_PAGE, type HistoryCommit, type HistoryPages, PAGES_PARALLEL, PAGES_PER_QUERY, commitActors, graphCommit,
-  inBatches, variablesOf } from './repository-history.ts'
+  inBatches, nextCursor, variablesOf } from './repository-history.ts'
 
 // Windows a read is split into at most, each meant to hold as many commits
 // as WINDOW_COMMITS, a page's worth with room to spare, as often as the
@@ -55,7 +55,7 @@ const stamp = (at: number, up: boolean) => new Date((up ? Math.ceil : Math.floor
 // made of those it read, as GitHub lists them the latest made first, those
 // made together left out; or its end, none read), and how many pages were
 // read (`read`).
-export async function readWindows(fullName: string, token: string, head: string, low: number, high: number, perMs: number, fetchImpl: typeof fetch) {
+async function readWindows(fullName: string, token: string, head: string, low: number, high: number, perMs: number, fetchImpl: typeof fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
   const bottom = Math.max(low, high - MAX_WINDOWS * WINDOW_COMMITS / perMs)
   const count = Math.min(MAX_WINDOWS, Math.max(1, Math.ceil((high - bottom) * perMs / WINDOW_COMMITS)))
@@ -79,8 +79,8 @@ export async function readWindows(fullName: string, token: string, head: string,
           if (!commits.has(commit.sha)) commits.set(commit.sha, commit)
           oldest = Math.min(oldest, commit.committedAt ?? Number.POSITIVE_INFINITY)
         }
-        const info = pages[at]?.pageInfo
-        if (window.since !== null && info?.hasNextPage === true && typeof info.endCursor === 'string') next.push({ ...window, after: info.endCursor, oldest })
+        const after = nextCursor(pages[at]?.pageInfo)
+        if (window.since !== null && after !== null) next.push({ ...window, after, oldest })
       }
     })
     open = [...next, ...open.slice(wave.length)]
@@ -122,7 +122,7 @@ export function gitLogPage(top: string, known: Map<string, HistoryCommit>, low: 
 // parents of those they list that none of `listed` is nor any kept lists, on
 // till none is left, as many as MAX_KEPT: as a walk reading pages goes on to
 // them.
-export async function keepPages(tops: string[], known: Map<string, HistoryCommit>, listed: Set<string>, low: number, pages: HistoryPages) {
+async function keepPages(tops: string[], known: Map<string, HistoryCommit>, listed: Set<string>, low: number, pages: HistoryPages) {
   const covered = new Set(listed)
   const kept: [string, HistoryCommit[]][] = []
   const waiting = [...tops]

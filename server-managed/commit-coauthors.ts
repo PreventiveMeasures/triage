@@ -17,7 +17,7 @@ export const COAUTHORS_READ = 5
 // One who made a commit beside its author: by name and account, as its
 // author is, and the agent it is where known (common/managed/github-agents.ts),
 // by its account, its commits' address or name, or the marks it leaves.
-export interface Coauthor { name: string | null; login: string | null; id: number | null; agent?: string }
+interface Coauthor { name: string | null; login: string | null; id: number | null; agent?: string }
 
 // `Co-authored-by: <name> <address>` trailers, GitHub matching the key
 // regardless of case; Cursor's agents' links, as their work carries them;

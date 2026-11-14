@@ -36,12 +36,12 @@ export function repositoryCodeFits(files: RepositoryCodeFiles | null): files is 
 }
 
 // A directory's files' count and bytes, as GitHub lists its tree.
-export interface RepositoryCodeFiles { files: number; bytes: number }
+interface RepositoryCodeFiles { files: number; bytes: number }
 
 // The directory read: the repository by its id and name, the commit, the
 // directory (`''` for the root), its tree's id, and its files as listed,
 // which weigh its load among the active ones.
-export interface RepositoryCodeInput { repoId: number; repo: string; commit: string; path: string; tree: string; listed: RepositoryCodeFiles }
+interface RepositoryCodeInput { repoId: number; repo: string; commit: string; path: string; tree: string; listed: RepositoryCodeFiles }
 
 // A package's refusals, as a directory's: past the bounds, or an archive
 // @preventive/archive refuses, as it does one holding a symlink that climbs
@@ -90,7 +90,7 @@ const COMMIT = /^[a-f\d]{40}$/u
 
 // A directory as kept: the repository by its id and name, the commit and the
 // directory, as its body names them; and the head they are kept at.
-export type KeptCodeAt = Pick<RepositoryCodeInput, 'repoId' | 'repo' | 'commit' | 'path'>
+type KeptCodeAt = Pick<RepositoryCodeInput, 'repoId' | 'repo' | 'commit' | 'path'>
 type KeptCodeHead = Pick<KeptCodeAt, 'commit' | 'repo'>
 // Under the repository, then the commit, so either goes by its prefix; the
 // repository's name and the directory hashed, as a key's parts are names.

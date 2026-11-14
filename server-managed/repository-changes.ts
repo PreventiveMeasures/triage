@@ -25,7 +25,7 @@ export const FILES_PAGE = 100
 const MAX_PATH = 4096
 const SHA = /^[a-f\d]{40}$/u
 
-export type ChangeStatus = 'A' | 'M' | 'D' | 'R'
+type ChangeStatus = 'A' | 'M' | 'D' | 'R'
 // A file a commit changes: its path, its status, and a rename's path before.
 export type ChangedFile = [path: string, status: Exclude<ChangeStatus, 'R'>] | [path: string, status: 'R', from: string]
 export interface CommitChanges { files: ChangedFile[]; more: boolean }
@@ -37,6 +37,8 @@ export interface ChangesStore {
 }
 
 const pathOf = (value: unknown) => typeof value === 'string' && value !== '' && value.length <= MAX_PATH && !/\p{Cc}/u.test(value) ? value : null
+// No such commit: GitHub's 404, or its 422 for an id naming none.
+const noCommit = (err: unknown) => err instanceof GithubApiError && (err.message === 'github-not-found' || err.message === 'github-status-422')
 
 // A file's status as git names it: a copy is a file added; one GitHub
 // lists unchanged (its mode alone changed, say) changes none.
@@ -99,8 +101,7 @@ export async function repositoryChanges(fullName: string, token: string | null, 
       found.set(sha, changes)
       await kept.write(sha, changes)
     } catch (err) {
-      // No such commit: GitHub's 404, or its 422 for an id naming none.
-      if (err instanceof GithubApiError && (err.message === 'github-not-found' || err.message === 'github-status-422')) found.set(sha, null)
+      if (noCommit(err)) found.set(sha, null)
       else throw err
     }
   })
@@ -126,7 +127,7 @@ export const TREES_READ = 3
 const MAX_TREE_READS = 400
 const TREES_PARALLEL = 6
 export interface CommitTree { files: string[]; sizes: number[]; cut: boolean }
-export interface TreeStore {
+interface TreeStore {
   read(commit: string): Promise<CommitTree | null>
   write(commit: string, tree: CommitTree): Promise<void>
 }
@@ -135,23 +136,28 @@ type TreeEntry = { type?: unknown; path?: unknown; sha?: unknown; size?: unknown
 // A file read: its path and its bytes.
 type Blob = [path: string, size: number]
 type TreeListing = (tree: string, recursive: boolean) => Promise<{ entries: TreeEntry[]; truncated: boolean }>
+// A tree's entries as GitHub lists them, those of every tree under it too
+// where `recursive`, and whether it cut the listing short.
+const treeListing = (fullName: string, token: string | null, fetchImpl: typeof fetch): TreeListing => {
+  const repo = repoApi(fullName)
+  return async (tree, recursive) => {
+    const data = await githubJson(`${repo}/git/trees/${tree}${recursive ? '?recursive=1' : ''}`, token, fetchImpl) as { tree?: unknown; truncated?: unknown }
+    if (!Array.isArray(data?.tree)) throw new GithubApiError(502, 'github-malformed')
+    return { entries: data.tree as TreeEntry[], truncated: data.truncated === true }
+  }
+}
 
 export async function repositoryTree(fullName: string, token: string | null, commit: string, kept: TreeStore,
   fetchImpl: typeof fetch = globalThis.fetch): Promise<CommitTree | null> {
   if (!SHA.test(commit)) return null
   const held = await kept.read(commit)
   if (held) return held
-  const repo = repoApi(fullName)
-  const listing: TreeListing = async (tree, recursive) => {
-    const data = await githubJson(`${repo}/git/trees/${tree}${recursive ? '?recursive=1' : ''}`, token, fetchImpl) as { tree?: unknown; truncated?: unknown }
-    if (!Array.isArray(data?.tree)) throw new GithubApiError(502, 'github-malformed')
-    return { entries: data.tree as TreeEntry[], truncated: data.truncated === true }
-  }
+  const listing = treeListing(fullName, token, fetchImpl)
   let whole: Awaited<ReturnType<TreeListing>>
   try {
     whole = await listing(commit, true)
   } catch (err) {
-    if (err instanceof GithubApiError && (err.message === 'github-not-found' || err.message === 'github-status-422')) return null
+    if (noCommit(err)) return null
     throw err
   }
   const files: Blob[] = []
@@ -246,18 +252,17 @@ export async function directoryFiles(fullName: string, token: string | null, com
 // (GET /repos/:owner/:repo/git/trees/:tree, its own entries alone); null
 // where it has none there, or GitHub has no such commit.
 async function directoryTree(fullName: string, token: string | null, commit: string, path: string, fetchImpl: typeof fetch): Promise<string | null> {
-  const repo = repoApi(fullName)
+  const listing = treeListing(fullName, token, fetchImpl)
   let tree = commit
   for (const name of path.split('/')) {
-    let data: { tree?: unknown }
+    let entries: TreeEntry[]
     try {
-      data = await githubJson(`${repo}/git/trees/${tree}`, token, fetchImpl) as typeof data
+      entries = (await listing(tree, false)).entries
     } catch (err) {
-      if (err instanceof GithubApiError && (err.message === 'github-not-found' || err.message === 'github-status-422')) return null
+      if (noCommit(err)) return null
       throw err
     }
-    if (!Array.isArray(data?.tree)) throw new GithubApiError(502, 'github-malformed')
-    const entry = (data.tree as TreeEntry[]).find(item => item?.path === name && item.type === 'tree')
+    const entry = entries.find(item => item?.path === name && item.type === 'tree')
     if (typeof entry?.sha !== 'string' || !SHA.test(entry.sha)) return null
     tree = entry.sha
   }
@@ -265,7 +270,7 @@ async function directoryTree(fullName: string, token: string | null, commit: str
 }
 
 // The files of a tree within the directory `path` ('' the whole repository).
-export function treeWithin({ files, sizes, cut }: CommitTree, path: string): CommitTree {
+function treeWithin({ files, sizes, cut }: CommitTree, path: string): CommitTree {
   if (path === '') return { files, sizes, cut }
   const within = [...files.keys()].filter(at => files[at]!.startsWith(`${path}/`))
   return { files: within.map(at => files[at]!), sizes: within.map(at => sizes[at]!), cut }

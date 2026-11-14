@@ -50,7 +50,7 @@ export interface AssessedPackage { name: string; version: string; integrity?: st
 export type Assessment = { published: string | null; findings: { id: string; severity: Severity; takenDown?: unknown }[]; score: { score: number } }
 
 // What of a scan's source assessing a package asks (RepositoryRiskSource).
-export interface AssessingSource {
+interface AssessingSource {
   version(name: string, version: string, signal: AbortSignal): Promise<NpmVersionDocument>
   assess(doc: NpmVersionDocument, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>
   removed(name: string, version: string, teamScoped: boolean, signal: AbortSignal): Promise<Assessment>

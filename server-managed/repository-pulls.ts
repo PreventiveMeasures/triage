@@ -22,6 +22,8 @@ import { AGENT_BRANCH_PREFIXES } from './app-agents.ts'
 import { AGENT_ISSUE_FIELDS, AGENT_PULL_FIELDS, type IssueNode, type PullNode, issue, pull } from './repository-agents.ts'
 import { githubGraphql } from './github-graphql.ts'
 import { count, timeOf } from './github-values.ts'
+import { SHA, nextCursor } from './repository-history.ts'
+import { ISSUE_REASONS, type IssueReason } from './repository-issues.ts'
 
 // What the pull requests kept are read by, its version: bumped as what a
 // page reads, or how one is told, changes, its pull requests read again
@@ -41,7 +43,6 @@ const TOP_UP_PAGE = 10
 const LIST_QUERIES = 5
 const MERGED_COMMITS = 100
 const LABEL_AGENTS = Object.keys(GITHUB_AGENTS)
-const SHA = /^[a-f\d]{40}$/u
 
 
 // A pull request as read: its row on the Agents tab, whether a GitHub App's
@@ -61,8 +62,6 @@ export interface Merged { sha: string; at: number; agent: boolean; own?: string[
 // (`bot`, as a pull request's), when it was closed, and why (`reason`, as
 // GitHub tells it: completed, not planned or a duplicate).
 export type KeptIssue = AgentIssue & { bot?: true; closedAt: number | null; reason: IssueReason | null }
-export type IssueReason = 'completed' | 'not-planned' | 'duplicate'
-export const ISSUE_REASONS: Record<string, IssueReason> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }
 // The pull requests or issues updated since a year's start (`since`) as
 // read so far (readList), the most recently updated first (`rows`); when the
 // newest read was last updated, those updated since read again (`through`,
@@ -183,7 +182,7 @@ async function readList<Node extends { updatedAt?: unknown }, Row extends { numb
   for (let queries = 0; queries < LIST_QUERIES; queries++) {
     const first = topping && queries === 0 ? TOP_UP_PAGE : LIST_PAGE
     const page = (await githubGraphql(spec.query, { owner, name, after, first }, token, fetchImpl) as ListPage<Node> | null)?.repository?.[spec.connection]
-    const end = page?.pageInfo?.hasNextPage !== true || typeof page.pageInfo.endCursor !== 'string'
+    const cursor = nextCursor(page?.pageInfo), end = cursor === null
     let crossed = false
     for (const node of page?.nodes ?? []) {
       const updated = timeOf(node?.updatedAt)
@@ -199,7 +198,7 @@ async function readList<Node extends { updatedAt?: unknown }, Row extends { numb
     // read; else as far as those read before reached. Read to the last
     // the repository has, every one of them.
     if (crossed || end) return result(from ?? stop, null, stop > since ? kept?.reach : undefined, (end && !crossed) || (whole && stop > since))
-    after = page!.pageInfo!.endCursor as string
+    after = cursor
     // Read as far back as `need`: finished, so far back, those updated
     // since read by the next as ever.
     if (need > since && to !== null && to < need) return result(Math.max(from ?? stop, kept?.through ?? Number.NEGATIVE_INFINITY), null, to)

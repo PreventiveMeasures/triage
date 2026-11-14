@@ -3,9 +3,7 @@
 // with GraphQL once and kept by its commit.
 import { linkNoreplyUsers } from './github-accounts.ts'
 import { githubGraphql, notFound } from './github-graphql.ts'
-import { COMMIT_FRAGMENT, type GraphCommit, type HistoryCommit, commitActors, graphCommit, inBatches, variablesOf } from './repository-history.ts'
-
-const SHA = /^[a-f\d]{40}$/u
+import { COMMIT_FRAGMENT, type GraphCommit, type HistoryCommit, SHA, commitActors, commitIds, commitsQuery, graphCommit, inBatches, variablesOf } from './repository-history.ts'
 
 // A pull request squashed into a commit of the default branch's history
 // (`merge`): its number, the commit its head was at when merged (`head`,
@@ -35,17 +33,13 @@ const MAX_SQUASHED = 100
 // Looked up of an answer's commits not yet kept, at most, the newest first;
 // in queries of as many commits, or pull requests (their commits' lines
 // counted, as a history's are), as many at once.
-export const MAX_SQUASH_LOOKUPS = 500
+const MAX_SQUASH_LOOKUPS = 500
 const SQUASH_COMMITS = 100
 const SQUASH_PULLS = 5
 const SQUASH_PARALLEL = 4
 
 // The merged pull request that brought each commit in, `c<n>` the `n`th's.
-const mergedPullsQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('o', count, 'GitObjectID!')}) {
-  repository(owner: $owner, name: $name) {
-    ${Array.from({ length: count }, (_, at) => `c${at}: object(oid: $o${at}) { ... on Commit { associatedPullRequests(first: 1) { nodes { number mergeCommit { oid } } } } }`).join('\n    ')}
-  }
-}`
+const mergedPullsQuery = (count: number) => commitsQuery(count, 'c', 'associatedPullRequests(first: 1) { nodes { number mergeCommit { oid } } }')
 // Each pull request's head when merged and its latest commits, `p<n>` the `n`th's.
 const squashedQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('n', count, 'Int!')}) {
   repository(owner: $owner, name: $name) {
@@ -56,8 +50,6 @@ ${COMMIT_FRAGMENT}`
 
 type MergedPulls = { repository?: Record<string, { associatedPullRequests?: { nodes?: ({ number?: unknown; mergeCommit?: { oid?: unknown } | null } | null)[] } } | null> | null }
 type SquashedPage = { repository?: Record<string, { headRefOid?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: GraphCommit | null } | null)[] } } | null> | null }
-
-// A pull request or commit GitHub has none of, as one deleted: its field null.
 
 // Each repository's lookup of squashed pull requests going on, by its full
 // name: one at a time, those asking meanwhile waiting on it, and their
@@ -128,8 +120,8 @@ async function lookUpSquashes(fullName: string, token: string, unknown: HistoryC
     else merged.push({ commit, number })
   }
   await inBatches(asked, SQUASH_COMMITS, SQUASH_PARALLEL, async batch => {
-    const data = await githubGraphql(mergedPullsQuery(batch.length), { owner, name, ...Object.fromEntries(batch.map((commit, at) => [`o${at}`, commit.sha])) },
-      token, fetchImpl, notFound) as MergedPulls
+    const data = await githubGraphql(mergedPullsQuery(batch.length), { owner, name, ...commitIds(batch.map(commit => commit.sha)) }, token, fetchImpl,
+      notFound) as MergedPulls
     for (const [at, commit] of batch.entries()) {
       const node = data?.repository?.[`c${at}`]
       if (!node) continue
