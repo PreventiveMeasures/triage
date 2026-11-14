@@ -200,6 +200,15 @@ function lockfilesChanged(files: ChangedFile[]) {
     omitted: all.slice(MAX_DIRECTORIES).flatMap(([, directory]) => [...directory.paths]).toSorted() }
 }
 
+// The text of the file at `path` of repository `fullName` at `ref`; null
+// where GitHub has none there.
+export async function repositoryFile(fullName: string, token: string, path: string, ref: string): Promise<string | null> {
+  try { return await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).getRepoFile({ repo: fullName, path, ref })) } catch (err) {
+    if (err instanceof GithubApiError && err.message === 'github-not-found') return null
+    throw err
+  }
+}
+
 // A lockfile's packages at `ref`, as read in this instance, else as kept
 // beyond it (`kept`), else shared with a read of it with the same token still
 // under way, else of GitHub, and kept; a lockfile its reader refuses, why,
@@ -229,13 +238,8 @@ async function readOf(fullName: string, token: string, ref: string, { path, form
   kept: LockfileStore | null): Promise<{ read: LockfileRead; github: boolean }> {
   const stored = await kept?.lockfiles.read(key)
   if (stored) { lockfileReads.set(`${fullName}\0${key}`, stored); return { read: stored, github: false } }
-  let text: string
-  try {
-    text = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).getRepoFile({ repo: fullName, path, ref }))
-  } catch (err) {
-    if (err instanceof GithubApiError && err.message === 'github-not-found') return { read: { error: 'github-not-found' }, github: true }
-    throw err
-  }
+  const text = await repositoryFile(fullName, token, path, ref)
+  if (text === null) return { read: { error: 'github-not-found' }, github: true }
   let read: LockfileRead
   try { read = { packages: lockedPackages(format, text, { review: true }) } } catch (error) {
     read = { error: 'lockfile-unreadable', ...error instanceof Error ? { detail: error.message.slice(0, 500) } : {} }

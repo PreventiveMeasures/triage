@@ -100,6 +100,7 @@ function marksFit(before: string, after: string, marks: unknown): boolean {
   return true
 }
 
+// The two sides diffed in a worker, its answer checked (answers).
 function inWorker(before: string, after: string, { base, other }: RenameDiffRequest, deadline: number): Promise<RenameDiff> {
   if (before.length + after.length > MAX_DIFF_CHARS) throw new PrettyError(413, 'diff-too-large')
   return workers.run(new URL('./rename-diff-worker.js', import.meta.url), {

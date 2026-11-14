@@ -14,12 +14,10 @@
 // file's mode is left out, as the files it reads have none.
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import { createClient } from '@preventive/upstream/github.js'
 import { isPatchHash, isPatchPath } from '../common/managed/npm-packages.js'
-import { GithubApiError, upstreamGithub } from './github-errors.ts'
 import { type Lru, lru } from './lru.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText } from './npm-packages.ts'
-import type { GithubAsked } from './pull-dependencies.ts'
+import { type GithubAsked, repositoryFile } from './pull-dependencies.ts'
 
 // Where a patch is read: its file in a repository (by its id) at a commit,
 // from the repository's root; and the patch, by its hash besides.
@@ -309,13 +307,8 @@ export async function readPatch(fullName: string, token: string, patch: NpmPatch
   const known = patches.get(key)
   if (known) return known
   if (asked) asked.github = true
-  let text: string
-  try {
-    text = await upstreamGithub(() => createClient({ token, userAgent: 'deepview-triage' }).getRepoFile({ repo: fullName, path: patch.path, ref: patch.commit }))
-  } catch (err) {
-    if (err instanceof GithubApiError && err.message === 'github-not-found') throw new NpmPackageError(404, 'patch-not-found')
-    throw err
-  }
+  const text = await repositoryFile(fullName, token, patch.path, patch.commit)
+  if (text === null) throw new NpmPackageError(404, 'patch-not-found')
   if (Buffer.byteLength(text) > MAX_PATCH_BYTES) throw new NpmPackageError(413, 'patch-too-large')
   if (!isPatchOf(text, patch.hash)) throw new NpmPackageError(409, 'patch-mismatch')
   const files = parsePatch(text)

@@ -79,7 +79,7 @@ export function npmManifest(json: Record<string, unknown>): Record<string, unkno
   // The scripts npm runs installing it from the registry; not `prepare`,
   // which runs only for a local or git install.
   const scripts = stringRecord(json['scripts'])
-  const install = scripts ? ['preinstall', 'install', 'postinstall'].filter(script => script in scripts) : []
+  const install = scripts ? INSTALL_SCRIPTS.filter(script => script in scripts) : []
   if (install.length > 0) pick['installScripts'] = Object.fromEntries(install.map(script => [script, scripts![script]]))
   // A GitLab project it names, as its provenance's source is matched with
   // the repository it names, GitHub's below.
