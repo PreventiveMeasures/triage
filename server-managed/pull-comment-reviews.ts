@@ -12,10 +12,10 @@
 // comment's. They count for the pull request alone, never stored.
 import { createHash } from 'node:crypto'
 import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
+import { githubGraphql } from './github-graphql.ts'
 import { type Lru, lru } from './lru.ts'
 import type { CommentReviews } from './pull-dependency-reviews.ts'
 import type { PublishedReview } from './repository-dependency-reviews.ts'
-import { githubGraphql } from './repository-history.ts'
 import type { CommentReview, ParseCommentsInput, ReviewComment, ReviewVerdict, ReviewedDependencies } from './reviewed-dependencies.ts'
 
 const MAX_COMMENTS = 1000

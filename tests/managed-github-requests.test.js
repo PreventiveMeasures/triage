@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
-import { githubJson } from '../server-managed/github-app.ts'
-import { keepTaggedReadsIn } from '../server-managed/github-requests.ts'
-import { githubGraphql } from '../server-managed/repository-history.ts'
+import { githubJson, keepTaggedReadsIn } from '../server-managed/github-requests.ts'
+import { githubGraphql } from '../server-managed/github-graphql.ts'
 
 const url = 'https://api.github.com/repos/org/repo'
 const query = 'query($name: String!) { repository(owner: "org", name: $name) { id } }'

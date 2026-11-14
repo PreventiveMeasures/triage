@@ -27,11 +27,12 @@
 // this instance where its reader keeps it (LockfileStore): what a blob holds
 // never changes either, and a push changing no lockfile changes none.
 import { createClient } from '@preventive/upstream/github.js'
-import { GithubApiError, githubJson } from './github-app.ts'
-import { upstreamGithub } from './github-errors.ts'
+import { GithubApiError, upstreamGithub } from './github-errors.ts'
+import { githubJson, repoApi } from './github-requests.ts'
 import { compareVersions, isExactVersion } from '@preventive/upstream/semver.js'
 import { type LockedPackage, isTestFixture, lockedPackages, patchedIn } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
+import { eachOf } from './queue.ts'
 import { type ChangedFile, commitChanges } from './repository-changes.ts'
 
 // The files of a pull request read from its own list past those compared,
@@ -138,14 +139,13 @@ export interface GithubAsked { github: boolean }
 const readKey = (ref: string, { path, format, sha }: { path: string; format: Format; sha?: string }) =>
   sha ? `blob\0${format}\0${sha}` : `commit\0${ref}\0${path}`
 
-const api = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
 
 // The pull request's base's and head's commits, as GitHub has them now: its
 // base's moving on as it does, its head's with each push, both kept once it
 // is merged or closed.
 export interface PullCommits { base: string; head: string }
 async function pullCommits(fullName: string, token: string, number: number, fetchImpl: typeof fetch): Promise<PullCommits> {
-  const pull = await githubJson(`${api(fullName)}/pulls/${number}`, token, fetchImpl) as
+  const pull = await githubJson(`${repoApi(fullName)}/pulls/${number}`, token, fetchImpl) as
     { number?: unknown; base?: { sha?: unknown; repo?: { full_name?: unknown } | null }; head?: { sha?: unknown } } | null
   const base = pull?.base?.sha, head = pull?.head?.sha, repo = pull?.base?.repo?.full_name
   if (pull?.number !== number || typeof base !== 'string' || !SHA.test(base) || typeof head !== 'string' || !SHA.test(head)
@@ -160,7 +160,7 @@ async function pullCommits(fullName: string, token: string, number: number, fetc
 // now: null where they are no longer `base` and `head` (`current`).
 async function pullFiles(fullName: string, token: string, number: number, base: string, head: string, fetchImpl: typeof fetch,
   current: () => Promise<boolean>) {
-  const compared = await githubJson(`${api(fullName)}/compare/${base}...${head}?per_page=1`, token, fetchImpl) as { merge_base_commit?: { sha?: unknown } } | null
+  const compared = await githubJson(`${repoApi(fullName)}/compare/${base}...${head}?per_page=1`, token, fetchImpl) as { merge_base_commit?: { sha?: unknown } } | null
   const mergeBase = compared?.merge_base_commit?.sha
   if (typeof mergeBase !== 'string' || !SHA.test(mergeBase)) throw new GithubApiError(502, 'github-malformed')
   const { files, more } = commitChanges(compared)
@@ -168,7 +168,7 @@ async function pullFiles(fullName: string, token: string, number: number, base: 
   if (!await current()) return null
   const listed: ChangedFile[] = []
   for (let page = 1; listed.length < PULL_FILES; page++) {
-    const data = await githubJson(`${api(fullName)}/pulls/${number}/files?per_page=${FILES_PAGE}&page=${page}`, token, fetchImpl)
+    const data = await githubJson(`${repoApi(fullName)}/pulls/${number}/files?per_page=${FILES_PAGE}&page=${page}`, token, fetchImpl)
     if (!Array.isArray(data)) throw new GithubApiError(502, 'github-malformed')
     listed.push(...commitChanges({ files: data }).files)
     if (data.length < FILES_PAGE) return { mergeBase, files: listed, cut: false }
@@ -244,20 +244,6 @@ async function readOf(fullName: string, token: string, ref: string, { path, form
   lockfileReads.set(`${fullName}\0${key}`, read)
   await kept?.lockfiles.write(key, read)
   return { read, github: true }
-}
-
-// Runs `run` for each of `items`, as many at once as `parallel`, each's
-// result in its place.
-export async function eachOf<T, R>(items: T[], parallel: number, run: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = []
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, async () => {
-    while (next < items.length) {
-      const at = next++
-      results[at] = await run(items[at]!)
-    }
-  }))
-  return results
 }
 
 // Versions by semver, the highest first, any semver can't read after them.

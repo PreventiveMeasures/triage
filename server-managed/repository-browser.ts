@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
-import { GithubApiError, type GithubIdentity, READ_PERMISSIONS, githubJson, githubRepoPermission, githubUserIdentity, onTokenRejected, repoAccessToken } from './github-app.ts'
+import { type GithubIdentity, READ_PERMISSIONS, githubRepoPermission, githubUserIdentity, repoAccessToken } from './github-app.ts'
+import { GithubApiError } from './github-errors.ts'
+import { encodedPath, githubJson, onTokenRejected, repoApi } from './github-requests.ts'
 import { MAX_PACKAGE_BYTES, readConfigEntryPoints, readPackageEntryPoints } from './package-entry-points.ts'
 import { MAX_STASIS_CONFIG_BYTES, STASIS_CONFIG } from './stasis-config.ts'
 import { readSolidityEntryPoints } from './solidity-entry-points.ts'
@@ -21,7 +23,7 @@ const refCommits = (items: { name?: unknown; commit?: { sha?: unknown } }[]) => 
 async function branchCommits(read: (suffix: string) => Promise<unknown>, branches: { name?: unknown; commit?: { sha?: unknown } }[], defaultBranch: string) {
   const listed = refCommits(branches)
   if (!defaultBranch || branches.length < REFS_PAGE || listed.some(item => item.name === defaultBranch)) return listed
-  const ref = await read(`/git/ref/heads/${defaultBranch.split('/').map(encodeURIComponent).join('/')}`).catch(() => null) as { object?: { sha?: unknown } } | null
+  const ref = await read(`/git/ref/heads/${encodedPath(defaultBranch)}`).catch(() => null) as { object?: { sha?: unknown } } | null
   return typeof ref?.object?.sha === 'string' && /^[a-f\d]{40}$/u.test(ref.object.sha) ? [...listed, { name: defaultBranch, sha: ref.object.sha }] : listed
 }
 
@@ -134,7 +136,7 @@ export function createRepositoryBrowser(config: ManagedConfig, user: RepositoryB
 // listing short, as it does past 100,000 entries.
 export async function repositoryTreeFiles(fullName: string, token: string | null, tree: string, fetchImpl: typeof fetch = globalThis.fetch) {
   if (!/^[a-f\d]{40}$/u.test(tree)) throw new GithubApiError(400, 'bad-tree')
-  const url = `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/git/trees/${tree}?recursive=1`
+  const url = `${repoApi(fullName)}/git/trees/${tree}?recursive=1`
   const data = await githubJson(url, token, fetchImpl) as { tree?: unknown; truncated?: unknown }
   if (!Array.isArray(data?.tree)) throw new GithubApiError(502, 'github-malformed')
   if (data.truncated === true) return null
@@ -155,7 +157,7 @@ type Access = { data: RepoMetadata; token: string | null; level: string | null }
 // installation's. What it told, the token reading it, and the level asked.
 async function askAccess(repo: SelectedRepo, start: string | null, userToken: string | null, installationToken: () => Promise<string | null>,
   getIdentity: () => Promise<GithubIdentity>, fetchImpl: typeof fetch): Promise<Access> {
-  const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
+  const base = repoApi(repo.fullName)
   let token = start
   const metadata = async () => {
     try { return await githubJson(base, token, fetchImpl) }
@@ -216,7 +218,7 @@ async function keptAccess(verdicts: VerdictCache | null, userToken: string | nul
 
 async function repositoryReader(repo: SelectedRepo, userToken: string | null, installationToken: () => Promise<string | null>, getIdentity: (fresh?: boolean) => Promise<GithubIdentity>, fetchImpl: typeof fetch,
   verdicts: VerdictCache | null) {
-  const base = `https://api.github.com/repos/${repo.fullName.split('/').map(encodeURIComponent).join('/')}`
+  const base = repoApi(repo.fullName)
   // Public reads can use the signed-in user's quota without repository grants.
   // Nonpublic reads still require the repository App and the effective-user gate,
   // whose permission level is kept (`level`).
@@ -270,7 +272,7 @@ async function repositoryReader(repo: SelectedRepo, userToken: string | null, in
       return /^[a-f\d]{40}$/u.test(sha) ? parseGithubCommit(sha, await read(`/commits?sha=${sha}&per_page=1`)) : null
     },
     async directory(path: string, commit: string) {
-      const data = await read(`/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(commit)}`)
+      const data = await read(`/contents/${encodedPath(path)}?ref=${encodeURIComponent(commit)}`)
       if (!Array.isArray(data)) throw new GithubApiError(400, 'not-a-directory')
       const entries: RepositoryEntry[] = []
       for (const item of data) {

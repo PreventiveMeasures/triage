@@ -10,11 +10,11 @@
 // is locked. GitHub having none of a lockfile it lists there fails the
 // whole, as it would for any file.
 import { createClient } from '@preventive/upstream/github.js'
-import { upstreamGithub } from './github-errors.ts'
-import { GithubApiError } from './github-app.ts'
+import { GithubApiError, upstreamGithub } from './github-errors.ts'
 import { type LockedPackage, patchedIn } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
-import { type GithubAsked, type ListedLockfile, type LockfileStore, eachOf, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
+import { eachOf } from './queue.ts'
+import { type GithubAsked, type ListedLockfile, type LockfileStore, lockedWith, lockfileFormat, readLockfile } from './pull-dependencies.ts'
 
 export const MAX_LOCKFILES = 100
 const READ_AT_ONCE = 4

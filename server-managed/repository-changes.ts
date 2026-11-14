@@ -10,7 +10,9 @@
 // commit holds, which Replay starts from (GET /api/admin/repositories/tree),
 // as GitHub lists its tree at once (repositoryTree), kept as well.
 
-import { GithubApiError, githubJson } from './github-app.ts'
+import { GithubApiError } from './github-errors.ts'
+import { githubJson, repoApi } from './github-requests.ts'
+import { eachOf } from './queue.ts'
 
 // Commits an answer tells at most, read of GitHub as many at once as
 // CHANGES_PARALLEL.
@@ -71,12 +73,6 @@ export function changesWithin({ files, more }: CommitChanges, path: string): Com
   }) }
 }
 
-// Runs `run` for each of `items`, as many at once as `parallel`.
-async function eachOf<T>(items: T[], parallel: number, run: (item: T) => Promise<void>) {
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, async () => { while (next < items.length) await run(items[next++]!) }))
-}
-
 // A commit's files as GitHub lists them, read a page at a time while each
 // is full, till MAX_FILES are.
 async function commitFiles(url: string, token: string | null, fetchImpl: typeof fetch) {
@@ -96,7 +92,7 @@ export async function repositoryChanges(fullName: string, token: string | null, 
   fetchImpl: typeof fetch = globalThis.fetch): Promise<Map<string, CommitChanges | null>> {
   const asked = [...new Set(shas)].filter(sha => SHA.test(sha))
   const found = new Map<string, CommitChanges | null>(await kept.read(asked))
-  const repo = `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
+  const repo = repoApi(fullName)
   await eachOf(asked.filter(sha => !found.has(sha)), CHANGES_PARALLEL, async sha => {
     try {
       const changes = commitChanges(await commitFiles(`${repo}/commits/${sha}`, token, fetchImpl))
@@ -145,7 +141,7 @@ export async function repositoryTree(fullName: string, token: string | null, com
   if (!SHA.test(commit)) return null
   const held = await kept.read(commit)
   if (held) return held
-  const repo = `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
+  const repo = repoApi(fullName)
   const listing: TreeListing = async (tree, recursive) => {
     const data = await githubJson(`${repo}/git/trees/${tree}${recursive ? '?recursive=1' : ''}`, token, fetchImpl) as { tree?: unknown; truncated?: unknown }
     if (!Array.isArray(data?.tree)) throw new GithubApiError(502, 'github-malformed')
@@ -250,7 +246,7 @@ export async function directoryFiles(fullName: string, token: string | null, com
 // (GET /repos/:owner/:repo/git/trees/:tree, its own entries alone); null
 // where it has none there, or GitHub has no such commit.
 async function directoryTree(fullName: string, token: string | null, commit: string, path: string, fetchImpl: typeof fetch): Promise<string | null> {
-  const repo = `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
+  const repo = repoApi(fullName)
   let tree = commit
   for (const name of path.split('/')) {
     let data: { tree?: unknown }

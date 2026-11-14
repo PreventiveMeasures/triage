@@ -10,9 +10,9 @@ import { getTarball, setCacheDir } from '@preventive/upstream/npm.js'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
-import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_TAR_ENTRIES, NpmPackageError, canReadPrivateNpm, npmFileText, npmManifest, npmPublishTime, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion,
+import { MAX_NPM_JSON_LENGTH, MAX_NPM_PACKAGE_BYTES, MAX_NPM_TAR_ENTRIES, NpmPackageError, canReadPrivateNpm, npmFileText, npmPublishTime, npmTarballFilename, readNpmPackument, readNpmTar, readNpmVersion,
   readNpmVersions, readTogether, setNpmDocumentCache } from '../server-managed/npm-packages.ts'
-import { npmVersionFields } from '../server-managed/npm-manifest.ts'
+import { npmManifest, npmVersionFields } from '../server-managed/npm-manifest.ts'
 import { npmPublishTimeStore, npmVersionStore, ownKeptPrunes, riskLineStore } from '../server-managed/npm-kept.ts'
 import { MAX_TAR_BYTES, loadNpmFiles, loadNpmPackageBody, loadNpmTarball, setNpmTarballCache } from '../server-managed/npm-loads.ts'
 import { npmCommitTags, npmGithubStats } from '../server-managed/npm-insights.ts'

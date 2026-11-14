@@ -1,8 +1,11 @@
 // GitHub's GraphQL API, a query at a time, as the repository readers ask it
 // (repository-history.ts, repository-agents.ts, repository-pulse.ts and the rest).
-import { GithubApiError, githubJson } from './github-app.ts'
+import { GithubApiError } from './github-errors.ts'
+import { githubJson } from './github-requests.ts'
 
 export type GraphqlError = { type?: unknown; path?: unknown; message?: unknown }
+// An error naming what isn't there, for the queries that read past it.
+export const notFound = (error: GraphqlError) => error?.type === 'NOT_FOUND'
 
 const NAMED_ERRORS = new Set(['RATE_LIMITED', 'NOT_FOUND', 'FORBIDDEN'])
 // GitHub's own words for a query it stopped past its time (ten seconds):

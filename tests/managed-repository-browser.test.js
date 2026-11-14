@@ -10,7 +10,8 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { createRepositoryBrowser, scopedDirectory } from '../server-managed/repository-browser.ts'
-import { GithubApiError, githubJson } from '../server-managed/github-app.ts'
+import { GithubApiError } from '../server-managed/github-errors.ts'
+import { githubJson } from '../server-managed/github-requests.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
 const repo = { repoId: 1, fullName: 'org/repo', private: false, installationId: null, defaultBranch: 'main', htmlUrl: '', addedBy: null }

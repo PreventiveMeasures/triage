@@ -2,7 +2,7 @@
 // viewer's Commits tab draws them (repository-history.ts), each looked up
 // with GraphQL once and kept by its commit.
 import { linkNoreplyUsers } from './github-accounts.ts'
-import { type GraphqlError, githubGraphql } from './github-graphql.ts'
+import { githubGraphql, notFound } from './github-graphql.ts'
 import { COMMIT_FRAGMENT, type GraphCommit, type HistoryCommit, commitActors, graphCommit, inBatches, variablesOf } from './repository-history.ts'
 
 const SHA = /^[a-f\d]{40}$/u
@@ -58,7 +58,6 @@ type MergedPulls = { repository?: Record<string, { associatedPullRequests?: { no
 type SquashedPage = { repository?: Record<string, { headRefOid?: unknown; commits?: { totalCount?: unknown; nodes?: ({ commit?: GraphCommit | null } | null)[] } } | null> | null }
 
 // A pull request or commit GitHub has none of, as one deleted: its field null.
-const notFound = (error: GraphqlError) => error?.type === 'NOT_FOUND'
 
 // Each repository's lookup of squashed pull requests going on, by its full
 // name: one at a time, those asking meanwhile waiting on it, and their

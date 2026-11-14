@@ -27,7 +27,7 @@
 // (pull-dependencies.ts), and kept by the commit (`baselines` in this
 // instance, `kept` beyond it), never stored as reviews.
 import { lockedAt, lockedIn } from './commit-lockfiles.ts'
-import { GithubApiError } from './github-app.ts'
+import { GithubApiError } from './github-errors.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { EVERY_LOCKFILE, type LockfileScope, heldTo, isEvery, reviewedIn } from './lockfile-scope.ts'
 import { type Lru, lru } from './lru.ts'

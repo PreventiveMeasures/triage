@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { ManagedConfig } from './config.ts'
-import { GithubApiError, filterInstalledRepos, listInstalledRepos, listUserRepos } from './github-app.ts'
+import { filterInstalledRepos, listInstalledRepos, listUserRepos } from './github-app.ts'
+import { GithubApiError } from './github-errors.ts'
 import type { ConnectedRepo, RepoListing } from './github-app.ts'
 
 const CACHE_MS = 60_000

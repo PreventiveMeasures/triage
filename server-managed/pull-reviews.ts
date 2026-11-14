@@ -15,6 +15,7 @@
 // the popup, which reads reviews' bodies.
 import { githubAgent } from '../common/managed/github-agents.ts'
 import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
+import { timeOf } from './github-values.ts'
 
 const REVIEWERS = 20
 const REQUESTS = 10
@@ -72,10 +73,6 @@ const ASKED = /^@codex\s+review\b/iu
 const FAILED = /^Codex Review: Something went wrong/u
 const WORKFLOW = /<!--\s*gh-aw-workflow-id:\s*([\w.-]{1,100})\s*-->/u
 
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
 const commitOf = (value: unknown) => typeof value === 'string' && COMMIT.test(value.toLowerCase()) ? value.toLowerCase() : null
 const textOf = (value: unknown) => typeof value === 'string' ? value : ''
 const isCodex = (account: GraphAccount) => {

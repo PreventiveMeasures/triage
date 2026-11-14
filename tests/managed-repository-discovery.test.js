@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
-import { githubJson, listInstalledRepos, listUserRepos } from '../server-managed/github-app.ts'
+import { listInstalledRepos, listUserRepos } from '../server-managed/github-app.ts'
+import { githubJson } from '../server-managed/github-requests.ts'
 import { RepositoryDiscovery } from '../server-managed/repository-discovery.ts'
 
 const config = {

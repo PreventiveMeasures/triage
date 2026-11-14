@@ -4,14 +4,13 @@
 import { createClient } from '@preventive/upstream/github.js'
 import type { ActionsSource } from '../risk/index.js'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
-import { githubJson } from './github-app.ts'
+import { encodedPath, githubJson, repoApi } from './github-requests.ts'
 
 // How many pages of 100 tags are listed; a repository with more is told by
 // its tags one at a time.
 const MAX_TAG_PAGES = 10
 const BRANCHES_PAGE = 100
 
-const api = (name: string, suffix: string) => `https://api.github.com/repos/${name.split('/').map(encodeURIComponent).join('/')}${suffix}`
 
 // Whether upstream refused what it was asked before asking GitHub, as a ref
 // git wouldn't take: its arguments' checks say what each must be.
@@ -48,7 +47,7 @@ export function githubActionsSource(token: string | null, fetchImpl: typeof fetc
     tag: async (name, tag) => (await orNone(() => client.getRepoTag({ repo: name, tag })))?.oid ?? null,
     branch: async (name, branch) => (await orNone(() => client.getRepoHead({ repo: name, branch })))?.oid ?? null,
     async branches(name) {
-      const listed = await githubJson(api(name, `/branches?per_page=${BRANCHES_PAGE}`), token, fetchImpl)
+      const listed = await githubJson(`${repoApi(name)}/branches?per_page=${BRANCHES_PAGE}`, token, fetchImpl)
       if (!Array.isArray(listed)) throw new GithubApiError(502, 'github-malformed')
       const branches = (listed as { name?: unknown; commit?: { sha?: unknown } }[]).flatMap(item => typeof item?.name === 'string'
         && typeof item.commit?.sha === 'string' && /^[\da-f]{40}$/u.test(item.commit.sha) ? [{ branch: item.name, oid: item.commit.sha }] : [])
@@ -59,7 +58,7 @@ export function githubActionsSource(token: string | null, fetchImpl: typeof fetc
     async contains(name, base, sha) {
       if (!/^[\da-f]{40}$/u.test(sha)) return null
       let compared
-      try { compared = await githubJson(api(name, `/compare/${base.split('/').map(encodeURIComponent).join('/')}...${sha}?per_page=1`), token, fetchImpl) as { status?: unknown } } catch (error) {
+      try { compared = await githubJson(`${repoApi(name)}/compare/${encodedPath(base)}...${sha}?per_page=1`, token, fetchImpl) as { status?: unknown } } catch (error) {
         if (error instanceof GithubApiError && (error.status === 404 || error.message === 'github-status-422')) return null
         throw error
       }

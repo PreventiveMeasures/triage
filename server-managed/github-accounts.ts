@@ -1,7 +1,7 @@
 // GitHub accounts as GitHub's REST and GraphQL APIs name them, where a
 // repository's activity names its authors (repository-history.ts and the
 // Commits, Issues, Agents and Pulse tabs' readers).
-import { githubGraphql } from './github-graphql.ts'
+import { githubGraphql, notFound } from './github-graphql.ts'
 
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 
@@ -54,7 +54,7 @@ export async function linkNoreplyUsers(actors: (GraphActor | null | undefined)[]
   if (logins.length === 0) return
   const query = `query(${logins.map((_, at) => `$l${at}: String!`).join(', ')}) { ${logins.map((_, at) => `u${at}: user(login: $l${at}) { login databaseId }`).join(' ')} }`
   const data = await githubGraphql(query, Object.fromEntries(logins.map((login, at) => [`l${at}`, login])), token, fetchImpl,
-    error => error?.type === 'NOT_FOUND') as Record<string, GraphAccount> | null
+    notFound) as Record<string, GraphAccount> | null
   const users = new Map(logins.map((login, at) => [login, data?.[`u${at}`] ?? null]))
   for (const { actor, login } of unnamed) actor.user = users.get(login) ?? null
 }

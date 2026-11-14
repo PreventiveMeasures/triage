@@ -9,7 +9,8 @@
 // without one (http.ts), each answer kept as npm-insights.ts keeps its own.
 import { Buffer } from 'node:buffer'
 import { kept } from './kept.ts'
-import { NPM_REGISTRY, askUpstreamJson, plainObject } from './npm-packages.ts'
+import { plainObject } from './npm-manifest.ts'
+import { NPM_REGISTRY, askUpstreamJson } from './npm-packages.ts'
 
 const ATTESTATIONS_API = `${NPM_REGISTRY}/-/npm/v1/attestations`
 const ATTESTATIONS_BYTES = 1024 * 1024

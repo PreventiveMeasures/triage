@@ -113,6 +113,11 @@ function holdTaggedRead(fetchImpl: typeof fetch, key: string, read: TaggedRead) 
   }
 }
 
+// `path` (a repository's full name, a branch, a file's path) with each of its
+// segments URL-encoded, and the REST API's URL of the repository `fullName`.
+export const encodedPath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
+export const repoApi = (fullName: string) => `https://api.github.com/repos/${encodedPath(fullName)}`
+
 // One GitHub API call returning parsed JSON, optionally Bearer-authed by a
 // user token, App JWT, or installation token, `body` sent as JSON (a GraphQL
 // query's, given longer to answer). Network / non-2xx / malformed fold into a

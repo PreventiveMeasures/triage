@@ -20,7 +20,8 @@ import { type AgentIssue, type AgentPull, labelAgents } from '../common/managed/
 import { GITHUB_AGENTS, agentOperated } from '../common/managed/github-agents.ts'
 import { AGENT_BRANCH_PREFIXES } from './app-agents.ts'
 import { AGENT_ISSUE_FIELDS, AGENT_PULL_FIELDS, type IssueNode, type PullNode, issue, pull } from './repository-agents.ts'
-import { githubGraphql } from './repository-history.ts'
+import { githubGraphql } from './github-graphql.ts'
+import { count, timeOf } from './github-values.ts'
 
 // What the pull requests kept are read by, its version: bumped as what a
 // page reads, or how one is told, changes, its pull requests read again
@@ -42,11 +43,6 @@ const MERGED_COMMITS = 100
 const LABEL_AGENTS = Object.keys(GITHUB_AGENTS)
 const SHA = /^[a-f\d]{40}$/u
 
-const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
 
 // A pull request as read: its row on the Agents tab, whether a GitHub App's
 // bot opened it (`bot`, GitHub's GraphQL API naming one by its app's login

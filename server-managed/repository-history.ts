@@ -13,12 +13,12 @@ import { type AgentSignals, agentSignals } from '../common/managed/agent-tasks.t
 import { githubAgent } from '../common/managed/github-agents.ts'
 import { AGENT_MARKS_READ, APP_AGENTS } from './app-agents.ts'
 import { type CommitFacts, MAX_COAUTHORS, type Maker, coauthorFacts, coauthorTrailers } from './commit-coauthors.ts'
-import { GithubApiError, githubJson } from './github-app.ts'
+import { GithubApiError } from './github-errors.ts'
 import { type GraphActor, accountOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
 import { githubGraphql } from './github-graphql.ts'
+import { githubJson, repoApi } from './github-requests.ts'
+import { MAX_NAME, nameOf, timeOf } from './github-values.ts'
 
-export { ACTOR, type GraphAccount, type GraphActor, type NamedAccount, accountOf, actorOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
-export { type GraphqlError, githubGraphql } from './github-graphql.ts'
 
 export const HISTORY_PAGE = 100
 // The deepest page read, as far as Older commits goes.
@@ -33,7 +33,6 @@ const ALL_TAGS = 100
 const REF_TIPS = 100
 const MAX_PARENTS = 8
 const MAX_SUBJECT = 1000
-const MAX_NAME = 256
 const SHA = /^[a-f\d]{40}$/u
 
 // A commit, its author by name, address (`authorEmail`) and their account's
@@ -50,11 +49,6 @@ export interface HistoryCommit extends CommitFacts { sha: string; parents: strin
   deletions?: number | null; authoredAt?: number | null; authorZone?: number | null; marks?: AgentSignals; marked?: number }
 export interface HistoryRef { name: string; sha: string }
 
-const textOf = (value: unknown, max: number) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
 
 // The address Claude's own commits are authored with.
 export const CLAUDE_EMAIL = 'noreply@anthropic.com'
@@ -105,8 +99,8 @@ function historyCommit(sha: unknown, parents: unknown[], message: unknown, autho
     sha,
     parents: parents.filter((parent): parent is string => typeof parent === 'string' && SHA.test(parent)).slice(0, MAX_PARENTS),
     subject: typeof message === 'string' ? message.replaceAll('\r\n', '\n').split('\n', 1)[0]!.trim().slice(0, MAX_SUBJECT) : '',
-    authorName: textOf(author.name, MAX_NAME),
-    authorEmail: textOf(author.email, MAX_NAME),
+    authorName: nameOf(author.name),
+    authorEmail: nameOf(author.email),
     authorLogin: author.account.login,
     authorId: author.account.id,
     ...coauthorFacts(message, listed),
@@ -124,7 +118,6 @@ const restCommit = (item: RestCommit, listed: Maker[] | null = null) => historyC
   item?.commit?.message, { name: item?.commit?.author?.name, email: item?.commit?.author?.email, account: accountOf(item?.author) }, item?.commit?.committer?.date,
   null, listed)
 
-const repoApi = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
 
 // A page of the commits `commit` reaches, newest first as GitHub lists them,
 // those touching `path` alone where it names a directory; `more` where a
@@ -330,7 +323,7 @@ export type AllHeads = { heads: (HistoryRef & { at: number | null })[]; defaultB
 export async function repositoryAllHeads(fullName: string, token: string, fetchImpl: typeof fetch = globalThis.fetch): Promise<AllHeads> {
   const [owner, name] = fullName.split('/') as [string, string]
   const { heads, repository, cut } = await repositoryHeads(owner, name, token, fetchImpl)
-  const defaultBranch = textOf(repository?.defaultBranchRef?.name, MAX_NAME)
+  const defaultBranch = nameOf(repository?.defaultBranchRef?.name)
   // The default branch, where its name sorts past the heads read.
   const defaultTip = repository?.defaultBranchRef?.target?.oid
   if (defaultBranch && typeof defaultTip === 'string' && SHA.test(defaultTip) && !heads.some(head => head.name === defaultBranch)) {

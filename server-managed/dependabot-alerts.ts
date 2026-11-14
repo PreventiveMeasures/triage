@@ -11,6 +11,7 @@
 import { isExactVersion, satisfies, validRange } from '@preventive/upstream/semver.js'
 import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import { GithubApiError, githubUnreachable, throwGithubResponseError } from './github-errors.ts'
+import { encodedPath, repoApi } from './github-requests.ts'
 import type { LockedPackage } from './locked-packages.ts'
 
 // An alert, as GitHub has it: its `number` in its repository and its page
@@ -88,7 +89,7 @@ function alertOf(fullName: string, raw: unknown): DependabotAlert | null {
   const ids = Array.isArray(advisory?.identifiers) ? advisory.identifiers as { value?: unknown }[] : []
   const cwes = Array.isArray(advisory?.cwes) ? advisory.cwes as { cwe_id?: unknown }[] : []
   return {
-    number, url: `https://github.com/${fullName.split('/').map(encodeURIComponent).join('/')}/security/dependabot/${number}`, manifest, name, ghsa,
+    number, url: `https://github.com/${encodedPath(fullName)}/security/dependabot/${number}`, manifest, name, ghsa,
     aliases: [...new Set(ids.flatMap(id => typeof id?.value === 'string' && /^[\w.:-]{1,64}$/u.test(id.value) && id.value !== ghsa ? [id.value] : []))],
     ...title === undefined ? {} : { title }, ...severity === undefined ? {} : { severity },
     ...range === undefined ? {} : { range }, ...patched === undefined ? {} : { patched },
@@ -143,7 +144,7 @@ async function askPage(url: string, token: string, fetchImpl: typeof fetch): Pro
 // `fullName`'s alerts in `states`, MAX_PAGES at most, in GitHub's order (the
 // newest first), and whether that is all of them.
 async function listAlerts(fullName: string, states: readonly string[], token: string, fetchImpl: typeof fetch) {
-  const base = `${API}/repos/${fullName.split('/').map(encodeURIComponent).join('/')}/dependabot/alerts`
+  const base = `${repoApi(fullName)}/dependabot/alerts`
   const alerts: DependabotAlert[] = []
   const seen = new Set<number>()
   let cursor: [string, string] | null = null

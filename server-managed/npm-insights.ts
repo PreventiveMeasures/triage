@@ -15,9 +15,11 @@ import type { Advisory, CacheStore } from '@preventive/upstream/advisories.js'
 import { type Client, HttpError, createClient } from '@preventive/upstream/github.js'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { isExactVersion } from '@preventive/upstream/semver.js'
+import { repoApi } from './github-requests.ts'
 import { kept } from './kept.ts'
 import { type NpmProvenance, keptNpmProvenance } from './npm-provenance.ts'
-import { NpmPackageError, askUpstreamJson, plainObject, readLimited } from './npm-packages.ts'
+import { plainObject } from './npm-manifest.ts'
+import { NpmPackageError, askUpstreamJson, readLimited } from './npm-packages.ts'
 
 const DOWNLOADS_API = 'https://api.npmjs.org/downloads/range'
 // What npm's range API may answer for each package asked: a year of days is
@@ -168,10 +170,9 @@ export interface NpmGithubStats {
 // How many pull requests a repository has open: the last page of their list,
 // one a page, as its Link header names it, or the one page's length.
 async function countOpenPulls(repo: string, token: string | null): Promise<number | null> {
-  const path = repo.split('/').map(encodeURIComponent).join('/')
   let res: Response
   try {
-    res = await fetch(`https://api.github.com/repos/${path}/pulls?state=open&per_page=1`, {
+    res = await fetch(`${repoApi(repo)}/pulls?state=open&per_page=1`, {
       headers: { accept: 'application/vnd.github+json', 'user-agent': 'deepview-triage', ...token && { authorization: `Bearer ${token}` } },
       redirect: 'error', signal: AbortSignal.timeout(API_TIMEOUT_MS),
     })

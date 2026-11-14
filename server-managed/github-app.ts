@@ -7,10 +7,7 @@ import { createHash, createSign } from 'node:crypto'
 import { createClient } from '@preventive/upstream/github.js'
 import type { ManagedConfig } from './config.ts'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
-import { USER_AGENT, githubJson, onTokenRejected } from './github-requests.ts'
-
-export { GithubApiError } from './github-errors.ts'
-export { githubJson, onTokenRejected } from './github-requests.ts'
+import { USER_AGENT, githubJson, onTokenRejected, repoApi } from './github-requests.ts'
 
 const GITHUB_API = 'https://api.github.com'
 const PER_PAGE = 100
@@ -203,10 +200,9 @@ export async function repositoryInstallation(config: ManagedConfig, repoId: numb
   const { githubAppId, githubAppPrivateKey } = config
   if (githubAppId == null || githubAppPrivateKey == null) throw new GithubApiError(503, 'github-app-not-configured')
   if (publicRepositoryName(fullName) !== fullName) throw new GithubApiError(409, 'repo-identity-changed')
-  const path = fullName.split('/').map(encodeURIComponent).join('/')
   const jwt = appJwt(githubAppId, githubAppPrivateKey)
   let raw
-  try { raw = await githubJson(`${GITHUB_API}/repos/${path}/installation`, jwt, fetchImpl) } catch (err) {
+  try { raw = await githubJson(`${repoApi(fullName)}/installation`, jwt, fetchImpl) } catch (err) {
     if (err instanceof GithubApiError && err.status === 404) return null
     throw err
   }
@@ -215,7 +211,7 @@ export async function repositoryInstallation(config: ManagedConfig, repoId: numb
   if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) throw new GithubApiError(502, 'github-malformed')
   if (installation?.suspended_at != null || !['read', 'write'].includes(String(installation?.permissions?.contents))) return null
   const token = await installationAccessToken(githubAppId, githubAppPrivateKey, id, fetchImpl)
-  const repo = parseRepo(await githubJson(`${GITHUB_API}/repos/${path}`, token, fetchImpl), id)
+  const repo = parseRepo(await githubJson(repoApi(fullName), token, fetchImpl), id)
   if (repo == null || repo.id !== repoId || repo.fullName.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(409, 'repo-identity-changed')
   return id
 }
@@ -295,9 +291,8 @@ export async function githubUserIdentity(userToken: string, fetchImpl: typeof fe
 // The permission's level (`admin`, `write`, `read`), as GitHub tells it of
 // `identity` alone; `none` where it tells of none, or of another account.
 export async function githubRepoPermission(fullName: string, token: string, identity: GithubIdentity, fetchImpl: typeof fetch = globalThis.fetch): Promise<string> {
-  const path = fullName.split('/').map(encodeURIComponent).join('/')
   try {
-    const body = await githubJson(`${GITHUB_API}/repos/${path}/collaborators/${encodeURIComponent(identity.login)}/permission`, token, fetchImpl) as { permission?: unknown; user?: { id?: unknown } }
+    const body = await githubJson(`${repoApi(fullName)}/collaborators/${encodeURIComponent(identity.login)}/permission`, token, fetchImpl) as { permission?: unknown; user?: { id?: unknown } }
     return body?.user?.id === identity.id && typeof body.permission === 'string' ? body.permission : 'none'
   } catch (err) {
     if (err instanceof GithubApiError && err.status === 404) return 'none'

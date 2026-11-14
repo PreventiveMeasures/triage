@@ -7,7 +7,8 @@
 // only caller of the hook); and is told of none where it answers nothing, or
 // fails, which is logged.
 import type { DependencyReview, DependencyReviewStore } from './dependency-reviews.ts'
-import { type PullDependencies, eachOf } from './pull-dependencies.ts'
+import type { PullDependencies } from './pull-dependencies.ts'
+import { eachOf } from './queue.ts'
 import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
 import type { DependencyReviewEntry, ReviewedDependencies } from './reviewed-dependencies.ts'
 

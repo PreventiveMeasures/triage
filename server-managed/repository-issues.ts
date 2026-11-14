@@ -11,9 +11,11 @@
 // add is read (http.ts teamRepositoryDependencies). A nonpublic repository's
 // are read with its GitHub App's installation, which reads pull requests only
 // with their own permission (doc/code-viewer.md).
-import { GithubApiError } from './github-app.ts'
+import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
+import { GithubApiError } from './github-errors.ts'
+import { type GraphqlError, githubGraphql } from './github-graphql.ts'
+import { count, nameOf, timeOf } from './github-values.ts'
 import { touchesLockfile } from './pull-dependencies.ts'
-import { ACTOR, type GraphAccount, type GraphqlError, actorOf, githubGraphql } from './repository-history.ts'
 import { ITEM_THREADS, type ReviewNode, TILE_THREADS, pullReviews, reviewFields, reviewsRefused } from './pull-reviews.ts'
 
 export const ISSUES_PAGE = 50
@@ -21,7 +23,6 @@ export const ISSUES_PAGE = 50
 export const ISSUES_READ_VERSION = 4
 const MAX_LABELS = 20
 const MAX_TITLE = 1000
-const MAX_NAME = 256
 const COLOR = /^[a-f\d]{6}$/iu
 const SHA = /^[a-f\d]{40}$/u
 // A page's cursor as GitHub gives it, to read on from: opaque, base64 or
@@ -67,12 +68,6 @@ type Node = ReviewNode & { number?: unknown; title?: unknown; createdAt?: unknow
 type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }
   page?: { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (Node | null)[] } } | null }
 
-const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
-const nameOf = (value: unknown, max = MAX_NAME) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 const REVIEWS: Record<string, string> = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes', REVIEW_REQUIRED: 'required' }
 const CHECKS: Record<string, string> = { SUCCESS: 'success', FAILURE: 'failure', ERROR: 'failure', PENDING: 'pending', EXPECTED: 'pending' }
 const REASONS: Record<string, string> = { COMPLETED: 'completed', NOT_PLANNED: 'not-planned', DUPLICATE: 'duplicate' }

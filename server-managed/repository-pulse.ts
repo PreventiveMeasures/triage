@@ -13,11 +13,14 @@
 // week `weeks` weeks earlier, the pull requests merged and opened and the
 // issues closed and opened, how many and the latest of each.
 import { agentOperated, githubAgent } from '../common/managed/github-agents.ts'
-import { GithubApiError, githubJson } from './github-app.ts'
-import { shareGithubRead } from './github-requests.ts'
+import { ACTOR, type GraphAccount, accountOf, actorOf } from './github-accounts.ts'
+import { GithubApiError } from './github-errors.ts'
+import { githubGraphql } from './github-graphql.ts'
+import { githubJson, repoApi, shareGithubRead } from './github-requests.ts'
+import { count, timeOf } from './github-values.ts'
 import { coauthorsOf } from './commit-coauthors.ts'
 import { windowsOn } from './history-windows.ts'
-import { ACTOR, type GraphAccount, type HistoryCommit, type HistoryPages, accountOf, actorOf, githubGraphql, historyFrom } from './repository-history.ts'
+import { type HistoryCommit, type HistoryPages, historyFrom } from './repository-history.ts'
 
 export const PULSE_WEEKS = [1, 4, 13, 52]
 // What a year counted from its commits holds, its version: kept years of
@@ -94,12 +97,6 @@ export interface PulseNarrowing { from: number; to: number | null; authors: stri
 // YEAR_COMMITS (`tooMany`).
 export type YearCommits = { complete: true; commits: HistoryCommit[]; passed: HistoryCommit[]; from: number | null } | { complete: false; read: number; tooMany: boolean }
 
-const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
-const repoApi = (fullName: string) => `https://api.github.com/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`
 const emptyPunch = () => Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
 
 // One statistic: its rows once GitHub has computed it, 'pending' while it

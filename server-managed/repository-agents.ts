@@ -18,9 +18,10 @@
 import { type AgentAuthor, type AgentBranch, type AgentCommit, type AgentIssue, type AgentPull, type AgentSignals, type AppAgent, agentSignals } from '../common/managed/agent-tasks.ts'
 import { GITHUB_AGENTS, type GithubAgentAccount, type GithubAgentId, githubAgent } from '../common/managed/github-agents.ts'
 import { AGENT_BRANCH_PREFIXES, APP_AGENTS } from './app-agents.ts'
-import type { GraphqlError } from './github-graphql.ts'
-import { ACTOR, ALL_BRANCHES, type HistoryCommit, type HistoryPages, type NamedAccount, actorOf, commitAccount, commitMarks, githubGraphql, historyFrom, historyMarks,
-  inBatches, linkNoreplyUsers, messageMarks, variablesOf } from './repository-history.ts'
+import { ACTOR, type NamedAccount, actorOf, commitAccount, linkNoreplyUsers } from './github-accounts.ts'
+import { githubGraphql, notFound } from './github-graphql.ts'
+import { count, nameOf, timeOf } from './github-values.ts'
+import { ALL_BRANCHES, type HistoryCommit, type HistoryPages, commitMarks, historyFrom, historyMarks, inBatches, messageMarks, variablesOf } from './repository-history.ts'
 import type { IssueList, PullList } from './repository-pulls.ts'
 
 export const AGENT_PULLS_PAGE = 50
@@ -32,7 +33,6 @@ const CLOSES = 5
 // page.
 const LABELS = 100
 const MAX_TITLE = 1000
-const MAX_NAME = 256
 const LOGIN = /^[A-Za-z\d][A-Za-z\d-]{0,38}(?:\[bot\])?$/u
 const SHA = /^[a-f\d]{40}$/u
 // Commits whether a pull request brought each is looked up of, in a query,
@@ -45,9 +45,9 @@ const AGENT_EMAILS = APP_AGENTS.flatMap(({ id }) => GITHUB_AGENTS[id as GithubAg
   .flatMap(({ id: account, logins }: GithubAgentAccount) => account === undefined ? [] : logins.map(login => `${account}+${login}@users.noreply.github.com`)))
 
 // Branches' tip commits, `c<n>` the `n`th's: each's message and author.
-const tipsQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('o', count, 'GitObjectID!')}) {
+const tipsQuery = (size: number) => `query($owner: String!, $name: String!, ${variablesOf('o', size, 'GitObjectID!')}) {
   repository(owner: $owner, name: $name) {
-    ${Array.from({ length: count }, (_, at) => `c${at}: object(oid: $o${at}) { ... on Commit { message author { email user { login databaseId } } } }`).join('\n    ')}
+    ${Array.from({ length: size }, (_, at) => `c${at}: object(oid: $o${at}) { ... on Commit { message author { email user { login databaseId } } } }`).join('\n    ')}
   }
 }`
 // Tips looked up a query, and queries at once.
@@ -110,9 +110,9 @@ type CommitNode = { oid?: unknown; messageHeadline?: unknown; message?: unknown;
 export type IssueNode = { number?: unknown; title?: unknown; state?: unknown; createdAt?: unknown; updatedAt?: unknown; author?: Login }
 type Connection<T> = { pageInfo?: { hasNextPage?: unknown; endCursor?: unknown }; nodes?: (T | null)[] }
 // Whether a pull request brought each commit, `c<n>` the `n`th's.
-const pulledQuery = (count: number) => `query($owner: String!, $name: String!, ${variablesOf('o', count, 'GitObjectID!')}) {
+const pulledQuery = (size: number) => `query($owner: String!, $name: String!, ${variablesOf('o', size, 'GitObjectID!')}) {
   repository(owner: $owner, name: $name) {
-    ${Array.from({ length: count }, (_, at) => `c${at}: object(oid: $o${at}) { ... on Commit { associatedPullRequests(first: 1) { totalCount } } }`).join('\n    ')}
+    ${Array.from({ length: size }, (_, at) => `c${at}: object(oid: $o${at}) { ... on Commit { associatedPullRequests(first: 1) { totalCount } } }`).join('\n    ')}
   }
 }`
 type Pulled = { repository?: Record<string, { associatedPullRequests?: { totalCount?: unknown } } | null> | null }
@@ -123,13 +123,7 @@ type RefNode = { prefix?: unknown; name?: unknown; target?: { oid?: unknown; com
 type RefsPage = { repository?: { refs?: Connection<RefNode> } | null }
 type Found = { search?: { pageInfo?: { endCursor?: unknown }; nodes?: (PullNode | null)[] } | null } | null
 
-const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0
 const number = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0 ? value as number : null
-const timeOf = (value: unknown) => {
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  return Number.isSafeInteger(at) ? at : null
-}
-const nameOf = (value: unknown, max = MAX_NAME) => typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null
 const loginOf = (author: Login) => typeof author?.login === 'string' && LOGIN.test(author.login) ? author.login : null
 const PULL_STATES: Record<string, AgentPull['state']> = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' }
 
@@ -185,7 +179,6 @@ export interface CommitPulls {
 }
 
 // A commit GitHub has none of, as one rewritten away: its field null.
-const notFound = (error: GraphqlError) => error?.type === 'NOT_FOUND'
 
 // Those of `shas` a pull request brought: as kept (`kept`), the rest looked
 // up, PULLED_COMMITS a query, and kept; one GitHub has none of, none.

@@ -9,6 +9,7 @@ import { newIssueLabels } from '../common/github-issue-labels.js'
 import { ignoresOwnRepo } from '../common/finding-repo.js'
 import { appJwt, githubAppConfigured, installUrl, publicRepositoryName } from './github-app.ts'
 import { ISSUE_LOGIN_PATH, issueUserToken } from './github-issue-oauth.ts'
+import { encodedPath } from './github-requests.ts'
 import { TeamReportsError, loadTeamReports, recheckTeam, teamSnapshot } from './team-reports.ts'
 
 export const MAX_ISSUE_BODY_BYTES = 512_000
@@ -84,7 +85,7 @@ export async function prepareGithubIssue(config: ManagedConfig, db: ManagedDb, s
   if (!targetRepository || targetRepository.toLowerCase() !== context.repository.toLowerCase()) throw new IssueError(400, 'bad-issue-repository')
   const repository = snapshot.repositories.find(repo => repo.github.toLowerCase() === targetRepository.toLowerCase())
   if (!repository || !githubAppConfigured(config)) return { mode: 'form' as const, labels, recheck }
-  const path = `/repos/${targetRepository.split('/').map(encodeURIComponent).join('/')}`
+  const path = `/repos/${encodedPath(targetRepository)}`
   const installation = await github(`${path}/installation`, appJwt(config.githubAppId!, config.githubAppPrivateKey!), fetchImpl)
   if (installation.status === 404) return { mode: 'form' as const, labels, recheck }
   if (!installation.ok) throw new IssueError(502, 'github-unavailable')

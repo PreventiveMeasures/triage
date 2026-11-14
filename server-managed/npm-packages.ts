@@ -21,8 +21,6 @@ import type { Role } from '../common/managed/roles.ts'
 import { npmManifest, npmVersionFields, plainObject, stringRecord } from './npm-manifest.ts'
 import { keepJson, readKeptJson, upstreamCachePath } from './upstream-cache.ts'
 
-export { npmManifest, plainObject }
-
 export const NPM_REGISTRY = 'https://registry.npmjs.org'
 const VERSION_DOCUMENT_BYTES = 8 * 1024 * 1024
 // Abbreviated packuments of packages with thousands of versions run to tens of MiB.

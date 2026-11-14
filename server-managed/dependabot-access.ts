@@ -4,7 +4,8 @@
 import type { ManagedConfig } from './config.ts'
 import type { SelectedRepo } from './db.ts'
 import { type DependabotAlert, dependabotAlerts } from './dependabot-alerts.ts'
-import { GithubApiError, type GithubIdentity, githubRepoPermission, repoAccessToken, repositoryInstallation } from './github-app.ts'
+import { type GithubIdentity, githubRepoPermission, repoAccessToken, repositoryInstallation } from './github-app.ts'
+import { GithubApiError } from './github-errors.ts'
 
 // The levels GitHub lets see a repository's Dependabot alerts by default
 // (maintain's reads `write`).
