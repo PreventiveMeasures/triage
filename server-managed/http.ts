@@ -352,6 +352,8 @@ const NPM_PATHS = new Set([NPM_PACKAGE_PATH, NPM_VERSIONS_PATH, NPM_DOWNLOAD_PAT
   NPM_RENAME_DIFF_PATH, NPM_TYPE_ONLY_PATH, NPM_RISK_PATH, NPM_COMPARISON_PATH, NPM_DELTA_PATH])
 // How long an npm response may go unread before its connection is dropped.
 const NPM_RESPONSE_IDLE_MS = 60_000
+// `res`'s connection dropped once the response goes NPM_RESPONSE_IDLE_MS unread.
+function dropIdle(res: ServerResponse): void { res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy()) }
 const MAX_TEAM_NAME = 100
 // Managed data routes, and with them the authentication routes, which an
 // admin's view as another user covers. Other paths fall through to a combined
@@ -520,7 +522,7 @@ function firstHeader(v: string | string[] | undefined): string | null {
 const USER_AVATAR_CACHE = 'private, max-age=300, stale-while-revalidate=86400'
 
 // `key` is the image chosen for `id`; one not cached falls back to `id`'s own.
-async function serveAvatar(req: IncomingMessage, res: ServerResponse, avatarStore: AvatarStore, id: string, key = id, cacheControl = USER_AVATAR_CACHE): Promise<void> {
+async function serveAvatar(req: IncomingMessage, res: ServerResponse, avatarStore: AvatarStore, id: string, key: string, cacheControl = USER_AVATAR_CACHE): Promise<void> {
   sendAvatar(req, res, await avatarStore.get(key) ?? (key === id ? null : await avatarStore.get(id)), cacheControl)
 }
 
@@ -652,6 +654,15 @@ async function readJsonBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES
 // can't be read.
 async function readBodyFields(req: IncomingMessage, res: ServerResponse, maxBytes?: number): Promise<Record<string, unknown> | null> {
   try { return (await readJsonBody(req, maxBytes) ?? {}) as Record<string, unknown> } catch { sendJson(res, 400, { error: 'bad-body' }); return null }
+}
+
+// A JSON body (readJsonBody) that is an object; null, answered 400, where it
+// is none.
+async function readBodyObject(req: IncomingMessage, res: ServerResponse, maxBytes?: number): Promise<Record<string, unknown> | null> {
+  const body = await readJsonBody(req, maxBytes).catch(() => null)
+  if (plainObject(body)) return body
+  sendJson(res, 400, { error: 'bad-body' })
+  return null
 }
 
 // The router enforces same-origin for every request. A mutation also needs an
@@ -1523,6 +1534,12 @@ async function repositoryBrowserUser(deps: ManagedHttpDeps, userId: string) {
   return { githubUserId, token }
 }
 
+// The repository browser's reader of `repo` (repository-browser.ts), with
+// user `userId`'s own GitHub access.
+async function repositoryReader(deps: ManagedHttpDeps, userId: string, repo: SelectedRepo) {
+  return createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, userId)).reader(repo)
+}
+
 // After a catalog response: read the commit details it lacked with this
 // user's repository access, for the next catalog to send.
 async function backfillCatalogCommits(deps: ManagedHttpDeps, userId: string, missing: readonly CatalogCommit[]): Promise<void> {
@@ -1587,13 +1604,20 @@ function scopeRepositoryContents(contents: RepositoryContents | null, virtualEnt
   } : {}) }
 }
 
+// The repository a read's query names by its id (`repoId`); null where it
+// names none.
+function askedRepoId(query: URLSearchParams): number | null {
+  const repoId = Number(query.get('repoId'))
+  return Number.isSafeInteger(repoId) && repoId > 0 ? repoId : null
+}
+
 // A browse's repository, revision and directory, as its query names them;
 // null, answered, where it names none.
 function repositoryQuery(res: ServerResponse, query: URLSearchParams) {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const normalized = normalizeTeamPath(query.get('path') ?? '')
   const ref = query.get('ref') ?? ''
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !normalized.ok || ref.length > 1024 || /\p{Cc}/u.test(ref)) {
+  if (repoId === null || !normalized.ok || ref.length > 1024 || /\p{Cc}/u.test(ref)) {
     sendJson(res, 400, { error: 'bad-request' }); return null
   }
   return { repoId, ref, path: normalized.path ?? '' }
@@ -1650,7 +1674,12 @@ const sameRepository = (current: SelectedRepo, authorized: SelectedRepo) =>
   JSON.stringify({ ...current, cachedDefaultBranch: authorized.cachedDefaultBranch }) === JSON.stringify(authorized)
 
 function sendGithubError(res: ServerResponse, err: GithubApiError) {
-  sendJson(res, err.status === 401 ? 502 : err.status, { error: err.message }, err.retryAfter == null ? {} : { 'retry-after': String(err.retryAfter) })
+  sendRefusal(res, githubRefusal(err))
+}
+// `err` answered where it is GitHub's failure (sendGithubError), else thrown on.
+function answerGithubFailure(res: ServerResponse, err: unknown): void {
+  if (!(err instanceof GithubApiError)) throw err
+  sendGithubError(res, err)
 }
 
 // Recheck repository/path grants after upstream reads, before returning names.
@@ -1671,8 +1700,7 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
   const access = await authorize(true)
   if (!access) return
   try {
-    const browser = createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id))
-    const reader = await browser.reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     // Microseconds, so overlapping browses practically never share a listing time.
     const observedUs = Math.round((performance.timeOrigin + performance.now()) * 1000)
     const trees = repositoryTreesOf(deps)
@@ -1695,8 +1723,7 @@ async function handleRepositoryBrowser(res: ServerResponse, deps: ManagedHttpDep
       defaultContents: scopeRepositoryContents(revisions?.defaultContents ?? null, current.virtualEntries),
     } : {}) } : commitOnly ? contents : scopeRepositoryContents(contents as RepositoryContents, current.virtualEntries))
   } catch (err) {
-    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
-    throw err
+    answerGithubFailure(res, err)
   }
 }
 
@@ -1777,14 +1804,14 @@ async function handleRepositoryCode(res: ServerResponse, deps: ManagedHttpDeps, 
   const access = await authorize(true)
   if (!access) return
   try {
-    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     const commit = await reader.commit(ref)
     const repo = access.repo.fullName
     const client = createClient({ token: reader.readToken() })
     // Access still held, and the same repository, before anything read is sent.
     const fenced = async () => await stillAuthorized(res, reader, authorize, access.repo) !== null
     const send = (bytes: Buffer) => {
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       res.writeHead(200, {
         'content-type': 'application/json', 'content-encoding': 'br', 'content-length': String(bytes.byteLength),
         'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff',
@@ -1872,7 +1899,7 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
   if (!access) return
   let readingPulls: Promise<{ number: number; sha: string }[] | null> = Promise.resolve(null)
   try {
-    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     const repo = access.repo.fullName
     const token = reader.readToken()
     // With a token, as GraphQL reads them.
@@ -1944,8 +1971,7 @@ async function handleRepositoryHistory(res: ServerResponse, deps: ManagedHttpDep
       ...pulls.length > 0 ? { pulls: pulls.map(pull => ({ ...pull, commits: pull.commits.map(shown) })) } : {}, ...squashed.pending ? { pullsPending: true } : {},
       ...openPulls?.length ? { openPulls } : {} }))
   } catch (err) {
-    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
-    throw err
+    answerGithubFailure(res, err)
   } finally {
     // A failed history must not release the request's database lease while
     // its independent pull read is still writing to the cache.
@@ -2000,13 +2026,12 @@ async function readForReplay(res: ServerResponse, deps: ManagedHttpDeps, cookie:
   const access = await authorize(true)
   if (!access) return
   try {
-    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     const body = await read(access.repo.fullName, reader.readToken(), repoId, path)
     if (!await stillAuthorized(res, reader, authorize, access.repo)) return
     sendJson(res, 200, body)
   } catch (err) {
-    if (err instanceof GithubApiError) { sendGithubError(res, err); return }
-    throw err
+    answerGithubFailure(res, err)
   }
 }
 
@@ -2354,6 +2379,9 @@ const refusal = (status: number, error: string, retryAfter?: number | null): Ref
 function sendRefusal(res: ServerResponse, { status, error, retryAfter }: Refusal) {
   sendJson(res, status, { error }, retryAfter == null ? {} : { 'retry-after': String(retryAfter) })
 }
+// GitHub's failure `err`, as a request is refused for it: a token GitHub
+// rejects told as GitHub failing (502), never as the reader's session refused.
+const githubRefusal = (err: GithubApiError) => refusal(err.status === 401 ? 502 : err.status, err.message, err.retryAfter)
 // The whole of repository `repoId`, where the session `cookie` names may
 // read all of it, and who reads it; else why not: none of it
 // (`no-repository`), or only some (`no-directory`).
@@ -2376,7 +2404,7 @@ function wholeAccessIn(grants: Awaited<ReturnType<typeof repositoryGrants>>, use
 async function readWholeRepositoryOf<T>(deps: ManagedHttpDeps, access: WholeAccess, answer: (fullName: string, token: string, user: StoredUser) => Promise<{ value: T; kept: boolean }>,
   reauthorize: () => Promise<WholeAccess | Refusal>): Promise<{ value: T; kept: boolean } | Refusal> {
   try {
-    const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+    const reader = await repositoryReader(deps, access.user.id, access.repo)
     const token = reader.readToken()
     if (!token) return refusal(403, 'github-token-required')
     const answered = await answer(access.repo.fullName, token, access.user)
@@ -2387,7 +2415,7 @@ async function readWholeRepositoryOf<T>(deps: ManagedHttpDeps, access: WholeAcce
     if (!sameRepository(current.repo, access.repo)) return refusal(409, 'repository-changed')
     return answered
   } catch (err) {
-    if (err instanceof GithubApiError) return refusal(err.status === 401 ? 502 : err.status, err.message, err.retryAfter)
+    if (err instanceof GithubApiError) return githubRefusal(err)
     throw err
   }
 }
@@ -2415,11 +2443,11 @@ const patchFields = (field: (key: string) => unknown) => requestedPatch({ hash: 
 // open pull requests' commits, which they never tell (teamOpenPulls reads
 // them).
 async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const kind = query.get('kind')
   const state = query.get('state') ?? 'open'
   const after = query.get('after')
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
+  if (repoId === null || (kind !== 'issues' && kind !== 'pulls') || (state !== 'open' && state !== 'closed')
     || (after !== null && !ISSUES_CURSOR.test(after))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const { value: { commits: _commits, ...page }, kept, at } = await keptAnswer(deps, issuesKey(repoId, kind, state, after),
@@ -2441,9 +2469,9 @@ const issuesKey = (repoId: number, kind: string, state: string, after: string | 
 // `commits`, the first page, naming neither, with issues and branches. They
 // are the whole repository's (readWholeRepository).
 async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const cursors = { pulls: query.get('pulls'), commits: query.get('commits') }
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || (cursors.pulls !== null && !ISSUES_CURSOR.test(cursors.pulls))
+  if (repoId === null || (cursors.pulls !== null && !ISSUES_CURSOR.test(cursors.pulls))
     || (cursors.commits !== null && !COMMITS_CURSOR.test(cursors.commits))) {
     sendJson(res, 400, { error: 'bad-request' }); return
   }
@@ -2459,9 +2487,9 @@ async function handleRepositoryAgents(res: ServerResponse, deps: ManagedHttpDeps
 // `number`, as the code viewer's popup for it shows it (repository-issues.ts
 // repositoryItem). It is the whole repository's (readWholeRepository).
 async function handleRepositoryItem(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const number = itemNumber(query.get('number'))
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || number === null) { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (repoId === null || number === null) { sendJson(res, 400, { error: 'bad-request' }); return }
   await readWholeRepository(res, deps, cookie, repoId, (fullName, token) => repositoryItem(fullName, token, number), `item\0${ISSUES_READ_VERSION}\0${number}`, true)
 }
 
@@ -2489,7 +2517,7 @@ function itemNumber(text: string | null): number | null {
 const MAX_ASKED_PULLS = 20
 const PULLS_AT_ONCE = 3
 async function handleRepositoryPullDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const review = query.get('review') === '1'
   // As an open one's tile on the Pull requests tab asks (`listed=1`): each
   // by the commits the page it is of names, where one kept names them
@@ -2497,7 +2525,7 @@ async function handleRepositoryPullDependencies(res: ServerResponse, deps: Manag
   const tiles = query.get('listed') === '1'
   const listed = query.get('numbers')
   const numbers = listed === null ? [itemNumber(query.get('number'))] : listed.split(',').map(text => itemNumber(text))
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || numbers.length > MAX_ASKED_PULLS || numbers.some(number => number === null) || new Set(numbers).size < numbers.length
+  if (repoId === null || numbers.length > MAX_ASKED_PULLS || numbers.some(number => number === null) || new Set(numbers).size < numbers.length
     || !['1', null].includes(query.get('review')) || !['1', null].includes(query.get('listed'))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token, user) => {
     const commits = tiles ? await keptPullCommits(deps, repoId, numbers as number[]) : new Map<number, PullCommits>()
@@ -2574,8 +2602,8 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
 // its access not asked again, where its head was kept and its lockfiles and
 // baseline held or kept (lockfileKept), GitHub asked for none of them.
 async function handleRepositoryBranchDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
-  if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const repoId = askedRepoId(query)
+  if (repoId === null) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, (fullName, token, user) => branchDependencyAnswer(deps, fullName, token, user, repoId),
     async () => (await deps.db.repoDependencyReview(repoId))?.enabled ? null : { review: null })
 }
@@ -2613,8 +2641,8 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
 // paths, with their formats, at its head, as its pulse reads it, for its
 // settings to name those it holds to (lockfile-scope.ts).
 async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
-  if (!Number.isSafeInteger(repoId) || repoId <= 0) { sendJson(res, 400, { error: 'bad-request' }); return }
+  const repoId = askedRepoId(query)
+  if (repoId === null) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const head = (await defaultTip(deps, repoId, fullName, token)).sha
     return { value: { head, lockfiles: head ? (await lockfilesAt(fullName, token, head, lockfileKept(deps, repoId))).map(({ path, format }) => ({ path, format })) : [] }, kept: false }
@@ -2900,9 +2928,9 @@ function lockfileKept(deps: ManagedHttpDeps, repoId: number): LockfileStore {
 // `pending`, for the client to ask again. They are the whole repository's
 // (readWholeRepository).
 async function handleRepositoryPulse(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const weeks = Number(query.get('weeks') ?? '4')
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (repoId === null || !PULSE_WEEKS.includes(weeks)) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const year = pulseYearRead(deps, repoId, fullName, token, weeks)
     const [period, counted] = await Promise.all([
@@ -3007,13 +3035,13 @@ async function pulseActivity(deps: ManagedHttpDeps, repoId: number, fullName: st
 // `from`) and the GitHub accounts a picked contributor committed as
 // (`authors`), as repositoryActivity reads them, kept apart for each.
 async function handleRepositoryPulseItems(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
-  const repoId = Number(query.get('repoId'))
+  const repoId = askedRepoId(query)
   const weeks = Number(query.get('weeks') ?? '4')
   const [from, to] = [pulseDay(query.get('from')), query.has('to') ? pulseDay(query.get('to')) : null]
   const logins = (query.get('authors') ?? '').split(',').filter(Boolean)
   // Each once, whatever its case, as GitHub matches logins.
   const authors = [...new Set(logins.map(login => login.toLowerCase()))].toSorted()
-  if (!Number.isSafeInteger(repoId) || repoId <= 0 || !PULSE_WEEKS.includes(weeks) || from === null || (query.has('to') && (to === null || to < from))
+  if (repoId === null || !PULSE_WEEKS.includes(weeks) || from === null || (query.has('to') && (to === null || to < from))
     || authors.length > PULSE_AUTHORS || !logins.every(login => GITHUB_LOGIN.test(login))) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const narrowing = { from, to, authors }
@@ -3135,6 +3163,13 @@ function prebuildBundle(deps: ManagedHttpDeps, id: string) {
   })().catch(err => console.warn('managed: bundle cache build failed:', err)))
 }
 
+// `stream` as the body of a response whose head is written: none of it for
+// a HEAD, and the response cut short where it fails midway.
+async function sendBody(req: IncomingMessage, res: ServerResponse, stream: OpenedBlob['stream']) {
+  if (req.method === 'HEAD') { stream.destroy(); res.end(); return }
+  try { await pipeline(stream, res) } catch { res.destroy() }
+}
+
 // Brotli-encoded bytes as they are: the browser's HTTP stack decompresses
 // them without a Brotli JS dependency.
 async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: OpenedBlob, contentType: string, headers: Record<string, string> = {}) {
@@ -3143,8 +3178,7 @@ async function sendEncoded(req: IncomingMessage, res: ServerResponse, blob: Open
     ...(blob.size == null ? {} : { 'content-length': String(blob.size) }), 'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
   })
-  if (req.method === 'HEAD') { blob.stream.destroy(); res.end(); return }
-  try { await pipeline(blob.stream, res) } catch { res.destroy() }
+  await sendBody(req, res, blob.stream)
 }
 
 
@@ -3335,25 +3369,31 @@ async function handleBundleCache(req: IncomingMessage, res: ServerResponse, deps
   try { cached = await open(rec) }
   catch (err) { sendBundleFailure(res, err); return }
   // A cold build can outlast a session or membership change.
-  const current = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id)
-  if (!current?.bundle) {
-    cached.stream.destroy()
-    sendJson(res, current ? 404 : 401, { error: current ? 'no-bundle' : 'unauthenticated' })
-    return
-  }
-  await sendEncoded(req, res, cached, contentType, headers)
+  if (await readableBundle(res, deps, session, id)) await sendEncoded(req, res, cached, contentType, headers)
+  else cached.stream.destroy()
 }
 
-// Two bundles a reader asks about together, where they may read both, else
-// null, told as 401 or 404: asked before what is worked out of them and
-// again before it is sent.
-function bothBundles(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, otherId: string) {
-  return async () => {
+// What `work` makes of the pretty-printed copies (503 where none are kept)
+// of two bundles a reader asks about together, where they may read both,
+// else told as 401 or 404: asked before it is made and again before it is
+// sent; its failure answered as a bundle's derivative's is.
+async function sendOfBothBundles(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, otherId: string,
+  work: (cache: PrettyCache, records: readonly [ManagedBundle, ManagedBundle]) => Promise<OpenedBlob>) {
+  const readable = async () => {
     const [base, other] = await Promise.all([id, otherId].map(bundle => deps.db.getBundleAccessSnapshot(session.id, Date.now(), bundle)))
     if (!base || !other) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     if (!base.bundle || !other.bundle) { sendJson(res, 404, { error: 'no-bundle' }); return null }
     return [base.bundle, other.bundle] as const
   }
+  const records = await readable()
+  if (!records) return
+  const { prettyCache } = deps
+  if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
+  let body
+  try { body = await work(prettyCache, records) }
+  catch (err) { sendBundleFailure(res, err); return }
+  if (await readable()) await sendEncoded(req, res, body, 'application/json')
+  else body.stream.destroy()
 }
 
 // GET /api/bundles/:id/rename-diff: one of its JavaScript files diffed with
@@ -3362,18 +3402,8 @@ function bothBundles(res: ServerResponse, deps: ManagedHttpDeps, session: Manage
 async function handleBundleRenameDiff(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
   const otherId = params.get('other') ?? '', request = renameDiffRequest(params)
   if (!request || !/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-file' }); return }
-  const readable = bothBundles(res, deps, session, id, otherId)
-  const records = await readable()
-  if (!records) return
-  const { prettyCache } = deps
-  if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-  let diff
-  try {
-    diff = await renameDiffOf(request, async () => [await prettyText(await prettyCache.bundle(records[0], request.base)),
-      await prettyText(await prettyCache.bundle(records[1], request.other))])
-  } catch (err) { sendBundleFailure(res, err); return }
-  if (await readable()) await sendEncoded(req, res, diff, 'application/json')
-  else diff.stream.destroy()
+  await sendOfBothBundles(req, res, deps, session, id, otherId, (cache, [base, other]) => renameDiffOf(request, async () => [
+    await prettyText(await cache.bundle(base, request.base)), await prettyText(await cache.bundle(other, request.other))]))
 }
 
 // GET /api/bundles/:id/comparison?other=: its files paired with the `other`
@@ -3383,16 +3413,8 @@ async function handleBundleRenameDiff(req: IncomingMessage, res: ServerResponse,
 async function handleBundleComparison(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, params: URLSearchParams) {
   const otherId = params.get('other') ?? ''
   if (!/^[a-f\d-]{36}$/iu.test(otherId)) { sendJson(res, 400, { error: 'bad-bundle' }); return }
-  const readable = bothBundles(res, deps, session, id, otherId)
-  const records = await readable()
-  if (!records) return
-  const { prettyCache } = deps
-  if (!prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-  let body
-  try { body = await comparisonBody(await prettyCache.bundleDetails(records[0]), await prettyCache.bundleDetails(records[1]), params.get('scope') ?? '') }
-  catch (err) { sendBundleFailure(res, err); return }
-  if (await readable()) await sendEncoded(req, res, body, 'application/json')
-  else body.stream.destroy()
+  await sendOfBothBundles(req, res, deps, session, id, otherId, async (cache, [base, other]) =>
+    comparisonBody(await cache.bundleDetails(base), await cache.bundleDetails(other), params.get('scope') ?? ''))
 }
 
 // GET /api/bundles/:id/pretty?other=: the files that changed between it and
@@ -3684,7 +3706,7 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
     const access = await authorize(input.directory)
     if (!access) return
     await withBundleBuildLease(deps.db, access.user.id, controller.signal, async signal => {
-      const reader = await createRepositoryBrowser(deps.config, await repositoryBrowserUser(deps, access.user.id)).reader(access.repo)
+      const reader = await repositoryReader(deps, access.user.id, access.repo)
       signal.throwIfAborted()
       // Catalogs then show the built bundle's commit details from the cache.
       const commitCached = cacheCommitDetails(deps.db, reader, input.repoId, input.commit)
@@ -3705,8 +3727,7 @@ async function handleCreateBundle(req: IncomingMessage, res: ServerResponse, dep
   } catch (error) {
     if (res.destroyed || controller.signal.aborted) return
     if (error instanceof BundleBuildError) { sendJson(res, error.status, { error: error.code }); return }
-    if (error instanceof GithubApiError) { sendGithubError(res, error); return }
-    throw error
+    answerGithubFailure(res, error)
   } finally { res.off('close', onClose) }
 }
 
@@ -3832,8 +3853,7 @@ async function handleGetBundle(req: IncomingMessage, res: ServerResponse, deps: 
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   })
-  if (req.method === 'HEAD') { stored.stream.destroy(); res.end(); return }
-  try { await pipeline(stored.stream, res) } catch { res.destroy() }
+  await sendBody(req, res, stored.stream)
 }
 
 // GET /api/admin/bundles/<id>/usage — the reports that name a bundle, read
@@ -3971,8 +3991,7 @@ async function handleReportSources(req: IncomingMessage, res: ServerResponse, de
     ...(cached.size == null ? {} : { 'content-length': String(cached.size) }), 'cache-control': 'private, no-store',
     'x-content-type-options': 'nosniff',
   })
-  if (req.method === 'HEAD') { cached.stream.destroy(); res.end(); return }
-  try { await pipeline(cached.stream, res) } catch { res.destroy() }
+  await sendBody(req, res, cached.stream)
 }
 
 async function reportIds(data: unknown): Promise<Set<string>> {
@@ -4704,17 +4723,17 @@ const REVIEW_READS_AT_ONCE = 8
 
 // Lists must enforce the same target and base access as the review itself,
 // including permission changes while the registry requests are in flight;
-// first as `session`, the one the request read just now, where given. A
-// team's (`teamId`) only to one who still reads its reviews there, asked
-// again with the rest (npmReviewReader).
+// first as `session`, the one the request read just now. A team's
+// (`teamId`) only to one who still reads its reviews there, asked again
+// with the rest (npmReviewReader).
 async function readableNpmReviews<T extends ReviewContext>(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, user: string, reviews: T[],
-  session?: { id: string; role: NpmReader['role'] }, teamId?: string): Promise<T[] | null> {
+  session: { id: string; role: NpmReader['role'] }, teamId?: string): Promise<T[] | null> {
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
   res.on('close', onClose)
   try {
     const names = reviews.flatMap(review => [review.package, ...review.basePackage ? [review.basePackage] : []])
-    const reader = session ? await npmReaderOf(deps, session, names) : await npmReader(deps, cookie, names)
+    const reader = await npmReaderOf(deps, session, names)
     if (!reader || reader.userId !== user) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
     // Public versions' documents as the viewer keeps them (npm-kept.ts), a
     // day, all read of the database at once: a list asks npm for none it read
@@ -4768,6 +4787,43 @@ async function npmReviewPublicationLimit(deps: ManagedHttpDeps, reader: NpmReade
   return npmReviewVerdictLimit(doc, list, socket, risk)
 }
 
+// The change a POST of reviews asks for, as its `body` names it: a review
+// started, an entry saved, a set published, continued or revoked. Null,
+// answered 400, where it names none.
+function reviewChange(res: ServerResponse, body: Record<string, unknown>): ReviewChange | null {
+  const action = body['action'], reviewId = body['reviewId'] ?? null, revision = body['revision'] ?? null
+  if (typeof action !== 'string' || !['start', 'save', 'publish', 'continue', 'revoke'].includes(action)
+    || (reviewId !== null && (typeof reviewId !== 'string' || reviewId.length === 0 || reviewId.length > 100 || !Number.isSafeInteger(revision) || Number(revision) < 1))
+    || (!['save', 'start'].includes(action) && reviewId === null) || (action === 'start' && reviewId !== null)) { sendJson(res, 400, { error: 'bad-review' }); return null }
+  if (action === 'start') return { action, reviewId: null, revision: null }
+  if (action === 'publish') {
+    const teamIds = body['teamIds']
+    if (!Array.isArray(teamIds) || teamIds.length === 0 || teamIds.length > 100 || teamIds.some(id => typeof id !== 'string' || id.length > 100)) {
+      sendJson(res, 400, { error: 'bad-review-teams' }); return null
+    }
+    const finalComment = body['finalComment'] ?? '', finalStatus = body['finalStatus'] ?? null
+    if (typeof finalComment !== 'string' || finalComment.length > 20000 || finalStatus !== null
+      && (typeof finalStatus !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(finalStatus))) {
+      sendJson(res, 400, { error: 'bad-final-verdict' }); return null
+    }
+    return { action, reviewId: reviewId as string, revision: revision as number, teamIds, files: [], nonTextFiles: [],
+      final: finalStatus === null ? null : { status: finalStatus as ReviewInput['status'] & string, comment: finalComment } }
+  }
+  if (action === 'continue' || action === 'revoke') return { action, reviewId: reviewId as string, revision: revision as number }
+  const file = body['file']
+  const comment = body['comment']
+  const status = body['status'] ?? null
+  const entryId = body['entryId'] ?? null
+  if (typeof file !== 'string' || !file || file.length > 4096 || file.includes('\0')
+    || (entryId !== null && (typeof entryId !== 'string' || entryId.length === 0 || entryId.length > 100))
+    || typeof comment !== 'string' || comment.length > 20000
+    || (status !== null && (typeof status !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(status))) || (status === null && entryId === null)) {
+    sendJson(res, 400, { error: 'bad-review' }); return null
+  }
+  return { action: 'save', reviewId: reviewId as string | null, revision: revision as number | null, entryId: entryId as string | null,
+    entry: { file, comment, status: status as ReviewInput['status'] } }
+}
+
 // Reviews are scoped to the bytes actually displayed, including the base:
 // each change but a revocation loads both versions' files, of tarballs held
 // to their integrity and to their shasum where npm tells one (npm-loads.ts),
@@ -4783,14 +4839,8 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   const session = mutation ? await checkMutation(req, res, deps, cookie, { handed: true }) : await readSession(deps.config, deps.db, cookie, Date.now(), { handed: true })
   if (!session) { if (!mutation) sendJson(res, 401, { error: 'unauthenticated' }); return }
   if (!roleAtLeast(session.user.role, mutation ? 'triage' : 'view')) { sendJson(res, 403, { error: 'forbidden' }); return }
-  let body: Record<string, unknown> = {}
-  if (mutation) {
-    try {
-      const raw = await readJsonBody(req, 128 * 1024)
-      if (!plainObject(raw)) throw new Error('bad-body')
-      body = raw
-    } catch { sendJson(res, 400, { error: 'bad-body' }); return }
-  }
+  const body: Record<string, unknown> | null = mutation ? await readBodyObject(req, res, 128 * 1024) : {}
+  if (!body) return
   const field = (key: string) => mutation ? body[key] : params.get(key)
   const name = field('package')
   const version = field('version')
@@ -4812,40 +4862,10 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     basePackage: basePackage as string | null, baseVersion: baseVersion as string | null, baseIntegrity: baseIntegrity as string | null }
   let change: ReviewChange | null = null
   if (mutation) {
-    const action = body['action'], reviewId = body['reviewId'] ?? null, revision = body['revision'] ?? null
-    if (typeof action !== 'string' || !['start', 'save', 'publish', 'continue', 'revoke'].includes(action)
-      || (reviewId !== null && (typeof reviewId !== 'string' || reviewId.length === 0 || reviewId.length > 100 || !Number.isSafeInteger(revision) || Number(revision) < 1))
-      || (!['save', 'start'].includes(action) && reviewId === null) || (action === 'start' && reviewId !== null)) { sendJson(res, 400, { error: 'bad-review' }); return }
-    if (action === 'start') change = { action, reviewId: null, revision: null }
-    else if (action === 'publish') {
-      const teamIds = body['teamIds']
-      if (!Array.isArray(teamIds) || teamIds.length === 0 || teamIds.length > 100 || teamIds.some(id => typeof id !== 'string' || id.length > 100)) {
-        sendJson(res, 400, { error: 'bad-review-teams' }); return
-      }
-      const finalComment = body['finalComment'] ?? '', finalStatus = body['finalStatus'] ?? null
-      if (typeof finalComment !== 'string' || finalComment.length > 20000 || finalStatus !== null
-        && (typeof finalStatus !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(finalStatus))) {
-        sendJson(res, 400, { error: 'bad-final-verdict' }); return
-      }
-      change = { action, reviewId: reviewId as string, revision: revision as number, teamIds, files: [], nonTextFiles: [],
-        final: finalStatus === null ? null : { status: finalStatus as ReviewInput['status'] & string, comment: finalComment } }
-    } else if (action === 'continue' || action === 'revoke') change = { action, reviewId: reviewId as string, revision: revision as number }
-    else {
-      const file = body['file']
-      const comment = body['comment']
-      const status = body['status'] ?? null
-      const entryId = body['entryId'] ?? null
-      if (typeof file !== 'string' || !file || file.length > 4096 || file.includes('\0')
-        || (entryId !== null && (typeof entryId !== 'string' || entryId.length === 0 || entryId.length > 100))
-        || typeof comment !== 'string' || comment.length > 20000
-        || (status !== null && (typeof status !== 'string' || !['accept', 'accept-with-nits', 'request-changes', 'reject'].includes(status))) || (status === null && entryId === null)) {
-        sendJson(res, 400, { error: 'bad-review' }); return
-      }
-      change = { action: 'save', reviewId: reviewId as string | null, revision: revision as number | null, entryId: entryId as string | null,
-        entry: { file, comment, status: status as ReviewInput['status'] } }
-    }
+    change = reviewChange(res, body)
+    if (!change) return
     // Each change but a revocation reads a patched version's patch.
-    if (patchHash !== null && action !== 'revoke' && !patch) { sendJson(res, 400, { error: 'bad-review-context' }); return }
+    if (patchHash !== null && change.action !== 'revoke' && !patch) { sendJson(res, 400, { error: 'bad-review-context' }); return }
   }
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
@@ -4947,7 +4967,7 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
   res.once('close', () => { if (!res.writableEnded) controller.abort() })
-  res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+  dropIdle(res)
   const kept = npmDeltaStore<NpmDelta>(deps.db, deps.config.debug), keptVersions = npmVersionStore(deps.db, deps.config.debug)
   const out = openLines(res)
   let stopped = false
@@ -5107,7 +5127,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const assessment = await npmRisk(doc, otherSpec === '' ? 'pick' : old, { db: deps.db, npmCache: deps.npmCacheStorage, debug: deps.config.debug, teamScoped, fromEmpty: otherSpec === '(empty)',
         ownScope: listed => deps.db.hasTeamNpmScope(listed), privileged, signal: controller.signal })
       // What it tells is read of both versions: private where either is.
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       await reply(doc.private || old?.private === true, { ...assessment })
       return
     }
@@ -5117,7 +5137,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // (npm-delta.ts), as a list of versions wanting reviews tells them.
     if (path === NPM_DELTA_PATH) {
       const old = otherSpec === '(empty)' ? null : await otherDoc()
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       const delta = await npmDelta(old ? deltaSide(old) : null, deltaSide(doc), npmDeltaStore<NpmDelta>(deps.db, deps.config.debug))
       await reply(doc.private || old?.private === true, { name, version: doc.version, otherVersion: old?.version ?? null, ...delta })
       return
@@ -5133,7 +5153,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const old = otherSpec === '(empty)' ? null : await otherDoc()
       const patched = patch ? await npmPatchOf(deps, cookie, patch) : null
       if (patched && 'error' in patched) { sendRefusal(res, patched); return }
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       const loads = [doc, ...old ? [old] : []].map(loadNpmFiles)
       let body
       try {
@@ -5177,7 +5197,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
         : path === NPM_TYPE_ONLY_PATH ? typeOnlyFiles(sides!) : sides ? compared(sides) : await deps.prettyCache.npmAll(doc)
       const isPrivate = doc.private || other?.private === true
       if (!(await recheck(isPrivate))) return
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       await sendLines(res, lines, async () => {
         const current = await npmReader(deps, cookie, isPrivate ? [name] : [])
         return current != null && (!isPrivate || canReadPrivateNpm(current, name))
@@ -5193,7 +5213,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const diff = await renameDiffOf(diffed, async () => [await prettyText(await prettyCache.npm(doc, diffed.base)),
         await prettyText(await prettyCache.npm(other, diffed.other))], !doc.private && !other.private)
       if (!(await recheck(doc.private || other.private))) { diff.stream.destroy(); return }
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       await sendEncoded(req, res, diff, 'application/json')
       return
     }
@@ -5207,7 +5227,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       let body
       try { body = await patchedVersionBody(doc, patch, patchedFiles(await load.result, patched.files)) } finally { load.release() }
       if (!(await recheck(doc.private))) { body.stream.destroy(); return }
-      res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+      dropIdle(res)
       await sendEncoded(req, res, body, 'application/json')
       return
     }
@@ -5240,7 +5260,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     res.once('close', load.release)
     const bytes = await load.result
     if (!(await recheck(doc.private))) return
-    res.setTimeout(NPM_RESPONSE_IDLE_MS, () => res.destroy())
+    dropIdle(res)
     res.writeHead(200, {
       ...download
         ? { 'content-type': 'application/gzip', 'content-disposition': attachmentDisposition(npmTarballFilename(doc.name, doc.version)) }
@@ -5369,18 +5389,11 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       }
       return
     }
-    if (path === ISSUE_LOGIN_PATH) {
+    if (path === ISSUE_LOGIN_PATH || path === LINK_LOGIN_PATH) {
       if (method !== 'GET') { send405(res, 'GET'); return }
       const s = await readWorkspaceSession(res, deps, cookie)
       if (!s) return
-      const result = issueLoginRedirect(config, s.session)
-      sendRedirect(res, result.location, result.setCookie); return
-    }
-    if (path === LINK_LOGIN_PATH) {
-      if (method !== 'GET') { send405(res, 'GET'); return }
-      const s = await readWorkspaceSession(res, deps, cookie)
-      if (!s) return
-      const result = linkLoginRedirect(config, s.session)
+      const result = path === ISSUE_LOGIN_PATH ? issueLoginRedirect(config, s.session) : linkLoginRedirect(config, s.session)
       sendRedirect(res, result.location, result.setCookie); return
     }
     if (path === PROFILE_PATH) { await handleProfile(req, res, deps, cookie); return }
@@ -5697,12 +5710,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
       if (method !== 'POST') { send405(res, 'POST'); return }
       const s = await checkMutation(req, res, deps, cookie, { handed: true })
       if (!s) return
-      let body: Record<string, unknown>
-      try {
-        const raw = await readJsonBody(req, 4096)
-        if (!plainObject(raw)) throw new Error('bad-body')
-        body = raw
-      } catch { sendJson(res, 400, { error: 'bad-body' }); return }
+      const body = await readBodyObject(req, res)
+      if (!body) return
       const id = body['reviewId'], revision = body['revision']
       if (typeof id !== 'string' || !id || id.length > 100 || !Number.isSafeInteger(revision) || Number(revision) < 1) {
         sendJson(res, 400, { error: 'bad-review' }); return
