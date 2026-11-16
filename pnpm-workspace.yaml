@@ -11,8 +11,13 @@ linkWorkspacePackages: true
 
 lockfileIncludeTarballUrl: true
 
+minimumReleaseAge: 20160
+
 minimumReleaseAgeExclude:
   - "@chalker/*"
+  - "@exodus/stasis"
+  - "@exodus/stasis-core"
+  - "@exodus/stasis-plugins"
   - "@preventive/*"
   - "@rray/*"
 
