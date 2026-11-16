@@ -12,6 +12,7 @@ const MODEL_NAMES = new Map([
   ['moonshotai/kimi-k3', 'Kimi K3'],
   ['z-ai/glm-5.3', 'GLM 5.3'],
   ['qwen/qwen3.8-max', 'Qwen3.8 Max'],
+  ['qwen/qwen4-max', 'Qwen4 Max'],
   ['deepseek/deepseek-v4.1-flash', 'DeepSeek V4.1 Flash'],
   ['deepseek/deepseek-v4-pro', 'DeepSeek V4 Pro'],
 ])

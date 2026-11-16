@@ -22,7 +22,7 @@ export function defaultScanModels(provider: string | null = null) {
     'google/gemma-4-31b-it',
     'x-ai/grok-4.7',
     'z-ai/glm-5.3',
-    'qwen/qwen3.8-max',
+    'qwen/qwen4-max',
     'deepseek/deepseek-v4.1-flash',
     'deepseek/deepseek-v4-pro',
     'mistralai/mistral-large-4-0',
