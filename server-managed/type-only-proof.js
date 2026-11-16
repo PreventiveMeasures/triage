@@ -77,15 +77,15 @@ function runLines(text) {
 }
 
 // `{ runs, otherRuns }` where each side there is a declaration file proven to
-// hold types alone but for what runs, some of it there; else false, and where
-// the proof throws, as no check should. Asked of a pair not stamped.
+// hold types alone but for what runs; else false, and where the proof throws,
+// as no check should. Asked of a pair not stamped, which always runs some.
 export function typeOnlyRuns(from, to) {
   const sides = [from, to].filter(file => file !== null)
   if (sides.length === 0 || !sides.every(file => DECLARATION.test(file.path))) return false
   try {
     if (!sides.every(file => proveTypeOnly(file.text).proven)) return false
-    const [base, other] = [from, to].map(file => (file ? runLines(file.text) : []))
-    return base.length + other.length > 0 && { runs: base, otherRuns: other }
+    const [runs, otherRuns] = [from, to].map(file => (file ? runLines(file.text) : []))
+    return { runs, otherRuns }
   } catch {
     return false
   }

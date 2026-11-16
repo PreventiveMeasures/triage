@@ -1755,8 +1755,8 @@ export class BundleCompareCode extends LitElement {
         this.requestUpdate()
       },
     }
-    const { a: aLines, b: bLines } = folds?.length ?? { a: model.a.length, b: model.b.length }
-    const digits = String(Math.max(aLines, bLines, 1)).length
+    const lines = folds?.lines ?? { a: model.a.length, b: model.b.length }
+    const digits = String(Math.max(lines.a, lines.b, 1)).length
     return html`${prefs.ignoreRenames && changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
       ${WHITESPACE_KEPT[whitespace] ? html`<p class="bundle-compare-code-note">${WHITESPACE_KEPT[whitespace]}</p>` : nothing}
       ${warned.length > 0 ? html`<p class="bundle-compare-code-note">${readsSaid(warned)} <button type="button" @click=${() => this._setRenames(false)}>Show them marked</button></p>` : nothing}

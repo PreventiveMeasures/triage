@@ -15,7 +15,7 @@ import { textLines, typeFolds } from '../ui/view/bundle-compare-code-model.js'
 
 const zodDeclarations = "import { z } from 'zod';\nexport declare const UserSchema: z.ZodObject<{\n    id: z.ZodString;\n}>;\nexport type User = z.infer<typeof UserSchema>;\n//# sourceMappingURL=user.d.ts.map\n"
 const declared = text => ({ path: 'x.d.ts', text })
-// The lines of a text told as running, by their text.
+// The lines of a text told as running, by their text; false where it isn't proven.
 const told = text => {
   const runs = typeOnlyRuns(null, declared(text))
   return runs && runs.otherRuns.flatMap(([from, to]) => textLines(text).slice(from, to))
@@ -25,7 +25,7 @@ test('a type-only import or export loads nothing and is set aside; one with inli
   const T = 'export type T = 1;\n'
   for (const form of ["import type { A } from 'a';", "import type D from 'd';", "import type * as N from 'n';", "export type { A } from 'e';", "export type * from 'i';",
     "export type * as N from 'k';", "import type y = require('y');", 'export declare const x: number;', "declare module 'm' {\n  import 'inner';\n}"]) {
-    assert.equal(told(`${T}${form}\n${T}`), false, `${form}: set aside`)
+    assert.deepEqual(told(`${T}${form}\n${T}`), [], `${form}: set aside`)
     assert.equal(typeOnlyStamped(declared(`${T}${T}`), declared(`${T}${form}\n${T}`)), true, `${form}: added, a change in types alone`)
   }
   for (const form of ["import { type A } from 'a';", "import { type A, B } from 'b';", "export { type A } from 'f';", "import * as ns from 'ns';", "import d from 'd';",
@@ -55,7 +55,7 @@ test('a line holding anything that runs is told whole, however lines are broken 
   ]
   for (const [text, lines, said] of cases) assert.deepEqual(told(text), lines, said)
   assert.deepEqual(told("export type A = 1;\rimport { b } from 'b';\r"), ["export type A = 1;\rimport { b } from 'b';\r"], 'lines broken by CR alone, one line as the view splits them')
-  assert.equal(told("export type A = `import { a } from 'b'`;\n"), false, 'a type that spells a load, loading nothing')
+  assert.deepEqual(told("export type A = `import { a } from 'b'`;\n"), [], 'a type that spells a load, loading nothing')
 })
 
 test('what runs is worked out only while there is time left for it, once every pair is stamped, none of whose stamps it costs', async () => {
