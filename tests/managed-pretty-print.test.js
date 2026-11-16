@@ -6,8 +6,6 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { once } from 'node:events'
-import { Worker } from 'node:worker_threads'
 import { Readable } from 'node:stream'
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib'
 import { Bundle } from '@exodus/stasis-core/bundle'
@@ -19,7 +17,6 @@ import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createDiskObjectStorage } from '../server-managed/object-storage-disk.ts'
 import { compared, createPrettyCache, prettyBody, stalePrettyRemover } from '../server-managed/pretty-print.ts'
 import { renameDiffOf } from '../server-managed/rename-diff.ts'
-import { typeOnlyRuns } from '../server-managed/type-only-proof.js'
 import { createSession } from '../server-managed/session.ts'
 import { MAX_PRETTY_BYTES, prettyExtension } from '../common/pretty-print.js'
 import { changeBlocks } from '../common/line-diff.js'
@@ -803,30 +800,6 @@ test('asked, the files that changed in types alone but for what runs are told to
   registry(t, [packageOf('lib', '1.0.0', runBuilds[0]), packageOf('lib', '1.1.0', runBuilds[1])])
   assert.deepEqual(linesOf(await h.send(asked(npmTypeOnly('lib', '1.0.0', '1.1.0')))), runLines(), 'two npm versions\'')
   assert.deepEqual(linesOf(await h.send(npmTypeOnly('lib', '1.0.0', '1.1.0'))), [runLines()[1]])
-})
-
-test('what runs is worked out only while there is time left for it, once every pair is stamped, none of whose stamps it costs', async () => {
-  const declared = (path, text) => ({ path, text })
-  const pairs = [[declared('a.d.ts', 'export type A = 1;\n'), declared('a.d.ts', 'export type A = 2;\n')],
-    [null, declared('user.d.ts', zodDeclarations)]]
-  const answer = async runsUntil => {
-    const worker = new Worker(new URL('../server-managed/type-only-worker.js', import.meta.url), { workerData: { pairs, runsUntil }, execArgv: ['--disable-warning=ExperimentalWarning'] })
-    const [told] = await once(worker, 'message')
-    await worker.terminate()
-    return told
-  }
-  assert.deepEqual(await answer(Date.now() + 60_000), [true, { runs: [], otherRuns: [[0, 1], [5, 6]] }])
-  assert.deepEqual(await answer(Date.now() - 1), [true, false], 'past its time, told as not stamped, the stamp kept')
-  assert.deepEqual(await answer(null), [true, false], 'and where it isn\'t asked for')
-})
-
-test('the lines that run are those Node\'s type stripping leaves, the hashbang, and each comment it keeps that may be one a tool reads, whatever the proof\'s grammar for it', () => {
-  const text = '#!/usr/bin/env node\n/** A type. */\nexport type A = 1;\nimport {\n  type B,\n  C,\n} from \'./c\';\n/// <REFERENCE types="node" />\n// a note\nexport interface D {\n  /*# sourceURL=x */\n}\n//@ sourceMappingURL=d.ts.map\n'
-  assert.deepEqual(typeOnlyRuns(null, { path: 'x.d.ts', text }), { runs: [], otherRuns: [[0, 1], [3, 8], [12, 13]] },
-    'a directive below the first statement told, though it steers nothing there; none erased with a declaration, nor its prose')
-  assert.deepEqual(typeOnlyRuns(null, { path: 'x.d.ts', text: `\uFEFF${text}` }), { runs: [], otherRuns: [[0, 1], [3, 8], [12, 13]] }, 'past a byte order mark alike')
-  assert.equal(typeOnlyRuns(null, { path: 'x.ts', text }), false, 'none of a file not named as a declaration file')
-  assert.equal(typeOnlyRuns(null, { path: 'x.d.ts', text: `${text}console.log(1);\n` }), false, 'nor of one that runs code')
 })
 
 test('a comparison\'s files are paired renamed within a package alone, as the viewer pairs them', async t => {

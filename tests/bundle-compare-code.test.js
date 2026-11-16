@@ -2763,13 +2763,16 @@ test('a declaration file that changed in types alone but for what runs shows, it
   const { prefs } = await import('../ui/view/bundle-compare-code.js')
   t.after(() => { element._setTypes(false); prefs.layout = 'unified' })
   // Added, as a zod schema's; an import added beside its types changing; one
-  // too large for the tree to count, likewise; and one whose types are as
-  // they were, an import added alone.
+  // too large for the tree to count, likewise; a type-only import given an
+  // inline type specifier, which loads its module, and one taken the other
+  // way; and one whose types are as they were, an import added alone.
   const [big, bigger] = largeSides(i => `export declare const v${i}: ${typeof i === 'string' ? 'string' : 'number'};\n`)
   const files = [{ 'types/api.d.ts': 'import { z } from \'zod\';\nexport declare const A: z.ZodString;\n', 'types/index.d.ts': 'export * from \'./a\';\nexport type X = 1;\n',
-    'types/big.d.ts': `import { z } from 'zod';\n${big}` },
+    'types/big.d.ts': `import { z } from 'zod';\n${big}`, 'types/load.d.ts': 'import type { A } from \'./a\';\nexport declare const x: A;\n',
+    'types/unload.d.ts': 'import { type A } from \'./a\';\nexport declare const x: A;\n' },
   { 'types/user.d.ts': zodDeclarations, 'types/api.d.ts': 'import { z } from \'zod\';\nimport { B } from \'./b\';\nexport declare const A: z.ZodNumber;\nexport declare const C: B;\n',
-    'types/index.d.ts': 'export * from \'./a\';\nexport * from \'./b\';\nexport type X = 1;\n', 'types/big.d.ts': `import { z } from 'zod';\nimport { y } from 'y';\n${bigger}` }]
+    'types/index.d.ts': 'export * from \'./a\';\nexport * from \'./b\';\nexport type X = 1;\n', 'types/big.d.ts': `import { z } from 'zod';\nimport { y } from 'y';\n${bigger}`,
+    'types/load.d.ts': 'import { type A } from \'./a\';\nexport declare const x: A | null;\n', 'types/unload.d.ts': 'import type { A } from \'./a\';\nexport declare const x: A | null;\n' }]
   const element = view('types/user.d.ts', files)
   element.base.managedId = 'b91'
   element.other.managedId = 'b92'
@@ -2778,9 +2781,9 @@ test('a declaration file that changed in types alone but for what runs shows, it
   assert.match(shown, /UserSchema: z\.ZodObject/u, 'its types shown till it is pressed')
   element._setTypes(true)
   const added = renderText(element.render())
-  // Its rows: each line drawn, `[kind, number, code]`, and each run of types set aside, `['types', what it says]`.
-  const rows = markup => [...markup.matchAll(/<div class="diff-row diff-types" role="row">\s*<span>([^<]*)<\/span>|<div class=(?:"|)diff-row ([^"]*?)(?:"|) role="row"[^]*?(?:<span class="diff-num">(\d*)<\/span>)?<span class="diff-sign">.<\/span><span class=(?:"|)diff-code[^>]*>([^<]*)<\/span>/gu)]
-    .map(([, types, kind, number, code]) => (types ? ['types', types] : [kind.trim(), number, code]))
+  // Its rows, unified: each line drawn, `[kind, number, code]`, its new side's number, else its old side's, and each run of types set aside, `['types', what it says]`.
+  const rows = markup => [...markup.matchAll(/<div class="diff-row diff-types" role="row">\s*<span>([^<]*)<\/span>|<div class=(?:"|)diff-row ([^"]*?)(?:"|) role="row"[^]*?<span class="diff-num">(\d*)<\/span><span class="diff-num">(\d*)<\/span><span class="diff-sign">.<\/span><span class=(?:"|)diff-code[^>]*>([^<]*)<\/span>/gu)]
+    .map(([, types, kind, old, number, code]) => (types ? ['types', types] : [kind.trim(), number || old, code]))
   assert.deepEqual(rows(added), [['add', '1', "import { z } from 'zod';"], ['types', 'Only types here · lines 2–12'], ['add', '13', '//# sourceMappingURL=user.d.ts.map']],
     'its import and pragma as added, numbered as in the file, its types a row saying so')
   assert.match(added, /Only types here · lines 2–12<\/span>\s*<button type="button" class="bundle-compare-code-action" @click=>Show type-only changes<\/button>/u, 'and how to show them')
@@ -2799,6 +2802,12 @@ test('a declaration file that changed in types alone but for what runs shows, it
   const large = renderText(element.render())
   assert.deepEqual(rows(large), [['ctx', '1', "import { z } from 'zod';"], ['add', '2', "import { y } from 'y';"], ['types', 'Only types here · lines 3–12002']], 'drawn at once, however large')
   assert.match(rowCounts(large)['types/big.d.ts'], /data-tooltip=With Hide type-only changes>[^]*class=add>\+1<\/span>/u, 'and counted in the tree, too large to count as published, as it drew')
+  element.path = 'types/load.d.ts'
+  const load = renderText(element.render())
+  assert.deepEqual(rows(load), [['add', '1', "import { type A } from './a';"], ['types', 'Only types here · line 2']], 'an inline type specifier loads its module: shown')
+  assert.doesNotMatch(load, /import type \{ A \}/u, 'the type-only import it was, which loaded nothing, among types')
+  element.path = 'types/unload.d.ts'
+  assert.deepEqual(rows(renderText(element.render())), [['del', '1', "import { type A } from './a';"], ['types', 'Only types here · lines 1–2']], 'and its load gone, shown')
   element.path = 'types/index.d.ts'
   const index = renderText(element.render())
   assert.doesNotMatch(index, /Only types here/u, 'nothing set aside where its types are as they were')
