@@ -118,6 +118,12 @@ function projectClient(files) {
       assert.equal(repo, 'org/repo'); assert.equal(ref, commit)
       return Object.hasOwn(files, path) ? Promise.resolve(files[path]) : Promise.reject(new Error(`no ${path} in the fixture`))
     },
+    // The commit the default branch's head, the repo's own, as Stasis holds a
+    // commit given by its sha to the repo's history.
+    getRepoHead({ repo }) {
+      assert.equal(repo, 'org/repo')
+      return Promise.resolve({ oid: commit, branch: 'main' })
+    },
     // Soldeer's git dependencies are fetched by their commit's tree, and
     // follow a moved repository; the fixture has none.
     getCommitTree({ repo }) {
@@ -276,6 +282,8 @@ test('missing, ambiguous and named-but-missing lockfiles are reported as the loc
     ['buildVfsBundle: stasis.config.json\'s entries name index.js but not main.js: bundle either the entries it names or others, not both', 'config-mixed'],
     ['buildVfsBundle: stasis.config.json is not valid JSON', 'config-invalid'],
     ['buildVfsBundle: stasis.config.json: entries "index.js": unknown option "x"', 'config-invalid'],
+    [`buildGitHubBundle: ${commit} is in the history of no branch or tag of org/repo (a fork's, say, which GitHub serves through its name too): give a commit of its own`, 'commit-not-own'],
+    [`buildGitHubBundle: ${commit} is at no tag or branch head of org/repo nor in its default branch's history, and 20 of its 120 other branches were left uncompared (100 compared at most): give --sha= a commit of its default branch or at a tag`, 'commit-not-own'],
     ['buildVfsBundle: stasis.config.json: lock can only be \'frozen\' (got "none")', 'config-invalid'],
     ['stasis.config.json\'s lockfiles names nope/package-lock.json, which is no file in /', 'config-invalid'],
     ['buildVfsBundle: stasis.config.json: disallowedPaths refuses value.ts ("value.ts")', 'config-policy'],
@@ -456,4 +464,20 @@ test('real Stasis’s build notes the directory it builds from and each tree it 
   const notes = await noted(workspace)
   assert.deepEqual(notes.map(([event, { tree }]) => [event, tree]), [['project', undefined], ['download', 'repo']], 'a workspace’s, the whole repo')
   assert.ok(notes[1][1].bytes > 0)
+})
+
+
+test('real Stasis holds the commit to the repo’s own history: a fork’s, which GitHub serves through the repo’s name too, is refused', async () => {
+  const other = 'b'.repeat(40)
+  const forked = { ...projectClient(files),
+    getRepoHead: () => Promise.resolve({ oid: other, branch: 'main' }),
+    compareCommits: () => Promise.resolve({ status: 'diverged', aheadBy: 1, behindBy: 1, mergeBase: other }),
+    listRepoTags: () => Promise.resolve([]),
+    listRepoBranches: () => Promise.resolve([{ branch: 'main', oid: other }]) }
+  const error = await buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, forked).then(() => null, failure => failure)
+  assert.ok(error, 'refused')
+  assert.equal(buildErrorCode(error, error.message), 'commit-not-own')
+  const behind = { ...forked, compareCommits: ({ base, head }) => Promise.resolve(base === commit && head === 'main' ? { status: 'ahead', aheadBy: 1, behindBy: 0, mergeBase: commit } : { status: 'diverged' }) }
+  const built = await buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, behind)
+  assert.ok(built.bytes.length > 0, 'one in its default branch’s history builds')
 })

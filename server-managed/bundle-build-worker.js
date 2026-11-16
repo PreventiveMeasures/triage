@@ -179,7 +179,10 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
 // the config's or an entry's, is the policy's; one it can't read, build with
 // its options, or lay out the lockfiles it names of, is the config's. A build
 // the repository's stasis.lock.json disagrees with, or that its lock mode
-// holds to one that isn't there, is the stasis.lock.json's.
+// holds to one that isn't there, is the stasis.lock.json's. A commit Stasis
+// finds in the history of none of the repo's branches or tags (a fork's,
+// which GitHub serves through the repo's name too), or can't tell of past its
+// branches compared, isn't the repo's own.
 export function buildErrorCode(error, message) {
   if (['build-scope', 'too-large', 'bad-conditions', 'config-invalid', 'config-mixed', 'config-conditions'].includes(message)) return message
   if (error instanceof HttpError) return error.status === 429 ? 'github-rate-limited' : 'github-build-failed'
@@ -188,6 +191,7 @@ export function buildErrorCode(error, message) {
   if (/\bstasis\.config\.json(?:: entries .*?)?: (?:allowed|disallowed)(?:Paths|Modules) (?:refuses|does not allow|allows none of) /u.test(message)) return 'config-policy'
   if (/\bstasis\.config\.json(?: is not valid JSON|: |'s lockfiles )/u.test(message)) return 'config-invalid'
   if (/\bstasis\.lock\.json(?::| isn't there,| \(lock = )/u.test(message)) return 'stasis-lock'
+  if (/ is in the history of no branch or tag of | is at no tag or branch head of .+ nor in its default branch's history/u.test(message)) return 'commit-not-own'
   return /no packageManager given|lockfile installs|no (?:pnpm-lock\.yaml|yarn\.lock|package-lock\.json|soldeer\.lock) found in /u.test(message) ? 'build-lockfile' : 'build-failed'
 }
 
