@@ -62,7 +62,7 @@ export function markedCounts(blocks, marks) {
 }
 
 // A file that changed in types alone but for what runs, as the server proves
-// it (type-only.js typeRuns: its module loads, and the like), with its types
+// it (type-only.js typeProof: its module loads, and the like), with its types
 // set aside: `before` and `after` the texts of each side's lines that hold
 // what runs (`runs`, `otherRuns`, `[from, to)` each), to be diffed in place of
 // the files'; `lineOf`, by side, each of their lines' line in its file, and

@@ -5,7 +5,7 @@ import { computeFileHash } from '@preventive/report'
 import { renamedDiffs } from '@preventive/compare/names.js'
 import { needsPrettyPrint } from '../common/pretty-print.js'
 import { toldVersion } from './_npm-risk.js'
-import { typeOnlyProof } from '../server-managed/type-only-proof.js'
+import { typeOnlyRuns, typeOnlyStamped } from '../server-managed/type-only-proof.js'
 
 const state = {}
 mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
@@ -105,7 +105,8 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
       const [before, after] = [path && olds.get(path), otherPath && news.get(otherPath)]
       if (![before, after].every(text => text === null || typeof text === 'string')) continue
       const file = (name, text) => (name === null ? null : { path: name, text })
-      const proven = typeOnlyProof(file(path, before), file(otherPath, after), true)
+      const sides = [file(path, before), file(otherPath, after)]
+      const proven = typeOnlyStamped(...sides) || typeOnlyRuns(...sides)
       if (!proven) continue
       const hash = text => (text === null ? null : computeFileHash(text))
       await onLine({ path, hash: await hash(before), otherPath, otherHash: await hash(after), ...proven !== true && proven })

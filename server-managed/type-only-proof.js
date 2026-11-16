@@ -1,25 +1,26 @@
 // Whether a pair of a comparison's files changed in types alone (type-only.ts),
-// as @preventive/compare's compareTrees stamps a change `typeOnly`, told in a
-// worker (type-only-worker.js): each a file a side, `{ path, text }`, a side
-// not there null, its path as it is, which says what a file is. Two paths pair
-// as one change wherever compareTrees takes them for a rename at all; where it
-// doesn't, the pair is types only where each of its two changes is: the file
-// gone erasing whole, and the one come erasing whole or leaving a single bare
-// `export {}`, which nothing loaded before.
+// told in a worker (type-only-worker.js): each a file a side, `{ path, text }`,
+// a side not there null, its path as it is, which says what a file is.
 //
-// One it doesn't stamp, `runs` asked for, may still hold types alone but for
-// what runs on each side: each side there a declaration file that
-// proveTypeOnly proves, its runtime what changed -- a module load added, gone
-// or another, or a file added or removed that loads one, as a zod schema's
-// declarations do. Told then are the lines that hold what runs on each side
-// (`runs` the base's, `otherRuns` the other's, none for a side not there), for
-// the viewer to diff those alone with the rest folded as types. What runs is
-// what the proof takes into its runtime: the hashbang, each statement Node's
+// typeOnlyStamped: as @preventive/compare's compareTrees stamps a change
+// `typeOnly`. Two paths pair as one change wherever compareTrees takes them
+// for a rename at all; where it doesn't, the pair is types only where each of
+// its two changes is: the file gone erasing whole, and the one come erasing
+// whole or leaving a single bare `export {}`, which nothing loaded before.
+//
+// typeOnlyRuns: one it doesn't stamp may still hold types alone but for what
+// runs on each side, each side there a declaration file proveTypeOnly proves,
+// its runtime what changed: a module load added, gone or another, or a file
+// added or removed that loads one, as a zod schema's declarations do. Told
+// then are the lines that hold what runs on each side (`runs` the base's,
+// `otherRuns` the other's, none for a side not there), for the viewer to diff
+// those alone with its types set aside: the hashbang, each statement Node's
 // type stripping leaves to run (a module load, `export {}`, `export default`
-// of a name), and the comments it keeps that a tool reads, a triple-slash
-// directive leading the file and a source map or source URL pragma. A line
-// holding any of it is told whole; a range is `[from, to)` of lines counted
-// from zero, as the viewer splits a text at `\n`.
+// of a name), and each comment it keeps that may be one a tool reads (a
+// triple-slash directive, a source map or source URL pragma), told wide of
+// the proof's own grammar for them, so none it reads is ever set aside. A
+// line holding any of it is told whole; a range is `[from, to)` of lines
+// counted from zero, as the viewer splits a text at `\n`.
 import { stripTypeScriptTypes } from 'node:module'
 import { compareTrees, proveTypeOnly } from '@preventive/compare'
 import { parseSync } from 'oxc-parser'
@@ -27,30 +28,35 @@ import { parseSync } from 'oxc-parser'
 // A declaration file as compareTrees takes one: `.d.ts`, `.d.mts`, `.d.cts`,
 // and `.d.css.ts` for a `.css` file's.
 const DECLARATION = /\.d\.(?:[^./]+\.)?[cm]?ts$/u
-// The comments proveTypeOnly takes into a runtime, as it reads them: a
-// directive steers only before the first statement; a pragma anywhere.
-const DIRECTIVE = /^\/\/\/\s*<(?:reference|amd-module|amd-dependency)\s/iu
-const PRAGMA = /^\/[/*][#@]\s+source(?:Mapping)?URL=\s*\S/u
+// A comment that may be a directive (`/// <reference .../>`) or a pragma
+// (`//# sourceMappingURL=`, and its legacy `//@` and block forms).
+const STEERING = /^\/(?:\/\/|[/*][#@])/u
 const BLANK = /^\s*$/u
 
 const tree = file => (file ? [{ name: file.path, data: file.text }] : [])
 
+export function typeOnlyStamped(from, to) {
+  const changes = compareTrees(tree(from), tree(to), { paths: 'keys', lines: false, renames: Number.MIN_VALUE })
+  return changes.length > 0 && changes.every(change => change.typeOnly === true)
+}
+
 // The lines of a text proven to hold types alone but for what runs that hold
 // any of that, as merged ranges. Stripping blanks what it erases in place,
 // each character to a blank, so a statement it leaves blank is erased and one
-// it leaves anything of runs, as the proof found; what it reads starts past a
-// byte order mark, and so do the offsets in its tree.
+// it leaves anything of runs, as the proof found, and a comment it leaves is
+// kept; what it reads starts past a byte order mark, and so do the offsets in
+// its tree.
 function runLines(text) {
   const shift = text.startsWith('﻿') ? 1 : 0
   const body = text.slice(shift)
   const code = stripTypeScriptTypes(body, { mode: 'strip' })
   const { program, comments } = parseSync('file.ts', body, { lang: 'ts', sourceType: 'module' })
-  const prologue = program.body[0]?.start ?? body.length
   const kept = ({ start, end }) => code.slice(start, end)
   const spans = [...program.hashbang ? [program.hashbang] : [], ...program.body.filter(statement => !BLANK.test(kept(statement))),
-    ...comments.filter(comment => (DIRECTIVE.test(kept(comment)) && comment.start < prologue) || PRAGMA.test(kept(comment)))]
+    ...comments.filter(comment => STEERING.test(kept(comment)))]
   const starts = [0]
   for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) starts.push(at + 1)
+  // The line an offset of the text is on: the last whose start is at most it.
   const lineAt = offset => {
     let high = starts.length - 1, low = 0
     while (low < high) {
@@ -70,19 +76,16 @@ function runLines(text) {
   return ranges
 }
 
-// `true` where the pair changed in types alone; with `runs`, `{ runs,
-// otherRuns }` where it holds types alone but for what runs on each side, as
-// above, some of it there; else `false`. None where the proof throws, as no
-// check should.
-export function typeOnlyProof(from, to, runs = false) {
-  const changes = compareTrees(tree(from), tree(to), { paths: 'keys', lines: false, renames: Number.MIN_VALUE })
-  if (changes.length > 0 && changes.every(change => change.typeOnly === true)) return true
+// `{ runs, otherRuns }` where each side there is a declaration file proven to
+// hold types alone but for what runs, some of it there; else false, and where
+// the proof throws, as no check should. Asked of a pair not stamped.
+export function typeOnlyRuns(from, to) {
   const sides = [from, to].filter(file => file !== null)
-  if (!runs || sides.length === 0 || !sides.every(file => DECLARATION.test(file.path))) return false
+  if (sides.length === 0 || !sides.every(file => DECLARATION.test(file.path))) return false
   try {
     if (!sides.every(file => proveTypeOnly(file.text).proven)) return false
     const [base, other] = [from, to].map(file => (file ? runLines(file.text) : []))
-    return base.length + other.length > 0 ? { runs: base, otherRuns: other } : false
+    return base.length + other.length > 0 && { runs: base, otherRuns: other }
   } catch {
     return false
   }

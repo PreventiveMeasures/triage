@@ -671,6 +671,48 @@ describe('Code view model', () => {
     assert.equal(typeFolds('export * from "a"\n', 'export * from "a"\nexport * from "b"\n', { runs: [[0, 1]], otherRuns: [[0, 2]] }), null, 'nor where it holds no types')
   })
 
+  test('a file\'s rows, its types set aside, hold each of its lines on either side once, in order, as a line drawn or among types', () => {
+    // A seeded pick, so a failure is the same each run.
+    let seed = 7
+    const pick = n => { seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31; return seed % n }
+    // A file of up to 11 lines, each a load (what runs) or a type, and its runs.
+    const file = () => {
+      const runs = [], texts = []
+      for (let i = 0, n = pick(12); i < n; i++) {
+        const loads = pick(3) === 0
+        if (loads && runs.at(-1)?.[1] === texts.length) runs.at(-1)[1]++
+        else if (loads) runs.push([texts.length, texts.length + 1])
+        texts.push(loads ? `import x${pick(4)}` : `type T = ${pick(4)}`)
+      }
+      return { text: texts.map(line => `${line}\n`).join(''), runs, count: texts.length }
+    }
+    const span = range => (range ? Array.from({ length: range.to - range.from }, (_, i) => range.from + i) : [])
+    const upTo = count => Array.from({ length: count }, (_, i) => i)
+    // Each side's lines its rows hold, in order: those drawn, by their line in its file, and those among types.
+    const held = (rows, { lineOf }) => {
+      const seen = { a: [], b: [] }
+      for (const row of rows) {
+        assert.notEqual(row.kind, 'fold', 'no line folded')
+        const [left, right] = row.kind === 'types' ? [null, null] : row.kind === 'change' ? [row.left, row.right] : [row.a, row.b]
+        seen.a.push(...row.kind === 'types' ? span(row.a) : left == null ? [] : [lineOf.a[left]])
+        seen.b.push(...row.kind === 'types' ? span(row.b) : right == null ? [] : [lineOf.b[right]])
+      }
+      return seen
+    }
+    let checked = 0
+    for (let round = 0; round < 400; round++) {
+      const [a, b] = [file(), file()]
+      const folds = typeFolds(a.text, b.text, { runs: a.runs, otherRuns: b.runs })
+      if (!folds) continue
+      const model = Object.assign(lineDiff(folds.before, folds.after, { ignoreWhitespace: pick(2) === 0 }), { typeFolds: folds })
+      for (const split of [false, true]) {
+        assert.deepEqual(held(diffRows(model, new Map(), { split }), folds), { a: upTo(a.count), b: upTo(b.count) }, `${JSON.stringify([a.text, b.text])}, ${split ? 'split' : 'unified'}`)
+      }
+      checked++
+    }
+    assert.ok(checked > 100, `${checked} pairs set aside`)
+  })
+
   test('added and removed files are one block of every line', () => {
     const added = lineDiff('', 'a\nb\n')
     assert.deepEqual(diffRows(added).map(row => [row.kind, row.b]), [['add', 0], ['add', 1]])

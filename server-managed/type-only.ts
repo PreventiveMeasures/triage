@@ -9,12 +9,13 @@
 // added one's empty or a single bare `export {}` (proveTypeOnly) -- and
 // nothing else. Asked with `runs=1`, those too that hold types alone but for
 // a runtime the change does not leave as it was, each with the lines holding
-// that runtime on either side (type-only-proof.js): a viewer that does not
-// ask takes every line for a change in types alone. Proven in a worker, off
-// the event loop, a comparison at a time per process, for at most a minute;
-// told a line each, `{ path, hash, otherPath, otherHash }`, a side not there
-// null, and `runs` and `otherRuns` where those are told, which the viewer
-// checks name the files it shows. Access is the caller's to check.
+// that runtime on either side (type-only-proof.js), as many as there is time
+// left for once every file is stamped: a viewer that does not ask takes every
+// line for a change in types alone. Proven in a worker, off the event loop, a
+// comparison at a time per process, for at most a minute; told a line each,
+// `{ path, hash, otherPath, otherHash }`, a side not there null, and `runs`
+// and `otherRuns` where those are told, which the viewer checks name the
+// files it shows. Access is the caller's to check.
 import { pathOrder } from './npm-packages.ts'
 import { type ComparedSide, PrettyError, type PrettyRequest } from './pretty-print.ts'
 import { comparedFiles } from './rename-diff.ts'
@@ -28,6 +29,9 @@ const TYPESCRIPT = new Set(['ts', 'mts', 'cts'])
 const MAX_ACTIVE_PROOFS = 1
 const MAX_WAITING_PROOFS = 16
 const PROOF_TIMEOUT_MS = 60_000
+// What runs is worked out only while this much of that is left: past the
+// longest one file of the largest the pretty-print cache holds may take.
+const RUNS_MARGIN_MS = 15_000
 
 type File = PrettyRequest & { text: string }
 // A range of lines, `[from, to)`, counted from zero.
@@ -44,14 +48,15 @@ const workers = workerTurns({ what: 'type-only proof', active: MAX_ACTIVE_PROOFS
 const ranges = (told: unknown): told is Lines[] => Array.isArray(told)
   && told.every(range => Array.isArray(range) && range.length === 2 && range.every(Number.isSafeInteger) && range[0] >= 0 && range[0] < range[1])
 const proof = (told: unknown): told is Proof => typeof told === 'boolean'
-  || (typeof told === 'object' && told !== null && ranges((told as { runs?: unknown }).runs) && ranges((told as { otherRuns?: unknown }).otherRuns))
+  || (typeof told === 'object' && told !== null && 'runs' in told && 'otherRuns' in told && ranges(told.runs) && ranges(told.otherRuns))
 
 // Which of `pairs` compareTrees stamps types only, by index, and with `runs`
-// which hold types alone but for what runs, with its lines, in a worker
-// settled once it is gone; none where it fails, as no proof should.
+// which hold types alone but for what runs, with its lines, as many as there
+// is time for, in a worker settled once it is gone; none where it fails, as
+// no proof should.
 function proven(pairs: Array<[File | null, File | null]>, runs: boolean, deadline: number): Promise<Proof[]> {
   return workers.run(new URL('./type-only-worker.js', import.meta.url), {
-    workerData: { pairs: pairs.map(sides => sides.map(file => file && { path: file.path, text: file.text })), runs },
+    workerData: { pairs: pairs.map(sides => sides.map(file => file && { path: file.path, text: file.text })), runsUntil: runs ? deadline - RUNS_MARGIN_MS : null },
     // Node's type stripping, which the proof holds oxc's tree to, warns it is experimental.
     execArgv: ['--disable-warning=ExperimentalWarning'], resourceLimits: { maxOldGenerationSizeMb: 1024 },
   }, (told): Proof[] | null => (Array.isArray(told) && told.length === pairs.length && told.every(proof) ? told : null), deadline)

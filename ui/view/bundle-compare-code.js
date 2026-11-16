@@ -49,7 +49,7 @@ import { packageJsonInstallScripts } from '../../risk/npm/install-scripts.js'
 import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.js'
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import './mode-switch.js'
-import { typeOnly, typeRuns } from './type-only.js'
+import { typeProof } from './type-only.js'
 import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
 import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
@@ -213,9 +213,15 @@ const highlightPending = new Set()
 // or `b`) and line, while its markup, marked words and end stay the same: a
 // diff drawn again marks no line again, as a long one takes a while to.
 const drawnCode = new WeakMap()
-// A file's types set aside (_typeFolds), by the server's proof of what runs
-// in it, with the texts they were set aside from.
+// A file's types set aside, its lines that run diffed alone (typeFolds), by
+// the server's proof of what runs in it (type-only.js typeProof), kept with
+// the texts they were set aside from: null where that hides no change.
 const foldsKept = new WeakMap()
+function foldsOf(runs, { before, after }) {
+  let kept = foldsKept.get(runs)
+  if (!(kept?.before === before && kept.after === after)) foldsKept.set(runs, kept = { before, after, folds: typeFolds(before, after, runs) })
+  return kept.folds
+}
 
 // A line's number in its file, as a diff draws it: of the file's lines it
 // shows, where its types are set aside (typeFolds).
@@ -1058,7 +1064,7 @@ export class BundleCompareCode extends LitElement {
     const drawn = this._drawnTotals.get(path)
     if (drawn?.settings === countSettings()) return drawn.counts.aside.length === 0 ? { published: drawn.counts, shown: null } : { published: null, shown: drawn.counts }
     const contents = prefs.ignoreTypes ? fileContents(this.base, this.other, path, entry) : null
-    const types = typeof contents?.before === 'string' && typeof contents.after === 'string' && typeOnly(this.base, this.other, path, entry, contents, this._repaint, this.scope)
+    const types = typeof contents?.before === 'string' && typeof contents.after === 'string' && typeProof(this.base, this.other, path, entry, contents, this._repaint, this.scope) === true
     return { published: null, shown: types ? { additions: 0, deletions: 0, renamed: 0, aside: [HIDE_TYPES] } : null }
   }
 
@@ -1106,18 +1112,19 @@ export class BundleCompareCode extends LitElement {
   // comparison's come (_renamesAlone). One that changed in types alone, as
   // the server proved (`types`, type-only.js), draws nothing where those
   // changes are hidden (`typesHidden`); one that changed in types alone but
-  // for what runs, its lines that run alone (`typesFolded`, _typeFolds).
+  // for what runs, its lines that run alone (`typesFolded`, foldsOf).
   _fileState(path, entry, counting = false) {
     const contents = fileContents(this.base, this.other, path, entry)
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
-    const types = textual && typeOnly(this.base, this.other, path, entry, contents, this._repaint, this.scope)
+    const proof = textual ? typeProof(this.base, this.other, path, entry, contents, this._repaint, this.scope) : undefined
+    const types = proof === true
     if (types && prefs.ignoreTypes) {
       const model = { a: [], b: [], blocks: [], additions: 0, deletions: 0, renamed: 0, marked: new Set(), noEol: { a: false, b: false }, words: new Map() }
       if (counting) return { pretty: null, hiding: false, model, spacesHidden: false, typesHidden: true }
       return this._noteDrawn(path, { ...contents, textual, large: false, printing: null, pretty: null, key: null, generated: false, renamed: false, warned: [], hiding: false, changes: null,
         model, whitespace: null, spacesHidden: false, types, typesHidden: true })
     }
-    const folds = textual && !types ? this._typeFolds(path, entry, contents) : null
+    const folds = proof && proof !== true ? foldsOf(proof, contents) : null
     const folded = !!folds && prefs.ignoreTypes
     // Its printed copies drawn where the toggle is on and printing changes
     // its diff (_printing); counted, not asked for where it is off.
@@ -1196,19 +1203,6 @@ export class BundleCompareCode extends LitElement {
     if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || (prefs.ignoreRenames && (changes?.status === 'loading' || changes?.status === 'error'))
     return this._noteDrawn(path, { ...folded ? contents : { before: shown, after }, textual, large, printing, pretty, key, generated, renamed, warned, hiding, changes, model,
       whitespace, spacesHidden: found.ignoreWhitespace, types: types || !!folds, typesFolded: folded })
-  }
-
-  // A file's types set aside, its lines that run diffed alone (typeFolds),
-  // where the server proved it changed in types alone but for what runs
-  // (typeRuns) and setting them aside hides a change: kept, by the proof,
-  // with the texts they were set aside from. Null for any other.
-  _typeFolds(path, entry, contents) {
-    const runs = typeRuns(this.base, this.other, path, entry, contents, this._repaint, this.scope)
-    if (!runs) return null
-    const { before, after } = contents
-    let kept = foldsKept.get(runs)
-    if (!(kept?.before === before && kept.after === after)) foldsKept.set(runs, kept = { before, after, folds: typeFolds(before, after, runs) })
-    return kept.folds
   }
 
   // Whether a file's whitespace may mean something on either side, so its

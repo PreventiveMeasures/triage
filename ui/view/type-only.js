@@ -91,12 +91,16 @@ async function load(key, comparison, base, other, scope) {
 }
 
 // What the server proved of a file of a comparison, `entry` as Compare lists
-// it and `contents` its two sides' texts: `true`, the lines holding what runs,
-// or nothing (undefined) till that came, and for a file other than TypeScript
-// on either side there, or a text other than its side's file. `notify` called
-// once it came. A comparison within a reason `scope` (bundle-comparison.js)
-// has those of the files it compares within it, apart from the whole bundles'.
-function proof(base, other, path, { kind, basePath = path }, { before, after }, notify, scope) {
+// it and `contents` its two sides' texts: `true` where it changed in types
+// alone; where it changed in types alone but for what runs, the lines holding
+// that on each side, `{ runs, otherRuns }`, each `[from, to)` of its side's
+// lines counted from zero, none for a side not there, the same object while
+// the proof is kept; else nothing (undefined), as till that came, and for a
+// file other than TypeScript on either side there, or a text other than its
+// side's file. `notify` called once it came. A comparison within a reason
+// `scope` (bundle-comparison.js) has those of the files it compares within
+// it, apart from the whole bundles'.
+export function typeProof(base, other, path, { kind, basePath = path }, { before, after }, notify, scope = '') {
   if (kind === 'repointed' || !renameDiffable(base, other)) return undefined
   const sides = [kind === 'added' ? null : basePath, kind === 'removed' ? null : path]
   if (!sides.every(file => file === null || TYPESCRIPT.has(prettyExtension(file)))) return undefined
@@ -112,17 +116,4 @@ function proof(base, other, path, { kind, basePath = path }, { before, after }, 
   evict()
   comparison.notify = notify
   return comparison.files.get(pairOf(...sides))
-}
-
-// Whether a file changed in types alone, as the server proved (proof): false
-// till that came.
-export const typeOnly = (base, other, path, entry, contents, notify, scope = '') => proof(base, other, path, entry, contents, notify, scope) === true
-
-// The lines that hold what runs on each side of a file that changed in types
-// alone but for those (proof), `{ runs, otherRuns }`, each `[from, to)` of its
-// side's lines counted from zero, none for a side not there; null till they
-// came, and for any other file. The same object while the proof is kept.
-export function typeRuns(base, other, path, entry, contents, notify, scope = '') {
-  const proven = proof(base, other, path, entry, contents, notify, scope)
-  return typeof proven === 'object' ? proven : null
 }
