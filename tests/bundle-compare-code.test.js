@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { computeFileHash } from '@preventive/report'
-import { compareTrees } from '@preventive/compare'
 import { renamedDiffs } from '@preventive/compare/names.js'
 import { needsPrettyPrint } from '../common/pretty-print.js'
 import { toldVersion } from './_npm-risk.js'
+import { typeOnlyProof } from '../server-managed/type-only-proof.js'
 
 const state = {}
 mock.module('../client/index.js', { namedExports: { state, BUNDLE_SOURCE_WRAP_KEY: 'wrap' } })
@@ -23,8 +23,9 @@ mock.module('../ui/view/bundle-code-splitter.js', { namedExports: {} })
 // for noted (`renameStreams`).
 const comparisons = [], pretty = new Map(), renameDiffs = [], renameStreams = [], unsent = new Set(), viewed = new Set()
 // Each comparison's proofs of files changed in types alone asked for, as the
-// server proves them (@preventive/compare's compareTrees `typeOnly`), of the
-// view's bundles' files paired as the view pairs them.
+// server proves them (type-only-proof.js: @preventive/compare's compareTrees
+// `typeOnly`), and of those in types alone but for what runs, with its lines,
+// of the view's bundles' files paired as the view pairs them.
 const typeProofs = []
 // The rename diffs the mock server is working out at once, and the most so far;
 // `held`, while set, a promise each waits for before it answers.
@@ -103,11 +104,11 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
     for (const [path, otherPath] of pairs) {
       const [before, after] = [path && olds.get(path), otherPath && news.get(otherPath)]
       if (![before, after].every(text => text === null || typeof text === 'string')) continue
-      const tree = (name, text) => (name === null ? [] : [{ name, data: text }])
-      const changes = compareTrees(tree(path, before), tree(otherPath, after), { paths: 'keys', lines: false, renames: Number.MIN_VALUE })
-      if (changes.length === 0 || !changes.every(change => change.typeOnly)) continue
+      const file = (name, text) => (name === null ? null : { path: name, text })
+      const proven = typeOnlyProof(file(path, before), file(otherPath, after), true)
+      if (!proven) continue
       const hash = text => (text === null ? null : computeFileHash(text))
-      await onLine({ path, hash: await hash(before), otherPath, otherHash: await hash(after) })
+      await onLine({ path, hash: await hash(before), otherPath, otherHash: await hash(after), ...proven !== true && proven })
     }
   },
   fetchNpmTypeOnly() {},
@@ -2738,6 +2739,70 @@ test('changes in types alone, as the server proves them, are hidden where asked:
   element.path = 'types/run.d.ts'
   assert.match(renderText(element.render()), /class=diff-row add/u, 'and drawn')
   assert.equal(typeProofs.length - proofs, 1, 'asked for once, for the comparison')
+})
+
+// A zod schema's declarations, as tsc emits them: its import of zod, its
+// types, and its source map pragma.
+const zodDeclarations = `import { z } from 'zod';
+export declare const UserSchema: z.ZodObject<{
+    id: z.ZodString;
+    name: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    id: string;
+    name: string;
+}, {
+    id: string;
+    name: string;
+}>;
+export type User = z.infer<typeof UserSchema>;
+//# sourceMappingURL=user.d.ts.map
+`
+
+test('a declaration file that changed in types alone but for what runs shows, its type-only changes hidden, its imports alone, its types folded', async t => {
+  const { prefs } = await import('../ui/view/bundle-compare-code.js')
+  t.after(() => { element._setTypes(false); prefs.layout = 'unified' })
+  // Added, as a zod schema's; an import added beside its types changing; one
+  // too large for the tree to count, likewise; and one whose types are as
+  // they were, an import added alone.
+  const [big, bigger] = largeSides(i => `export declare const v${i}: ${typeof i === 'string' ? 'string' : 'number'};\n`)
+  const files = [{ 'types/api.d.ts': 'import { z } from \'zod\';\nexport declare const A: z.ZodString;\n', 'types/index.d.ts': 'export * from \'./a\';\nexport type X = 1;\n',
+    'types/big.d.ts': `import { z } from 'zod';\n${big}` },
+  { 'types/user.d.ts': zodDeclarations, 'types/api.d.ts': 'import { z } from \'zod\';\nimport { B } from \'./b\';\nexport declare const A: z.ZodNumber;\nexport declare const C: B;\n',
+    'types/index.d.ts': 'export * from \'./a\';\nexport * from \'./b\';\nexport type X = 1;\n', 'types/big.d.ts': `import { z } from 'zod';\nimport { y } from 'y';\n${bigger}` }]
+  const element = view('types/user.d.ts', files)
+  element.base.managedId = 'b91'
+  element.other.managedId = 'b92'
+  const shown = await paintUntil(element, markup => /accessible-label=Hide type-only changes/u.test(markup))
+  assert.match(shown, /\.checked=false accessible-label=Hide type-only changes/u, 'offered, once the server proved it')
+  assert.match(shown, /UserSchema: z\.ZodObject/u, 'its types shown till it is pressed')
+  element._setTypes(true)
+  const added = renderText(element.render())
+  const rows = markup => [...markup.matchAll(/<div class=(?:"|)diff-row ([^"]*?)(?:"|) role="row"[^]*?(?:<span class="diff-num">(\d*)<\/span>)?<span class="diff-sign">.<\/span><span class=(?:"|)diff-code[^>]*>([^<]*)<\/span>/gu)]
+    .map(([, kind, number, code]) => [kind.trim(), number, code])
+  assert.deepEqual(rows(added), [['add', '1', "import { z } from 'zod';"], ['add types', '', '11 type-only lines · 2–12'], ['add', '13', '//# sourceMappingURL=user.d.ts.map']],
+    'its import and pragma as added, numbered as in the file, its types one line saying so')
+  assert.match(added, /Only its imports and what else runs are shown: the rest of this file is types alone\./u)
+  assert.match(/<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(added)[1], /<span class="add">\+2<\/span><span class="del">−0<\/span>/u, 'the lines that run counted in its head')
+  assert.match(added, /\.checked=true accessible-label=Hide type-only changes/u, 'still there to turn off')
+  const counts = rowCounts(added)
+  assert.match(counts['types/user.d.ts'], /data-tooltip=With Hide type-only changes As published: \+13 −0>[^]*class=add>\+2<\/span>/u, 'counted in the tree as drawn')
+  assert.match(counts['types/api.d.ts'], /data-tooltip=With Hide type-only changes As published: \+3 −1>[^]*class=add>\+1<\/span>/u)
+  assert.match(counts['types/big.d.ts'], /data-tooltip=With Hide type-only changes>[^]*class=add>\+1<\/span>/u, 'one too large to count as published, as it would draw')
+  element.path = 'types/api.d.ts'
+  assert.deepEqual(rows(renderText(element.render())), [['ctx', '1', "import { z } from 'zod';"], ['add', '2', "import { B } from './b';"], ['ctx types', '', '1 → 2 type-only lines · 3–4']],
+    'its types at one place on both sides, one line for both')
+  prefs.layout = 'split'
+  assert.match(renderText(element.render()), /<span class="diff-half"><span class="diff-num"><\/span><span class="diff-sign"> <\/span><span class="diff-code diff-types">1 type-only line · 2<\/span><\/span>\s*<span class="diff-half"><span class="diff-num"><\/span><span class="diff-sign"> <\/span><span class="diff-code diff-types">2 type-only lines · 3–4<\/span><\/span>/u,
+    'split, each side its own')
+  prefs.layout = 'unified'
+  element.path = 'types/big.d.ts'
+  assert.deepEqual(rows(renderText(element.render())), [['ctx', '1', "import { z } from 'zod';"], ['add', '2', "import { y } from 'y';"], ['ctx types', '', '12,000 type-only lines · 3–12002']],
+    'drawn at once, however large')
+  element.path = 'types/index.d.ts'
+  const index = renderText(element.render())
+  assert.doesNotMatch(index, /type-only lines|Only its imports/u, 'nothing folded where its types are as they were')
+  assert.match(index, /class=diff-row add role="row"[^]*?<span class="diff-num">2<\/span><span class="diff-sign">\+<\/span><span class=diff-code>export \* from '\.\/b';/u, 'its diff drawn whole')
+  assert.doesNotMatch(index, /accessible-label=Hide type-only changes/u, 'and not offered for it')
 })
 
 test('the Diff view offers to hide changes in types alone where any file it shows has them', async t => {

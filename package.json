@@ -234,6 +234,7 @@
     "server-managed/team-reports.ts",
     "server-managed/triage-response.ts",
     "server-managed/type-only.ts",
+    "server-managed/type-only-proof.js",
     "server-managed/type-only-worker.js",
     "server-managed/uploads.ts",
     "server-managed/view-as.ts",

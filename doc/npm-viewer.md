@@ -84,6 +84,8 @@ Compare's Files section lists every changed file; files that are not text compar
 In Code, the pretty-print toggle is offered wherever formatting changes the diff.
 For JavaScript minified on both sides, lines that differ only in names the minifier renamed are drawn faint and counted apart.
 **Hide renamed names** gives the old side the new side's names; where either side reads names (`.name`, `.toString`, `.stack`), a note warns that values may change.
+**Hide type-only changes** hides a declaration file's change where the server proves it touches types alone.
+Where the file's imports, or anything else it leaves to run, changed too (a zod schema's declarations added, an import added beside changed types), only those lines show, each run of types between them folded into one line that counts its lines.
 
 ## Risk
 

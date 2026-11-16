@@ -987,6 +987,16 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   padding: 0 .75rem;
   white-space: nowrap;
 }
+/* A line standing for a run of a file's types, the lines that run shown
+   alone: told as a fold is, kept where it was added or removed. */
+.diff-row.ctx.types { background: var(--diff-fold); }
+.diff-code.diff-types {
+  align-self: center;
+  color: var(--muted);
+  font-family: var(--font-ui, system-ui);
+  font-size: .7rem;
+  white-space: nowrap;
+}
 .bundle-compare-code-more {
   display: flex;
   align-items: center;

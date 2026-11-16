@@ -17,7 +17,7 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleCompareFiles, bundleCompareScopes, bundleCompareSideScopes } from '../ui/view/bundle-compare-inputs.js'
 import { prepareComparison } from '../ui/view/bundle-comparison-local.js'
 import { scanScopeOptions } from '../ui/scan/scopes.js'
-import { DIFF_CONTEXT, diffRows, fileLineCounts, lineDiff, markHighlighted, markSegments, textLines, whitespaceHidden, whitespaceInsensitive } from '../ui/view/bundle-compare-code-model.js'
+import { DIFF_CONTEXT, TYPES_LINE, diffRows, fileLineCounts, foldedLine, lineDiff, markHighlighted, markSegments, textLines, typeFoldCounts, typeFolds, whitespaceHidden, whitespaceInsensitive } from '../ui/view/bundle-compare-code-model.js'
 import { bundlePackageVersions } from '../ui/view/bundle-sources.js'
 import { bundleFileMeta, comparePackages, compareSemver, computeBundleDiff, computeVersionUpdates, versionDirection } from '../ui/view/bundle-compare-diff.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
@@ -646,6 +646,28 @@ describe('Code view model', () => {
     const folds = n => diffRows(edges(n)).filter(row => row.kind === 'fold').map(row => row.count)
     assert.deepEqual(folds(11), [], '9 lines between the changes: three on each side leave three, too few to fold')
     assert.deepEqual(folds(12), [4])
+  })
+
+  test('a declaration file\'s lines that run are diffed alone, each run of its types between them one line, the same on both sides, and counted apart', () => {
+    const before = 'import a\ntype A = 1\ntype B = 2\nimport b'
+    const after = 'import a\nimport c\ntype A = 3\ntype B = 2\ntype C = 4\nimport b\n//# sourceMappingURL=x\n'
+    const folds = typeFolds(before, after, { runs: [[0, 1], [3, 4]], otherRuns: [[0, 2], [5, 7]] })
+    assert.equal(folds.before, `import a\n${TYPES_LINE}\nimport b`, 'a last line with no newline after it left so')
+    assert.equal(folds.after, `import a\nimport c\n${TYPES_LINE}\nimport b\n//# sourceMappingURL=x\n`)
+    assert.deepEqual(folds.spans.b.map(({ from, to, types }) => [from, to, types]), [[0, 1, false], [1, 2, false], [2, 5, true], [5, 6, false], [6, 7, false]])
+    const model = lineDiff(folds.before, folds.after)
+    model.typeSpans = folds.spans
+    assert.deepEqual(diffRows(model).map(row => [row.kind, row.a, row.b]), [['ctx', 0, 0], ['add', undefined, 1], ['ctx', 1, 2], ['del', 2, undefined], ['add', undefined, 3], ['add', undefined, 4]],
+      'the types at one place pair as unchanged, a line no longer last changed for its newline, and no unchanged line folded')
+    assert.deepEqual(typeFoldCounts(model.blocks, folds.spans), { additions: 3, deletions: 1 })
+    assert.equal(foldedLine(folds.spans, 'b', 3), 2, 'a line of types shown on the one standing for it')
+    assert.equal(foldedLine(folds.spans, 'b', 6), 4)
+    const added = typeFolds('', 'import a\ntype A = 1\n', { runs: [], otherRuns: [[0, 1]] })
+    assert.deepEqual([added.before, added.after], ['', `import a\n${TYPES_LINE}\n`])
+    assert.deepEqual(typeFoldCounts(lineDiff(added.before, added.after).blocks, added.spans), { additions: 1, deletions: 0 }, 'its types no line added')
+    assert.equal(typeFolds('import a\ntype A = 1\n', 'import a\nimport b\ntype A = 1\n', { runs: [[0, 1]], otherRuns: [[0, 2]] }), null, 'none where its types are as they were')
+    assert.equal(typeFolds('import a\ntype A = 1\n', 'import a\ntype A = 2\n', { runs: [[0, 1]], otherRuns: [[0, 1]] }), null, 'nor where what runs is')
+    assert.equal(typeFolds('export * from "a"\n', 'export * from "a"\nexport * from "b"\n', { runs: [[0, 1]], otherRuns: [[0, 2]] }), null, 'nor where it holds no types')
   })
 
   test('added and removed files are one block of every line', () => {

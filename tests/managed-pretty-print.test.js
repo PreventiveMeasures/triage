@@ -765,6 +765,43 @@ test('the files that changed between two npm versions in types alone are told in
   assert.equal((await h.send(npmTypeOnly('lib', '1.0.0', '1.1.0'), null)).status, 401)
 })
 
+// Two builds' declaration files: one a zod schema's, added, its import of
+// zod and its source map pragma what runs; one an import added as its types
+// changed; one changed in types alone; one whose import alone changed, its
+// types as they were, told as the others are (the viewer, finding no type
+// changed, draws it whole); and, left out however asked, one that runs code
+// once changed.
+const zodDeclarations = "import { z } from 'zod';\nexport declare const UserSchema: z.ZodObject<{\n    id: z.ZodString;\n}>;\nexport type User = z.infer<typeof UserSchema>;\n//# sourceMappingURL=user.d.ts.map\n"
+const runBuilds = [
+  { 'types/api.d.ts': "import { z } from 'zod';\nexport declare const A: z.ZodString;\n", 'types/index.d.ts': 'export interface A { a: string }\n', 'types/run.d.ts': "import { z } from 'zod';\n",
+    'types/reexport.d.ts': "export * from './a';\nexport type X = 1;\n" },
+  { 'types/user.d.ts': zodDeclarations, 'types/api.d.ts': "import { z } from 'zod';\nimport {\n  type B,\n  C,\n} from './b';\nexport declare const A: z.ZodNumber;\n",
+    'types/index.d.ts': 'export interface A { a: number }\n', 'types/run.d.ts': "import { z } from 'zod';\nz.object({});\n", 'types/reexport.d.ts': "export * from './a';\nexport * from './b';\nexport type X = 1;\n" },
+]
+const runLines = () => {
+  const [olds, news] = runBuilds
+  const line = (path, otherPath, runs) => ({ path, hash: path && fileHash(olds[path]), otherPath, otherHash: otherPath && fileHash(news[otherPath]), ...runs })
+  return [line('types/api.d.ts', 'types/api.d.ts', { runs: [[0, 1]], otherRuns: [[0, 5]] }), line('types/index.d.ts', 'types/index.d.ts'),
+    line('types/reexport.d.ts', 'types/reexport.d.ts', { runs: [[0, 1]], otherRuns: [[0, 2]] }), line(null, 'types/user.d.ts', { runs: [], otherRuns: [[0, 1], [5, 6]] })]
+}
+
+test('asked, the files that changed in types alone but for what runs are told too, with the lines that hold it on either side; unasked, none of them', async t => {
+  const h = await setup(t)
+  const [base, other] = [await h.seed(runBuilds[0]), await h.seed(runBuilds[1])]
+  const asked = path => `${path}&runs=1`
+  assert.deepEqual(linesOf(await h.send(asked(bundleTypeOnly(base, other)))), runLines(),
+    'a load added as its types changed, a multi-line one told whole; a file added that loads one; none that runs code')
+  assert.deepEqual(linesOf(await h.send(bundleTypeOnly(base, other))), [runLines()[1]], 'unasked, those in types alone alone, as a viewer that does not ask takes every line for one')
+  const share = (await h.send(`/api/teams/${h.team}/share`, 'admin', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
+  const headers = { 'x-deepview-share': share.path.split('.').at(-1) }
+  assert.deepEqual(linesOf(await h.send(asked(bundleTypeOnly(base, other)), null, { headers })), runLines(), 'a public link\'s own bundles')
+  assert.deepEqual(linesOf(await h.send(bundleTypeOnly(base, other), null, { headers })), [runLines()[1]])
+  withToken(t)
+  registry(t, [packageOf('lib', '1.0.0', runBuilds[0]), packageOf('lib', '1.1.0', runBuilds[1])])
+  assert.deepEqual(linesOf(await h.send(asked(npmTypeOnly('lib', '1.0.0', '1.1.0')))), runLines(), 'two npm versions\'')
+  assert.deepEqual(linesOf(await h.send(npmTypeOnly('lib', '1.0.0', '1.1.0'))), [runLines()[1]])
+})
+
 test('a comparison\'s files are paired renamed within a package alone, as the viewer pairs them', async t => {
   const h = await setup(t)
   // A chunk renamed within its package, and one like it gone from one package and come in another.

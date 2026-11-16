@@ -571,15 +571,17 @@ export function fetchNpmRenameDiffs(name, version, otherVersion, onLine, { signa
 
 // The files that changed between two bundles, or two versions of a package,
 // in types alone, as the server proves them (@preventive/compare's
-// compareTrees `typeOnly`), in one request: `onLine` called with each, `{
-// path, hash, otherPath, otherHash }`, a side not there null; two bundles'
-// within a reason `scope` where given.
+// compareTrees `typeOnly`), and those in types alone but for what runs
+// (`runs=1`, server-managed/type-only-proof.js), in one request: `onLine`
+// called with each, `{ path, hash, otherPath, otherHash }`, a side not there
+// null, one of the latter with the lines holding what runs on either side,
+// `runs` and `otherRuns`; two bundles' within a reason `scope` where given.
 export function fetchBundleTypeOnly(id, other, onLine, { signal, scope = '' } = {}) {
-  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/type-only?${scoped(other, scope)}`, PRETTY_ERRORS, onLine, signal)
+  return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/type-only?${scoped(other, scope)}&runs=1`, PRETTY_ERRORS, onLine, signal)
 }
 
 export function fetchNpmTypeOnly(name, version, otherVersion, onLine, { signal } = {}) {
-  return requestPrettyLines(`/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion })}`, NPM_ERRORS, onLine, signal)
+  return requestPrettyLines(`/api/npm/type-only?${new URLSearchParams({ name, version, otherVersion, runs: '1' })}`, NPM_ERRORS, onLine, signal)
 }
 
 // The lines each of several versions changes against another, or
