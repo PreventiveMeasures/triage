@@ -62,6 +62,7 @@ The revision list suggests up to 100 branches and tags, and accepts any other na
   Metro builds for iOS and Android and requires the `react-native` condition.
 - The build runs from the nearest directory, at or above the entry points' common parent, that holds a `package.json` (or `foundry.toml`, `soldeer.toml` or `soldeer.lock`).
 - The build never runs repository code or install scripts.
+- The commit is held to the repository's own history: one in the history of none of its branches or tags, such as a fork's that GitHub serves through the repository's name too, fails the build (`422 commit-not-own`).
   The tree it lays out is read, not run, so it is for no Node: `engineStrict` takes any `engines.node`, whatever Node the server runs.
 - Stasis detects TypeScript, and generates the Prisma Clients the entry points reach unless `stasis.config.json` sets `generatePrisma: false`.
   Generating one needs Stasis's optional `@prisma/client-generator-ts` peer, which this server doesn't install, so an import of a generated client fails the build, saying why.
