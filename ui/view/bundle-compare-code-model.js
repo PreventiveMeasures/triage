@@ -62,60 +62,50 @@ export function markedCounts(blocks, marks) {
 }
 
 // A file that changed in types alone but for what runs, as the server proves
-// it (type-only.js typeRuns: its module loads, and the like), with its lines
-// of types folded: each side's lines that hold what runs (`runs`, `otherRuns`,
-// `[from, to)` each), and each run of its other lines, between them, one line
-// standing for it (TYPES_LINE), the same on both sides, so two at one place
-// pair as unchanged. `before` and `after` are the texts of those lines, to be
-// diffed in place of the files'; `spans`, by side, each of their lines' lines
-// in its file, `{ from, to, types }`, `types` where it stands for a run of
-// types. Null where folding them would hide no change (each side's lines of
-// types the same, in order) or leave none to show (its lines that run the
-// same): its diff is drawn whole then.
-export const TYPES_LINE = '\0'
+// it (type-only.js typeRuns: its module loads, and the like), with its types
+// set aside: `before` and `after` the texts of each side's lines that hold
+// what runs (`runs`, `otherRuns`, `[from, to)` each), to be diffed in place of
+// the files'; `lineOf`, by side, each of their lines' line in its file, and
+// `length` the file's lines, for diffRows to show where its other lines, of
+// types alone, stand between them. Null where setting those aside would hide
+// no change (each side's lines of types the same, in order) or leave none to
+// show (its lines that run the same): its diff is drawn whole then.
 export function typeFolds(before, after, { runs, otherRuns }) {
-  const fold = (text, ranges) => {
-    const kept = [], lines = textLines(text), run = [], spans = [], types = []
-    let at = 0
-    const typesTo = to => {
-      if (to <= at) return
-      kept.push(TYPES_LINE)
-      spans.push({ from: at, to, types: true })
-      types.push(lines.slice(at, to).join('\n'))
-      at = to
-    }
-    for (const [from, to] of ranges) {
-      typesTo(Math.min(from, lines.length))
-      for (; at < Math.min(to, lines.length); at++) {
-        kept.push(lines[at])
-        spans.push({ from: at, to: at + 1, types: false })
-        run.push(lines[at])
-      }
-    }
-    typesTo(lines.length)
+  const side = (text, ranges) => {
+    const lineOf = [], lines = textLines(text)
+    for (const [from, to] of ranges) for (let i = Math.max(from, (lineOf.at(-1) ?? -1) + 1); i < Math.min(to, lines.length); i++) lineOf.push(i)
+    const run = lineOf.map(i => lines[i]), shown = new Set(lineOf)
     // A last line with no newline after it stays so where it is shown.
-    const open = text !== '' && !text.endsWith('\n') && spans.at(-1)?.types === false
-    return { text: kept.length === 0 ? '' : `${kept.join('\n')}${open ? '' : '\n'}`, spans, types: types.join('\n'), run: run.join('\n') }
+    const open = text !== '' && !text.endsWith('\n') && lineOf.at(-1) === lines.length - 1
+    return { text: run.length === 0 ? '' : `${run.join('\n')}${open ? '' : '\n'}`, lineOf, length: lines.length, run: run.join('\n'),
+      types: lines.filter((_, i) => !shown.has(i)).join('\n') }
   }
-  const a = fold(before, runs), b = fold(after, otherRuns)
+  const a = side(before, runs), b = side(after, otherRuns)
   if (a.types === b.types || a.run === b.run) return null
-  return { before: a.text, after: b.text, spans: { a: a.spans, b: b.spans } }
+  return { before: a.text, after: b.text, lineOf: { a: a.lineOf, b: b.lineOf }, length: { a: a.length, b: b.length } }
 }
 
-// The lines a diff of folded texts (typeFolds) adds and removes, but those
-// standing for types, of which no line is counted.
-export function typeFoldCounts(blocks, spans) {
-  let additions = 0, deletions = 0
-  for (const { a0, a1, b0, b1 } of blocks) {
-    for (let i = a0; i < a1; i++) if (!spans.a[i].types) deletions++
-    for (let j = b0; j < b1; j++) if (!spans.b[j].types) additions++
+// Rows of a diff of a file's lines that run (typeFolds), a `types` row before
+// each where lines of types alone stand before it on either side, and after
+// the last where they end the file: `a` and `b` those lines, `{ from, to }`
+// of its file, or null where that side has none there.
+function withTypes(rows, { lineOf, length }) {
+  const next = { a: 0, b: 0 }, out = []
+  const types = to => {
+    const [a, b] = ['a', 'b'].map(side => (to[side] > next[side] ? { from: next[side], to: to[side] } : null))
+    if (a || b) out.push({ kind: 'types', a, b })
   }
-  return { additions, deletions }
+  for (const row of rows) {
+    const at = row.kind === 'change' ? { a: row.left, b: row.right } : row
+    const line = { a: at.a == null ? next.a : lineOf.a[at.a], b: at.b == null ? next.b : lineOf.b[at.b] }
+    types(line)
+    if (at.a != null) next.a = line.a + 1
+    if (at.b != null) next.b = line.b + 1
+    out.push(row)
+  }
+  types(length)
+  return out
 }
-
-// The line of folded texts (typeFolds) a file's `line` on `side` is shown
-// on: itself, or the one standing for the types it is among.
-export const foldedLine = (spans, side, line) => spans[side].findIndex(span => line >= span.from && line < span.to)
 
 // A file's lines added and removed between its two sides as they are, for a
 // tree to list beside it, as an npm dependency review's tree counts them:
@@ -188,9 +178,9 @@ export function whitespaceInsensitive(path, text = '', format = undefined) {
 // counterpart on the other side (see alignBlock) naming it as its `pair`.
 // Split, a block is `change` rows of a removed line `left` and an added
 // line `right`, either null where that side has run out. A diff of a file's
-// lines that run, its types folded (typeFolds), folds none of them: they are
-// a few, and each of its lines standing for types is shown between them.
-export function diffRows(model, expansion = new Map(), { context = model.typeSpans ? Infinity : DIFF_CONTEXT, split = false } = {}) {
+// lines that run, its types set aside (typeFolds), folds none of them, a few
+// as they are, and shows where its types stand between them (withTypes).
+export function diffRows(model, expansion = new Map(), { context = model.typeFolds ? Infinity : DIFF_CONTEXT, split = false } = {}) {
   const { a, blocks } = model
   const rows = []
   let ai = 0, bi = 0
@@ -223,7 +213,7 @@ export function diffRows(model, expansion = new Map(), { context = model.typeSpa
     ai = block.a1
     bi = block.b1
   }
-  return rows
+  return model.typeFolds ? withTypes(rows, model.typeFolds) : rows
 }
 
 // A block's lines as rows of [removed line, added line, paired]: each removed

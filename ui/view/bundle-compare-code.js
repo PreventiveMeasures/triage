@@ -34,7 +34,7 @@ import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } fr
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'
 import { LONG_LINE, sourceText } from './source-text.js'
 import { controlMarkup } from './control-chars.js'
-import { EXPAND_STEP, alignedBlock, diffRows, fileLineCounts, foldedLine, hidesWhitespace, lineDiff, markHighlighted, markedCounts, markSegments, textLines, typeFoldCounts, typeFolds, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
+import { EXPAND_STEP, alignedBlock, diffRows, fileLineCounts, hidesWhitespace, lineDiff, markHighlighted, markedCounts, markSegments, textLines, typeFolds, whitespaceHidden, whitespaceInsensitive } from './bundle-compare-code-model.js'
 import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
@@ -131,9 +131,6 @@ const HIDE_RENAMES = 'Hide renamed names', HIDE_TYPES = 'Hide type-only changes'
 const countSettings = () => `${!!state.bundleSourcePretty}\0${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.ignoreTypes}`
 const setAside = ({ pretty, spacesHidden, hiding, typesHidden, typesFolded }) => [pretty?.status === 'ready' && 'Pretty-print', spacesHidden && HIDE_WHITESPACE, hiding && HIDE_RENAMES,
   (typesHidden || typesFolded) && HIDE_TYPES].filter(Boolean)
-// What a file changed in types alone but for what runs shows, its lines of
-// types folded (_typesFolded).
-const TYPES_FOLDED = 'Only its imports and what else runs are shown: the rest of this file is types alone.'
 const WHITESPACE_KEPT = {
   mixed: 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.',
 }
@@ -216,13 +213,13 @@ const highlightPending = new Set()
 // or `b`) and line, while its markup, marked words and end stay the same: a
 // diff drawn again marks no line again, as a long one takes a while to.
 const drawnCode = new WeakMap()
-// A file's lines of types folded (_typeFolds), by the server's proof of what
-// runs in it, with the texts they were folded from.
+// A file's types set aside (_typeFolds), by the server's proof of what runs
+// in it, with the texts they were set aside from.
 const foldsKept = new WeakMap()
 
 // A line's number in its file, as a diff draws it: of the file's lines it
-// shows, where its types are folded (typeFolds).
-const lineNumber = (model, side, line) => (model.typeSpans?.[side][line].from ?? line) + 1
+// shows, where its types are set aside (typeFolds).
+const lineNumber = (model, side, line) => (model.typeFolds?.lineOf[side][line] ?? line) + 1
 
 function countLines(text) {
   let count = 0
@@ -1055,21 +1052,14 @@ export class BundleCompareCode extends LitElement {
   // A file too large for the tree to count (fileLineCounts) counted as its
   // diff last drew it under these settings (_noteDrawn): as published where
   // they set nothing of it aside, else as shown; none changed, shown, where
-  // its changes in types alone are hidden (type-only.js), drawn or not, and
-  // its lines that run, where it changed in types alone but for those (its
-  // types folded, _typesFolded); else none, no diff of it found here.
+  // its changes in types alone are hidden (type-only.js), drawn or not; else
+  // none, no diff of it found here.
   _largeCounts(path, entry) {
     const drawn = this._drawnTotals.get(path)
     if (drawn?.settings === countSettings()) return drawn.counts.aside.length === 0 ? { published: drawn.counts, shown: null } : { published: null, shown: drawn.counts }
     const contents = prefs.ignoreTypes ? fileContents(this.base, this.other, path, entry) : null
-    const textual = typeof contents?.before === 'string' && typeof contents.after === 'string'
-    if (textual && typeOnly(this.base, this.other, path, entry, contents, this._repaint, this.scope)) {
-      return { published: null, shown: { additions: 0, deletions: 0, renamed: 0, aside: [HIDE_TYPES] } }
-    }
-    const folds = textual ? this._typeFolds(path, entry, contents) : null
-    if (!folds) return { published: null, shown: null }
-    const counted = this._typesFolded(path, entry, contents, folds, true), { model } = counted
-    return { published: null, shown: { additions: model.additions, deletions: model.deletions, renamed: 0, aside: setAside(counted) } }
+    const types = typeof contents?.before === 'string' && typeof contents.after === 'string' && typeOnly(this.base, this.other, path, entry, contents, this._repaint, this.scope)
+    return { published: null, shown: types ? { additions: 0, deletions: 0, renamed: 0, aside: [HIDE_TYPES] } : null }
   }
 
   // ── The selected file ────────────────────────────────────────────
@@ -1116,7 +1106,7 @@ export class BundleCompareCode extends LitElement {
   // comparison's come (_renamesAlone). One that changed in types alone, as
   // the server proved (`types`, type-only.js), draws nothing where those
   // changes are hidden (`typesHidden`); one that changed in types alone but
-  // for what runs, its lines that run, its types folded (_typesFolded).
+  // for what runs, its lines that run alone (`typesFolded`, _typeFolds).
   _fileState(path, entry, counting = false) {
     const contents = fileContents(this.base, this.other, path, entry)
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
@@ -1128,12 +1118,12 @@ export class BundleCompareCode extends LitElement {
         model, whitespace: null, spacesHidden: false, types, typesHidden: true })
     }
     const folds = textual && !types ? this._typeFolds(path, entry, contents) : null
-    if (folds && prefs.ignoreTypes) return this._typesFolded(path, entry, contents, folds, counting)
+    const folded = !!folds && prefs.ignoreTypes
     // Its printed copies drawn where the toggle is on and printing changes
     // its diff (_printing); counted, not asked for where it is off.
-    const printing = textual && (!counting || state.bundleSourcePretty) ? this._printing(path, entry, contents) : null
+    const printing = textual && !folded && (!counting || state.bundleSourcePretty) ? this._printing(path, entry, contents) : null
     const pretty = state.bundleSourcePretty && printing?.applies ? printing.copies : null
-    const { before, after } = pretty?.status === 'ready' ? pretty : contents
+    const { before, after } = folded ? folds : pretty?.status === 'ready' ? pretty : contents
     // Renamed names are found by the server, in the copies it pretty-printed
     // (rename-diff.js), once those came: the lines that differ in them alone
     // marked, the diff of the files as they are drawn till then, or hidden
@@ -1163,12 +1153,13 @@ export class BundleCompareCode extends LitElement {
       // is for that it hides none in yet, to be turned off: its copies or the
       // server's diff coming or failed, or no names given, as it said why.
       const renamed = ready && changes.reason === null ? changes.marks.length > 0 || (prefs.ignoreRenames && changes.before !== before) : prefs.ignoreRenames && generated
-      const key = modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreWhitespace, ignoreRenames: hiding, markRenames: marked })
+      const key = `${modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreWhitespace, ignoreRenames: hiding, markRenames: marked })}${folded ? '\0types' : ''}`
       // The old side as the server diffed it, given the new side's names, where they are hidden.
       const shown = hiding ? changes.before : before
       const options = hiding ? { changes: { blocks: changes.blocks } } : marked ? { marks: changes.marks } : {}
       const model = textual && !large && (!changes || ready || !prefs.ignoreRenames)
         ? (counting ? this._counts(key, shown, after, options, ignoreWhitespace) : this._model(key, shown, after, options, ignoreWhitespace)) : null
+      if (folded && model) model.typeFolds = folds
       return { key, changes, warned, renamed, hiding, shown, model, ignoreWhitespace }
     }
     // Whitespace changes are hidden as diff -b hides them, only in a file whose
@@ -1180,11 +1171,11 @@ export class BundleCompareCode extends LitElement {
     const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && (found.model.mixed ??= hidesMixedWhitespace(found.shown, after, found.model.blocks))
     if (mixed) found = diffed(false)
     const { key, changes, warned, renamed, hiding, shown, model } = found
-    if (counting) return { pretty, hiding, model, spacesHidden: found.ignoreWhitespace }
+    if (counting) return { pretty, hiding, model, spacesHidden: found.ignoreWhitespace, typesFolded: folded }
     if (pretty?.status === 'ready' && model) this._noteRowless(path, model.blocks.length === 0)
     // The texts as published diffed as the search diffs them (_searchResults):
     // their blocks kept for it, not found again, however large.
-    else if (model) {
+    else if (model && !folded) {
       this._blocks.set(`${prefs.ignoreWhitespace}\0${path}`, model.blocks)
       this._aligned.set(model.blocks, model)
     }
@@ -1203,54 +1194,21 @@ export class BundleCompareCode extends LitElement {
     // failed to hide, until they are shown (see _scrollSought); marked, they
     // leave its rows as they are.
     if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || (prefs.ignoreRenames && (changes?.status === 'loading' || changes?.status === 'error'))
-    return this._noteDrawn(path, { before: shown, after, textual, large, printing, pretty, key, generated, renamed, warned, hiding, changes, model, whitespace,
-      spacesHidden: found.ignoreWhitespace, types: types || !!folds })
+    return this._noteDrawn(path, { ...folded ? contents : { before: shown, after }, textual, large, printing, pretty, key, generated, renamed, warned, hiding, changes, model,
+      whitespace, spacesHidden: found.ignoreWhitespace, types: types || !!folds, typesFolded: folded })
   }
 
-  // A file's lines of types folded (typeFolds), where the server proved it
-  // changed in types alone but for what runs (typeRuns) and folding them
-  // hides a change, unless what runs is too large to diff unasked: kept, by
-  // the proof, with the texts they were folded from. Null for any other.
+  // A file's types set aside, its lines that run diffed alone (typeFolds),
+  // where the server proved it changed in types alone but for what runs
+  // (typeRuns) and setting them aside hides a change: kept, by the proof,
+  // with the texts they were set aside from. Null for any other.
   _typeFolds(path, entry, contents) {
     const runs = typeRuns(this.base, this.other, path, entry, contents, this._repaint, this.scope)
     if (!runs) return null
     const { before, after } = contents
     let kept = foldsKept.get(runs)
-    if (!(kept?.before === before && kept.after === after)) {
-      const folds = typeFolds(before, after, runs)
-      foldsKept.set(runs, kept = { before, after, folds: folds && !isLargeDiff(folds.before, folds.after) ? folds : null })
-    }
+    if (!(kept?.before === before && kept.after === after)) foldsKept.set(runs, kept = { before, after, folds: typeFolds(before, after, runs) })
     return kept.folds
-  }
-
-  // A file that changed in types alone but for what runs, its changes in
-  // types hidden: its lines that run diffed alone, as they changed, each run
-  // of its types between them folded to a line that says so (_typesCode),
-  // counted apart from the lines it changed (typeFoldCounts); its whitespace
-  // changes hidden or shown as another file's are (_fileState). However large
-  // the file, what runs of it is diffed at once: a few lines, its imports.
-  _typesFolded(path, entry, contents, folds, counting) {
-    const { before, after, spans } = folds
-    const unlisted = this._unlisted(path, entry, contents)
-    const diffed = ignoreWhitespace => {
-      const key = `${modelKey(path, false, { ignoreWhitespace, ignoreRenames: false })}\0types`
-      const model = counting ? this._counts(key, before, after, {}, ignoreWhitespace) : this._model(key, before, after, {}, ignoreWhitespace)
-      if (model.typeSpans !== spans) Object.assign(model, { typeSpans: spans }, typeFoldCounts(model.blocks, spans))
-      return { key, model, ignoreWhitespace }
-    }
-    let found = diffed(prefs.ignoreWhitespace && !unlisted)
-    const mixed = found.ignoreWhitespace && (found.model.mixed ??= hidesMixedWhitespace(before, after, found.model.blocks))
-    if (mixed) found = diffed(false)
-    const { key, model, ignoreWhitespace } = found
-    if (counting) return { pretty: null, hiding: false, model, spacesHidden: ignoreWhitespace, typesFolded: true }
-    const off = !unlisted && !prefs.ignoreWhitespace ? this._whitespaceHidden(`${path}\0types`, before, after) : null
-    const whitespace = unlisted ? null
-      : mixed ? 'mixed'
-      : prefs.ignoreWhitespace ? (hidesAnyWhitespace(model, before, after) ? 'hideable' : null)
-      : off.hides && !off.mixed ? 'hideable' : null
-    if (this._sought?.path === path) this._soughtSettling = false
-    return this._noteDrawn(path, { ...contents, textual: true, large: false, printing: null, pretty: null, key, generated: false, renamed: false, warned: [], hiding: false,
-      changes: null, model, whitespace, spacesHidden: ignoreWhitespace, types: true, typesFolded: true })
   }
 
   // Whether a file's whitespace may mean something on either side, so its
@@ -1371,7 +1329,7 @@ export class BundleCompareCode extends LitElement {
     const reformatted = pretty?.status === 'ready' && pretty.before === pretty.after
     const spaced = !reformatted && prefs.ignoreWhitespace && whitespace === 'hideable'
     const renamed = !reformatted && hiding
-    // Its lines that run changed in whitespace alone, those changes hidden, its types folded.
+    // Its lines that run changed in whitespace alone, those changes hidden, its types set aside.
     const hidden = [typesFolded && 'types', spaced && 'whitespace', renamed && 'renamed names'].filter(Boolean)
     const told = reformatted ? 'No actual code changes in this file.' : hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : null
     return html`<div class="bundle-compare-code-message">
@@ -1773,24 +1731,24 @@ export class BundleCompareCode extends LitElement {
   }
 
 
-  _renderDiff(path, entry, { after, before, key, model, pretty, changes, hiding, warned = [], whitespace = null, typesFolded = false }) {
+  _renderDiff(path, entry, { after, before, key, model, pretty, changes, hiding, warned = [], whitespace = null }) {
     const { kind, basePath = path } = entry
     const split = prefs.layout === 'split'
     // A search hit picked in this file: its row, opened and shown, to scroll
-    // to, once for each model it is drawn from; in a file whose types are
-    // folded, the line it is on or the fold standing for it.
+    // to, once for each model it is drawn from; in a file whose types are set
+    // aside (typeFolds), where it is one of the lines shown.
     const sought = this._sought?.path === path && this._sought.key !== key ? this._soughtLine(path, entry, pretty, model) : null
     if (this._sought?.path === path) this._sought.key = key
-    const spans = model.typeSpans
-    const seek = sought ? this._seekRows(key, model, spans ? { side: sought.side, line: foldedLine(spans, sought.side, sought.line) } : sought, split) : null
+    const folds = model.typeFolds
+    const seek = sought ? this._seekRows(key, model, folds ? { side: sought.side, line: folds.lineOf[sought.side].indexOf(sought.line) } : sought, split) : null
     if (seek?.index >= 0) this._soughtRow = { path, index: seek.index + (split ? 1 : 0) }
     const expansion = this._expansions.get(key) ?? new Map()
     const rows = seek?.rows ?? diffRows(model, expansion, { split })
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const shown = rows.length > limit ? rows.slice(0, limit) : rows
-    // A file's lines colored as its text is, those of a file whose types are
-    // folded taken for the lines it shows of it.
-    const shownLines = (lines, side) => (lines && spans ? spans[side].map(span => (span.types ? null : lines[span.from])) : lines)
+    // A file's lines colored as its text is, those of one whose types are set
+    // aside taken for the lines it shows.
+    const shownLines = (lines, side) => (lines && folds ? folds.lineOf[side].map(line => lines[line]) : lines)
     const lit = {
       model,
       a: kind === 'added' ? null : shownLines(this._highlighted(this.base, basePath, before,
@@ -1803,9 +1761,9 @@ export class BundleCompareCode extends LitElement {
         this.requestUpdate()
       },
     }
-    const digits = String(spans ? Math.max(spans.a.at(-1)?.to ?? 0, spans.b.at(-1)?.to ?? 0, 1) : Math.max(model.a.length, model.b.length, 1)).length
-    return html`${typesFolded ? html`<p class="bundle-compare-code-note">${TYPES_FOLDED} <button type="button" @click=${() => this._setTypes(false)}>Show type-only changes</button></p>` : nothing}
-      ${prefs.ignoreRenames && changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
+    const { a: aLines, b: bLines } = folds?.length ?? { a: model.a.length, b: model.b.length }
+    const digits = String(Math.max(aLines, bLines, 1)).length
+    return html`${prefs.ignoreRenames && changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
       ${WHITESPACE_KEPT[whitespace] ? html`<p class="bundle-compare-code-note">${WHITESPACE_KEPT[whitespace]}</p>` : nothing}
       ${warned.length > 0 ? html`<p class="bundle-compare-code-note">${readsSaid(warned)} <button type="button" @click=${() => this._setRenames(false)}>Show them marked</button></p>` : nothing}
       <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })} data-path=${path}
@@ -1824,14 +1782,14 @@ export class BundleCompareCode extends LitElement {
 
   _rowKey(row) {
     if (row.kind === 'fold') return `f${row.run}:${row.a}`
+    if (row.kind === 'types') return `t${row.a?.from ?? ''}:${row.b?.from ?? ''}`
     if (row.kind === 'change') return `c${row.left ?? ''}:${row.right ?? ''}`
     return `${row.kind}${row.a ?? ''}:${row.b ?? ''}`
   }
 
-  // Words marked in a removed line and the added line it pairs with: none in
-  // a line standing for types (typeFolds).
+  // Words marked in a removed line and the added line it pairs with.
   _words(model, a, b) {
-    if (a == null || b == null || model.typeSpans?.a[a].types || model.typeSpans?.b[b].types) return null
+    if (a == null || b == null) return null
     const key = `${a}:${b}`
     if (!model.words.has(key)) model.words.set(key, wordRanges(model.a[a], model.b[b]))
     return model.words.get(key)
@@ -1853,25 +1811,21 @@ export class BundleCompareCode extends LitElement {
     return sourceText(text, end)
   }
 
-  // One side of a line: number, sign, code. `side` is 'a' or 'b'. A line
-  // standing for types (typeFolds) says so in place of code, unnumbered.
+  // One side of a line: number, sign, code. `side` is 'a' or 'b'.
   _cell(lit, side, line, sign, ranges) {
     if (line == null) return html`<span class="diff-num"></span><span class="diff-sign"></span><span class="diff-code diff-empty"></span>`
-    const span = lit.model.typeSpans?.[side][line]
-    if (span?.types) return html`<span class="diff-num"></span><span class="diff-sign">${sign}</span>${this._typesCode(span)}`
     return html`<span class="diff-num">${lineNumber(lit.model, side, line)}</span><span class="diff-sign">${sign}</span>${this._codeCell(lit, side, line, ranges)}`
   }
 
-  // A line standing for a run of types, `span` of its side's file and, where
-  // it stands for those of both sides, `other` of the other's (typeFolds):
-  // its lines told, as the new side numbers them where both are told, as a
-  // fold of unchanged lines tells its own.
-  _typesCode(span, other = null) {
-    const count = ({ from, to }) => to - from
-    const lines = other && count(other) !== count(span) ? `${count(span).toLocaleString()} → ${count(other).toLocaleString()} type-only lines`
-      : `${count(other ?? span).toLocaleString()} type-only ${count(other ?? span) === 1 ? 'line' : 'lines'}`
-    const { from, to } = other ?? span
-    return html`<span class="diff-code diff-types">${lines} · ${to - from === 1 ? from + 1 : `${from + 1}–${to}`}</span>`
+  // Lines of types alone between a file's lines that run, set aside
+  // (diffRows), said as a file changed in types alone is (_fileMessage): by
+  // their lines on the new side, else on the old.
+  _types({ a, b }) {
+    const { from, to } = b ?? a
+    return html`<div class="diff-row diff-types" role="row">
+      <span>Only types here · ${to - from === 1 ? `line ${from + 1}` : `lines ${from + 1}–${to}`}${b ? '' : ' before'}</span>
+      <button type="button" class="bundle-compare-code-action" @click=${() => this._setTypes(false)}>Show type-only changes</button>
+    </div>`
   }
 
   _noEol(model, side, line) {
@@ -1899,22 +1853,17 @@ export class BundleCompareCode extends LitElement {
   _unifiedRow(row, lit) {
     const { model } = lit
     if (row.kind === 'fold') return this._fold(row, lit)
-    const spans = model.typeSpans
+    if (row.kind === 'types') return this._types(row)
     if (row.kind === 'ctx') {
-      // Types folded at one place on both sides, a line saying so for both.
-      if (spans?.a[row.a].types) {
-        return html`<div class="diff-row ctx types" role="row"><span class="diff-num"></span><span class="diff-num"></span><span class="diff-sign"> </span>${this._typesCode(spans.a[row.a], spans.b[row.b])}</div>`
-      }
       return html`<div class="diff-row ctx" role="row"><span class="diff-num">${lineNumber(model, 'a', row.a)}</span>${this._cell(lit, 'b', row.b, ' ', null)}</div>`
     }
     const del = row.kind === 'del'
     const words = del ? this._words(model, row.a, row.pair)?.a : this._words(model, row.pair, row.b)?.b
     const renamed = model.marked?.has(row.change)
-    const types = spans?.[del ? 'a' : 'b'][del ? row.a : row.b].types
-    return html`<div class=${`diff-row ${row.kind}${renamed ? ' renamed' : ''}${types ? ' types' : ''}`} role="row"
+    return html`<div class=${`diff-row ${row.kind}${renamed ? ' renamed' : ''}`} role="row"
       data-tooltip=${renamed ? 'Renamed names alone' : nothing}>
-      ${types ? html`<span class="diff-num"></span><span class="diff-num"></span><span class="diff-sign">${del ? '−' : '+'}</span>${this._typesCode(spans[del ? 'a' : 'b'][del ? row.a : row.b])}`
-        : del ? html`<span class="diff-num">${lineNumber(model, 'a', row.a)}</span><span class="diff-num"></span><span class="diff-sign">−</span>${this._codeCell(lit, 'a', row.a, words)}`
+      ${del
+        ? html`<span class="diff-num">${lineNumber(model, 'a', row.a)}</span><span class="diff-num"></span><span class="diff-sign">−</span>${this._codeCell(lit, 'a', row.a, words)}`
         : html`<span class="diff-num"></span><span class="diff-num">${lineNumber(model, 'b', row.b)}</span><span class="diff-sign">+</span>${this._codeCell(lit, 'b', row.b, words)}`}
     </div>`
   }
@@ -1934,8 +1883,9 @@ export class BundleCompareCode extends LitElement {
   _splitRow(row, lit) {
     const { model } = lit
     if (row.kind === 'fold') return this._fold(row, lit)
+    if (row.kind === 'types') return this._types(row)
     if (row.kind === 'ctx') {
-      return html`<div class=${classMap({ 'diff-row': true, ctx: true, types: !!model.typeSpans?.a[row.a].types })} role="row">
+      return html`<div class="diff-row ctx" role="row">
         <span class="diff-half">${this._cell(lit, 'a', row.a, ' ', null)}</span>
         <span class="diff-half">${this._cell(lit, 'b', row.b, ' ', null)}</span>
       </div>`

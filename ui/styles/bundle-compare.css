@@ -921,7 +921,7 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 }
 /* Split: the two sides as halves of one row, wrapped so neither needs a
    scrollbar of its own. */
-.split .diff-row:not(.diff-fold) {
+.split .diff-row:not(.diff-fold, .diff-types) {
   display: grid;
   grid-template-columns: 1fr 1fr;
 }
@@ -987,15 +987,18 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   padding: 0 .75rem;
   white-space: nowrap;
 }
-/* A line standing for a run of a file's types, the lines that run shown
-   alone: told as a fold is, kept where it was added or removed. */
-.diff-row.ctx.types { background: var(--diff-fold); }
-.diff-code.diff-types {
-  align-self: center;
+/* Lines of types alone between a file's lines that run, set aside: said
+   across the diff as a file changed in types alone is. */
+.diff-types {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: .75rem;
+  padding: .75rem 1.5rem;
+  background: var(--diff-fold);
   color: var(--muted);
   font-family: var(--font-ui, system-ui);
-  font-size: .7rem;
-  white-space: nowrap;
+  font-size: .82rem;
 }
 .bundle-compare-code-more {
   display: flex;
