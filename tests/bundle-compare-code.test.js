@@ -2798,6 +2798,15 @@ test('a declaration file that changed in types alone but for what runs shows, it
   prefs.layout = 'split'
   assert.equal(renderText(element.render()).match(/<div class="diff-row diff-types" role="row">\s*<span>Only types here · lines 3–4<\/span>/gu)?.length, 1, 'split, across both sides')
   prefs.layout = 'unified'
+  // A search hit picked in it is taken to its line where that is shown, else to the row standing for the types it is among.
+  const soughtRow = line => {
+    element._sought = { path: 'types/api.d.ts', side: 'b', line, at: 0, query: 'e' }
+    const markup = renderText(element.render())
+    return markup.slice(markup.indexOf('aria-label="Diff"')).split('role="row"').slice(1)[element._soughtRow?.index]
+  }
+  assert.match(soughtRow(1), /<span class="diff-num">2<\/span><span class="diff-sign">\+<\/span>[^]*import \{ B \} from/u, 'a hit in a line that runs, at its line')
+  assert.match(soughtRow(3), /Only types here · lines 3–4/u, 'one among its types set aside, at the row that says so and how to show them')
+  element._sought = element._soughtRow = null
   element.path = 'types/big.d.ts'
   const large = renderText(element.render())
   assert.deepEqual(rows(large), [['ctx', '1', "import { z } from 'zod';"], ['add', '2', "import { y } from 'y';"], ['types', 'Only types here · lines 3–12002']], 'drawn at once, however large')

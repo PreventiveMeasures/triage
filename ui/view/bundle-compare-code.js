@@ -868,10 +868,14 @@ export class BundleCompareCode extends LitElement {
   // A sought line's row among a diff's `rows`, a fold it is in opened past
   // it, and the rows shown taken to it: `{ rows, index }`, `index` -1 where
   // it isn't among them. `key` names the diff's model, as its expansions and
-  // limit are kept.
-  _seekRows(key, model, { side, line }, split) {
-    const shows = row => side === 'b'
-      ? ((row.kind === 'ctx' || row.kind === 'add') && row.b === line) || (row.kind === 'change' && row.right === line)
+  // limit are kept. In a file whose types are set aside (typeFolds) the line
+  // is its file's: its row where it is one of the lines shown, else the row
+  // that stands for the types it is among, which says how to show them.
+  _seekRows(key, model, { side, line: sought }, split) {
+    const folds = model.typeFolds
+    const line = folds ? folds.lineOf[side].indexOf(sought) : sought
+    const shows = row => row.kind === 'types' ? line === -1 && !!row[side] && sought >= row[side].from && sought < row[side].to
+      : side === 'b' ? ((row.kind === 'ctx' || row.kind === 'add') && row.b === line) || (row.kind === 'change' && row.right === line)
       : ((row.kind === 'ctx' || row.kind === 'del') && row.a === line) || (row.kind === 'change' && row.left === line)
     let expansion = this._expansions.get(key) ?? new Map()
     let rows = diffRows(model, expansion, { split })
@@ -1730,11 +1734,11 @@ export class BundleCompareCode extends LitElement {
     const split = prefs.layout === 'split'
     // A search hit picked in this file: its row, opened and shown, to scroll
     // to, once for each model it is drawn from; in a file whose types are set
-    // aside (typeFolds), where it is one of the lines shown.
+    // aside (typeFolds), its line's or that of the types it is among.
     const sought = this._sought?.path === path && this._sought.key !== key ? this._soughtLine(path, entry, pretty, model) : null
     if (this._sought?.path === path) this._sought.key = key
     const folds = model.typeFolds
-    const seek = sought ? this._seekRows(key, model, folds ? { side: sought.side, line: folds.lineOf[sought.side].indexOf(sought.line) } : sought, split) : null
+    const seek = sought ? this._seekRows(key, model, sought, split) : null
     if (seek?.index >= 0) this._soughtRow = { path, index: seek.index + (split ? 1 : 0) }
     const expansion = this._expansions.get(key) ?? new Map()
     const rows = seek?.rows ?? diffRows(model, expansion, { split })

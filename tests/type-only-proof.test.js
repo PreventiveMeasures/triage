@@ -10,6 +10,7 @@ import { once } from 'node:events'
 import { test } from 'node:test'
 import { Worker } from 'node:worker_threads'
 import { parseSync } from 'oxc-parser'
+import { proofsSoFar } from '../server-managed/type-only.ts'
 import { typeOnlyRuns, typeOnlyStamped } from '../server-managed/type-only-proof.js'
 import { textLines, typeFolds } from '../ui/view/bundle-compare-code-model.js'
 
@@ -58,17 +59,46 @@ test('a line holding anything that runs is told whole, however lines are broken 
   assert.deepEqual(told("export type A = `import { a } from 'b'`;\n"), [], 'a type that spells a load, loading nothing')
 })
 
-test('what runs is worked out only while there is time left for it, once every pair is stamped, none of whose stamps it costs', async () => {
+// All a worker of `pairs` tells, in order, until it is gone.
+async function workerTold(pairs, runsUntil) {
+  const worker = new Worker(new URL('../server-managed/type-only-worker.js', import.meta.url), { workerData: { pairs, runsUntil }, execArgv: ['--disable-warning=ExperimentalWarning'] })
+  const messages = []
+  worker.on('message', message => messages.push(message))
+  await once(worker, 'exit')
+  return messages
+}
+
+test('every pair is stamped and its stamp told before what runs is worked out, of a pair at a time while there is time left, the smallest files first', async () => {
+  const zod = { runs: [], otherRuns: [[0, 1], [5, 6]] }
   const pairs = [[declared('export type A = 1;\n'), declared('export type A = 2;\n')], [null, declared(zodDeclarations)]]
-  const answer = async runsUntil => {
-    const worker = new Worker(new URL('../server-managed/type-only-worker.js', import.meta.url), { workerData: { pairs, runsUntil }, execArgv: ['--disable-warning=ExperimentalWarning'] })
-    const [answered] = await once(worker, 'message')
-    await worker.terminate()
-    return answered
-  }
-  assert.deepEqual(await answer(Date.now() + 60_000), [true, { runs: [], otherRuns: [[0, 1], [5, 6]] }])
-  assert.deepEqual(await answer(Date.now() - 1), [true, false], 'past its time, told as not stamped, the stamp kept')
-  assert.deepEqual(await answer(null), [true, false], 'and where it isn\'t asked for')
+  assert.deepEqual(await workerTold(pairs, Date.now() + 60_000), [{ stamped: [true, false] }, { at: 1, ...zod }, [true, zod]], 'its stamps, then what runs of each not stamped, then its answer')
+  assert.deepEqual(await workerTold(pairs, Date.now() - 1), [{ stamped: [true, false] }, [true, false]], 'past its time, told as not stamped, the stamp kept')
+  assert.deepEqual(await workerTold(pairs, null), [{ stamped: [true, false] }, [true, false]], 'and where it isn\'t asked for')
+  const [large, small] = [`import { a } from 'a';\n${'export type T = 1;\n'.repeat(50)}`, "import { b } from 'b';\nexport type T = 1;\n"]
+  const sized = await workerTold([[null, declared(large)], [null, declared('console.log(1);\n')], [null, declared(small)]], Date.now() + 60_000)
+  assert.deepEqual(sized.slice(1, -1).map(({ at }) => at), [2, 0], 'the smaller file\'s first, none told of one that runs code')
+  assert.deepEqual(sized.at(-1), [{ runs: [], otherRuns: [[0, 1]] }, false, { runs: [], otherRuns: [[0, 1]] }], 'its answer by pair all the same')
+})
+
+test('a worker gone before its answer is answered for as far as it told: every stamp, and what runs of each pair it came to', async () => {
+  const zod = { runs: [], otherRuns: [[0, 1], [5, 6]] }
+  const pairs = [[declared('export type A = 1;\n'), declared('export type A = 2;\n')], [null, declared(zodDeclarations)], [null, declared(`${zodDeclarations}export type More = 1;\n`)]]
+  const messages = await workerTold(pairs, Date.now() + 60_000)
+  const early = proofsSoFar(pairs.length)
+  assert.deepEqual(early(messages[0]), [true, false, false], 'its stamps alone, should what runs of the first file take past its deadline')
+  assert.deepEqual(early(messages[1]), [true, zod, false], 'and what runs of each pair as it comes')
+  assert.deepEqual(early(messages[2]), [true, zod, zod])
+  assert.equal(early(messages.at(-1)), null, 'its answer is not one to settle for: taken as its answer')
+  assert.deepEqual(messages.at(-1), [true, zod, zod])
+  // Nothing is taken that does not read as what a worker of these pairs tells.
+  for (const [said, why] of [[{ at: 1, ...zod }, 'what runs before any stamp'], [{ stamped: [true] }, 'stamps of other pairs'], [{ stamped: [true, 1, false] }, 'a stamp that is none'], [null, 'nothing'],
+    ['stamped', 'a word']]) assert.equal(proofsSoFar(3)(said), null, why)
+  const taken = proofsSoFar(3)
+  assert.deepEqual(taken({ stamped: [true, false, false] }), [true, false, false])
+  for (const [said, why] of [[{ stamped: [false, false, false] }, 'stamps told again'], [{ at: 0, ...zod }, 'what runs of a pair stamped'], [{ at: 3, ...zod }, 'of a pair not there'],
+    [{ at: 1.5, ...zod }, 'of no pair'], [{ at: 1, runs: [[1, 0]], otherRuns: [] }, 'lines that are none'], [{ at: 1, runs: [] }, 'one side\'s alone']]) assert.equal(taken(said), null, why)
+  assert.deepEqual(taken({ at: 1, ...zod }), [true, zod, false])
+  assert.equal(taken({ at: 1, runs: [], otherRuns: [[0, 2]] }), null, 'nor what runs of a pair told twice')
 })
 
 test('the lines that run are those Node\'s type stripping leaves, the hashbang, and each comment it keeps that may be one a tool reads, whatever the proof\'s grammar for it', () => {
@@ -78,6 +108,23 @@ test('the lines that run are those Node\'s type stripping leaves, the hashbang, 
   assert.deepEqual(typeOnlyRuns(null, { path: 'x.d.ts', text: `\uFEFF${text}` }), { runs: [], otherRuns: [[0, 1], [3, 8], [12, 13]] }, 'past a byte order mark alike')
   assert.equal(typeOnlyRuns(null, { path: 'x.ts', text }), false, 'none of a file not named as a declaration file')
   assert.equal(typeOnlyRuns(null, { path: 'x.d.ts', text: `${text}console.log(1);\n` }), false, 'nor of one that runs code')
+})
+
+test('none are told where a triple-slash directive steers on one side alone though its line reads the same on both', () => {
+  const directive = '/// <reference path="./more.d.ts" />'
+  const [load, loads] = ["import { a } from 'a';\n", "import { a } from 'a';\nimport { b } from 'b';\n"]
+  const below = `export type X = 1;\n${directive}\n${load}export type Y = 1;\n`
+  const leading = `${directive}\n${loads}export type Y = 2;\n`
+  // Its line would show unchanged between an import added and types set aside, the statement that kept it from steering among them.
+  assert.equal(typeOnlyStamped(declared(below), declared(leading)), false, 'no change in types alone: it steers now')
+  assert.equal(typeOnlyRuns(declared(below), declared(leading)), false, 'come to lead the file: drawn whole')
+  assert.equal(typeOnlyRuns(declared(leading), declared(below)), false, 'and gone below a statement')
+  assert.equal(typeOnlyRuns(declared(`import {\n  ${directive}\n  a } from 'a';\n`), declared(leading)), false, 'or within one')
+  assert.deepEqual(typeOnlyRuns(declared(`${directive}\n${load}export type Y = 1;\n`), declared(leading)), { runs: [[0, 2]], otherRuns: [[0, 3]] }, 'leading both, told')
+  assert.deepEqual(typeOnlyRuns(declared(below), declared(`export type Z = 1;\n${directive}\n${loads}`)), { runs: [[1, 3]], otherRuns: [[1, 4]] }, 'below a statement on both, prose on both, told')
+  assert.deepEqual(typeOnlyRuns(declared(`${directive}\n${below}`), declared(leading)), { runs: [[0, 1], [2, 4]], otherRuns: [[0, 3]] }, 'said again below a statement where it leads both, told')
+  assert.deepEqual(typeOnlyRuns(declared(`export type X = 1;\n${load}`), declared(leading)), { runs: [[1, 2]], otherRuns: [[0, 3]] }, 'added, its line shows as added')
+  assert.deepEqual(typeOnlyRuns(null, declared(below)), { runs: [], otherRuns: [[1, 3]] }, 'a side not there has none to differ from')
 })
 
 // Files of a declaration file's statements, picked with a seed: types, loads
@@ -115,14 +162,17 @@ function sideEffects(text) {
   for (const { start, end } of [...running, ...comments.filter(steers)]) {
     for (let line = lineAt(start); line <= lineAt(end - 1); line++) lines.add(line)
   }
+  // Its directives by whether each leads it, before its first statement, where alone it steers.
+  const first = program.body[0]?.start ?? Infinity
+  const directives = leads => comments.filter(comment => (comment.start < first) === leads).map(comment => text.slice(comment.start, comment.end)).filter(comment => DIRECTIVE.test(comment))
   const name = node => node?.name ?? node?.value
   const loads = running.map(statement => JSON.stringify([statement.type, statement.source?.value, statement.attributes?.map(({ key, value }) => [name(key), value.value]),
     statement.specifiers?.filter(spec => spec.importKind !== 'type' && spec.exportKind !== 'type').map(spec => [spec.type, name(spec.imported), name(spec.local), name(spec.exported)]),
     name(statement.exported), statement.type === 'ExportDefaultDeclaration' ? name(statement.declaration) : null]))
-  return { lines: [...lines], loads }
+  return { lines: [...lines], loads, steering: directives(true), prose: directives(false) }
 }
 
-test('no line that may have a side effect is set aside, nor is a change to one told as a change in types alone, over pairs of files picked at random', () => {
+test('no line that may have a side effect is set aside, nor is a change to one told as a change in types alone or left to read as no change, over pairs of files picked at random', () => {
   let seed = 7919
   const pick = n => { seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31; return seed % n }
   const file = () => {
@@ -149,6 +199,10 @@ test('no line that may have a side effect is set aside, nor is a change to one t
     if (!runs) continue
     for (const [effects, ranges] of [[before, runs.runs], [after, runs.otherRuns]]) {
       assert.deepEqual(effects.lines.filter(line => !inRanges(ranges, line)), [], `not told: ${pair}`)
+    }
+    // A directive that steers on one side alone is there on that side alone: its line is none that reads the same on both.
+    for (const [one, other] of [[before, after], [after, before]]) {
+      assert.deepEqual(one.steering.filter(directive => !other.steering.includes(directive) && other.prose.includes(directive)), [], `a directive steering on one side alone, its line on both: ${pair}`)
     }
     const folds = typeFolds(a.text, b.text, runs)
     if (!folds) continue

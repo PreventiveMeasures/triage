@@ -666,6 +666,13 @@ describe('Code view model', () => {
     assert.deepEqual(diffRows(addedModel).map(row), [['add', undefined, 0], ['types', null, { from: 1, to: 2 }]], 'an added file\'s types where they end it, on its side alone')
     assert.equal(typeFolds('import a\ntype A = 1\nimport b', 'import a\ntype A = 2\nimport c', { runs: [[0, 1], [2, 3]], otherRuns: [[0, 1], [2, 3]] }).before, 'import a\nimport b',
       'a last line with no newline after it left so')
+    // Unified, a change's removed lines come before its added ones: the types before either stand ahead of it, a row for both.
+    const changed = typeFolds('type A = 1\nimport a\nimport b\ntype C = 1\n', 'type A = 2\ntype B = 3\nimport c\nimport d\n', { runs: [[1, 3]], otherRuns: [[2, 4]] })
+    const changedModel = Object.assign(lineDiff(changed.before, changed.after), { typeFolds: changed })
+    assert.deepEqual(diffRows(changedModel).map(row), [['types', { from: 0, to: 1 }, { from: 0, to: 2 }], ['del', 0, undefined], ['del', 1, undefined], ['add', undefined, 0], ['add', undefined, 1],
+      ['types', { from: 3, to: 4 }, null]], 'one row of types ahead of a change, none between its removed lines and its added')
+    assert.deepEqual(diffRows(changedModel, new Map(), { split: true }).map(row).filter(([kind]) => kind === 'types'), [['types', { from: 0, to: 1 }, { from: 0, to: 2 }], ['types', { from: 3, to: 4 }, null]],
+      'as split tells them')
     assert.equal(typeFolds('import a\ntype A = 1\n', 'import a\nimport b\ntype A = 1\n', { runs: [[0, 1]], otherRuns: [[0, 2]] }), null, 'none where its types are as they were')
     assert.equal(typeFolds('import a\ntype A = 1\n', 'import a\ntype A = 2\n', { runs: [[0, 1]], otherRuns: [[0, 1]] }), null, 'nor where what runs is')
     assert.equal(typeFolds('export * from "a"\n', 'export * from "a"\nexport * from "b"\n', { runs: [[0, 1]], otherRuns: [[0, 2]] }), null, 'nor where it holds no types')
