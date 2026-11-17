@@ -16,7 +16,7 @@ import { auditCache, auditedKeys } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
 import { type ComparedSide, PrettyError, compared, prettyRequest, prettyText } from './pretty-print.ts'
 import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
-import { typeOnlyFiles } from './type-only.ts'
+import { runsAsked, typeOnlyFiles } from './type-only.ts'
 import { comparisonBody } from './comparison.ts'
 import { sharedTeamApp, withWorkspaceSummary } from './team-app.ts'
 
@@ -131,7 +131,8 @@ function serveCompared(res: ServerResponse, deps: ManagedHttpDeps, bundle: Manag
   if (part === 'comparison') return serveComparison(res, deps, bundle, other, url, stream)
   if (part === 'rename-diff' && url.searchParams.has('path')) return serveRenameDiff(res, deps, bundle, other, url, stream)
   if (part === 'pretty') return serveChanges(res, deps, bundle, other, recheck, compared, '')
-  return serveChanges(res, deps, bundle, other, recheck, part === 'type-only' ? typeOnlyFiles : renamedPairs, url.searchParams.get('scope') ?? '')
+  const typeOnly = (sides: [ComparedSide, ComparedSide]) => typeOnlyFiles(sides, runsAsked(url.searchParams))
+  return serveChanges(res, deps, bundle, other, recheck, part === 'type-only' ? typeOnly : renamedPairs, url.searchParams.get('scope') ?? '')
 }
 
 // One of a bundle's JavaScript files diffed with one of `other`, another of

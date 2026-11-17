@@ -61,6 +61,52 @@ export function markedCounts(blocks, marks) {
   return { additions, deletions, renamed, marked }
 }
 
+// A file that changed in types alone but for what runs, as the server proves
+// it (type-only.js typeProof: its module loads, and the like), with its types
+// set aside: `before` and `after` the texts of each side's lines that hold
+// what runs (`runs`, `otherRuns`, `[from, to)` each), to be diffed in place of
+// the files'; `lineOf`, by side, each of their lines' line in its file, and
+// `lines` the file's count of them, for diffRows to show where its other
+// lines, of types alone, stand between them. Null where setting those aside would hide
+// no change (each side's lines of types the same, in order) or leave none to
+// show (its lines that run the same): its diff is drawn whole then.
+export function typeFolds(before, after, { runs, otherRuns }) {
+  const side = (text, ranges) => {
+    const lineOf = [], lines = textLines(text)
+    for (const [from, to] of ranges) for (let i = from; i < Math.min(to, lines.length); i++) lineOf.push(i)
+    const run = lineOf.map(i => lines[i]), shown = new Set(lineOf)
+    // A last line with no newline after it stays so where it is shown.
+    const open = text !== '' && !text.endsWith('\n') && lineOf.at(-1) === lines.length - 1
+    return { text: run.length === 0 ? '' : `${run.join('\n')}${open ? '' : '\n'}`, lineOf, lines: lines.length, run: run.join('\n'),
+      types: lines.filter((_, i) => !shown.has(i)).join('\n') }
+  }
+  const a = side(before, runs), b = side(after, otherRuns)
+  if (a.types === b.types || a.run === b.run) return null
+  return { before: a.text, after: b.text, lineOf: { a: a.lineOf, b: b.lineOf }, lines: { a: a.lines, b: b.lines } }
+}
+
+// Rows of a diff of a file's lines that run (typeFolds), a `types` row before
+// each where lines of types alone stand before it on either side, and after
+// the last where they end the file: `a` and `b` those lines, `{ from, to }`
+// of its file, or null where that side has none there.
+function withTypes(rows, { lineOf, lines }) {
+  const next = { a: 0, b: 0 }, out = []
+  const types = to => {
+    const [a, b] = ['a', 'b'].map(side => (to[side] > next[side] ? { from: next[side], to: to[side] } : null))
+    if (a || b) out.push({ kind: 'types', a, b })
+  }
+  for (const row of rows) {
+    const at = row.kind === 'change' ? { a: row.left, b: row.right } : row
+    const line = { a: at.a == null ? next.a : lineOf.a[at.a], b: at.b == null ? next.b : lineOf.b[at.b] }
+    types(line)
+    if (at.a != null) next.a = line.a + 1
+    if (at.b != null) next.b = line.b + 1
+    out.push(row)
+  }
+  types(lines)
+  return out
+}
+
 // A file's lines added and removed between its two sides as they are, for a
 // tree to list beside it, as an npm dependency review's tree counts them:
 // none where a side is not text, nor for a file too large to count while a
@@ -131,8 +177,10 @@ export function whitespaceInsensitive(path, text = '', format = undefined) {
 // (`del`) lines and then its added (`add`) ones, a line paired with its
 // counterpart on the other side (see alignBlock) naming it as its `pair`.
 // Split, a block is `change` rows of a removed line `left` and an added
-// line `right`, either null where that side has run out.
-export function diffRows(model, expansion = new Map(), { context = DIFF_CONTEXT, split = false } = {}) {
+// line `right`, either null where that side has run out. A diff of a file's
+// lines that run, its types set aside (typeFolds), folds none of them, a few
+// as they are, and shows where its types stand between them (withTypes).
+export function diffRows(model, expansion = new Map(), { context = model.typeFolds ? Infinity : DIFF_CONTEXT, split = false } = {}) {
   const { a, blocks } = model
   const rows = []
   let ai = 0, bi = 0
@@ -165,7 +213,7 @@ export function diffRows(model, expansion = new Map(), { context = DIFF_CONTEXT,
     ai = block.a1
     bi = block.b1
   }
-  return rows
+  return model.typeFolds ? withTypes(rows, model.typeFolds) : rows
 }
 
 // A block's lines as rows of [removed line, added line, paired]: each removed

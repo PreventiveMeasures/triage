@@ -1,19 +1,16 @@
 // Which of a comparison's pairs of files changed in types alone (type-only.ts),
-// as @preventive/compare's compareTrees stamps a change `typeOnly`, off the
-// server's event loop: each pair a tree of a file a side, a side not there
-// none, its paths as they are, which say what a file is. Two paths pair as one
-// change wherever compareTrees takes them for a rename at all; where it
-// doesn't, the pair is types only where each of its two changes is: the file
-// gone erasing whole, and the one come erasing whole or leaving a single bare
-// `export {}`, which nothing loaded before. `[true, false, ...]` by pair.
+// off the server's event loop, as type-only-proof.js tells each: `true`, `{
+// runs, otherRuns }` for one that holds types alone but for what runs, or
+// `false`, by pair. Every pair is stamped first, then what runs is worked out
+// of those not stamped while `runsUntil` (a time, or null where it isn't
+// asked for) has not come, so the work cannot cost a stamp its deadline: one
+// past it is told as not stamped, as where it isn't asked for.
 import { parentPort, workerData } from 'node:worker_threads'
-import { compareTrees } from '@preventive/compare'
+import { typeOnlyRuns, typeOnlyStamped } from './type-only-proof.js'
 
-const tree = file => (file ? [{ name: file.path, data: file.text }] : [])
-const answer = workerData.pairs.map(([from, to]) => {
-  const changes = compareTrees(tree(from), tree(to), { paths: 'keys', lines: false, renames: Number.MIN_VALUE })
-  return changes.length > 0 && changes.every(change => change.typeOnly === true)
-})
+const { pairs, runsUntil } = workerData
+const stamped = pairs.map(([from, to]) => typeOnlyStamped(from, to))
+const answer = stamped.map((stamp, i) => stamp || (runsUntil !== null && Date.now() < runsUntil && typeOnlyRuns(...pairs[i])))
 // Node worker messages have no browser target origin.
 // oxlint-disable-next-line unicorn/require-post-message-target-origin
 parentPort.postMessage(answer)

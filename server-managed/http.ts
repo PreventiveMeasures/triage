@@ -88,8 +88,9 @@
 //        bundle's, both pretty-printed, renamed names hidden, whitespace changes shown and hidden | 400/401/404/409/413/422/429/504
 //   GET  /api/bundles/<id>/rename-diff?other=&scope= → every pair of its JavaScript files and another bundle's the viewer
 //        diffs so, within a reason scope where given, Brotli-encoded ndjson | 400/401/404/422/503
-//   GET  /api/bundles/<id>/type-only?other=&scope= → the files that changed between it and another bundle in types alone, as
-//        @preventive/compare proves them, within a reason scope where given, Brotli-encoded ndjson | 400/401/404/422/503
+//   GET  /api/bundles/<id>/type-only?other=&scope=&runs= → the files that changed between it and another bundle in types alone, as
+//        @preventive/compare proves them, within a reason scope where given, and with runs=1 those in types alone but for
+//        what runs, with the lines that hold it, Brotli-encoded ndjson | 400/401/404/422/503
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
@@ -130,8 +131,8 @@
 //        another version's, both pretty-printed, renamed names hidden, whitespace changes shown and hidden | 400/401/404/409/413/422/429/502/503/504
 //   GET  /api/npm/rename-diff?name=&version=&otherVersion= → every pair of their JavaScript files the viewer diffs so,
 //        Brotli-encoded ndjson | 400/401/404/413/429/502/503
-//   GET  /api/npm/type-only?name=&version=&otherVersion= → the files that changed between two versions in types alone,
-//        Brotli-encoded ndjson | 400/401/404/413/429/502/503
+//   GET  /api/npm/type-only?name=&version=&otherVersion=&runs= → the files that changed between two versions in types alone,
+//        and with runs=1 those in types alone but for what runs, Brotli-encoded ndjson | 400/401/404/413/429/502/503
 //   GET  /api/npm/delta?name=&version=&otherVersion= → the lines a version adds and removes against another, or `(empty)`, and
 //        those but for declaration files changed in types alone, where any are, and whether binary files changed
 //        | 400/401/404/413/422/429/502/503/504
@@ -262,9 +263,9 @@ import { type NpmAdvisoryOptions, npmAdvisories, npmCommitTags, npmDownloads, np
 import { npmProvenance } from './npm-provenance.ts'
 import { npmReadyScanDownload, npmReadyScanDownloads, npmRisk, npmRiskRemoved } from './npm-risk.ts'
 import { NpmRiskError } from '../risk/index.js'
-import { type PrettyCache, PrettyError, type PrettyRequest, compared, prettyRequest, prettyText } from './pretty-print.ts'
+import { type ComparedSide, type PrettyCache, PrettyError, type PrettyRequest, compared, prettyRequest, prettyText } from './pretty-print.ts'
 import { renameDiffOf, renameDiffRequest, renamedPairs } from './rename-diff.ts'
-import { typeOnlyFiles } from './type-only.ts'
+import { runsAsked, typeOnlyFiles } from './type-only.ts'
 import { comparisonBody, emptySide, npmComparedSide, patchedVersionBody } from './comparison.ts'
 import { isNpmPackageName, isNpmPackageSpec, isPatchHash, npmPackageScope } from '../common/managed/npm-packages.js'
 
@@ -5196,7 +5197,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       const other = otherSpec === '' ? null : await otherDoc()
       const sides = other && await deps.prettyCache.npmSides(doc, other)
       const lines = path === NPM_RENAME_DIFF_PATH ? renamedPairs(sides!, !doc.private && !other!.private)
-        : path === NPM_TYPE_ONLY_PATH ? typeOnlyFiles(sides!) : sides ? compared(sides) : await deps.prettyCache.npmAll(doc)
+        : path === NPM_TYPE_ONLY_PATH ? typeOnlyFiles(sides!, runsAsked(params)) : sides ? compared(sides) : await deps.prettyCache.npmAll(doc)
       const isPrivate = doc.private || other?.private === true
       if (!(await recheck(isPrivate))) return
       dropIdle(res)
@@ -5559,7 +5560,8 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
         if (method !== 'GET') { send405(res, 'GET'); return }
         if (part === 'rename-diff' && url.searchParams.has('path')) { await handleBundleRenameDiff(req, res, deps, session, id, url.searchParams); return }
         // The pairs a scoped Compare diffs, of the files it compares within its scope.
-        const [linesOf, scope] = part === 'pretty' ? [compared, ''] : [part === 'type-only' ? typeOnlyFiles : renamedPairs, url.searchParams.get('scope') ?? '']
+        const typeOnly = (sides: [ComparedSide, ComparedSide]) => typeOnlyFiles(sides, runsAsked(url.searchParams))
+        const [linesOf, scope] = part === 'pretty' ? [compared, ''] : [part === 'type-only' ? typeOnly : renamedPairs, url.searchParams.get('scope') ?? '']
         await handleBundleChanges(res, deps, session, id, url.searchParams.get('other') ?? '', async (cache, base, other) => linesOf(await cache.bundleSides(base, other, scope))); return
       }
       if (method !== 'GET' && method !== 'HEAD') { send405(res, 'GET, HEAD'); return }
