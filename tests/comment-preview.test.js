@@ -44,6 +44,26 @@ test('managed previews show each author, body and timestamp for the active findi
   assert.doesNotMatch(renderText(preview.render()), /popover="manual"/u, 'no fallback to a stale local projection after reset')
 })
 
+test('a managed comment shows its author by the name they chose, their login in its tooltip; by their login without one', () => {
+  const preview = new CommentPreview()
+  preview.finding = { id: 'active' }
+  const shown = comment => {
+    state.managedComments.set('active', [{ body: 'Note', createdAt: 0, ...comment }])
+    return renderText(preview.render())
+  }
+  const named = shown({ authorId: 'a', authorLogin: 'alice', authorName: 'Alice Example' })
+  assert.match(named, /<strong>Alice Example<\/strong>/u)
+  assert.match(named, /data-tooltip=@alice on GitHub>/u)
+  assert.match(named, /<span>A<\/span>/u, 'their avatar over their name\'s letter')
+  assert.doesNotMatch(named, /<strong>alice</u)
+  for (const authorName of [null, undefined, '  ', 'bob']) {
+    const unnamed = shown({ authorId: 'b', authorLogin: 'bob', authorName })
+    assert.match(unnamed, /<strong>bob<\/strong>/u, String(authorName))
+    assert.doesNotMatch(unnamed, /on GitHub/u, 'a login shown needs no tooltip telling it')
+  }
+  assert.doesNotMatch(shown({ authorId: null, authorLogin: null, authorName: null }), /managed-comment-author/u, 'an imported one has no author')
+})
+
 test('local/E2E previews preserve multiline text and links, with a separate Edit hint', () => {
   managed = false
   const preview = new CommentPreview()

@@ -999,7 +999,8 @@ function prepareStatements(db: ManagedSql) {
                  FROM managed_finding_triage t LEFT JOIN managed_user u ON u.id = t.updated_by
                 WHERE t.finding_id IN (SELECT id FROM requested)) AS triage,
               (SELECT json_group_array(json_object('id', c.id, 'findingId', c.finding_id, 'body', c.body, 'authorId', c.author_id,
-                        'authorLogin', COALESCE(u.login, c.author_login), 'createdAt', c.created_at, 'updatedAt', c.updated_at, 'version', c.version)
+                        'authorLogin', COALESCE(u.login, c.author_login), 'authorName', u.name,
+                        'createdAt', c.created_at, 'updatedAt', c.updated_at, 'version', c.version)
                         ORDER BY c.created_at NULLS FIRST, c.id)
                  FROM managed_finding_comment c LEFT JOIN managed_user u ON u.id = c.author_id
                 WHERE c.finding_id IN (SELECT id FROM requested)) AS comments,

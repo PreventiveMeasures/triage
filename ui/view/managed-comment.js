@@ -1,11 +1,14 @@
 import { getPublicShare } from '../../client/managed/public-share.js'
 import { html, nothing } from 'lit'
 import { keyed } from 'lit/directives/keyed.js'
+import { commentAuthorName } from '../../common/managed/comments.ts'
 
-export function managedCommentAvatar(id, login) {
+// A user's avatar (`id`), over the letter of what they show as (`name`: their
+// name, else their login), which a public link's readers have alone.
+export function managedCommentAvatar(id, name) {
   if (!id) return nothing
   return keyed(id, html`<span class="managed-comment-avatar" aria-hidden="true">
-    <span>${(login?.[0] ?? '?').toUpperCase()}</span>
+    <span>${(name?.[0] ?? '?').toUpperCase()}</span>
     ${getPublicShare() ? nothing : html`<img alt="" src=${`/api/avatar/${encodeURIComponent(id)}`} loading="lazy"
       @error=${event => { event.currentTarget.hidden = true }}>`}
   </span>`)
@@ -27,12 +30,16 @@ function commentTime(comment) {
 
 // Shared by finding cards and the discussion dialog. The caller supplies the
 // linkified body and any author-only actions, keeping their event handlers local.
+// Its author shows by the name they chose, their login in its tooltip, and by
+// their login where they have none.
 export function managedCommentTemplate(comment, body, actions = nothing) {
   const time = commentTime(comment)
+  const author = commentAuthorName(comment)
   return html`<div class="managed-comment"><div class="managed-comment-row">
-    ${comment.authorId || comment.authorLogin ? html`<span class="managed-comment-author">
-      ${managedCommentAvatar(comment.authorId, comment.authorLogin)}
-      ${comment.authorLogin ? html`<strong>${comment.authorLogin}</strong>` : nothing}
+    ${comment.authorId || author ? html`<span class="managed-comment-author"
+      data-tooltip=${comment.authorLogin && author !== comment.authorLogin ? `@${comment.authorLogin} on GitHub` : nothing}>
+      ${managedCommentAvatar(comment.authorId, author)}
+      ${author ? html`<strong>${author}</strong>` : nothing}
     </span>` : nothing}
     <div class="managed-comment-body">${body}</div>
     ${time === nothing && actions === nothing ? nothing : html`<div class="managed-comment-meta">

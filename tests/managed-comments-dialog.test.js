@@ -91,6 +91,18 @@ test('live discussion scrolling follows the bottom but preserves a reader browsi
   assert.equal(dialog.thread.scrollTop, 100)
 })
 
+test('the composer replies as the signed-in user by the name they chose, else by their login', async t => {
+  const session = state.managedSession
+  t.after(() => { state.managedSession = session })
+  const text = value => Array.isArray(value) ? value.map(text).join('') : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('')
+    : value == null || typeof value === 'symbol' ? '' : String(value)
+  const dialog = await open(t)
+  for (const [name, shown] of [['Alice Example', 'Alice Example'], [null, 'alice'], ['  ', 'alice']]) {
+    state.managedSession = { ...session, login: 'alice', name }
+    assert.match(text(dialog.render()), new RegExp(`Reply as <strong>${shown}</strong>`, 'u'))
+  }
+})
+
 test('disconnect removes the live subscription and reopening reads the latest comments', async t => {
   const dialog = await open(t)
   dialog._finish()

@@ -61,8 +61,10 @@ export function initCommentMethods(db: DatabaseSync): void {
 }
 
 export function commentMethods(db: ManagedSql): CommentStore {
+  // The author's login and name as they are now; one no longer a user keeps
+  // the login they wrote it under, and has no name.
   const fields = `c.id, c.finding_id AS findingId, c.body, c.author_id AS authorId,
-    COALESCE(u.login, c.author_login) AS authorLogin,
+    COALESCE(u.login, c.author_login) AS authorLogin, u.name AS authorName,
     c.created_at AS createdAt, c.updated_at AS updatedAt, c.version`
   const select = db.prepare(`SELECT ${fields} FROM managed_finding_comment c
     LEFT JOIN managed_user u ON u.id = c.author_id WHERE c.id = ?`)

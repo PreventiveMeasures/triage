@@ -41,6 +41,8 @@ export async function checkFoldedReads(db) {
       plain({ triage: await db.listTriage(ids), comments: await db.listComments(ids), issues: await db.listManagedIssues(ids) }), JSON.stringify(ids))
   }
   assert.deepEqual((await db.getAnnotations(['a'])).comments.map(comment => comment.body), ['first', 'third'])
+  assert.deepEqual((await db.getAnnotations(['a', 'b'])).comments.map(comment => [comment.authorLogin, comment.authorName]),
+    [['user1', null], ['user2', 'User 2'], ['bot', null]], 'each author by their login and the name they chose')
   assert.deepEqual((await db.getAnnotations(['a', 'b'])).triage.map(row => row.flagged), [true, false])
 
   // Report views, for each user and report, a missing one included.
