@@ -1,4 +1,4 @@
-import { automaticFixFor } from './managed-issues.js'
+import { automaticFixFor, managedIssueFor } from './managed-issues.js'
 import { isPlaceholderNpmPackage, state } from '#client/index.js'
 import { SEVERITY_ORDER, activeRevalidateKinds, displayedSeverity, findingText, isModule, isRevalidation, isRuledOut, prettyModel, revalidateKind, voidsConfidence } from './format.js'
 import { drawnTabs, getMergedGroups, primaryTab, tabKey, triageEntry, underlyingFindingsShown } from './group.js'
@@ -211,6 +211,7 @@ export function resetFilters() {
   state.filterInclude = ''
   state.filterIncludeNegate = false
   state.filterComment = ''
+  state.filterIssue = ''
   state.filterFix = ''
   state.filterFlagged = ''
   state.filterDuplicates = ''
@@ -240,7 +241,7 @@ const FILTER_FIELDS = [
   'filterAnalyzer', 'filterModel', 'filterValidationModel', 'filterRepo',
   'filterConfMin', 'filterConfMax',
   'filterInclude', 'filterIncludeNegate',
-  'filterComment', 'filterFix', 'filterFlagged', 'filterDuplicates', 'filterCrossContext', 'filterAppStacked', 'filterSecurity',
+  'filterComment', 'filterIssue', 'filterFix', 'filterFlagged', 'filterDuplicates', 'filterCrossContext', 'filterAppStacked', 'filterSecurity',
   'filterRevalidate', 'filterPartial',
 ]
 
@@ -601,7 +602,7 @@ function matchesEntryFilters(f) {
     const col = triageEntry(f)?.color ?? 'none'
     if (!F.filterColors.has(col)) return false
   }
-  // NOTE: the annotation filters (comment | fix | flag) are intentionally
+  // NOTE: the annotation filters (comment | issue | fix | flag) are intentionally
   // NOT evaluated here — they're GROUP-level (see matchesAnnotationFilters
   // / applyFilters) so 'with' / 'without' stay complementary across a
   // dedup group.
@@ -639,8 +640,10 @@ function matchesEntryFilters(f) {
   return true
 }
 
-// Group-level annotation filters (comment | fix | flag), each a tri-state
-// '' / 'with' / 'without'. These are deliberately NOT per-tab: 'without'
+// Group-level annotation filters (comment | issue | fix | flag), each a
+// tri-state '' / 'with' / 'without'. Issue asks for the finding's saved
+// managed issue (managed-issues.js), which no other mode has. These are
+// deliberately NOT per-tab: 'without'
 // must mean "NO tab in the dedup group carries it" (¬∃) — the exact
 // complement of 'with' = "≥1 tab carries it" (∃). A per-tab `g.some`
 // negation would instead keep a group that has the annotation on one tab
@@ -648,11 +651,15 @@ function matchesEntryFilters(f) {
 // is computed once over the whole group, then 'with'/'without' applied.
 function matchesAnnotationFilters(group) {
   const F = activeFilters()
-  if (!F.filterComment && !F.filterFix && !F.filterFlagged) return true
+  if (!F.filterComment && !F.filterIssue && !F.filterFix && !F.filterFlagged) return true
   const groupHas = (pred) => group.some((f) => pred(triageEntry(f)))
   if (F.filterComment) {
     const has = groupHas((e) => Boolean(e?.comment))
     if (F.filterComment === 'with' ? !has : has) return false
+  }
+  if (F.filterIssue) {
+    const has = group.some(f => Boolean(managedIssueFor(f)))
+    if (F.filterIssue === 'with' ? !has : has) return false
   }
   if (F.filterFix) {
     const has = group.some(f => Boolean(triageEntry(f)?.fix || automaticFixFor(f)))

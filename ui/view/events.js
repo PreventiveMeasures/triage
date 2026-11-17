@@ -2947,14 +2947,15 @@ report.addEventListener('source-toggle', (e) => {
   if (!wasActive) state.filterSources.add(v)
   render()
 })
-// Annotation filter chips (comment | fix | flag | duplicates | cross-context |
-// App-stacked) — cycle the matching
+// Annotation filter chips (comment | issue | fix | flag | duplicates |
+// cross-context | App-stacked) — cycle the matching
 // tri-state ('' → 'with' → 'without' → '') and re-render. Each is an
 // independent AND filter (matchesFilters).
 report.addEventListener('annotation-filter-toggle', (e) => {
   const key = e.detail?.key
   const next = (v) => (v === '' ? 'with' : v === 'with' ? 'without' : '')
   if (key === 'comment') state.filterComment = next(state.filterComment)
+  else if (key === 'issue') state.filterIssue = next(state.filterIssue)
   else if (key === 'fix') state.filterFix = next(state.filterFix)
   else if (key === 'flag') state.filterFlagged = next(state.filterFlagged)
   else if (key === 'duplicates' && !state.currentWorkspace) state.filterDuplicates = next(state.filterDuplicates)

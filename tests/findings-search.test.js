@@ -29,6 +29,7 @@ function reset() {
   state.filterInclude = ''
   state.filterIncludeNegate = false
   state.filterComment = ''
+  state.filterIssue = ''
   state.filterFix = ''
   state.filterFlagged = ''
   state.triage = new Map()
@@ -198,7 +199,7 @@ describe('matchesFilters — findings search', () => {
   })
 })
 
-describe('applyFilters — annotation filters (comment | fix | flag, group-level tri-state)', () => {
+describe('applyFilters — annotation filters (comment | issue | fix | flag, group-level tri-state)', () => {
   beforeEach(reset)
 
   it("comment 'with' keeps commented groups; 'without' keeps the rest; '' is off", () => {
@@ -281,4 +282,28 @@ test('Has fix includes automatic and manual links across siblings, with Without 
   state.localMode = true
   state.filterFix = 'with'
   assert.deepEqual(applyFilters([auto, manual, plain]), [manual], 'managed automatic links never bleed into local mode')
+})
+
+test('Has issue reads the managed issue across siblings, with Without as its complement', t => {
+  reset()
+  const next = { serverMode: 'managed', localMode: false, currentManagedTeam: 'team', managedSession: { id: 'user' },
+    managedIssues: new Map([['filed', { url: 'https://github.com/o/r/issues/1', autoFix: null, duplicateOf: null }]]) }
+  const previous = Object.fromEntries(Object.keys(next).map(key => [key, state[key]]))
+  Object.assign(state, next)
+  t.after(() => { Object.assign(state, previous); reset() })
+  // A Fix that happens to be an issue link is still a Fix, not the finding's issue.
+  state.triage.set('manual', { fix: 'https://github.com/o/r/issues/2' })
+  const filed = [makeFinding('filed'), makeFinding('sibling')], manual = [makeFinding('manual')], plain = [makeFinding('plain')]
+  state.filterIssue = 'with'
+  assert.deepEqual(applyFilters([filed, manual, plain]), [filed])
+  state.filterIssue = 'without'
+  assert.deepEqual(applyFilters([filed, manual, plain]), [manual, plain])
+  state.filterFix = 'with'
+  assert.deepEqual(applyFilters([filed, manual, plain]), [manual], 'ANDs with the other annotation filters')
+  state.filterFix = ''
+  state.filterIssue = ''
+  assert.deepEqual(applyFilters([filed, manual, plain]), [filed, manual, plain])
+  state.localMode = true
+  state.filterIssue = 'with'
+  assert.deepEqual(applyFilters([filed, manual, plain]), [], 'managed issues never bleed into local mode')
 })

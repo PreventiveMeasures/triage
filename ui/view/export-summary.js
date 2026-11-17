@@ -124,10 +124,10 @@ export function activeFilterDescriptions(fields = state) {
       clear: { filterInclude: '', filterIncludeNegate: false },
     })
   }
-  // Annotation tri-state filters (comment / fix / flag): '' = off,
-  // 'with' / 'without' = present / absent across the group. Three rows
+  // Annotation tri-state filters (comment / issue / fix / flag): '' = off,
+  // 'with' / 'without' = present / absent across the group. Four rows
   // under one label, so each needs its own key to be removable.
-  for (const [field, noun] of [['filterComment', 'comment'], ['filterFix', 'fix'], ['filterFlagged', 'flag']]) {
+  for (const [field, noun] of [['filterComment', 'comment'], ['filterIssue', 'issue'], ['filterFix', 'fix'], ['filterFlagged', 'flag']]) {
     const v = fields[field]
     if (v) out.push({ key: `annotation:${noun}`, label: 'Annotation', value: `${v === 'with' ? 'With' : 'Without'} ${noun}`, clear: { [field]: '' } })
   }

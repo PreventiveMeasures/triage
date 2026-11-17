@@ -1,7 +1,7 @@
-// `<annotation-filter>` — comment | fix | flag after the Sources / Deps
+// `<annotation-filter>` — comment | issue | fix | flag after the Sources / Deps
 // switch, or duplicates | cross-context | App-stacked | security beside App mode. Each
 // chip cycles an INDEPENDENT, AND-combined tri-state filter (state.filterComment /
-// filterFix / filterFlagged / filterDuplicates / filterCrossContext /
+// filterIssue / filterFix / filterFlagged / filterDuplicates / filterCrossContext /
 // filterAppStacked / filterSecurity: '' → 'with' → 'without' → ''):
 // selecting more narrows the row set further
 // (see matchesFilters in filters.js). Mirrors `<source-filter>`'s
@@ -31,10 +31,14 @@ import { ensureHostAria } from './host-aria.js'
 import { LINKS_ICON_SVG } from './icons.js'
 
 // Inlined glyphs (same path data as render-finding.js's COMMENT_ICON /
-// FIX_ICON / FLAG_ICON) so this toolbar chip stays a light StateElement
-// rather than importing the finding-render module.
+// ISSUE_ICON / FIX_ICON / FLAG_ICON) so this toolbar chip stays a light
+// StateElement rather than importing the finding-render module.
 const COMMENT_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <path class="bubble" d="M2.5 3h11a.5.5 0 0 1 .5.5v6.5a.5.5 0 0 1-.5.5H8.4l-3 2.6V10.5H2.5a.5.5 0 0 1-.5-.5V3.5a.5.5 0 0 1 .5-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>`
+const ISSUE_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+  <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <circle cx="8" cy="8" r="1.7" fill="currentColor"/>
 </svg>`
 const FIX_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
   <path class="wrench" d="M10.4 2.6a3 3 0 0 0-3.6 4.5L2 12l2 2 4.9-4.8a3 3 0 0 0 4.5-3.6l-1.8 1.8-1.5-.4-.4-1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
@@ -63,9 +67,10 @@ const SECURITY_GLYPH = html`<svg viewBox="0 0 16 16" width="12" height="12" aria
 </svg>`
 
 const CHIPS = [
-  { key: 'comment', glyph: COMMENT_GLYPH, label: 'commented', stateKey: 'filterComment', hasKey: 'hasComment' },
-  { key: 'fix',     glyph: FIX_GLYPH,     label: 'fixed',      stateKey: 'filterFix',     hasKey: 'hasFix' },
-  { key: 'flag',    glyph: FLAG_GLYPH,    label: 'flagged',    stateKey: 'filterFlagged', hasKey: 'hasFlagged' },
+  { key: 'comment', glyph: COMMENT_GLYPH, label: 'commented findings', stateKey: 'filterComment', hasKey: 'hasComment' },
+  { key: 'issue',   glyph: ISSUE_GLYPH,   label: 'findings with an issue', stateKey: 'filterIssue', hasKey: 'hasIssue' },
+  { key: 'fix',     glyph: FIX_GLYPH,     label: 'fixed findings',     stateKey: 'filterFix',     hasKey: 'hasFix' },
+  { key: 'flag',    glyph: FLAG_GLYPH,    label: 'flagged findings',   stateKey: 'filterFlagged', hasKey: 'hasFlagged' },
   { key: 'duplicates', glyph: DUPLICATES_GLYPH, label: 'rows with duplicates in other reports', stateKey: 'filterDuplicates', hasKey: 'hasDuplicates' },
   { key: 'cross-context', glyph: CROSS_CONTEXT_GLYPH, label: 'rows across multiple repos or packages', stateKey: 'filterCrossContext', hasKey: 'hasCrossContext' },
   { key: 'app-stacked', glyph: APP_STACKED_GLYPH, label: 'stacked App rows', stateKey: 'filterAppStacked', hasKey: 'hasAppStacked' },
@@ -77,6 +82,7 @@ class AnnotationFilter extends StateElement {
   static properties = {
     group: { type: String },
     hasComment: { attribute: false },
+    hasIssue:   { attribute: false },
     hasFix:     { attribute: false },
     hasFlagged: { attribute: false },
     hasDuplicates: { attribute: false },
@@ -91,6 +97,7 @@ class AnnotationFilter extends StateElement {
     super()
     this.group = 'marks'
     this.hasComment = false
+    this.hasIssue = false
     this.hasFix = false
     this.hasFlagged = false
     this.hasDuplicates = false
@@ -115,8 +122,7 @@ class AnnotationFilter extends StateElement {
     const renderChip = (c) => {
       // Tri-state: '' → 'with' (only) → 'without' (exclude) → ''.
       const sel = state[c.stateKey]
-      const label = CONTEXT_KEYS.has(c.key)
-        ? c.label : `${c.label} findings`
+      const { label } = c
       const title = sel === 'with'
         ? `Showing only ${label} — click to exclude them`
         : sel === 'without'
