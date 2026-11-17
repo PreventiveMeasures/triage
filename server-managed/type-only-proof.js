@@ -20,7 +20,11 @@
 // triple-slash directive, a source map or source URL pragma), told wide of
 // the proof's own grammar for them, so none it reads is ever set aside. A
 // line holding any of it is told whole; a range is `[from, to)` of lines
-// counted from zero, as the viewer splits a text at `\n`.
+// counted from zero, as the viewer splits a text at `\n`. None are told of
+// a pair where a diff of those lines would not show what changed: a
+// triple-slash comment that leads one side, where a directive steers, and
+// stands below a statement on the other, where it is prose, its line the same
+// on both (`moved`). Its diff is drawn whole, as one not proven is.
 import { stripTypeScriptTypes } from 'node:module'
 import { compareTrees, proveTypeOnly } from '@preventive/compare'
 import { parseSync } from 'oxc-parser'
@@ -41,19 +45,20 @@ export function typeOnlyStamped(from, to) {
 }
 
 // The lines of a text proven to hold types alone but for what runs that hold
-// any of that, as merged ranges. Stripping blanks what it erases in place,
-// each character to a blank, so a statement it leaves blank is erased and one
-// it leaves anything of runs, as the proof found, and a comment it leaves is
-// kept; what it reads starts past a byte order mark, and so do the offsets in
-// its tree.
+// any of that, as merged ranges (`lines`), and its triple-slash comments, by
+// whether each leads it (`leading`, `below`). Stripping blanks what it erases
+// in place, each character to a blank, so a statement it leaves blank is
+// erased and one it leaves anything of runs, as the proof found, and a comment
+// it leaves is kept; what it reads starts past a byte order mark, and so do
+// the offsets in its tree.
 function runLines(text) {
   const shift = text.startsWith('﻿') ? 1 : 0
   const body = text.slice(shift)
   const code = stripTypeScriptTypes(body, { mode: 'strip' })
   const { program, comments } = parseSync('file.ts', body, { lang: 'ts', sourceType: 'module' })
   const kept = ({ start, end }) => code.slice(start, end)
-  const spans = [...program.hashbang ? [program.hashbang] : [], ...program.body.filter(statement => !BLANK.test(kept(statement))),
-    ...comments.filter(comment => STEERING.test(kept(comment)))]
+  const steering = comments.filter(comment => STEERING.test(kept(comment)))
+  const spans = [...program.hashbang ? [program.hashbang] : [], ...program.body.filter(statement => !BLANK.test(kept(statement))), ...steering]
   const starts = [0]
   for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) starts.push(at + 1)
   // The line an offset of the text is on: the last whose start is at most it.
@@ -73,19 +78,30 @@ function runLines(text) {
     if (last && from <= last[1]) last[1] = Math.max(last[1], to)
     else ranges.push([from, to])
   }
-  return ranges
+  // Its triple-slash comments, by their text: those that lead it, before its
+  // first statement, where alone a directive steers, and those below one.
+  const first = program.body[0]?.start ?? Infinity
+  const slashed = leads => new Set(steering.filter(comment => (comment.start < first) === leads).map(kept).filter(comment => comment.startsWith('///')))
+  return { lines: ranges, leading: slashed(true), below: slashed(false) }
 }
 
+// Whether a triple-slash comment that leads `one` side stands only below a
+// statement on the `other`: a directive that steers on one alone, though its
+// line reads the same on both.
+const moved = (one, other) => [...one.leading].some(comment => !other.leading.has(comment) && other.below.has(comment))
+
 // `{ runs, otherRuns }` where each side there is a declaration file proven to
-// hold types alone but for what runs; else false, and where the proof throws,
-// as no check should. Asked of a pair not stamped, which always runs some.
+// hold types alone but for what runs, and no directive steers on one side
+// alone unseen (`moved`); else false, and where the proof throws, as no
+// check should. Asked of a pair not stamped, which always runs some.
 export function typeOnlyRuns(from, to) {
   const sides = [from, to].filter(file => file !== null)
   if (sides.length === 0 || !sides.every(file => DECLARATION.test(file.path))) return false
   try {
     if (!sides.every(file => proveTypeOnly(file.text).proven)) return false
-    const [runs, otherRuns] = [from, to].map(file => (file ? runLines(file.text) : []))
-    return { runs, otherRuns }
+    const [base, other] = [from, to].map(file => (file ? runLines(file.text) : null))
+    if (base && other && (moved(base, other) || moved(other, base))) return false
+    return { runs: base?.lines ?? [], otherRuns: other?.lines ?? [] }
   } catch {
     return false
   }

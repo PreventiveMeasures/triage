@@ -5,7 +5,9 @@
 // `timeout`); a worker given until its deadline too, then terminated (504
 // `timeout`). One that can't start is refused (503 `unavailable`), and one
 // gone without an answer `accept` takes fails (422 `failed`), each as `error`
-// tells it; `what` names them in the log.
+// tells it; `what` names them in the log. A worker that told, before its
+// answer, one to settle for (`early`) fails in neither way: gone without its
+// own, its deadline come or its memory run out, it answers that.
 import { Worker, type WorkerOptions } from 'node:worker_threads'
 
 export function workerTurns({ what, active, waiting, error: Failure, busy, timeout, failed }: {
@@ -40,18 +42,25 @@ export function workerTurns({ what, active, waiting, error: Failure, busy, timeo
     },
     // The answer of a worker of `url`, as `accept` takes it, or null where
     // it doesn't: settled once the worker is gone, so that its turn is given
-    // up only then.
-    run<T>(url: URL, options: WorkerOptions, accept: (told: unknown) => T | null, deadline: number): Promise<T> {
+    // up only then. `early`, where given, is asked first of each thing the
+    // worker tells: the answer to settle for should it be gone before it
+    // tells its own, or null for what is its own, or anything else.
+    run<T>(url: URL, options: WorkerOptions, accept: (told: unknown) => T | null, deadline: number, early?: (told: unknown) => T | null): Promise<T> {
       let worker: Worker
       try { worker = new Worker(url, options) } catch (err) {
         console.warn(`managed: a ${what} could not start:`, err)
         throw new Failure(503, 'unavailable')
       }
       return new Promise((resolve, reject) => {
-        let answer: T | null = null, failure = new Failure(422, failed)
+        let answer: T | null = null, answered = false, failure = new Failure(422, failed)
         const timer = setTimeout(() => { failure = new Failure(504, timeout); void worker.terminate() }, deadline - Date.now())
-        worker.once('message', (told: unknown) => {
-          answer = accept(told)
+        worker.on('message', (told: unknown) => {
+          // Nothing it tells past its answer, while it is being terminated, is taken.
+          if (answered) return
+          const settled = early?.(told) ?? null
+          if (settled !== null) { answer = settled; return }
+          answered = true
+          answer = accept(told) ?? answer
           void worker.terminate()
         })
         worker.once('error', err => { console.warn(`managed: a ${what} failed:`, err) })
