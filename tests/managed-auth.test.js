@@ -265,7 +265,7 @@ test('GET /api/admin/scan/models: managed users receive the same starting catalo
   const body = JSON.parse(response.body)
   assert.deepEqual(body, defaultScanModels())
   assert.equal(body.defaultModel, 'anthropic/claude-opus-5.5')
-  assert.ok(body.models.some((model) => model.id === 'openai/gpt-6-astra-pro' && model.efforts.includes('max')))
+  assert.ok(body.models.some((model) => model.id === 'openai/gpt-6.2-astra-pro' && model.efforts.includes('max')))
   await db.close()
 })
 
