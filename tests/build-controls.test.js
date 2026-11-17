@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { spawnSync } from 'node:child_process'
 import { transform } from 'esbuild'
 import { minify } from 'oxc-minify'
 import { escapedControls } from '../build-controls.js'
@@ -20,4 +21,13 @@ test('control characters esbuild and oxc-minify print raw are escaped again, rea
   assert.doesNotMatch(escapedControls(again), RAW, 'none left raw after it either')
   assert.deepEqual(await valuesOf(escapedControls(again)), await valuesOf(code), 'still each the character itself')
   assert.equal(escapedControls('a\tb\nc\r\n'), 'a\tb\nc\r\n', 'tabs and line ends as they are')
+})
+
+// Neither tsc nor another test loads build.js, so nothing else notices a name
+// it imports no longer being exported. An unknown mode loads it, with every
+// module it imports, and builds nothing.
+test('build.js loads, every name it imports being exported', () => {
+  const run = spawnSync(process.execPath, ['build.js', 'none'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' })
+  assert.equal(run.stderr, 'unknown mode: none\n')
+  assert.equal(run.status, 1)
 })
