@@ -88,16 +88,28 @@ export function typeFolds(before, after, { runs, otherRuns }) {
 // Rows of a diff of a file's lines that run (typeFolds), a `types` row before
 // each where lines of types alone stand before it on either side, and after
 // the last where they end the file: `a` and `b` those lines, `{ from, to }`
-// of its file, or null where that side has none there.
+// of its file, or null where that side has none there. Unified, a change's
+// removed lines come before its added ones: the types that stand before the
+// first added are told with those before the first removed, a row for both
+// ahead of the change, as split tells them, not one between its two halves.
 function withTypes(rows, { lineOf, lines }) {
   const next = { a: 0, b: 0 }, out = []
   const types = to => {
     const [a, b] = ['a', 'b'].map(side => (to[side] > next[side] ? { from: next[side], to: to[side] } : null))
     if (a || b) out.push({ kind: 'types', a, b })
+    next.a = Math.max(next.a, to.a)
+    next.b = Math.max(next.b, to.b)
   }
-  for (const row of rows) {
+  for (const [i, row] of rows.entries()) {
     const at = row.kind === 'change' ? { a: row.left, b: row.right } : row
-    const line = { a: at.a == null ? next.a : lineOf.a[at.a], b: at.b == null ? next.b : lineOf.b[at.b] }
+    // The first added line of the change a run of removed lines starts, where it adds any.
+    let added = null
+    if (row.kind === 'del' && rows[i - 1]?.kind !== 'del') {
+      let after = i + 1
+      while (rows[after]?.kind === 'del') after++
+      if (rows[after]?.kind === 'add') added = lineOf.b[rows[after].b]
+    }
+    const line = { a: at.a == null ? next.a : lineOf.a[at.a], b: at.b == null ? added ?? next.b : lineOf.b[at.b] }
     types(line)
     if (at.a != null) next.a = line.a + 1
     if (at.b != null) next.b = line.b + 1
