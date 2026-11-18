@@ -25,6 +25,12 @@ const TYPESCRIPT = new Set(['ts', 'mts', 'cts'])
 // A failure that may pass: not a refusal, nor a server whose Node proves
 // nothing (501 proof-unsupported, server-managed/type-only.ts), as it won't.
 const retryable = status => status !== 501 && !(status >= 400 && status < 500 && status !== 429)
+// Review's base where it has none (npm-review.js EMPTY_REVIEW_BASE): a version
+// is proven against no files, each of its own added, as against an empty one.
+const emptyBase = details => details?.integrity === '(empty)'
+// Whether the server proves a comparison's files: two managed bundles', or
+// two versions' of one npm package (renameDiffable), or a version's alone.
+const provable = (base, other) => renameDiffable(base, other) || (emptyBase(base) && !!other?.npm)
 // A pair by both files' paths, a side not there empty.
 const pairOf = (path, otherPath) => `${path ?? ''}\0${otherPath ?? ''}`
 
@@ -69,7 +75,9 @@ async function load(key, comparison, base, other, scope) {
       const lines = runs === undefined && otherRuns === undefined ? true : ranges(runs, path !== null) && ranges(otherRuns, otherPath !== null) && { runs, otherRuns }
       if (lines && await named(base, path, hash) && await named(other, otherPath, otherHash)) files.set(pairOf(path, otherPath), lines)
     }
-    await (base.npm ? fetchNpmTypeOnly(base.npm.name, base.npm.version, other.npm.version, line) : fetchBundleTypeOnly(base.managedId, other.managedId, line, { scope }))
+    await (base.npm ? fetchNpmTypeOnly(base.npm.name, base.npm.version, other.npm.version, line)
+      : emptyBase(base) ? fetchNpmTypeOnly(other.npm.name, other.npm.version, '(empty)', line)
+      : fetchBundleTypeOnly(base.managedId, other.managedId, line, { scope }))
   } catch (err) {
     // A session that changed asks again under the new one, on its render.
     if (err?.name === 'AbortError') {
@@ -103,7 +111,7 @@ async function load(key, comparison, base, other, scope) {
 // `scope` (bundle-comparison.js) has those of the files it compares within
 // it, apart from the whole bundles'.
 export function typeProof(base, other, path, { kind, basePath = path }, { before, after }, notify, scope = '') {
-  if (kind === 'repointed' || !renameDiffable(base, other)) return undefined
+  if (kind === 'repointed' || !provable(base, other)) return undefined
   const sides = [kind === 'added' ? null : basePath, kind === 'removed' ? null : path]
   if (!sides.every(file => file === null || TYPESCRIPT.has(prettyExtension(file)))) return undefined
   if ((sides[0] !== null && before !== bundleFilesAsMap(base).get(basePath)) || (sides[1] !== null && after !== bundleFilesAsMap(other).get(path))) return undefined

@@ -575,7 +575,9 @@ export function fetchNpmRenameDiffs(name, version, otherVersion, onLine, { signa
 // (`runs=1`, server-managed/type-only-proof.js), in one request: `onLine`
 // called with each, `{ path, hash, otherPath, otherHash }`, a side not there
 // null, one of the latter with the lines holding what runs on either side,
-// `runs` and `otherRuns`; two bundles' within a reason `scope` where given.
+// `runs` and `otherRuns`; two bundles' within a reason `scope` where given,
+// and a version's against no files where `otherVersion` is `(empty)`, as
+// Review reads one with no base, `version` the one read.
 export function fetchBundleTypeOnly(id, other, onLine, { signal, scope = '' } = {}) {
   return requestPrettyLines(`/api/bundles/${encodeURIComponent(id)}/type-only?${scoped(other, scope)}&runs=1`, PRETTY_ERRORS, onLine, signal)
 }

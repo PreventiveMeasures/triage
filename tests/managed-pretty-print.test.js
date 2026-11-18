@@ -802,6 +802,20 @@ test('asked, the files that changed in types alone but for what runs are told to
   assert.deepEqual(linesOf(await h.send(npmTypeOnly('lib', '1.0.0', '1.1.0'))), [runLines()[1]])
 })
 
+test('a version against no files, as Review reads one with no base, has each declaration file added, in types alone or but for what runs; a private one\'s for its readers alone', async t => {
+  const h = await setup(t)
+  withToken(t)
+  registry(t, [packageOf('lib', '1.1.0', runBuilds[1]), { ...packageOf('@corp/lib', '1.1.0', runBuilds[1]), private: true }])
+  const added = (otherPath, runs) => ({ path: null, hash: null, otherPath, otherHash: fileHash(runBuilds[1][otherPath]), ...runs })
+  const lines = [added('types/api.d.ts', { runs: [], otherRuns: [[0, 5]] }), added('types/index.d.ts'),
+    added('types/reexport.d.ts', { runs: [], otherRuns: [[0, 2]] }), added('types/user.d.ts', { runs: [], otherRuns: [[0, 1], [5, 6]] })]
+  assert.deepEqual(linesOf(await h.send(`${npmTypeOnly('lib', '1.1.0', '(empty)')}&runs=1`)), lines, 'as against an empty file each: none that runs code')
+  assert.deepEqual(linesOf(await h.send(npmTypeOnly('lib', '1.1.0', '(empty)'))), [lines[1]], 'unasked, those in types alone alone')
+  assert.equal((await h.send(npmTypeOnly('@corp/lib', '1.1.0', '(empty)'))).status, 404, 'a reader without private access gets nothing')
+  assert.deepEqual(linesOf(await h.send(`${npmTypeOnly('@corp/lib', '1.1.0', '(empty)')}&runs=1`, 'admin')), lines)
+  assert.equal((await h.send(`/api/npm/rename-diff?${new URLSearchParams({ name: 'lib', version: '1.1.0', otherVersion: '(empty)' })}`)).status, 400, 'nor is another comparison against none')
+})
+
 test('a comparison\'s files are paired renamed within a package alone, as the viewer pairs them', async t => {
   const h = await setup(t)
   // A chunk renamed within its package, and one like it gone from one package and come in another.

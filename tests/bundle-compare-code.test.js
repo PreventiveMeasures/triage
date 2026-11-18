@@ -98,22 +98,31 @@ mock.module('../ui/view/client-managed.js', { namedExports: {
   fetchNpmRenameDiffs() {},
   async fetchBundleTypeOnly(id, other, onLine, { scope = '' } = {}) {
     typeProofs.push({ id, other, ...scope ? { scope } : {} })
-    const [olds, news] = [id, other].map(managedId => bundleFilesAsMap([...viewed].findLast(held => held?.managedId === managedId)))
-    const { changed, onlyBase, onlyOther } = computeBundleDiff(olds, news, () => '.').files
-    const pairs = [...changed.map(({ path, basePath = path }) => [basePath, path]), ...onlyBase.map(({ path, basePath = path }) => [basePath, null]), ...onlyOther.map(({ path }) => [null, path])]
-    for (const [path, otherPath] of pairs) {
-      const [before, after] = [path && olds.get(path), otherPath && news.get(otherPath)]
-      if (![before, after].every(text => text === null || typeof text === 'string')) continue
-      const file = (name, text) => (name === null ? null : { path: name, text })
-      const sides = [file(path, before), file(otherPath, after)]
-      const proven = typeOnlyStamped(...sides) || typeOnlyRuns(...sides)
-      if (!proven) continue
-      const hash = text => (text === null ? null : computeFileHash(text))
-      await onLine({ path, hash: await hash(before), otherPath, otherHash: await hash(after), ...proven !== true && proven })
-    }
+    await typeOnlyAnswer(...[id, other].map(managedId => bundleFilesAsMap([...viewed].findLast(held => held?.managedId === managedId))), onLine)
   },
-  fetchNpmTypeOnly() {},
+  // Two versions of a package as the view's have them, or one against no
+  // files, `otherVersion` `(empty)`, `version` the one read.
+  async fetchNpmTypeOnly(name, version, otherVersion, onLine) {
+    typeProofs.push({ name, version, otherVersion })
+    const files = at => bundleFilesAsMap([...viewed].findLast(held => held?.npm?.name === name && held.npm.version === at))
+    await typeOnlyAnswer(...otherVersion === '(empty)' ? [new Map(), files(version)] : [files(version), files(otherVersion)], onLine)
+  },
 } })
+// The mock server's type-only answer of two sides' files, by path.
+async function typeOnlyAnswer(olds, news, onLine) {
+  const { changed, onlyBase, onlyOther } = computeBundleDiff(olds, news, () => '.').files
+  const pairs = [...changed.map(({ path, basePath = path }) => [basePath, path]), ...onlyBase.map(({ path, basePath = path }) => [basePath, null]), ...onlyOther.map(({ path }) => [null, path])]
+  for (const [path, otherPath] of pairs) {
+    const [before, after] = [path && olds.get(path), otherPath && news.get(otherPath)]
+    if (![before, after].every(text => text === null || typeof text === 'string')) continue
+    const file = (name, text) => (name === null ? null : { path: name, text })
+    const sides = [file(path, before), file(otherPath, after)]
+    const proven = typeOnlyStamped(...sides) || typeOnlyRuns(...sides)
+    if (!proven) continue
+    const hash = text => (text === null ? null : computeFileHash(text))
+    await onLine({ path, hash: await hash(before), otherPath, otherHash: await hash(after), ...proven !== true && proven })
+  }
+}
 mock.module('lit/directives/repeat.js', { namedExports: { repeat: (items, _key, template) => items.map(template) } })
 // Prism can't load here, so text is drawn uncolored, unless a test colors it
 // with `highlighting.markup`, a text to the markup Prism would give.
@@ -2822,6 +2831,23 @@ test('a declaration file that changed in types alone but for what runs shows, it
   assert.doesNotMatch(index, /Only types here/u, 'nothing set aside where its types are as they were')
   assert.match(index, /class=diff-row add role="row"[^]*?<span class="diff-num">2<\/span><span class="diff-sign">\+<\/span><span class=diff-code>export \* from '\.\/b';/u, 'its diff drawn whole')
   assert.doesNotMatch(index, /accessible-label=Hide type-only changes/u, 'and not offered for it')
+})
+
+test('a version reviewed with no base has its declaration files proven against none, as against an empty file each', async t => {
+  t.after(() => { element._setTypes(false) })
+  // As Review's base where it has none (npm-review.js EMPTY_REVIEW_BASE).
+  const empty = { integrity: '(empty)', kind: 'sourcemap', json: { version: 3, sources: [], sourcesContent: [] }, fileSizes: new Map() }
+  const other = version('9.0.0', { 'types/user.d.ts': zodDeclarations, 'types/plain.d.ts': 'export type P = 1;\n', 'index.js': 'module.exports = 1\n' }, {})
+  const { element, render } = compareOf(empty, other)
+  const proofs = typeProofs.length
+  element.path = 'types/user.d.ts'
+  const shown = await paintUntil(element, markup => /accessible-label=Hide type-only changes/u.test(markup))
+  assert.match(shown, /\.checked=false accessible-label=Hide type-only changes/u, 'offered, once the server proved it')
+  assert.deepEqual(typeProofs.slice(proofs), [{ name: 'pkg', version: '9.0.0', otherVersion: '(empty)' }], 'the version asked about against none')
+  element._setTypes(true)
+  assert.match(render('types/user.d.ts'), /<span>Only types here · lines 2–12<\/span>/u, 'its imports alone shown, its types a row')
+  assert.match(render('types/plain.d.ts'), /Only types changed in this file\./u, 'one of types alone hidden whole')
+  assert.match(render('index.js'), /module\.exports = 1/u, 'code drawn')
 })
 
 test('the Diff view offers to hide changes in types alone where any file it shows has them', async t => {

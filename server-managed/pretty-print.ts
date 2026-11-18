@@ -276,6 +276,11 @@ async function bundleSide(details: Parameters<typeof bundlePackageDirs>[0], scop
     packageDirs: bundlePackageDirs(details) }
 }
 
+// A base side of no files, which a version is compared against where it has
+// none: none to print, nor to keep.
+const noFiles = (): ComparedSide => ({ side: 'base', files: [], hashes: new Map(), packageDirs: null, kept: () => Promise.resolve(null),
+  made: () => Promise.reject(new PrettyError(404, 'no-file')) })
+
 // A version's files by path, from one load of them.
 async function npmFiles(doc: NpmVersionDocument): Promise<Array<[string, Uint8Array]>> {
   const load = loadNpmFiles(doc)
@@ -413,12 +418,14 @@ export function createPrettyCache(bundles: BundleCacheStorage, npm: CacheStorage
     },
     // A bundle's details, read in its turn, as Compare pairs them (comparison.ts).
     bundleDetails,
-    npmSides(base: NpmVersionDocument, other: NpmVersionDocument): Promise<[ComparedSide, ComparedSide]> {
+    // Or a version's against no files, `base` null, each of its files added,
+    // as Review reads a version with no base.
+    npmSides(base: NpmVersionDocument | null, other: NpmVersionDocument): Promise<[ComparedSide, ComparedSide]> {
       const sideOf = async (doc: NpmVersionDocument, side: Side): Promise<ComparedSide> => ({ side, ...await sideFiles(await npmFiles(doc), (_, bytes) => npmFileHash(bytes)),
         packageDirs: null,
         kept: request => npmKept(doc, request),
         made: (request, text) => npmCopy(doc, request, () => Promise.resolve(text)) })
-      return Promise.all([sideOf(base, 'base'), sideOf(other, 'other')])
+      return Promise.all([base ? sideOf(base, 'base') : noFiles(), sideOf(other, 'other')])
     },
   }
 }
