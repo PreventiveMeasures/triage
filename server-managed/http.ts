@@ -132,7 +132,8 @@
 //   GET  /api/npm/rename-diff?name=&version=&otherVersion= → every pair of their JavaScript files the viewer diffs so,
 //        Brotli-encoded ndjson | 400/401/404/413/429/502/503
 //   GET  /api/npm/type-only?name=&version=&otherVersion=&runs= → the files that changed between two versions in types alone,
-//        and with runs=1 those in types alone but for what runs, Brotli-encoded ndjson | 400/401/404/413/429/501/502/503
+//        or with otherVersion (empty) of the version against no files, each added, as Review reads one with no base; and
+//        with runs=1 those in types alone but for what runs, Brotli-encoded ndjson | 400/401/404/413/429/501/502/503
 //   GET  /api/npm/delta?name=&version=&otherVersion= → the lines a version adds and removes against another, or `(empty)`, and
 //        those but for declaration files changed in types alone, where any are, and whether binary files changed
 //        | 400/401/404/413/422/429/502/503/504
@@ -5024,7 +5025,8 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   const otherSpec = params.get('otherVersion') ?? ''
   // The package a comparison's other side is a version of, another where Review compares a dependency replaced.
   const otherName = path === NPM_COMPARISON_PATH ? params.get('otherName') ?? name : name
-  if (!isNpmPackageName(name) || !isNpmPackageName(otherName) || (versioned && !isNpmPackageSpec(spec)) || ((path === NPM_RENAME_DIFF_PATH || path === NPM_TYPE_ONLY_PATH) && !isNpmPackageSpec(otherSpec))
+  if (!isNpmPackageName(name) || !isNpmPackageName(otherName) || (versioned && !isNpmPackageSpec(spec)) || (path === NPM_RENAME_DIFF_PATH && !isNpmPackageSpec(otherSpec))
+    || (path === NPM_TYPE_ONLY_PATH && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))
     || (path === NPM_PRETTY_PATH && otherSpec !== '' && !isNpmPackageSpec(otherSpec))
     || (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))
     || ((path === NPM_COMPARISON_PATH || path === NPM_DELTA_PATH) && otherSpec !== '(empty)' && !isNpmPackageSpec(otherSpec))) {
@@ -5106,7 +5108,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // The version it is compared with, where its route names one, read
     // beside it, the two read of those kept at once.
     const against: [string, string, boolean] | null = (path === NPM_RISK_PATH && otherSpec !== '' && otherSpec !== '(empty)') || (path === NPM_DELTA_PATH && otherSpec !== '(empty)')
-      || ((path === NPM_TYPE_ONLY_PATH || path === NPM_RENAME_DIFF_PATH || (path === NPM_PRETTY_PATH && !params.has('path'))) && otherSpec !== '')
+      || ((path === NPM_TYPE_ONLY_PATH || path === NPM_RENAME_DIFF_PATH || (path === NPM_PRETTY_PATH && !params.has('path'))) && otherSpec !== '' && otherSpec !== '(empty)')
       ? [name, otherSpec, privileged]
       : path === NPM_COMPARISON_PATH && otherSpec !== '(empty)' ? [otherName, otherSpec, canReadPrivateNpm(reader, otherName)] : null
     const keptTogether = against ? readTogether(keptVersions, [{ name, version: spec }, { name: against[0], version: against[1] }]) : keptVersions
@@ -5203,11 +5205,14 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // Against another version, the pairs of its files that changed that the
     // viewer diffs with renamed names hidden (rename-diff.ts renamedPairs), a
     // line each as it is worked out, as Compare's pretty-printed files are;
-    // and those that changed in types alone (type-only.ts).
+    // and those that changed in types alone (type-only.ts), the version's
+    // against no files where the other is `(empty)`, as Review reads one with
+    // no base.
     if (path === NPM_PRETTY_PATH || path === NPM_TYPE_ONLY_PATH || (path === NPM_RENAME_DIFF_PATH && !diffed)) {
       if (!deps.prettyCache) { sendJson(res, 503, { error: 'unavailable' }); return }
-      const other = otherSpec === '' ? null : await otherDoc()
-      const sides = other && await deps.prettyCache.npmSides(doc, other)
+      const empty = path === NPM_TYPE_ONLY_PATH && otherSpec === '(empty)'
+      const other = otherSpec === '' || empty ? null : await otherDoc()
+      const sides = empty ? await deps.prettyCache.npmSides(null, doc) : other && await deps.prettyCache.npmSides(doc, other)
       const lines = path === NPM_RENAME_DIFF_PATH ? renamedPairs(sides!, !doc.private && !other!.private)
         : path === NPM_TYPE_ONLY_PATH ? typeOnlyFiles(sides!, runsAsked(params)) : sides ? compared(sides) : await deps.prettyCache.npmAll(doc)
       const isPrivate = doc.private || other?.private === true
