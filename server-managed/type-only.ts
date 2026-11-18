@@ -16,7 +16,10 @@
 // for at most a minute; told a line each, `{ path, hash, otherPath,
 // otherHash }`, a side not there null, and `runs` and `otherRuns` where those
 // are told, which the viewer checks name the files it shows. Access is the
-// caller's to check.
+// caller's to check. Where this Node proves nothing (proofUnsupported), a
+// comparison of any TypeScript file is refused (501 proof-unsupported), not
+// told as one of none changed in types alone.
+import { proveTypeOnly } from '@preventive/compare'
 import { pathOrder } from './npm-packages.ts'
 import { type ComparedSide, PrettyError, type PrettyRequest } from './pretty-print.ts'
 import { comparedFiles } from './rename-diff.ts'
@@ -91,6 +94,21 @@ function proven(pairs: Array<[File | null, File | null]>, runs: boolean, deadlin
   }, (told): Proof[] | null => (Array.isArray(told) && told.length === pairs.length && told.every(proof) ? told : null), deadline, proofsSoFar(pairs.length))
 }
 
+// Why this Node proves nothing, or null: proveTypeOnly tells every text
+// `unsupported` alike where the Node has no type stripping of its own, or no
+// parser loads, or its stripping writes otherwise than the proof holds it to
+// (as amaro 1.2, Node's stripping since, writes ASCII spaces where 1.1 wrote
+// blanks of the bytes it erased). Found once, as the worker would find it,
+// and logged then: an empty text is proven wherever proving is.
+let unsupported: string | null | undefined
+export function proofUnsupported(): string | null {
+  if (unsupported === undefined) {
+    unsupported = proveTypeOnly('').proven ? null : `Node ${process.version}, amaro ${process.versions['amaro'] ?? 'none'}`
+    if (unsupported !== null) console.warn(`managed: no file can be proven to change in types alone on ${unsupported}: @preventive/compare's proveTypeOnly finds it unsupported`)
+  }
+  return unsupported
+}
+
 // The files that changed between a comparison's two sides in types alone,
 // as the viewer pairs them, and with `runs` those in types alone but for what
 // runs, a line each once all are proven, in path order.
@@ -103,6 +121,8 @@ export function typeOnlyFiles([base, other]: readonly [ComparedSide, ComparedSid
     ...onlyBase.map(({ path, basePath = path }) => [olds.get(basePath), null]), ...onlyOther.map(({ path }) => [null, news.get(path)])]
     .filter((sides): sides is [File | null, File | null] => sides.every(file => file !== undefined) && sides.some(file => file !== null) && sides[0]?.hash !== sides[1]?.hash)
     .toSorted(([a, b], [c, d]) => pathOrder((b ?? a)!.path, (d ?? c)!.path))
+  // Thrown before any line is streamed, so that its status is sent.
+  if (pairs.length > 0 && proofUnsupported() !== null) throw new PrettyError(501, 'proof-unsupported')
   return (async function* () {
     if (pairs.length === 0) return
     const deadline = Date.now() + PROOF_TIMEOUT_MS

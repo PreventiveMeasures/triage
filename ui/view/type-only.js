@@ -22,7 +22,9 @@ const RETRY_MAX_MS = 5 * 60_000
 // TypeScript files, as the server reads them by extension: none other is proven.
 const TYPESCRIPT = new Set(['ts', 'mts', 'cts'])
 
-const retryable = status => !(status >= 400 && status < 500 && status !== 429)
+// A failure that may pass: not a refusal, nor a server whose Node proves
+// nothing (501 proof-unsupported, server-managed/type-only.ts), as it won't.
+const retryable = status => status !== 501 && !(status >= 400 && status < 500 && status !== 429)
 // A pair by both files' paths, a side not there empty.
 const pairOf = (path, otherPath) => `${path ?? ''}\0${otherPath ?? ''}`
 
