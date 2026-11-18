@@ -106,7 +106,8 @@ function sessionHeld() {
 // those not held, or grown old, in one read (readTeam): `{ status }`,
 // 'loading', then 'ready' with its default branch's dependencies (`branch`,
 // none where no review is in effect, nor where its reader may read only
-// some of it) and, where they are, its open pull requests (`pulls`), those
+// some of it) and, where they are, its open pull requests (`pulls`, those
+// carrying its label alone where it names one, `label`), those
 // whose dependencies are still to be told by their numbers (`telling`), or
 // 'error' with its `error`; one grown old shown as it was while it is read
 // again (`refreshing`), lest its pull requests leave the tab meanwhile.
@@ -189,7 +190,8 @@ function toldLine(line, entry, hold) {
       return
     }
     const items = (Array.isArray(line.pulls?.items) ? line.pulls.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0)
-    hold(telling({ status: 'ready', branch, pulls: { items, more: line.pulls?.more === true } }, new Set(items.filter(readsDependencies).map(item => item.number))))
+    const label = typeof line.pulls?.label === 'string' && line.pulls.label ? { label: line.pulls.label } : {}
+    hold(telling({ status: 'ready', branch, pulls: { items, more: line.pulls?.more === true, ...label } }, new Set(items.filter(readsDependencies).map(item => item.number))))
   } else if (line.dependencies instanceof Map && entry.telling) {
     seedPullDependencies(line.repoId, line.dependencies, true)
     hold(telling(entry, new Set([...entry.telling].filter(number => !line.dependencies.has(number)))))
@@ -437,6 +439,8 @@ class TeamDependencies extends StateElement {
     const sorted = sort === 'fewest' ? wanting : wanting.toSorted(SORTS[sort][1])
     // The repositories whose open pull requests are more than are read.
     const unchecked = reviewed.filter(({ read }) => read.pulls.more)
+    // Those whose open pull requests are read by a label of theirs alone, by it.
+    const labelled = Map.groupBy(reviewed.filter(({ read }) => read.pulls.label), ({ read }) => read.pulls.label)
     // Each version wanting reviews, as the first adding it tells it, by the
     // pull requests adding it; and the first whose lockfiles name its patch's
     // file, whence that is read (`patched`).
@@ -489,29 +493,39 @@ class TeamDependencies extends StateElement {
     const tab = tabs.some(([kind]) => kind === picked) ? picked : 'pulls'
     this._shown = tab
     const counts = { pulls: wanting.length, versions: adding.size, branch: branches.reduce((sum, { count }) => sum + count, 0) }
+    // Above each sub-tab's lists but Reviews', one line, there whatever it
+    // says, lest what is under it move: that they are being read and what
+    // couldn't be, at its start, and the pull requests' order at its end.
     return html`<div class="team-deps">
       ${dialogTabs({ tabs: tabs.map(([id, label]) => ({ id, label: html`${label}${counts[id] == null || reading && counts[id] === 0 ? nothing
         : html`<span class="team-deps-tab-n">${counts[id].toLocaleString('en-US')}</span>`}` })), current: tab, prefix: 'team-deps', select: kind => this.pick(kind) })}
       <div class="team-deps-panel" role="tabpanel" id=${`team-deps-panel-${tab}`} aria-labelledby=${`team-deps-tab-${tab}`}>
       ${tab === 'reviews' ? withCompare(() => html`<dependency-review-list .session=${state.managedSession} .team=${this.team}></dependency-review-list>`) : html`
-      ${reading ? html`<p class="team-deps-quiet" role="status">Reading their pull requests…</p>` : nothing}
-      ${failed.length === 1 ? html`<p class="team-deps-quiet" role="alert">${failed[0]}</p>` : failed.length > 1
-        ? html`<p class="team-deps-quiet" role="alert" data-tooltip=${failed.join('\n')} .tooltipContent=${html`<div class="compare-tip">
-          <div class="compare-tip-head">Couldn’t be read</div>
-          <div class="compare-tip-rows">${failures.map(([name, error]) => html`<span>${shorten(name)}</span><span>${error}</span>`)}</div></div>`}>${plural(failed.length,
-          'repository or pull request')} couldn’t be read.</p>` : nothing}
+      <div class="team-deps-bar">
+        ${reading ? html`<p class="team-deps-quiet" role="status">Reading their pull requests…</p>` : nothing}
+        ${failed.length === 1 ? html`<p class="team-deps-quiet" data-tooltip=${failed[0]} role="alert">${failed[0]}</p>` : failed.length > 1
+          ? html`<p class="team-deps-quiet" role="alert" data-tooltip=${failed.join('\n')} .tooltipContent=${html`<div class="compare-tip">
+            <div class="compare-tip-head">Couldn’t be read</div>
+            <div class="compare-tip-rows">${failures.map(([name, error]) => html`<span>${shorten(name)}</span><span>${error}</span>`)}</div></div>`}>${plural(failed.length,
+            'repository or pull request')} couldn’t be read.</p>` : nothing}
+        ${tab === 'pulls' && reviewed.length > 0 && sorted.length > 1 ? html`<span class="bundles-overview-sort" role="group" aria-label="Pull request order">${Object.entries(SORTS)
+          .map(([value, [label]]) => html`<button type="button" aria-pressed=${String(value === sort)} @click=${() => { state.teamDependenciesSort = value }}>${label}</button>`)}</span>`
+          : nothing}
+      </div>
       ${!reading && reads.length > 0 && reviewed.length === 0 && failures.length === 0
         ? html`<p class="workspace-content-empty">None of this team’s repositories reviews its dependencies for you.</p>` : nothing}
       ${tab === 'branch' ? nothing : unchecked.map(({ repo, read }) => html`<p class="team-deps-quiet" role="alert">Only ${shorten(repo.name)}’s ${plural(read.pulls.items.length, 'open pull request')}
         updated latest are checked; its others aren’t.</p>`)}
-      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(sorted, sort, adding, reading, unchecked.length > 0, naming)
+      ${tab === 'branch' ? nothing : [...labelled].map(([label, of]) => html`<p class="team-deps-quiet">Only open pull requests labeled <code>${label}</code> are checked${
+        of.length === reviewed.length ? '' : ` in ${of.map(({ repo }) => shorten(repo.name)).join(', ')}`}.</p>`)}
+      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(sorted, adding, reading, unchecked.length > 0, naming)
         : tab === 'versions' ? this.renderVersions(adding, reading, naming) : branches.map(({ repo, read }) => this.renderBranch(repo, read, naming))}`}
       </div>
     </div>`
   }
 
-  // The pull requests wanting reviews, in the order picked (`sort`), which
-  // their picker picks where there are more than one; each version a pull
+  // The pull requests wanting reviews, in the order picked, which the line
+  // above them picks where there are more than one (render); each version a pull
   // request above adds listed after its own, all of them, dimmed, naming the
   // one above it is listed under; each version other pull requests review
   // in their comments told so (`elsewhere`); and the reader's reviews of its
@@ -519,7 +533,7 @@ class TeamDependencies extends StateElement {
   // (dependency-review-copy.js); one wanting none is not listed, its copy in
   // its popup. Each named as `naming` names it, every card a column wide,
   // however many versions it lists or opens.
-  renderPulls(wanting, sort, adding, reading, unchecked, { elsewhere, named, among }) {
+  renderPulls(wanting, adding, reading, unchecked, { elsewhere, named, among }) {
     if (wanting.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
     }
@@ -530,10 +544,7 @@ class TeamDependencies extends StateElement {
       return versionRow(pkg, pull.entry.review, { others: (adding.get(versionKey(pkg))?.pulls ?? []).filter(other => other !== pull && other !== above).map(named),
         elsewhere: elsewhere(pkg, pull), above: above && named(above), added: true, involved: among(pkg), here: named(pull), ...readAt(pull) })
     }
-    return html`${wanting.length > 1 ? html`<div class="team-deps-sort"><span class="bundles-overview-sort" role="group" aria-label="Pull request order">${Object.entries(SORTS)
-      .map(([value, [label]]) => html`<button type="button" aria-pressed=${String(value === sort)} @click=${() => { state.teamDependenciesSort = value }}>${label}</button>`)}</span></div>`
-      : nothing}
-    <ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
+    return html`<ol class="team-deps-pulls" aria-label="Pull requests wanting reviews">${wanting.map(pull => {
       const own = pull.wanted.filter(pkg => !told.has(versionKey(pkg)))
       const above = pull.wanted.filter(pkg => told.has(versionKey(pkg)))
       for (const pkg of own) told.set(versionKey(pkg), pull)

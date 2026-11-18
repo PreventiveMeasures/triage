@@ -235,7 +235,7 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
 import { type KnownMerges, type SquashedPull, type Squashes, squashedPulls } from './repository-squashes.ts'
 import { AGENTS_READ_VERSION, type AuthoredCommit, type BranchTip, type BranchTips, COMMITS_CURSOR, type CommitPulls, repositoryAgents } from './repository-agents.ts'
-import { ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem } from './repository-issues.ts'
+import { DEPENDENCIES_LABEL, ISSUES_CURSOR, ISSUES_READ_VERSION, repositoryIssues, repositoryItem, repositoryLabel } from './repository-issues.ts'
 import { type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits, type PullDependencies,
   type PullDependencyStore, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
 import { eachOf } from './queue.ts'
@@ -2462,8 +2462,10 @@ async function handleRepositoryIssues(res: ServerResponse, deps: ManagedHttpDeps
   })
 }
 // What GET issues keeps a page of a repository's `kind` by, `state` ones on
-// from the cursor `after` names.
-const issuesKey = (repoId: number, kind: string, state: string, after: string | null) => `${repoId}\0issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}`
+// from the cursor `after` names; those carrying `label` alone, as a team's
+// Dependencies reads them (teamOpenPulls), apart from the pages of all.
+const issuesKey = (repoId: number, kind: string, state: string, after: string | null, label: string | null = null) =>
+  `${repoId}\0issues\0${ISSUES_READ_VERSION}\0${kind}\0${state}\0${after ?? ''}${label === null ? '' : `\0label\0${label}`}`
 
 // GET /api/admin/repositories/agents: what the code viewer's Agents tab
 // reconstructs agents' sessions from (repository-agents.ts): a page
@@ -2662,7 +2664,9 @@ async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpD
 // effect for the reader, else `{ repoId, branch: null }`, as for one they
 // may read only some of, or `{ repoId, error, status }`; then its pull
 // requests' dependencies, of those changing a lockfile or that may,
-// TEAM_PULLS_TOGETHER at a time (`{ repoId, dependencies }`); each line of
+// TEAM_PULLS_TOGETHER at a time (`{ repoId, dependencies }`); its open pull
+// requests those carrying its `dependencies` label alone where it has one
+// (`pulls.label`, its name; teamOpenPulls); each line of
 // dependencies with the lines their versions wanting reviews change, where
 // they are counted already (`deltas`, npm-delta.ts keptNpmDeltas), told
 // before the rows asking for them are drawn. Last, `{ done: true
@@ -2737,12 +2741,13 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
 async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
   send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>): Promise<boolean> {
   const repoId = access.repo.repoId
-  type Read = { branch: object | null; pulls?: { items: TeamPull[]; more: boolean }; commits?: Map<number, PullCommits> }
+  type Read = { branch: object | null; pulls?: { items: TeamPull[]; more: boolean; label?: string }; commits?: Map<number, PullCommits> }
   const read = await readWholeRepositoryOf<Read>(deps, access, async (fullName, token, user) => {
     const branch = await branchDependencyAnswer(deps, fullName, token, user, repoId, setting)
     if (!(branch.value as { review?: unknown }).review) return { value: { branch: null }, kept: branch.kept }
     const pulls = await teamOpenPulls(deps, repoId, fullName, token)
-    return { value: { branch: branch.value, pulls: { items: pulls.items, more: pulls.more }, commits: pulls.commits }, kept: branch.kept && pulls.kept }
+    return { value: { branch: branch.value, pulls: { items: pulls.items, more: pulls.more, ...pulls.label === null ? {} : { label: pulls.label } }, commits: pulls.commits },
+      kept: branch.kept && pulls.kept }
   }, reauthorize)
   if ('error' in read) return send({ repoId, ...PARTIAL_ACCESS.has(read.error) ? { branch: null } : { error: read.error, status: read.status } })
   const { branch, pulls, commits } = read.value
@@ -2769,22 +2774,29 @@ const withDeltas = async (deps: ManagedHttpDeps, answers: object[]) => {
 // A repository's open pull requests, as many pages of them as
 // TEAM_PULL_PAGES, each read and kept as GET issues reads it; each's base's
 // and head's commits as its page has them (`commits`, by its number), where
-// it has them; whether it has more, and whether all were kept.
+// it has them; whether it has more, and whether all were kept. Where the
+// repository has a label named DEPENDENCIES_LABEL (kept as a page is), those
+// carrying it alone, by its name as the repository has it (`label`), their
+// pages kept apart from GET issues', which are of all of them: a repository
+// of many open pull requests, few of them its dependencies', read in a page.
 async function teamOpenPulls(deps: ManagedHttpDeps, repoId: number, fullName: string, token: string) {
+  const labelled = await keptAnswer(deps, `${repoId}\0label\0${DEPENDENCIES_LABEL}`, () => repositoryLabel(fullName, token, DEPENDENCIES_LABEL))
+  const label = typeof labelled.value.label === 'string' && labelled.value.label !== '' ? labelled.value.label : null
   const items: TeamPull[] = []
   const commits = new Map<number, PullCommits>()
-  let after: string | null = null, kept = true
+  let after: string | null = null, kept = labelled.kept
   for (let page = 0; page < TEAM_PULL_PAGES; page++) {
     const cursor = after
-    const answer = await keptAnswer(deps, issuesKey(repoId, 'pulls', 'open', cursor), async () => ({ kind: 'pulls', state: 'open', ...await repositoryIssues(fullName, token, 'pulls', 'open', cursor) }))
+    const answer = await keptAnswer(deps, issuesKey(repoId, 'pulls', 'open', cursor, label),
+      async () => ({ kind: 'pulls', state: 'open', ...await repositoryIssues(fullName, token, 'pulls', 'open', cursor, undefined, label) }))
     kept &&= answer.kept
     const value = answer.value as OpenPullsPage
     items.push(...(Array.isArray(value.items) ? value.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0))
     pageCommits(value, commits)
-    if (value.more !== true || typeof value.after !== 'string') return { items, commits, more: false, kept }
+    if (value.more !== true || typeof value.after !== 'string') return { items, commits, more: false, kept, label }
     after = value.after
   }
-  return { items, commits, more: true, kept }
+  return { items, commits, more: true, kept, label }
 }
 type OpenPullsPage = { items?: unknown; more?: unknown; after?: unknown; commits?: unknown }
 // Each open pull request's base's and head's commits a page of them names,

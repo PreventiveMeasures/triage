@@ -1962,9 +1962,17 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   & > h2 { margin: 0 0 .25rem; font-size: .875rem; font-weight: 500; color: var(--text); }
   & > .team-deps-quiet:first-child, & > h2 + .team-deps-quiet { margin: 0 0 .25rem; }
 }
-/* The order the pull requests are in, picked above them at their end, as
-   other orders are (.bundles-overview-sort). */
-.team-deps-sort { align-self: flex-end; display: inline-flex; margin-bottom: -.25rem; }
+/* One line above the lists: at its start what is being read and what
+   couldn't be, each on a line of its own cut short, whole in its tooltip; at
+   its end the order the pull requests are in, picked as other orders are
+   (.bundles-overview-sort). Its room is kept whatever it says, so nothing
+   under it moves as it starts or stops saying it. */
+.team-deps-bar {
+  display: flex; align-items: center; gap: .75rem; flex: none; min-height: 1.375rem; margin-bottom: -.25rem;
+
+  & > .team-deps-quiet { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  & > .bundles-overview-sort { margin-left: auto; flex: none; }
+}
 /* The pull requests' cards side by side in their order, each a column a
    little wider than its versions', however many it lists. */
 .team-deps-pulls {

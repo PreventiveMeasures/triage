@@ -8,7 +8,9 @@
 // packages are told (pull-dependencies.ts touchesLockfile), and its reviews
 // (pull-reviews.ts), each reviewer's; and an open one's base's and head's
 // commits, kept with its page but never told, by which what its lockfiles
-// add is read (http.ts teamRepositoryDependencies). A nonpublic repository's
+// add is read (http.ts teamRepositoryDependencies), of those carrying a
+// label alone where one is named, as a team's Dependencies names the
+// repository's DEPENDENCIES_LABEL where it has one. A nonpublic repository's
 // are read with its GitHub App's installation, which reads pull requests only
 // with their own permission (doc/code-viewer.md).
 import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
@@ -48,12 +50,13 @@ const states = { issues: { open: '[OPEN]', closed: '[CLOSED]' }, pulls: { open: 
 
 // A page of `kind`, those in `state`, after the page `after` ends, and how
 // many of each state there are; open pull requests with their commits and
-// their reviews.
-const pageQuery = (kind: IssuesKind, state: IssuesState) => `query($owner: String!, $name: String!, $after: String) {
+// their reviews. `labelled`, of those carrying a label of `$labels` alone,
+// the counts still of all.
+const pageQuery = (kind: IssuesKind, state: IssuesState, labelled = false) => `query($owner: String!, $name: String!, $after: String${labelled ? ', $labels: [String!]' : ''}) {
   repository(owner: $owner, name: $name) {
     open: ${connection[kind]}(states: ${states[kind].open}) { totalCount }
     closed: ${connection[kind]}(states: ${states[kind].closed}) { totalCount }
-    page: ${connection[kind]}(states: ${states[kind][state]}, first: ${ISSUES_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
+    page: ${connection[kind]}(states: ${states[kind][state]}, first: ${ISSUES_PAGE}, after: $after, ${labelled ? 'labels: $labels, ' : ''}orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
       nodes { ${fields[kind]}${kind === 'pulls' && state === 'open' ? ` baseRefOid headRefOid ${files} ${reviewFields(TILE_THREADS, false)}` : ''} }
     }
@@ -176,14 +179,33 @@ export async function repositoryItem(fullName: string, token: string, number: nu
 const commitsOf = (number: number, { baseRefOid: base, headRefOid: head }: Node) =>
   typeof base === 'string' && SHA.test(base) && typeof head === 'string' && SHA.test(head) ? [{ number, base, head }] : []
 
+// The label the pull requests changing a repository's dependencies carry,
+// as Dependabot's do: where it has one, a team's Dependencies reads its open
+// pull requests carrying it alone (http.ts teamOpenPulls).
+export const DEPENDENCIES_LABEL = 'dependencies'
+const LABEL_QUERY = `query($owner: String!, $name: String!, $label: String!) { repository(owner: $owner, name: $name) { label(name: $label) { name } } }`
+const labelRefused = (error: GraphqlError) => error?.type === 'FORBIDDEN' && Array.isArray(error.path) && error.path.includes('label')
+
+// The repository's label named `label`, by its name as the repository has
+// it, which its pull requests are read by; null where it has none, or GitHub
+// refuses to tell.
+export async function repositoryLabel(fullName: string, token: string, label: string, fetchImpl: typeof fetch = globalThis.fetch) {
+  const [owner, name] = fullName.split('/') as [string, string]
+  const data = await githubGraphql(LABEL_QUERY, { owner, name, label }, token, fetchImpl, labelRefused) as { repository?: { label?: { name?: unknown } | null } | null }
+  const named = data?.repository?.label?.name
+  return { label: typeof named === 'string' && named !== '' ? named : null }
+}
+
 // A page of the repository's issues or pull requests in `state`, after the
 // page `after` ended (null for the first): its `items`, how many are open and
 // closed (`counts`), and, where more follow, the cursor reading them
 // (`after`); open pull requests' commits (`commits`, commitsOf) too, which
-// the code viewer is never told (http.ts handleRepositoryIssues).
-export async function repositoryIssues(fullName: string, token: string, kind: IssuesKind, state: IssuesState, after: string | null, fetchImpl: typeof fetch = globalThis.fetch) {
+// the code viewer is never told (http.ts handleRepositoryIssues). With
+// `label`, those carrying it alone.
+export async function repositoryIssues(fullName: string, token: string, kind: IssuesKind, state: IssuesState, after: string | null, fetchImpl: typeof fetch = globalThis.fetch,
+  label: string | null = null) {
   const [owner, name] = fullName.split('/') as [string, string]
-  const data = await githubGraphql(pageQuery(kind, state), { owner, name, after }, token, fetchImpl, partRefused) as Page
+  const data = await githubGraphql(pageQuery(kind, state, label !== null), { owner, name, after, ...label === null ? {} : { labels: [label] } }, token, fetchImpl, partRefused) as Page
   const repository = data?.repository
   if (!repository) throw new GithubApiError(404, 'github-not-found')
   const info = repository.page?.pageInfo

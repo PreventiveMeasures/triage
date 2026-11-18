@@ -128,6 +128,8 @@ Each author has one unpublished review per comparison.
 
 A team that reviews dependencies shows a **Dependencies** tab (`/team/<slug>/dependencies`) to those who review in it.
 It reads the open pull requests of each team repository whose review is in effect for the reader, up to the 1,000 updated latest per repository, and says where there are more.
+Where a repository has a `dependencies` label, as Dependabot's pull requests carry, it reads only the open pull requests carrying that label, and says so.
+An open pull request without the label is then not listed there, whatever it adds; its tile and its popup still tell its versions' reviews.
 Its sub-tabs are:
 
 - **Pull requests**: those whose versions want reviews or whose review fails, each a card that opens its popup.

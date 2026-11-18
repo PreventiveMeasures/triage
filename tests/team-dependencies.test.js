@@ -34,9 +34,9 @@ const branches = {
 const pull = (number, more = {}) => ({ number, title: `Pull ${number}`, author: 'octo', state: 'open', touchesLockfile: true, ...more })
 // When one was opened and last updated, by days into the year.
 const dated = (opened, updated) => ({ createdAt: Date.UTC(2026, 0, opened), updatedAt: Date.UTC(2026, 0, updated) })
-// Repository 8's more than are read.
+// Repository 8's more than are read, and those carrying its label alone.
 const pulls = { 7: { items: [pull(1, dated(10, 60)), pull(3), pull(4, { touchesLockfile: false }), pull(9, dated(15, 32)), pull(10), pull(11)], more: false },
-  8: { items: [pull(2, dated(20, 21)), pull(6, dated(5, 64)), pull(7, { touchesLockfile: false })], more: true } }
+  8: { items: [pull(2, dated(20, 21)), pull(6, dated(5, 64)), pull(7, { touchesLockfile: false })], more: true, label: 'dependencies' } }
 const dependencies = {
   // Its shared one reviewed in its comments, which count for it alone.
   '7#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared', { reviews: 1, commented: 1, reviewers: [{ login: 'kay', status: 'accept', passes: true, comment: true }] }),
@@ -121,7 +121,8 @@ const widths = text => [...text.matchAll(/<li class="?team-deps-pull( is-[a-z\d-
 
 test('the pull requests wanting reviews, fewest first, each version under the first adding it, dimmed under those after naming it, its review shown; every version apart, once; the default branches\'; and the team\'s reviews, a sub-tab each', async () => {
   const view = shown([repo(7, 'org/a'), repo(8, 'org/b'), repo(9, 'other/c'), repo(7, 'org/a')])
-  assert.match(templateText(view.render()), /role="status">Reading their pull requests…/u)
+  assert.match(templateText(view.render()), /<div class="team-deps-bar">\s*<p class="team-deps-quiet" role="status">Reading their pull requests…<\/p>\s*<\/div>/u,
+    'said in the line above the lists, none yet to order')
   const text = await read(view)
   assert.deepEqual(tabs(text), [['Pull requests', '4', true], ['Versions', '16', false], ['Default branch', '2', false], ['Reviews', null, false]])
   assert.match(text, /role="tabpanel" id=team-deps-panel-pulls aria-labelledby=team-deps-tab-pulls>/u, 'the one open under them')
@@ -131,6 +132,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.deepEqual(asked.dependencies, [], 'none asked again')
   assert.equal(npmDelta('old', '1.0.0', '(empty)').additions, 3, 'the lines a version changes, counted already, held as its row asks for them')
   assert.match(text, /role="alert">Only b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
+  assert.match(text, /Only open pull requests labeled <code>dependencies<\/code> are checked in b\./u, 'one read by its label alone says so, named where others aren\'t')
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = cardsOf(text)
   assert.equal(cards.length, 4, 'one adding none wanting reviews not shown')
@@ -221,7 +223,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   view.pick('reviews')
   const reviews = templateText(view.render())
   assert.match(reviews, /<dependency-review-list \.session=\[object Object\] \.team=team-1><\/dependency-review-list>/u, 'those published to the team')
-  assert.doesNotMatch(reviews, /Reading their pull requests|team-deps-pull"/u)
+  assert.doesNotMatch(reviews, /Reading their pull requests|team-deps-pull"|team-deps-bar/u)
   assert.equal(state.teamDependenciesTab, 'reviews', 'the sub-tab last picked, which the team\'s Dependencies tab opens again')
   assert.deepEqual(routes.splice(0), ['versions', 'branch', 'reviews'].map(dependencyTab => ['push', { view: 'workspace-dependencies', teamSlug: 'deps', dependencyTab }]),
     'each picked at its address, an entry of its own')
@@ -239,8 +241,8 @@ test('the pull requests in the order picked, the newest opened first where none 
   try {
     let text = await read(view)
     assert.deepEqual(order(text), ['b#2', 'b#6', 'a#1', 'a#9'], 'those adding fewest first, as picked')
-    assert.match(text, /<div class="team-deps-sort"><span class="bundles-overview-sort" role="group" aria-label="Pull request order"><button type="button" aria-pressed=false @click=[^]*?>Newest<\/button><button type="button" aria-pressed=false @click=[^]*?>Updated<\/button><button type="button" aria-pressed=true @click=[^]*?>Fewest to review<\/button><\/span><\/div>/u,
-      'picked as other orders are, by their buttons')
+    assert.match(text, /<div class="team-deps-bar">\s*<span class="bundles-overview-sort" role="group" aria-label="Pull request order"><button type="button" aria-pressed=false @click=[^]*?>Newest<\/button><button type="button" aria-pressed=false @click=[^]*?>Updated<\/button><button type="button" aria-pressed=true @click=[^]*?>Fewest to review<\/button><\/span>\s*<\/div>/u,
+      'picked as other orders are, by their buttons, at the end of the line above them, which says nothing')
     const versions = () => { view.pick('versions'); const listed = templateText(view.render()); view.pick('pulls'); return listed }
     const before = versions()
     for (const [sort, expected] of [[undefined, ['b#2', 'a#9', 'a#1', 'b#6']], ['updated', ['b#6', 'a#1', 'a#9', 'b#2']], ['other', ['b#2', 'a#9', 'a#1', 'b#6']]]) {
@@ -273,6 +275,8 @@ test('a team none of whose repositories reviews its dependencies for its reader 
   const failing = shown([repo(10, 'org/gone')])
   const failed = await read(failing)
   assert.match(failed, /role="alert">gone: It isn’t there\.</u, 'named without its owner, the only one')
+  assert.match(failed, /<div class="team-deps-bar">\s*<p class="team-deps-quiet" data-tooltip=[^]*? role="alert">gone: It isn’t there\.<\/p>\s*<\/div>/u,
+    'in the line above the lists, whole in its tooltip')
   assert.doesNotMatch(failed, /workspace-content-empty/u, 'nothing told of what it couldn’t read')
 })
 
