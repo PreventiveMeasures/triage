@@ -27,6 +27,7 @@ const { lockedAt, lockedIn } = await import('../server-managed/commit-lockfiles.
 const { lockedPackages } = await import('../server-managed/locked-packages.ts')
 const { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages } = await import('../server-managed/pull-dependency-reviews.ts')
 const { MAX_ADDED } = await import('../server-managed/pull-dependencies.ts')
+const { repositoryLabel } = await import('../server-managed/repository-issues.ts')
 const { checkRepositoryDependencyReviews, context, people, publish } = await import('./_managed-repository-dependency-reviews.js')
 const { readLines } = await import('./_managed-lines.js')
 const { npmDeltaStore, npmVersionStore } = await import('../server-managed/npm-kept.ts')
@@ -690,8 +691,9 @@ test('the default branch\'s dependencies, read on a cold instance of what anothe
 // A team's Dependencies in one request (GET /api/teams/:id/dependencies):
 // alice's team `one` has org/repo, which reviews its dependencies, org/other,
 // which reviews none, and src of org/part, which she may read only some of;
-// org/repo's open pull request 5 with `pull` as its page reads it.
-async function teamFixture(t, pull = {}) {
+// org/repo's open pull request 5 with `pull` as its page reads it; a query
+// `answers` answers, answered so.
+async function teamFixture(t, pull = {}, answers = () => null) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const users = await people(db)
@@ -704,9 +706,9 @@ async function teamFixture(t, pull = {}) {
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
   const node = { number: 5, title: 'Bump ms', state: 'OPEN', createdAt: null, updatedAt: null, closedAt: null, author: null, comments: { totalCount: 0 },
     labels: { totalCount: 0, nodes: [] }, files: { totalCount: 1, nodes: [{ path: 'package-lock.json' }] }, ...pull }
-  const asked = github(t, { ...PULL, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } }
+  const asked = github(t, { ...PULL, graphql: body => answers(body) ?? (body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } }
     : body.query.includes('page: pullRequests') ? { repository: { open: { totalCount: 1 }, closed: { totalCount: 0 }, page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node] } } }
-      : {} })
+      : {}) })
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
   const read = (path = '/api/teams/one/dependencies', who = 'alice') => readLines(t, handler, path, users[who].setCookie.split(';')[0])
   return { db, users, asked, read, send: api(db, users) }
@@ -732,6 +734,49 @@ test('a team\'s Dependencies in one request: each repository as its own endpoint
   assert.deepEqual((await read('/api/teams/one/dependencies?repoIds=3,1')).lines.map(line => line.repoId ?? 'done'), [3, 1, 1, 'done'], 'those named alone')
   assert.equal((await read('/api/teams/one/dependencies?repoIds=x')).status, 400)
   assert.equal((await read('/api/teams/two/dependencies')).status, 404, 'a team not hers')
+})
+
+test('a team\'s Dependencies read the open pull requests carrying a repository\'s dependencies label alone, where it has one, by its name as it has it, kept apart from its Pull requests tab\'s', async t => {
+  const issues = '/api/admin/repositories/issues?repoId=1&kind=pulls&state=open'
+  const pagesOf = async label => {
+    const labels = [], pages = []
+    const { read, send } = await teamFixture(t, {}, body => {
+      if (body.query.includes('label(name: $label)')) { labels.push(body.variables.label); return { repository: { label } } }
+      if (body.query.includes('page: pullRequests')) pages.push(body)
+      return null
+    })
+    return { pages, labels, read, send }
+  }
+  // One with the label, named as it names it: those carrying it asked for alone.
+  const { pages, labels, read, send } = await pagesOf({ name: 'Dependencies' })
+  const lines = (await read()).lines
+  assert.deepEqual(labels, ['dependencies'], 'asked whether it has one, once')
+  assert.equal(lines.find(line => line.pulls)?.pulls.label, 'Dependencies', 'told by its name')
+  assert.ok(lines.some(line => line.dependencies?.[0]?.number === 5), 'their dependencies read as ever')
+  assert.equal(pages.length, 1)
+  assert.match(pages[0].query, /\$labels: \[String!\][^]*page: pullRequests\([^)]*labels: \$labels, /u)
+  assert.deepEqual(pages[0].variables.labels, ['Dependencies'])
+  // Its Pull requests tab's page is of all of them, read and kept apart.
+  assert.equal((await send(issues, { who: 'alice' })).body.items.length, 1)
+  assert.equal(pages.length, 2, 'not answered by the labelled page')
+  assert.ok(!pages[1].query.includes('$labels') && !Object.hasOwn(pages[1].variables, 'labels'), 'asked as ever')
+  assert.equal((await read()).lines.find(line => line.pulls)?.pulls.label, 'Dependencies')
+  assert.deepEqual([pages.length, labels.length], [2, 1], 'both kept, neither asked again')
+
+  // One without: all of them, as its Pull requests tab reads them, in the same page.
+  const none = await pagesOf(null)
+  const told = (await none.read()).lines.find(line => line.pulls)
+  assert.deepEqual([Object.hasOwn(told.pulls, 'label'), told.pulls.items.length], [false, 1])
+  assert.ok(!none.pages[0].query.includes('$labels') && !Object.hasOwn(none.pages[0].variables, 'labels'))
+  await none.send(issues, { who: 'alice' })
+  assert.equal(none.pages.length, 1, 'the page the tab reads')
+
+  // GitHub refusing to tell of its labels is its having none; any other failure is the read's.
+  const answering = body => () => Promise.resolve(Response.json(body))
+  const refused = { data: { repository: { label: null } }, errors: [{ type: 'FORBIDDEN', path: ['repository', 'label'], message: 'Resource not accessible by integration' }] }
+  assert.deepEqual(await repositoryLabel('org/repo', 'token', 'dependencies', answering(refused)), { label: null })
+  assert.deepEqual(await repositoryLabel('org/repo', 'token', 'dependencies', answering({ data: { repository: { label: { name: 'dependencies' } } } })), { label: 'dependencies' })
+  await assert.rejects(repositoryLabel('org/repo', 'token', 'dependencies', () => Promise.resolve(Response.json({ message: 'Bad Gateway' }, { status: 502 }))), { message: 'github-status-502' })
 })
 
 test('a team\'s Dependencies, its time up, tells the repositories left to ask for again; a reader whose session is gone is told nothing more', async t => {

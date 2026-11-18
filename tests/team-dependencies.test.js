@@ -34,9 +34,9 @@ const branches = {
 const pull = (number, more = {}) => ({ number, title: `Pull ${number}`, author: 'octo', state: 'open', touchesLockfile: true, ...more })
 // When one was opened and last updated, by days into the year.
 const dated = (opened, updated) => ({ createdAt: Date.UTC(2026, 0, opened), updatedAt: Date.UTC(2026, 0, updated) })
-// Repository 8's more than are read.
+// Repository 8's more than are read, and those carrying its label alone.
 const pulls = { 7: { items: [pull(1, dated(10, 60)), pull(3), pull(4, { touchesLockfile: false }), pull(9, dated(15, 32)), pull(10), pull(11)], more: false },
-  8: { items: [pull(2, dated(20, 21)), pull(6, dated(5, 64)), pull(7, { touchesLockfile: false })], more: true } }
+  8: { items: [pull(2, dated(20, 21)), pull(6, dated(5, 64)), pull(7, { touchesLockfile: false })], more: true, label: 'dependencies' } }
 const dependencies = {
   // Its shared one reviewed in its comments, which count for it alone.
   '7#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared', { reviews: 1, commented: 1, reviewers: [{ login: 'kay', status: 'accept', passes: true, comment: true }] }),
@@ -131,6 +131,7 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.deepEqual(asked.dependencies, [], 'none asked again')
   assert.equal(npmDelta('old', '1.0.0', '(empty)').additions, 3, 'the lines a version changes, counted already, held as its row asks for them')
   assert.match(text, /role="alert">Only b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
+  assert.match(text, /Only open pull requests labeled <code>dependencies<\/code> are checked in b\./u, 'one read by its label alone says so, named where others aren\'t')
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = cardsOf(text)
   assert.equal(cards.length, 4, 'one adding none wanting reviews not shown')
