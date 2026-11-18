@@ -36,15 +36,24 @@ function capture(t) {
   return records
 }
 
-test('the worker env holds NPM_TOKEN alone, when set', async t => {
-  t.after(() => { delete process.env.NPM_TOKEN; delete process.env.TRIAGE_TEST_SECRET })
+test('the worker env holds NPM_TOKEN and VERCEL_ENV alone, each when set', async t => {
+  const vercelEnv = process.env.VERCEL_ENV
+  t.after(() => {
+    delete process.env.NPM_TOKEN; delete process.env.TRIAGE_TEST_SECRET
+    if (vercelEnv === undefined) delete process.env.VERCEL_ENV
+    else process.env.VERCEL_ENV = vercelEnv
+  })
   process.env.TRIAGE_TEST_SECRET = 'not for the worker'
+  const set = (name, value) => { if (value === undefined) delete process.env[name]; else process.env[name] = value }
+  // Stasis takes VERCEL_ENV as set even when empty, so an empty one passes.
   for (const npmToken of [undefined, 'npm_testToken']) {
-    if (npmToken === undefined) delete process.env.NPM_TOKEN
-    else process.env.NPM_TOKEN = npmToken
-    Worker.start = worker => queueMicrotask(() => worker.emit('message', { bytes: new Uint8Array(), directory: '', filename: 'bundle.br' }))
-    await buildRepositoryBundle('user', request, new AbortController().signal)
-    assert.deepEqual(Worker.env, npmToken === undefined ? {} : { NPM_TOKEN: npmToken })
+    for (const vercel of [undefined, 'production', '']) {
+      set('NPM_TOKEN', npmToken)
+      set('VERCEL_ENV', vercel)
+      Worker.start = worker => queueMicrotask(() => worker.emit('message', { bytes: new Uint8Array(), directory: '', filename: 'bundle.br' }))
+      await buildRepositoryBundle('user', request, new AbortController().signal)
+      assert.deepEqual(Worker.env, { ...(npmToken === undefined ? {} : { NPM_TOKEN: npmToken }), ...(vercel === undefined ? {} : { VERCEL_ENV: vercel }) })
+    }
   }
 })
 

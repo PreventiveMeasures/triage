@@ -109,7 +109,8 @@ interface BuiltBundle { bytes: Buffer; directory: string; filename: string }
 interface BuildRequest {
   input: BundleBuildInput; github: string; token: string | null; maxBytes: number; scopes: (string | null)[]
   // Upstream's disk cache for what a build fetches (setCacheDir), or null for
-  // none, as on Vercel. Resolved here: the worker's env holds NPM_TOKEN alone.
+  // none, as on Vercel. Resolved here: the worker's env holds NPM_TOKEN and
+  // VERCEL_ENV alone.
   cacheDir: string | null
 }
 // An extra per-process ceiling, one build at a time, its worker given the heap
@@ -185,9 +186,12 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
     workerUrl = new URL('./bundle-build-worker.js', import.meta.url)
     log('started')
     // Upstream reads NPM_TOKEN from the env for scoped packages, which npm
-    // answers with 404 when private and asked without it. Nothing else passes.
-    const npmToken = process.env['NPM_TOKEN']
-    const env = npmToken ? { NPM_TOKEN: npmToken } : {}
+    // answers with 404 when private and asked without it. Stasis reads
+    // VERCEL_ENV, set or not as here, to parse without oxc-parser's raw
+    // transfer on Vercel, whose functions can't reserve its 6 GiB buffer.
+    // Nothing else passes.
+    const npmToken = process.env['NPM_TOKEN'], vercelEnv = process.env['VERCEL_ENV']
+    const env = { ...(npmToken ? { NPM_TOKEN: npmToken } : {}), ...(vercelEnv === undefined ? {} : { VERCEL_ENV: vercelEnv }) }
     worker = new Worker(workerUrl, {
       workerData: { ...request, type: 'managed-bundle-build' }, env, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: heapLimitMib },
     })
