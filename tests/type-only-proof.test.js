@@ -115,12 +115,17 @@ test('a declaration file\'s own source map comment, its last line, is set aside 
     assert.ok(typeOnlyRuns(null, at(text)).otherRuns.length > 0, `told: ${JSON.stringify(text)}`)
   }
   assert.equal(typeOnlyStamped(at(`let x = 1;\n${own}\n`), at(`let x = 1;\n${own}`)), false, 'nor is a file that runs code, its comment changed alone')
-  // A name a line terminator breaks would end the comment within it, what follows it code.
+  // A name a line terminator breaks would end the comment within it, what follows it code: only plain Latin names are read.
   for (const end of ['\n', '\r', '\u2028', '\u2029']) {
     const path = `x${end}import { evil } from 'evil';${end}export type Z = x.d.ts`, text = `${types}//# sourceMappingURL=${path}.map\n`
     assert.equal(typeOnlyStamped(null, { path, text }), false, `a name with ${JSON.stringify(end)}`)
     assert.ok(typeOnlyRuns(null, { path, text }).otherRuns.length > 0, `its load told: ${JSON.stringify(end)}`)
   }
+  for (const name of ['us er.d.ts', '\u00FCser.d.ts', 'user+1.d.ts', 'user@1.d.ts', 'us\u0435r.d.ts', 'user\t.d.ts']) {
+    assert.equal(typeOnlyStamped(null, { path: `dist/${name}`, text: `${types}//# sourceMappingURL=${name}.map\n` }), false, `not plain: ${JSON.stringify(name)}`)
+  }
+  assert.equal(typeOnlyStamped(null, { path: 'dist/User-Name_v2.0.d.mts', text: `${types}//# sourceMappingURL=User-Name_v2.0.d.mts.map\n` }), true, 'Latin letters, digits, - _ .')
+  assert.equal(typeOnlyStamped(null, at(`${types}//# sourceMappingURL=dist/user.d.ts.map\n`)), false, 'nor a path')
 })
 
 test('the lines that run are those Node\'s type stripping leaves, the hashbang, and each comment it keeps that may be one a tool reads, whatever the proof\'s grammar for it', () => {

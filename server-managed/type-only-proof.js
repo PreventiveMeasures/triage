@@ -49,13 +49,14 @@ const tree = file => (file ? [{ name: file.path, data: file.text }] : [])
 // nothing else: `//# sourceMappingURL=` and its name, `user.d.ts.map` for
 // `types/user.d.ts`, ending the file with a newline or without. Any other
 // name or spelling, or anything after it, and the file is as it is; so too
-// where its name holds a line terminator, which would end the comment within
-// it and leave what follows to run, so that no code is ever taken for one.
-const LINE_TERMINATOR = /[\n\r\u2028\u2029]/u
+// where its own name is not plain (PLAIN_NAME): one holding a line terminator
+// would end the comment within it, and what follows would run, so no other
+// character than Latin letters, digits, `-`, `_` and `.` is taken in one.
+const PLAIN_NAME = /^[A-Za-z0-9._-]+$/u
 function withoutOwnMap(file) {
   if (file === null) return null
   const name = file.path.slice(file.path.lastIndexOf('/') + 1)
-  if (LINE_TERMINATOR.test(name)) return file
+  if (!PLAIN_NAME.test(name)) return file
   const comment = `//# sourceMappingURL=${name}.map`
   for (const last of [comment, `${comment}\n`]) {
     const before = file.text.endsWith(last) ? file.text.slice(0, -last.length) : null
