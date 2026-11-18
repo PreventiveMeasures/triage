@@ -231,7 +231,7 @@ import { ensureBundleSources, handOffBundles, openBundle, prefetchBundleHashes, 
 import { renderSidebar } from './sidebar.js'
 import { BUNDLE_TABS, goHome, persistLastBundle, switchToFile, switchToManagedTeam, switchToWorkspace, switchToWorkspaceContent } from './ingest.js'
 import { treeAnchor } from './file-counts.js'
-import { graph2, cleanupGraph2 } from './graph/state.js'
+import { cleanupGraph2, graph2 } from './graph/state.js'
 import { hideToast, showToast } from './toast.js'
 import { managedDetailsReady } from './managed-details.js'
 

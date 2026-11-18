@@ -252,6 +252,8 @@ export async function registerPasskey(opts: {
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
   if (!(created instanceof PublicKeyCredential)) {
+    // The browser gave no credential: one missing, not a value of the wrong type.
+    // oxlint-disable-next-line unicorn/prefer-type-error
     throw new Error('passkey: registration returned no credential')
   }
   const credentialId = new Uint8Array(created.rawId).toBase64({ alphabet: 'base64url', omitPadding: true })
@@ -302,6 +304,8 @@ export async function assertPasskey(opts: {
     ...(opts.signal ? { signal: opts.signal } : {}),
   })
   if (!(got instanceof PublicKeyCredential)) {
+    // The browser gave no credential: one missing, not a value of the wrong type.
+    // oxlint-disable-next-line unicorn/prefer-type-error
     throw new Error('passkey: assertion returned no credential')
   }
   const ext = (got.getClientExtensionResults() as unknown as { prf?: { results?: { first?: ArrayBuffer } } }).prf

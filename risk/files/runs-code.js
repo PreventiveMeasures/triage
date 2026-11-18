@@ -171,7 +171,7 @@ const KEY_ABSENT = /(?:!|\bdelete\s)[\s(]{0,4}(?:[\p{ID_Continue}$]{1,64}\s{0,4}
 const ESCAPE = /\\(?:x([\da-f]{2})|u([\da-f]{4})|u\{([\da-f]{1,6})\}|([0-3][0-7]{0,2}|[4-7][0-7]?)|(\r\n|[^]))/giu
 const CONTROLS = new Map([['n', '\n'], ['r', '\r'], ['t', '\t'], ['b', '\b'], ['f', '\f'], ['v', '\v']])
 const LINE_ENDS = new Set(['\n', '\r', '\r\n', '\u2028', '\u2029'])
-const unescaped = text => text.replace(ESCAPE, (escape, hex, unit, point, octal, char) => {
+const unescaped = text => text.replaceAll(ESCAPE, (escape, hex, unit, point, octal, char) => {
   if (char !== undefined) return LINE_ENDS.has(char) ? '' : CONTROLS.get(char) ?? char
   const code = octal === undefined ? Number.parseInt(hex ?? unit ?? point, 16) : Number.parseInt(octal, 8)
   return code <= 0x10_FFFF ? String.fromCodePoint(code) : escape
@@ -477,7 +477,7 @@ function read(code, base, at) {
     // its regular expression each time.
     const held = HOLDS_ANY.test(text) ? HOLDS.flatMap(([kind, holds]) => text.search(holds) === -1 ? [] : [...text.matchAll(holds)].map(({ index: within }) => [kind, within])) : []
     for (const [kind, within] of held) if (kind !== 'tokens' || within > 0 || keyed()) at(kind, base + index + within)
-    if (text.includes('registry.') && REGISTRY_URL.test(unescaped(text).replace(URL_STRIPPED, ''))) at('registry', base + index)
+    if (text.includes('registry.') && REGISTRY_URL.test(unescaped(text).replaceAll(URL_STRIPPED, ''))) at('registry', base + index)
     for (const [kind, name] of MODULES) if (name.test(string) && loaded(code, index)) at(kind, base + index)
     if (PROFILE.test(string) && HOME_BEFORE.test(code.slice(Math.max(0, index - 100), index))) at('persistence', base + index)
     for (const [part, dir, file] of PARTS) {
