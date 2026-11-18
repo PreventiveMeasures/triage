@@ -1262,7 +1262,7 @@ function linkLineRefs(note, url) {
   const file = stripLineAnchor(url)
   const link = (prose) => {
     const kept = keptRanges(prose)
-    return prose.replace(LINE_REF_RE, (match, from, to, at) => {
+    return prose.replaceAll(LINE_REF_RE, (match, from, to, at) => {
       const range = inFence(kept, at) ? null : lineRange(to ? `${from}-${to}` : from)
       return range ? `([${match.slice(1, -1).trim()}](${file}${lineAnchor(range)}))` : match
     })

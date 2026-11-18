@@ -681,7 +681,7 @@ describe('Code view model', () => {
   test('a file\'s rows, its types set aside, hold each of its lines on either side once, in order, as a line drawn or among types', () => {
     // A seeded pick, so a failure is the same each run.
     let seed = 7
-    const pick = n => { seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31; return seed % n }
+    const pick = n => { seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31; return Math.floor(seed / 2 ** 31 * n) }
     // A file of up to 11 lines, each a load (what runs) or a type, and its runs.
     const file = () => {
       const runs = [], texts = []

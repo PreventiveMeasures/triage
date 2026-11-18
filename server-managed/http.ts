@@ -90,7 +90,7 @@
 //        diffs so, within a reason scope where given, Brotli-encoded ndjson | 400/401/404/422/503
 //   GET  /api/bundles/<id>/type-only?other=&scope=&runs= → the files that changed between it and another bundle in types alone, as
 //        @preventive/compare proves them, within a reason scope where given, and with runs=1 those in types alone but for
-//        what runs, with the lines that hold it, Brotli-encoded ndjson | 400/401/404/422/503
+//        what runs, with the lines that hold it, Brotli-encoded ndjson | 400/401/404/422/501/503
 //   GET  /api/admin/bundles      → admin all bundles; managers own/team bundles | 401/403
 //   POST /api/admin/bundles      → admin|manage uploads a bundle (raw body) | 401/403/413
 //   GET  /api/admin/bundles/<id> → admin|manage downloads a stored bundle | 401/403/404
@@ -132,7 +132,7 @@
 //   GET  /api/npm/rename-diff?name=&version=&otherVersion= → every pair of their JavaScript files the viewer diffs so,
 //        Brotli-encoded ndjson | 400/401/404/413/429/502/503
 //   GET  /api/npm/type-only?name=&version=&otherVersion=&runs= → the files that changed between two versions in types alone,
-//        and with runs=1 those in types alone but for what runs, Brotli-encoded ndjson | 400/401/404/413/429/502/503
+//        and with runs=1 those in types alone but for what runs, Brotli-encoded ndjson | 400/401/404/413/429/501/502/503
 //   GET  /api/npm/delta?name=&version=&otherVersion= → the lines a version adds and removes against another, or `(empty)`, and
 //        those but for declaration files changed in types alone, where any are, and whether binary files changed
 //        | 400/401/404/413/422/429/502/503/504

@@ -17,6 +17,8 @@ export async function startPglite() {
     return restored
   } catch { /* no cache yet, or a stale one: initdb below rewrites it */ }
   const pg = new PGlite()
+  // PGlite dumps a data directory only once ready (0.5.15 waits on it forever before).
+  await pg.waitReady
   const dump = Buffer.from(await (await pg.dumpDataDir('none')).arrayBuffer())
   try {
     // Concurrent processes each write their own file; renaming is atomic.

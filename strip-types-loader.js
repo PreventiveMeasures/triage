@@ -29,8 +29,8 @@
 //
 // `mode: 'strip'` (types elided, no enum/namespace transform) suffices —
 // the repo is `erasableSyntaxOnly` (tsconfig.json). Strip mode replaces
-// each elided type with equal-width whitespace, so line AND column
-// positions survive 1:1 and stack traces stay exact without a source map.
+// each elided UTF-16 unit with whitespace, so line AND column positions
+// survive 1:1 and stack traces stay exact without a source map.
 
 import { isUtf8 } from 'node:buffer'
 import { readFileSync } from 'node:fs'
@@ -49,13 +49,13 @@ const TS_RE = /\.(?<kind>[cm])?ts$/u
 // type syntax was removed, so the bytes Node runs can't silently diverge
 // from the bytes we wrote.
 //
-// The comparison is per-CODE-POINT, not per-byte. swc preserves byte
-// offsets by swapping each elided multi-byte character for a *same-width*
-// Unicode whitespace char — e.g. an em-dash (U+2014) in a type-level
-// comment becomes U+2002 EN SPACE, not ASCII 0x20 — so a raw-byte check
-// would false-positive on the many such comments in this codebase. `\s`
-// matches those Unicode spaces, and strip preserves code-unit length too,
-// so string indices stay aligned.
+// The comparison is per UTF-16 unit, which reads the file itself only
+// because its bytes were checked to be UTF-8 before decoding (below): a
+// lossy decoding would compare units that are no file's. Node's stripping
+// (amaro) keeps the length in units, writing in place of each unit it
+// erases a blank: up to amaro 1.1 one of as many UTF-8 bytes (an em-dash,
+// U+2014, in a type-level comment becomes U+2002 EN SPACE), from 1.2 an
+// ASCII space. `\s` matches either.
 const WHITESPACE = /\s/u
 
 function assertOnlyErased(url, source, stripped) {
@@ -80,7 +80,10 @@ registerHooks({
       if (!isUtf8(bytes)) {
         throw new Error(`strip-types-loader: ${url} is not valid UTF-8`)
       }
-      const raw = bytes.toString('utf8')
+      // A byte order mark is no part of the source, as Node reads a `.ts`
+      // file: stripping drops one, which would read as a unit erased.
+      const decoded = bytes.toString('utf8')
+      const raw = decoded.startsWith('\uFEFF') ? decoded.slice(1) : decoded
       const stripped = stripTypeScriptTypes(raw, { mode: 'strip' })
       assertOnlyErased(url, raw, stripped)
       return {

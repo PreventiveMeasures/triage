@@ -244,7 +244,7 @@ function extractPreloadLinks(html: string): { html: string, link: string | null 
   // when we keep a non-preload tag the whitespace is restored via
   // `return match` (HTML layout preserved).
   const tagRe = /<link\b[^>]*>\s*/giu
-  const stripped = html.replace(tagRe, (match, offset: number) => {
+  const stripped = html.replaceAll(tagRe, (match, offset: number) => {
     if (inAnyRange(offset, skip)) return match
     const attrs = parseLinkAttrs(match)
     const rel = (attrs['rel'] ?? '').toLowerCase()
