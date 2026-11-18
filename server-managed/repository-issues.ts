@@ -8,9 +8,9 @@
 // packages are told (pull-dependencies.ts touchesLockfile), and its reviews
 // (pull-reviews.ts), each reviewer's; and an open one's base's and head's
 // commits, kept with its page but never told, by which what its lockfiles
-// add is read (http.ts teamRepositoryDependencies), of those carrying a
-// label alone where one is named, as a team's Dependencies names the
-// repository's DEPENDENCIES_LABEL where it has one. A nonpublic repository's
+// add is read for its tile (http.ts keptPullCommits). A team's Dependencies
+// reads the open ones in pages of its own, of less each (repositoryOpenPulls).
+// A nonpublic repository's
 // are read with its GitHub App's installation, which reads pull requests only
 // with their own permission (doc/code-viewer.md).
 import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
@@ -50,13 +50,12 @@ const states = { issues: { open: '[OPEN]', closed: '[CLOSED]' }, pulls: { open: 
 
 // A page of `kind`, those in `state`, after the page `after` ends, and how
 // many of each state there are; open pull requests with their commits and
-// their reviews. `labelled`, of those carrying a label of `$labels` alone,
-// the counts still of all.
-const pageQuery = (kind: IssuesKind, state: IssuesState, labelled = false) => `query($owner: String!, $name: String!, $after: String${labelled ? ', $labels: [String!]' : ''}) {
+// their reviews.
+const pageQuery = (kind: IssuesKind, state: IssuesState) => `query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     open: ${connection[kind]}(states: ${states[kind].open}) { totalCount }
     closed: ${connection[kind]}(states: ${states[kind].closed}) { totalCount }
-    page: ${connection[kind]}(states: ${states[kind][state]}, first: ${ISSUES_PAGE}, after: $after, ${labelled ? 'labels: $labels, ' : ''}orderBy: { field: UPDATED_AT, direction: DESC }) {
+    page: ${connection[kind]}(states: ${states[kind][state]}, first: ${ISSUES_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
       nodes { ${fields[kind]}${kind === 'pulls' && state === 'open' ? ` baseRefOid headRefOid ${files} ${reviewFields(TILE_THREADS, false)}` : ''} }
     }
@@ -102,12 +101,16 @@ function item(kind: IssuesKind, node: Node | null) {
     closedAt: timeOf(node.closedAt), comments: count(node.comments?.totalCount), labels, moreLabels: Math.max(0, count(node.labels?.totalCount) - labels.length) }
   if (kind === 'issues') return { ...common, ...issueState(node.state, node.stateReason) }
   const checks = node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state
-  const listed = node.files?.nodes
-  const paths = Array.isArray(listed) ? listed.flatMap(file => typeof file?.path === 'string' ? [file.path] : []) : null
   return { ...common, ...pullState(node.state, node.isDraft), mergedAt: timeOf(node.mergedAt),
     review: REVIEWS[String(node.reviewDecision)] ?? null, checks: CHECKS[String(checks)] ?? null, additions: count(node.additions), deletions: count(node.deletions),
-    head: nameOf(node.headRefName), base: nameOf(node.baseRefName),
-    ...paths ? { touchesLockfile: touchesLockfile(paths, count(node.files?.totalCount)) } : {} }
+    head: nameOf(node.headRefName), base: nameOf(node.baseRefName), ...lockfileTouched(node) }
+}
+// Whether a pull request changes a lockfile read (touchesLockfile), by the
+// files of it listed; untold where GitHub lists none of them.
+function lockfileTouched(node: Node) {
+  const listed = node.files?.nodes
+  const paths = Array.isArray(listed) ? listed.flatMap(file => typeof file?.path === 'string' ? [file.path] : []) : null
+  return paths ? { touchesLockfile: touchesLockfile(paths, count(node.files?.totalCount)) } : {}
 }
 
 // A pull request's checks, which a GitHub App reads only with the Checks and
@@ -200,12 +203,10 @@ export async function repositoryLabel(fullName: string, token: string, label: st
 // page `after` ended (null for the first): its `items`, how many are open and
 // closed (`counts`), and, where more follow, the cursor reading them
 // (`after`); open pull requests' commits (`commits`, commitsOf) too, which
-// the code viewer is never told (http.ts handleRepositoryIssues). With
-// `label`, those carrying it alone.
-export async function repositoryIssues(fullName: string, token: string, kind: IssuesKind, state: IssuesState, after: string | null, fetchImpl: typeof fetch = globalThis.fetch,
-  label: string | null = null) {
+// the code viewer is never told (http.ts handleRepositoryIssues).
+export async function repositoryIssues(fullName: string, token: string, kind: IssuesKind, state: IssuesState, after: string | null, fetchImpl: typeof fetch = globalThis.fetch) {
   const [owner, name] = fullName.split('/') as [string, string]
-  const data = await githubGraphql(pageQuery(kind, state, label !== null), { owner, name, after, ...label === null ? {} : { labels: [label] } }, token, fetchImpl, partRefused) as Page
+  const data = await githubGraphql(pageQuery(kind, state), { owner, name, after }, token, fetchImpl, partRefused) as Page
   const repository = data?.repository
   if (!repository) throw new GithubApiError(404, 'github-not-found')
   const info = repository.page?.pageInfo
@@ -221,4 +222,63 @@ export async function repositoryIssues(fullName: string, token: string, kind: Is
     more: next !== null, after: next,
     ...open ? { commits: tiles.flatMap(({ node, tile }) => commitsOf(tile.number, node)) } : {},
   }
+}
+
+// A page of the open pull requests a team's Dependencies reads (http.ts
+// teamOpenPulls), those carrying `$labels` alone where it names some: each by
+// what its card there and its popup's heading tell (its number, title and
+// author, when it was opened and last updated, whether it is a draft), the
+// files by which whether it changes a lockfile is told, and its base's and
+// head's commits, by which what its lockfiles add is read. Nothing else a
+// tile shows (its labels, comments, size, branches, checks, reviews, threads
+// and comments), which GitHub is slow enough to gather for fifty of a large
+// repository's to fail the page.
+const openPullsQuery = (labelled: boolean) => `query($owner: String!, $name: String!, $first: Int!, $after: String${labelled ? ', $labels: [String!]' : ''}) {
+  repository(owner: $owner, name: $name) {
+    page: pullRequests(states: [OPEN], first: $first, after: $after, ${labelled ? 'labels: $labels, ' : ''}orderBy: { field: UPDATED_AT, direction: DESC }) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number title createdAt updatedAt author { ${ACTOR} } state isDraft baseRefOid headRefOid ${files} }
+    }
+  }
+}`
+// What a kept page of them was read as: kept ones read before differ.
+export const OPEN_PULLS_READ = 1
+// How many a page asks for: ISSUES_PAGE, then, where GitHub fails to answer
+// that many in its time, fewer, and fewer again.
+export const OPEN_PULLS_SIZES = [ISSUES_PAGE, 20, 5]
+// GitHub not answering a query in its time: its gateway's 502 or 504, the
+// timeout it tells of itself, or ours of it. Fewer asked for may be answered.
+const SLOW = new Set(['github-status-502', 'github-status-504', 'github-timeout', 'github-unreachable'])
+const tooSlow = (err: unknown) => err instanceof GithubApiError && SLOW.has(err.message)
+
+// A page of the repository's open pull requests, the latest updated first,
+// after the page `after` ended (null for the first), those carrying `label`
+// alone where it names one: its `items`, their commits (`commits`, commitsOf)
+// and, where more follow, the cursor reading them (`after`). As many as
+// `size` asked for, then, GitHub too slow to answer, as many as each smaller
+// of OPEN_PULLS_SIZES, the last one's failure the read's; how many were
+// asked for (`size`) told, for the pages after it to ask no more.
+export async function repositoryOpenPulls(fullName: string, token: string, after: string | null, label: string | null, size: number = ISSUES_PAGE,
+  fetchImpl: typeof fetch = globalThis.fetch) {
+  const fitting = OPEN_PULLS_SIZES.filter(one => one <= size)
+  const sizes = fitting.length > 0 ? fitting : OPEN_PULLS_SIZES.slice(-1)
+  for (const first of sizes.slice(0, -1)) {
+    try { return await openPullsPage(fullName, token, after, label, first, fetchImpl) } catch (err) {
+      if (!tooSlow(err)) throw err
+    }
+  }
+  return openPullsPage(fullName, token, after, label, sizes.at(-1)!, fetchImpl)
+}
+async function openPullsPage(fullName: string, token: string, after: string | null, label: string | null, first: number, fetchImpl: typeof fetch) {
+  const [owner, name] = fullName.split('/') as [string, string]
+  const data = await githubGraphql(openPullsQuery(label !== null), { owner, name, first, after, ...label === null ? {} : { labels: [label] } }, token, fetchImpl, checksRefused) as Page
+  const repository = data?.repository
+  if (!repository) throw new GithubApiError(404, 'github-not-found')
+  const info = repository.page?.pageInfo
+  const next = info?.hasNextPage === true && typeof info.endCursor === 'string' && ISSUES_CURSOR.test(info.endCursor) ? info.endCursor : null
+  const pulls = (repository.page?.nodes ?? []).flatMap(node => {
+    const named = itemOf(node)
+    return node && named ? [{ node, tile: { ...named, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), ...pullState(node.state, node.isDraft), ...lockfileTouched(node) } }] : []
+  })
+  return { items: pulls.map(({ tile }) => tile), commits: pulls.flatMap(({ node, tile }) => commitsOf(tile.number, node)), more: next !== null, after: next, size: first }
 }

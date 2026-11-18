@@ -3,7 +3,8 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { constants, createGzip } from 'node:zlib'
 import { beforeEach, test } from 'node:test'
-import { fetchBundleContents, fetchBundleMetadata, fetchBundleOrigin, fetchManagedBundleCatalog, fetchRepositoryAgents, fetchRepositoryIssues, fetchRepositoryPulse, prefetchActivity }
+import { fetchBundleContents, fetchBundleMetadata, fetchBundleOrigin, fetchManagedBundleCatalog, fetchRepositoryAgents, fetchRepositoryIssues, fetchRepositoryPulse, fetchTeamDependencies,
+  prefetchActivity }
   from '../ui/managed/bundle-data.js'
 import { managedAppState } from '../ui/managed/state.js'
 import { beginViewNavigation, currentViewSignal } from '../ui/view/view-navigation.js'
@@ -133,6 +134,17 @@ test('session changes abort origin reads and discard late response bodies', asyn
   body.resolve({ bundle: { repo: { github: 'previous/session' } } })
   await rejected
   assert.deepEqual(notices, [])
+})
+
+test('a team\'s Dependencies tell why a repository couldn\'t be read, and why not all its open pull requests were, in words; its other lines as they come', async t => {
+  const lines = [{ repoId: 1, error: 'github-unreachable', status: 502 }, { repoId: 2, branch: {}, pulls: { items: [{ number: 5 }], more: true, error: 'github-status-502' } },
+    { repoId: 3, branch: {}, pulls: { items: [], more: true, error: 'time-up' } }, { repoId: 4, branch: {}, pulls: { items: [], more: false } }, { done: true }]
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response(lines.map(line => `${JSON.stringify(line)}\n`).join(''), { headers: { 'content-type': 'application/x-ndjson' } })))
+  const told = []
+  await fetchTeamDependencies('team', line => told.push(line))
+  assert.deepEqual(told, [{ repoId: 1, error: 'Could not connect to GitHub. Try again shortly.', status: 502, code: 'github-unreachable' },
+    { repoId: 2, branch: {}, pulls: { items: [{ number: 5 }], more: true, error: 'Not all its open pull requests were read. GitHub failed to answer. Try again shortly.' } },
+    { repoId: 3, branch: {}, pulls: { items: [], more: true, error: 'Not all its open pull requests were read. Reading them took too long.' } }, lines[3], lines[4]])
 })
 
 test('bundle catalogue errors distinguish denied access from temporary failures', async t => {

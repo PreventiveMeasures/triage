@@ -29,14 +29,17 @@ const patch = { hash: 'a'.repeat(64), path: 'patches/pat@1.0.0.patch' }
 const branches = {
   7: { cut: false, head: 'f'.repeat(40), review: { ...terms, unreviewed: 2 }, lockfiles: [dir({ unreviewed: [wants('old'), wants('pat', { patch })] })] },
   8: { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir(), { paths: ['web/bun.lock'], error: 'lockfile-unsupported' }] },
+  13: { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] },
   9: { cut: false, review: null, lockfiles: [dir()] },
 }
 const pull = (number, more = {}) => ({ number, title: `Pull ${number}`, author: 'octo', state: 'open', touchesLockfile: true, ...more })
 // When one was opened and last updated, by days into the year.
 const dated = (opened, updated) => ({ createdAt: Date.UTC(2026, 0, opened), updatedAt: Date.UTC(2026, 0, updated) })
-// Repository 8's more than are read, and those carrying its label alone.
+// Repository 8's more than are read; not all of 13's read.
+const UNREAD = 'Not all its open pull requests were read. GitHub failed to answer. Try again shortly.'
 const pulls = { 7: { items: [pull(1, dated(10, 60)), pull(3), pull(4, { touchesLockfile: false }), pull(9, dated(15, 32)), pull(10), pull(11)], more: false },
-  8: { items: [pull(2, dated(20, 21)), pull(6, dated(5, 64)), pull(7, { touchesLockfile: false })], more: true, label: 'dependencies' } }
+  8: { items: [pull(2, dated(20, 21)), pull(6, dated(5, 64)), pull(7, { touchesLockfile: false })], more: true },
+  13: { items: [pull(20)], more: true, error: UNREAD } }
 const dependencies = {
   // Its shared one reviewed in its comments, which count for it alone.
   '7#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('shared', { reviews: 1, commented: 1, reviewers: [{ login: 'kay', status: 'accept', passes: true, comment: true }] }),
@@ -56,12 +59,13 @@ const dependencies = {
     { login: 7, status: 'accept' }, { login: 'zed', status: 'maybe' }] }), wants('rej', { reviews: 2, rejected: true }), wants('vouched', { reviewed: true })] })] },
   // Its versions past those told wanting reviews, those told passed.
   '8#6': { cut: false, review: { ...terms, toReview: 3 }, lockfiles: [dir({ added: [wants('fine', { reviews: 2 })], more: 250 })] },
+  '13#20': { cut: false, review: terms, lockfiles: [dir({ added: [wants('late')] })] },
 }
 // A team's lines, as the server tells them (fetchTeamDependencies), of those
 // `repoIds` names, else all: the lines `old` changes, counted already, with
 // 7's default branch; its pull requests' dependencies two a line. Those
 // `timeUp` names left for the read's time, once, their default branch told.
-const TEAM = [7, 8, 9, 10, 11, 12]
+const TEAM = [7, 8, 9, 10, 11, 12, 13]
 let timeUp = new Set()
 function teamLines(repoIds) {
   const lines = [], unread = []
@@ -132,7 +136,6 @@ test('the pull requests wanting reviews, fewest first, each version under the fi
   assert.deepEqual(asked.dependencies, [], 'none asked again')
   assert.equal(npmDelta('old', '1.0.0', '(empty)').additions, 3, 'the lines a version changes, counted already, held as its row asks for them')
   assert.match(text, /role="alert">Only b’s 3 open pull requests\s+updated latest are checked; its others aren’t\./u)
-  assert.match(text, /Only open pull requests labeled <code>dependencies<\/code> are checked in b\./u, 'one read by its label alone says so, named where others aren\'t')
   assert.doesNotMatch(text, /Reading their pull requests/u)
   const cards = cardsOf(text)
   assert.equal(cards.length, 4, 'one adding none wanting reviews not shown')
@@ -266,7 +269,7 @@ test('the pull requests in the order picked, the newest opened first where none 
   } finally { state.teamDependenciesSort = 'fewest' }
 })
 
-test('a team none of whose repositories reviews its dependencies for its reader says so, one they read only some of among them; one read failing says it', async () => {
+test('a team none of whose repositories reviews its dependencies for its reader says so, one they read only some of among them; one read failing says it', async t => {
   state.managedSession = { id: 'other', role: 'triage' }
   const none = shown([repo(9, 'org/c'), repo(11, 'org/part')])
   const noneText = await read(none)
@@ -277,6 +280,17 @@ test('a team none of whose repositories reviews its dependencies for its reader 
   assert.match(failed, /role="alert">gone: It isn’t there\.</u, 'named without its owner, the only one')
   assert.match(failed, /<div class="team-deps-bar">\s*<p class="team-deps-quiet" data-tooltip=[^]*? role="alert">gone: It isn’t there\.<\/p>\s*<\/div>/u,
     'in the line above the lists, whole in its tooltip')
+  // Not all of one's open pull requests read: those read shown, why the rest weren't said there too, in place of their being more than are read.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  const partly = shown([repo(13, 'org/m')])
+  const partial = await read(partly)
+  assert.match(partial, /role="alert">m: Not all its open pull requests were read\. GitHub failed to answer\. Try again shortly\.</u)
+  assert.match(partial, />m#20<[^]*>late</u, 'those read, with their versions')
+  assert.doesNotMatch(partial, /updated latest are checked/u)
+  const before = asked.teams.length
+  t.mock.timers.tick(31_000)
+  await read(partly)
+  assert.equal(asked.teams.length, before + 1, 'asked for again as one failing is, sooner than one read whole')
   assert.doesNotMatch(failed, /workspace-content-empty/u, 'nothing told of what it couldn’t read')
 })
 

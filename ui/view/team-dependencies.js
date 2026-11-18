@@ -106,8 +106,8 @@ function sessionHeld() {
 // those not held, or grown old, in one read (readTeam): `{ status }`,
 // 'loading', then 'ready' with its default branch's dependencies (`branch`,
 // none where no review is in effect, nor where its reader may read only
-// some of it) and, where they are, its open pull requests (`pulls`, those
-// carrying its label alone where it names one, `label`), those
+// some of it) and, where they are, its open pull requests (`pulls`, with
+// why not all of them were read, where they weren't, `error`), those
 // whose dependencies are still to be told by their numbers (`telling`), or
 // 'error' with its `error`; one grown old shown as it was while it is read
 // again (`refreshing`), lest its pull requests leave the tab meanwhile.
@@ -190,16 +190,17 @@ function toldLine(line, entry, hold) {
       return
     }
     const items = (Array.isArray(line.pulls?.items) ? line.pulls.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0)
-    const label = typeof line.pulls?.label === 'string' && line.pulls.label ? { label: line.pulls.label } : {}
-    hold(telling({ status: 'ready', branch, pulls: { items, more: line.pulls?.more === true, ...label } }, new Set(items.filter(readsDependencies).map(item => item.number))))
+    const unread = typeof line.pulls?.error === 'string' && line.pulls.error ? { error: line.pulls.error } : {}
+    hold(telling({ status: 'ready', branch, pulls: { items, more: line.pulls?.more === true, ...unread } }, new Set(items.filter(readsDependencies).map(item => item.number))))
   } else if (line.dependencies instanceof Map && entry.telling) {
     seedPullDependencies(line.repoId, line.dependencies, true)
     hold(telling(entry, new Set([...entry.telling].filter(number => !line.dependencies.has(number)))))
   }
 }
-// One held with the pull requests still to be told, till none are.
+// One held with the pull requests still to be told, till none are; one not
+// all of whose pull requests were read, till it is read again, sooner.
 const telling = (entry, numbers) => numbers.size > 0 ? { ...entry, until: Number.POSITIVE_INFINITY, telling: numbers }
-  : { ...entry, until: Date.now() + KEEP_MS, telling: null }
+  : { ...entry, until: Date.now() + (entry.pulls?.error ? RETRY_MS : KEEP_MS), telling: null }
 
 // One a read told no more of, as held: one it told nothing of, as none of
 // its team's, so reviewing none for its reader (`failure` none); else
@@ -437,10 +438,10 @@ class TeamDependencies extends StateElement {
     }).filter(pull => pull.size > 0 || pull.others > 0 || pull.failed).toSorted(fewest)
     const sort = Object.hasOwn(SORTS, state.teamDependenciesSort) ? state.teamDependenciesSort : 'newest'
     const sorted = sort === 'fewest' ? wanting : wanting.toSorted(SORTS[sort][1])
-    // The repositories whose open pull requests are more than are read.
-    const unchecked = reviewed.filter(({ read }) => read.pulls.more)
-    // Those whose open pull requests are read by a label of theirs alone, by it.
-    const labelled = Map.groupBy(reviewed.filter(({ read }) => read.pulls.label), ({ read }) => read.pulls.label)
+    // The repositories whose open pull requests are more than are read, and
+    // those not all of whose were, which their failure tells instead.
+    const unchecked = reviewed.filter(({ read }) => read.pulls.more && !read.pulls.error)
+    const unread = reviewed.filter(({ read }) => read.pulls.error)
     // Each version wanting reviews, as the first adding it tells it, by the
     // pull requests adding it; and the first whose lockfiles name its patch's
     // file, whence that is read (`patched`).
@@ -454,7 +455,7 @@ class TeamDependencies extends StateElement {
     }
     const reading = reads.some(({ read }) => read.status === 'loading') || pulls.some(({ entry }) => entry.status === 'loading')
     const failures = [...reads.filter(({ read }) => read.status === 'error').map(({ repo, read }) => [repo.name, read.error]),
-      ...pulls.filter(({ entry }) => entry.status === 'error').map(pull => [pullName(pull), pull.entry.error])]
+      ...unread.map(({ repo, read }) => [repo.name, read.pulls.error]), ...pulls.filter(({ entry }) => entry.status === 'error').map(pull => [pullName(pull), pull.entry.error])]
     // The default branches with versions wanting reviews, or failing them.
     const branches = reviewed.flatMap(({ repo, read }) => {
       const { count } = unreviewedVersions(read.branch), failed = reviewFailures(read.branch)
@@ -516,9 +517,7 @@ class TeamDependencies extends StateElement {
         ? html`<p class="workspace-content-empty">None of this team’s repositories reviews its dependencies for you.</p>` : nothing}
       ${tab === 'branch' ? nothing : unchecked.map(({ repo, read }) => html`<p class="team-deps-quiet" role="alert">Only ${shorten(repo.name)}’s ${plural(read.pulls.items.length, 'open pull request')}
         updated latest are checked; its others aren’t.</p>`)}
-      ${tab === 'branch' ? nothing : [...labelled].map(([label, of]) => html`<p class="team-deps-quiet">Only open pull requests labeled <code>${label}</code> are checked${
-        of.length === reviewed.length ? '' : ` in ${of.map(({ repo }) => shorten(repo.name)).join(', ')}`}.</p>`)}
-      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(sorted, adding, reading, unchecked.length > 0, naming)
+      ${reviewed.length === 0 ? nothing : tab === 'pulls' ? this.renderPulls(sorted, adding, reading, unchecked.length + unread.length > 0, naming)
         : tab === 'versions' ? this.renderVersions(adding, reading, naming) : branches.map(({ repo, read }) => this.renderBranch(repo, read, naming))}`}
       </div>
     </div>`
