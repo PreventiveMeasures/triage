@@ -99,6 +99,7 @@ If the bytes match an existing bundle, it reuses that one.
 - From GitHub: the repository tree and files at the selected commit, with the credential the access check chose: usually the user's own token for a public repository, and the repository App's installation token for a private one.
 - From npm: the lockfile's packages, their version documents and tarballs.
 - The build runs in a worker that receives no server credential except `NPM_TOKEN`, which npm needs for private scoped packages.
+  Its env holds that and `VERCEL_ENV` alone: on Vercel, Stasis parses without oxc-parser's raw transfer, whose 6 GiB buffer a Vercel function can't reserve.
 - Build logs (`managed-bundle-build:` records) never include credentials or upstream response bodies, and the API returns only an error code.
 - They record the build worker's memory at each stage and every 5 seconds (the process's resident set, the worker's heap and its ArrayBuffers), the directory Stasis builds from, each tree it downloads of the repository (the whole repository's or a directory's) and its size, and the Node build (V8 version, pointer compression, sandbox); none of it reaches the API's answer.
 - Off Vercel, what builds and audits download is kept in upstream's disk cache, `$XDG_CACHE_HOME/PreventiveMeasures` (or `~/.cache/PreventiveMeasures`).
