@@ -326,7 +326,11 @@ function github(t, { files, compared = [], missing = [], failing = [], graphql =
     if (url.pathname === '/repos/org/repo/pulls/5') {
       return Promise.resolve(Response.json({ number: 5, state: 'open', base: { sha: tip, repo: { full_name: 'org/repo' } }, head: { sha: head } }))
     }
-    if (url.pathname === '/graphql') return Promise.resolve(Response.json({ data: graphql(JSON.parse(init.body)) }))
+    // A query's data, or GitHub's whole answer to it, where it is given one.
+    if (url.pathname === '/graphql') {
+      const told = graphql(JSON.parse(init.body))
+      return Promise.resolve(told instanceof Response ? told : Response.json({ data: told }))
+    }
     if (url.pathname === `/repos/org/repo/compare/${tip}...${head}`) return Promise.resolve(Response.json({ merge_base_commit: { sha: mergeBase }, files: compared }))
     const commit = /^\/repos\/org\/repo\/git\/commits\/([a-f\d]{40})$/u.exec(url.pathname)?.[1]
     if (commits[commit]) return Promise.resolve(Response.json({ sha: commit, tree: { sha: commits[commit].root } }))
@@ -714,6 +718,8 @@ async function teamFixture(t, pull = {}, answers = () => null) {
   return { db, users, asked, read, send: api(db, users) }
 }
 const without = ({ users: _users, ...body }) => body
+// An open pull request as the tab's own page tells it, of what its tile does.
+const slim = ({ number, title, author, authorId, createdAt, updatedAt, state, draft, touchesLockfile }) => ({ number, title, author, authorId, createdAt, updatedAt, state, draft, touchesLockfile })
 
 test('a team\'s Dependencies in one request: each repository as its own endpoints answer it, as lines as each is read; one reviewing none, or read only in part, answered at once', async t => {
   const { asked, read, send } = await teamFixture(t)
@@ -725,8 +731,8 @@ test('a team\'s Dependencies in one request: each repository as its own endpoint
   const answer = await read()
   assert.equal(answer.status, 200)
   assert.equal(answer.headers['content-type'], 'application/x-ndjson')
-  assert.deepEqual(answer.lines, [{ repoId: 2, branch: null }, { repoId: 3, branch: null }, { repoId: 1, branch, pulls: { items: pulls, more: false } },
-    { repoId: 1, dependencies }, { done: true }], 'the two read of no GitHub first, then org/repo\'s, its pull requests\' dependencies after')
+  assert.deepEqual(answer.lines, [{ repoId: 2, branch: null }, { repoId: 3, branch: null }, { repoId: 1, branch, pulls: { items: pulls.map(slim), more: false } },
+    { repoId: 1, dependencies }, { done: true }], 'the two read of no GitHub first, then org/repo\'s, each open pull request by what its card tells of its tile, their dependencies after')
   assert.ok(answer.ended)
   assert.ok(!asked.some(path => /org\/(?:other|part)/u.test(path)), 'GitHub asked nothing of those reviewing none, or read only in part')
   assert.match(answer.headers['server-timing'], /db;dur=[\d.]+;desc="\d+ statements"/u, 'its time told, the database\'s')
@@ -736,7 +742,7 @@ test('a team\'s Dependencies in one request: each repository as its own endpoint
   assert.equal((await read('/api/teams/two/dependencies')).status, 404, 'a team not hers')
 })
 
-test('a team\'s Dependencies read the open pull requests carrying a repository\'s dependencies label alone, where it has one, by its name as it has it, kept apart from its Pull requests tab\'s', async t => {
+test('a team\'s Dependencies read a repository\'s open pull requests in pages of their own, of less each than its Pull requests tab\'s; those carrying its dependencies label alone, where it has one, by its name as it has it', async t => {
   const issues = '/api/admin/repositories/issues?repoId=1&kind=pulls&state=open'
   const pagesOf = async label => {
     const labels = [], pages = []
@@ -751,25 +757,26 @@ test('a team\'s Dependencies read the open pull requests carrying a repository\'
   const { pages, labels, read, send } = await pagesOf({ name: 'Dependencies' })
   const lines = (await read()).lines
   assert.deepEqual(labels, ['dependencies'], 'asked whether it has one, once')
-  assert.equal(lines.find(line => line.pulls)?.pulls.label, 'Dependencies', 'told by its name')
+  assert.deepEqual(Object.keys(lines.find(line => line.pulls).pulls), ['items', 'more'])
   assert.ok(lines.some(line => line.dependencies?.[0]?.number === 5), 'their dependencies read as ever')
   assert.equal(pages.length, 1)
   assert.match(pages[0].query, /\$labels: \[String!\][^]*page: pullRequests\([^)]*labels: \$labels, /u)
-  assert.deepEqual(pages[0].variables.labels, ['Dependencies'])
-  // Its Pull requests tab's page is of all of them, read and kept apart.
+  assert.deepEqual([pages[0].variables.labels, pages[0].variables.first], [['Dependencies'], 50])
+  assert.ok(['baseRefOid', 'headRefOid', 'files(first: 100)'].every(field => pages[0].query.includes(field)), 'what tells its lockfiles\' changes asked for')
+  assert.ok(!/labels\(|statusCheckRollup|reviewDecision|latestReviews|reviewThreads|comments/u.test(pages[0].query), 'nothing of its labels, checks, reviews, threads or comments')
+  // Its Pull requests tab's page is of all of them, a tile's whole, read and kept apart.
   assert.equal((await send(issues, { who: 'alice' })).body.items.length, 1)
-  assert.equal(pages.length, 2, 'not answered by the labelled page')
-  assert.ok(!pages[1].query.includes('$labels') && !Object.hasOwn(pages[1].variables, 'labels'), 'asked as ever')
-  assert.equal((await read()).lines.find(line => line.pulls)?.pulls.label, 'Dependencies')
+  assert.equal(pages.length, 2, 'not answered by the tab\'s page')
+  assert.ok(!pages[1].query.includes('$labels') && !Object.hasOwn(pages[1].variables, 'labels') && pages[1].query.includes('latestReviews'), 'asked as ever')
+  await read()
   assert.deepEqual([pages.length, labels.length], [2, 1], 'both kept, neither asked again')
 
-  // One without: all of them, as its Pull requests tab reads them, in the same page.
+  // One without: all of them, in pages of its own all the same.
   const none = await pagesOf(null)
-  const told = (await none.read()).lines.find(line => line.pulls)
-  assert.deepEqual([Object.hasOwn(told.pulls, 'label'), told.pulls.items.length], [false, 1])
-  assert.ok(!none.pages[0].query.includes('$labels') && !Object.hasOwn(none.pages[0].variables, 'labels'))
+  assert.equal((await none.read()).lines.find(line => line.pulls).pulls.items.length, 1)
+  assert.ok(!none.pages[0].query.includes('$labels') && !Object.hasOwn(none.pages[0].variables, 'labels') && !none.pages[0].query.includes('latestReviews'))
   await none.send(issues, { who: 'alice' })
-  assert.equal(none.pages.length, 1, 'the page the tab reads')
+  assert.equal(none.pages.length, 2)
 
   // GitHub refusing to tell of its labels is its having none; any other failure is the read's.
   const answering = body => () => Promise.resolve(Response.json(body))
@@ -777,6 +784,67 @@ test('a team\'s Dependencies read the open pull requests carrying a repository\'
   assert.deepEqual(await repositoryLabel('org/repo', 'token', 'dependencies', answering(refused)), { label: null })
   assert.deepEqual(await repositoryLabel('org/repo', 'token', 'dependencies', answering({ data: { repository: { label: { name: 'dependencies' } } } })), { label: 'dependencies' })
   await assert.rejects(repositoryLabel('org/repo', 'token', 'dependencies', () => Promise.resolve(Response.json({ message: 'Bad Gateway' }, { status: 502 }))), { message: 'github-status-502' })
+})
+
+// org/repo's open pull requests in two pages, 5 then 6, which changes no
+// lockfile: each page asked for as `page` answers it, by its cursor and how
+// many it asks for, else as GitHub would.
+async function pagedFixture(t, page) {
+  const asked = []
+  const node = number => ({ number, title: `Pull ${number}`, state: 'OPEN', createdAt: null, updatedAt: null, author: null,
+    files: { totalCount: 1, nodes: [{ path: number === 5 ? 'package-lock.json' : 'README.md' }] } })
+  const fixture = await teamFixture(t, {}, body => {
+    if (!body.query.includes('$first: Int!')) return null
+    const { after, first } = body.variables
+    asked.push([after, first])
+    return page(after, first) ?? { repository: { page: after === null ? { pageInfo: { hasNextPage: true, endCursor: 'C1' }, nodes: [node(5)] }
+      : { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node(6)] } } }
+  })
+  const pulls = async () => (await fixture.read()).lines.find(line => line.repoId === 1 && (line.pulls || line.error))
+  return { ...fixture, asked, pulls }
+}
+const badGateway = () => Response.json({ message: 'Bad Gateway' }, { status: 502 })
+
+test('a page of a team\'s open pull requests GitHub is too slow to answer is asked again for fewer, the pages after it for no more; one it fails all the same leaves those read told, the rest read on from them next', async t => {
+  t.mock.method(console, 'warn', () => {})
+  // Fifty too many for GitHub: twenty asked for, and of the page after.
+  const fewer = await pagedFixture(t, (_after, first) => first > 20 ? badGateway() : null)
+  const whole = await fewer.pulls()
+  assert.deepEqual([whole.pulls.items.map(item => item.number), whole.pulls.more, Object.hasOwn(whole.pulls, 'error')], [[5, 6], false, false])
+  assert.deepEqual(fewer.asked, [[null, 50], [null, 20], ['C1', 20]])
+  assert.equal(console.warn.mock.callCount(), 0, 'none failed')
+
+  // Its second page failed however few are asked for: the first told, with why the rest weren't, and its dependencies read.
+  let failing = true
+  const partly = await pagedFixture(t, after => after === 'C1' && failing ? badGateway() : null)
+  const lines = (await partly.read()).lines
+  const partial = lines.find(line => line.pulls)
+  assert.deepEqual([partial.pulls.items.map(item => item.number), partial.pulls.more, partial.pulls.error], [[5], true, 'github-status-502'])
+  assert.ok(partial.branch.review, 'its default branch told all the same')
+  assert.ok(lines.some(line => line.dependencies?.[0]?.number === 5) && lines.at(-1).done === true)
+  assert.deepEqual(partly.asked, [[null, 50], ['C1', 50], ['C1', 20], ['C1', 5]], 'asked for fewer twice before it is given up')
+  assert.equal(console.warn.mock.callCount(), 1, 'its failure logged')
+  // Read again once GitHub answers: on from the page kept.
+  failing = false
+  partly.asked.length = 0
+  const again = await partly.pulls()
+  assert.deepEqual([again.pulls.items.map(item => item.number), again.pulls.more, Object.hasOwn(again.pulls, 'error')], [[5, 6], false, false])
+  assert.deepEqual(partly.asked, [['C1', 50]], 'its first page not asked for again')
+
+  // One GitHub refuses is the repository's failure, as ever; nor is it asked for fewer.
+  const refused = await pagedFixture(t, () => Response.json({ data: null, errors: [{ type: 'FORBIDDEN', path: ['repository', 'page'], message: 'Resource not accessible by integration' }] }))
+  assert.deepEqual(await refused.pulls(), { repoId: 1, error: 'github-status-403', status: 502 })
+  assert.deepEqual(refused.asked, [[null, 50]])
+})
+
+test('a team\'s open pull requests whose pages outlast its time are told as far as read, the repository left to ask for again', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  const slow = await pagedFixture(t, after => { if (after === null) t.mock.timers.tick(241_000); return null })
+  const lines = (await slow.read()).lines
+  const told = lines.find(line => line.pulls)
+  assert.deepEqual([told.pulls.items.map(item => item.number), told.pulls.more, told.pulls.error], [[5], true, 'time-up'])
+  assert.deepEqual(slow.asked, [[null, 50]], 'the page after not asked for')
+  assert.deepEqual(lines.at(-1), { done: false, unread: [1] })
 })
 
 test('a team\'s Dependencies, its time up, tells the repositories left to ask for again; a reader whose session is gone is told nothing more', async t => {

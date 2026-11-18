@@ -128,7 +128,7 @@ Each author has one unpublished review per comparison.
 
 A team that reviews dependencies shows a **Dependencies** tab (`/team/<slug>/dependencies`) to those who review in it.
 It reads the open pull requests of each team repository whose review is in effect for the reader, up to the 1,000 updated latest per repository, and says where there are more.
-Where a repository has a `dependencies` label, as Dependabot's pull requests carry, it reads only the open pull requests carrying that label, and says so.
+Where a repository has a `dependencies` label, as Dependabot's pull requests carry, it reads only the open pull requests carrying that label.
 An open pull request without the label is then not listed there, whatever it adds; its tile and its popup still tell its versions' reviews.
 Its sub-tabs are:
 
@@ -144,6 +144,9 @@ A version is listed under the first pull request that adds it, as one review pas
 The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
 A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.
 What the tab read is kept for two minutes; drawn after that, it is shown while it is read again.
+It reads a repository's open pull requests in pages of its own, 50 at a time, asking GitHub only for what its cards show and for the files and commits that tell what each one's lockfiles add.
+A page GitHub fails to answer in time is asked for again with 20, then 5, and the pages after it ask for no more than that.
+Where a page fails all the same, the tab shows the pull requests read till then, says the rest weren't read, and asks again once drawn 30 seconds or more later, reading on from the pages already kept.
 Each pull request's dependencies are found by the base and head commits that the page of open pull requests names, so the tab doesn't ask GitHub for those commits.
 The list of lockfiles at the default branch's head and at the baseline commit, and each lockfile's versions by its contents, are kept in the database for a month.
 Another server instance then reads none of them from GitHub again, and after a push that changes no lockfile only the list is read again.

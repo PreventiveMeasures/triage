@@ -369,9 +369,13 @@ export function runBundleValidation(id, csrfToken, { signal } = {}) {
 // else all, in one request (GET /api/teams/:id/dependencies): `onLine`
 // called with each line as it comes, as the server tells them
 // (server-managed/http.ts handleTeamDependencies), a repository's failure
-// told by why (`error`), and its pull requests' dependencies by number, as
+// told by why (`error`), as is why not all its open pull requests were read
+// (`pulls.error`), and its pull requests' dependencies by number, as
 // fetchPullDependenciesOf tells them (`dependencies`).
 const TEAM_DEPENDENCIES_ERRORS = { 'no-team': 'This team is not available to you.', 400: 'Not a team’s repositories.' }
+const GITHUB_FAILED = 'GitHub failed to answer. Try again shortly.'
+const UNREAD_PULLS_ERRORS = { ...REPOSITORY_ISSUES_ERRORS, 'github-status-502': GITHUB_FAILED, 'github-status-504': GITHUB_FAILED, 'time-up': 'Reading them took too long.' }
+const unreadPulls = error => `Not all its open pull requests were read. ${UNREAD_PULLS_ERRORS[error] ?? `(${error})`}`
 export function fetchTeamDependencies(teamId, onLine, { repoIds = null, signal } = {}) {
   const query = repoIds ? `?${new URLSearchParams({ repoIds: repoIds.join(',') })}` : ''
   return request(`/api/teams/${encodeURIComponent(teamId)}/dependencies${query}`, TEAM_DEPENDENCIES_ERRORS, async response => {
@@ -379,7 +383,8 @@ export function fetchTeamDependencies(teamId, onLine, { repoIds = null, signal }
     for await (const line of responseLines(response)) {
       if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
       onLine(typeof line.error === 'string' ? { ...line, error: BRANCH_DEPENDENCIES_ERRORS[line.error] ?? BRANCH_DEPENDENCIES_ERRORS[line.status]
-        ?? `It couldn’t be read (${line.error}).`, code: line.error } : Array.isArray(line.dependencies) ? { ...line, dependencies: pullAnswers(line.dependencies) } : line)
+        ?? `It couldn’t be read (${line.error}).`, code: line.error } : Array.isArray(line.dependencies) ? { ...line, dependencies: pullAnswers(line.dependencies) }
+        : typeof line.pulls?.error === 'string' ? { ...line, pulls: { ...line.pulls, error: unreadPulls(line.pulls.error) } } : line)
     }
   }, signal)
 }
