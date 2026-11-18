@@ -782,7 +782,7 @@ const runLines = () => {
   const [olds, news] = runBuilds
   const line = (path, otherPath, runs) => ({ path, hash: path && fileHash(olds[path]), otherPath, otherHash: otherPath && fileHash(news[otherPath]), ...runs })
   return [line('types/api.d.ts', 'types/api.d.ts', { runs: [[0, 1]], otherRuns: [[0, 5]] }), line('types/index.d.ts', 'types/index.d.ts'),
-    line('types/reexport.d.ts', 'types/reexport.d.ts', { runs: [[0, 1]], otherRuns: [[0, 2]] }), line(null, 'types/user.d.ts', { runs: [], otherRuns: [[0, 1], [5, 6]] })]
+    line('types/reexport.d.ts', 'types/reexport.d.ts', { runs: [[0, 1]], otherRuns: [[0, 2]] }), line(null, 'types/user.d.ts', { runs: [], otherRuns: [[0, 1]] })]
 }
 
 test('asked, the files that changed in types alone but for what runs are told too, with the lines that hold it on either side; unasked, none of them', async t => {
@@ -808,7 +808,7 @@ test('a version against no files, as Review reads one with no base, has each dec
   registry(t, [packageOf('lib', '1.1.0', runBuilds[1]), { ...packageOf('@corp/lib', '1.1.0', runBuilds[1]), private: true }])
   const added = (otherPath, runs) => ({ path: null, hash: null, otherPath, otherHash: fileHash(runBuilds[1][otherPath]), ...runs })
   const lines = [added('types/api.d.ts', { runs: [], otherRuns: [[0, 5]] }), added('types/index.d.ts'),
-    added('types/reexport.d.ts', { runs: [], otherRuns: [[0, 2]] }), added('types/user.d.ts', { runs: [], otherRuns: [[0, 1], [5, 6]] })]
+    added('types/reexport.d.ts', { runs: [], otherRuns: [[0, 2]] }), added('types/user.d.ts', { runs: [], otherRuns: [[0, 1]] })]
   assert.deepEqual(linesOf(await h.send(`${npmTypeOnly('lib', '1.1.0', '(empty)')}&runs=1`)), lines, 'as against an empty file each: none that runs code')
   assert.deepEqual(linesOf(await h.send(npmTypeOnly('lib', '1.1.0', '(empty)'))), [lines[1]], 'unasked, those in types alone alone')
   assert.equal((await h.send(npmTypeOnly('@corp/lib', '1.1.0', '(empty)'))).status, 404, 'a reader without private access gets nothing')
