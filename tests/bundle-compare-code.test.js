@@ -2793,13 +2793,13 @@ test('a declaration file that changed in types alone but for what runs shows, it
   // Its rows, unified: each line drawn, `[kind, number, code]`, its new side's number, else its old side's, and each run of types set aside, `['types', what it says]`.
   const rows = markup => [...markup.matchAll(/<div class="diff-row diff-types" role="row">\s*<span>([^<]*)<\/span>|<div class=(?:"|)diff-row ([^"]*?)(?:"|) role="row"[^]*?<span class="diff-num">(\d*)<\/span><span class="diff-num">(\d*)<\/span><span class="diff-sign">.<\/span><span class=(?:"|)diff-code[^>]*>([^<]*)<\/span>/gu)]
     .map(([, types, kind, old, number, code]) => (types ? ['types', types] : [kind.trim(), number || old, code]))
-  assert.deepEqual(rows(added), [['add', '1', "import { z } from 'zod';"], ['types', 'Only types here · lines 2–12'], ['add', '13', '//# sourceMappingURL=user.d.ts.map']],
-    'its import and pragma as added, numbered as in the file, its types a row saying so')
-  assert.match(added, /Only types here · lines 2–12<\/span>\s*<button type="button" class="bundle-compare-code-action" @click=>Show type-only changes<\/button>/u, 'and how to show them')
-  assert.match(/<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(added)[1], /<span class="add">\+2<\/span><span class="del">−0<\/span>/u, 'the lines that run counted in its head')
+  assert.deepEqual(rows(added), [['add', '1', "import { z } from 'zod';"], ['types', 'Only types here · lines 2–13']],
+    'its import as added, numbered as in the file, its types a row saying so, with the comment naming its own map that ends it')
+  assert.match(added, /Only types here · lines 2–13<\/span>\s*<button type="button" class="bundle-compare-code-action" @click=>Show type-only changes<\/button>/u, 'and how to show them')
+  assert.match(/<header class="bundle-code-main-bar bundle-compare-code-bar">([^]*?)<\/header>/u.exec(added)[1], /<span class="add">\+1<\/span><span class="del">−0<\/span>/u, 'the lines that run counted in its head')
   assert.match(added, /\.checked=true accessible-label=Hide type-only changes/u, 'still there to turn off')
   const counts = rowCounts(added)
-  assert.match(counts['types/user.d.ts'], /data-tooltip=With Hide type-only changes As published: \+13 −0>[^]*class=add>\+2<\/span>/u, 'counted in the tree as drawn')
+  assert.match(counts['types/user.d.ts'], /data-tooltip=With Hide type-only changes As published: \+13 −0>[^]*class=add>\+1<\/span>/u, 'counted in the tree as drawn')
   assert.match(counts['types/api.d.ts'], /data-tooltip=With Hide type-only changes As published: \+3 −1>[^]*class=add>\+1<\/span>/u)
   element.path = 'types/api.d.ts'
   assert.deepEqual(rows(renderText(element.render())), [['ctx', '1', "import { z } from 'zod';"], ['add', '2', "import { B } from './b';"], ['types', 'Only types here · lines 3–4']],
@@ -2845,7 +2845,7 @@ test('a version reviewed with no base has its declaration files proven against n
   assert.match(shown, /\.checked=false accessible-label=Hide type-only changes/u, 'offered, once the server proved it')
   assert.deepEqual(typeProofs.slice(proofs), [{ name: 'pkg', version: '9.0.0', otherVersion: '(empty)' }], 'the version asked about against none')
   element._setTypes(true)
-  assert.match(render('types/user.d.ts'), /<span>Only types here · lines 2–12<\/span>/u, 'its imports alone shown, its types a row')
+  assert.match(render('types/user.d.ts'), /<span>Only types here · lines 2–13<\/span>/u, 'its imports alone shown, its types a row')
   assert.match(render('types/plain.d.ts'), /Only types changed in this file\./u, 'one of types alone hidden whole')
   assert.match(render('index.js'), /module\.exports = 1/u, 'code drawn')
 })

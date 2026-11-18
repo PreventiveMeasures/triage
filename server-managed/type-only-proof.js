@@ -25,6 +25,12 @@
 // triple-slash comment that leads one side, where a directive steers, and
 // stands below a statement on the other, where it is prose, its line the same
 // on both (`moved`). Its diff is drawn whole, as one not proven is.
+//
+// Each sets aside a file's own source map comment, as tsc writes one with a
+// declaration map: its last line exactly `//# sourceMappingURL=` its own name
+// `.map`, a newline after it or none (withoutOwnMap). It names the file's own
+// map, for a debugger alone, and is taken for one of its types: the file is
+// proven, and its lines that run told, without it.
 import { stripTypeScriptTypes } from 'node:module'
 import { compareTrees, proveTypeOnly } from '@preventive/compare'
 import { parseSync } from 'oxc-parser'
@@ -39,9 +45,33 @@ const BLANK = /^\s*$/u
 
 const tree = file => (file ? [{ name: file.path, data: file.text }] : [])
 
+// A file without its own source map comment, where its last line is that and
+// nothing else: `//# sourceMappingURL=` and its name, `user.d.ts.map` for
+// `types/user.d.ts`, ending the file with a newline or without. Any other
+// name or spelling, or anything after it, and the file is as it is; so too
+// where its own name is not plain (PLAIN_NAME): one holding a line terminator
+// would end the comment within it, and what follows would run, so no other
+// character than Latin letters, digits, `-`, `_` and `.` is taken in one.
+const PLAIN_NAME = /^[A-Za-z0-9._-]+$/u
+function withoutOwnMap(file) {
+  if (file === null) return null
+  const name = file.path.slice(file.path.lastIndexOf('/') + 1)
+  if (!PLAIN_NAME.test(name)) return file
+  const comment = `//# sourceMappingURL=${name}.map`
+  for (const last of [comment, `${comment}\n`]) {
+    const before = file.text.endsWith(last) ? file.text.slice(0, -last.length) : null
+    if (before !== null && (before === '' || before === '\uFEFF' || before.endsWith('\n'))) return { ...file, text: before }
+  }
+  return file
+}
+
+// Two the same but for their own source map comments changed nothing else:
+// in types alone, where each is a declaration file proven to hold types alone.
 export function typeOnlyStamped(from, to) {
-  const changes = compareTrees(tree(from), tree(to), { paths: 'keys', lines: false, renames: Number.MIN_VALUE })
-  return changes.length > 0 && changes.every(change => change.typeOnly === true)
+  const [base, other] = [from, to].map(withoutOwnMap)
+  const changes = compareTrees(tree(base), tree(other), { paths: 'keys', lines: false, renames: Number.MIN_VALUE })
+  if (changes.length > 0) return changes.every(change => change.typeOnly === true)
+  return [base, other].every(file => file !== null && DECLARATION.test(file.path) && proveTypeOnly(file.text).proven)
 }
 
 // The lines of a text proven to hold types alone but for what runs that hold
@@ -52,7 +82,7 @@ export function typeOnlyStamped(from, to) {
 // it leaves is kept; what it reads starts past a byte order mark, and so do
 // the offsets in its tree.
 function runLines(text) {
-  const shift = text.startsWith('﻿') ? 1 : 0
+  const shift = text.startsWith('\uFEFF') ? 1 : 0
   const body = text.slice(shift)
   const code = stripTypeScriptTypes(body, { mode: 'strip' })
   const { program, comments } = parseSync('file.ts', body, { lang: 'ts', sourceType: 'module' })
@@ -94,7 +124,8 @@ const moved = (one, other) => [...one.leading].some(comment => !other.leading.ha
 // hold types alone but for what runs, and no directive steers on one side
 // alone unseen (`moved`); else false, and where the proof throws, as no
 // check should. Asked of a pair not stamped, which always runs some.
-export function typeOnlyRuns(from, to) {
+export function typeOnlyRuns(...pair) {
+  const [from, to] = pair.map(withoutOwnMap)
   const sides = [from, to].filter(file => file !== null)
   if (sides.length === 0 || !sides.every(file => DECLARATION.test(file.path))) return false
   try {

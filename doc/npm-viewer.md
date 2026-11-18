@@ -86,6 +86,7 @@ For JavaScript minified on both sides, lines that differ only in names the minif
 **Hide renamed names** gives the old side the new side's names; where either side reads names (`.name`, `.toString`, `.stack`), a note warns that values may change.
 **Hide type-only changes** hides a declaration file's change where the server proves it touches types alone.
 Where the file's imports, or anything else it leaves to run, changed too (a zod schema's declarations added, an import added beside changed types), only those lines show, with a row where its types stand between them, as a file changed in types alone is told.
+A last line naming the file's own source map, as tsc writes one (`//# sourceMappingURL=user.d.ts.map` ending `user.d.ts`, a newline after it or none), counts among its types; any other source map comment shows.
 
 ## Risk
 

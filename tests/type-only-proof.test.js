@@ -101,6 +101,33 @@ test('a worker gone before its answer is answered for as far as it told: every s
   assert.equal(taken({ at: 1, runs: [], otherRuns: [[0, 2]] }), null, 'nor what runs of a pair told twice')
 })
 
+// tsc ends a declaration file with a comment naming its own map: set aside with its types, and no other.
+test('a declaration file\'s own source map comment, its last line, is set aside with its types; any other is told', () => {
+  const own = '//# sourceMappingURL=user.d.ts.map', types = 'export type A = 1;\n'
+  const at = text => ({ path: 'dist/user.d.ts', text })
+  for (const text of [`${types}${own}\n`, `${types}${own}`, `﻿${own}\n`]) assert.equal(typeOnlyStamped(null, at(text)), true, JSON.stringify(text))
+  assert.equal(typeOnlyStamped(at(`${types}${own}\n`), at(`${types}${own}`)), true, 'the newline after it gone alone')
+  assert.equal(typeOnlyStamped(at(types), at(`${types}${own}\n`)), true, 'it added alone')
+  assert.deepEqual(typeOnlyRuns(null, at(`import { z } from 'zod';\n${types}${own}\n`)), { runs: [], otherRuns: [[0, 1]] }, 'its line among the types')
+  for (const text of [`${types}//# sourceMappingURL=other.d.ts.map\n`, `${types}//@ sourceMappingURL=user.d.ts.map\n`, `${types}/*# sourceMappingURL=user.d.ts.map */\n`,
+    `${types}//# sourceMappingURL= user.d.ts.map\n`, `${types}${own}\r\n`, `${types}${own}\n\n`, `${types}${own} \n`, `${types}${own}\nexport type B = 2;\n`]) {
+    assert.equal(typeOnlyStamped(null, at(text)), false, JSON.stringify(text))
+    assert.ok(typeOnlyRuns(null, at(text)).otherRuns.length > 0, `told: ${JSON.stringify(text)}`)
+  }
+  assert.equal(typeOnlyStamped(at(`let x = 1;\n${own}\n`), at(`let x = 1;\n${own}`)), false, 'nor is a file that runs code, its comment changed alone')
+  // A name a line terminator breaks would end the comment within it, what follows it code: only plain Latin names are read.
+  for (const end of ['\n', '\r', '\u2028', '\u2029']) {
+    const path = `x${end}import { evil } from 'evil';${end}export type Z = x.d.ts`, text = `${types}//# sourceMappingURL=${path}.map\n`
+    assert.equal(typeOnlyStamped(null, { path, text }), false, `a name with ${JSON.stringify(end)}`)
+    assert.ok(typeOnlyRuns(null, { path, text }).otherRuns.length > 0, `its load told: ${JSON.stringify(end)}`)
+  }
+  for (const name of ['us er.d.ts', '\u00FCser.d.ts', 'user+1.d.ts', 'user@1.d.ts', 'us\u0435r.d.ts', 'user\t.d.ts']) {
+    assert.equal(typeOnlyStamped(null, { path: `dist/${name}`, text: `${types}//# sourceMappingURL=${name}.map\n` }), false, `not plain: ${JSON.stringify(name)}`)
+  }
+  assert.equal(typeOnlyStamped(null, { path: 'dist/User-Name_v2.0.d.mts', text: `${types}//# sourceMappingURL=User-Name_v2.0.d.mts.map\n` }), true, 'Latin letters, digits, - _ .')
+  assert.equal(typeOnlyStamped(null, at(`${types}//# sourceMappingURL=dist/user.d.ts.map\n`)), false, 'nor a path')
+})
+
 test('the lines that run are those Node\'s type stripping leaves, the hashbang, and each comment it keeps that may be one a tool reads, whatever the proof\'s grammar for it', () => {
   const text = '#!/usr/bin/env node\n/** A type. */\nexport type A = 1;\nimport {\n  type B,\n  C,\n} from \'./c\';\n/// <REFERENCE types="node" />\n// a note\nexport interface D {\n  /*# sourceURL=x */\n}\n//@ sourceMappingURL=d.ts.map\n'
   assert.deepEqual(typeOnlyRuns(null, { path: 'x.d.ts', text }), { runs: [], otherRuns: [[0, 1], [3, 8], [12, 13]] },
@@ -135,7 +162,7 @@ const TYPES = ['export type T{k} = { a: {n} };', 'export interface I{k} {\n  a: 
   "export type { A{k} } from 'e{n}';", "export type * from 'i{n}';", "import type * as TN{k} from 'tn{n}';", '/** doc {n} */', '// note {n}', '']
 const RUNS = ["import { type A{k} } from 'a{n}';", "import { type A{k}, B{k} } from 'b{n}';", "import {\n  type A{k},\n  B{k},\n} from 'c{n}';", "import * as ns{k} from 'ns{n}';",
   "import def{k} from 'd{n}';", "export { type A{k} } from 'f{n}';", "export { B{k} } from 'g{n}';", "export * from 'h{n}';", "export * as nsx{k} from 'j{n}';", 'export {};',
-  "export type X{k} = 1; import { b{k} } from 'b{n}';", '//# sourceMappingURL=x{n}.map', '/// <reference types="node{n}" />', "import { q{k} } from 'q{n}' with { type: 'json' };"]
+  "export type X{k} = 1; import { b{k} } from 'b{n}';", '//# sourceMappingURL=x{n}.map', '//# sourceMappingURL=x.d.ts.map', '/// <reference types="node{n}" />', "import { q{k} } from 'q{n}' with { type: 'json' };"]
 
 // What may have a side effect in a text, read from oxc's tree alone, apart
 // from Node's stripping: each statement but one that is plainly a type, and
@@ -159,7 +186,9 @@ function sideEffects(text) {
   const running = program.body.filter(statement => !plainlyType(statement))
   const lines = new Set()
   const steers = comment => DIRECTIVE.test(text.slice(comment.start, comment.end)) || PRAGMA.test(text.slice(comment.start, comment.end))
-  for (const { start, end } of [...running, ...comments.filter(steers)]) {
+  // The file's own source map comment, `x.d.ts`'s, ending it: set aside with its types.
+  const ownMap = ({ start, end }) => text.slice(start, end) === '//# sourceMappingURL=x.d.ts.map' && (start === 0 || text[start - 1] === '\n') && /^\n?$/u.test(text.slice(end))
+  for (const { start, end } of [...running, ...comments.filter(comment => steers(comment) && !ownMap(comment))]) {
     for (let line = lineAt(start); line <= lineAt(end - 1); line++) lines.add(line)
   }
   // Its directives by whether each leads it, before its first statement, where alone it steers.
