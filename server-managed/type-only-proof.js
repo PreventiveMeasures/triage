@@ -48,10 +48,15 @@ const tree = file => (file ? [{ name: file.path, data: file.text }] : [])
 // A file without its own source map comment, where its last line is that and
 // nothing else: `//# sourceMappingURL=` and its name, `user.d.ts.map` for
 // `types/user.d.ts`, ending the file with a newline or without. Any other
-// name or spelling, or anything after it, and the file is as it is.
+// name or spelling, or anything after it, and the file is as it is; so too
+// where its name holds a line terminator, which would end the comment within
+// it and leave what follows to run, so that no code is ever taken for one.
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/u
 function withoutOwnMap(file) {
   if (file === null) return null
-  const comment = `//# sourceMappingURL=${file.path.slice(file.path.lastIndexOf('/') + 1)}.map`
+  const name = file.path.slice(file.path.lastIndexOf('/') + 1)
+  if (LINE_TERMINATOR.test(name)) return file
+  const comment = `//# sourceMappingURL=${name}.map`
   for (const last of [comment, `${comment}\n`]) {
     const before = file.text.endsWith(last) ? file.text.slice(0, -last.length) : null
     if (before !== null && (before === '' || before === '\uFEFF' || before.endsWith('\n'))) return { ...file, text: before }

@@ -115,6 +115,12 @@ test('a declaration file\'s own source map comment, its last line, is set aside 
     assert.ok(typeOnlyRuns(null, at(text)).otherRuns.length > 0, `told: ${JSON.stringify(text)}`)
   }
   assert.equal(typeOnlyStamped(at(`let x = 1;\n${own}\n`), at(`let x = 1;\n${own}`)), false, 'nor is a file that runs code, its comment changed alone')
+  // A name a line terminator breaks would end the comment within it, what follows it code.
+  for (const end of ['\n', '\r', '\u2028', '\u2029']) {
+    const path = `x${end}import { evil } from 'evil';${end}export type Z = x.d.ts`, text = `${types}//# sourceMappingURL=${path}.map\n`
+    assert.equal(typeOnlyStamped(null, { path, text }), false, `a name with ${JSON.stringify(end)}`)
+    assert.ok(typeOnlyRuns(null, { path, text }).otherRuns.length > 0, `its load told: ${JSON.stringify(end)}`)
+  }
 })
 
 test('the lines that run are those Node\'s type stripping leaves, the hashbang, and each comment it keeps that may be one a tool reads, whatever the proof\'s grammar for it', () => {
