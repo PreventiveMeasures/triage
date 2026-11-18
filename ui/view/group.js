@@ -11,6 +11,7 @@ import { SEVERITY_ORDER, canDropRevalidation, depsDirName, displayedSeverity, is
 import { matchesRunTab } from './filters.js'
 import { mergeReportGroups } from '../../common/workspace-groups.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
+import { commentAuthorName } from '../../common/managed/comments.ts'
 import { getLinksPreview } from './links-preview.js'
 import { securityStampOptions } from './security-stamp.js'
 import { mergeLinkedWorkspaceGroups } from '../../common/linked-workspace-groups.js'
@@ -101,7 +102,9 @@ export function triageEntry(f) {
   // useful without putting managed comments into the triage/sync write path.
   const comments = state.managedComments?.get(f.id) ?? []
   if (comments.length === 0 && !entry?.comment) return entry
-  return { ...entry, comment: comments.map(comment => comment.authorLogin ? `${comment.authorLogin}: ${comment.body}` : comment.body).join('\n\n') }
+  // Each under who it shows as by (managed-comment.js), as search finds it.
+  const told = comment => { const author = commentAuthorName(comment); return author ? `${author}: ${comment.body}` : comment.body }
+  return { ...entry, comment: comments.map(told).join('\n\n') }
 }
 
 export function isIgnored(f) {

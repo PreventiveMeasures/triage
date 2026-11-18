@@ -54,6 +54,23 @@ test('legacy text migrates once without guessing authors; comments survive triag
   assert.equal((await db.getComment(added.id)).authorLogin, 'alice', 'deleted users retain a durable author label')
 })
 
+test('a comment tells its author by the name they chose, as it is now, beside their login', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const alice = await db.upsertUser({ ...identity(1, 'alice'), name: 'Alice Example' }, 10)
+  const bob = await db.upsertUser(identity(2, 'bob'), 10)
+  const named = await db.createComment({ findingId: 'f', body: 'Named', authorId: alice, authorLogin: 'alice' }, 20)
+  const unnamed = await db.createComment({ findingId: 'f', body: 'Unnamed', authorId: bob, authorLogin: 'bob' }, 21)
+  const imported = await db.createComment({ findingId: 'f', body: 'Imported', authorId: null, authorLogin: null }, 22)
+  assert.deepEqual([named, unnamed, imported].map(comment => [comment.authorLogin, comment.authorName]), [['alice', 'Alice Example'], ['bob', null], [null, null]])
+  assert.deepEqual(await db.listComments(['f']), [named, unnamed, imported])
+  assert.deepEqual((await db.getAnnotations(['f'])).comments, structuredClone([named, unnamed, imported]), 'a team\'s annotations read them alike')
+  await db.upsertUser({ ...identity(1, 'alice'), name: 'Alice Renamed' }, 30)
+  assert.equal((await db.getComment(named.id)).authorName, 'Alice Renamed')
+  assert.equal((await db.editComment(named.id, alice, 'alice', 'Edited', 1, 'r', 40)).authorName, 'Alice Renamed')
+  assert.deepEqual((await db.getAnnotations(['f'])).comments.map(comment => comment.authorName), ['Alice Renamed', null, null])
+})
+
 test('migration preserves comments written by a legacy server after an earlier migration', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'managed-comments-rollback-'))
   const path = join(dir, 'managed.sqlite')
@@ -307,7 +324,7 @@ async function fixture(t) {
 test('comment API enforces author identity, team paths, visibility, CSRF, versions and read-only roles', async (t) => {
   const { db, sessions, request } = await fixture(t)
   const path = '/api/reports/r/comments'
-  const payload = { findingId: 'own', body: '  Alice note  ', authorId: sessions.bob.userId, authorLogin: 'spoofed', createdAt: null, updatedAt: null }
+  const payload = { findingId: 'own', body: '  Alice note  ', authorId: sessions.bob.userId, authorLogin: 'spoofed', authorName: 'Spoofed', createdAt: null, updatedAt: null }
   assert.equal((await request('POST', path, null, payload)).status, 401)
   assert.equal((await request('POST', path, 'alice', payload, false)).status, 403)
   for (const user of ['reader', 'outside']) assert.equal((await request('POST', path, user, payload)).status, 404)
@@ -319,15 +336,19 @@ test('comment API enforces author identity, team paths, visibility, CSRF, versio
   assert.equal(first.comment.body, 'Alice note')
   assert.equal(first.comment.authorId, sessions.alice.userId)
   assert.equal(first.comment.authorLogin, 'alice')
+  assert.equal(first.comment.authorName, null, 'a name is the author\'s own, never the request\'s')
   assert.equal(typeof first.comment.createdAt, 'number', 'ordinary posts cannot remove their timestamp')
+  await db.upsertUser({ ...identity(3, 'bob'), name: 'Bob Example' }, Date.now())
   const second = await request('POST', path, 'bob', { findingId: 'own', body: 'Bob note' })
   assert.equal(second.status, 201)
+  assert.equal(second.comment.authorName, 'Bob Example')
   await db.createComment({ findingId: 'own', body: 'Legacy note', authorId: null, authorLogin: null }, 20)
   const hidden = await request('POST', path, 'admin', { findingId: 'dep', body: 'Dependency note' })
   assert.equal(hidden.status, 201)
   const read = await request('GET', path, 'reader')
   assert.equal(read.comments.length, 3)
   assert.ok(read.comments.some(comment => comment.authorId === null))
+  assert.deepEqual(read.comments.map(comment => comment.authorName).toSorted(), ['Bob Example', null, null])
   assert.equal((await request('GET', path, 'admin')).comments.length, 4)
   assert.equal((await request('GET', '/api/reports/rescan/comments', 'alice')).comments.length, 3, 'same finding shares its discussion across reports')
   const edit = `${path}/${first.comment.id}`

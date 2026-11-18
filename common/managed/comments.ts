@@ -6,12 +6,21 @@ export interface ManagedComment {
   body: string
   authorId: string | null
   authorLogin: string | null
+  // The name its author chose to show (managed_user.name), as it is now: null
+  // for one with none, one no longer a user, and to a public link's readers.
+  authorName: string | null
   createdAt: number | null
   updatedAt: number | null
   version: number
 }
 
 export const MAX_COMMENT_TEXT = 10_000
+
+// Who a comment shows as by: its author's name, else their login; null for
+// one with neither, as an imported or legacy one is.
+export function commentAuthorName(comment: { authorName?: string | null; authorLogin?: string | null }): string | null {
+  return comment.authorName?.trim() || comment.authorLogin || null
+}
 
 // Callers also enforce write access to the report containing the finding.
 // Admins can remove comments with no linked user, but cannot claim authorship.

@@ -5,6 +5,7 @@ import type { ManagedHttpDeps } from './http.ts'
 import type { ManagedBundle } from './db.ts'
 import type { OpenedBlob } from './blob-store.ts'
 import type { WorkspaceShareSnapshot } from './workspace-shares.ts'
+import type { ManagedComment } from '../common/managed/comments.ts'
 import { sendJson, sendLines, writeResponse } from './http-response.ts'
 import { hashToken } from './crypto.ts'
 import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, teamReportVisibility, teamResponsePart } from './team-reports.ts'
@@ -23,6 +24,12 @@ import { sharedTeamApp, withWorkspaceSummary } from './team-app.ts'
 function json(res: ServerResponse, status: number, body: unknown): void {
   sendJson(res, status, body, { 'cache-control': 'private, no-store', 'referrer-policy': 'no-referrer' })
 }
+
+// An answer's comments as a link's readers have them: their authors by login
+// alone. A name is chosen to show to the app's users, and may be a linked
+// account's, which a login doesn't tell of.
+const unnamed = <T extends { comments: ManagedComment[] }>(answer: T): T =>
+  ({ ...answer, comments: answer.comments.map(comment => ({ ...comment, authorName: null })) })
 
 // A blob sent as the response, the link checked again first (handlePublicWorkspace).
 type Stream = (stored: OpenedBlob, encoding: string | null, contentType?: string) => Promise<void>
@@ -93,7 +100,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
       await serveTeamFeed(res, deps, snapshot, recheck, { readState: () => deps.db.getWorkspaceShareFeedState(tokenHash) }); return
     }
     if (teamRoute[2] === 'annotations') {
-      await send(await loadTeamAnnotations(deps.db, deps.reportStore, snapshot, url.searchParams.get('reportId'))); return
+      await send(unnamed(await loadTeamAnnotations(deps.db, deps.reportStore, snapshot, url.searchParams.get('reportId')))); return
     }
     if (teamRoute[2] === 'shared') { await sendTeam(); return }
     const body = await loadTeamReportsResponse(deps.db, deps.reportStore, snapshot, teamResponsePart(teamRoute[2]!, url))
@@ -107,7 +114,7 @@ export async function handlePublicWorkspace(req: IncomingMessage, res: ServerRes
     const visible = await teamReportVisibility(deps.db, deps.reportStore, snapshot, id)
     await recheck()
     if (part === 'sources') { await sources(res, deps, snapshot, id, visible.sourcePaths, recheck, stream); return }
-    if (part === 'comments') { await send({ comments: await deps.db.listComments([...visible.ids]) }); return }
+    if (part === 'comments') { await send(unnamed({ comments: await deps.db.listComments([...visible.ids]) })); return }
     const entries = Object.fromEntries((await deps.db.listTriage([...visible.ids])).map(row => [row.findingId, triageWireEntry(row)]))
     await send({ entries }); return
   }

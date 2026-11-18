@@ -1390,10 +1390,13 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 const triage = new Map<string, TriageEntryPatch | null>()
-const comments: ManagedComment[] = [{
+const comments: Omit<ManagedComment, 'authorName'>[] = [{
   id: 'fixture-comment-legacy', findingId: 'managed-fixture-1', body: 'An imported note without an author.',
   authorId: null, authorLogin: null, createdAt: null, updatedAt: null, version: 1,
 }]
+// A comment with its author by the name they show by now, as their profile
+// has it.
+const namedComment = (comment: typeof comments[number]): ManagedComment => ({ ...comment, authorName: comment.authorId === 'fixture-user' ? fixtureProfile().name : null })
 // Whether `req` may change triage or comments: the fixture user's role one
 // that triages, and the session's CSRF token sent.
 const mayTriage = (req: IncomingMessage) => ['admin', 'manage', 'triage'].includes(role) && req.headers['x-csrf-token'] === 'fixture-csrf-token'
@@ -1403,7 +1406,7 @@ async function handleComments(req: IncomingMessage, res: ServerResponse, reportI
   if (!report || !['admin', 'manage', 'triage', 'view'].includes(role)) { sendJson(res, 404, { error: 'no-report' }); return }
   const ids = new Set(findingIds(report))
   if (req.method === 'GET' && commentId == null) {
-    sendJson(res, 200, { comments: comments.filter(comment => ids.has(comment.findingId)) }); return
+    sendJson(res, 200, { comments: comments.filter(comment => ids.has(comment.findingId)).map(namedComment) }); return
   }
   if (commentId == null ? req.method !== 'POST' : req.method !== 'PATCH' && req.method !== 'DELETE') { send405(res); return }
   if (!mayTriage(req)) { sendJson(res, 403, { error: 'forbidden' }); return }
@@ -1418,7 +1421,7 @@ async function handleComments(req: IncomingMessage, res: ServerResponse, reportI
     const at = Date.now()
     const comment = { id: randomUUID(), findingId: raw.findingId, body: body!, authorId: 'fixture-user', authorLogin: 'managed-preview', createdAt: at, updatedAt: at, version: 1 }
     comments.push(comment)
-    sendJson(res, 201, { comment }); return
+    sendJson(res, 201, { comment: namedComment(comment) }); return
   }
   const comment = comments.find(entry => entry.id === commentId && ids.has(entry.findingId))
   if (!comment) { sendJson(res, 404, { error: 'no-comment' }); return }
@@ -1431,7 +1434,7 @@ async function handleComments(req: IncomingMessage, res: ServerResponse, reportI
     res.writeHead(204, { 'cache-control': 'no-store' }); res.end(); return
   }
   if (comment.body !== body) { comment.body = body!; comment.updatedAt = Date.now(); comment.version++ }
-  sendJson(res, 200, { comment })
+  sendJson(res, 200, { comment: namedComment(comment) })
 }
 
 async function handleTriage(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
@@ -1505,7 +1508,7 @@ async function sendTeamReports(url: URL, res: ServerResponse, route: string, rep
       return [entry.id, ids] as const
     })))
     const ids = new Set([...byReport.values()].flat())
-    sendJson(res, 200, { reports: Object.fromEntries(byReport), entries: Object.fromEntries([...triage].filter(([id]) => ids.has(id))), comments: comments.filter(comment => ids.has(comment.findingId)) })
+    sendJson(res, 200, { reports: Object.fromEntries(byReport), entries: Object.fromEntries([...triage].filter(([id]) => ids.has(id))), comments: comments.filter(comment => ids.has(comment.findingId)).map(namedComment) })
     return
   }
   // Trees apart, as the managed server sends them (team-reports.ts withoutTree).

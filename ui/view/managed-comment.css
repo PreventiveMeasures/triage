@@ -10,7 +10,8 @@
   grid-column: 1; grid-row: 1;
   display: flex; align-items: center; gap: .45rem;
   min-width: 0; max-width: 14rem;
-  & strong { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  /* A name, unlike a login, has spaces: cut short on its line as a login is. */
+  & strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 }
 .managed-comment-avatar {
   position: relative; display: inline-flex; align-items: center; justify-content: center;
