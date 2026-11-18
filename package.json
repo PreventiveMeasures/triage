@@ -430,7 +430,7 @@
     "@exodus/stasis": "1.0.0-rc.4",
     "@exodus/stasis-core": "1.0.0-rc.4",
     "@preventive/archive": "^1.4.1",
-    "@preventive/compare": "^1.2.12",
+    "@preventive/compare": "^1.2.13",
     "@preventive/diff": "^1.1.1",
     "@preventive/lockfile": "^1.3.0",
     "@preventive/publishers": "^1.1.0",
