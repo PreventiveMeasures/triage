@@ -67,7 +67,7 @@ export type TriageBucket = 'inprogress' | 'fixed' | 'invalid' | 'deleted' | 'ign
 export type KanbanColumnKey = TriageBucket | 'untriaged'
 export type ShownTriage = TriageBucket
 
-// Tri-state for the toolbar annotation filters (comment / fix / flag):
+// Tri-state for the toolbar annotation filters (comment / issue / fix / flag):
 // '' = off, 'with' = only findings carrying it, 'without' = only findings
 // lacking it. See matchesFilters + <annotation-filter>.
 export type AnnotationFilterState = '' | 'with' | 'without'
@@ -196,9 +196,10 @@ export interface State {
   filterIncludeNegate: boolean
   // Annotation filters — each is a tri-state ('' / 'with' / 'without')
   // that independently (AND-combined) restricts the row set by whether a
-  // finding's triage carries a comment / a fix / `flagged: true`. See
-  // matchesFilters.
+  // finding's triage carries a comment / a fix / `flagged: true`, or the
+  // finding has a managed issue. See matchesFilters.
   filterComment: AnnotationFilterState
+  filterIssue: AnnotationFilterState
   filterFix: AnnotationFilterState
   filterFlagged: AnnotationFilterState
   // Report-only links to resolved finding IDs absent from this report.
@@ -853,11 +854,12 @@ export const state: State = store<State>({
   // Negation toggle for the findings search: when true the query
   // EXCLUDES — show findings that DON'T match. See matchesFilters.
   filterIncludeNegate: false,
-  // Annotation-filter tri-states (the toolbar's comment | fix | flag chip
-  // group after the Sources / Dependencies switch). '' = no filter,
+  // Annotation-filter tri-states (the toolbar's comment | issue | fix | flag
+  // chip group after the Sources / Dependencies switch). '' = no filter,
   // 'with' = only those carrying it, 'without' = only those lacking it.
   // AND-combined.
   filterComment: '',
+  filterIssue: '',
   filterFix: '',
   filterFlagged: '',
   filterDuplicates: '',

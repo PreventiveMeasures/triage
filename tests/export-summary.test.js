@@ -30,6 +30,7 @@ function reset() {
   state.filterInclude = ''
   state.filterIncludeNegate = false
   state.filterComment = ''
+  state.filterIssue = ''
   state.filterFix = ''
   state.filterFlagged = ''
   state.filterRevalidate = ''
@@ -283,16 +284,18 @@ describe('activeFilterDescriptions — dropping a filter', () => {
     assert.deepEqual(search.clear, { filterInclude: '', filterIncludeNegate: false })
   })
 
-  it('gives the three annotation rows distinct keys under one label', () => {
+  it('gives the four annotation rows distinct keys under one label', () => {
     state.filterComment = 'with'
+    state.filterIssue = 'with'
     state.filterFix = 'without'
     state.filterFlagged = 'with'
     const rows = activeFilterDescriptions()
-    assert.deepEqual(rows.map((r) => r.label), ['Annotation', 'Annotation', 'Annotation'])
-    assert.deepEqual(rows.map((r) => r.key), ['annotation:comment', 'annotation:fix', 'annotation:flag'])
-    // Dropping the middle one leaves the other two.
-    const relaxed = { ...cloneFilterFields(), ...rows[1].clear }
-    assert.deepEqual(activeFilterDescriptions(relaxed).map((r) => r.key), ['annotation:comment', 'annotation:flag'])
+    assert.deepEqual(rows.map((r) => r.label), ['Annotation', 'Annotation', 'Annotation', 'Annotation'])
+    assert.deepEqual(rows.map((r) => r.value), ['With comment', 'With issue', 'Without fix', 'With flag'])
+    assert.deepEqual(rows.map((r) => r.key), ['annotation:comment', 'annotation:issue', 'annotation:fix', 'annotation:flag'])
+    // Dropping a middle one leaves the other three.
+    const relaxed = { ...cloneFilterFields(), ...rows[2].clear }
+    assert.deepEqual(activeFilterDescriptions(relaxed).map((r) => r.key), ['annotation:comment', 'annotation:issue', 'annotation:flag'])
   })
 })
 

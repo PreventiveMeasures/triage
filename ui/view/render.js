@@ -21,7 +21,7 @@ import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
 import { COMMENT_ICON, FIX_ICON, FLAG_ICON, badgeLabel } from './render-finding.js'
 import { computeFindingCountsByFile, computeTransitiveCounts, fileHasFindings, mergeReportsTree } from './file-counts.js'
 import { renderTreeView } from './render-files.js'
-import { automaticFixFor, cardLinkFor } from './managed-issues.js'
+import { automaticFixFor, cardLinkFor, managedIssueFor } from './managed-issues.js'
 import { graph2 } from './graph/state.js'
 import { attachGraphLayout, loadedGraphMod } from './graph-attach.js'
 import { attachTerminal } from './terminal-attach.js'
@@ -642,7 +642,7 @@ function triageFilterTemplate(colorCounts) {
 // so the host drops it in unconditionally.
 
 function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
-  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasFix, hasFlagged, hasDuplicates, hasCrossContext, hasAppStacked, showSecurity, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked } = flags
+  const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasIssue, hasFix, hasFlagged, hasDuplicates, hasCrossContext, hasAppStacked, showSecurity, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked } = flags
   // The findings tab gains a "graph" view-mode option when a
   // tree-bearing report is loaded (showGraphMode). The focus and
   // kanban modes sit between grouped and graph. Switching to graph
@@ -692,8 +692,8 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
             ?has-partial=${showPartial}
           ></conf-filter>`
         : nothing}
-      ${hasComment || hasFix || hasFlagged || state.filterComment || state.filterFix || state.filterFlagged
-        ? html`<annotation-filter .hasComment=${hasComment} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
+      ${hasComment || hasIssue || hasFix || hasFlagged || state.filterComment || state.filterIssue || state.filterFix || state.filterFlagged
+        ? html`<annotation-filter .hasComment=${hasComment} .hasIssue=${hasIssue} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
         : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
       <!-- App / code lens — the far right of the row, past the triage
@@ -2312,12 +2312,12 @@ function renderImpl() {
   // The Confirmed lock needs the same ruled-out evidence as opening filters,
   // even though those copies were removed before workspace rows were merged.
   Object.defineProperty(allGroups, 'ruledOutIds', { value: mergedGroups.ruledOutIds })
-  // The annotation filter group (comment | fix | flag) self-gates per
-  // chip like the triage selector: a chip shows only once at least one
+  // The annotation filter group (comment | issue | fix | flag) self-gates
+  // per chip like the triage selector: a chip shows only once at least one
   // finding carries that annotation (scanned over the full loaded set,
   // independent of the active filters) — or while its filter is on, so a
-  // left-active filter can always be switched off. One pass for all three.
-  let hasComment = false, hasFix = false, hasFlagged = false
+  // left-active filter can always be switched off. One pass for all four.
+  let hasComment = false, hasFix = false, hasFlagged = false, hasIssue = false
   // Same single pass also detects whether ANY finding carries a severity
   // correction — gates the <severity-mode-switch> (scanned over the full
   // loaded set, not just the active filter). Checked before the triage
@@ -2328,6 +2328,7 @@ function renderImpl() {
     for (const f of g) {
       if (hasSeverityCorrection(f)) hasCorrectedSeverity = true
       const e = triageEntry(f)
+      if (managedIssueFor(f)) hasIssue = true
       if (automaticFixFor(f)) hasFix = true
       if (!e) continue
       if (e.comment) hasComment = true
@@ -2702,6 +2703,7 @@ function renderImpl() {
       canDetailLayer,
       canUpstreamLens,
       confirmedLocked,
+      hasIssue,
       hasFix,
       hasFlagged,
       hasDuplicates,
