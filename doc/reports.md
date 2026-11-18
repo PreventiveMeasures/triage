@@ -122,6 +122,9 @@ Anyone who can read a finding sees its discussion.
 `triage`, `manage` and `admin` users can add comments, and edit or delete their own.
 Admins can also delete comments that have no author.
 The server takes the author from the session, and the client cannot choose it.
+A comment shows its author by the name they chose on their profile, as it is now, with their GitHub login in its tooltip, and by their login where they have no name.
+Search and the Markdown export name them the same way.
+A [public link](./navigation.md) shows authors by login only, since a chosen name may come from a linked account.
 Comment text must be nonempty and at most 10,000 characters.
 Editing or deleting a comment that changed since it was read fails with `409`, instead of overwriting newer text.
 Imported comments, and comments carried over from older triage rows, have no author.

@@ -30,7 +30,7 @@ The security and dependency finding filters apply alike to report data, comments
 A link never exposes:
 
 - drafts, or any other team's workspace
-- GitHub pull request metadata, bundle commit details and tags, or user avatars
+- GitHub pull request metadata, bundle commit details and tags, or user avatars and the names users chose: a comment's author shows by login
 - finding triage history, even when a login cookie is also present
 - any global endpoint, mutation, cleanup or sync transport
 

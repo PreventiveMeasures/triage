@@ -219,6 +219,13 @@ test('an anonymous token sees one published workspace, its annotations and no gl
   }
   await h.db.createComment({ findingId: 'visible-finding', body: 'Shared comment', authorId: h.sessions.manage.userId, authorLogin: 'manage', reportId: 'visible' }, Date.now())
   assert.equal((await h.request('/api/reports/visible/comments', { token })).body.comments[0].body, 'Shared comment')
+  // A link's readers have a comment's author by login alone, the app's users by the name they chose too.
+  await h.db.upsertUser({ githubUserId: 2, login: 'manage', name: 'Manager Example', avatarUrl: null }, Date.now())
+  const authorOf = async (path, options) => { const [{ authorLogin, authorName }] = (await h.request(path, options)).body.comments; return [authorLogin, authorName] }
+  for (const path of ['/api/reports/visible/comments', '/api/teams/team/annotations']) {
+    assert.deepEqual(await authorOf(path, { token }), ['manage', null], path)
+  }
+  assert.deepEqual(await authorOf('/api/reports/visible/comments', { role: 'manage' }), ['manage', 'Manager Example'])
   h.reads.length = 0
   const denied = ['/api/teams', '/api/teams/other/shared', '/api/teams/other/reports', '/api/teams/whole/reports',
     '/api/reports/foreign/triage', '/api/reports/draft/comments', '/api/reports/sibling/sources',

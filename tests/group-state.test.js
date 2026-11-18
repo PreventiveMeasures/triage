@@ -380,6 +380,19 @@ describe('upstream members keep out of the group verdict', () => {
     assert.equal(tabTriage(blank), 'fixed')
   })
 
+  it('reads a managed finding\'s comments as one, each under who it shows as by: their name, else login', t => {
+    reset()
+    const mode = state.serverMode
+    t.after(() => { state.serverMode = mode; state.managedComments = new Map() })
+    state.serverMode = 'managed'
+    const f = tab({ color: 'red' })
+    state.managedComments = new Map([[f.id, [
+      { body: 'Named', authorLogin: 'alice', authorName: 'Alice Example' }, { body: 'Unnamed', authorLogin: 'bob', authorName: null },
+      { body: 'Imported', authorLogin: null, authorName: null },
+    ]]])
+    assert.deepEqual(triageEntry(f), { color: 'red', comment: 'Alice Example: Named\n\nbob: Unnamed\n\nImported' })
+  })
+
   it('ignores all upstream annotations in App view and restores them in the other lenses', () => {
     reset()
     const dep = upstream({ color: 'red', comment: 'Upstream note', fix: 'upstream fix', flagged: true })

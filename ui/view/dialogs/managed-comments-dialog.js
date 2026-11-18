@@ -11,6 +11,9 @@ import commentCSS from './dialog-comment.css'
 import managedCommentCSS from '../managed-comment.css'
 import threadCSS from './dialog-managed-comments.css'
 
+// What the signed-in user's comments show them as by: their name, else login.
+const sessionName = () => state.managedSession.name?.trim() || state.managedSession.login
+
 class ManagedCommentsDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(commentCSS), unsafeCSS(managedCommentCSS), unsafeCSS(threadCSS)]
   static properties = {
@@ -188,8 +191,8 @@ class ManagedCommentsDialog extends AppDialog {
       </section>
       ${this._error ? html`<p class="error" role="alert">${this._error}</p>` : nothing}
       ${canWrite ? html`<form class="composer" @submit=${event => { event.preventDefault(); void this._save() }}>
-        <label class="composer-label" for="comment-body">${managedCommentAvatar(state.managedSession.id, state.managedSession.login)}
-          ${this._editing ? 'Edit your comment' : html`Reply as <strong>${state.managedSession.login}</strong>`}</label>
+        <label class="composer-label" for="comment-body">${managedCommentAvatar(state.managedSession.id, sessionName())}
+          ${this._editing ? 'Edit your comment' : html`Reply as <strong>${sessionName()}</strong>`}</label>
         <textarea id="comment-body" rows="3" maxlength=${MAX_COMMENT_TEXT} .value=${this._value} placeholder="Write a comment…"
           aria-describedby="comment-shortcut" ?disabled=${this._busy} @input=${event => { this._value = event.target.value }} @keydown=${this._keydown}></textarea>
         <footer class="nwd-actions">
