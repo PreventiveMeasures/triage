@@ -174,7 +174,7 @@ function sideEffects(text) {
 
 test('no line that may have a side effect is set aside, nor is a change to one told as a change in types alone or left to read as no change, over pairs of files picked at random', () => {
   let seed = 7919
-  const pick = n => { seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31; return seed % n }
+  const pick = n => { seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31; return Math.floor(seed / 2 ** 31 * n) }
   const file = () => {
     const parts = []
     for (let count = pick(9), k = 0; k < count; k++) {
