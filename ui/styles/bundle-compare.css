@@ -876,8 +876,12 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   background: rgb(from var(--accent) r g b / .1);
   & .diff-num { background: color-mix(in oklch, var(--accent) 20%, var(--bg)); color: var(--text); }
 }
+/* Content-box, against theme.css's border-box: its padding is besides the
+   1.6ch, so the sign keeps .6ch of space before the code rather than
+   overflowing into it. */
 .diff-sign {
   flex: none;
+  box-sizing: content-box;
   width: 1.6ch;
   padding-left: .35rem;
   color: var(--muted);
