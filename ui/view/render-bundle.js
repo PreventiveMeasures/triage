@@ -720,10 +720,10 @@ const renderSourceWrapToggle = () => html`<button type="button" class="bundle-so
   aria-pressed=${state.bundleSourceWrap ? 'true' : 'false'} aria-label="Wrap lines" data-tooltip="Wrap lines">${WRAP_ICON}</button>`
 
 // Pretty-print toggle for a source viewer's bar, on a minified file the
-// server can format (pretty-source.js): busy while its copy is asked for, and
-// saying why where it failed. After the wrap toggle, which pressing it can
-// hide; in the Code tab's bar, before the file's stats, which keep room for
-// its copy's (renderBundleCodeMain).
+// server can format, or JSON (pretty-source.js): busy while its copy is asked
+// for, and saying why where it failed. After the wrap toggle, which pressing
+// it can hide; in the Code tab's bar, before the file's stats, which keep
+// room for its copy's (renderBundleCodeMain).
 function renderPrettyToggle(copy) {
   const status = copy?.status
   return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
@@ -1809,7 +1809,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       ${graphed ? nothing : renderSourceWrapToggle()}
       ${graphed ? nothing : toggle}
       ${lockfile ? renderLockfileToggle(read) : nothing}
-      ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${toggle === nothing ? nothing
+      ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${graphed || toggle === nothing ? nothing
         : html`<span class="bundle-code-main-stats-room" aria-hidden="true">${textStats(sourceContent)}</span>`}<span>${textStats(content)}</span></span>` : nothing}
       ${single ? html`<button type="button" class="bundle-code-close" data-dropped-lockfile-close aria-label="Close" data-tooltip="Close">×</button>` : nothing}
     </header>

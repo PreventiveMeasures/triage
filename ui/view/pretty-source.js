@@ -8,11 +8,14 @@
 // off. The viewer keeps the last few bundle copies it read, and the last few
 // versions' and comparisons', for the session; a copy's line numbers are its
 // own, so the file's line links and marks stay with the file as published.
+// JSON is formatted here instead, in any bundle (prettyJsonCopy).
 import { html } from 'lit'
 import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
-import { needsPrettyPrint } from '../../common/pretty-print.js'
+import { prettyJsonText } from '../../common/pretty-json.js'
+import { MAX_PRETTY_BYTES, jsonPrinted, needsPrettyPrint } from '../../common/pretty-print.js'
+import { utf8ByteLength } from '../../common/utf8.js'
 import { fetchPrettyBundleChanges, fetchPrettyBundleFile, fetchPrettyNpmChanges, fetchPrettyNpmFile, fetchPrettyNpmFiles } from './client-managed.js'
 import { npmFileReadabilityRead } from './file-readability.js'
 
@@ -93,18 +96,50 @@ const versions = new Map()
 // as the server was busy, is asked for alone (fileCopy).
 const comparisons = new Map()
 
-// Whether each file of a bundle or npm version can be formatted, by its
-// details (needsPrettyPrint, as the server tells an npm version's).
+// Whether each file of a bundle or npm version is minified, by its details
+// (needsPrettyPrint, as the server tells an npm version's).
 const formattable = new WeakMap()
 
-// Whether the open file can be pretty-printed: a formattable file of a
-// managed bundle or an npm version.
-export function prettyPrintable(details, entry, path, content) {
-  if (!(entry?.managedId || entry?.npm) || typeof content !== 'string') return false
+// Whether a file is minified code that can be pretty-printed: JSON in any
+// bundle, other code in a managed bundle or an npm version.
+export function prettyMinified(details, entry, path, content) {
+  if (!(jsonPrinted(path) || entry?.managedId || entry?.npm) || typeof content !== 'string') return false
   let files = formattable.get(details)
   if (!files) formattable.set(details, files = new Map())
   if (!files.has(path)) files.set(path, needsPrettyPrint(path, content, () => npmFileReadabilityRead(details, path, content)))
   return files.get(path)
+}
+
+// JSON copies by details and path, each with the text it was made from.
+const jsonCopies = new WeakMap()
+
+// A JSON file's copy, made here: ready, or an error where it would read
+// otherwise than the file; null where the file isn't JSON or is too large.
+export function prettyJsonCopy(details, path, content) {
+  let files = jsonCopies.get(details)
+  if (!files) jsonCopies.set(details, files = new Map())
+  const kept = files.get(path)
+  if (kept?.content === content) return kept.copy
+  let copy = null
+  if (utf8ByteLength(content) <= MAX_PRETTY_BYTES) {
+    try {
+      const text = prettyJsonText(content)
+      if (text !== null) copy = { status: 'ready', text }
+    } catch (err) {
+      copy = { status: 'error', message: err?.message ?? String(err), retry: false }
+    }
+  }
+  files.set(path, { content, copy })
+  return copy
+}
+
+// Whether the open file can be pretty-printed: JSON its copy changes, or
+// minified code of a managed bundle or an npm version.
+export function prettyPrintable(details, entry, path, content) {
+  if (typeof content !== 'string') return false
+  if (!jsonPrinted(path)) return prettyMinified(details, entry, path, content)
+  const copy = prettyJsonCopy(details, path, content)
+  return copy !== null && copy.text !== content
 }
 
 // Copies asked for in the task now running and in the last one that asked,
@@ -252,6 +287,7 @@ function versionCopy(details, entry, path, content, notify) {
 // is off.
 export function prettyCopy(details, entry, path, content, notify) {
   if (!state.bundleSourcePretty) return null
+  if (jsonPrinted(path)) return prettyJsonCopy(details, path, content)
   if (entry.npm) return versionCopy(details, entry, path, content, notify)
   return fileCopy(details, path, content, notify, entry)
 }
@@ -333,8 +369,9 @@ async function loadComparison(key, comparison, base, other) {
 // `other`, `notify` called once it comes; the comparison's files asked for
 // the first time one is, whether or not the toggle is on, and one it brought
 // none of asked for alone once it ended. A text other than the side's file
-// has none.
+// has none. JSON, of any comparison, is formatted here.
 export function comparedCopy(base, other, side, path, content, notify) {
+  if (jsonPrinted(path)) return prettyJsonCopy(side === 'base' ? base : other, path, content) ?? { status: 'error', message: "It isn't JSON.", retry: false }
   const key = `${base.integrity}\0${other.integrity}`
   let comparison = comparisons.get(key)
   comparisons.delete(key)

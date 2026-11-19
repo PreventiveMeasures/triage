@@ -39,8 +39,8 @@ import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
-import { PRETTY_ICON, comparedCopy, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { MAX_PRETTY_BYTES, prettyExtension } from '../../common/pretty-print.js'
+import { PRETTY_ICON, comparedCopy, prettyJsonCopy, prettyMinified, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { MAX_PRETTY_BYTES, jsonPrinted, prettyExtension } from '../../common/pretty-print.js'
 import { utf8ByteLength } from '../../common/utf8.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory, npmTextKindTag } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
@@ -1236,22 +1236,24 @@ export class BundleCompareCode extends LitElement {
   }
 
   // A file's two sides pretty-printed, as the server prints every pair that
-  // changed between two managed bundles or two versions of a package
-  // (pretty-source.js comparedCopy), the toggle on or not, and whether
-  // printing them changes its diff (`applies`): where either side is
-  // minified, as the Code tab prints a file (`minified`), or, where both
-  // sides have text and once both copies came, where their diff has fewer
-  // changed lines than the files' (`smaller`: formatting changed, as a
-  // semicolon added to every line; an added file has nothing to compare). Its
-  // copies (`copies`): the first failure of either, else one still coming,
-  // else their texts and hashes. Null for a file whose sides can't both be
-  // printed.
+  // changed between two managed bundles or two versions of a package, and the
+  // viewer JSON in any comparison (pretty-source.js comparedCopy), the toggle
+  // on or not, and whether printing them changes its diff (`applies`): where
+  // either side is minified, as the Code tab prints a file (`minified`), or,
+  // where both sides have text and once both copies came, where their diff
+  // has fewer changed lines than the files' (`smaller`: formatting changed, as
+  // a semicolon added to every line; an added file has nothing to compare).
+  // Its copies (`copies`): the first failure of either, else one still
+  // coming, else their texts and hashes. Null for a file whose sides can't
+  // both be printed.
   _printing(path, entry, contents) {
     const { kind, basePath = path, modified } = entry, { before, after } = contents
-    if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after || !renameDiffable(this.base, this.other)) return null
+    if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after) return null
     const sides = [['base', this.base, basePath, before], ['other', this.other, path, after]]
-    if (!sides.every(([, , file, text]) => text === '' || (prettyExtension(file) !== null && printableSize(text)))) return null
-    const unreadable = sides.some(([, details, file, text]) => text !== '' && prettyPrintable(details, details, file, text))
+    const printable = ([, details, file, text]) => text === '' || (jsonPrinted(file) ? prettyJsonCopy(details, file, text) !== null
+      : renameDiffable(this.base, this.other) && prettyExtension(file) !== null && printableSize(text))
+    if (!sides.every(printable)) return null
+    const unreadable = sides.some(([, details, file, text]) => text !== '' && prettyMinified(details, details, file, text))
     const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
     const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading')
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }

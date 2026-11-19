@@ -53,6 +53,7 @@ These are the bundle view's tabs; see [bundles](./bundles.md) for what they shar
 Each file links to GitHub at the commit the version was published from, where npm recorded both the repository and that commit.
 A file its build wrote may not be in the repository.
 A minified file of up to 4 MiB, in a language the server formats, has a pretty-print toggle.
+A JSON file of up to 4 MiB has one wherever formatting changes it, formatted in the viewer: two spaces deep, with each object or array that fits within 120 characters on one line.
 The formatted copy has its own lines, so line links and marks stay on the file as published.
 
 ### Compare

@@ -30,7 +30,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchPrettyBundleChanges: (id, other, onLine) => lines('bundle changes', id, other, onLine),
   fetchPrettyNpmChanges: (name, version, otherVersion, onLine) => lines('npm changes', name, version, otherVersion, onLine),
 } })
-const { comparedCopy, prettyCopy: copyOf, prettyPrintable, prettySettled, togglePrettySource } = await import('../ui/view/pretty-source.js')
+const { comparedCopy, prettyCopy: copyOf, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } = await import('../ui/view/pretty-source.js')
 // Each copy asked for here notes its path once it comes, as a view repaints,
 // in the list of the test that asked: one that comes after its test ended
 // counts for no later test.
@@ -189,6 +189,34 @@ test('only a managed bundle\'s or npm version\'s minified code is offered pretty
   const npm = { integrity: 'sha512-npm', kind: 'sourcemap', npm: { name: 'lib', version: '1.0.0' }, json: { version: 3, sources: ['lib.min.js', 'index.js'], sourcesContent: [minified, readable] } }
   assert.equal(prettyPrintable(npm, { npm: npm.npm }, 'lib.min.js', minified), true)
   assert.equal(prettyPrintable(npm, { npm: npm.npm }, 'index.js', readable), false)
+})
+
+test('JSON is pretty-printed here, in any bundle, where that changes it, nothing asked of the server', () => {
+  const files = { 'data.json': '{"a":1,"b":[1,2]}\n', 'laid.json': '{ "a": 1, "b": [1, 2] }\n', 'twice.json': '{"a":1,"a":2}', 'conf.json': '{ // c\n}' }
+  const details = bundleOf(files), printable = path => prettyPrintable(details, {}, path, files[path])
+  assert.equal(printable('data.json'), true, 'a local bundle\'s too')
+  assert.equal(printable('laid.json'), false, 'laid out as its copy would be')
+  assert.equal(printable('conf.json'), false, 'not JSON')
+  assert.equal(printable('twice.json'), true, 'offered, to say why it can\'t be')
+  assert.equal(prettyCopy(details, {}, 'data.json', files['data.json']), null, 'none while the toggle is off')
+  state.bundleSourcePretty = true
+  assert.deepEqual(prettyCopy(details, managed, 'data.json', files['data.json']), { status: 'ready', text: files['laid.json'] })
+  const refused = prettyCopy(details, {}, 'twice.json', files['twice.json'])
+  assert.equal(refused.status, 'error')
+  assert.match(prettyTooltip(refused), /^Couldn't pretty-print: The copy would change more than its layout/u)
+  const huge = JSON.stringify(['x'.repeat(4 * 1024 * 1024)])
+  assert.equal(prettyPrintable(bundleOf({ 'big.json': huge }), {}, 'big.json', huge), false, 'past what is formatted')
+  assert.deepEqual(requests, [])
+  assert.equal(renders.length, 0)
+})
+
+test('a comparison\'s JSON is pretty-printed here, in any comparison, nothing asked of the server', () => {
+  const base = bundleOf({ 'a.json': '{"v":1}\n' }), other = bundleOf({ 'a.json': '{"v":2}\n' })
+  assert.deepEqual(comparedCopy(base, other, 'base', 'a.json', '{"v":1}\n', () => {}), { status: 'ready', text: '{ "v": 1 }\n' })
+  assert.deepEqual(comparedCopy(base, other, 'other', 'a.json', '{"v":2}\n', () => {}), { status: 'ready', text: '{ "v": 2 }\n' })
+  assert.equal(comparedCopy(base, other, 'other', 'a.json', 'v = 2', () => {}).status, 'error', 'a text that isn\'t JSON')
+  assert.deepEqual(requests, [])
+  assert.equal(changeRequests.length, 0)
 })
 
 test('a bundle file\'s copy is asked for by its metadata hash once the toggle is on, and kept', async () => {
