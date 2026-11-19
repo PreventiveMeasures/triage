@@ -53,6 +53,7 @@ These are the bundle view's tabs; see [bundles](./bundles.md) for what they shar
 Each file links to GitHub at the commit the version was published from, where npm recorded both the repository and that commit.
 A file its build wrote may not be in the repository.
 A minified file of up to 4 MiB, in a language the server formats, has a pretty-print toggle.
+A JSON file of up to 4 MiB has one too, formatted in the viewer once it is on: two spaces deep, with each object or array that fits within 120 characters on one line.
 The formatted copy has its own lines, so line links and marks stay on the file as published.
 
 ### Compare
@@ -81,7 +82,7 @@ Compare's Overview lists the dependencies only one version has and the ranges th
 A new dependency is tagged with its package's download tier, and with its age or `published later` where its package did not exist when the older version was published.
 Compare's Files section lists every changed file; files that are not text compare by digest.
 
-In Code, the pretty-print toggle is offered wherever formatting changes the diff.
+In Code, the pretty-print toggle is offered wherever formatting changes the diff; for JSON, formatted only once it is on, where either side is minified.
 For JavaScript minified on both sides, lines that differ only in names the minifier renamed are drawn faint and counted apart.
 **Hide renamed names** gives the old side the new side's names; where either side reads names (`.name`, `.toString`, `.stack`), a note warns that values may change.
 **Hide type-only changes** hides a declaration file's change where the server proves it touches types alone.

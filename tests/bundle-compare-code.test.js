@@ -416,6 +416,20 @@ test('a file whose copies diff in as many lines as it is not offered pretty-prin
   assert.match(on, /class="add">\+1<\/span><span class="del">−1/u)
 })
 
+test('minified JSON is offered pretty-printed at once in any comparison, printed by the viewer', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const json = v => `${JSON.stringify({ items: Array.from({ length: 60 }, (_, id) => ({ id, name: `item ${id}` })), v })}\n`
+  const element = view('data/items.json', [{ 'data/items.json': json(1) }, { 'data/items.json': json(2) }])
+  const asked = comparisons.length
+  assert.match(renderText(element.render()), /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'offered in a local comparison, its sides minified')
+  state.bundleSourcePretty = true
+  const on = renderText(element.render())
+  assert.match(on, /aria-pressed=true aria-busy= aria-label="Pretty-print"/u)
+  assert.match(on, /<span class=diff-code> {4}\{ "id": 59, "name": "item 59" \}<\/span>/u, 'its copies drawn, each item on a line of its own')
+  assert.match(on, /<span class="diff-sign">−<\/span><span class=diff-code> {2}"v": <mark class="diff-word">1<\/mark><\/span>/u, 'the one line changed')
+  assert.equal(comparisons.length, asked, 'nothing asked of the server')
+})
+
 test('a readable file added is not offered pretty-printed though its copy is shorter: it has no other side to compare', async () => {
   const element = view('src/added.js', [{}, { 'src/added.js': 'a()\n\n\nb()\n' }])
   element.base.managedId = 'b51'

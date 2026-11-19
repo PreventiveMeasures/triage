@@ -720,10 +720,10 @@ const renderSourceWrapToggle = () => html`<button type="button" class="bundle-so
   aria-pressed=${state.bundleSourceWrap ? 'true' : 'false'} aria-label="Wrap lines" data-tooltip="Wrap lines">${WRAP_ICON}</button>`
 
 // Pretty-print toggle for a source viewer's bar, on a minified file the
-// server can format (pretty-source.js): busy while its copy is asked for, and
-// saying why where it failed. After the wrap toggle, which pressing it can
-// hide; in the Code tab's bar, before the file's stats, which keep room for
-// its copy's (renderBundleCodeMain).
+// server can format, or JSON (pretty-source.js): busy while its copy is asked
+// for, and saying why where it failed. After the wrap toggle, which pressing
+// it can hide; in the Code tab's bar, before the file's stats, which keep
+// room for its copy's (renderBundleCodeMain).
 function renderPrettyToggle(copy) {
   const status = copy?.status
   return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
@@ -1761,12 +1761,12 @@ function textStats(text) {
 // open alone (renderDroppedLockfile), with no history to step through and a
 // close at the end of the bar.
 function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null, { single = false } = {}) {
-  const viewed = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
-  const { pretty, toggle, fileFindings, lineFindings } = viewed
   const lockfile = typeof sourceContent === 'string' && lockfileFormat(path) !== null
   const read = lockfile ? viewedLockfile(details, path, sourceContent, bundleSourcesAsMap(details), () => { if (shownSource(path)) render() }) : null
   const graphed = read?.status === 'ready'
-  const content = graphed ? sourceContent : viewed.content
+  const { pretty, toggle, content, fileFindings, lineFindings } = graphed
+    ? { pretty: false, toggle: nothing, content: sourceContent, fileFindings: [], lineFindings: new Map() }
+    : viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
@@ -1785,7 +1785,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       ${github ? githubFileLink(github, entry?.commitInfo) : nothing}
       ${renderBundleCodeImporters(details, path)}
       <span class="bundle-code-main-spacer"></span>
-      ${fileFindings.length > 0 && !graphed ? html`<span
+      ${fileFindings.length > 0 ? html`<span
         class="bundle-code-main-issues"
         data-bundle-code-issue-order=${JSON.stringify(issueOrder)}
       >
@@ -1807,7 +1807,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
         >›</button>
       </span>` : nothing}
       ${graphed ? nothing : renderSourceWrapToggle()}
-      ${graphed ? nothing : toggle}
+      ${toggle}
       ${lockfile ? renderLockfileToggle(read) : nothing}
       ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${toggle === nothing ? nothing
         : html`<span class="bundle-code-main-stats-room" aria-hidden="true">${textStats(sourceContent)}</span>`}<span>${textStats(content)}</span></span>` : nothing}

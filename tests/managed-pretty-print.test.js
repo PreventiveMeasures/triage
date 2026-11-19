@@ -139,7 +139,7 @@ const builds = (path = 'dist/app.min.js', otherPath = path) => ({ path, hash: fi
 
 test('pretty-printing takes code by extension, up to a size, and leaves template literals as they are', async () => {
   assert.deepEqual(['a.min.js', 'b.MJS', 'c.d.ts', 'd.tsx', 'e.css', 'f.json', 'g.md', 'h', 'i.js.map'].map(prettyExtension),
-    ['js', 'mjs', 'ts', 'tsx', 'css', 'json', null, null, null])
+    ['js', 'mjs', 'ts', 'tsx', 'css', null, null, null, null], 'JSON is the viewer\'s')
   const text = brotliDecompressSync(await prettyBody(minified, 'js')).toString()
   assert.equal(text, await formatted(minified))
   assert.ok(text.split('\n').length > 5)

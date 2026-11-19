@@ -39,9 +39,7 @@ import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
-import { PRETTY_ICON, comparedCopy, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { MAX_PRETTY_BYTES, prettyExtension } from '../../common/pretty-print.js'
-import { utf8ByteLength } from '../../common/utf8.js'
+import { PRETTY_ICON, comparedCopy, comparedPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory, npmTextKindTag } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
@@ -232,11 +230,6 @@ function countLines(text) {
   for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) count++
   return count
 }
-
-// Whether a text is no larger than the server formats (MAX_PRETTY_BYTES):
-// its UTF-8 counted only where its length leaves it in doubt, each of its
-// UTF-16 units one to three bytes.
-const printableSize = text => text.length * 3 <= MAX_PRETTY_BYTES || (text.length <= MAX_PRETTY_BYTES && utf8ByteLength(text) <= MAX_PRETTY_BYTES)
 
 // The pretty-print toggle a file shown has (_fileState): where printing
 // changes its diff, its copies' state while they are drawn, else off; none
@@ -1236,24 +1229,24 @@ export class BundleCompareCode extends LitElement {
   }
 
   // A file's two sides pretty-printed, as the server prints every pair that
-  // changed between two managed bundles or two versions of a package
-  // (pretty-source.js comparedCopy), the toggle on or not, and whether
-  // printing them changes its diff (`applies`): where either side is
-  // minified, as the Code tab prints a file (`minified`), or, where both
-  // sides have text and once both copies came, where their diff has fewer
-  // changed lines than the files' (`smaller`: formatting changed, as a
-  // semicolon added to every line; an added file has nothing to compare). Its
-  // copies (`copies`): the first failure of either, else one still coming,
-  // else their texts and hashes. Null for a file whose sides can't both be
-  // printed.
+  // changed between two managed bundles or two versions of a package, and the
+  // viewer JSON in any comparison (pretty-source.js comparedCopy), the toggle
+  // on or not, and whether printing them changes its diff (`applies`): where
+  // either side is minified, as the Code tab prints a file (`minified`), or,
+  // where both sides have text and once both copies came, where their diff
+  // has fewer changed lines than the files' (`smaller`: formatting changed, as
+  // a semicolon added to every line; an added file has nothing to compare).
+  // Its copies (`copies`): the first failure of either, else one still
+  // coming, else one not made while the toggle is off (JSON's), else their
+  // texts and hashes. Null for a file whose sides can't both be printed.
   _printing(path, entry, contents) {
     const { kind, basePath = path, modified } = entry, { before, after } = contents
-    if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after || !renameDiffable(this.base, this.other)) return null
+    if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after) return null
     const sides = [['base', this.base, basePath, before], ['other', this.other, path, after]]
-    if (!sides.every(([, , file, text]) => text === '' || (prettyExtension(file) !== null && printableSize(text)))) return null
-    const unreadable = sides.some(([, details, file, text]) => text !== '' && prettyPrintable(details, details, file, text))
+    if (!sides.every(([side, , file, text]) => text === '' || comparedPrintable(this.base, this.other, side, file, text))) return null
+    const unreadable = sides.some(([, details, file, text]) => text !== '' && minified(details, file, text))
     const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
-    const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading')
+    const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading') ?? both.find(copy => copy.status === 'off')
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }
     const smaller = !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
     return { copies, minified: unreadable, smaller, applies: unreadable || smaller }
