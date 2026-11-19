@@ -30,7 +30,8 @@ function oneLine(value, room) {
 
 // `data`, a value JSON.parse returned, laid out as `JSON.stringify(data,
 // undefined, 2)` does, but for each object or array whose one-line form fits
-// its line within `width`, kept on it. Throws past `limit` characters, which
+// its line within `width`, kept on it, and an array of strings alone that
+// doesn't, as many to a line as fit. Throws past `limit` characters, which
 // deep nesting can run to from a short text.
 export function prettyJSON(data, { width = 120, limit = Infinity } = {}) {
   const lines = []
@@ -48,6 +49,20 @@ export function prettyJSON(data, { width = 120, limit = Infinity } = {}) {
     const array = Array.isArray(value), keys = array ? null : Object.keys(value)
     const count = array ? value.length : keys.length
     push(`${indent}${head}${array ? '[' : '{'}`)
+    if (array && value.every(item => typeof item === 'string')) {
+      let row = ''
+      for (const [i, item] of value.entries()) {
+        const part = `${JSON.stringify(item)}${i < count - 1 ? ',' : ''}`
+        if (row && indent.length + 2 + row.length + 1 + part.length > width) {
+          push(`${indent}  ${row}`)
+          row = ''
+        }
+        row = row ? `${row} ${part}` : part
+      }
+      push(`${indent}  ${row}`)
+      push(`${indent}]${tail}`)
+      return
+    }
     for (let i = 0; i < count; i++) {
       write(array ? value[i] : value[keys[i]], `${indent}  `, array ? '' : `${JSON.stringify(keys[i])}: `, i < count - 1 ? ',' : '')
     }
@@ -64,14 +79,15 @@ const COPY_LIMIT = 16 * 1024 * 1024
 // A JSON text without the blanks between its tokens.
 const blankless = text => text.replaceAll(/("(?:[^"\\]+|\\.)*")|[\t\n\r ]+/gu, '$1')
 
-// A JSON text pretty-printed (prettyJSON), keeping whether it ends in a line
-// end, or null where it isn't JSON. Throws where the copy would read
-// otherwise than the text: a key given twice, an escape or a number respelled.
-export function prettyJsonText(text) {
+// A JSON text pretty-printed (prettyJSON, `width` 0 for JSON.stringify's
+// layout), keeping whether it ends in a line end, or null where it isn't JSON.
+// Throws where the copy would read otherwise than the text: a key given
+// twice, an escape or a number respelled.
+export function prettyJsonText(text, { width } = {}) {
   let value
   try { value = JSON.parse(text) } catch { return null }
   if (!text.isWellFormed()) throw new Error('Its text has lone surrogates.')
-  const copy = `${prettyJSON(value, { limit: COPY_LIMIT })}${text.endsWith('\n') ? '\n' : ''}`
+  const copy = `${prettyJSON(value, { width, limit: COPY_LIMIT })}${text.endsWith('\n') ? '\n' : ''}`
   if (JSON.stringify(JSON.parse(copy)) !== JSON.stringify(value)) throw new Error('The copy reads as another value.')
   if (blankless(text) !== blankless(copy)) throw new Error('The copy would change more than its layout: a key given twice, or an escape, a number or the order of keys written otherwise.')
   return copy

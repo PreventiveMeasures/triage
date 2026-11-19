@@ -39,6 +39,25 @@ test('prettyJSON lays JSON out two spaces deep, as JSON.stringify does, keeping 
   }
 })
 
+test('prettyJSON lays an array of strings alone that doesn\'t fit on one line as many to a line as fit', () => {
+  const files = ['index.js', 'lib/', 'dist/cjs/index.cjs', 'dist/esm/index.mjs', 'types/index.d.ts', 'README.md', 'LICENSE', 'CHANGELOG.md', 'bin/cli.js', 'x']
+  assert.equal(prettyJSON({ files, mixed: [...files, 1] }, { width: 60 }), [
+    '{',
+    '  "files": [',
+    '    "index.js", "lib/", "dist/cjs/index.cjs",',
+    '    "dist/esm/index.mjs", "types/index.d.ts", "README.md",',
+    '    "LICENSE", "CHANGELOG.md", "bin/cli.js", "x"',
+    '  ],',
+    '  "mixed": [',
+    ...files.map(file => `    ${JSON.stringify(file)},`),
+    '    1',
+    '  ]',
+    '}',
+  ].join('\n'), 'strings alone: an array of anything else as JSON.stringify lays it')
+  const long = 'x'.repeat(70)
+  assert.equal(prettyJSON(['a', long, 'b'], { width: 60 }), `[\n  "a",\n  "${long}",\n  "b"\n]`, 'one too long for a line on its own')
+})
+
 test('prettyJSON folds within the width at any depth, its indentation and key counted', () => {
   const nested = { a: { b: { c: { list: Array.from({ length: 21 }, (_, i) => i * 100) } } } }
   assert.ok(prettyJSON(nested).split('\n').every(line => line.length <= 120))

@@ -339,8 +339,9 @@ function handleBundleSourceClick(e) {
     return true
   }
   // A pretty-printed copy's lines aren't the file's, so it opens at its top.
-  if (e.target.closest('[data-bundle-source-pretty]')) {
-    togglePrettySource()
+  const prettyToggle = e.target.closest('[data-bundle-source-pretty]')
+  if (prettyToggle) {
+    togglePrettySource(prettyToggle.dataset.bundleSourcePretty === 'json')
     render()
     resetBundleSourceScroll()
     return true

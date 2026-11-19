@@ -40,6 +40,7 @@ import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
 import { PRETTY_ICON, comparedCopy, comparedPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { jsonPrinted } from '../../common/pretty-json.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory, npmTextKindTag } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
@@ -126,7 +127,7 @@ const HIDE_RENAMES = 'Hide renamed names', HIDE_TYPES = 'Hide type-only changes'
 // them; and what of a file's changes those set aside, as its state drawn or
 // counted says (_fileState): printed, its whitespace, renamed names or
 // changes in types alone hidden.
-const countSettings = () => `${!!state.bundleSourcePretty}\0${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.ignoreTypes}`
+const countSettings = () => `${state.bundleSourcePretty}\0${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.ignoreTypes}`
 const setAside = ({ pretty, spacesHidden, hiding, typesHidden, typesFolded }) => [pretty?.status === 'ready' && 'Pretty-print', spacesHidden && HIDE_WHITESPACE, hiding && HIDE_RENAMES,
   (typesHidden || typesFolded) && HIDE_TYPES].filter(Boolean)
 const WHITESPACE_KEPT = {
@@ -232,9 +233,10 @@ function countLines(text) {
 }
 
 // The pretty-print toggle a file shown has (_fileState): where printing
-// changes its diff, its copies' state while they are drawn, else off; none
-// where printing would change nothing.
-export const prettyToggle = file => (file.printing?.applies ? file.pretty ?? { status: 'off' } : null)
+// changes its diff, its copies' state while they are drawn, else off, and
+// whether it is JSON's (`json`), with a third state; none where printing
+// would change nothing.
+export const prettyToggle = file => (file.printing?.applies ? { ...file.pretty ?? { status: 'off' }, json: file.printing.json } : null)
 
 // The files a toggle drawing many applies to, on lines after its own: listed,
 // as many as AFFECTS_LISTED, else counted.
@@ -720,7 +722,7 @@ export class BundleCompareCode extends LitElement {
   // them.
   _searchResults(order) {
     const drawn = rowlessSettings()
-    const key = `${this._query}\0${this._forced.size}\0${drawn}\0${prefs.layout}\0${!!state.bundleSourcePretty}\0${prettySettled()}\0${this._rowlessCount}\0${order.join('\0')}`
+    const key = `${this._query}\0${this._forced.size}\0${drawn}\0${prefs.layout}\0${state.bundleSourcePretty}\0${prettySettled()}\0${this._rowlessCount}\0${order.join('\0')}`
     if (this._found?.key === key && this._found.entries === this._entries) return this._found.result
     // Counted from the first diff, not the scan, so each render finds one.
     let until = null
@@ -1231,25 +1233,28 @@ export class BundleCompareCode extends LitElement {
   // A file's two sides pretty-printed, as the server prints every pair that
   // changed between two managed bundles or two versions of a package, and the
   // viewer JSON in any comparison (pretty-source.js comparedCopy), the toggle
-  // on or not, and whether printing them changes its diff (`applies`): where
-  // either side is minified, as the Code tab prints a file (`minified`), or,
-  // where both sides have text and once both copies came, where their diff
-  // has fewer changed lines than the files' (`smaller`: formatting changed, as
-  // a semicolon added to every line; an added file has nothing to compare).
-  // Its copies (`copies`): the first failure of either, else one still
-  // coming, else one not made while the toggle is off (JSON's), else their
-  // texts and hashes. Null for a file whose sides can't both be printed.
+  // on or not, and whether the toggle applies to it (`applies`): to JSON
+  // always, as the Code tab offers it, its copies made only once the toggle
+  // is on; else where either side is minified, as the Code tab prints a file
+  // (`minified`), or, where both sides have text and once both copies came,
+  // where their diff has fewer changed lines than the files' (`smaller`:
+  // formatting changed, as a semicolon added to every line; an added file has
+  // nothing to compare). Its copies (`copies`): the first failure of either,
+  // else one still coming, else one not made while the toggle is off (JSON's),
+  // else their texts and hashes. Null for a file whose sides can't both be
+  // printed.
   _printing(path, entry, contents) {
     const { kind, basePath = path, modified } = entry, { before, after } = contents
     if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after) return null
     const sides = [['base', this.base, basePath, before], ['other', this.other, path, after]]
     if (!sides.every(([side, , file, text]) => text === '' || comparedPrintable(this.base, this.other, side, file, text))) return null
-    const unreadable = sides.some(([, details, file, text]) => text !== '' && minified(details, file, text))
+    const json = sides.every(([, , file, text]) => text === '' || jsonPrinted(file))
+    const unreadable = !json && sides.some(([, details, file, text]) => text !== '' && minified(details, file, text))
     const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
     const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading') ?? both.find(copy => copy.status === 'off')
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }
-    const smaller = !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
-    return { copies, minified: unreadable, smaller, applies: unreadable || smaller }
+    const smaller = !json && !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
+    return { copies, json, minified: unreadable, smaller, applies: json || unreadable || smaller }
   }
 
   // Whether the texts a file shows are too large to diff unasked
@@ -1545,10 +1550,11 @@ export class BundleCompareCode extends LitElement {
   // can show or hide them, and a diff its layout, last. Lines always wrap.
   _toggles(diffable, pretty = null, renamed = false, whitespace = false, types = false) {
     return html`${diffable ? this._hides(renamed, whitespace, types) : nothing}
-        ${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error' })}
+        ${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error',
+          'is-folded': pretty.json && state.bundleSourcePretty === 'folded' })}
           aria-pressed=${String(!!state.bundleSourcePretty)} aria-busy=${pretty.status === 'loading' ? 'true' : nothing} aria-label="Pretty-print"
-          data-tooltip=${`${prettyTooltip(pretty)}${affectedFiles(pretty.affects)}`}
-          @click=${() => { togglePrettySource(); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}
+          data-tooltip=${`${prettyTooltip(pretty, pretty.json)}${affectedFiles(pretty.affects)}`}
+          @click=${() => { togglePrettySource(pretty.json); this.requestUpdate() }}>${PRETTY_ICON}</button>` : nothing}
         ${diffable ? html`<span class="bundles-overview-sort bundle-compare-code-layout" role="group" aria-label="Diff layout">
           ${[['unified', 'Unified'], ['split', 'Split']].map(([value, label]) => html`<button type="button" aria-pressed=${String(prefs.layout === value)} @click=${() => { prefs.layout = value; this.requestUpdate() }}>${label}</button>`)}
         </span>` : nothing}`

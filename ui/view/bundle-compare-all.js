@@ -231,7 +231,7 @@ export class BundleCompareAll extends BundleCompareCode {
     const failed = pretties.filter(copy => copy.status === 'error')
     const toggle = failed.length > 0 ? { ...failed[0], failed: failed.length, of: pretties.length }
       : pretties.find(copy => copy.status === 'loading') ?? pretties[0] ?? null
-    const pretty = toggle && { ...toggle, affects: printed.map(({ path }) => path) }
+    const pretty = toggle && { ...toggle, json: pretties.some(copy => copy.json), affects: printed.map(({ path }) => path) }
     // The diff's controls, while any file shows a change or hides one they can show.
     const diffable = shown.some(({ file }) => file.model?.blocks.length > 0 || file.whitespace || file.hiding || file.types)
     return this._layout(rail, html`<header class="bundle-code-main-bar bundle-compare-code-bar">

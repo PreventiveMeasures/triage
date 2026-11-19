@@ -143,7 +143,7 @@ export interface State {
   bundleSourceFindingIdx: number | null
   bundleSourceTargetLine: { bundle: string | null; path: string; line: number; end?: number; anchor?: number } | null
   bundleSourceWrap: boolean
-  bundleSourcePretty: boolean
+  bundleSourcePretty: false | 'indented' | 'folded'
   bundleCodeTerminal: boolean
   bundleSourceLockfile: boolean
   droppedLockfile: DroppedLockfile | null
@@ -683,7 +683,9 @@ export const state: State = store<State>({
   // Whether the source viewer wraps long lines: on unless turned off. A
   // reading preference, persisted like kanbanDetailFullscreen.
   bundleSourceWrap: readSavedBundleSourceWrap() ?? true,
-  // Whether the Code tab shows minified files pretty-printed (pretty-source.js).
+  // Whether the Code tab shows minified files pretty-printed (pretty-source.js),
+  // and JSON in which layout: 'indented', as JSON.stringify writes it, or
+  // 'folded', each object or array that fits on a line kept on it.
   bundleSourcePretty: false,
   // Whether the Code tab shows the Terminal tab's shell under its code panel
   // (render-bundle.js renderBundleCodeTerminal). Kept across bundles and tabs
