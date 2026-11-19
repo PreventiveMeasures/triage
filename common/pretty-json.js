@@ -1,7 +1,9 @@
 // JSON pretty-printed for reading, by the viewer (ui/view/pretty-source.js).
 
+// Whether a path is JSON, which the viewer formats rather than the server.
+export const jsonPrinted = path => /\.json$/iu.test(path)
+
 const isContainer = value => value !== null && typeof value === 'object'
-const isBlank = char => char === ' ' || char === '\n' || char === '\r' || char === '\t'
 
 // `value` on one line, `{ "a": [1, 2] }`, or null where that is longer than
 // `room`: given up on as soon as it is, as a long one is tried at every level.
@@ -49,36 +51,18 @@ export function prettyJSON(data, { width = 120 } = {}) {
   return lines.join('\n')
 }
 
-// Whether two JSON texts differ only in the blanks between their tokens.
-function sameTokens(a, b) {
-  let i = 0, j = 0, string = false
-  for (;;) {
-    if (!string) {
-      while (isBlank(a[i])) i++
-      while (isBlank(b[j])) j++
-    }
-    if (i >= a.length || j >= b.length) return i >= a.length && j >= b.length
-    const char = a[i]
-    if (char !== b[j]) return false
-    if (string && char === '\\') {
-      i++
-      j++
-      if (a[i] !== b[j]) return false
-    } else if (char === '"') string = !string
-    i++
-    j++
-  }
-}
+// A JSON text without the blanks between its tokens.
+const blankless = text => text.replaceAll(/("(?:[^"\\]+|\\.)*")|[\t\n\r ]+/gu, '$1')
 
 // A JSON text pretty-printed (prettyJSON), keeping whether it ends in a line
 // end, or null where it isn't JSON. Throws where the copy would read
 // otherwise than the text: a key given twice, an escape or a number respelled.
-export function prettyJsonText(text, options) {
+export function prettyJsonText(text) {
   let value
   try { value = JSON.parse(text) } catch { return null }
   if (!text.isWellFormed()) throw new Error('Its text has lone surrogates.')
-  const copy = `${prettyJSON(value, options)}${text.endsWith('\n') ? '\n' : ''}`
+  const copy = `${prettyJSON(value)}${text.endsWith('\n') ? '\n' : ''}`
   if (JSON.stringify(JSON.parse(copy)) !== JSON.stringify(value)) throw new Error('The copy reads as another value.')
-  if (!sameTokens(text, copy)) throw new Error('The copy would change more than its layout: a key given twice, or an escape, a number or the order of keys written otherwise.')
+  if (blankless(text) !== blankless(copy)) throw new Error('The copy would change more than its layout: a key given twice, or an escape, a number or the order of keys written otherwise.')
   return copy
 }

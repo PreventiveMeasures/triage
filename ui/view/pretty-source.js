@@ -13,11 +13,11 @@ import { html } from 'lit'
 import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
-import { prettyJsonText } from '../../common/pretty-json.js'
-import { MAX_PRETTY_BYTES, jsonPrinted, needsPrettyPrint } from '../../common/pretty-print.js'
-import { utf8ByteLength } from '../../common/utf8.js'
+import { jsonPrinted, prettyJsonText } from '../../common/pretty-json.js'
+import { needsPrettyPrint, prettyExtension, printableSize } from '../../common/pretty-print.js'
 import { fetchPrettyBundleChanges, fetchPrettyBundleFile, fetchPrettyNpmChanges, fetchPrettyNpmFile, fetchPrettyNpmFiles } from './client-managed.js'
 import { npmFileReadabilityRead } from './file-readability.js'
+import { renameDiffable } from './rename-diff.js'
 
 // The pretty-print toggles' icon, for the Code tab's bar and Compare's.
 export const PRETTY_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5c-1.4 0-2 .6-2 2v1.6c0 .9-.5 1.6-1.5 1.9 1 .3 1.5 1 1.5 1.9v1.6c0 1.4.6 2 2 2M10.5 2.5c1.4 0 2 .6 2 2v1.6c0 .9.5 1.6 1.5 1.9-1 .3-1.5 1-1.5 1.9v1.6c0 1.4-.6 2-2 2"/></svg>`
@@ -96,32 +96,18 @@ const versions = new Map()
 // as the server was busy, is asked for alone (fileCopy).
 const comparisons = new Map()
 
-// Whether each file of a bundle or npm version is minified, by its details
-// (needsPrettyPrint, as the server tells an npm version's).
-const formattable = new WeakMap()
-
-// Whether a file is minified code that can be pretty-printed: JSON in any
-// bundle, other code in a managed bundle or an npm version.
-export function prettyMinified(details, entry, path, content) {
-  if (!(jsonPrinted(path) || entry?.managedId || entry?.npm) || typeof content !== 'string') return false
-  let files = formattable.get(details)
-  if (!files) formattable.set(details, files = new Map())
-  if (!files.has(path)) files.set(path, needsPrettyPrint(path, content, () => npmFileReadabilityRead(details, path, content)))
-  return files.get(path)
-}
-
 // JSON copies by details and path, each with the text it was made from.
 const jsonCopies = new WeakMap()
 
 // A JSON file's copy, made here: ready, or an error where it would read
 // otherwise than the file; null where the file isn't JSON or is too large.
-export function prettyJsonCopy(details, path, content) {
+function prettyJsonCopy(details, path, content) {
   let files = jsonCopies.get(details)
   if (!files) jsonCopies.set(details, files = new Map())
   const kept = files.get(path)
   if (kept?.content === content) return kept.copy
   let copy = null
-  if (utf8ByteLength(content) <= MAX_PRETTY_BYTES) {
+  if (printableSize(content)) {
     try {
       const text = prettyJsonText(content)
       if (text !== null) copy = { status: 'ready', text }
@@ -133,13 +119,23 @@ export function prettyJsonCopy(details, path, content) {
   return copy
 }
 
-// Whether the open file can be pretty-printed: JSON its copy changes, or
-// minified code of a managed bundle or an npm version.
+// Whether each file of a bundle or npm version can be formatted, by its
+// details (needsPrettyPrint, as the server tells an npm version's).
+const formattable = new WeakMap()
+
+// Whether the open file can be pretty-printed: JSON its copy changes, in any
+// bundle, or a formattable file of a managed bundle or an npm version.
 export function prettyPrintable(details, entry, path, content) {
   if (typeof content !== 'string') return false
-  if (!jsonPrinted(path)) return prettyMinified(details, entry, path, content)
-  const copy = prettyJsonCopy(details, path, content)
-  return copy !== null && copy.text !== content
+  if (jsonPrinted(path)) {
+    const copy = prettyJsonCopy(details, path, content)
+    return copy !== null && copy.text !== content
+  }
+  if (!(entry?.managedId || entry?.npm)) return false
+  let files = formattable.get(details)
+  if (!files) formattable.set(details, files = new Map())
+  if (!files.has(path)) files.set(path, needsPrettyPrint(path, content, () => npmFileReadabilityRead(details, path, content)))
+  return files.get(path)
 }
 
 // Copies asked for in the task now running and in the last one that asked,
@@ -364,6 +360,14 @@ async function loadComparison(key, comparison, base, other) {
   evictComparisons()
 }
 
+// Whether one side's file of a comparison can be pretty-printed (comparedCopy):
+// JSON in any comparison, other code the server formats between two managed
+// bundles or two versions of a package.
+export function comparedPrintable(base, other, side, path, content) {
+  return jsonPrinted(path) ? prettyJsonCopy(side === 'base' ? base : other, path, content) !== null
+    : renameDiffable(base, other) && prettyExtension(path) !== null && printableSize(content)
+}
+
 // One side's file of a comparison of two managed bundles, or two versions of
 // a package (rename-diff.js renameDiffable), pretty-printed: `side` `base` or
 // `other`, `notify` called once it comes; the comparison's files asked for
@@ -371,7 +375,8 @@ async function loadComparison(key, comparison, base, other) {
 // none of asked for alone once it ended. A text other than the side's file
 // has none. JSON, of any comparison, is formatted here.
 export function comparedCopy(base, other, side, path, content, notify) {
-  if (jsonPrinted(path)) return prettyJsonCopy(side === 'base' ? base : other, path, content) ?? { status: 'error', message: "It isn't JSON.", retry: false }
+  const details = side === 'base' ? base : other
+  if (jsonPrinted(path)) return prettyJsonCopy(details, path, content)
   const key = `${base.integrity}\0${other.integrity}`
   let comparison = comparisons.get(key)
   comparisons.delete(key)
@@ -381,7 +386,6 @@ export function comparedCopy(base, other, side, path, content, notify) {
   }
   comparisons.set(key, comparison)
   evictComparisons()
-  const details = side === 'base' ? base : other
   if (content !== bundleFilesAsMap(details).get(path)) return { status: 'error', message: MISMATCH, retry: false }
   comparison.notify = notify
   return comparison.copies.get(`${side}\0${path}`) ?? comparison.rest ?? (comparison.ended ? fileCopy(details, path, content, notify) : { status: 'loading' })

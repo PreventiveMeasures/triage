@@ -39,9 +39,7 @@ import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
-import { PRETTY_ICON, comparedCopy, prettyJsonCopy, prettyMinified, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
-import { MAX_PRETTY_BYTES, jsonPrinted, prettyExtension } from '../../common/pretty-print.js'
-import { utf8ByteLength } from '../../common/utf8.js'
+import { PRETTY_ICON, comparedCopy, comparedPrintable, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory, npmTextKindTag } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
@@ -232,11 +230,6 @@ function countLines(text) {
   for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) count++
   return count
 }
-
-// Whether a text is no larger than the server formats (MAX_PRETTY_BYTES):
-// its UTF-8 counted only where its length leaves it in doubt, each of its
-// UTF-16 units one to three bytes.
-const printableSize = text => text.length * 3 <= MAX_PRETTY_BYTES || (text.length <= MAX_PRETTY_BYTES && utf8ByteLength(text) <= MAX_PRETTY_BYTES)
 
 // The pretty-print toggle a file shown has (_fileState): where printing
 // changes its diff, its copies' state while they are drawn, else off; none
@@ -1250,10 +1243,8 @@ export class BundleCompareCode extends LitElement {
     const { kind, basePath = path, modified } = entry, { before, after } = contents
     if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after) return null
     const sides = [['base', this.base, basePath, before], ['other', this.other, path, after]]
-    const printable = ([, details, file, text]) => text === '' || (jsonPrinted(file) ? prettyJsonCopy(details, file, text) !== null
-      : renameDiffable(this.base, this.other) && prettyExtension(file) !== null && printableSize(text))
-    if (!sides.every(printable)) return null
-    const unreadable = sides.some(([, details, file, text]) => text !== '' && prettyMinified(details, details, file, text))
+    if (!sides.every(([side, , file, text]) => text === '' || comparedPrintable(this.base, this.other, side, file, text))) return null
+    const unreadable = sides.some(([, details, file, text]) => text !== '' && minified(details, file, text))
     const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
     const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading')
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }

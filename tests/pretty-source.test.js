@@ -29,8 +29,13 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchPrettyNpmFile: (...args) => { requests.push(['npm file', ...args]); return answer(args[3]) },
   fetchPrettyBundleChanges: (id, other, onLine) => lines('bundle changes', id, other, onLine),
   fetchPrettyNpmChanges: (name, version, otherVersion, onLine) => lines('npm changes', name, version, otherVersion, onLine),
+  // rename-diff.js's, which pretty-source.js reads renameDiffable of.
+  fetchBundleRenameDiff: () => Promise.reject(new Error('unexpected request')),
+  fetchBundleRenameDiffs: () => Promise.reject(new Error('unexpected request')),
+  fetchNpmRenameDiff: () => Promise.reject(new Error('unexpected request')),
+  fetchNpmRenameDiffs: () => Promise.reject(new Error('unexpected request')),
 } })
-const { comparedCopy, prettyCopy: copyOf, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } = await import('../ui/view/pretty-source.js')
+const { comparedCopy, comparedPrintable, prettyCopy: copyOf, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } = await import('../ui/view/pretty-source.js')
 // Each copy asked for here notes its path once it comes, as a view repaints,
 // in the list of the test that asked: one that comes after its test ended
 // counts for no later test.
@@ -214,7 +219,9 @@ test('a comparison\'s JSON is pretty-printed here, in any comparison, nothing as
   const base = bundleOf({ 'a.json': '{"v":1}\n' }), other = bundleOf({ 'a.json': '{"v":2}\n' })
   assert.deepEqual(comparedCopy(base, other, 'base', 'a.json', '{"v":1}\n', () => {}), { status: 'ready', text: '{ "v": 1 }\n' })
   assert.deepEqual(comparedCopy(base, other, 'other', 'a.json', '{"v":2}\n', () => {}), { status: 'ready', text: '{ "v": 2 }\n' })
-  assert.equal(comparedCopy(base, other, 'other', 'a.json', 'v = 2', () => {}).status, 'error', 'a text that isn\'t JSON')
+  assert.equal(comparedPrintable(base, other, 'other', 'a.json', '{"v":2}\n'), true)
+  assert.equal(comparedPrintable(base, other, 'other', 'a.json', 'v = 2'), false, 'a text that isn\'t JSON')
+  assert.equal(comparedPrintable(base, other, 'other', 'a.min.js', minified), false, 'other code only between managed bundles')
   assert.deepEqual(requests, [])
   assert.equal(changeRequests.length, 0)
 })

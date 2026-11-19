@@ -1761,12 +1761,12 @@ function textStats(text) {
 // open alone (renderDroppedLockfile), with no history to step through and a
 // close at the end of the bar.
 function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null, { single = false } = {}) {
-  const viewed = viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
-  const { pretty, toggle, fileFindings, lineFindings } = viewed
   const lockfile = typeof sourceContent === 'string' && lockfileFormat(path) !== null
   const read = lockfile ? viewedLockfile(details, path, sourceContent, bundleSourcesAsMap(details), () => { if (shownSource(path)) render() }) : null
   const graphed = read?.status === 'ready'
-  const content = graphed ? sourceContent : viewed.content
+  const { pretty, toggle, content, fileFindings, lineFindings } = graphed
+    ? { pretty: false, toggle: nothing, content: sourceContent, fileFindings: [], lineFindings: new Map() }
+    : viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
@@ -1785,7 +1785,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
       ${github ? githubFileLink(github, entry?.commitInfo) : nothing}
       ${renderBundleCodeImporters(details, path)}
       <span class="bundle-code-main-spacer"></span>
-      ${fileFindings.length > 0 && !graphed ? html`<span
+      ${fileFindings.length > 0 ? html`<span
         class="bundle-code-main-issues"
         data-bundle-code-issue-order=${JSON.stringify(issueOrder)}
       >
@@ -1807,9 +1807,9 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
         >›</button>
       </span>` : nothing}
       ${graphed ? nothing : renderSourceWrapToggle()}
-      ${graphed ? nothing : toggle}
+      ${toggle}
       ${lockfile ? renderLockfileToggle(read) : nothing}
-      ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${graphed || toggle === nothing ? nothing
+      ${typeof content === 'string' ? html`<span class="bundle-code-main-stats">${toggle === nothing ? nothing
         : html`<span class="bundle-code-main-stats-room" aria-hidden="true">${textStats(sourceContent)}</span>`}<span>${textStats(content)}</span></span>` : nothing}
       ${single ? html`<button type="button" class="bundle-code-close" data-dropped-lockfile-close aria-label="Close" data-tooltip="Close">×</button>` : nothing}
     </header>
