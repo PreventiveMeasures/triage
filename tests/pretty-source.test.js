@@ -38,7 +38,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
 // JSON's copies, counted as they are made.
 const prettyJson = await import('../common/pretty-json.js')
 let jsonCopies = 0
-mock.module('../common/pretty-json.js', { exports: { ...prettyJson, prettyJsonText: text => { jsonCopies++; return prettyJson.prettyJsonText(text) } } })
+mock.module('../common/pretty-json.js', { exports: { ...prettyJson, prettyJsonText: (...args) => { jsonCopies++; return prettyJson.prettyJsonText(...args) } } })
 const { comparedCopy, comparedPrintable, prettyCopy: copyOf, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } = await import('../ui/view/pretty-source.js')
 // Each copy asked for here notes its path once it comes, as a view repaints,
 // in the list of the test that asked: one that comes after its test ended
@@ -210,14 +210,10 @@ test('JSON is pretty-printed here, in any bundle, its copy made once the toggle 
   assert.equal(printable('twice.json'), true, 'offered, to say why it can\'t be')
   assert.equal(prettyCopy(details, {}, 'data.json', files['data.json']), null, 'none while the toggle is off')
   assert.equal(jsonCopies, made, 'none made while it is off')
-  state.bundleSourcePretty = true
-  assert.deepEqual(prettyCopy(details, managed, 'data.json', files['data.json']), { status: 'ready', text: files['laid.json'] })
-  assert.deepEqual(prettyCopy(details, managed, 'laid.json', files['laid.json']), { status: 'ready', text: files['laid.json'] })
+  state.bundleSourcePretty = 'indented'
   const refused = prettyCopy(details, {}, 'twice.json', files['twice.json'])
   assert.equal(refused.status, 'error')
-  assert.match(prettyTooltip(refused), /^Couldn't pretty-print: The copy would change more than its layout/u)
-  prettyCopy(details, {}, 'data.json', files['data.json'])
-  assert.equal(jsonCopies, made + 3, 'each made once')
+  assert.match(prettyTooltip(refused, true), /^Couldn't pretty-print: The copy would change more than its layout/u)
   const nested = `${'['.repeat(500)}${'0,'.repeat(100_000)}0${']'.repeat(500)}`
   assert.match(prettyTooltip(prettyCopy(bundleOf({ 'deep.json': nested }), {}, 'deep.json', nested)), /would run past 16,777,216 characters/u, 'nested past what its copy may run to')
   const huge = JSON.stringify(['x'.repeat(4 * 1024 * 1024)])
@@ -226,13 +222,48 @@ test('JSON is pretty-printed here, in any bundle, its copy made once the toggle 
   assert.equal(renders.length, 0)
 })
 
+test('the toggle on JSON has a third state: indented as JSON.stringify writes it, then folded, then off; the copy last asked for kept', () => {
+  const text = '{"a":1,"b":[1,2]}\n'
+  const details = bundleOf({ 'data.json': text })
+  const copy = () => prettyCopy(details, {}, 'data.json', text)
+  const made = jsonCopies
+  assert.equal(prettyTooltip(copy(), true), 'Pretty-print')
+  togglePrettySource(true)
+  assert.equal(state.bundleSourcePretty, 'indented')
+  assert.deepEqual(copy(), { status: 'ready', text: `${JSON.stringify(JSON.parse(text), undefined, 2)}\n` })
+  assert.match(prettyTooltip(copy(), true), /^Pretty-printed, each value on a line of its own\. Press to fold/u)
+  togglePrettySource(true)
+  assert.equal(state.bundleSourcePretty, 'folded')
+  assert.deepEqual(copy(), { status: 'ready', text: '{ "a": 1, "b": [1, 2] }\n' })
+  assert.match(prettyTooltip(copy(), true), /^Pretty-printed, what fits on a line folded onto it\. Press to show as published\./u)
+  togglePrettySource(true)
+  assert.equal(state.bundleSourcePretty, false)
+  assert.equal(copy(), null)
+  assert.equal(jsonCopies, made + 2)
+  togglePrettySource(true)
+  togglePrettySource(true)
+  copy()
+  assert.equal(jsonCopies, made + 2, 'folded again, kept, indented not asked for between')
+  state.bundleSourcePretty = 'indented'
+  copy()
+  copy()
+  assert.equal(jsonCopies, made + 3, 'the other layout\'s made in its place, once')
+  state.bundleSourcePretty = 'folded'
+  togglePrettySource()
+  assert.equal(state.bundleSourcePretty, false, 'off from either state where the toggle is other code\'s')
+  togglePrettySource()
+  togglePrettySource()
+  assert.equal(state.bundleSourcePretty, false, 'which has two')
+})
+
 test('a comparison\'s JSON is pretty-printed here, in any comparison, once the toggle is on, nothing asked of the server', () => {
   const base = bundleOf({ 'a.json': '{"v":1}\n' }), other = bundleOf({ 'a.json': '{"v":2}\n' })
   const made = jsonCopies
   assert.deepEqual(comparedCopy(base, other, 'base', 'a.json', '{"v":1}\n', () => {}), { status: 'off' }, 'not made while the toggle is off')
   assert.equal(jsonCopies, made)
-  state.bundleSourcePretty = true
-  assert.deepEqual(comparedCopy(base, other, 'base', 'a.json', '{"v":1}\n', () => {}), { status: 'ready', text: '{ "v": 1 }\n' })
+  state.bundleSourcePretty = 'indented'
+  assert.deepEqual(comparedCopy(base, other, 'base', 'a.json', '{"v":1}\n', () => {}), { status: 'ready', text: '{\n  "v": 1\n}\n' })
+  state.bundleSourcePretty = 'folded'
   assert.deepEqual(comparedCopy(base, other, 'other', 'a.json', '{"v":2}\n', () => {}), { status: 'ready', text: '{ "v": 2 }\n' })
   assert.equal(comparedPrintable(base, other, 'other', 'a.json', '{"v":2}\n'), true)
   assert.equal(comparedPrintable(base, other, 'other', 'a.json', 'v = 2'), false, 'a text that isn\'t JSON')

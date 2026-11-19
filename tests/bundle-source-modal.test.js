@@ -701,6 +701,25 @@ test('a dropped lockfile opens alone, in the Code pane with no file tree or hist
   assert.match(asText, /data-bundle-source-wrap.*data-bundle-source-lockfile aria-pressed=false/su, 'its text a toggle away')
 })
 
+test('Code offers JSON pretty-printed in any bundle, its toggle with a third state, folded', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const text = '{"a":1,"b":[1,2]}\n'
+  const entry = { name: 'app.map', integrity: 'sha512-pretty-json' }
+  const code = pretty => {
+    Object.assign(state, { currentView: 'bundles', bundleDetailsTab: 'code', selectedBundle: entry.integrity, bundles: [entry], bundleSourceFile: 'data.json',
+      bundleCodeSearchMode: 'files', bundleCodeSearchQuery: '', bundleSourcePretty: pretty,
+      bundleDetails: { kind: 'sourcemap', integrity: entry.integrity, size: 123, json: { version: 3, sources: ['data.json'], sourcesContent: [text] } } })
+    return renderText(renderBundlesList([entry]))
+  }
+  assert.match(code(false), /data-bundle-source-pretty=json aria-pressed=false/u, 'a local bundle\'s, told as JSON\'s for its third state')
+  const indented = code('indented')
+  assert.match(indented, /data-bundle-source-pretty=json aria-pressed=true[^>]*data-tooltip=Pretty-printed, each value on a line of its own\./u)
+  assert.match(indented, /<span class="bundle-code-main-stats">[^]*<span>8 lines · /u, 'its copy shown, each value on a line of its own')
+  const folded = code('folded')
+  assert.match(folded, /data-bundle-source-pretty=json aria-pressed=true[^>]*data-tooltip=Pretty-printed, what fits on a line folded onto it\./u)
+  assert.match(folded, /<span class="bundle-code-main-stats">[^]*<span>2 lines · /u, 'folded onto one line')
+})
+
 test('the source popup and the Search tab\'s source offer a managed bundle\'s minified code pretty-printed, after the wrap toggle', () => {
   const minified = `${'var a=1;'.repeat(200)}\n`
   const sources = { 'dist/app.min.js': minified, 'src/index.js': 'export const a = 1\n' }

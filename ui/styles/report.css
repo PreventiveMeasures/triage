@@ -1318,6 +1318,8 @@ button.bundle-code-importers-item:hover { background: var(--surface); }
 .bundle-source-pretty-toggle[aria-pressed=true],
 .bundle-source-lockfile-toggle[aria-pressed=true],
 .bundle-source-wrap-toggle[aria-pressed=true] { color: var(--accent); }
+/* JSON's third state, folded: its braces drawn closer together. */
+.bundle-source-pretty-toggle.is-folded > svg { transform: scaleX(.7); }
 /* Busy while its copy is asked for, or its lockfile read; red where that
    failed. */
 .bundle-source-pretty-toggle.is-loading,

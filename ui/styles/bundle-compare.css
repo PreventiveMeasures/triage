@@ -788,6 +788,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
   /* Pretty-printing: busy while its copies are asked for; red where that failed. */
   &.is-loading { opacity: .55; cursor: default; }
   &.is-error { color: var(--critical); }
+  /* JSON's third state, folded: its braces drawn closer together. */
+  &.is-folded > svg { transform: scaleX(.7); }
 }
 /* What the diff hides, in one frame as tall as the toggles beside it: Hide:,
    then a named switch for each (mode-switch, as the treemap's Sunburst). In a

@@ -35,7 +35,8 @@ import { bundlePackageSourceStats } from './bundle-source-package.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, defaultOpenDirectories, filterBundleSourceTree, navigateBundleSourceTree, shallowestNamed, sourceDirectoryLabel } from './bundle-source-tree.js'
 import { bundleSourceLinkResolver } from './bundle-source-links.js'
 import { watchSourceWrap } from './source-wrap.js'
-import { PRETTY_ICON, prettyCopy, prettyPrintable, prettyTooltip } from './pretty-source.js'
+import { PRETTY_ICON, prettyCopy, prettyFolded, prettyPrintable, prettyTooltip } from './pretty-source.js'
+import { jsonPrinted } from '../../common/pretty-json.js'
 import { bundleFileHistory } from './bundle-code-history.js'
 import { BUNDLE_ICON_SVG, COMMIT_ICON_SVG, DEPENDENCIES_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, REPO_ICON_SVG, SCAN_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { lockfileFormat, lockfileTooltip, viewedLockfile } from './lockfile-view.js'
@@ -724,11 +725,12 @@ const renderSourceWrapToggle = () => html`<button type="button" class="bundle-so
 // for, and saying why where it failed. After the wrap toggle, which pressing
 // it can hide; in the Code tab's bar, before the file's stats, which keep
 // room for its copy's (renderBundleCodeMain).
-function renderPrettyToggle(copy) {
+function renderPrettyToggle(copy, json) {
   const status = copy?.status
-  return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error' })}
-    data-bundle-source-pretty aria-pressed=${state.bundleSourcePretty ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
-    aria-label="Pretty-print" data-tooltip=${prettyTooltip(copy)}>${PRETTY_ICON}</button>`
+  return html`<button type="button" class=${classMap({ 'bundle-source-pretty-toggle': true, 'is-loading': status === 'loading', 'is-error': status === 'error',
+    'is-folded': prettyFolded(json) })}
+    data-bundle-source-pretty=${json ? 'json' : ''} aria-pressed=${state.bundleSourcePretty ? 'true' : 'false'} aria-busy=${status === 'loading' ? 'true' : nothing}
+    aria-label="Pretty-print" data-tooltip=${prettyTooltip(copy, json)}>${PRETTY_ICON}</button>`
 }
 
 // The open file as a source viewer shows it: a pretty-printed copy, once it
@@ -740,7 +742,7 @@ function viewedSource(details, entry, path, content, fileFindings, lineFindings)
   const printable = prettyPrintable(details, entry, path, content)
   const copy = printable ? prettyCopy(details, entry, path, content, () => { if (state.bundleSourceFile === path) render() }) : null
   const pretty = copy?.status === 'ready'
-  return { pretty, toggle: printable ? renderPrettyToggle(copy) : nothing, content: pretty ? copy.text : content,
+  return { pretty, toggle: printable ? renderPrettyToggle(copy, jsonPrinted(path)) : nothing, content: pretty ? copy.text : content,
     fileFindings: pretty ? [] : fileFindings, lineFindings: pretty ? new Map() : lineFindings }
 }
 
