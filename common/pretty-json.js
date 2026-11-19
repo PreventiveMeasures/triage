@@ -50,21 +50,21 @@ export function prettyJSON(data, { width = 120, limit = Infinity } = {}) {
     const count = array ? value.length : keys.length
     push(`${indent}${head}${array ? '[' : '{'}`)
     if (array && value.every(item => typeof item === 'string')) {
+      const room = width - indent.length - 2
       let row = ''
       for (const [i, item] of value.entries()) {
         const part = `${JSON.stringify(item)}${i < count - 1 ? ',' : ''}`
-        if (row && indent.length + 2 + row.length + 1 + part.length > width) {
+        if (row && row.length + 1 + part.length > room) {
           push(`${indent}  ${row}`)
           row = ''
         }
         row = row ? `${row} ${part}` : part
       }
       push(`${indent}  ${row}`)
-      push(`${indent}]${tail}`)
-      return
-    }
-    for (let i = 0; i < count; i++) {
-      write(array ? value[i] : value[keys[i]], `${indent}  `, array ? '' : `${JSON.stringify(keys[i])}: `, i < count - 1 ? ',' : '')
+    } else {
+      for (let i = 0; i < count; i++) {
+        write(array ? value[i] : value[keys[i]], `${indent}  `, array ? '' : `${JSON.stringify(keys[i])}: `, i < count - 1 ? ',' : '')
+      }
     }
     push(`${indent}${array ? ']' : '}'}${tail}`)
   }

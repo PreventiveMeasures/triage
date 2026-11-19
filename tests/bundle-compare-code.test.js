@@ -332,7 +332,7 @@ test('minified files diff pretty-printed, and names renamed alike throughout can
   const off = renderText(element.render())
   assert.match(off, /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'a minified file offers pretty-printing')
   assert.doesNotMatch(off, /Hide renamed names/u, 'renamed names are hidden in the copies alone')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   assert.match(renderText(element.render()), /is-loading/u, 'busy while both copies are asked for')
   // Until both copies came, each hashed first.
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
@@ -393,7 +393,7 @@ test('a file whose formatting alone changed is offered pretty-printed once its c
   const offered = renderText(element.render())
   assert.match(offered, /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'offered: its copies diff in fewer lines than it')
   assert.match(offered, /class="add">\+6<\/span><span class="del">−6/u, 'drawn as published while off')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const on = renderText(element.render())
   assert.match(on, /No actual code changes in this file\./u, 'its copies the same')
   assert.match(on, /aria-pressed=true aria-busy= aria-label="Pretty-print"/u)
@@ -409,7 +409,7 @@ test('a file whose copies diff in as many lines as it is not offered pretty-prin
   pretty.set('b44:src/number.js', 'export const n = 2;\n')
   assert.equal(await untilPrinted(element, 'src/number.js'), 'ready')
   assert.doesNotMatch(renderText(element.render()), /aria-label="Pretty-print"/u, 'printing it would change nothing')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const on = renderText(element.render())
   assert.doesNotMatch(on, /aria-label="Pretty-print"/u)
   assert.doesNotMatch(on, /const n = (?:<mark[^>]*>)?2(?:<\/mark>)?;/u, 'not its printed copy')
@@ -470,7 +470,7 @@ test('a file minified on one side alone is offered pretty-printed at once, and d
   pretty.set('b45:dist/half.js', 'var Y = 1;\nq(Y);\n')
   pretty.set('b46:dist/half.js', 'var Y = 1;\nq(Y);\nq(2);\n')
   assert.match(renderText(element.render()), /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'offered before its copies came: its new side is minified')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   assert.equal(await untilPrinted(element, 'dist/half.js'), 'ready')
   assert.match(renderText(element.render()), /class="add">\+1<\/span><span class="del">−0/u, 'its copies diffed')
 })
@@ -483,7 +483,7 @@ test('a file whose copy a comparison brought none of is asked for alone, and dra
   pretty.set('b53:dist/apart.min.js', 'var Y = 1;\nq(Y);\n')
   pretty.set('b54:dist/apart.min.js', 'var Y = 1;\nq(Y);\nq(2);\n')
   unsent.add('b53:dist/apart.min.js')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   assert.equal(await untilPrinted(element, 'dist/apart.min.js'), 'ready')
   assert.match(renderText(element.render()), /class="add">\+1<\/span><span class="del">−0/u, 'its base\'s copy asked for alone, then diffed')
 })
@@ -518,7 +518,7 @@ test('the Diff view offers pretty-printing where it changes any file\'s diff, an
   assert.equal(await untilPrinted(all, 'src/fa.js'), 'ready')
   assert.equal(await untilPrinted(all, 'src/fb.js'), 'ready')
   assert.match(bar(), /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'offered: printing changes one file\'s diff')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const on = renderText(all.render())
   assert.match(on, /No actual code changes in this file\./u, 'the one it changes printed')
   assert.doesNotMatch(on, /const b = (?:<mark[^>]*>)?2(?:<\/mark>)?;/u, 'the other as published')
@@ -531,7 +531,7 @@ test('a diff the server could not hide renamed names in says why and shows them'
   element.other.managedId = 'b6'
   pretty.set('b5:dist/lib.min.js', 'var Y = 1;\nq(Y);\n')
   pretty.set('b6:dist/lib.min.js', 'var X = 1;\nq(X);\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   pretty.set('b5:dist/lib.min.js', Object.assign(new Error('Comparing this file took too long.'), { status: 504 }))
   element._setRenames(true)
@@ -592,7 +592,7 @@ test('the Diff view pretty-prints every minified file it shows, however many', a
   const all = new (customElements.get('bundle-compare-all'))()
   for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   assert.match(renderText(all.render()), /is-loading/u, 'each asked for')
   // Two at a time, each hashed as it comes, which can take any number of turns.
   const deadline = Date.now() + 10_000
@@ -665,7 +665,7 @@ test('the Diff view\'s pretty-print toggle shows any file\'s failure, not only t
   const all = new (customElements.get('bundle-compare-all'))()
   for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.match(renderText(all.render()), /is-error[\s\S]*data-tooltip=Couldn't pretty-print 1 of 2 files: This file couldn't be read as code\./u)
 })
@@ -691,7 +691,7 @@ test('the Diff view marks the renamed lines of every minified file it shows, how
   all._query = 'dist/m'
   const asked = renameDiffs.length
   flying.most = 0
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const states = () => files.map(path => all._fileState(path, all._entries.get(path)))
   const deadline = Date.now() + 20_000
   while (states().some(file => file.changes?.status !== 'ready') && Date.now() < deadline) {
@@ -749,7 +749,7 @@ test('the Diff view\'s rename diffs are kept for its comparison: opened again, w
   await import('../ui/view/bundle-compare-all.js')
   const { files, opened, since } = diffViewOf(t, 'dist/k', 20, ['b37', 'b38'])
   const [streams, alone] = [renameStreams.length, renameDiffs.length]
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const first = opened()
   assert.ok(await settledRenames(first, files), 'each file\'s diff came')
   first.disconnectedCallback()
@@ -760,7 +760,7 @@ test('the Diff view\'s rename diffs are kept for its comparison: opened again, w
   again._setWhitespace(false)
   state.bundleSourcePretty = false
   renderText(again.render())
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   assert.ok(await settledRenames(again, files), 'pretty-print turned off and on')
   assert.deepEqual(since(streams, alone), { streams: 1, alone: 0 }, 'one request for them all, none alone')
 })
@@ -774,7 +774,7 @@ test('the Diff view asks alone for a rename diff its comparison\'s came without,
   undiffable.add(`b39:${files[3]}`)
   t.after(() => { unsent.delete(`b39:${files[1]}`); tooLong.delete(`b39:${files[2]}`); undiffable.delete(`b39:${files[3]}`) })
   const [streams, alone] = [renameStreams.length, renameDiffs.length]
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const all = opened()
   const asked = () => renameDiffs.slice(alone).filter(({ id }) => id === 'b39').map(({ path }) => path).toSorted()
   const changes = path => all._fileState(path, all._entries.get(path)).changes
@@ -796,7 +796,7 @@ test('the Diff view filtered, or with pretty-print turned off, while its rename 
   flying.held = new Promise(resolve => { release = resolve })
   t.after(() => { release(); flying.held = null })
   const [streams, alone] = [renameStreams.length, renameDiffs.length]
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const all = opened()
   for (let i = 0; i < 400 && flying.now < 1; i++) {
     renderText(all.render())
@@ -808,7 +808,7 @@ test('the Diff view filtered, or with pretty-print turned off, while its rename 
   renderText(all.render())
   state.bundleSourcePretty = false
   renderText(all.render())
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   renderText(all.render())
   release()
   flying.held = null
@@ -829,7 +829,7 @@ test('the Diff view keeps its renamed names toggles where hiding them hides ever
   for (const name of ['base', 'other', 'files', 'baseName', 'otherName']) all[name] = code[name]
   all.willUpdate(new Map([['base'], ['other'], ['files']]))
   all._query = 'rn.min'
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   all._setRenames(true)
   for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(all.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
@@ -967,7 +967,7 @@ test('a hit in a file whose printed copies make a diff too large to show unasked
   const printed = last => `${Array.from({ length: 60_000 }, (_, i) => `q(${i});`).join('\n')}\n${last}`
   pretty.set('b21:dist/grown.min.js', printed(''))
   pretty.set('b22:dist/grown.min.js', printed('fetch(1);\n'))
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 400 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.match(renderText(element.render()), /This diff is large/u, 'large as printed, though small as published')
   element._mode = 'code'
@@ -992,7 +992,7 @@ test('a file whose diff is of its pretty-printed copies lists its lines as publi
   element._query = 'fetch('
   const signs = () => element._searchResults(element._railState().order).files.find(file => file.path === 'dist/printed.min.js').hits.map(hit => `${hit.sign ?? '?'}${hit.side}${hit.line}`)
   assert.deepEqual(signs(), ['−a0', '+b0'], 'as published while it is diffed so')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   assert.deepEqual(signs(), ['?b0'])
   assert.match(renderText(element.render()), /Shown pretty-printed: its lines as published, unsigned, the lines it removed not searched\./u)
 })
@@ -1002,7 +1002,7 @@ test('an added file shown pretty-printed lists its lines signed, numbered as pub
   const element = view(null, [{}, { 'dist/added.min.js': `var X=1;${'q(X);'.repeat(250)}fetch(2);\n` }])
   element.base.managedId = 'b11'
   element.other.managedId = 'b12'
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   element._mode = 'code'
   element._query = 'fetch('
   const found = element._searchResults(element._railState().order)
@@ -1019,7 +1019,7 @@ test('a hit opens at the same match pretty-printed where the printer respaced an
   element.other.managedId = 'b14'
   pretty.set('b13:dist/mixed.min.js', 'var x = a - b;\ns = "a+b";\nq(x);\n')
   pretty.set('b14:dist/mixed.min.js', 'var x = a + b;\ns = "a+b";\nq(x);\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   element._mode = 'code'
   element._query = 'a+b'
@@ -1134,7 +1134,7 @@ test('a query of blanks alone lists no file shown pretty-printed, whose blanks t
   element._query = ' '
   const listed = () => element._searchResults(element._railState().order).files.some(file => file.path === 'dist/blank.min.js')
   assert.equal(listed(), true)
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   assert.equal(listed(), false)
   element._query = 'X = 1'
   assert.equal(listed(), true, 'a query with more than blanks still is')
@@ -1176,7 +1176,7 @@ test('a hit opened pretty-printed is found in the copy reading its text and matc
   element.other.managedId = 'b28'
   pretty.set('b27:dist/common.min.js', `var Y = 1;\n${'x(1); y(22);\n'.repeat(40_000)}`)
   pretty.set('b28:dist/common.min.js', `var X = 1;\n${'x(1); y(22);\n'.repeat(40_000)}`)
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   element.path = 'dist/common.min.js'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const { pretty: copies, model } = element._fileState('dist/common.min.js', element._entries.get('dist/common.min.js'))
@@ -1204,7 +1204,7 @@ test('a file whose printed copy failed shows, and is searched, as published', as
   element.other.managedId = 'b16'
   pretty.set('b15:dist/failed.min.js', Object.assign(new Error('Comparing this file took too long.'), { status: 504 }))
   pretty.set('b16:dist/failed.min.js', 'var X = 1;\nfetch(2);\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   element.path = 'dist/failed.min.js'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.match(renderText(element.render()), /is-error/u, 'its copy failed')
@@ -1222,7 +1222,7 @@ test('a file whose printed copies are the same isn\'t listed once they are kept:
   element.other.managedId = 'b24'
   pretty.set('b23:dist/same.min.js', 'var X = 1;\nfetch(1);\n')
   pretty.set('b24:dist/same.min.js', 'var X = 1;\nfetch(1);\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   element._mode = 'code'
   element._query = 'fetch('
   const listed = () => element._searchResults(element._railState().order).files.some(file => file.path === 'dist/same.min.js')
@@ -1244,7 +1244,7 @@ test('a file whose only changes are renamed names, hidden, isn\'t listed once dr
   element.other.managedId = 'b26'
   pretty.set('b25:dist/renamed.min.js', '(function () {\n  var Y = 1;\n  q(Y);\n})();\n')
   pretty.set('b26:dist/renamed.min.js', '(function () {\n  var X = 1;\n  q(X);\n})();\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   element._setRenames(true)
   element._mode = 'code'
   element._query = 'q(X)'
@@ -1267,7 +1267,7 @@ test('a hit in a file whose printed copy is still coming is sought again in the 
   element.other.managedId = 'b18'
   pretty.set('b17:dist/coming.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
   pretty.set('b18:dist/coming.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   element._mode = 'code'
   element._query = 'Z(1)'
   element.render()
@@ -1296,7 +1296,7 @@ test('a hit in a file whose renamed names failed to hide waits, and opens at its
   element.other.managedId = 'b20'
   pretty.set('b19:dist/unhidden.min.js', 'var Y = 1;\nq(Y);\n')
   pretty.set('b20:dist/unhidden.min.js', 'var X = 1;\nq(X);\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   pretty.set('b19:dist/unhidden.min.js', Object.assign(new Error('Comparing this file took too long.'), { status: 504 }))
   element._setRenames(true)
@@ -1387,7 +1387,7 @@ test('a search hit in a minified file opens, pretty-printed, at the line holding
   element.other.managedId = 'b2'
   pretty.set('b1:dist/search.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
   pretty.set('b2:dist/search.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   element._mode = 'code'
   element._query = 'Z(1)'
@@ -1408,7 +1408,7 @@ test('a search hit whose match pretty-printing spaces opens at the line its firs
   element.other.managedId = 'b8'
   pretty.set('b7:dist/spaced.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
   pretty.set('b8:dist/spaced.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nmodule.exports = Z;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   element._mode = 'code'
   element._query = 'X+n'
@@ -1757,7 +1757,7 @@ test('with renamed names hidden, Hide whitespace changes is offered where the se
   element.other.managedId = 'b10'
   pretty.set('b9:dist/ws.min.js', '(function () {\n  var Y = 1;\n  q(Y);\n  q(Y);\n})();\n')
   pretty.set('b10:dist/ws.min.js', '(function () {\n  var X = 1;\n    q(X);\n  q(X);\n})();\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   element._setRenames(true)
   const settled = async () => {
@@ -1987,7 +1987,7 @@ test('the tree counts each file as its diff draws it, pretty-printed: `≈` wher
   pretty.set('b61:src/number.js', 'export const n = 1;\n')
   pretty.set('b62:src/number.js', 'export const n = 2;\n')
   assert.match(rowCounts(renderText(element.render()))['src/ended.js'], /class=add>\+6<\/span> <span class=del>−6<\/span>/u, 'as published while off')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const counts = rowCounts(await paintUntil(element, markup => /≈/u.test(rowCounts(markup)['src/ended.js'] ?? '')))
   assert.match(counts['src/ended.js'], /unchanged" aria-label=No line changes with Pretty-print data-tooltip=No line changes with Pretty-print As published: \+6 −6>≈/u,
     'its copies the same, though the file is not drawn')
@@ -2071,7 +2071,7 @@ test('the tree counts a minified file as its head does once the server\'s diff c
   pretty.set('b63:dist/tree.min.js', 'var Y = 1;\nfunction q(n) {\n  return Y + n;\n}\nq(Y);\nmodule.exports = q;\n')
   pretty.set('b64:dist/tree.min.js', 'var X = 1;\nfunction Z(n) {\n  return X + n;\n}\nZ(X);\nZ(1);\nmodule.exports = Z;\n')
   const [streams, alone] = [renameStreams.length, renameDiffs.length]
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const marked = rowCounts(await paintUntil(element, markup => /marked/u.test(rowCounts(markup)['dist/tree.min.js'] ?? '')))
   assert.match(marked['dist/tree.min.js'], /data-tooltip=With Pretty-print ≈3 lines differing in renamed names alone, marked As published: \+1 −1> <span class=add>\+3<\/span> <span class=del>−2<\/span>/u,
     'the lines differing in renamed names alone counted apart')
@@ -2260,7 +2260,7 @@ test('a rename diff that failed for a reason that may pass is asked for again wh
   element.other.managedId = 'b10'
   pretty.set('b9:dist/busy.min.js', 'var Y = 1;\nq(Y);\nmodule.exports = Y;\n')
   pretty.set('b10:dist/busy.min.js', 'var X = 1;\nq(X);\nmodule.exports = X;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const settle = async () => { for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
   pretty.set('b9:dist/busy.min.js', Object.assign(new Error('Too many files are being compared. Try again shortly.'), { status: 429 }))
@@ -2290,7 +2290,7 @@ test('a diff the server answers for other files than those asked about, or of ot
   let release
   flying.held = new Promise(resolve => { release = resolve })
   t.after(() => { release(); flying.held = null })
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const settle = async () => { for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
   // The answer of another file's diff, or of another copy of this one: drawn, either might hide a change.
@@ -2350,7 +2350,7 @@ test('a comparison\'s diff of a file asked for alone while it was read leaves th
   misanswered.add('b31:copy')
   element._renamesAlone = false
   element._setRenames(true)
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   await until(() => !/is-loading/u.test(paint()) && renameStreams.some(({ id }) => id === 'b31'))
   let open
   gate = new Promise(resolve => { open = resolve })
@@ -2385,7 +2385,7 @@ test('pretty-printed, a minified file marks its renamed lines unasked, the plain
   element.other.managedId = 'b20'
   pretty.set('b19:dist/marked.min.js', 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n')
   pretty.set('b20:dist/marked.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const coming = renderText(element.render())
   assert.match(coming, /aria-label="Diff"/u, 'the plain diff drawn while the server works')
@@ -2413,7 +2413,7 @@ test('a minified file whose rename diff failed for a reason that may pass is ask
   const copy = 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n'
   pretty.set('b23:dist/later.min.js', copy)
   pretty.set('b24:dist/later.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   pretty.set('b23:dist/later.min.js', Object.assign(new Error('The server is busy.'), { status: 503 }))
   const state_ = () => element._fileState('dist/later.min.js', element._entries.get('dist/later.min.js'))
@@ -2441,7 +2441,7 @@ test('a minified file whose rename diff was worked out from other copies than th
   pretty.set('b25:dist/recopied.min.js', 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n')
   pretty.set('b26:dist/recopied.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
   misanswered.add('b25:copy')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const changes = () => element._fileState('dist/recopied.min.js', element._entries.get('dist/recopied.min.js')).changes
   for (let i = 0; i < 200 && changes()?.status !== 'error'; i++) {
     renderText(element.render())
@@ -2485,7 +2485,7 @@ test('a rename diff that failed for a reason that may pass paints the view opene
   const copy = 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n'
   pretty.set('b35:dist/reopened.min.js', copy)
   pretty.set('b36:dist/reopened.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   // The view it failed for, in no page.
   const gone = opened()
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(gone.render())); i++) await new Promise(resolve => { wait(resolve, 5) })
@@ -2548,7 +2548,7 @@ test('a view gone is not painted again as a rename diff it asked for comes, so a
   element.other.managedId = 'b32'
   pretty.set('b31:dist/gone.min.js', 'var Y = function () {};\nq(Y);\nh();\nmodule.exports = 1;\n')
   pretty.set('b32:dist/gone.min.js', 'var X = function () {};\nq(X);\nh();\nmodule.exports = 2;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   let painted = 0
   element.requestUpdate = () => { painted++ }
@@ -2570,7 +2570,7 @@ test('names a file reads leave its renamed names hidden, saying what a rename ma
   // Three lines differing in names alone, one between them unchanged, and a number changed.
   pretty.set('b13:dist/named.min.js', 'var Y = function () {};\nq(Y);\nf(Y.name);\nh();\ng(1);\nmodule.exports = 1;\n')
   pretty.set('b14:dist/named.min.js', 'var X = function () {};\nq(X);\nf(X.name);\nh();\ng(2);\nmodule.exports = 1;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   const settle = async () => { for (let i = 0; i < 200 && /(?:Hiding renamed names|Marking renamed lines)…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) }) }
   element._setRenames(true)
@@ -2597,7 +2597,7 @@ test('a file whose renamed names alone changed says what they may change where i
   element.other.managedId = 'b18'
   pretty.set('b17:dist/same.min.js', 'var Y = 1;\nq(Y);\nf(Y.toString());\nmodule.exports = 1;\n')
   pretty.set('b18:dist/same.min.js', 'var X = 1;\nq(X);\nf(X.toString());\nmodule.exports = 1;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   element._setRenames(true)
   for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
@@ -2616,7 +2616,7 @@ test('a file renamed from another type to JavaScript offers no renamed names hid
   element.other.managedId = 'b12'
   pretty.set('b11:dist/lib.min.jsx', 'var Y = 1;\nq(Y);\nmodule.exports = Y;\n')
   pretty.set('b12:dist/lib.min.js', 'var X = 1;\nq(X);\nmodule.exports = X;\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   assert.doesNotMatch(renderText(element.render()), /Hide renamed names/u)
 })
@@ -2629,7 +2629,7 @@ test('Hide renamed names, on, stays to be turned off in a minified file whose co
   pretty.set('b39:dist/unprinted.min.js', Object.assign(new Error("This file couldn't be read as code."), { status: 422 }))
   pretty.set('b40:dist/unprinted.min.js', 'var X = 1;\nq(X);\nmodule.exports = 2;\n')
   element._setRenames(true)
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const toggle = /\.checked=true accessible-label=Hide renamed names/u
   const coming = renderText(element.render())
   assert.match(coming, /is-loading/u, 'its copies coming')
@@ -2649,7 +2649,7 @@ test('a file whose names the server could not give the new side\'s says why, its
   element.other.managedId = 'b8'
   pretty.set('b7:dist/eval.min.js', 'var Y = 1;\neval("Y");\nq(Y);\n')
   pretty.set('b8:dist/eval.min.js', 'var X = 1;\neval("X");\nq(X);\n')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
   element._setRenames(true)
   for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
@@ -2914,7 +2914,7 @@ test('a comparison within a reason scope asks for its rename diffs and type-only
   const element = view('dist/sc.min.js', files)
   ;[element.base.managedId, element.other.managedId] = ['b75', 'b76']
   const [streams, proofs] = [renameStreams.length, typeProofs.length]
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   // Within a scope, painted again within it, then across the whole bundles.
   for (const scope of ['reason:web', 'reason:web', '']) {
     element.scope = scope

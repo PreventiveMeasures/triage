@@ -210,7 +210,7 @@ test('JSON is pretty-printed here, in any bundle, its copy made once the toggle 
   assert.equal(printable('twice.json'), true, 'offered, to say why it can\'t be')
   assert.equal(prettyCopy(details, {}, 'data.json', files['data.json']), null, 'none while the toggle is off')
   assert.equal(jsonCopies, made, 'none made while it is off')
-  state.bundleSourcePretty = true
+  state.bundleSourcePretty = 'indented'
   const refused = prettyCopy(details, {}, 'twice.json', files['twice.json'])
   assert.equal(refused.status, 'error')
   assert.match(prettyTooltip(refused, true), /^Couldn't pretty-print: The copy would change more than its layout/u)
@@ -222,7 +222,7 @@ test('JSON is pretty-printed here, in any bundle, its copy made once the toggle 
   assert.equal(renders.length, 0)
 })
 
-test('the toggle on JSON has a third state: indented as JSON.stringify writes it, then folded, then off; each copy made once', () => {
+test('the toggle on JSON has a third state: indented as JSON.stringify writes it, then folded, then off; the copy last asked for kept', () => {
   const text = '{"a":1,"b":[1,2]}\n'
   const details = bundleOf({ 'data.json': text })
   const copy = () => prettyCopy(details, {}, 'data.json', text)
@@ -239,10 +239,16 @@ test('the toggle on JSON has a third state: indented as JSON.stringify writes it
   togglePrettySource(true)
   assert.equal(state.bundleSourcePretty, false)
   assert.equal(copy(), null)
+  assert.equal(jsonCopies, made + 2)
   togglePrettySource(true)
   togglePrettySource(true)
   copy()
-  assert.equal(jsonCopies, made + 2, 'each layout\'s made once')
+  assert.equal(jsonCopies, made + 2, 'folded again, kept, indented not asked for between')
+  state.bundleSourcePretty = 'indented'
+  copy()
+  copy()
+  assert.equal(jsonCopies, made + 3, 'the other layout\'s made in its place, once')
+  state.bundleSourcePretty = 'folded'
   togglePrettySource()
   assert.equal(state.bundleSourcePretty, false, 'off from either state where the toggle is other code\'s')
   togglePrettySource()

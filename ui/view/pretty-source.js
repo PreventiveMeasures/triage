@@ -8,8 +8,7 @@
 // off. The viewer keeps the last few bundle copies it read, and the last few
 // versions' and comparisons', for the session; a copy's line numbers are its
 // own, so the file's line links and marks stay with the file as published.
-// JSON is formatted here instead, in any bundle (prettyJsonCopy), the toggle
-// on it a third state: indented as JSON.stringify does, then folded.
+// JSON is formatted here instead, in any bundle (prettyJsonCopy).
 import { html } from 'lit'
 import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
@@ -28,11 +27,17 @@ export const PRETTY_ICON = html`<svg viewBox="0 0 16 16" width="13" height="13" 
 // them failed (`failed` of `of`).
 export const prettyTooltip = (copy, json = false) => copy?.status === 'loading' ? 'Pretty-printing…'
   : copy?.status === 'error' ? `Couldn't pretty-print${copy.of > 1 ? ` ${copy.failed} of ${copy.of} files` : ''}: ${copy.message}`
-  : json && state.bundleSourcePretty ? JSON_LAYOUTS[jsonLayout()] : 'Pretty-print'
+  : json && state.bundleSourcePretty ? JSON_LAYOUTS[state.bundleSourcePretty].tooltip : 'Pretty-print'
 
-// JSON's layouts while the toggle is on, as its tooltip tells them.
-const JSON_LAYOUTS = { indented: 'Pretty-printed, each value on a line of its own. Press to fold what fits on one.', folded: 'Pretty-printed, what fits on a line folded onto it. Press to show as published.' }
-const jsonLayout = () => (state.bundleSourcePretty === 'folded' ? 'folded' : 'indented')
+// JSON's layouts while the toggle is on: the width prettyJSON folds to, and
+// what its tooltip tells of it.
+const JSON_LAYOUTS = {
+  indented: { width: 0, tooltip: 'Pretty-printed, each value on a line of its own. Press to fold what fits on one.' },
+  folded: { width: 120, tooltip: 'Pretty-printed, what fits on a line folded onto it. Press to show as published.' },
+}
+
+// Whether a toggle shows JSON's third state, folded.
+export const prettyFolded = json => json && state.bundleSourcePretty === 'folded'
 
 // Bundle copies kept, the one read last last; each can run to megabytes.
 const KEPT_COPIES = 8
@@ -103,8 +108,8 @@ const versions = new Map()
 const comparisons = new Map()
 
 // JSON files by details and path: the text each was read from, whether it
-// can be formatted (JSON, not too large), and its copy in each layout once
-// one was asked for.
+// can be formatted (JSON, not too large), and its copy in the layout last
+// asked for.
 const jsonFiles = new WeakMap()
 
 const parses = text => {
@@ -115,24 +120,25 @@ function jsonFile(details, path, content) {
   let files = jsonFiles.get(details)
   if (!files) jsonFiles.set(details, files = new Map())
   let file = files.get(path)
-  if (file?.content !== content) files.set(path, file = { content, printable: printableSize(content) && parses(content), copies: {} })
+  if (file?.content !== content) files.set(path, file = { content, printable: printableSize(content) && parses(content), layout: null, copy: null })
   return file
 }
 
-// A JSON file's copy in the layout the toggle is in, made here the first time
-// it is asked for: ready, or an error where it would read otherwise than the
+// A JSON file's copy in the layout the toggle is in, made here as it is first
+// asked for in it: ready, or an error where it would read otherwise than the
 // file; null where it can't be.
 function prettyJsonCopy(details, path, content) {
-  const file = jsonFile(details, path, content), layout = jsonLayout()
+  const file = jsonFile(details, path, content), layout = state.bundleSourcePretty
   if (!file.printable) return null
-  if (!file.copies[layout]) {
+  if (file.layout !== layout) {
+    file.layout = layout
     try {
-      file.copies[layout] = { status: 'ready', text: prettyJsonText(content, { width: layout === 'indented' ? 0 : undefined }) }
+      file.copy = { status: 'ready', text: prettyJsonText(content, { width: JSON_LAYOUTS[layout].width }) }
     } catch (err) {
-      file.copies[layout] = { status: 'error', message: err?.message ?? String(err), retry: false }
+      file.copy = { status: 'error', message: err?.message ?? String(err), retry: false }
     }
   }
-  return file.copies[layout]
+  return file.copy
 }
 
 // Whether each file of a bundle or npm version can be formatted, by its
@@ -409,7 +415,7 @@ export function comparedCopy(base, other, side, path, content, notify) {
 // for a reason that may have passed: an npm version's, or a comparison's, all
 // again, once its request ended.
 export function togglePrettySource(json = false) {
-  state.bundleSourcePretty = state.bundleSourcePretty ? json && state.bundleSourcePretty !== 'folded' && 'folded' : 'indented'
+  state.bundleSourcePretty = state.bundleSourcePretty ? json && state.bundleSourcePretty === 'indented' && 'folded' : 'indented'
   if (state.bundleSourcePretty !== 'indented') return
   const failed = copy => copy.status === 'error' && copy.retry
   for (const [key, copy] of copies) if (failed(copy)) copies.delete(key)
