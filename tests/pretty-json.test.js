@@ -55,6 +55,14 @@ test('prettyJsonText pretty-prints a JSON text, keeping whether it ends in a lin
   for (const text of ['module.exports = {}', '{ // c\n "a": 1 }', '{"a":1,}', '﻿{"a":1}', '']) assert.equal(prettyJsonText(text), null, text)
 })
 
+test('prettyJSON gives up past its limit, which deep nesting reaches from a short text', () => {
+  const nested = `${'['.repeat(500)}${'0,'.repeat(100_000)}0${']'.repeat(500)}`
+  assert.throws(() => prettyJSON(JSON.parse(nested), { limit: 1_000_000 }), { name: 'RangeError', message: 'The copy would run past 1,000,000 characters.' })
+  assert.throws(() => prettyJsonText(nested), /would run past 16,777,216 characters/u)
+  assert.equal(prettyJSON([1, [2, 3]], { width: 0, limit: 29 }).length, 29, 'up to it')
+  assert.throws(() => prettyJSON([1, [2, 3]], { width: 0, limit: 28 }), RangeError)
+})
+
 test('prettyJsonText refuses a text of lone surrogates, or one its copy would read otherwise than', () => {
   assert.throws(() => prettyJsonText('["\uD800"]'), /lone surrogates/u)
   for (const text of ['{"a":1,"a":2}', '{"b":1,"2":2,"1":3}', '{"u":"a\\/b"}', '{"u":"\\u00e9"}', '["\\uD800"]', '[1.0]', '[1E3]', '[-0]', '[12345678901234567890]']) {

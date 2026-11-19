@@ -219,7 +219,7 @@ The Code and Compare tabs pretty-print JavaScript, TypeScript, JSX and CSS files
 The server checks that the output differs from the source only in layout.
 When 16 files are already waiting, it answers `429 pretty-busy`.
 Formatted copies are encrypted like the bundle where storage is encrypted (see [STORAGE-ENCRYPTION.md](../server-managed/STORAGE-ENCRYPTION.md)) and removed with it.
-JSON files of up to 4 MiB are pretty-printed in the viewer instead, in any bundle, held to the same: a file with a key given twice, keys out of the order JavaScript keeps them in, or an escape or number written otherwise than `JSON.stringify` writes it, is refused, as is one with lone surrogates.
+JSON files of up to 4 MiB are pretty-printed in the viewer instead, in any bundle, once the toggle is on, held to the same: a file with a key given twice, keys out of the order JavaScript keeps them in, or an escape or number written otherwise than `JSON.stringify` writes it, is refused, as is one with lone surrogates or whose copy would run past 16M characters.
 Compare's **Hide renamed names** and **Hide type-only changes** are worked out on the server; reviewed code is only parsed, never compiled or run.
 These requests check access before they work and again before they answer.
 

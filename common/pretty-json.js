@@ -30,26 +30,36 @@ function oneLine(value, room) {
 
 // `data`, a value JSON.parse returned, laid out as `JSON.stringify(data,
 // undefined, 2)` does, but for each object or array whose one-line form fits
-// its line within `width`, kept on it.
-export function prettyJSON(data, { width = 120 } = {}) {
+// its line within `width`, kept on it. Throws past `limit` characters, which
+// deep nesting can run to from a short text.
+export function prettyJSON(data, { width = 120, limit = Infinity } = {}) {
   const lines = []
+  let length = -1 // no line end before the first line
+  const push = line => {
+    if ((length += line.length + 1) > limit) throw new RangeError(`The copy would run past ${limit.toLocaleString('en')} characters.`)
+    lines.push(line)
+  }
   const write = (value, indent, head, tail) => {
     const line = oneLine(value, width - indent.length - head.length - tail.length)
     if (line !== null || !isContainer(value)) {
-      lines.push(`${indent}${head}${line ?? JSON.stringify(value)}${tail}`)
+      push(`${indent}${head}${line ?? JSON.stringify(value)}${tail}`)
       return
     }
     const array = Array.isArray(value), keys = array ? null : Object.keys(value)
     const count = array ? value.length : keys.length
-    lines.push(`${indent}${head}${array ? '[' : '{'}`)
+    push(`${indent}${head}${array ? '[' : '{'}`)
     for (let i = 0; i < count; i++) {
       write(array ? value[i] : value[keys[i]], `${indent}  `, array ? '' : `${JSON.stringify(keys[i])}: `, i < count - 1 ? ',' : '')
     }
-    lines.push(`${indent}${array ? ']' : '}'}${tail}`)
+    push(`${indent}${array ? ']' : '}'}${tail}`)
   }
   write(data, '', '', '')
   return lines.join('\n')
 }
+
+// The most characters a text's copy (prettyJsonText) runs to: four times the
+// largest file formatted, far past what a file not nested hundreds deep needs.
+const COPY_LIMIT = 16 * 1024 * 1024
 
 // A JSON text without the blanks between its tokens.
 const blankless = text => text.replaceAll(/("(?:[^"\\]+|\\.)*")|[\t\n\r ]+/gu, '$1')
@@ -61,7 +71,7 @@ export function prettyJsonText(text) {
   let value
   try { value = JSON.parse(text) } catch { return null }
   if (!text.isWellFormed()) throw new Error('Its text has lone surrogates.')
-  const copy = `${prettyJSON(value)}${text.endsWith('\n') ? '\n' : ''}`
+  const copy = `${prettyJSON(value, { limit: COPY_LIMIT })}${text.endsWith('\n') ? '\n' : ''}`
   if (JSON.stringify(JSON.parse(copy)) !== JSON.stringify(value)) throw new Error('The copy reads as another value.')
   if (blankless(text) !== blankless(copy)) throw new Error('The copy would change more than its layout: a key given twice, or an escape, a number or the order of keys written otherwise.')
   return copy

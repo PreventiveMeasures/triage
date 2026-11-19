@@ -35,6 +35,10 @@ mock.module('../ui/view/client-managed.js', { exports: {
   fetchNpmRenameDiff: () => Promise.reject(new Error('unexpected request')),
   fetchNpmRenameDiffs: () => Promise.reject(new Error('unexpected request')),
 } })
+// JSON's copies, counted as they are made.
+const prettyJson = await import('../common/pretty-json.js')
+let jsonCopies = 0
+mock.module('../common/pretty-json.js', { exports: { ...prettyJson, prettyJsonText: text => { jsonCopies++; return prettyJson.prettyJsonText(text) } } })
 const { comparedCopy, comparedPrintable, prettyCopy: copyOf, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } = await import('../ui/view/pretty-source.js')
 // Each copy asked for here notes its path once it comes, as a view repaints,
 // in the list of the test that asked: one that comes after its test ended
@@ -196,27 +200,38 @@ test('only a managed bundle\'s or npm version\'s minified code is offered pretty
   assert.equal(prettyPrintable(npm, { npm: npm.npm }, 'index.js', readable), false)
 })
 
-test('JSON is pretty-printed here, in any bundle, where that changes it, nothing asked of the server', () => {
+test('JSON is pretty-printed here, in any bundle, its copy made once the toggle is on, nothing asked of the server', () => {
   const files = { 'data.json': '{"a":1,"b":[1,2]}\n', 'laid.json': '{ "a": 1, "b": [1, 2] }\n', 'twice.json': '{"a":1,"a":2}', 'conf.json': '{ // c\n}' }
   const details = bundleOf(files), printable = path => prettyPrintable(details, {}, path, files[path])
+  const made = jsonCopies
   assert.equal(printable('data.json'), true, 'a local bundle\'s too')
-  assert.equal(printable('laid.json'), false, 'laid out as its copy would be')
+  assert.equal(printable('laid.json'), true, 'any JSON')
   assert.equal(printable('conf.json'), false, 'not JSON')
   assert.equal(printable('twice.json'), true, 'offered, to say why it can\'t be')
   assert.equal(prettyCopy(details, {}, 'data.json', files['data.json']), null, 'none while the toggle is off')
+  assert.equal(jsonCopies, made, 'none made while it is off')
   state.bundleSourcePretty = true
   assert.deepEqual(prettyCopy(details, managed, 'data.json', files['data.json']), { status: 'ready', text: files['laid.json'] })
+  assert.deepEqual(prettyCopy(details, managed, 'laid.json', files['laid.json']), { status: 'ready', text: files['laid.json'] })
   const refused = prettyCopy(details, {}, 'twice.json', files['twice.json'])
   assert.equal(refused.status, 'error')
   assert.match(prettyTooltip(refused), /^Couldn't pretty-print: The copy would change more than its layout/u)
+  prettyCopy(details, {}, 'data.json', files['data.json'])
+  assert.equal(jsonCopies, made + 3, 'each made once')
+  const nested = `${'['.repeat(500)}${'0,'.repeat(100_000)}0${']'.repeat(500)}`
+  assert.match(prettyTooltip(prettyCopy(bundleOf({ 'deep.json': nested }), {}, 'deep.json', nested)), /would run past 16,777,216 characters/u, 'nested past what its copy may run to')
   const huge = JSON.stringify(['x'.repeat(4 * 1024 * 1024)])
   assert.equal(prettyPrintable(bundleOf({ 'big.json': huge }), {}, 'big.json', huge), false, 'past what is formatted')
   assert.deepEqual(requests, [])
   assert.equal(renders.length, 0)
 })
 
-test('a comparison\'s JSON is pretty-printed here, in any comparison, nothing asked of the server', () => {
+test('a comparison\'s JSON is pretty-printed here, in any comparison, once the toggle is on, nothing asked of the server', () => {
   const base = bundleOf({ 'a.json': '{"v":1}\n' }), other = bundleOf({ 'a.json': '{"v":2}\n' })
+  const made = jsonCopies
+  assert.deepEqual(comparedCopy(base, other, 'base', 'a.json', '{"v":1}\n', () => {}), { status: 'off' }, 'not made while the toggle is off')
+  assert.equal(jsonCopies, made)
+  state.bundleSourcePretty = true
   assert.deepEqual(comparedCopy(base, other, 'base', 'a.json', '{"v":1}\n', () => {}), { status: 'ready', text: '{ "v": 1 }\n' })
   assert.deepEqual(comparedCopy(base, other, 'other', 'a.json', '{"v":2}\n', () => {}), { status: 'ready', text: '{ "v": 2 }\n' })
   assert.equal(comparedPrintable(base, other, 'other', 'a.json', '{"v":2}\n'), true)

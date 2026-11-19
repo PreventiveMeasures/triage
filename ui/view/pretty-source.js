@@ -96,41 +96,45 @@ const versions = new Map()
 // as the server was busy, is asked for alone (fileCopy).
 const comparisons = new Map()
 
-// JSON copies by details and path, each with the text it was made from.
-const jsonCopies = new WeakMap()
+// JSON files by details and path: the text each was read from, whether it
+// can be formatted (JSON, not too large), and its copy once one was asked for.
+const jsonFiles = new WeakMap()
 
-// A JSON file's copy, made here: ready, or an error where it would read
-// otherwise than the file; null where the file isn't JSON or is too large.
+const parses = text => {
+  try { JSON.parse(text); return true } catch { return false }
+}
+
+function jsonFile(details, path, content) {
+  let files = jsonFiles.get(details)
+  if (!files) jsonFiles.set(details, files = new Map())
+  let file = files.get(path)
+  if (file?.content !== content) files.set(path, file = { content, printable: printableSize(content) && parses(content), copy: null })
+  return file
+}
+
+// A JSON file's copy, made here the first time it is asked for: ready, or an
+// error where it would read otherwise than the file; null where it can't be.
 function prettyJsonCopy(details, path, content) {
-  let files = jsonCopies.get(details)
-  if (!files) jsonCopies.set(details, files = new Map())
-  const kept = files.get(path)
-  if (kept?.content === content) return kept.copy
-  let copy = null
-  if (printableSize(content)) {
+  const file = jsonFile(details, path, content)
+  if (file.printable && !file.copy) {
     try {
-      const text = prettyJsonText(content)
-      if (text !== null) copy = { status: 'ready', text }
+      file.copy = { status: 'ready', text: prettyJsonText(content) }
     } catch (err) {
-      copy = { status: 'error', message: err?.message ?? String(err), retry: false }
+      file.copy = { status: 'error', message: err?.message ?? String(err), retry: false }
     }
   }
-  files.set(path, { content, copy })
-  return copy
+  return file.copy
 }
 
 // Whether each file of a bundle or npm version can be formatted, by its
 // details (needsPrettyPrint, as the server tells an npm version's).
 const formattable = new WeakMap()
 
-// Whether the open file can be pretty-printed: JSON its copy changes, in any
-// bundle, or a formattable file of a managed bundle or an npm version.
+// Whether the open file can be pretty-printed: JSON, in any bundle, or a
+// formattable file of a managed bundle or an npm version.
 export function prettyPrintable(details, entry, path, content) {
   if (typeof content !== 'string') return false
-  if (jsonPrinted(path)) {
-    const copy = prettyJsonCopy(details, path, content)
-    return copy !== null && copy.text !== content
-  }
+  if (jsonPrinted(path)) return jsonFile(details, path, content).printable
   if (!(entry?.managedId || entry?.npm)) return false
   let files = formattable.get(details)
   if (!files) formattable.set(details, files = new Map())
@@ -364,7 +368,7 @@ async function loadComparison(key, comparison, base, other) {
 // JSON in any comparison, other code the server formats between two managed
 // bundles or two versions of a package.
 export function comparedPrintable(base, other, side, path, content) {
-  return jsonPrinted(path) ? prettyJsonCopy(side === 'base' ? base : other, path, content) !== null
+  return jsonPrinted(path) ? jsonFile(side === 'base' ? base : other, path, content).printable
     : renameDiffable(base, other) && prettyExtension(path) !== null && printableSize(content)
 }
 
@@ -373,10 +377,10 @@ export function comparedPrintable(base, other, side, path, content) {
 // `other`, `notify` called once it comes; the comparison's files asked for
 // the first time one is, whether or not the toggle is on, and one it brought
 // none of asked for alone once it ended. A text other than the side's file
-// has none. JSON, of any comparison, is formatted here.
+// has none. JSON, of any comparison, is formatted here, once the toggle is on.
 export function comparedCopy(base, other, side, path, content, notify) {
   const details = side === 'base' ? base : other
-  if (jsonPrinted(path)) return prettyJsonCopy(details, path, content)
+  if (jsonPrinted(path)) return state.bundleSourcePretty ? prettyJsonCopy(details, path, content) : { status: 'off' }
   const key = `${base.integrity}\0${other.integrity}`
   let comparison = comparisons.get(key)
   comparisons.delete(key)

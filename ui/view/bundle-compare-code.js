@@ -1237,8 +1237,8 @@ export class BundleCompareCode extends LitElement {
   // has fewer changed lines than the files' (`smaller`: formatting changed, as
   // a semicolon added to every line; an added file has nothing to compare).
   // Its copies (`copies`): the first failure of either, else one still
-  // coming, else their texts and hashes. Null for a file whose sides can't
-  // both be printed.
+  // coming, else one not made while the toggle is off (JSON's), else their
+  // texts and hashes. Null for a file whose sides can't both be printed.
   _printing(path, entry, contents) {
     const { kind, basePath = path, modified } = entry, { before, after } = contents
     if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after) return null
@@ -1246,7 +1246,7 @@ export class BundleCompareCode extends LitElement {
     if (!sides.every(([side, , file, text]) => text === '' || comparedPrintable(this.base, this.other, side, file, text))) return null
     const unreadable = sides.some(([, details, file, text]) => text !== '' && minified(details, file, text))
     const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
-    const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading')
+    const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading') ?? both.find(copy => copy.status === 'off')
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }
     const smaller = !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
     return { copies, minified: unreadable, smaller, applies: unreadable || smaller }
