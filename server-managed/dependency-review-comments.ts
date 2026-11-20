@@ -68,9 +68,10 @@ export function withFormatted<T extends DependencyReview>(reviewed: ReviewedDepe
 
 // Those of `reviews` `user` published of the versions `told` adds, by their
 // ids, each with the versions it is of, as its lockfiles lock each: of its
-// version, of an integrity it is locked with and of its patch, whole or
-// compared with a version it was (pull-dependency-reviews.ts reviewsOf,
-// comparedWith), or, `any`, with any version of its package.
+// version, of an integrity it is locked with and of its patch, whole,
+// compared with another package's version, or compared with a version it was
+// (pull-dependency-reviews.ts reviewsOf, comparedWith), or, `any`, with any
+// version of its package.
 interface Own { review: PublishedReview; pkgs: LockedPackage[] }
 function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string, any: boolean): Map<string, Own> {
   // Theirs by the version they are of, each version probed once.

@@ -16,8 +16,9 @@
 // tarball (locked-packages.ts), with an integrity. One from git, another
 // tarball (a mirror's too), or with no integrity can't be; a file of the
 // project's isn't. Its reviews are those of it, of an integrity it is locked
-// with, either whole, or compared with a version of its package: for a
-// version the pull request adds, one it was; for another, any. A patched
+// with, either whole, compared with any version of another package, or
+// compared with a version of its own: for a version the pull request adds,
+// one it was; for another, any. A patched
 // one's (`patch`) are of it as patched, by its patch's hash, its patch read
 // of the repository at its file, which its lockfile names, or which is found
 // where it names it by its hash alone (npm-patch.ts withPatchFiles):
@@ -99,18 +100,19 @@ export function reviewsOf(pkg: LockedPackage, reviews: ReviewsOf): PublishedRevi
   const hashes = hashesOf(pkg)
   return (reviews.get(`${pkg.name}@${pkg.version}`) ?? []).filter(review => hashes.includes(review.integrity) && (review.patchHash ?? '') === (pkg.patchHash ?? ''))
 }
-// Whether `review` is of `pkg` whole, or compared with one of `bases` of its
-// package (any, for `any`).
+// Whether `review` is of `pkg` whole, compared with a version of another
+// package (any), or compared with one of `bases` of its own package (any,
+// for `any`).
 export const comparedWith = (review: PublishedReview, pkg: LockedPackage, bases: string[] | 'any') => review.basePackage === null
-  || (review.basePackage === pkg.name && (bases === 'any' || bases.includes(review.baseVersion ?? '')))
+  || review.basePackage !== pkg.name || bases === 'any' || bases.includes(review.baseVersion ?? '')
 
 const ACCEPTING = new Set(['accept', 'accept-with-nits'])
 // Where `pkg`'s reviewers stand on it among `reviews`, those of its version,
 // of an integrity it is locked with, and of its patch: each one's latest
 // telling it, any rejecting it holding it unreviewed (`rejected`); those
 // accepting it passing it (`passing`), each once, by a full, accepting
-// review of theirs, whole or compared with one of `bases` of its package
-// (any, for `any`); and how many review it in its pull request's comments
+// review of theirs, whole, compared with another package's version, or
+// compared with one of `bases` of its own (any, for `any`); and how many review it in its pull request's comments
 // alone (`commented`), which count for it alone: whose reviews passing it,
 // else whose latest, are its comments'. Each reviewer too (`reviewers`), by
 // their login, their latest verdict, whether they pass it, and whether that
