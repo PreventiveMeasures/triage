@@ -134,12 +134,20 @@ Its sub-tabs are:
 
 - **Pull requests**: those whose versions want reviews or whose review fails, each a card that opens its popup.
   A selector orders them newest first (the default), most recently updated first, or fewest versions to review first.
-- **Versions**: every added version that wants reviews, once, with the pull requests that add it.
+  Pull requests that add only versions listed under others come after the rest, one line each, and can be hidden.
+- **Versions**: every added version that wants reviews, once, with the pull requests that add it; those lacking a review made in another are red.
 - **Default branch**, where anything there wants reviews: what each repository's default branch locks that wants reviews or fails them, and its lockfiles left unread.
 - **Reviews**: the reviews published to the team, revoked ones too, latest first, with their authors.
   Each author shows with their avatar and their name in the app, with their GitHub login in its tooltip.
 
-A version is listed under the first pull request that adds it, as one review passes it everywhere, and later pull requests that add it say so; a patched one by its patch, as each patch of it is reviewed apart.
+Where several pull requests add a version, its reviews in each are compared: who passes it and who rejects it there, by login.
+
+- Reviewed alike, one pull request lists it, the one with the fewest reviews left to make, and the others show it dimmed, naming that one.
+- A pull request lacking a review that counts in another (one made in that one's comments, say) shows it red, naming whose review and where.
+  Where each lacks a review of the other's, both are red; where one holds every review, it lists the version as usual.
+
+A patched version stands by its patch, as each patch of it is reviewed apart.
+A version's badge names who passes it so far (`alice 1/2`), the reader as `you`.
 
 The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
 A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.
