@@ -24,7 +24,7 @@ mock.module('../ui/view/client-managed.js', { exports: {
 } })
 const near = new Map()
 mock.module('../ui/view/lazy-render.js', { exports: { watchNearViewport(target, cb) { near.set(target, cb) }, unwatchNearViewport(target) { near.delete(target) } } })
-const { deltaBase, npmDelta, seedNpmDeltas } = await import('../ui/view/npm-delta.js')
+const { npmDelta, reviewBase, seedNpmDeltas } = await import('../ui/view/npm-delta.js')
 // Not connected: its watching asked of it alone, its updates none.
 const Delta = class extends customElements.get('npm-delta') { requestUpdate() {} }
 // A frame past, those asked within it asked for.
@@ -72,7 +72,14 @@ test('a row\'s lines are read once it nears the viewport, those asked within a f
   failed._unwatch()
   assert.equal(near.has(failed), false)
 
-  assert.deepEqual([deltaBase({ version: '2.1.3', was: ['2.1.3', '2.1.2'] }), deltaBase({ version: '1.0.0' })], ['2.1.2', '(empty)'], 'against the version it was, else whole')
+  assert.deepEqual([reviewBase({ name: 'ms', version: '2.1.3', was: ['2.1.3', '2.1.2'] }), reviewBase({ name: 'ms', version: '1.0.0' })], [{ name: 'ms', version: '2.1.2' }, null],
+    'against the version it was, else whole')
+  assert.deepEqual(reviewBase({ name: 'ms', version: '2.1.3', patch: { hash: 'a' }, was: ['2.1.3', '2.1.2'] }), { name: 'ms', version: '2.1.3' }, 'a patched one against the version it patches')
+  // Where the host's reviewed dependencies name them, the one they name, of its package or another; else none, whatever it was.
+  const named = { reviewedBases: true }
+  assert.deepEqual([reviewBase({ name: 'ms', version: '2.1.3', was: ['2.1.2'], base: { name: 'ms', version: '2.0.0' } }, named),
+    reviewBase({ name: '@fork/ms', version: '3.0.0', base: { name: 'ms', version: '2.1.3' } }, named), reviewBase({ name: 'ms', version: '2.1.3', was: ['2.1.2'] }, named)],
+  [{ name: 'ms', version: '2.0.0' }, { name: 'ms', version: '2.1.3' }, null])
 })
 
 test('fifty a request, two requests at once, the rest waiting their turn; one the server told none of, or that failed, failed; those told otherwise never asked', async () => {

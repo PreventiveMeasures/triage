@@ -240,7 +240,7 @@ import { AGENTS_READ_VERSION, type AuthoredCommit, type BranchTip, type BranchTi
 import { DEPENDENCIES_LABEL, ISSUES_CURSOR, ISSUES_READ_VERSION, OPEN_PULLS_READ, OPEN_PULLS_SIZES, repositoryIssues, repositoryItem, repositoryLabel, repositoryOpenPulls } from './repository-issues.ts'
 import { type DirectoryDependencies, type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits,
   type PullDependencies,
-  type PullDependencyStore, type PullRefs, lockfileFormat, pullDependenciesAt, pullRefs } from './pull-dependencies.ts'
+  type PullDependencyStore, type PullRefs, lockfileFormat, pullDependenciesAt, pullKey, pullRefs } from './pull-dependencies.ts'
 import { eachOf } from './queue.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, type PublishedReview, type RepoDependencyReview } from './repository-dependency-reviews.ts'
@@ -2315,6 +2315,13 @@ async function defaultTip(deps: ManagedHttpDeps, repoId: number, fullName: strin
   return { sha: read.value.sha, kept: read.kept }
 }
 
+// Repository `repoId`'s default branch, as last seen, else as selected; none
+// where it isn't selected.
+async function defaultBranchOf(deps: ManagedHttpDeps, repoId: number): Promise<string | null> {
+  const repo = (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId)
+  return repo ? repo.cachedDefaultBranch ?? repo.defaultBranch : null
+}
+
 // What the Pulse keeps of repository `repoId`'s pull requests merged, as
 // it tells by them whose its year's commits are (pulseCommits, agentMerges).
 const pulseMergesKey = (repoId: number) => `${repoId}\0pulse-merges\0${PULSE_YEAR_VERSION}`
@@ -2606,26 +2613,35 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   commits?: PullCommits) {
   const kept = pullDependencyKept(deps, repoId)
   const reading: { told?: PullDependencies } = {}
+  // Where its review is on, those of lockfiles it leaves out told to none,
+  // whoever asks.
+  const setting = await deps.db.repoDependencyReview(repoId)
+  // Where the host names each version's base (reviewed-dependencies.ts
+  // `base`), and its review is asked for and on, one into the default
+  // branch read without its merge base's lockfiles, nor its Stasis builds
+  // (`baseless`): the versions a base locked tell nothing then, every
+  // unreviewed one its head locks its own, and the branch's state is told
+  // apart (branchDependencyAnswer).
+  const into = review && deps.reviewedDependencies?.base && setting?.enabled ? await defaultBranchOf(deps, repoId) : null
   // With the branches they are of, where told, kept with them.
   const answered = commits ? { value: { baseRef: commits.baseRef, headRef: commits.headRef, fork: commits.fork, commits: `${commits.base}...${commits.head}` }, kept: true }
     : await keptAnswer(deps, `${repoId}\0pull-commits\0${PULL_DEPENDENCIES_READ}\0${number}`, async () => {
-      const { told, ...read } = await pullDependenciesAt(fullName, token, number, kept)
+      const { told, ...read } = await pullDependenciesAt(fullName, token, number, kept, undefined, undefined, into)
       reading.told = told
       return read
     }, undefined, false, stampOf(deps, repoId, fullName, token))
   // What its commits tell, as read, else as kept by them, else, no longer
   // kept, read again: by those given, without asking GitHub for them.
-  const held = reading.told ?? (typeof answered.value.commits === 'string' ? await kept.read(answered.value.commits) : null)
-  const pulled = { number, ...held ?? (await pullDependenciesAt(fullName, token, number, kept, undefined, commits)).told }
-  // Where its review is on, those of lockfiles it leaves out told to none,
-  // whoever asks.
-  const setting = await deps.db.repoDependencyReview(repoId)
+  const baseless = into !== null && answered.value.baseRef === into
+  const held = reading.told ?? (typeof answered.value.commits === 'string' ? await kept.read(pullKey(answered.value.commits, baseless)) : null)
+  const pulled = { number, ...held ?? (await pullDependenciesAt(fullName, token, number, kept, undefined, commits, into)).told }
   // With what the stasis.config.json files it holds to reach, each a
   // directory of its own, none waited for; a lockfile's versions those reach
   // not marked as its package manager's alone (withReach).
   const asked: GithubAsked = { github: false }
   const scoped = setting?.enabled ? withReach(heldDependencies({ ...pulled, lockfiles: [...pulled.lockfiles,
-    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, pulled.base, pulled.head, asked, pullRefs(answered.value.baseRef, answered.value.headRef, answered.value.fork))] },
+    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, pulled.base, pulled.head, asked, pullRefs(answered.value.baseRef, answered.value.headRef, answered.value.fork),
+      pulled.baseless === true)] },
   setting.lockfiles)) : pulled
   const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(scoped)) : null
   // Its review by the lockfiles they were told by, though they have changed
@@ -2658,18 +2674,19 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
 // What the stasis.config.json files repository `repoId`'s review holds to
 // (`scope`) have Stasis reach, each a directory of dependencies by its own
 // path (stasis-dependencies.ts stasisDirectory): at `head`, against `base`
-// where one is given. None is waited for: one not built yet is built behind
+// where one is given, but for a pull request read without its base
+// (`baseless`), whose base isn't built. None is waited for: one not built yet is built behind
 // the answer (stasisReader), told the branch its commit is of where `refs`
 // names it, a pull request's head's, or its base's, which holds `base`. An
 // open pull request's head that is a fork's (`refs.fork`) is no commit of
 // the repository's own, which Stasis refuses: nothing is built for it.
 function stasisDirectories(deps: ManagedHttpDeps, fullName: string, token: string, repoId: number, scope: LockfileScope, base: string | null, head: string,
-  asked: GithubAsked, refs: PullRefs = {}): Promise<DirectoryDependencies[]> {
+  asked: GithubAsked, refs: PullRefs = {}, baseless = false): Promise<DirectoryDependencies[]> {
   if (refs.fork) return Promise.resolve(stasisConfigs(scope).map(config => ({ paths: [config], error: 'stasis-failed', detail: 'commit-not-own' })))
   const reader = stasisReader(deps), reads = lockfileKept(deps, repoId)
   return Promise.all(stasisConfigs(scope).map(config => stasisDirectory(config, base, head,
     commit => reader.read({ repoId, fullName }, token, commit, config, commit === head ? refs.headRef : refs.baseRef),
-    (commit, held) => lockedAt(fullName, token, commit, reads, held, asked))))
+    (commit, held) => lockedAt(fullName, token, commit, reads, held, asked), baseless)))
 }
 
 // What reads repositories' Stasis dependencies, one a database: kept by it,
@@ -2952,41 +2969,46 @@ async function keptPullCommits(deps: ManagedHttpDeps, repoId: number, numbers: n
 }
 
 // The lines the versions wanting reviews of `answers` change, as their rows
-// show them (npm-delta.js deltaBase), a patched one's none, where they are
-// counted already: of public versions alone, those npm answered for in a day
-// (npmVersionStore), their integrities those npmDelta keys them by. `[name,
-// version, base, delta]` each, none counted here.
+// show them (npm-delta.js deltaBase): against the version the host names
+// (`base`, of its package or another) where it names them (`reviewedBases`),
+// else one it was; a patched one's none, where they are counted already: of
+// public versions alone, those npm answered for in a day (npmVersionStore),
+// their integrities those npmDelta keys them by. `[name, version, base,
+// delta]` each, and the base's package where it is another's, none counted here.
 async function teamDeltas(deps: ManagedHttpDeps, answers: object[]) {
-  const asked = new Map<string, [string, string, string]>()
-  for (const answer of answers as { lockfiles?: { added?: unknown; unreviewed?: unknown }[]; review?: { required?: number } }[]) {
+  const asked = new Map<string, [string, string, string, string]>()
+  for (const answer of answers as { lockfiles?: { added?: unknown; unreviewed?: unknown }[]; review?: { required?: number; reviewedBases?: unknown } }[]) {
     const required = answer.review?.required
     if (!Number.isSafeInteger(required)) continue
     for (const pkg of (answer.lockfiles ?? []).flatMap(dir => [...Array.isArray(dir.added) ? dir.added : [], ...Array.isArray(dir.unreviewed) ? dir.unreviewed : []]) as
-      { name?: unknown; version?: unknown; source?: unknown; was?: unknown; reviews?: unknown; rejected?: unknown; baseline?: unknown; reviewed?: unknown; unsupported?: unknown
-        patch?: unknown }[]) {
+      { name?: unknown; version?: unknown; source?: unknown; was?: unknown; base?: { name?: unknown; version?: unknown }; reviews?: unknown; rejected?: unknown; baseline?: unknown
+        reviewed?: unknown; unsupported?: unknown; patch?: unknown }[]) {
       if (pkg.source !== 'registry' || pkg.patch || typeof pkg.name !== 'string' || typeof pkg.version !== 'string' || !isExactVersion(pkg.version)) continue
       if (pkg.unsupported || pkg.baseline || pkg.reviewed || typeof pkg.reviews !== 'number' || (pkg.reviews >= required! && !pkg.rejected)) continue
-      const was = Array.isArray(pkg.was) ? pkg.was.find(prior => typeof prior === 'string' && prior !== pkg.version) as string | undefined : undefined
-      asked.set(`${pkg.name}\0${pkg.version}\0${was ?? '(empty)'}`, [pkg.name, pkg.version, was ?? '(empty)'])
+      const named = answer.review?.reviewedBases ? pkg.base : undefined
+      const was = answer.review?.reviewedBases || !Array.isArray(pkg.was) ? undefined : pkg.was.find(prior => typeof prior === 'string' && prior !== pkg.version) as string | undefined
+      const [otherName, base] = typeof named?.name === 'string' && typeof named.version === 'string' ? [named.name, named.version] : [pkg.name, was ?? '(empty)']
+      asked.set(`${pkg.name}\0${pkg.version}\0${base}\0${otherName}`, [pkg.name, pkg.version, base, otherName])
     }
   }
   if (asked.size === 0) return []
-  const versions = [...asked.values()].flatMap(([name, version, base]) => [{ name, version }, ...base === '(empty)' || !isExactVersion(base) ? [] : [{ name, version: base }]])
+  const versions = [...asked.values()].flatMap(([name, version, base, otherName]) => [{ name, version },
+    ...base === '(empty)' || !isExactVersion(base) ? [] : [{ name: otherName, version: base }]])
   const kept = await npmVersionStore(deps.db, deps.config.debug).readMany!(versions)
   const integrity = (name: string, version: string) => {
     const hit = kept.get(`${name}@${version}`)
     const dist = hit && Date.now() - hit.at < VERSION_KEPT_MS ? hit.json['dist'] : null
     return plainObject(dist) && typeof dist['integrity'] === 'string' ? dist['integrity'] : null
   }
-  const sides = [...asked.values()].flatMap(([name, version, base]) => {
-    const against = base === '(empty)' ? null : integrity(name, base), other = integrity(name, version)
-    return other && (base === '(empty)' || against) ? [{ name, version, base, key: [against, other] as [string | null, string] }] : []
+  const sides = [...asked.values()].flatMap(([name, version, base, otherName]) => {
+    const against = base === '(empty)' ? null : integrity(otherName, base), other = integrity(name, version)
+    return other && (base === '(empty)' || against) ? [{ name, version, base, otherName, key: [against, other] as [string | null, string] }] : []
   })
   if (sides.length === 0) return []
   const counted = await keptNpmDeltas(sides.map(({ key }) => key), npmDeltaStore<NpmDelta>(deps.db, deps.config.debug))
-  return sides.flatMap(({ name, version, base, key: [against, other] }) => {
+  return sides.flatMap(({ name, version, base, otherName, key: [against, other] }) => {
     const delta = counted.get(deltaKey(against, other))
-    return delta ? [[name, version, base, delta]] : []
+    return delta ? [[name, version, base, delta, ...otherName === name ? [] : [otherName]]] : []
   })
 }
 
@@ -5081,15 +5103,17 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   } finally { res.off('close', onClose) }
 }
 
-// GET /api/npm/deltas?versions=[[name, version, otherVersion], …]: the lines
-// each of up to MAX_ASKED_DELTAS versions changes against another, or
-// `(empty)`, as GET delta counts them, as lines of JSON as each is counted
-// (`{ name, version, otherVersion, …delta }`, or `{ name, version,
-// otherVersion, error, status }`), as a list's rows near the viewport ask
+// GET /api/npm/deltas?versions=[[name, version, otherVersion, otherName?], …]:
+// the lines each of up to MAX_ASKED_DELTAS versions changes against another,
+// of its package or of `otherName`, or `(empty)`, as GET delta counts them,
+// as lines of JSON as each is counted (`{ name, version, otherVersion,
+// otherName?, …delta }`, or `{ name, version, otherVersion, otherName?, error,
+// status }`), as a list's rows near the viewport ask
 // for them together (npm-delta.js), DELTAS_AT_ONCE at a time. Each read as
 // GET delta reads it, with the reader's access to its package, which is
-// checked again once it is counted: a private one's told only to a reader
-// who may still read it, none told to one whose session is gone.
+// checked again once it is counted, the other's package's too: a private
+// one's told only to a reader who may still read it, none told to one whose
+// session is gone.
 const MAX_ASKED_DELTAS = 50
 const DELTAS_AT_ONCE = 2
 // A version as npmDelta takes it: its integrity, and its files, loaded as
@@ -5102,10 +5126,11 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
   if (req.method !== 'GET') { send405(res, 'GET'); return }
   let asked: unknown = null
   try { asked = JSON.parse(params.get('versions') ?? '') } catch {}
-  if (!Array.isArray(asked) || asked.length === 0 || asked.length > MAX_ASKED_DELTAS || !asked.every(item => Array.isArray(item) && item.length === 3
-    && isNpmPackageName(item[0]) && isNpmPackageSpec(item[1]) && (item[2] === '(empty)' || isNpmPackageSpec(item[2])))) { sendJson(res, 400, { error: 'bad-package' }); return }
-  const versions = asked as [string, string, string][]
-  const reader = await npmReader(deps, cookie, [...new Set(versions.map(([name]) => name))], { handed: true })
+  if (!Array.isArray(asked) || asked.length === 0 || asked.length > MAX_ASKED_DELTAS || !asked.every(item => Array.isArray(item) && (item.length === 3
+    || (item.length === 4 && isNpmPackageName(item[3]) && item[2] !== '(empty)')) && isNpmPackageName(item[0]) && isNpmPackageSpec(item[1])
+    && (item[2] === '(empty)' || isNpmPackageSpec(item[2])))) { sendJson(res, 400, { error: 'bad-package' }); return }
+  const versions = (asked as string[][]).map(([name, version, otherVersion, otherName]) => [name, version, otherVersion, otherName ?? name] as [string, string, string, string])
+  const reader = await npmReader(deps, cookie, [...new Set(versions.flatMap(([name, , , otherName]) => [name, otherName]))], { handed: true })
   if (reader == null) { sendJson(res, 401, { error: 'unauthenticated' }); return }
   const controller = new AbortController()
   res.once('close', () => { if (!res.writableEnded) controller.abort() })
@@ -5113,16 +5138,15 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
   const kept = npmDeltaStore<NpmDelta>(deps.db, deps.config.debug), keptVersions = npmVersionStore(deps.db, deps.config.debug)
   const out = openLines(res)
   let stopped = false
-  await eachOf(versions, DELTAS_AT_ONCE, async ([name, version, otherVersion]) => {
+  await eachOf(versions, DELTAS_AT_ONCE, async ([name, version, otherVersion, otherName]) => {
     if (stopped || controller.signal.aborted) return
-    const asOne = { name, version, otherVersion }
-    let isPrivate = false, line: Record<string, unknown>
+    const asOne = { name, version, otherVersion, ...otherName === name ? {} : { otherName } }
+    let line: Record<string, unknown>, privateOf: string[] = []
     try {
-      const privileged = canReadPrivateNpm(reader, name)
-      const together = otherVersion === '(empty)' ? keptVersions : readTogether(keptVersions, [{ name, version }, { name, version: otherVersion }])
-      const [doc, old] = await Promise.all([readNpmVersion(name, version, privileged, controller.signal, together).then(found),
-        otherVersion === '(empty)' ? null : readNpmVersion(name, otherVersion, privileged, controller.signal, together).then(found)])
-      isPrivate = doc.private || old?.private === true
+      const together = otherVersion === '(empty)' ? keptVersions : readTogether(keptVersions, [{ name, version }, { name: otherName, version: otherVersion }])
+      const [doc, old] = await Promise.all([readNpmVersion(name, version, canReadPrivateNpm(reader, name), controller.signal, together).then(found),
+        otherVersion === '(empty)' ? null : readNpmVersion(otherName, otherVersion, canReadPrivateNpm(reader, otherName), controller.signal, together).then(found)])
+      privateOf = [...new Set([...doc.private ? [name] : [], ...old?.private ? [otherName] : []])]
       line = { ...asOne, ...await npmDelta(old ? deltaSide(old) : null, deltaSide(doc), kept) }
     } catch (err) {
       if (controller.signal.aborted) return
@@ -5131,9 +5155,9 @@ async function handleNpmDeltas(req: IncomingMessage, res: ServerResponse, deps: 
     }
     // A reader who lost their session, or their access to a private one,
     // while it was counted, is told nothing of it.
-    const current = await npmReader(deps, cookie, isPrivate ? [name] : [])
+    const current = await npmReader(deps, cookie, privateOf)
     if (current == null) { stopped = true; out.cut(); return }
-    if (isPrivate && !canReadPrivateNpm(current, name)) line = { ...asOne, error: 'package-not-found', status: 404 }
+    if (privateOf.some(one => !canReadPrivateNpm(current, one))) line = { ...asOne, error: 'package-not-found', status: 404 }
     if (!stopped && !await out.write(line)) stopped = true
   })
   if (!stopped) await out.end()

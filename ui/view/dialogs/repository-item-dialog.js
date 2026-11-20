@@ -18,7 +18,7 @@ import { flowText } from '../format.js'
 import { renderHighlighted } from '../render-finding.js'
 import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, agentIcon, agentName, branchOnGithub, issueState, sessionOnGithub, sessionRan } from '../repository-tiles.js'
 import { UNSUPPORTED_WHY, isPending, pullDependencies, readsDependencies, reviewFailures, reviewOf, subscribePullDependencies, unreviewedVersions } from '../pull-dependencies.js'
-import '../npm-delta.js'
+import { reviewBase } from '../npm-delta.js'
 import '../dependency-review-copy.js'
 import { managedRoutePath } from '../../../common/managed/routes.js'
 import { githubUser, githubUsers } from '../github-users.js'
@@ -266,27 +266,34 @@ class RepositoryItemDialog extends AppDialog {
   // it, one that can be, a patched one as patched, against the version it
   // patches where that was one, its patch alone, its patch read at `head`,
   // the commit its lockfiles were read at, where it is told its patch's
-  // file; its review; whether only devDependencies need it, whether
-  // it is patched; and where one not of npm's registry is from; and, one of
-  // npm's registry wanting reviews, unpatched, the lines it changes against
-  // the version it was, or whole (npm-delta.js). Another its lockfiles lock
+  // file; where the host's reviewed dependencies name the version to review
+  // it against (npm-delta.js reviewBase), of its package or another, that one
+  // in place of those it was, tagged; its review; whether only
+  // devDependencies need it, whether it is patched; and where one not of
+  // npm's registry is from; and, one of npm's registry wanting reviews,
+  // unpatched, the lines it changes against the version it is reviewed
+  // against, or whole (npm-delta.js). Another its lockfiles lock
   // (`other`), wanting reviews or failing them, by its version alone,
   // reviewed whole.
   renderPackage(pkg, review = null, other = false, head = null) {
     const { name, version, source, from, dev, was } = pkg
     const npm = (source === 'registry' || source === 'mirror') && version
-    const before = other ? undefined : was?.find(prior => prior !== version)
     const patch = pkg.patch?.path && head ? { hash: pkg.patch.hash, repoId: this.repository.repoId, commit: head, path: pkg.patch.path } : null
-    const base = patch && !other && was?.includes(version) ? version : before
+    const base = other ? null : reviewBase(pkg, review), before = base?.name === name && base.version !== version ? base.version : undefined
     const reviewed = npm && (!pkg.patch || patch) && review?.canReview && reviewOf(pkg, review) !== 'unsupported' ? managedRoutePath({ view: 'npm', packageName: name, packageSpec: version,
-      bundleTab: 'review', ...base ? { reviewPackage: name, reviewSpec: base } : {}, ...patch ? { patch } : {} }) : null
+      bundleTab: 'review', ...base ? { reviewPackage: base.name, reviewSpec: base.version } : {}, ...patch ? { patch } : {} }) : null
     const href = npm ? reviewed || (before && managedRoutePath({ view: 'npm', packageName: name, packageSpec: version, bundleTab: 'compare', compareSpec: before }))
       || managedRoutePath({ view: 'npm', packageName: name, packageSpec: version }) : null
+    const against = !other && review?.reviewedBases ? html`<span class="repo-item-tag" data-tooltip=${base
+      ? `Reviewed against ${base.name}@${base.version}, as the reviewed dependencies name it` : 'Reviewed whole, as the reviewed dependencies name no version to review it against'}>${base
+      ? `against ${base.name === name ? base.version : `${base.name}@${base.version}`}` : 'whole'}</span>` : nothing
     const label = html`${PACKAGE_ICON}<span class="repo-item-title">${name}${version ? html`<span class="repo-item-version">@${version}</span>` : nothing}</span>
       ${other ? nothing : was ? html`<span class="repo-item-was" data-tooltip-truncated data-tooltip=${`Was ${was.join(', ')}`}>from ${was.join(', ')}</span>`
         : html`<span class="repo-item-tag is-new" data-tooltip="Its lockfiles locked no version of it before">new</span>`}
+      ${against}
       ${this.renderReview(pkg, review)}
-      ${source === 'registry' && version && !pkg.patch && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${name} .version=${version} .base=${before ?? '(empty)'}></npm-delta>` : nothing}
+      ${source === 'registry' && version && !pkg.patch && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${name} .version=${version} .base=${base?.version ?? '(empty)'}
+        .baseName=${base?.name}></npm-delta>` : nothing}
       ${dev ? html`<span class="repo-item-tag" data-tooltip="Only devDependencies need it">dev</span>` : nothing}
       ${pkg.patch ? html`<span class="repo-item-tag" data-tooltip=${pkg.patch.path ? `pnpm patches it as it installs it, by ${pkg.patch.path}, which its reviews are of`
         : 'pnpm patches it as it installs it, by a patch whose file isn’t known, which reviews here can’t read'}>patched</span>` : nothing}

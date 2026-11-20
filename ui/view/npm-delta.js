@@ -1,6 +1,7 @@
 // The lines a version wanting reviews changes, beside its row in a list of
 // them (team-dependencies.js, dialogs/repository-item-dialog.js): against the
-// version it was (`base`), or, new, its whole package's (`(empty)`), as the
+// version it is reviewed against (`base`, of its package or another's,
+// `baseName`; reviewBase), or its whole package's (`(empty)`), as the
 // server counts them (GET /api/npm/deltas): `+x −y`, and, where declaration
 // files changed in types alone, which a reviewer may pass leaving them out,
 // `(+z −w -types)`; and `, binary` where binary files, which lines don't
@@ -50,18 +51,21 @@ const lines = told => count(told?.additions) === null || count(told?.deletions) 
 // What the server told of one, as held.
 const ready = (all, told) => ({ status: 'ready', until: Number.POSITIVE_INFINITY, ...all, typeless: lines(told.typeless), binary: told.binary === true })
 const failed = error => ({ status: 'error', until: Date.now() + RETRY_MS, error })
+// A delta's key: its version's, and its base's, of its package or `baseName`.
+const keyOf = (name, version, base, baseName = name) => `${name}\0${version}\0${base}\0${baseName}`
 
-// Version `version` of package `name`'s delta against `base`, as held, else
-// asked: `{ status }`, 'loading', then 'ready' with `additions`,
-// `deletions`, `typeless` and `binary`, or 'error' with its `error`.
-export function npmDelta(name, version, base) {
+// Version `version` of package `name`'s delta against `base`, a version of
+// its package or of `baseName`, as held, else asked: `{ status }`,
+// 'loading', then 'ready' with `additions`, `deletions`, `typeless` and
+// `binary`, or 'error' with its `error`.
+export function npmDelta(name, version, base, baseName = name) {
   const data = sessionHeld()
-  const key = `${name}\0${version}\0${base}`
+  const key = keyOf(name, version, base, baseName)
   const entry = data.get(key)
   if (entry && Date.now() < entry.until) return entry
   const loading = { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(key, loading)
-  asking.set(key, { asked: [name, version, base], loading })
+  asking.set(key, { asked: [name, version, base, ...baseName === name ? [] : [baseName]], loading })
   if (!framed) {
     framed = true
     if (globalThis.requestAnimationFrame) requestAnimationFrame(askTogether)
@@ -71,12 +75,12 @@ export function npmDelta(name, version, base) {
 }
 
 // Those told otherwise, as a team's Dependencies are (team-dependencies.js),
-// `[name, version, base, delta]` each, held as those asked for are, one
-// asked for meanwhile asked no more.
+// `[name, version, base, delta, baseName?]` each, held as those asked for
+// are, one asked for meanwhile asked no more.
 export function seedNpmDeltas(deltas) {
   const data = sessionHeld()
-  for (const [name, version, base, told] of deltas) {
-    const all = lines(told), key = `${name}\0${version}\0${base}`
+  for (const [name, version, base, told, baseName = name] of deltas) {
+    const all = lines(told), key = keyOf(name, version, base, baseName)
     if (!all || data.get(key)?.status === 'ready') continue
     asking.delete(key)
     data.set(key, ready(all, told))
@@ -132,7 +136,7 @@ function readOf(asked) {
   }
   return fetchNpmDeltas(asked.map(ask => ask.asked), told => {
     const all = lines(told)
-    settle(`${told.name}\0${told.version}\0${told.otherVersion}`, typeof told.error === 'string' ? failed(told.error)
+    settle(keyOf(told.name, told.version, told.otherVersion, told.otherName ?? told.name), typeof told.error === 'string' ? failed(told.error)
       : all ? ready(all, told) : failed('The server answered with no lines.'))
   }).then(() => {
     for (const key of [...left.keys()]) settle(key, failed('The server answered with none of it.'))
@@ -142,13 +146,21 @@ function readOf(asked) {
   })
 }
 
-// The version a row's delta is against: one it was, else none.
-export const deltaBase = pkg => pkg.was?.find(prior => prior !== pkg.version) ?? '(empty)'
+// The version a pull request's row is reviewed against, and its delta is
+// against, `{ name, version }`, none for its whole package: where the host's
+// reviewed dependencies name them (`review.reviewedBases`), the one they
+// name (`base`), of its package or another; else one it was, a patched
+// one's the version it patches where it was that.
+export function reviewBase(pkg, review) {
+  if (review?.reviewedBases) return pkg.base ?? null
+  const was = pkg.patch && pkg.was?.includes(pkg.version) ? pkg.version : pkg.was?.find(prior => prior !== pkg.version)
+  return was ? { name: pkg.name, version: was } : null
+}
 
 const counted = (additions, deletions) => html`<span class="is-added">+${additions.toLocaleString('en-US')}</span> <span class="is-deleted">−${deletions.toLocaleString('en-US')}</span>`
 
 class NpmDeltaElement extends LitElement {
-  static properties = { name: { attribute: false }, version: { attribute: false }, base: { attribute: false } }
+  static properties = { name: { attribute: false }, version: { attribute: false }, base: { attribute: false }, baseName: { attribute: false } }
 
   createRenderRoot() { return this }
 
@@ -156,7 +168,7 @@ class NpmDeltaElement extends LitElement {
     super()
     this._near = false
     // Drawn again as its own delta is read, or all may have changed.
-    this._notify = key => { if (this._near && (!key || key === `${this.name}\0${this.version}\0${this.base ?? '(empty)'}`)) this.requestUpdate() }
+    this._notify = key => { if (this._near && (!key || key === keyOf(this.name, this.version, this.base ?? '(empty)', this.baseName ?? this.name))) this.requestUpdate() }
   }
 
   connectedCallback() {
@@ -189,8 +201,9 @@ class NpmDeltaElement extends LitElement {
 
   render() {
     if (!this._near || !this.name || !this.version) return nothing
-    const entry = npmDelta(this.name, this.version, this.base ?? '(empty)')
-    const against = this.base && this.base !== '(empty)' ? `against ${this.base}` : 'the whole package'
+    const entry = npmDelta(this.name, this.version, this.base ?? '(empty)', this.baseName ?? this.name)
+    const based = this.base && this.base !== '(empty)' ? this.baseName && this.baseName !== this.name ? `${this.baseName}@${this.base}` : this.base : null
+    const against = based ? `against ${based}` : 'the whole package'
     if (entry.status === 'loading') return html`<span class="npm-delta is-loading" aria-label="Counting its lines">…</span>`
     if (entry.status === 'error') {
       return html`<span class="npm-delta is-error" data-tooltip=${entry.error} .tooltipContent=${html`<div class="compare-tip">
@@ -200,7 +213,7 @@ class NpmDeltaElement extends LitElement {
     // added and removed, those but for declaration files changed in types
     // alone, and that binary files changed too.
     const tip = html`<div class="compare-tip"><div class="compare-tip-head">Lines changed</div>
-      <div class="compare-tip-rows"><span class="compare-tip-label">Against</span><span>${this.base && this.base !== '(empty)' ? this.base : 'none, the whole package'}</span>
+      <div class="compare-tip-rows"><span class="compare-tip-label">Against</span><span>${based ?? 'none, the whole package'}</span>
         <span class="compare-tip-label">Added</span><span class="is-added">+${entry.additions.toLocaleString('en-US')}</span>
         <span class="compare-tip-label">Removed</span><span class="is-deleted">−${entry.deletions.toLocaleString('en-US')}</span>
         ${entry.typeless ? html`<span class="compare-tip-label">Types aside</span><span>${counted(entry.typeless.additions, entry.typeless.deletions)}</span>` : nothing}</div>

@@ -233,6 +233,30 @@ test('a review against another package\'s version passes any version it is of, n
   assert.deepEqual([answer.lockfiles[0].unreviewed, answer.review.toReview, answer.review.unreviewed], [[], 0, 0])
 })
 
+test('where the host names the version to review each against (`base`), each version added that `lookup` doesn\'t pass is told it, of its package or another, and reviews against it pass it; one read without its base tells only those it adds that pass none', async () => {
+  const [fresh, forked, bumped, vouched, whole] = [at('fresh', '2.0.0'), at('@fork/lib', '2.0.0'), at('lib', '3.0.0', { was: ['2.5.0'] }), at('vouched', '1.0.0'), at('whole', '1.0.0')]
+  const added = [fresh, forked, bumped, vouched, whole]
+  const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added, locked: added.map(bare) }] }
+  const bases = { 'fresh': { name: 'fresh', version: '1.0.0' }, '@fork/lib': { name: 'lib', version: '2.0.0' }, 'lib': { name: 'lib', version: '2.0.0' },
+    'vouched': { name: 'vouched', version: '0.9.0' } }
+  const asked = []
+  const reviewed = { lookup: dependency => Promise.resolve(dependency.name === 'vouched'),
+    base: dependency => { asked.push(dependency.name); return Promise.resolve(bases[dependency.name] ?? null) } }
+  const state = { required: 1, since: null, canReview: true, reviews: [passing(fresh, 'u1', '1.0.0'), passing(bumped, 'u1', '2.5.0')] }
+  const answer = await reviewedDependencies(told, state, { reviewed })
+  assert.deepEqual(asked.toSorted(), ['@fork/lib', 'fresh', 'lib', 'whole'], 'each but the one `lookup` passes')
+  assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(fresh), base: bases.fresh, reviews: 1, reviewers: [by('u1')] }, { ...strip(forked), base: bases['@fork/lib'], reviews: 0 },
+    { ...strip(bumped), base: bases.lib, reviews: 1, reviewers: [by('u1')] }, { ...strip(vouched), reviewed: true }, { ...strip(whole), reviews: 0 }],
+  'a review against the version it names passing it; one against a version it was still')
+  assert.deepEqual([answer.review.reviewedBases, answer.review.toReview], [true, 2])
+  assert.equal((await reviewedDependencies(told, state, { reviewed: { lookup: reviewed.lookup } })).lockfiles[0].added[0].reviews, 0, 'without `base`, none named, its review against none it was')
+
+  // Read without its base, every version its head locks its own: those passing none told alone, the rest counted as they are.
+  const baseless = await reviewedDependencies({ ...told, baseless: true }, state, { reviewed })
+  assert.deepEqual([baseless.lockfiles[0].added.map(pkg => pkg.name), baseless.lockfiles[0].more, baseless.review.toReview], [['@fork/lib', 'whole'], 0, 2])
+  assert.deepEqual((await reviewedDependencies({ ...told, baseless: true }, null)).lockfiles[0], { paths: ['package-lock.json'], more: 0, added: [] }, 'none told where no review judges them')
+})
+
 test('a version added past those told is judged as one added, against the versions it was, and counted as wanting a review', async () => {
   const added = Array.from({ length: MAX_ADDED }, (_, n) => at(`new-${String(n).padStart(3, '0')}`, '1.0.0'))
   const tail = at('zz-tail', '2.0.0', { was: ['1.0.0'] })
@@ -641,6 +665,30 @@ test('where the host registers reviewed dependencies, they replace the commit re
   assert.deepEqual(answer.body.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviewed === true]), [['left-pad', false], ['ms', false]])
   assert.deepEqual(asked.toSorted(), ['kept@1.0.0', 'left-pad@1.3.0', 'ms@2.1.3'])
   assert.ok(!read.some(request => request.includes('/git/')), 'nor the commit\'s lockfiles read')
+})
+
+test('where the host names each version\'s base, a pull request into the default branch is read without its merge base\'s lockfiles: every unreviewed version its head locks its own, told with the version named to review it against', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  const bases = { 'ms': { name: 'ms', version: '2.0.0' }, 'left-pad': { name: '@fork/left-pad', version: '1.0.0' } }
+  const host = { lookup: dependency => Promise.resolve(dependency.name === 'kept'), base: dependency => Promise.resolve(bases[dependency.name] ?? null) }
+  const send = api(db, users, { reviewedDependencies: host })
+  // Of a cold instance, holding no lockfile another test read.
+  coldInstance()
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
+  const read = github(t, PULL)
+  const ask = query => send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', ...query })}`)
+  const answer = await ask({ review: '1' })
+  assert.deepEqual(answer.body.lockfiles[0].added, [{ name: 'left-pad', version: '1.3.0', source: 'registry', base: bases['left-pad'], reviews: 0 },
+    { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' },
+    { name: 'ms', version: '2.1.3', source: 'registry', base: bases.ms, reviews: 0 }], 'kept, which `lookup` passes, left out; ms told none it was')
+  assert.deepEqual([answer.body.review.reviewedBases, answer.body.review.toReview, answer.body.review.unreviewed], [true, 2, 0])
+  assert.ok(!read.some(request => request.includes(`ref=${mergeBase}`)), 'none of its merge base\'s lockfiles read')
+  // Asked with no review, or into another branch, it is read against its merge base, kept apart.
+  read.length = 0
+  assert.deepEqual((await ask({})).body.lockfiles[0].added.map(pkg => [pkg.name, pkg.was ?? null]), [['left-pad', null], ['ms', ['2.1.2']]])
+  assert.ok(read.some(request => request.includes(`ref=${mergeBase}`)))
 })
 
 test('where the host reads an open pull request\'s comments, the reviews they make by those who review for the repository count for it', async t => {

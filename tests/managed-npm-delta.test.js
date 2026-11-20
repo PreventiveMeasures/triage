@@ -98,9 +98,17 @@ test('several versions\' lines in one request, each as GET delta answers it, as 
   assert.deepEqual(admin['@corp/lib@1.1.0 (empty)'], await alone(asked[2], 'admin'), 'counted for one with it')
   assert.equal(admin['@corp/lib@1.1.0 (empty)'].additions, 5)
 
+  // Against another package's version (`otherName`), as a reviewed base may be: each one's reader's access checked, a private one's refused one without it.
+  const across = byAsked((await send.lines(deltas([['@corp/lib', '1.1.0', '1.0.0', 'lib'], ['lib', '1.1.0', '1.1.0', '@corp/lib'], ['lib', '1.1.0', '1.0.0', 'lib']]), 'admin')).lines)
+  assert.deepEqual([across['@corp/lib@1.1.0 1.0.0'].otherName, across['@corp/lib@1.1.0 1.0.0'].additions, across['@corp/lib@1.1.0 1.0.0'].deletions],
+    ['lib', admin['lib@1.1.0 1.0.0'].additions, admin['lib@1.1.0 1.0.0'].deletions], 'counted as its own package\'s would be')
+  assert.deepEqual([across['lib@1.1.0 1.1.0'].additions, across['lib@1.1.0 1.0.0'].otherName], [0, undefined], 'its own package\'s told as it is asked without')
+  const refused = byAsked((await send.lines(deltas([['lib', '1.1.0', '1.1.0', '@corp/lib']]))).lines)
+  assert.deepEqual(refused['lib@1.1.0 1.1.0'], { name: 'lib', version: '1.1.0', otherVersion: '1.1.0', otherName: '@corp/lib', error: 'package-not-found', status: 404 })
   assert.equal((await send.lines(deltas(Array.from({ length: 50 }, (_, at) => ['lib', '1.1.0', at % 2 ? '1.0.0' : '(empty)'])))).lines.length, 50, 'fifty at once')
   assert.equal((await send.lines(deltas(Array.from({ length: 51 }, () => asked[0])))).status, 400, 'no more')
-  for (const bad of ['/api/npm/deltas', '/api/npm/deltas?versions=x', deltas([]), deltas([['lib', '1.1.0']]), deltas([['lib', '1.1.0', '']]), deltas([['Not A Name', '1.0.0', '(empty)']])]) {
+  for (const bad of ['/api/npm/deltas', '/api/npm/deltas?versions=x', deltas([]), deltas([['lib', '1.1.0']]), deltas([['lib', '1.1.0', '']]), deltas([['Not A Name', '1.0.0', '(empty)']]),
+    deltas([['lib', '1.1.0', '(empty)', 'other']]), deltas([['lib', '1.1.0', '1.0.0', 'Not A Name']]), deltas([['lib', '1.1.0', '1.0.0', 'lib', 'more']])]) {
     assert.deepEqual([(await send.lines(bad)).status, (await send(bad)).body], [400, { error: 'bad-package' }], bad)
   }
   assert.equal((await send.lines(deltas(asked), null)).status, 401)

@@ -146,6 +146,10 @@ test('a stasis.config.json is told as a directory of a pull request\'s dependenc
   'a version newly patched is new; one the lockfile locks that nothing reaches, not told; one no lockfile laying it out locks, told so')
   const branch = await stasisDirectory(config, null, head, read, lockedAt)
   assert.deepEqual([branch.added, branch.locked], [[], dir.locked], 'a default branch\'s, of no base, adds none')
+  asked.length = 0
+  const unbased = await stasisDirectory(config, base, head, read, lockedAt, true)
+  assert.deepEqual([asked, unbased.added.map(pkg => [pkg.name, pkg.was ?? null]), unbased.locked], [[head], [['gone', null], ['kept', null], ['ms', null], ['tool', null]], dir.locked],
+    'a pull request\'s read without its base: that never built, every version at the head new')
 
   // Reviewed as a lockfile's directory is: by its patch, one unlocked failing it.
   const state = { required: 1, since: null, canReview: true, lockfiles: { mode: 'include', paths: [config] }, reviews: [] }

@@ -10,7 +10,7 @@ import { startServer } from './server-common/standalone.ts'
 // reviews as a comment to copy (`formatDependencyReviews`). They replace a
 // repository's commit its dependencies are reviewed since.
 export { registerReviewedDependencies } from './server-managed/reviewed-dependencies.ts'
-export type { CommentReview, DependencyReviewEntry, FormatDependencyReviewsInput, ParseCommentsInput, ReviewComment, ReviewedDependencies, ReviewedDependency,
+export type { CommentReview, DependencyReviewEntry, FormatDependencyReviewsInput, ParseCommentsInput, ReviewComment, ReviewedBase, ReviewedDependencies, ReviewedDependency,
   ReviewedLockfile, ReviewedVersion, ReviewVerdict } from './server-managed/reviewed-dependencies.ts'
 
 const modes = ['e2e', 'managed', 'managed-e2e', 'e2e-managed'] as const

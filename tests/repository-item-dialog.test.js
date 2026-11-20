@@ -201,7 +201,7 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   assert.match(text, /href=\/npm\/ms@2\.1\.3\/review\/ms@2\.1\.2 [^]*class=repo-item-review is-passed data-tooltip=2 full, accepting reviews of 2 required><svg[^]*<\/svg>2\/2</u,
     'an update reviewed against the version it was, passed')
   assert.match(text, /href=\/npm\/tool@1\.0\.0\/review [^]*class=repo-item-review is-wanted data-tooltip=1 full, accepting review of 2 required>1\/2</u, 'a new one reviewed whole, wanting one more')
-  assert.match(text, />1\/2<\/span>\s*<npm-delta \.name=tool \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>/u, 'the lines it changes, whole')
+  assert.match(text, />1\/2<\/span>\s*<npm-delta \.name=tool \.version=1\.0\.0 \.base=\(empty\)\s*\.baseName=><\/npm-delta>/u, 'the lines it changes, whole')
   assert.equal(text.split('<npm-delta').length - 1, 2, 'of those wanting reviews alone: tool, and another its lockfiles lock')
   assert.match(text, /left-pad<span class="repo-item-version">@1\.3\.0[^]*>baseline</u)
   const own = text.slice(text.indexOf('repo-item-lockfiles'))
@@ -334,4 +334,18 @@ test('a list\'s later read of a popup\'s item shows as it says, what a list read
   const text = templateText(dialog.render())
   assert.match(text, /aria-label=Merged/u)
   assert.match(text, /<h4 class="repo-item-deps-heading">New dependency versions<\/h4>/u)
+})
+
+test('where the host names the version to review each against, a pull request\'s version is reviewed against that one, of its package or another, tagged so, and its lines counted so; else whole', () => {
+  const dialog = shown()
+  const review = { required: 1, canReview: true, reviewedBases: true }
+  const row = pkg => templateText(dialog.renderPackage(pkg, review))
+  const forked = row({ name: '@fork/ms', version: '3.0.0', source: 'registry', reviews: 0, base: { name: 'ms', version: '2.1.3' } })
+  assert.match(forked, /href=\/npm\/@fork\/ms@3\.0\.0\/review\/ms@2\.1\.3 /u)
+  assert.match(forked, /data-tooltip=Reviewed against ms@2\.1\.3, as the reviewed dependencies name it>against ms@2\.1\.3<\/span>/u)
+  assert.match(forked, /<npm-delta \.name=@fork\/ms \.version=3\.0\.0 \.base=2\.1\.3\s*\.baseName=ms><\/npm-delta>/u)
+  const own = row({ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0, was: ['2.1.1'], base: { name: 'ms', version: '2.0.0' } })
+  assert.match(own, /href=\/npm\/ms@2\.1\.3\/review\/ms@2\.0\.0 [^]*from 2\.1\.1<\/span>[^]*>against 2\.0\.0<\/span>/u, 'its own package\'s by its version alone, what it was told still')
+  const whole = row({ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0, was: ['2.1.1'] })
+  assert.match(whole, /href=\/npm\/ms@2\.1\.3\/review [^]*>whole<\/span>/u, 'none named, whole')
 })

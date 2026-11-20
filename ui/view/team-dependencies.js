@@ -39,7 +39,7 @@ import { icon } from './repository-tiles.js'
 import { sourcePackageIcon } from './source-file-icon.js'
 import { dialogTabs } from './header-tabs.js'
 import { withCompare } from './compare-load.js'
-import { deltaBase, seedNpmDeltas } from './npm-delta.js'
+import { reviewBase, seedNpmDeltas } from './npm-delta.js'
 import './dependency-review-copy.js'
 import { managedHistory } from './managed-history.js'
 import { managedRouteForIds, managedRoutePath } from '../../common/managed/routes.js'
@@ -364,7 +364,10 @@ const UNREACHED_SAID = 'by its lockfile alone: the stasis.config.json beside it 
 // which count there alone.
 function versionTip(pkg, review, { added, under, lacks, involved, here }) {
   const stance = reviewState(pkg, review)
-  const facts = [added ? ['Present', pkg.was?.join(', ') || 'none, new'] : null, pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
+  const named = added && review?.reviewedBases ? reviewBase(pkg, review) : null
+  const facts = [added ? ['Present', pkg.was?.join(', ') || 'none, new'] : null, added && review?.reviewedBases ? ['Reviewed against', named
+    ? `${named.name}@${named.version}, as the reviewed dependencies name it` : 'its whole package, as the reviewed dependencies name no version'] : null,
+    pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
     pkg.patch ? ['Patched', pkg.patch.path ?? 'by a patch whose file isn’t known, which reviews here can’t read'] : null,
     pkg.unreached ? ['Asked for', UNREACHED_SAID] : null,
     stance ? ['Review', stance.said ?? stance.label] : null, under ? ['Listed', `under ${under}`] : null,
@@ -410,11 +413,11 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
 export function versionRow(pkg, review, { others = [], adders = false, elsewhere = [], under = null, lacks = [], lacking = [], added = false, involved = [], here = null,
   repoId = null, head = null } = {}) {
   const npm = pkg.source === 'registry' && pkg.version
-  const before = pkg.patch && pkg.was?.includes(pkg.version) ? pkg.version : pkg.was?.find(prior => prior !== pkg.version)
+  const before = reviewBase(pkg, review)
   const patch = pkg.patch?.path && repoId && head ? { hash: pkg.patch.hash, repoId, commit: head, path: pkg.patch.path } : null
   const reviewing = review?.canReview && (!pkg.patch || patch) && reviewOf(pkg, review) !== 'unsupported'
   const href = npm ? managedRoutePath({ view: 'npm', packageName: pkg.name, packageSpec: pkg.version,
-    ...reviewing ? { bundleTab: 'review', ...before ? { reviewPackage: pkg.name, reviewSpec: before } : {}, ...patch ? { patch } : {} } : {} }) : null
+    ...reviewing ? { bundleTab: 'review', ...before ? { reviewPackage: before.name, reviewSpec: before.version } : {}, ...patch ? { patch } : {} } : {} }) : null
   const named = `${pkg.name}${pkg.version ? `@${pkg.version}` : ''}${pkg.patch ? ' (patched)' : ''}`
   const tip = versionTip(pkg, review, { added, under, lacks, involved, here })
   const inReview = elsewhere.filter(name => !lacking.includes(name))
@@ -422,7 +425,8 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
   const label = html`${sourcePackageIcon(pkg.ecosystem)}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
     ${pkg.patch ? html`<span class="team-deps-patched">patched</span>` : nothing}
     ${pkg.unreached ? html`<span class="team-deps-unreached" role="img" aria-label=${`Asked for ${UNREACHED_SAID}`}>!</span>` : nothing}
-    ${npm && !pkg.patch && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${deltaBase(pkg)}></npm-delta>` : nothing}
+    ${npm && !pkg.patch && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'}
+      .baseName=${before?.name}></npm-delta>` : nothing}
     ${reviewBadge(pkg, review)}
     ${under ? html`<span class="team-deps-under">${under}</span>` : nothing}
     ${lacking.length > 0 ? html`<span class="team-deps-lacks">${few(lacking)}</span>` : nothing}

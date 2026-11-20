@@ -300,7 +300,8 @@ function added({ lockfiles, review }) {
     const had = all.get(key)
     if (!had) { all.set(key, pkg); continue }
     const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, reviewers: _reviewers, ...version } = had
-    all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...patchedOf(had, pkg), ...bothReviewed(had, pkg, review) })
+    all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...!had.base && pkg.base ? { base: pkg.base } : {},
+      ...patchedOf(had, pkg), ...bothReviewed(had, pkg, review) })
   }
   const versions = [...all.values()]
   const fresh = versions.filter(pkg => !pkg.was)
