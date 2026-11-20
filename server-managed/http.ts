@@ -238,7 +238,8 @@ import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE,
 import { type KnownMerges, type SquashedPull, type Squashes, squashedPulls } from './repository-squashes.ts'
 import { AGENTS_READ_VERSION, type AuthoredCommit, type BranchTip, type BranchTips, COMMITS_CURSOR, type CommitPulls, repositoryAgents } from './repository-agents.ts'
 import { DEPENDENCIES_LABEL, ISSUES_CURSOR, ISSUES_READ_VERSION, OPEN_PULLS_READ, OPEN_PULLS_SIZES, repositoryIssues, repositoryItem, repositoryLabel, repositoryOpenPulls } from './repository-issues.ts'
-import { type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits, type PullDependencies,
+import { type DirectoryDependencies, type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits,
+  type PullDependencies,
   type PullDependencyStore, type PullRefs, lockfileFormat, pullDependenciesAt, pullRefs } from './pull-dependencies.ts'
 import { eachOf } from './queue.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
@@ -2582,7 +2583,7 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   const kept = pullDependencyKept(deps, repoId)
   const reading: { told?: PullDependencies } = {}
   // With the branches they are of, where told, kept with them.
-  const answered = commits ? { value: { baseRef: commits.baseRef, headRef: commits.headRef, commits: `${commits.base}...${commits.head}` }, kept: true }
+  const answered = commits ? { value: { baseRef: commits.baseRef, headRef: commits.headRef, fork: commits.fork, commits: `${commits.base}...${commits.head}` }, kept: true }
     : await keptAnswer(deps, `${repoId}\0pull-commits\0${PULL_DEPENDENCIES_READ}\0${number}`, async () => {
       const { told, ...read } = await pullDependenciesAt(fullName, token, number, kept)
       reading.told = told
@@ -2600,7 +2601,7 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   // not marked as its package manager's alone (withReach).
   const asked: GithubAsked = { github: false }
   const scoped = setting?.enabled ? withReach(heldDependencies({ ...pulled, lockfiles: [...pulled.lockfiles,
-    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, pulled.base, pulled.head, asked, pullRefs(answered.value.baseRef, answered.value.headRef))] },
+    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, pulled.base, pulled.head, asked, pullRefs(answered.value.baseRef, answered.value.headRef, answered.value.fork))] },
   setting.lockfiles)) : pulled
   const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(scoped)) : null
   // Its review by the lockfiles they were told by, though they have changed
@@ -2635,9 +2636,12 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
 // path (stasis-dependencies.ts stasisDirectory): at `head`, against `base`
 // where one is given. None is waited for: one not built yet is built behind
 // the answer (stasisReader), told the branch its commit is of where `refs`
-// names it, a pull request's head's, or its base's, which holds `base`.
+// names it, a pull request's head's, or its base's, which holds `base`. An
+// open pull request's head that is a fork's (`refs.fork`) is no commit of
+// the repository's own, which Stasis refuses: nothing is built for it.
 function stasisDirectories(deps: ManagedHttpDeps, fullName: string, token: string, repoId: number, scope: LockfileScope, base: string | null, head: string,
-  asked: GithubAsked, refs: PullRefs = {}) {
+  asked: GithubAsked, refs: PullRefs = {}): Promise<DirectoryDependencies[]> {
+  if (refs.fork) return Promise.resolve(stasisConfigs(scope).map(config => ({ paths: [config], error: 'stasis-failed', detail: 'commit-not-own' })))
   const reader = stasisReader(deps), reads = lockfileKept(deps, repoId)
   return Promise.all(stasisConfigs(scope).map(config => stasisDirectory(config, base, head,
     commit => reader.read({ repoId, fullName }, token, commit, config, commit === head ? refs.headRef : refs.baseRef),
@@ -2894,10 +2898,10 @@ type OpenPullsPage = { items?: unknown; more?: unknown; after?: unknown; commits
 // Each open pull request's base's and head's commits a page of them names,
 // into `commits` by its number.
 function pageCommits(page: OpenPullsPage, commits: Map<number, PullCommits>) {
-  for (const pull of Array.isArray(page.commits) ? page.commits as { number?: unknown; base?: unknown; head?: unknown; baseRef?: unknown; headRef?: unknown }[] : []) {
-    const { number, base, head, baseRef, headRef } = pull ?? {}
+  for (const pull of Array.isArray(page.commits) ? page.commits as { number?: unknown; base?: unknown; head?: unknown; baseRef?: unknown; headRef?: unknown; fork?: unknown }[] : []) {
+    const { number, base, head, baseRef, headRef, fork } = pull ?? {}
     if (Number.isSafeInteger(number) && typeof base === 'string' && SHA.test(base) && typeof head === 'string' && SHA.test(head)) {
-      commits.set(number as number, { base, head, ...pullRefs(baseRef, headRef) })
+      commits.set(number as number, { base, head, ...pullRefs(baseRef, headRef, fork) })
     }
   }
 }

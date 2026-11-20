@@ -124,7 +124,7 @@ function github(t, { compared = COMPARED, files = FILES, pullFiles = null, headA
     if (url.pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
     asked.push(at)
     if (url.pathname === '/repos/org/repo/pulls/5') {
-      return Promise.resolve(Response.json({ number: 5, base: { sha: tip, repo: { full_name: 'org/repo' }, ...refs.base }, head: { sha: headAt, ...refs.head } }))
+      return Promise.resolve(Response.json({ number: 5, ...refs.pull, base: { sha: tip, repo: { full_name: 'org/repo' }, ...refs.base }, head: { sha: headAt, ...refs.head } }))
     }
     if (url.pathname.startsWith(`/repos/org/repo/compare/${tip}...`)) {
       return Promise.resolve(Response.json({ merge_base_commit: { sha: baseAt }, files: compared }))
@@ -298,8 +298,10 @@ test('the branches a pull request\'s commits are of are told with them: its base
   assert.deepEqual(pullRefs('a.b/c-d_e@f', 'x'.repeat(255)), { baseRef: 'a.b/c-d_e@f', headRef: 'x'.repeat(255) })
 
   // Read by its number, of GitHub's own answer: its head's where its repository is its base's, not a fork's; none where GitHub names none.
-  const named = from => ({ base: { ref: 'main' }, head: { ref: 'bump-ms', repo: { full_name: from } } })
-  for (const [refs, told] of [[named('Org/Repo'), { baseRef: 'main', headRef: 'bump-ms' }], [named('fork/repo'), { baseRef: 'main' }], [{}, {}]]) {
+  // An open one whose head is a fork's is told so: no commit of the repository's own till it is merged.
+  const named = (from, state = 'open') => ({ pull: { state }, base: { ref: 'main' }, head: { ref: 'bump-ms', repo: { full_name: from } } })
+  for (const [refs, told] of [[named('Org/Repo'), { baseRef: 'main', headRef: 'bump-ms' }], [named('fork/repo'), { baseRef: 'main', fork: true }],
+    [named('fork/repo', 'closed'), { baseRef: 'main' }], [{}, {}]]) {
     github(t, { refs })
     const { told: _told, ...read } = await pullDependenciesAt('org/repo', 'token', 5, memory())
     assert.deepEqual(read, { ...told, commits: `${tip}...${head}` }, JSON.stringify(refs))

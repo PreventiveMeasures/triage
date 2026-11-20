@@ -1,6 +1,8 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { Buffer } from 'node:buffer'
-import { posix } from 'node:path'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
+import { join, posix } from 'node:path'
 import { brotliCompressSync } from 'node:zlib'
 import { isEvidenceFile } from '@exodus/stasis/audit-corrections'
 import { buildGitHubBundle, setCacheDir } from '@exodus/stasis/vfs-bundle'
@@ -128,12 +130,13 @@ function buildClientOf(client, note) {
 // `note` is told what the build log keeps of a build beside its stages: the
 // directory Stasis builds from (`project`), and each tree it downloads of the
 // repo (`download`, buildClientOf).
-export async function buildStasisBundle({ input, github, token, maxBytes, scopes, cacheDir = null }, client = createClient({ token }), progress = () => {}, note = () => {}) {
+export async function buildStasisBundle({ input, github, token, maxBytes, scopes, cacheDir = null, instanceDir = null }, client = createClient({ token }), progress = () => {}, note = () => {}) {
   const allowed = path => scopes.some(scope => !scope || path === scope || path.startsWith(scope + '/'))
   const buildClient = buildClientOf(client, note)
   // Upstream's disk cache keeps the npm tarballs and version documents, and
-  // the repo's tree, in `cacheDir`; without one (Vercel), nothing is kept on
-  // disk. This fresh worker inherits no application credentials but NPM_TOKEN.
+  // the repo's tree, in `cacheDir`; without one (Vercel), what it downloads
+  // of npm is kept in `instanceDir` (cacheOf), where one is given. This fresh
+  // worker inherits no application credentials but NPM_TOKEN.
   setCacheDir(cacheDir ?? false)
   progress('build')
   // Entries stasis.config.json lists are built from its directory, where
@@ -158,7 +161,7 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   const { bundle } = await buildGitHubBundle({
     github, sha: input.commit, ...(input.branch !== undefined && { branch: input.branch }), directory: project || undefined,
     entries: input.entries.map(entry => posix.relative(project || '.', entry)),
-    ...options, ...(named && { packageManager }), client: buildClient, ...(cacheDir === null && { cache: false }),
+    ...options, ...(named && { packageManager }), client: buildClient, ...await cacheOf(cacheDir, instanceDir),
   })
   const directory = bundle.repo?.directory ?? ''
   progress('scope')
@@ -200,12 +203,61 @@ export function lockfileDependencies(lockfile) {
   return [...found].toSorted(([a], [b]) => a < b ? -1 : 1).map(([, one]) => one)
 }
 
+// The npm tarballs and version documents a build downloads, kept as files in
+// `dir` for the builds after it in this instance, where no cache directory
+// is set (serverless, whose temporary directory lasts as long as its
+// instance): a store Stasis reads and writes in place of its cache, so a
+// bundle's build, a pull request's head and merge base, and the commits
+// after them download each version once. As much as `budget` bytes: found
+// past it, or with less than `spare` bytes left on its disk (Vercel's holds
+// 500 MB), the directory is emptied, and nothing is written past it. A file
+// is written whole or not at all, as what is read is held to its integrity,
+// a mismatch failing the build; one a stopped build left half-written is
+// removed.
+const INSTANCE_KEPT = new Set(['npm/tarballs', 'npm/versions'])
+const INSTANCE_BUDGET = 512 * 1024 * 1024
+const INSTANCE_SPARE = 64 * 1024 * 1024
+export async function instanceCache(dir, budget = INSTANCE_BUDGET, spare = INSTANCE_SPARE) {
+  let used = 0, written = 0
+  for (const name of await readdir(dir).catch(() => [])) {
+    if (name.endsWith('.tmp')) await rm(join(dir, name), { force: true }).catch(() => {})
+    else used += (await stat(join(dir, name)).catch(() => null))?.size ?? 0
+  }
+  const free = await statfs(dir).then(disk => disk.bavail * disk.bsize, () => Infinity)
+  if (used > budget || (used > 0 && free < spare)) {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+    used = 0
+  }
+  await mkdir(dir, { recursive: true }).catch(() => {})
+  const pathOf = (kind, name) => join(dir, createHash('sha256').update(`${kind}\0${name}`).digest('hex'))
+  return {
+    async read(kind, name) {
+      const bytes = INSTANCE_KEPT.has(kind) ? await readFile(pathOf(kind, name)).catch(() => null) : null
+      if (bytes === null || kind === 'npm/tarballs') return bytes
+      try { return JSON.parse(bytes.toString()) } catch { return null }
+    },
+    async write(kind, name, value) {
+      if (!INSTANCE_KEPT.has(kind)) return
+      const bytes = value instanceof Uint8Array ? value : Buffer.from(JSON.stringify(value))
+      if (used + bytes.length > budget) return
+      used += bytes.length
+      const path = pathOf(kind, name), tmp = `${path}.${++written}.tmp`
+      await writeFile(tmp, bytes).then(() => rename(tmp, path)).catch(() => rm(tmp, { force: true }).catch(() => {}))
+    },
+  }
+}
+
+// Stasis's `cache` option for a build: none with a cache directory set,
+// which it reads and writes; else the instance's own (instanceCache), where
+// it has a directory, and nothing kept where it has none.
+const cacheOf = async (cacheDir, instanceDir) => cacheDir === null ? { cache: instanceDir === null ? false : await instanceCache(instanceDir) } : {}
+
 // What the stasis.config.json at `input.config` has Stasis reach at
 // `input.commit`, for the repository's dependency review
 // (stasis-dependencies.ts): the npm versions of the lockfile it builds in
 // its directory, as `stasis github-bundle --lockfile-only` does, no bundle
 // serialized; none of a commit with no file there.
-export async function buildStasisLockfile({ input, github, token, cacheDir = null }, client = createClient({ token }), progress = () => {}, note = () => {}) {
+export async function buildStasisLockfile({ input, github, token, cacheDir = null, instanceDir = null }, client = createClient({ token }), progress = () => {}, note = () => {}) {
   const buildClient = buildClientOf(client, note)
   setCacheDir(cacheDir ?? false)
   progress('build')
@@ -216,7 +268,7 @@ export async function buildStasisLockfile({ input, github, token, cacheDir = nul
   await directoryConfig(configText, directory)
   note('project', { project: directory, configured: true })
   const { lockfile } = await buildGitHubBundle({ github, sha: input.commit, ...(input.branch !== undefined && { branch: input.branch }), directory: directory || undefined, lockfile: LOCK_FILE, client: buildClient,
-    ...(cacheDir === null && { cache: false }) })
+    ...await cacheOf(cacheDir, instanceDir) })
   progress('lockfile')
   if (!lockfile) throw new Error('Stasis built no lockfile of these entries')
   return lockfileDependencies(lockfile)

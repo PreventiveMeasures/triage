@@ -113,11 +113,13 @@ A build can take minutes, so no answer waits for one:
 
 - it is started the first time it is asked for at a commit, behind the answer, which says Stasis is still building (**Stasis building…**) and fails nothing yet; the page asks again every 30 seconds;
 - builds are made one at a time, in the worker bundle creation uses, and give way to a bundle being created; one that finds the worker busy is started when next asked for;
+- a build that ends within a minute of starting is followed at once by the one asked for last meanwhile, so a pull request's head and merge base are built back to back; after a longer one, the next starts when the page asks again;
+- what a build downloads from npm (tarballs and version documents) is kept on disk for the builds after it: in the server's cache directory, or, where there is none, as on Vercel, in the instance's temporary directory for as long as that instance lives, shared with bundle creation, up to 512 MiB, emptied when found past that or when its disk is nearly full (Vercel's holds 500 MB);
 - what is built is kept in the database for a month by the repository, the commit and the file's path, so each commit is built once;
 - a pull request's builds tell Stasis the branch each commit is of (its `branch` option), its base branch for the merge base and its head branch where that is the repository's own, so it needn't list tags and branches to hold the commit to the repository's history.
 
 A build that fails fails the review, and its directory names the failure's code. It is tried again when asked for an hour later, or a minute later where GitHub failed it.
-A fork's head is never built (`commit-not-own`); a merge base that can't be built, or has no such file, reaches nothing, so every version at the head is new.
+An open pull request whose head is a fork's is told `commit-not-own` at once, and nothing is built for it: Stasis builds only commits of the repository's own branches and tags. A merge base that can't be built, or has no such file, reaches nothing, so every version at the head is new.
 
 Where a `stasis.config.json` and a lockfile in its directory are both selected, the lockfile is reviewed whole as before and its versions are listed at once.
 Once Stasis has built the file, a team's [Dependencies tab](#a-teams-dependencies-tab) marks (**!**) each version the lockfile locks that none of its entries reaches: one only the package manager asks a review of.

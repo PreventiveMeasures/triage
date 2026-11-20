@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { createHash, randomUUID } from 'node:crypto'
-import { totalmem } from 'node:os'
-import { posix } from 'node:path'
+import { tmpdir, totalmem } from 'node:os'
+import { join, posix } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { BUNDLE_BUILD_TIMEOUT_MS, type BundleBuildLeaseStore } from './bundle-build-leases.ts'
 import { type BundleBuildDiagnostic, type BundleBuildStage, bundleBuildDiagnostic } from './bundle-build-diagnostics.js'
@@ -144,6 +144,10 @@ const MAX_ACTIVE_BUILDS = 1
 let behind: { yield: () => void; gone: Promise<void> } | null = null
 // Who builds behind no request, as `active` and the shared lease name it.
 const LOCKFILE_BUILDER = 'dependency-review'
+// Where builds keep what they download of npm for those after them in this
+// instance, where no cache directory is set, as on Vercel
+// (bundle-build-worker.js instanceCache).
+const INSTANCE_DIR = join(tmpdir(), 'triage-stasis-cache')
 async function yielded(): Promise<void> {
   const running = behind
   if (!running) return
@@ -203,7 +207,8 @@ export async function withBundleBuildLease<T>(db: BundleBuildLeaseStore, userId:
 // credentials or mutable Stasis state between requests.
 export function buildRepositoryBundle(userId: string, request: BuildRequest, signal: AbortSignal): Promise<BuiltBundle> {
   const context = { repoId: request.input.repoId, github: request.github, commit: request.input.commit, directory: request.input.directory, entryCount: request.input.entries.length }
-  return runBuild<BuiltBundle & { bytes: Uint8Array }, BuiltBundle>(userId, request, context, signal, message => {
+  const asked = { ...request, instanceDir: INSTANCE_DIR }
+  return runBuild<BuiltBundle & { bytes: Uint8Array }, BuiltBundle>(userId, asked, context, signal, message => {
     // A view of the bytes the worker handed over, not a copy of them.
     const { bytes } = message
     return { value: { bytes: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), directory: message.directory, filename: message.filename }, logged: { byteSize: bytes.length } }
@@ -218,7 +223,7 @@ export function buildRepositoryBundle(userId: string, request: BuildRequest, sig
 export async function buildRepositoryLockfile(db: BundleBuildLeaseStore, request: LockfileRequest, signal: AbortSignal): Promise<StasisDependency[]> {
   if (behind || active.size >= MAX_ACTIVE_BUILDS) throw new BundleBuildError(429, 'build-busy')
   const context = { repoId: request.input.repoId, github: request.github, commit: request.input.commit, config: request.input.config, branch: request.input.branch, lockfileOnly: true }
-  const asked = { ...request, lockfileOnly: true }
+  const asked = { ...request, instanceDir: INSTANCE_DIR, lockfileOnly: true }
   const yielding = new AbortController()
   let gone = () => {}
   behind = { yield: () => yielding.abort(new BundleBuildError(429, 'build-yielded')), gone: new Promise(resolve => { gone = resolve }) }

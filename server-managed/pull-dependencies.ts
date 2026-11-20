@@ -148,21 +148,24 @@ const readKey = (ref: string, { path, format, sha }: { path: string; format: For
 // base's moving on as it does, its head's with each push, both kept once it
 // is merged or closed. With the branches they are of, where told: its base's
 // (`baseRef`), whose history holds its merge base, and its head's
-// (`headRef`) where that is the repository's own, not a fork's.
-export interface PullRefs { baseRef?: string; headRef?: string }
+// (`headRef`) where that is the repository's own, not a fork's; and that an
+// open one's head is a fork's (`fork`), a commit of none of the repository's
+// branches till it is merged, which Stasis builds nothing of.
+export interface PullRefs { baseRef?: string; headRef?: string; fork?: true }
 export interface PullCommits extends PullRefs { base: string; head: string }
-// Those of `base` and `head` that are a branch's name.
-export const pullRefs = (base: unknown, head: unknown): PullRefs => ({ ...branchName(base) ? { baseRef: base } : {}, ...branchName(head) ? { headRef: head } : {} })
+// Those of `base` and `head` that are a branch's name, and `fork` where it is told.
+export const pullRefs = (base: unknown, head: unknown, fork?: unknown): PullRefs =>
+  ({ ...branchName(base) ? { baseRef: base } : {}, ...branchName(head) ? { headRef: head } : {}, ...fork === true ? { fork } : {} })
 async function pullCommits(fullName: string, token: string, number: number, fetchImpl: typeof fetch): Promise<PullCommits> {
   const pull = await githubJson(`${repoApi(fullName)}/pulls/${number}`, token, fetchImpl) as
-    { number?: unknown; base?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } | null }
+    { number?: unknown; state?: unknown; base?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } | null }
       head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } | null } } | null
   const base = pull?.base?.sha, head = pull?.head?.sha, repo = pull?.base?.repo?.full_name
   if (pull?.number !== number || typeof base !== 'string' || !SHA.test(base) || typeof head !== 'string' || !SHA.test(head)
     || typeof repo !== 'string' || repo.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(502, 'github-malformed')
   const from = pull.head?.repo?.full_name
   const own = typeof from === 'string' && from.toLowerCase() === repo.toLowerCase()
-  return { base, head, ...pullRefs(pull.base?.ref, own ? pull.head?.ref : undefined) }
+  return { base, head, ...pullRefs(pull.base?.ref, own ? pull.head?.ref : undefined, pull.state === 'open' && !own) }
 }
 
 // The pull request's merge base and the files it changes from it: as GitHub
