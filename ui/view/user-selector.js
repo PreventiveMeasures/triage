@@ -27,8 +27,8 @@ class UserSelector extends SearchableSelector {
   choices() { return userChoices(this.options, this._query) }
   optionIcon(option) {
     if (!option.initials) return nothing
-    return html`<span class="avatar" aria-hidden="true">${option.initials}${getPreviewRole() ? nothing : keyed(option.value, html`
-      <img alt="" loading="lazy" decoding="async" src=${`/api/avatar/${encodeURIComponent(option.value)}`}
+    return html`<span class="avatar" aria-hidden="true">${option.initials}${getPreviewRole() || !option.avatar ? nothing : keyed(option.avatar, html`
+      <img alt="" loading="lazy" decoding="async" src=${`/api/avatar/${encodeURIComponent(option.avatar)}`}
         @error=${event => { event.currentTarget.hidden = true }}>
     `)}</span>`
   }

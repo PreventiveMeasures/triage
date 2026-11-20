@@ -2603,7 +2603,7 @@ test('workspace history enforces roles and current report access before search, 
   assert.equal(manager.filters.users.some(user => user.id === `user:${fx.daveSess.userId}`), false)
   assert.equal((await read(managerCookie, `?repo=o%2Fr&actor=user:${fx.admin.id}&kind=triage&limit=1&page=2`)).total, 2)
   assert.equal((await read(adminCookie, `?repo=o%2Fother&actor=user:${fx.admin.id}&kind=triage`)).total, 1)
-  assert.deepEqual(manager.filters, { repos: ['o/r'], users: [{ id: `user:${fx.admin.id}`, login: 'alice', detail: null }] })
+  assert.deepEqual(manager.filters, { repos: ['o/r'], users: [{ id: `user:${fx.admin.id}`, userId: fx.admin.id, login: 'alice', name: null, detail: null }] })
   assert.equal((await read(managerCookie, '?kind=upload')).total, 1)
   assert.equal((await read(adminCookie, '?q=confidential&kind=triage')).total, 1)
 

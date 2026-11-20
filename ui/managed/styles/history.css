@@ -11,6 +11,78 @@
 .toolbar select {
   flex: 0 1 9rem;
 }
+/* The type filter, a customizable select: its options, and the one picked,
+   show the chips the rows do, in a menu like the user and repository
+   pickers'. */
+.kind-filter,
+.kind-filter::picker(select) {
+  appearance: base-select;
+}
+.toolbar .kind-filter {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  font-size: .76rem;
+}
+.kind-filter:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+/* Its ring inside its border, as the pickers beside it have theirs. */
+.kind-filter:focus-visible {
+  outline-offset: -2px;
+}
+.kind-filter > button {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex: 1;
+  min-width: 0;
+}
+.kind-filter selectedcontent {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+/* The pickers' chevron, its button's, in place of the select's triangle. */
+.kind-filter::picker-icon {
+  display: none;
+}
+.kind-filter > button svg {
+  flex: none;
+  width: .9rem;
+  height: .9rem;
+  margin-inline-start: auto;
+  color: var(--muted);
+}
+.kind-filter::picker(select) {
+  margin-block: 4px;
+  padding: .3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--ui-radius, 8px);
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 .6rem 1.6rem rgb(0 0 0 / .4);
+}
+.kind-filter option {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 1.9rem;
+  padding: .3rem .5rem;
+  border-radius: var(--ui-radius, 4px);
+  font-size: .76rem;
+}
+.kind-filter option::checkmark {
+  color: var(--accent);
+}
+.kind-filter option:is(:hover, :focus-visible) {
+  outline: none;
+  background: rgb(from var(--text) r g b / .05);
+}
+.kind-filter option:checked {
+  color: var(--accent);
+  background: rgb(from var(--accent) r g b / .1);
+}
 .toolbar repository-selector {
   flex: 1 1 12rem;
 }
@@ -81,12 +153,44 @@
   border-color: rgb(from var(--yellow) r g b / .25);
   background: rgb(from var(--yellow) r g b / .06);
 }
+.activity {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-width: 0;
+}
+.activity .avatar {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 1.35rem;
+  height: 1.35rem;
+  overflow: hidden;
+  border-radius: 50%;
+  font-size: .6rem;
+  font-weight: 600;
+}
+.activity .avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.activity .avatar img[hidden] {
+  display: none;
+}
 .activity-description,
 .detail {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: .75rem;
+}
+.activity-description {
+  flex: 1;
+  min-width: 0;
 }
 .actor {
   color: var(--text);
