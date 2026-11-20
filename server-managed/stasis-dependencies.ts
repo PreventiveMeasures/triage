@@ -123,8 +123,7 @@ export function stasisDependencyReader({ store, build, behind, stopping }: Reade
 // (`stasis-pending`); where the head's failed, or GitHub failed the base's,
 // why (`stasis-failed`). A base that couldn't be built of its own, as one of
 // no such file, reaches nothing, so every version at the head is new, as
-// it is for a pull request read without its base (`baseless`,
-// pull-dependencies.ts), whose base is never built.
+// where it is read without its base (`baseless`), which isn't built then.
 export async function stasisDirectory(config: string, base: string | null, head: string, read: (commit: string) => Promise<StasisRead>,
   locked: (commit: string, held: (path: string) => boolean) => Promise<CommitLockfiles>, baseless = false): Promise<DirectoryDependencies> {
   const paths = [config]

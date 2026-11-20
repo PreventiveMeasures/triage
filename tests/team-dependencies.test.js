@@ -177,7 +177,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
     'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
   assert.doesNotMatch(cards.slice(1).join(''), /dependency-review-copy/u, 'none where it formats none')
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
-  assert.match(cards[0], /rej[^]*<npm-delta \.name=rej [^]*shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)\s*\.baseName=><\/npm-delta>/u,
+  assert.match(cards[0], /rej[^]*<npm-delta \.name=rej [^]*shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>/u,
     'the lines each wanting reviews changes, a new one\'s whole; the one reviewed there already first, the one another lists after its own')
   assert.match(cards[1], />b#6<[^]*class="team-deps-count">3 deps<[^]*and 3 more versions past those listed</u, 'one whose versions wanting reviews aren\'t listed kept')
   assert.doesNotMatch(cards[1], /<li>/u)
@@ -684,18 +684,14 @@ test('however reviews fall across the pull requests adding a version, some pull 
   }
 })
 
-test('where the host names the version to review each against, a pull request\'s row reviews it against that one, of its package or another, and counts its lines so; else whole, whatever it was', async () => {
+test('where the host names bases, a row reviews its version against the one it names, of its package or another, its lines counted against one of its own; whole where it names none', async () => {
   const { versionRow } = await import('../ui/view/team-dependencies.js')
-  const review = { required: 1, canReview: true, reviewedBases: true, toReview: 2 }
-  const row = pkg => templateText(versionRow(pkg, review, { added: true }))
-  const forked = row({ name: '@fork/ms', version: '3.0.0', source: 'registry', reviews: 0, base: { name: 'ms', version: '2.1.3' } })
+  const review = { required: 1, canReview: true, reviewedBases: true }
+  const row = (pkg, more = review) => templateText(versionRow({ source: 'registry', version: '3.0.0', reviews: 0, ...pkg }, more, { added: true }))
+  assert.match(row({ name: 'ms', base: { name: 'ms', version: '2.0.0' } }), /href=\/npm\/ms@3\.0\.0\/review\/ms@2\.0\.0 [^]*<npm-delta \.name=ms \.version=3\.0\.0 \.base=2\.0\.0>/u)
+  const forked = row({ name: '@fork/ms', base: { name: 'ms', version: '2.1.3' } })
   assert.match(forked, /href=\/npm\/@fork\/ms@3\.0\.0\/review\/ms@2\.1\.3 /u)
-  assert.match(forked, /<npm-delta \.name=@fork\/ms \.version=3\.0\.0 \.base=2\.1\.3\s*\.baseName=ms><\/npm-delta>/u)
-  assert.match(forked, /Reviewed against<\/span><span>ms@2\.1\.3, as the reviewed dependencies name it/u)
-  const named = row({ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0, was: ['2.1.2'] })
-  assert.match(named, /href=\/npm\/ms@2\.1\.3\/review /u, 'none named: reviewed whole, not against the version it was')
-  assert.match(named, /\.base=\(empty\)\s*\.baseName=>/u)
-  assert.match(named, /Reviewed against<\/span><span>its whole package, as the reviewed dependencies name no version/u)
-  assert.match(templateText(versionRow({ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0, was: ['2.1.2'] }, { ...review, reviewedBases: undefined }, { added: true })),
-    /href=\/npm\/ms@2\.1\.3\/review\/ms@2\.1\.2 /u, 'where the host names none, against the version it was')
+  assert.doesNotMatch(forked, /<npm-delta/u, 'no lines counted against another package\'s')
+  assert.match(row({ name: 'ms', was: ['2.1.2'] }), /href=\/npm\/ms@3\.0\.0\/review [^]*\.base=\(empty\)>/u, 'none named: whole, not against the version it was')
+  assert.match(row({ name: 'ms', was: ['2.1.2'] }, { ...review, reviewedBases: undefined }), /href=\/npm\/ms@3\.0\.0\/review\/ms@2\.1\.2 /u, 'where the host names none')
 })

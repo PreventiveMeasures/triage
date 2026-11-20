@@ -70,9 +70,8 @@ export function withFormatted<T extends DependencyReview>(reviewed: ReviewedDepe
 // ids, each with the versions it is of, as its lockfiles lock each: of its
 // version, of an integrity it is locked with and of its patch, whole,
 // compared with another package's version, or compared with a version it was
-// or the one the host names (`bases`, by what each is asked; pull-dependency-
-// reviews.ts reviewsOf, comparedWith, basesOf), or, `any`, with any version
-// of its package.
+// or the base the host names it (`bases`; pull-dependency-reviews.ts reviewsOf,
+// comparedWith, basesOf), or, `any`, with any version of its package.
 interface Own { review: PublishedReview; pkgs: LockedPackage[] }
 function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string, any: boolean, bases: Map<string, ReviewedBase>): Map<string, Own> {
   // Theirs by the version they are of, each version probed once.
@@ -99,9 +98,7 @@ function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: str
 // reviews.ts stancesOf), an older one of that verdict not counting. A
 // version `lookup` fails to answer of keeps its review. Where the host reads
 // reviews of comments (`parseComments`), what a review was compared with is
-// its to weigh, so one compared with any version is given; else one compared
-// with the version the host names a version's base (`bases`, as its review
-// was told them, pull-dependency-reviews.ts reviewedDependencies) is too.
+// its to weigh, so one compared with any version is given.
 export async function formattedPull(reviewed: ReviewedDependencies | null, db: Pick<DependencyReviewStore, 'listOwnDependencyReviewsById'>, user: string,
   told: PullDependencies, state: RepoReviewState | null, pullRequest: { repository: string; number: number }, commented: PublishedReview[] = [],
   bases: Map<string, ReviewedBase> = new Map()): Promise<string | null> {

@@ -364,10 +364,7 @@ const UNREACHED_SAID = 'by its lockfile alone: the stasis.config.json beside it 
 // which count there alone.
 function versionTip(pkg, review, { added, under, lacks, involved, here }) {
   const stance = reviewState(pkg, review)
-  const named = added && review?.reviewedBases ? reviewBase(pkg, review) : null
-  const facts = [added ? ['Present', pkg.was?.join(', ') || 'none, new'] : null, added && review?.reviewedBases ? ['Reviewed against', named
-    ? `${named.name}@${named.version}, as the reviewed dependencies name it` : 'its whole package, as the reviewed dependencies name no version'] : null,
-    pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
+  const facts = [added ? ['Present', pkg.was?.join(', ') || 'none, new'] : null, pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
     pkg.patch ? ['Patched', pkg.patch.path ?? 'by a patch whose file isn’t known, which reviews here can’t read'] : null,
     pkg.unreached ? ['Asked for', UNREACHED_SAID] : null,
     stance ? ['Review', stance.said ?? stance.label] : null, under ? ['Listed', `under ${under}`] : null,
@@ -425,8 +422,8 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
   const label = html`${sourcePackageIcon(pkg.ecosystem)}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
     ${pkg.patch ? html`<span class="team-deps-patched">patched</span>` : nothing}
     ${pkg.unreached ? html`<span class="team-deps-unreached" role="img" aria-label=${`Asked for ${UNREACHED_SAID}`}>!</span>` : nothing}
-    ${npm && !pkg.patch && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'}
-      .baseName=${before?.name}></npm-delta>` : nothing}
+    ${npm && !pkg.patch && reviewOf(pkg, review) === 'wanted' && (!before || before.name === pkg.name)
+      ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'}></npm-delta>` : nothing}
     ${reviewBadge(pkg, review)}
     ${under ? html`<span class="team-deps-under">${under}</span>` : nothing}
     ${lacking.length > 0 ? html`<span class="team-deps-lacks">${few(lacking)}</span>` : nothing}

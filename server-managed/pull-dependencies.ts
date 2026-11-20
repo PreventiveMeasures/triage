@@ -87,9 +87,7 @@ export function touchesLockfile(paths: string[], changed: number): boolean | nul
 // A package version new to a directory, as its lockfile locks it, with its
 // integrity, which its reviews are held to; of a package its lockfiles locked
 // before, the versions of it they did (`was`, the highest first), none of one
-// new to it; and, where the host's reviewed dependencies name one, the
-// reviewed version to review it against (`base`, reviewed-dependencies.ts),
-// of its own package or another, in place of those.
+// new to it; and the version the host names to review it against (`base`).
 export type AddedPackage = LockedPackage & { was?: string[]; base?: { name: string; version: string } }
 // A directory's lockfiles the pull request changes (`paths`, those it adds,
 // modifies, removes or renames, by either name): the package versions they
@@ -107,14 +105,13 @@ export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage
 // in; and `cut` where it changes more files than GitHub lists, or lockfiles
 // in more directories than are read, with, where only those cut it and they
 // are few enough, the paths of those directories' lockfiles (`omitted`), for
-// a review holding to none of them to fail in nothing. Read without its
-// merge base's lockfiles (`baseless`, pullDependenciesAt), every version its
-// head's lock is new to it.
+// a review holding to none of them to fail in nothing; and whether it was
+// read without its merge base (`baseless`), every version new to it.
 export interface PullDependencies { base: string; head: string; lockfiles: DirectoryDependencies[]; cut: boolean; omitted?: string[]; baseless?: true }
 const MAX_OMITTED = 1000
 
 // What is told of a pull request, by the commits it is of, `${base}...${head}`,
-// and, read without its merge base's lockfiles, that it is (pullKey).
+// read without its merge base apart (pullKey).
 export const pullKey = (commits: string, baseless: boolean) => baseless ? `${commits}\0baseless` : commits
 export interface PullDependencyStore {
   read(key: string): Promise<PullDependencies | null>
@@ -340,7 +337,7 @@ export async function pullDependencies(fullName: string, token: string, number: 
 // GitHub has them now; and the branches they are of, where told (PullRefs).
 // Commits given that its own list of its files is no longer of are read as
 // GitHub has them now. One into branch `baselessInto` is read without its
-// merge base's lockfiles (`baseless`), every version its head's lock its own.
+// merge base's lockfiles (`baseless`).
 export async function pullDependenciesAt(fullName: string, token: string, number: number, kept: PullDependencyStore,
   fetchImpl: typeof fetch = globalThis.fetch, given?: PullCommits, baselessInto: string | null = null): Promise<PullRefs & { commits: string; told: PullDependencies }> {
   const { base, head, ...refs } = given ?? await pullCommits(fullName, token, number, fetchImpl)

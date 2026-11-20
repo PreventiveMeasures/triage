@@ -25,24 +25,11 @@ test('reviewed dependencies are registered once, a lookup and optionally a parse
   assert.equal(assembledReviewedDependencies(), assembled, 'the server assembled takes them')
 })
 
-test('the version `base` names to review each dependency against: of its own package or another, by its exact version; none where it names none, what isn\'t one, the dependency itself unpatched, or fails', async t => {
+test('the version `base` names each dependency, of its own package or another, as an exact version; none where it names none, or fails', async t => {
   const warned = t.mock.method(console, 'warn', () => {})
-  const of = (name, version, more = {}) => [`${name}@${version}`, { ecosystem: 'npm', lockfile: 'npm', name, version, integrity: 'sha512-x', ...more }]
-  const answers = { 'ms@2.1.3': { name: 'ms', version: '2.1.2' }, '@fork/ms@3.0.0': { name: 'ms', version: '2.1.3' }, 'new@1.0.0': null, 'gone@1.0.0': undefined,
-    'self@1.0.0': { name: 'self', version: '1.0.0' }, 'patched@1.0.0': { name: 'patched', version: '1.0.0' }, 'range@1.0.0': { name: 'range', version: '^1.0.0' },
-    'odd@1.0.0': { name: 'Not A Name', version: '1.0.0' }, 'text@1.0.0': 'ms@2.1.2' }
-  const asked = []
-  const base = dependency => {
-    asked.push(`${dependency.name}@${dependency.version}`)
-    return dependency.name === 'fails' ? Promise.reject(new Error('down')) : Promise.resolve(answers[`${dependency.name}@${dependency.version}`])
-  }
-  const dependencies = new Map([of('ms', '2.1.3'), of('@fork/ms', '3.0.0'), of('new', '1.0.0'), of('gone', '1.0.0'), of('self', '1.0.0'), of('patched', '1.0.0', { patchHash: 'a'.repeat(64) }),
-    of('range', '1.0.0'), of('odd', '1.0.0'), of('text', '1.0.0'), of('fails', '1.0.0')])
-  const named = await askBases(base, dependencies)
-  assert.deepEqual(Object.fromEntries(named), { 'ms@2.1.3': { name: 'ms', version: '2.1.2' }, '@fork/ms@3.0.0': { name: 'ms', version: '2.1.3' },
-    'patched@1.0.0': { name: 'patched', version: '1.0.0' } }, 'another package\'s too; a patched one against itself unpatched')
-  assert.equal(warned.mock.callCount(), 5, 'what names none of a version logged, and its failing')
-  assert.equal(asked.length, 10)
-  await askBases(base, dependencies)
-  assert.equal(asked.length, 11, 'each answer kept a while, one failing asked again')
+  const answers = { ms: { name: 'ms', version: '2.1.2' }, fork: { name: 'ms', version: '2.1.3' }, none: null, range: { name: 'range', version: '^1.0.0' }, odd: { name: 'Not A Name', version: '1.0.0' } }
+  const base = dependency => dependency.name === 'fails' ? Promise.reject(new Error('down')) : Promise.resolve(answers[dependency.name])
+  const named = await askBases(base, new Map(['ms', 'fork', 'none', 'range', 'odd', 'fails'].map(name => [name, { ecosystem: 'npm', lockfile: 'npm', name, version: '1.0.0', integrity: 'x' }])))
+  assert.deepEqual(Object.fromEntries(named), { ms: answers.ms, fork: answers.fork })
+  assert.equal(warned.mock.callCount(), 1, 'its failing logged')
 })

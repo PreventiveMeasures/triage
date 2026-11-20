@@ -233,7 +233,7 @@ test('a review against another package\'s version passes any version it is of, n
   assert.deepEqual([answer.lockfiles[0].unreviewed, answer.review.toReview, answer.review.unreviewed], [[], 0, 0])
 })
 
-test('where the host names the version to review each against (`base`), each version added that `lookup` doesn\'t pass is told it, of its package or another, and reviews against it pass it; one read without its base tells only those it adds that pass none', async () => {
+test('where the host names the version to review each against (`base`), each that `lookup` doesn\'t pass is told it, of its package or another, and reviews against it pass it; one read without its base tells only those it adds that pass none', async () => {
   const [fresh, forked, bumped, vouched, whole] = [at('fresh', '2.0.0'), at('@fork/lib', '2.0.0'), at('lib', '3.0.0', { was: ['2.5.0'] }), at('vouched', '1.0.0'), at('whole', '1.0.0')]
   const added = [fresh, forked, bumped, vouched, whole]
   const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added, locked: added.map(bare) }] }
@@ -245,11 +245,10 @@ test('where the host names the version to review each against (`base`), each ver
   const state = { required: 1, since: null, canReview: true, reviews: [passing(fresh, 'u1', '1.0.0'), passing(bumped, 'u1', '2.5.0')] }
   const namedBases = new Map()
   const answer = await reviewedDependencies(told, state, { reviewed, namedBases })
-  assert.deepEqual(asked.toSorted(), ['@fork/lib', 'fresh', 'lib', 'whole'], 'each but the one `lookup` passes')
-  assert.deepEqual(Object.fromEntries([...namedBases].map(([key, one]) => [JSON.parse(key).name, one])), { 'fresh': bases.fresh, '@fork/lib': bases['@fork/lib'], 'lib': bases.lib },
-    'each named told its caller too, by what it is asked, for the comment copying one\'s reviews to hold to')
+  assert.deepEqual(asked.toSorted(), ['@fork/lib', 'fresh', 'whole'], 'each `lookup` doesn\'t pass, of those wanting reviews')
+  assert.deepEqual([...namedBases.values()].map(one => `${one.name}@${one.version}`).toSorted(), ['fresh@1.0.0', 'lib@2.0.0'], 'each named told its caller, for the comment copying one\'s reviews')
   assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(fresh), base: bases.fresh, reviews: 1, reviewers: [by('u1')] }, { ...strip(forked), base: bases['@fork/lib'], reviews: 0 },
-    { ...strip(bumped), base: bases.lib, reviews: 1, reviewers: [by('u1')] }, { ...strip(vouched), reviewed: true }, { ...strip(whole), reviews: 0 }],
+    { ...strip(bumped), reviews: 1, reviewers: [by('u1')] }, { ...strip(vouched), reviewed: true }, { ...strip(whole), reviews: 0 }],
   'a review against the version it names passing it; one against a version it was still')
   assert.deepEqual([answer.review.reviewedBases, answer.review.toReview], [true, 2])
   assert.equal((await reviewedDependencies(told, state, { reviewed: { lookup: reviewed.lookup } })).lockfiles[0].added[0].reviews, 0, 'without `base`, none named, its review against none it was')

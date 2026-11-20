@@ -1,13 +1,13 @@
 // The reviewed dependencies a host keeps beyond the app, as it registers
 // them before the server is assembled (server.ts registerReviewedDependencies):
 // an async method telling whether a dependency, as a lockfile locks it, is
-// reviewed there (`lookup`), and, optionally, one naming the reviewed
-// version to review a dependency a pull request adds against (`base`), in
-// place of the versions its lockfiles locked before (pull-dependency-reviews.ts),
-// one reading the reviews of dependencies an open pull request's comments
-// make (`parseComments`, pull-comment-reviews.ts), and one formatting one's
-// own dependency reviews as a comment, for a copy button to give
-// (`formatDependencyReviews`, dependency-review-comments.ts). Registered, they replace the commit a repository
+// reviewed there (`lookup`), and, optionally, one naming the version to
+// review one a pull request adds against (`base`, pull-dependency-reviews.ts),
+// one reading the reviews of
+// dependencies an open pull request's comments make (`parseComments`,
+// pull-comment-reviews.ts), and one formatting one's own dependency reviews
+// as a comment, for a copy button to give (`formatDependencyReviews`,
+// dependency-review-comments.ts). Registered, they replace the commit a repository
 // is reviewed since (pull-dependency-reviews.ts): a version passes by the
 // reviews its teams publish, and those its pull request's comments make, as
 // many as the repository requires, or by `lookup`'s saying so, and is
@@ -16,10 +16,9 @@
 // comments' reviews count for the pull request alone, as it is open: the
 // host's to keep, as it is merged, among those `lookup` tells of.
 //
-// Each version is asked of `lookup`, and of `base`, once a request, as many
-// at once as ASK_AT_ONCE, its answer kept in this instance KEPT_MS; one
-// `lookup` fails to answer is unreviewed, and counted so (`unasked`), and
-// one `base` fails to answer for has none.
+// Each version is asked of `lookup` (and `base`) once a request, as many at once as
+// ASK_AT_ONCE, its answer kept in this instance KEPT_MS; one it fails to
+// answer is unreviewed, and counted so (`unasked`), or has no base.
 import { isExactVersion } from '@preventive/upstream/semver.js'
 import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import { type Lru, lru } from './lru.ts'
@@ -92,13 +91,11 @@ export interface DependencyReviewEntry {
 // What `formatDependencyReviews` formats: one's own reviews, never another's,
 // and the pull request whose versions they are of, where its copy asks.
 export interface FormatDependencyReviewsInput { reviews: DependencyReviewEntry[]; pullRequest?: { repository: string; number: number } }
-// A version to review a dependency against, as `base` names it: of its own
-// package or another, by its name and exact version.
+// A version to review a dependency against: of its package or another.
 export interface ReviewedBase { name: string; version: string }
 export interface ReviewedDependencies {
   lookup(dependency: ReviewedDependency): Promise<boolean>
-  // The reviewed version to review it against; none (null or undefined) for
-  // its whole package.
+  // The reviewed version to review it against; none for its whole package.
   base?(dependency: ReviewedDependency): Promise<ReviewedBase | null | undefined>
   parseComments?(input: ParseCommentsInput): Promise<CommentReview[]>
   // The comment to copy, none where it is empty, null or undefined.
@@ -165,17 +162,8 @@ export async function askReviewed(lookup: ReviewedDependencies['lookup'], depend
 }
 
 // The version `base` names to review each of `dependencies` against, by
-// their keys: none where it names none, or fails to answer; nor where it
-// names what isn't an exact version of an npm package, or the dependency
-// itself but as its patch changes it, which is logged.
+// their keys: none where it names no exact version of an npm package.
 export async function askBases(base: NonNullable<ReviewedDependencies['base']>, dependencies: Map<string, ReviewedDependency>): Promise<Map<string, ReviewedBase>> {
-  const named = new Map<string, ReviewedBase>()
-  for (const [key, answer] of await askEach(base, dependencies, 'name a base')) {
-    if (answer == null) continue
-    const dependency = dependencies.get(key)!, { name, version } = answer as Partial<ReviewedBase>
-    if (isNpmPackageName(name) && typeof version === 'string' && isExactVersion(version) && (name !== dependency.name || version !== dependency.version || dependency.patchHash)) {
-      named.set(key, { name, version })
-    } else console.warn('reviewed dependencies: named no version of a package as a base', `${dependency.name}@${dependency.version}`, JSON.stringify(answer))
-  }
-  return named
+  return new Map([...await askEach(base, dependencies, 'name a base')].flatMap(([key, one]) => isNpmPackageName(one?.name) && typeof one?.version === 'string'
+    && isExactVersion(one.version) ? [[key, { name: one.name, version: one.version }] as const] : []))
 }

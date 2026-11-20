@@ -17,7 +17,7 @@ Lockfiles under `node_modules` or in test fixtures are ignored, as no install us
 
 An open pull request's tile ([code-viewer.md](./code-viewer.md)) names its added versions, and the popup of any pull request lists them by directory under **New dependency versions**, marking new packages, the versions an update replaced, sources other than npm's registry, versions only devDependencies need, and [patched](#patched-versions) ones.
 Each npm version opens in the npm viewer, an update compared with the highest version it replaced.
-Where the host [names a base](#base) for each version, a version is reviewed against that one instead, of its own package or another, and a pull request into the default branch is read without its merge base (see [`base`](#base)).
+Where the host [names bases](#base), a version is reviewed against the one it names instead.
 
 ## When a pull request passes
 
@@ -265,19 +265,13 @@ Each version is asked once per request, up to sixteen at once, and an answer may
 
 ### `base`
 
-`base`, optional, names the reviewed version to review a version a pull request adds against, in place of the versions its lockfiles locked before.
-It receives the version as `lookup` does, and returns `{ name, version }`, an exact version of its own package or of another (a fork's original, a renamed package's old name), or null for none.
-It is asked about each reviewable version the pull request adds that `lookup` doesn't pass, up to sixteen at once, and an answer may be reused for a minute.
-An answer that isn't an exact version of an npm package, or that names the version itself unpatched, is ignored and logged, and so is a failure to answer; the version then has no base.
+`base`, optional, names the reviewed version to review a pull request's version against, in place of the versions its lockfiles locked before.
+It receives the version as `lookup` does, is asked about each one `lookup` doesn't pass, as `lookup` is, and returns `{ name, version }`, an exact version of its own package or another's (a fork's original, say), or null for none.
+Once it is registered:
 
-Once `base` is registered:
-
-- each such version's row in the popup and on the Dependencies tab links its review against the version named, and counts its lines against it; with none named, it is reviewed whole, whatever its lockfiles locked before;
-- a review against the version named counts for it, as one against a version it replaced does;
-- a pull request into the repository's default branch, where its review is on, is read without its merge base: none of the lockfiles there are read and no Stasis build of it is made, and every version its head locks is its own, so the popup lists those that `lookup`, reviews and its comments don't pass.
-  What the default branch itself locks is told apart, on the Dependencies tab's **Default branch**.
-
-A pull request into another branch is still read against its merge base, as one is when the review isn't asked for.
+- each version's row links its review against the version named, whole where none is, and counts its lines against it where it is of its own package;
+- a review against the version named counts, as one against a version it replaced does;
+- a pull request into the default branch, where its review is on, is read without its merge base (no lockfile read there, no Stasis build), every unreviewed version its head locks its own; the branch's own state shows on the Dependencies tab's **Default branch**.
 
 ### `parseComments`
 
