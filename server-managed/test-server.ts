@@ -388,17 +388,23 @@ function handleAdminCatalog(url: URL, method: string, res: ServerResponse): bool
     const query = (url.searchParams.get('q') ?? '').toLowerCase()
     const kind = url.searchParams.get('kind') ?? 'all'
     const actor = url.searchParams.get('actor') ?? '', repo = url.searchParams.get('repo') ?? ''
+    // Each actor a user by their login, with the name they show by, as the
+    // server reads them (activity.ts); else a legacy login.
     const actorKey = (login: string) => {
       const user = users.find(entry => entry.login === login)
       return user ? `user:${user.id}` : `legacy:${login}`
     }
+    const userOf = (login: string) => users.find(entry => entry.login === login) ?? null
     const accessible = history.filter(entry => role === 'admin' || reportMetadata.some(report => report.id === entry.reportId && canManageFixture(report)) || bundles.some(bundle => bundle.id === entry.bundleId && canManageFixture(bundle)))
+      .map(entry => ({ ...entry, actorId: userOf(entry.actor)?.id ?? null, actorName: userOf(entry.actor)?.name ?? null }))
     const filters = {
       repos: [...new Set(accessible.map(entry => entry.repo).filter(Boolean))].toSorted(),
-      users: [...new Set(accessible.map(entry => entry.actor))].toSorted().map(login => ({ id: actorKey(login), login, detail: null })),
+      users: [...new Set(accessible.map(entry => entry.actor))].toSorted().map(login => ({
+        id: actorKey(login), userId: userOf(login)?.id ?? null, login, name: userOf(login)?.name ?? null, detail: userOf(login) ? null : 'Legacy actor',
+      })),
     }
     const visible = accessible.filter(entry => (!repo || entry.repo === repo) && (!actor || actorKey(entry.actor) === actor)
-      && (kind === 'all' || entry.kind === kind) && [entry.actor, entry.action, entry.repo, entry.report, entry.finding].join(' ').toLowerCase().includes(query))
+      && (kind === 'all' || entry.kind === kind) && [entry.actor, entry.actorName, entry.action, entry.repo, entry.report, entry.finding].join(' ').toLowerCase().includes(query))
     const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 100))
     const page = Math.min(Math.max(1, Number(url.searchParams.get('page')) || 1), Math.max(1, Math.ceil(visible.length / limit)))
     sendJson(res, 200, { history: visible.slice((page - 1) * limit, page * limit), total: visible.length, page, limit, filters })

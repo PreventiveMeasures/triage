@@ -193,6 +193,13 @@ select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
+/* A text field is focus-visible however it was focused, a click included:
+   its own border shows it is focused, as the app's toolbar fields' does,
+   instead of a ring around it. */
+input:not([type=checkbox], [type=radio]):focus {
+  outline: none;
+  border-color: var(--accent);
+}
 button:disabled,
 select:disabled {
   opacity: .45;

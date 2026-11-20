@@ -78,3 +78,14 @@ test('user search matches names and logins while preserving membership and opaqu
   assert.equal(filtered.count, 1)
   assert.equal(filtered.total, 2, 'reset is not a user')
 })
+
+test('a user choice\'s avatar is the user its userId names where given, none for a legacy login, else its value', () => {
+  const [member, actor, legacy] = userOptions([
+    { id: 'u1', login: 'asec' },
+    { id: 'user:u2', userId: 'u2', login: 'reviewer', name: 'Riley Reviewer' },
+    { id: 'legacy:old', userId: null, login: 'old', detail: 'Legacy actor' },
+  ])
+  assert.deepEqual([member.value, member.avatar], ['u1', 'u1'])
+  assert.deepEqual([actor.value, actor.avatar, actor.displayLabel, actor.secondary], ['user:u2', 'u2', 'Riley Reviewer', '@reviewer'])
+  assert.deepEqual([legacy.value, legacy.avatar, legacy.initials], ['legacy:old', null, 'O'])
+})

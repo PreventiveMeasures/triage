@@ -26,8 +26,11 @@ export interface ActivityContext {
   repo: string | null
 }
 
+// `actor` is the login of who acted as it is now, else the one recorded;
+// `actorId` the user they are (null for a legacy login), and `actorName` the
+// name they chose to show, as it is now.
 export type ActivityEntry = {
-  id: string; kind: string; actor: string | null; action: string
+  id: string; kind: string; actor: string | null; actorId: string | null; actorName: string | null; action: string
   repo: string | null; reportId: string | null; report: string | null
   finding: string | null; at: number
 }
@@ -48,7 +51,8 @@ export interface ActivityQuery {
 
 export interface ActivityFilters {
   repos: string[]
-  users: { id: string; login: string; detail: string | null }[]
+  // `id` is the actor's filter key; `userId` the user, null for a legacy login.
+  users: { id: string; userId: string | null; login: string; name: string | null; detail: string | null }[]
 }
 
 export interface ActivityStore {
@@ -175,9 +179,10 @@ export function activityMethods(db: ManagedSql): ActivityStore {
       }
       const history = rows.map(({ total: _total, ...entry }) => entry)
       const filters: ActivityFilters = { repos: [], users: [] }
-      for (const row of (await stmts.filters.all(scope)) as { facet: string; id: string; login: string; detail: string | null }[]) {
+      type FacetRow = { facet: string; id: string; userId: string | null; login: string; name: string | null; detail: string | null }
+      for (const row of (await stmts.filters.all(scope)) as FacetRow[]) {
         if (row.facet === 'repo') filters.repos.push(row.id)
-        else filters.users.push({ id: row.id, login: row.login, detail: row.detail })
+        else filters.users.push({ id: row.id, userId: row.userId, login: row.login, name: row.name, detail: row.detail })
       }
       return { history, total, page: currentPage, limit, filters }
     },
@@ -186,14 +191,17 @@ export function activityMethods(db: ManagedSql): ActivityStore {
 
 // Both rows and selector choices come from the authorized source. Keep legacy
 // login-only actors separate: a historical login is not proof of user identity.
+// A user shows by their login and name as they are now, as in the selector.
 function activityStatements(db: ManagedSql, source: string) {
   const activity = `WITH events AS (${source}), activity AS (
-    SELECT events.*, COALESCE('user:' || actorId, 'legacy:' || actor) AS actorKey FROM events
+    SELECT e.id, e.kind, COALESCE(u.login, e.actor) AS actor, e.actorId, u.name AS actorName, e.action,
+      e.repo, e.reportId, e.report, e.finding, e.at, COALESCE('user:' || e.actorId, 'legacy:' || e.actor) AS actorKey
+    FROM events e LEFT JOIN managed_user u ON u.id = e.actorId
   )`
-  const filtered = `${activity} SELECT id, kind, actor, action, repo, reportId, report, finding, at FROM activity
+  const filtered = `${activity} SELECT id, kind, actor, actorId, actorName, action, repo, reportId, report, finding, at FROM activity
     WHERE (:kind = 'all' OR kind = :kind)
     AND (:repo = '' OR repo = :repo) AND (:actor = '' OR actorKey = :actor)
-    AND (:query = '' OR instr(lower(coalesce(actor, '') || ' ' || action || ' ' ||
+    AND (:query = '' OR instr(lower(coalesce(actor, '') || ' ' || coalesce(actorName, '') || ' ' || action || ' ' ||
       coalesce(repo, '') || ' ' || coalesce(report, '') || ' ' || coalesce(finding, '')), lower(:query)) > 0)`
   // A page's rows each carry the total, so the source is read once for both;
   // the selector choices, repositories then users, once between them.
@@ -202,13 +210,14 @@ function activityStatements(db: ManagedSql, source: string) {
     rows: db.prepare(`SELECT filtered.*, count(*) OVER () AS total FROM (${filtered}) AS filtered ORDER BY at DESC,
       CASE WHEN kind = 'triage' THEN CAST(substr(id, instr(id, ':') + 1) AS INTEGER) ELSE 0 END DESC,
       id DESC LIMIT :limit OFFSET :offset`),
-    filters: db.prepare(`${activity} SELECT 'repo' AS facet, repo AS id, repo AS login, NULL AS detail, repo AS sort, '' AS tiebreak
+    filters: db.prepare(`${activity} SELECT 'repo' AS facet, repo AS id, NULL AS userId, repo AS login, NULL AS name, NULL AS detail,
+      repo AS sort, '' AS tiebreak
       FROM (SELECT DISTINCT repo FROM activity WHERE repo IS NOT NULL AND repo <> '') AS repos
-      UNION ALL SELECT 'user' AS facet, a.actorKey AS id, COALESCE(u.login, a.actor, a.actorId) AS login,
-      CASE WHEN a.actorId IS NULL THEN 'Legacy actor' ELSE NULL END AS detail, COALESCE(u.login, a.actor, a.actorId) AS sort, a.actorKey AS tiebreak FROM (
-        SELECT actorKey, actorId, actor, ROW_NUMBER() OVER (PARTITION BY actorKey ORDER BY at DESC, id DESC) AS position
+      UNION ALL SELECT 'user' AS facet, a.actorKey AS id, a.actorId AS userId, COALESCE(a.actor, a.actorId) AS login, a.actorName AS name,
+      CASE WHEN a.actorId IS NULL THEN 'Legacy actor' ELSE NULL END AS detail, COALESCE(a.actor, a.actorId) AS sort, a.actorKey AS tiebreak FROM (
+        SELECT actorKey, actorId, actor, actorName, ROW_NUMBER() OVER (PARTITION BY actorKey ORDER BY at DESC, id DESC) AS position
         FROM activity WHERE actorKey IS NOT NULL AND actorKey <> 'legacy:'
-      ) a LEFT JOIN managed_user u ON u.id = a.actorId WHERE a.position = 1
+      ) a WHERE a.position = 1
       ORDER BY facet, sort, tiebreak`),
   }
 }

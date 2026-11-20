@@ -246,6 +246,9 @@ Unchanged edits, failed requests and deduplicated uploads add no entries.
 Upload and management entries survive content deletion and account renames.
 Triage history is kept in full unless `TRIAGE_HISTORY_LIMIT` bounds it per finding, and explicit triage deletion removes it.
 Older entries that recorded only a login are never attributed to a current account.
+An entry shows its actor by the name they chose on their profile, as it is now, over their avatar, with their GitHub login in its tooltip, and by their login where they have no name; the user filter names them the same way.
+An older entry with only a login shows that login, with no avatar.
+Search matches either.
 
 The **Users** page derives Last activity from the user's latest retained history entry, so reading pages counts for nothing.
 Last seen tracks sign-ins separately.

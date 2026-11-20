@@ -1130,3 +1130,41 @@ test('an admin opens the repositories\' risk page from its button beside Aliases
   page.session = { ...adminSession, role: 'manage' }
   assert.equal(templates(page.render()).some(template => template.strings.join('').includes('class="repository-pages"')), false, 'an admin\'s alone')
 })
+
+test('history rows show who acted by the name they chose over their avatar, their login in its tooltip, and a legacy login alone', () => {
+  const page = createPage(customElements.get('managed-admin-history'))
+  // Template text, with a `keyed` directive's template spelled out too.
+  const text = value => Array.isArray(value) ? value.map(text).join('')
+    : value?.strings ? value.strings.map((part, i) => part + text(value.values[i])).join('')
+    : value?.['_$litDirective$'] ? text(value.values[1])
+    : typeof value === 'symbol' ? '' : String(value ?? '')
+  const row = entry => text(page._row({ id: 'h', kind: 'triage', action: 'updated triage', at: 1, ...entry }))
+  const named = row({ actor: 'alice', actorId: 'u1', actorName: 'Alice Example' })
+  assert.match(named, /<strong class="actor" data-tooltip=@alice on GitHub>Alice Example<\/strong>/u)
+  assert.match(named, /class="avatar" aria-hidden="true"><span>A<\/span>\s*<img [^>]*src=\/api\/avatar\/u1/u, 'the user\'s avatar over their name\'s letter')
+  assert.match(named, /data-tooltip=Alice Example updated triage/u)
+  for (const actorName of [null, '  ']) {
+    const unnamed = row({ actor: 'bob', actorId: 'u2', actorName })
+    assert.match(unnamed, /<strong class="actor" data-tooltip=>bob<\/strong>/u, 'a login shown needs no tooltip telling it')
+    assert.match(unnamed, /src=\/api\/avatar\/u2/u)
+  }
+  const legacy = row({ actor: 'old-login', actorId: null, actorName: null })
+  assert.match(legacy, /<span>O<\/span><\/span>/u)
+  assert.doesNotMatch(legacy, /api\/avatar/u, 'a legacy login names no user to show the avatar of')
+  assert.match(row({ actor: null, actorId: null }), />Unknown user</u)
+})
+
+test('history type filter offers each kind by the chip its rows show, Access to admins alone', () => {
+  const page = createPage(customElements.get('managed-admin-history'))
+  const options = role => {
+    page.session = { role }
+    return [...templateText(page._kindFilter()).matchAll(/<option value="?(\w+)"?[^>]*>(.*?)<\/option>/gu)].map(([, value, label]) => [value, label])
+  }
+  const chip = kind => `<span class=kind ${kind}>${kind[0].toUpperCase()}${kind.slice(1)}</span>`
+  assert.deepEqual(options('admin'), [['all', 'All activity'], ...['triage', 'visibility', 'upload', 'repository', 'access', 'delete'].map(kind => [kind, chip(kind)])])
+  assert.deepEqual(options('manage').map(([value]) => value), ['all', 'triage', 'visibility', 'upload', 'repository', 'delete'])
+  assert.match(templateText(page._row({ id: 'h', kind: 'upload', at: 1 })), new RegExp(`^<div class="row">${chip('upload')}`, 'u'), 'the rows\' chip')
+  page._filter = 'upload'
+  assert.match(templateText(page._kindFilter()), /<option value=upload \?selected=true>/u)
+  assert.match(templateText(page._kindFilter()), /<selectedcontent><\/selectedcontent>/u, 'the picked one shows its chip')
+})

@@ -66,7 +66,7 @@ test('activity search and type filters run before pagination; ties, empty pages,
   const contexts = [{ finding: 'shared', reportId: 'visible', report: 'allowed.json', repo: 'allowed/repo' }]
   const manager = await db.listActivity({ ...query, contexts, limit: 5 })
   assert.equal(manager.total, 12)
-  assert.deepEqual(manager.filters, { repos: ['allowed/repo'], users: [{ id: 'legacy:alice', login: 'alice', detail: 'Legacy actor' }] })
+  assert.deepEqual(manager.filters, { repos: ['allowed/repo'], users: [{ id: 'legacy:alice', userId: null, login: 'alice', name: null, detail: 'Legacy actor' }] })
   assert.equal((await db.listActivity({ ...query, contexts, repo: 'allowed/repo', actor: 'legacy:alice' })).total, 12)
   assert.equal((await db.listActivity({ ...query, contexts, actor: 'legacy:bob' })).total, 0)
   assert.ok(manager.history.every(entry => entry.reportId === 'visible' && entry.report === 'allowed.json' && entry.repo === 'allowed/repo'))
@@ -133,9 +133,9 @@ test('history repository and user filters intersect before counts and paging wit
   assert.deepEqual(filtered.filters, {
     repos: ['owner/one', 'owner/two'],
     users: [
-      { id: 'legacy:alice', login: 'alice', detail: 'Legacy actor' },
-      { id: `user:${bob}`, login: 'alice-helper', detail: null },
-      { id: `user:${alice}`, login: 'renamed', detail: null },
+      { id: 'legacy:alice', userId: null, login: 'alice', name: null, detail: 'Legacy actor' },
+      { id: `user:${bob}`, userId: bob, login: 'alice-helper', name: null, detail: null },
+      { id: `user:${alice}`, userId: alice, login: 'renamed', name: null, detail: null },
     ],
   }, 'choices cover all authorized history independently of filters and pagination')
   const own = await db.listActivity({ ...query, actor: `user:${alice}` })
@@ -149,4 +149,29 @@ test('history repository and user filters intersect before counts and paging wit
     assert.equal(empty.total, 0)
     assert.equal(empty.page, 1)
   }
+})
+
+test('history shows each user by their login and the name they chose as they are now, a legacy login by itself', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const alice = await db.upsertUser({ githubUserId: 1, login: 'alice', name: 'Alice Example', avatarUrl: null }, 1)
+  await db.insertReport({ ...report, uploadedBy: alice, uploadedByLogin: 'alice' }, 10)
+  await db.setTriageEntries([['finding', { color: 'red' }]], alice, 'alice', 20, 'r')
+  await db.recordActivity({ kind: 'access', actorId: alice, actor: 'alice', action: 'changed a team' }, 30)
+  await db.recordActivity({ kind: 'access', actor: 'legacy-login', action: 'changed a role' }, 40)
+  await db.upsertUser({ githubUserId: 1, login: 'alice-renamed', name: 'Alice Example', avatarUrl: null }, 50)
+  const { history, filters } = await db.listActivity(query)
+  assert.deepEqual(history.map(entry => [entry.action, entry.actor, entry.actorId, entry.actorName]), [
+    ['changed a role', 'legacy-login', null, null],
+    ['changed a team', 'alice-renamed', alice, 'Alice Example'],
+    ['updated triage', 'alice-renamed', alice, 'Alice Example'],
+    ['uploaded a report', 'alice-renamed', alice, 'Alice Example'],
+  ], 'a recorded login gives way to the user\'s own, as the selector has it')
+  assert.deepEqual(filters.users, [
+    { id: `user:${alice}`, userId: alice, login: 'alice-renamed', name: 'Alice Example', detail: null },
+    { id: 'legacy:legacy-login', userId: null, login: 'legacy-login', name: null, detail: 'Legacy actor' },
+  ])
+  assert.equal((await db.listActivity({ ...query, query: 'alice example' })).total, 3, 'search finds a user by the name they show by')
+  assert.equal((await db.listActivity({ ...query, query: 'alice-renamed' })).total, 3)
+  assert.equal((await db.listActivity({ ...query, actor: `user:${alice}` })).total, 3)
 })

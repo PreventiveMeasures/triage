@@ -937,6 +937,12 @@ test('Postgres managed store: auth, scopes, uploads, history, comments, and rest
   assert.deepEqual({ ...await db.getUser(user) }, { id: user, login: 'user2', name: null, avatarUrl: null, role: (await db.listUsers()).find(u => u.id === user).role })
   assert.equal(await db.getUser('missing'), null)
   assert.equal((await db.listUsers()).find(u => u.id === user).lastActivityAt, 70)
+  // Each actor by the name they chose, as it is now, as the selector has them.
+  await db.upsertUser({ ...identity(2), name: 'User Two' }, 71)
+  const named = await db.listActivity({ ...query, query: 'user two' })
+  assert.deepEqual(named.history.map(entry => entry.action), ['published', 'edited a comment', 'added a comment', 'cleared triage', 'updated triage'])
+  assert.ok(named.history.every(entry => entry.actorId === user && entry.actor === 'user2' && entry.actorName === 'User Two'))
+  assert.deepEqual(named.filters.users.map(({ userId, name }) => [userId, name]), [[admin, null], [user, 'User Two']])
   const restarted = await openPostgresManagedDb(connect)
   assert.equal((await restarted.sessionWithUser('s', 80)).user.id, user)
   await restarted.close()

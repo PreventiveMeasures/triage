@@ -3,6 +3,7 @@ import { getPreviewRole, managedFetch } from '../../client/managed/request.js'
 // Manage data stays in the lazy bundle; the host supplies session updates and
 // renders composed navigation and notification events.
 import { html, nothing, unsafeCSS } from 'lit'
+import { keyed } from 'lit/directives/keyed.js'
 import { reportRepoGithub } from '@preventive/report'
 import { ManagedPage, loadingRows } from './page.js'
 import { appMarkup } from '../view/markup.js'
@@ -53,6 +54,18 @@ function adminAvatar(id, login) {
     ${getPreviewRole() ? nothing : html`<img alt="" src=${`/api/avatar/${encodeURIComponent(id)}`} @error=${(e) => e.currentTarget.classList.add('broken')}>`}
   </span>`
 }
+
+// Who acted on a history row: their avatar (`id`), over the letter of what
+// they show as (`shown`); a legacy login, no user's, by its letter alone.
+function actorAvatar(id, shown) {
+  return html`<span class="avatar" aria-hidden="true"><span>${(shown?.[0] ?? '?').toUpperCase()}</span>${!id || getPreviewRole() ? nothing : keyed(id, html`
+    <img alt="" loading="lazy" decoding="async" src=${`/api/avatar/${encodeURIComponent(id)}`} @error=${event => { event.currentTarget.hidden = true }}>`)}</span>`
+}
+
+// The kinds of history, each shown by its chip, in the rows and the filter;
+// its text capitalized itself, as an option's plain text is not styled.
+const HISTORY_KINDS = ['triage', 'visibility', 'upload', 'repository', 'access', 'delete']
+const kindChip = (kind, text = kind ?? 'activity') => html`<span class=${`kind ${kind ?? ''}`}>${text[0].toUpperCase()}${text.slice(1)}</span>`
 
 const ADMIN_EDIT_ICON = appMarkup(EDIT_ICON_SVG)
 const ADMIN_DELETE_ICON = appMarkup(DELETE_ICON_SVG)
@@ -218,7 +231,7 @@ class ManagedAdminHistory extends ManagedPage {
       <div class="page-intro"><p class="intro">${this._role === 'admin' ? 'Uploads, builds, access changes, repository changes, deletions, and triage.' : 'Bundle, report, and triage history within your team access.'}</p><span class="result-count">${this._history ? this._total : '…'} entries</span></div>
       <div class="toolbar" role="search">
         <input type="search" maxlength="500" aria-label="Search history" placeholder="Search history…" .value=${this._query} @input=${(event) => this._search(event.target.value)}>
-        <select aria-label="Filter history by type" .value=${this._filter} @change=${(event) => { this._filter = event.target.value; void this._load() }}><option value="all">All activity</option><option value="triage">Triage</option><option value="visibility">Visibility</option><option value="upload">Uploads and builds</option><option value="repository">${this._role === 'admin' ? 'Repositories' : 'Assignments'}</option>${this._role === 'admin' ? html`<option value="access">Access</option>` : nothing}<option value="delete">Deletions</option></select>
+        ${this._kindFilter()}
         ${this._contextFilters()}
         <button type="button" class="btn" ?disabled=${this._loading} @click=${() => this._load(page)}>Refresh</button>
       </div>
@@ -228,17 +241,34 @@ class ManagedAdminHistory extends ManagedPage {
     </div>`
   }
 
+  // A select whose options show the kinds' chips, as the rows do (a
+  // customizable select; a browser without one reads their names). Each
+  // option is its own template, as an older parser would drop a chip's
+  // element, and with it its binding, from a select's.
+  _kindFilter() {
+    const kinds = HISTORY_KINDS.filter(kind => kind !== 'access' || this._role === 'admin')
+    return html`<select class="kind-filter" aria-label="Filter history by type" .value=${this._filter}
+      @change=${(event) => { this._filter = event.target.value; void this._load() }}>
+      <button type="button"><selectedcontent></selectedcontent><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
+      <option value="all" ?selected=${this._filter === 'all'}>All activity</option>
+      ${kinds.map(kind => html`<option value=${kind} ?selected=${this._filter === kind}>${kindChip(kind)}</option>`)}
+    </select>`
+  }
+
   async _changePage(page) {
     await this._load(page)
     await this.updateComplete
     this.renderRoot.querySelector('.manage-list')?.scrollTo({ top: 0 })
   }
 
+  // Who acted shows by the name they chose, their login in its tooltip, and
+  // by their login where they have none, as a comment's author does.
   _row(entry) {
     const detail = [entry.repo ?? entry.repository, entry.report, entry.finding].filter(Boolean).join(' · ')
-    const actor = entry.actor ?? entry.user ?? 'Unknown user'
+    const login = entry.actor ?? entry.user ?? null
+    const actor = entry.actorName?.trim() || login || 'Unknown user'
     const action = entry.action ?? 'updated workspace data'
-    return html`<div class="row"><span class=${`kind ${entry.kind ?? ''}`}>${entry.kind ?? 'activity'}</span><span class="activity-description" data-tooltip-truncated data-tooltip=${`${actor} ${action}`}><strong class="actor">${actor}</strong> <span class="action">${action}</span></span><span class="detail" data-tooltip-truncated data-tooltip=${detail}>${detail || '—'}</span><span class="history-time">${userTime(entry.at)}</span></div>`
+    return html`<div class="row">${kindChip(entry.kind)}<span class="activity">${actorAvatar(entry.actorId, actor)}<span class="activity-description" data-tooltip-truncated data-tooltip=${`${actor} ${action}`}><strong class="actor" data-tooltip=${login && login !== actor ? `@${login} on GitHub` : nothing}>${actor}</strong> <span class="action">${action}</span></span></span><span class="detail" data-tooltip-truncated data-tooltip=${detail}>${detail || '—'}</span><span class="history-time">${userTime(entry.at)}</span></div>`
   }
 }
 customElements.define('managed-admin-history', ManagedAdminHistory)
