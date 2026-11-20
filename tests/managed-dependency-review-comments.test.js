@@ -112,19 +112,21 @@ test('a pull request\'s leaves out one\'s reviews of the versions the host\'s lo
 })
 
 test('a pull request\'s leaves out one\'s reviews its own comments there make already, with the same verdict; another\'s comments, or one\'s of another verdict, leave it in', async () => {
-  const pkgs = ['posted', 'theirs', 'changed', 'unposted'].map(name => ({ name, version: '1.0.0', source: 'registry', integrity: sri(name), lockfile: 'npm' }))
+  const pkgs = ['posted', 'theirs', 'changed', 'unposted', 'superseded'].map(name => ({ name, version: '1.0.0', source: 'registry', integrity: sri(name), lockfile: 'npm' }))
   const told = { base: 'c'.repeat(40), head: 'b'.repeat(40), cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: pkgs, locked: pkgs }] }
   const published = (pkg, more = {}) => ({ package: pkg.name, version: '1.0.0', integrity: pkg.integrity, basePackage: null, baseVersion: null, reviewer: 'me', login: 'grace', status: 'accept',
     full: true, time: 1, ...more })
   const state = { required: 2, since: null, canReview: true, lockfiles: { mode: 'exclude', paths: [] }, reviews: pkgs.map(pkg => published(pkg, { id: pkg.name })) }
-  // The reviews its comments make: one's own of the first, another's of the second, one's own of the third with another verdict.
-  const commented = [published(pkgs[0], { comment: true }), published(pkgs[1], { comment: true, reviewer: 'them' }), published(pkgs[2], { comment: true, status: 'accept-with-nits' })]
+  // The reviews its comments make: one's own of the first, another's of the second, one's own of the third with another verdict;
+  // and of the last one's own acceptance, then their later rejection, which is where they stand there.
+  const commented = [published(pkgs[0], { comment: true }), published(pkgs[1], { comment: true, reviewer: 'them' }), published(pkgs[2], { comment: true, status: 'accept-with-nits' }),
+    published(pkgs[4], { comment: true, time: 5 }), published(pkgs[4], { comment: true, status: 'reject', time: 9 })]
   const db = { listOwnDependencyReviewsById: (user, ids) => Promise.resolve(ids.map(id => review(id, { package: id, basePackage: null, baseVersion: null, baseIntegrity: null, status: 'accept' }))) }
   let given = null
   const reviewed = { lookup: () => Promise.resolve(false), formatDependencyReviews: input => { given = input; return Promise.resolve(`${input.reviews.length} reviewed`) } }
   const pullRequest = { repository: 'org/a', number: 5 }
-  assert.equal(await formattedPull(reviewed, db, 'me', told, state, pullRequest, commented), '3 reviewed')
-  assert.deepEqual(given.reviews.map(one => one.new.name), ['theirs', 'changed', 'unposted'])
-  assert.equal(await formattedPull(reviewed, db, 'me', told, state, pullRequest), '4 reviewed', 'all of them where its comments make none')
+  assert.equal(await formattedPull(reviewed, db, 'me', told, state, pullRequest, commented), '4 reviewed')
+  assert.deepEqual(given.reviews.map(one => one.new.name), ['theirs', 'changed', 'unposted', 'superseded'], 'one their latest comment there rejects kept, though an older one accepted it')
+  assert.equal(await formattedPull(reviewed, db, 'me', told, state, pullRequest), '5 reviewed', 'all of them where its comments make none')
   assert.equal(await formattedPull(reviewed, db, 'me', told, state, pullRequest, pkgs.map(pkg => published(pkg, { comment: true }))), null, 'nothing to copy once its comments make them all')
 })

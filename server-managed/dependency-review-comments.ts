@@ -91,8 +91,10 @@ function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: str
 // A review is left out where every version it is of, as locked, wants no
 // comment of it there: the host's `lookup` passes it already, or `user`'s
 // own comments there (of `commented`, the reviews its comments make) review
-// it with the same verdict, as copying it would but repeat them. A version
-// `lookup` fails to answer of keeps its review.
+// it with the same verdict, as copying it would but repeat them: by their
+// latest of it, which tells where they stand there (pull-dependency-
+// reviews.ts stancesOf), an older one of that verdict not counting. A
+// version `lookup` fails to answer of keeps its review.
 export async function formattedPull(reviewed: ReviewedDependencies | null, db: Pick<DependencyReviewStore, 'listOwnDependencyReviewsById'>, user: string,
   told: PullDependencies, state: RepoReviewState | null, pullRequest: { repository: string; number: number }, commented: PublishedReview[] = []): Promise<string | null> {
   if (!reviewed?.formatDependencyReviews || !state) return null
@@ -100,8 +102,8 @@ export async function formattedPull(reviewed: ReviewedDependencies | null, db: P
   if (mine.size === 0) return null
   const { passed } = await askReviewed(reviewed.lookup, new Map([...mine.values()].flatMap(({ pkgs }) => pkgs.map(askedOf))))
   const there = reviewsByVersion(commented.filter(review => review.reviewer === user))
-  const ids = [...mine].filter(([, { review, pkgs }]) => pkgs.some(pkg => !passed.has(askedOf(pkg)[0]) && !reviewsOf(pkg, there).some(made => made.status === review.status)))
-    .map(([id]) => id)
+  const stands = (pkg: LockedPackage) => reviewsOf(pkg, there).reduce<PublishedReview | null>((one, other) => one && one.time >= other.time ? one : other, null)?.status
+  const ids = [...mine].filter(([, { review, pkgs }]) => pkgs.some(pkg => !passed.has(askedOf(pkg)[0]) && stands(pkg) !== review.status)).map(([id]) => id)
   if (ids.length === 0) return null
   const reviews: DependencyReview[] = []
   for (let at = 0; at < ids.length; at += REVIEWS_AT_ONCE) reviews.push(...await db.listOwnDependencyReviewsById(user, ids.slice(at, at + REVIEWS_AT_ONCE)))
