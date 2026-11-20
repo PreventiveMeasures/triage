@@ -6,6 +6,7 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { buildGitHubBundle } from '@exodus/stasis/vfs-bundle'
 import { buildErrorCode, buildStasisBundle } from '../server-managed/bundle-build-worker.js'
 import { buildRepositoryBundle, githubBundleFilename, parseBundleBuild } from '../server-managed/bundle-build.ts'
+import { HttpError } from '@preventive/upstream/github.js'
 import { packageOf, registry } from './_managed-npm.js'
 
 const commit = 'a'.repeat(40)
@@ -35,6 +36,15 @@ test('build requests pin commits, reject unsafe inputs, and apply presets', () =
   assert.deepEqual(input(['a.js'], { conditions: { preset: 'metro', conditions: ['react-native'], platforms: ['android', 'android'] } }).conditions,
     { preset: 'metro', conditions: ['react-native'], platforms: ['android'] })
   assert.equal(input(['Token.sol']).conditions, null)
+})
+
+test('a build request names the branch its commit was picked by, where it was, as git names a branch', () => {
+  for (const branch of ['main', 'feature/x', 'release-1.2', 'user@host', 'a'.repeat(255)]) assert.equal(input(['a.js'], { branch }).branch, branch)
+  for (const branch of [undefined, null]) assert.equal(Object.hasOwn(input(['a.js'], { branch }), 'branch'), false)
+  for (const branch of ['', 'a b', 'a:b', 'a..b', 'a~1', 'a^', 'a?', 'a*', 'a[b', 'a\\b', 'a\n', '-a', '/a', 'a/', 'a//b', 'a.', '@', 'a@{1}', '.a', 'a/.b',
+    'a.lock', 'a.lock/b', 'a'.repeat(256), 1, ['main'], { name: 'main' }]) {
+    assert.throws(() => input(['a.js'], { branch }), { status: 400, code: 'bad-request' }, JSON.stringify(branch))
+  }
 })
 
 test('JSX and TSX entry points use the same build options as other scripts for every preset', () => {
@@ -504,4 +514,27 @@ test('real Stasis holds the commit to the repo’s own history: a fork’s, whic
   const behind = { ...forked, compareCommits: ({ base, head }) => Promise.resolve(base === commit && head === 'main' ? { status: 'ahead', aheadBy: 1, behindBy: 0, mergeBase: commit } : { status: 'diverged' }) }
   const built = await buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, behind)
   assert.ok(built.bytes.length > 0, 'one in its default branch’s history builds')
+})
+
+test('real Stasis asks the branch a commit was picked by first: one in its history builds with no ref listed, a fork’s is refused all the same', async () => {
+  const [main, feature] = ['b'.repeat(40), 'c'.repeat(40)]
+  const asked = []
+  const notListed = what => () => Promise.reject(new Error(`${what} listed`))
+  const repo = holds => ({ ...projectClient(files),
+    getRepoHead: ({ branch }) => {
+      asked.push(branch ?? '(default)')
+      if (branch === undefined) return Promise.resolve({ oid: main, branch: 'main' })
+      if (branch === 'feature') return Promise.resolve({ oid: feature, branch: 'feature' })
+      return Promise.reject(new HttpError(404, `GitHub has no branch ${branch}`))
+    },
+    compareCommits: ({ base, head }) => Promise.resolve(base === commit && holds.includes(head) ? { status: 'ahead', aheadBy: 1, behindBy: 0, mergeBase: commit } : { status: 'diverged' }),
+    listRepoTags: notListed('tags'), listRepoBranches: notListed('branches') })
+  const build = (client, branch) => buildStasisBundle({ input: input(['index.ts'], { branch }), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, client)
+  assert.ok((await build(repo(['feature']), 'feature')).bytes.length > 0, 'its branch has it')
+  assert.deepEqual(asked, ['feature'], 'asked of that branch alone')
+  const listed = { ...repo([]), listRepoTags: () => Promise.resolve([]), listRepoBranches: () => Promise.resolve([{ branch: 'main', oid: main }, { branch: 'feature', oid: feature }]) }
+  for (const branch of ['feature', 'gone']) {
+    const error = await build(listed, branch).then(() => null, failure => failure)
+    assert.equal(error && buildErrorCode(error, error.message), 'commit-not-own', `a branch ${branch === 'gone' ? 'GitHub hasn’t' : 'without it'} tells nothing`)
+  }
 })

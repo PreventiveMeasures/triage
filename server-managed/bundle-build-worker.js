@@ -144,8 +144,10 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   const { packageManager, ...options } = input.options
   const named = packageManager !== undefined && !namesLockfiles(await configText(project) ?? '{}')
   note('project', { project, configured: configured !== null, ...(named && { packageManager }) })
+  // The branch the commit was picked by, where it was, Stasis asks first of
+  // whether the commit is the repo's own (bundle-build.ts).
   const { bundle } = await buildGitHubBundle({
-    github, sha: input.commit, directory: project || undefined,
+    github, sha: input.commit, ...(input.branch !== undefined && { branch: input.branch }), directory: project || undefined,
     entries: input.entries.map(entry => posix.relative(project || '.', entry)),
     ...options, ...(named && { packageManager }), client: buildClient, ...(cacheDir === null && { cache: false }),
   })
