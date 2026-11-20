@@ -16,6 +16,15 @@ const ERRORS = {
   'no-finding': 'This finding is no longer available in this workspace.',
 }
 
+// How long the draft waits for what the finding's bundle says of its
+// evidence before it goes without (`draftOptionsReady`).
+const DRAFT_OPTIONS_WAIT = 3000
+function settleWithin(promise, ms) {
+  let timer
+  const timeout = new Promise(resolve => { timer = setTimeout(resolve, ms, null) })
+  return Promise.race([promise.catch(() => null), timeout]).finally(() => clearTimeout(timer))
+}
+
 class ManagedIssueDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(styles), unsafeCSS(quoteCSS)]
   static properties = { teamId: { attribute: false }, context: { attribute: false }, session: { attribute: false },
@@ -46,8 +55,12 @@ class ManagedIssueDialog extends AppDialog {
     if (this.busy || !this.current()) return
     this.busy = true; this.message = ''
     try {
-      const prepared = await requestGithubIssue(this.teamId, this.context, this.session.csrfToken)
+      // The draft's options once the evidence's links are in hand, when the
+      // opener gave a promise of them; waited for once, and not for long.
+      this.optionsWait ??= this.draftOptionsReady ? settleWithin(this.draftOptionsReady, DRAFT_OPTIONS_WAIT) : null
+      const [prepared, options] = await Promise.all([requestGithubIssue(this.teamId, this.context, this.session.csrfToken), this.optionsWait])
       if (!this.current()) return
+      if (options) this.draftOptions = options
       this.prepared = prepared
       this.uncertain = false
       // An untouched draft takes every section through the API, and Impact

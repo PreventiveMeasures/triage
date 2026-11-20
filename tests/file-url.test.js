@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
 
-const { configureDepsDir, evidenceMarkdown, evidenceUrl, fileUrl, findingUrl, githubRefLabel, isPkgRef, locationLabel, markdownLinkToken } = await import('../ui/view/format.js')
+const { configureDependencyRepos, configureDepsDir, evidenceMarkdown, evidenceUrl, fileUrl, findingUrl, githubRefLabel, isPkgRef, locationLabel, markdownLinkToken } = await import('../ui/view/format.js')
 
 describe('isPkgRef', () => {
   it('matches bare and scoped package references', () => {
@@ -384,6 +384,155 @@ describe('evidence rows', () => {
         'https://github.com/acme/monorepo/blob/HEAD/src/proxy.ts#L8',
       )
       assert.equal(evidenceUrl(row('src/proxy.ts', '8'), dep, '', 1), null)
+    })
+
+    // A row in another dependency links when a loaded finding in that
+    // same install names its upstream at a commit — pinned there, as
+    // that finding's own location is. Restored after each, as it is
+    // module-wide.
+    describe('another dependency a loaded finding knows', () => {
+      afterEach(() => { configureDependencyRepos([]) })
+      const own = { file: 'src/proxy.ts', repo: { github: 'acme/app' } }
+      const COMMIT = '0123456789abcdef0123456789abcdef01234567'
+      const loaded = (...findings) => configureDependencyRepos([{ groups: [findings] }])
+      const axios = (repo, file = 'node_modules/axios/lib/adapters/xhr.js') => ({ file, repo })
+
+      it('links it at that commit, under that repo\'s directory', () => {
+        loaded(own, axios({ github: 'axios/axios', commit: COMMIT }))
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), own, REPORT, 1),
+          `https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90`)
+        loaded(own, axios({ github: 'babel/babel', directory: 'packages/babel-core', commit: COMMIT }, 'node_modules/@babel/core/lib/index.js'))
+        assert.equal(evidenceUrl(row('node_modules/@babel/core/lib/parse.js', '3'), own, REPORT, 1),
+          `https://github.com/babel/babel/blob/${COMMIT}/packages/babel-core/lib/parse.js#L3`)
+      })
+
+      it('links the issue body\'s row, not a code span', () => {
+        loaded(own, axios({ github: 'axios/axios', commit: COMMIT }))
+        const cited = { ...own, evidence: [{ file: 'node_modules/axios/lib/http.js', line: '90' }] }
+        assert.equal(evidenceMarkdown(cited, { repoFallback: { github: 'acme/monorepo', directory: '' } }).split('\n')[1],
+          `1. [node_modules/axios/lib/http.js:90](https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90)`)
+      })
+
+      // A dependency finding naming no repo of its own takes it for its
+      // own package's rows too.
+      it('answers for the finding\'s own package when the finding names no repo', () => {
+        loaded(axios({ github: 'axios/axios', commit: COMMIT }))
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), { file: 'node_modules/axios/index.js' }, REPORT, 1),
+          `https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90`)
+      })
+
+      it('needs the commit: HEAD is a version the install need not hold', () => {
+        loaded(own, axios({ github: 'axios/axios' }))
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), own, REPORT, 1), null)
+      })
+
+      // The install root is the identity, as for rule 2: another copy of
+      // the package may be another version.
+      it('answers only for that install', () => {
+        loaded(own, axios({ github: 'axios/axios', commit: COMMIT }))
+        assert.equal(evidenceUrl(row('app/node_modules/axios/lib/http.js', '90'), own, REPORT, 1), null)
+        assert.equal(evidenceUrl(row('node_modules/qs/lib/parse.js', '7'), own, REPORT, 1), null)
+      })
+
+      it('leaves an install unknown when its findings disagree, and agrees with a short hash', () => {
+        loaded(own, axios({ github: 'axios/axios', commit: COMMIT }), axios({ github: 'other/axios', commit: COMMIT }))
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), own, REPORT, 1), null)
+        loaded(own, axios({ github: 'axios/axios', commit: COMMIT }), axios({ github: 'axios/axios', commit: 'fedcba9876543210fedcba9876543210fedcba98' }))
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), own, REPORT, 1), null)
+        loaded(own, axios({ github: 'axios/axios', commit: COMMIT.slice(0, 7) }), axios({ github: 'Axios/Axios', commit: COMMIT }))
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), own, REPORT, 1),
+          `https://github.com/Axios/Axios/blob/${COMMIT}/lib/http.js#L90`)
+      })
+
+      it('counts no repo the app ignores', () => {
+        loaded(own, { file: 'node_modules/axios/index.js', advisory: { package: 'axios' }, repo: { github: 'axios/axios', commit: COMMIT } })
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), own, REPORT, 1), null)
+      })
+    })
+
+    describe('another dependency loaded findings know by package', () => {
+      afterEach(() => { configureDependencyRepos([]) })
+      const COMMIT = '0123456789abcdef0123456789abcdef01234567'
+      const own = { file: 'src/proxy.ts', repo: { github: 'acme/app' } }
+      const stamped = (version) => ({ file: 'node_modules/.pnpm/axios@1.6.0/node_modules/axios/index.js',
+        package: { npm: { name: 'axios', version } }, repo: { github: 'axios/axios', commit: COMMIT } })
+
+      // A row's `package` stamp finds the package wherever it is installed,
+      // at that version only.
+      it('links a row whose package stamp names that package at that version', () => {
+        configureDependencyRepos([{ groups: [[own, stamped('1.6.0')]] }])
+        const at = (version) => evidenceUrl({ file: 'node_modules/axios/lib/http.js', line: '9', package: { npm: { name: 'axios', version } } }, own, REPORT, 1)
+        assert.equal(at('1.6.0'), `https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L9`)
+        assert.equal(at('1.7.0'), null)
+      })
+
+      it('keys no package without a version', () => {
+        configureDependencyRepos([{ groups: [[own, stamped(undefined)]] }])
+        assert.equal(evidenceUrl({ file: 'node_modules/axios/lib/http.js', package: { npm: { name: 'axios' } } }, own, REPORT, 1), null)
+      })
+    })
+
+    // New reports stamp a row in a dependency with its own `repo` and
+    // `package`, where they are not the finding's.
+    describe('a row\'s own repo and package', () => {
+      const COMMIT = 'fedcba9876543210fedcba9876543210fedcba98'
+      const own = { file: 'src/proxy.ts', repo: { github: 'acme/app' }, package: { npm: { name: 'app', version: '1.0.0' } } }
+      const dep = { file: 'node_modules/lodash/index.js', repo: { github: 'lodash/lodash', commit: COMMIT }, package: { npm: { name: 'lodash', version: '4.17.21' } } }
+
+      it('links the row under its own repo, as a finding\'s own repo links the finding', () => {
+        const cited = { file: 'node_modules/axios/lib/http.js', line: '90', repo: { github: 'axios/axios', commit: COMMIT }, package: { npm: { name: 'axios', version: '1.6.0' } } }
+        assert.equal(evidenceUrl(cited, own, REPORT, 1), `https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90`)
+        assert.equal(evidenceUrl({ ...cited, repo: { github: 'babel/babel', directory: 'packages/babel-core', commit: COMMIT } }, own, REPORT, 1),
+          `https://github.com/babel/babel/blob/${COMMIT}/packages/babel-core/lib/http.js#L90`)
+        // At HEAD where it names no commit, as the finding's own does.
+        assert.equal(evidenceUrl({ ...cited, repo: { github: 'axios/axios' } }, own, REPORT, 1), 'https://github.com/axios/axios/blob/HEAD/lib/http.js#L90')
+        // Over the finding's, in its own package's install too.
+        assert.equal(evidenceUrl({ ...cited, file: 'node_modules/lodash/merge.js' }, dep, REPORT, 1),
+          `https://github.com/axios/axios/blob/${COMMIT}/merge.js#L90`)
+      })
+
+      // A row naming no package of its own is the finding's where it sits
+      // in the finding's install, and a row naming one is the finding's
+      // only when it names the finding's.
+      it('takes the finding\'s repo for a row in the finding\'s own package', () => {
+        assert.equal(evidenceUrl({ file: 'node_modules/lodash/merge.js', line: '4' }, dep, REPORT, 1),
+          `https://github.com/lodash/lodash/blob/${COMMIT}/merge.js#L4`)
+        assert.equal(evidenceUrl({ file: 'node_modules/lodash/merge.js', line: '4', package: { npm: { name: 'lodash', version: '4.17.21' } } }, dep, REPORT, 1),
+          `https://github.com/lodash/lodash/blob/${COMMIT}/merge.js#L4`)
+        assert.equal(evidenceUrl({ file: 'node_modules/lodash/merge.js', line: '4', package: { npm: { name: 'lodash', version: '3.0.0' } } }, dep, REPORT, 1), null)
+      })
+    })
+
+    // A dependency's row nothing else answers for, where the finding's
+    // bundle records its package's repository and commit (focus-code.js
+    // bundleDependencyRepo).
+    describe('the bundle\'s record of a dependency', () => {
+      const COMMIT = '00112233445566778899aabbccddeeff00112233'
+      const own = { file: 'src/proxy.ts', repo: { github: 'acme/app' } }
+      const shipped = (cited) => (cited.file === 'node_modules/axios/lib/http.js' ? { file: 'lib/http.js', repo: { github: 'axios/axios', commit: COMMIT } } : null)
+
+      it('links the row there, at its line', () => {
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90-95'), own, REPORT, 1, shipped),
+          `https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90-L95`)
+        assert.equal(evidenceUrl(row('node_modules/qs/lib/parse.js', '7'), own, REPORT, 1, shipped), null)
+      })
+
+      it('is asked only for a dependency\'s row nothing else answers for', () => {
+        const asked = []
+        const ask = (r) => { asked.push(r.file); return null }
+        evidenceUrl(row('src/router.ts', '8'), own, REPORT, 1, ask)
+        evidenceUrl({ file: 'node_modules/axios/lib/http.js', repo: { github: 'axios/axios' } }, own, REPORT, 1, ask)
+        evidenceUrl(row('node_modules/lodash/merge.js', '4'), { file: 'node_modules/lodash/index.js', repo: { github: 'lodash/lodash' } }, REPORT, 1, ask)
+        assert.deepEqual(asked, [])
+        evidenceUrl(row('node_modules/axios/lib/http.js', '90'), own, REPORT, 1, ask)
+        assert.deepEqual(asked, ['node_modules/axios/lib/http.js'])
+      })
+
+      it('links the issue body\'s row', () => {
+        const cited = { ...own, evidence: [{ file: 'node_modules/axios/lib/http.js', line: '90' }] }
+        assert.equal(evidenceMarkdown(cited, { repoFallback: REPORT, shipped }).split('\n')[1],
+          `1. [node_modules/axios/lib/http.js:90](https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90)`)
+      })
     })
 
     it('still takes the row URL the report gave, over any of it', () => {

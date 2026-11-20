@@ -9,6 +9,7 @@ import { html, nothing } from 'lit'
 import { parseFindingUrl } from '../../client/finding-link.js'
 import { formatBytes as formatByteSize } from '../scan/metrics.js'
 import { REVALIDATE_FILTERS, hasRevalidateStamp } from '../../common/finding-filters.js'
+import { ignoresOwnRepo } from '../../common/finding-repo.js'
 import { asCommit, repoCommit, sameRepoSlug } from '../../common/repo-commit.js'
 import { codeSpan } from './code-span.js'
 export { PARTIAL_MODES, REVALIDATE_FILTERS, activeRevalidateKinds, hasRevalidateStamp, revalidateFilterKinds } from '../../common/finding-filters.js'
@@ -303,6 +304,68 @@ const NODE_PKG_ROOT_RE = /^(.*(?:^|\/)node_modules\/(?:@[^/]+\/[^/]+|[^/]+))(?:\
 
 function nodePackageRoot(file) {
   return NODE_PKG_ROOT_RE.exec(typeof file === 'string' ? file : '')?.[1] ?? null
+}
+
+// The package a `package` stamp names (`{ npm: { name, version } }`, the
+// analyzer's, on a finding or an evidence row), as one key:
+// `npm:name@version`, the version empty where the stamp gives none.
+// Null for no stamp, or one naming nothing.
+function packageStampKey(stamp) {
+  if (stamp === null || typeof stamp !== 'object') return null
+  for (const [ecosystem, pkg] of Object.entries(stamp)) {
+    if (typeof pkg?.name === 'string' && pkg.name !== '') return `${ecosystem}:${pkg.name}@${typeof pkg.version === 'string' ? pkg.version : ''}`
+  }
+  return null
+}
+
+// The dependencies whose upstream the loaded set knows at the commit it
+// was read at, by install (`nodePackageRoot`) and by the package a
+// finding's `package` stamp names at a version: each mapped to the `repo`
+// of a loaded finding there — the package's upstream, as on any
+// dependency finding (evidenceUrl rule 3) — when that `repo` names a
+// commit. Without one a link would be to HEAD, a version of the file the
+// install need not hold, so such a `repo` says nothing here. Findings
+// that disagree (another repo, directory or commit) leave the install or
+// package unknown (null), as the Packages view leaves a package with two
+// upstreams; a `repo` the app ignores (common/finding-repo.js) counts for
+// nothing.
+//
+// Called from render.js once per render, beside configureDepsDir, so
+// evidence rows in OTHER dependencies than their finding's can link
+// (evidenceUrl rule 4). Kept for the reports and their groups by
+// identity: the findings' paths and stamps never change once ingested.
+let dependencyRepoSet = null
+let dependencyRepos = { byRoot: new Map(), byPackage: new Map() }
+const repoSlugOf = (target) => reportRepoGithub({ repo: { github: target.id } }) ?? target.id
+// Two `repo`s, or null where they name different places. A short hash and
+// the full one it abbreviates are one commit; the longer is kept.
+function agreeingRepo(known, repo) {
+  if (known === null) return null
+  const now = repoTarget(repo), was = repoTarget(known)
+  const [a, b] = [was.commit.toLowerCase(), now.commit.toLowerCase()]
+  if (!sameRepoSlug(repoSlugOf(was), repoSlugOf(now)) || was.prefix !== now.prefix || !(a.startsWith(b) || b.startsWith(a))) return null
+  return b.length > a.length ? repo : known
+}
+export function configureDependencyRepos(reports) {
+  const list = Array.isArray(reports) ? reports : []
+  if (dependencyRepoSet?.length === list.length && dependencyRepoSet.every(([r, groups], i) => r === list[i] && groups === r?.groups)) return
+  dependencyRepoSet = list.map((r) => [r, r?.groups])
+  const byPackage = new Map(), byRoot = new Map()
+  const note = (map, key, repo) => map.set(key, map.has(key) ? agreeingRepo(map.get(key), repo) : repo)
+  for (const r of list) {
+    for (const g of r?.groups ?? []) {
+      for (const f of g) {
+        if (!f || f._repoIgnored || ignoresOwnRepo(f, f._repoFallback)) continue
+        const target = repoTarget(f.repo)
+        if (!target.id || !target.commit) continue
+        const root = nodePackageRoot(f.file)
+        if (root !== null) note(byRoot, root, f.repo)
+        const pkg = packageStampKey(f.package)
+        if (pkg !== null && !pkg.endsWith('@')) note(byPackage, pkg, f.repo)
+      }
+    }
+  }
+  dependencyRepos = { byRoot, byPackage }
 }
 
 // File size formatter for the file table/list, the graph's selection
@@ -1158,14 +1221,26 @@ export function snippetWindow(content, at, radius = 4) {
 //
 //   0. the row's own URL, if the report wrote one — not a guess at all
 //   1. the first row, restating the finding's own location
-//   2. a row in the same installed package as the finding
-//   3. a row in own source — the finding's repo when the finding is own
+//   2. the row's own `repo` stamp, which the analyzer writes on a row in
+//      a dependency (with its `package`) where they are not the finding's
+//   3. a row in the same package as the finding
+//   4. a row in another package, when a loaded finding in that install,
+//      or of that package and version, names its upstream at a commit
+//      (configureDependencyRepos)
+//   5. a row in another package, when the finding's bundle records that
+//      package's repository and commit (`shipped`, focus-code.js
+//      bundleDependencyRepo)
+//   6. a row in own source — the finding's repo when the finding is own
 //      source too, the report's repo when it isn't
 //
-// and anything else — a path in somebody else's source that isn't the
-// finding's own dependency — resolves to nothing, because knowing a
-// file belongs to SOME dependency doesn't say which one's repo to ask.
-export function evidenceUrl(row, f, repoFallback, index) {
+// and anything else — a path in somebody else's source that nothing
+// above answers for — resolves to nothing, because knowing a file
+// belongs to SOME dependency doesn't say which one's repo to ask.
+//
+// `shipped(row)` is `{ file, repo }`, the row's path in its package and
+// the `repo` its bundle records for that package, or null; only asked
+// for a dependency's row that nothing before it answers for.
+export function evidenceUrl(row, f, repoFallback, index, shipped = null) {
   // The report's own link for the row, when it wrote one. An exact ref,
   // usually pinned to the revision the report was produced from — it
   // beats anything reconstructed here and isn't ours to second-guess.
@@ -1193,19 +1268,41 @@ export function evidenceUrl(row, f, repoFallback, index) {
       : findingUrl({ file, line: row?.line, repo: f.repo, auditedCommit }, repoFallback)
   }
 
-  // 2. The same installed package as the finding's location. The
-  //    finding's repo is that package's upstream (that is what
-  //    `repo.github` means on a dependency finding), so it answers for
-  //    every file in it.
+  // 2. The row's own `repo`: its package's upstream, which answers for
+  //    it as a finding's own `repo` answers for the finding — at the
+  //    commit it names, HEAD where it names none.
+  if (repoTarget(row?.repo).id) return findingUrl({ file, line: row?.line, repo: row.repo }, repoFallback)
+
+  // 3. The finding's own package. The finding's repo is that package's
+  //    upstream (that is what `repo.github` means on a dependency
+  //    finding), so it answers for every file in it. A row's `package`
+  //    stamp says which package it is in, as it is written only where it
+  //    is not the finding's; without one, the install it sits in does.
   const pkg = nodePackageRoot(file)
-  if (pkg !== null && pkg === nodePackageRoot(main)) return inFindingRepo()
+  const rowPackage = packageStampKey(row?.package)
+  const ownPackage = rowPackage === null ? pkg !== null && pkg === nodePackageRoot(main) : rowPackage === packageStampKey(f?.package)
+  if (repo && ownPackage) return inFindingRepo()
 
-  // 3. Anything else in somebody else's source is unresolvable: we know
-  //    the file is a dependency's and we do not know WHICH dependency's
-  //    repo to ask.
-  if (hasDependencyMarker(file)) return null
+  // 4. A package — another, or the finding's own when the finding names
+  //    no repo — whose upstream a loaded finding names at the commit it
+  //    read, in that same install or of that package at that version:
+  //    linked there, pinned, as that finding's own location is.
+  const known = (rowPackage === null ? null : dependencyRepos.byPackage.get(rowPackage))
+    ?? (pkg === null ? null : dependencyRepos.byRoot.get(pkg))
+  if (known) return findingUrl({ file, line: row?.line, repo: known }, repoFallback)
 
-  // Own source, then. The finding's repo answers for it when the
+  if (hasDependencyMarker(file)) {
+    // 5. The package's repository and commit as the finding's bundle
+    //    records them.
+    const inBundle = shipped?.(row)
+    if (inBundle) return findingUrl({ file: inBundle.file, line: row?.line, repo: inBundle.repo }, repoFallback)
+    // Anything else in somebody else's source is unresolvable: we know
+    // the file is a dependency's and we do not know WHICH dependency's
+    // repo to ask.
+    return null
+  }
+
+  // 6. Own source, then. The finding's repo answers for it when the
   // finding is own-source too; when the finding sits in a dependency,
   // its repo is that dependency's upstream and would be the wrong
   // answer for a file in the project — so the report's repo takes it.
@@ -1250,10 +1347,10 @@ function evidenceRows(f, { spaced = false, link = row => row.url, lineLinks = fa
 // and so do the line references in its note: the issue body is read on
 // GitHub, where a bare path leads nowhere. Without it, only the rows the
 // report itself linked, so the search haystack never holds URLs the
-// report didn't write.
-export function evidenceMarkdown(f, { repoFallback } = {}) {
+// report didn't write. `shipped` is evidenceUrl's, the card's too.
+export function evidenceMarkdown(f, { repoFallback, shipped = null } = {}) {
   const linked = repoFallback !== undefined
-  const link = linked ? (row, i) => evidenceUrl(row, f, repoFallback, i) : undefined
+  const link = linked ? (row, i) => evidenceUrl(row, f, repoFallback, i, shipped) : undefined
   const rows = evidenceRows(f, { link, lineLinks: linked })
   return rows ? `**Evidence:**\n${rows}` : ''
 }

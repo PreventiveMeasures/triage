@@ -270,4 +270,4 @@ The bundle view's **Advisories** tab audits the bundle's dependencies:
 - Which npm packages npm answers for anonymously is cached for a month and shared across viewers; only public names are kept.
 - Failures return `502 upstream-unavailable`, without source contents or findings; an oversized package inventory returns `413` before upstream is contacted.
 
-Report-scoped sources (`/api/reports/:id/sources`) include only the source paths cited by findings the team can see, and access is checked again before they are streamed.
+Report-scoped sources (`/api/reports/:id/sources`) include only the source paths cited by findings the team can see, and access is checked again before they are streamed. For those paths' packages they also carry the GitHub repository and full commit each package records in the bundle, where it records both. A finding's evidence in a dependency links there, in the card and in the issue drafted from it.

@@ -1,11 +1,12 @@
 // Lazy source loader for finding panels and previews. Managed views fetch only
 // report-selected files into session memory; local/e2e views retain their
 // existing bundle loader. Neither changes the active bundle view.
-import { bundleFilePath, bundlesForFileHash, isManagedUiMode, state } from '#client/index.js'
+import { bundleFilePath, bundlesForFileHash, isManagedUiMode, readBundleIndex, state } from '#client/index.js'
 import { fetchReportSources, readReportSources } from './client-managed.js'
 import { activeTabFor } from './group.js'
 import { buildBundleDetails } from './bundle-load.js'
-import { bundleFilesAsMap, bundlePackageDirs, bundleSourcesAsMap } from './bundle-sources.js'
+import { parseBundleMetadata } from './bundle-metadata.js'
+import { bundleFilesAsMap, bundlePackageDirs, bundlePackageRepos, bundleSourcesAsMap } from './bundle-sources.js'
 import { bundleSourceImports, sourceLinkResolver } from '../../common/bundle-source-links.js'
 import { controlMarkup } from './control-chars.js'
 import { historyFor } from './focus-code-history.js'
@@ -58,6 +59,7 @@ async function loadSources(integrity) {
   sourcesCache.set(integrity, { sources: null, loading: true, error: null })
   try {
     const details = await buildBundleDetails(integrity, entry)
+    rememberPackageRepos(integrity, details)
     const sources = bundleSourcesAsMap(details)
     sourcesCache.set(integrity, { sources, packageFiles: bundleFilesAsMap(details), packageDirs: bundlePackageDirs(details), imports: bundleSourceImports(details, sources), formats: details.kind === 'stasis' ? details.bundle?.formats : null, loading: false, error: details.error ?? null })
   } catch (err) {
@@ -87,6 +89,84 @@ export function revealFocusCodeLines() {
   const rows = report.querySelectorAll('.focus-code-line-active')
   if (rows.length === 0) return
   revealCitedLines(rows[0].closest('.focus-code-body'), rows)
+}
+
+// The repository and commit each package of a local bundle records
+// (bundlePackageRepos), for the evidence rows in it: integrity →
+// `{ dirs, repos }` (every package's directory, longest first, so a path's
+// own package is the first that holds it), null for a bundle recording
+// none, or a pending read. Kept for the session: a handful of strings per
+// package, read off the bundle's index (bundle-metadata.js), or off the
+// bundle itself when the panel loads it anyway.
+const packageRepoCache = new Map()
+
+function rememberPackageRepos(integrity, details) {
+  const repos = bundlePackageRepos(details)
+  packageRepoCache.set(integrity, repos.size === 0 ? null
+    : { dirs: [...details.bundle.modules.keys()].filter((dir) => dir !== '.').toSorted((a, b) => b.length - a.length), repos })
+}
+
+// Only the index: a bundle without a current one is not opened for this,
+// and the panel's own load (loadSources) answers for it when it runs.
+function loadPackageRepos(integrity) {
+  const known = packageRepoCache.get(integrity)
+  if (known instanceof Promise) return known
+  if (known !== undefined) return Promise.resolve()
+  const job = (async () => {
+    let details = null
+    try {
+      const data = await readBundleIndex(integrity)
+      details = data ? parseBundleMetadata(data, integrity) : null
+    } catch { details = null }
+    // The panel's load may have answered while this read.
+    if (packageRepoCache.get(integrity) !== job) return
+    if (details && !details.stale) rememberPackageRepos(integrity, details)
+    else packageRepoCache.set(integrity, null)
+    state.focusCodeTick++
+    queueMicrotask(render)
+  })()
+  packageRepoCache.set(integrity, job)
+  return job
+}
+
+// Where a finding's bundle places one of its evidence rows in a
+// dependency: `{ file, repo }`, the row's path in its package and the
+// repository and commit that package records, for format.js evidenceUrl
+// (`shipped`). Null where the bundle has no such row, records no
+// repository and commit for its package, or has not been read yet.
+//
+// Reads what is ALREADY loaded. Locally it then reads the bundle's index,
+// once, a small file, and renders again; a managed view does not ask the
+// server for a report's sources for this — those come with the panel and
+// previews, and the issue dialog asks first (loadBundleDependencyRepos).
+export function bundleDependencyRepo(f, row) {
+  const bundle = attachedBundle(f)
+  if (!bundle || typeof row?.file !== 'string' || row.file === '') return null
+  if (bundle.reportId) {
+    const data = readReportSources(bundle.reportId)?.data
+    const path = data ? data.paths.get(row.file) ?? (data.sources.has(row.file) ? row.file : null) : null
+    const dir = path === null ? null : data.packageDirs.get(path)
+    const repo = dir ? data.packageRepos?.get(dir) : null
+    return repo ? { file: path.slice(dir.length + 1), repo } : null
+  }
+  if (isManagedUiMode()) return null
+  const known = packageRepoCache.get(bundle.integrity)
+  if (known === undefined) void loadPackageRepos(bundle.integrity)
+  if (!known || known instanceof Promise) return null
+  const path = bundleFilePath(bundle.integrity, row.file)
+  const dir = typeof path === 'string' ? known.dirs.find((d) => path.startsWith(`${d}/`)) : null
+  const repo = dir ? known.repos.get(dir) : null
+  return repo ? { file: path.slice(dir.length + 1), repo } : null
+}
+
+// Settles once what the finding's bundle records for its dependencies is
+// in hand, or there is none to read: what the issue dialog waits on
+// before it drafts the evidence.
+export async function loadBundleDependencyRepos(f) {
+  const bundle = attachedBundle(f)
+  if (!bundle) return
+  if (bundle.reportId) await fetchReportSources(bundle.reportId).catch(() => null)
+  else if (!isManagedUiMode()) await loadPackageRepos(bundle.integrity)
 }
 
 // The bundle attached to a finding, as `{ integrity, file, reportId? }`, or null.

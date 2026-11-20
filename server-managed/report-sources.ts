@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
-import { bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
+import { bundlePackageDirs, bundlePackageRepos, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { bundleSourceLinkImports } from '../common/bundle-source-links.js'
 import type { BundleDetails } from '../common/bundle-metadata.js'
 import { loadManagedFindings, managedFindingSourcePaths } from '../common/managed/report-content.ts'
@@ -31,7 +31,7 @@ function formatDirectory(bundleId: string, sha256: string, name: string) {
 }
 function sourceCacheFilename(report: ReportRecord, bundle: ManagedBundle, permissions: ViewerPermissions, repo: { github: string | null }, sourcePaths?: Set<string>) {
   const key = createHash('sha256').update(JSON.stringify([
-    'finding-access-v10', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
+    'finding-access-v11', sourcePaths ? [...sourcePaths].toSorted() : null, bundle.integrity, bundle.kind, permissions.dependencies, permissions.security, repo,
   ])).digest('hex')
   return `${formatDirectory(bundle.id, report.sha256, report.filename)}/${key}.json.gz`
 }
@@ -69,7 +69,10 @@ function encodeSources(integrity: string, details: BundleDetails, selection: Ret
   const bundle = details.kind === 'stasis' ? details.bundle as { formats: Map<string, string> } : null
   const formats = [...(bundle?.formats ?? [])].filter(([file]) => sources.has(file))
   const packageDirs = [...(bundlePackageDirs(details) ?? [])].filter(([file]) => sources.has(file))
-  return compress(Buffer.from(JSON.stringify({ integrity, ...selection, imports, formats, packageDirs })), { level: 6 })
+  // The repository and commit each of those files' packages records, which
+  // the finding's dependency evidence links to (focus-code.js).
+  const packageRepos = [...bundlePackageRepos(details, new Set(packageDirs.map(([, dir]) => dir)))]
+  return compress(Buffer.from(JSON.stringify({ integrity, ...selection, imports, formats, packageDirs, packageRepos })), { level: 6 })
 }
 
 type SourcemapEdges = (bundle: ManagedBundle) => Promise<BundleDetails['edges']>

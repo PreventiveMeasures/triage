@@ -9,7 +9,7 @@ import { newIssueLabels } from '../../common/github-issue-labels.js'
 import { NESTING_DEPTH, SEVERITY_ORDER, codeBlockSegments, commitUrl, correctedVariants, descriptionSections, displayFindingId, displayedSeverity, effectiveSeverity, evidenceMarkdown, evidenceNote, evidenceUrl, findingDisplayName, findingTitle, findingUrl, flowText, formatRunMeta, githubIssueUrl, githubRefLabel, hasSeverityCorrection, isHttpUrl, lineBlockSegments, lineRange, listSegments, locationLabel, markdownLinkToken, quoteSegments, revalidateStamp, revalidationShown, shortFindingId, snippetWindow, splitDescription, stripExportMarker, unquotedText } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, findingRepo, findingRepoTarget, groupKey, groupState, groupTabsByLevel, scopedTriage, sortTabs, tabKey, tabTriage, triageEntry, triageScope, triageTabs } from './group.js'
 import { highlightedCode } from './code-highlight.js'
-import { attachedBundle, bundleSource, findingSourcePath, focusCodePosition } from './focus-code.js'
+import { attachedBundle, bundleDependencyRepo, bundleSource, findingSourcePath, focusCodePosition } from './focus-code.js'
 import { samePos } from './focus-code-history.js'
 import { FILE_ICONS, PRODUCER_LABELS, REPORT_LOGOS, displayName, findingBrand, groupOf } from './file-display.js'
 import { CLAUDE_MARK_PATH, GITHUB_ICON_SVG } from './icons.js'
@@ -629,11 +629,14 @@ function evidenceTemplate(f, context) {
   // meaningful with a panel open: everywhere else the rows point out
   // of the app and none of them is "current".
   const shown = toPanel ? focusCodePosition(f) : null
+  // A row in a dependency nothing else links goes where the bundle
+  // records that package's repository, at its commit.
+  const shipped = (row) => bundleDependencyRepo(f, row)
   return html`<details class="evidence">
     <summary class="section-label">Evidence<span class="evidence-count">(${rows.length})</span></summary>
     <ol class="evidence-list">${rows.map((row, i) => {
       const label = locationLabel(row)
-      const url = evidenceUrl(row, f, repoFallback, i)
+      const url = evidenceUrl(row, f, repoFallback, i, shipped)
       const note = evidenceNote(row)
       // Indexed, so two rows citing the same place stay two marks too.
       const preview = codePreview(f, `ev${i}`, bundle, row?.file, row?.line)
@@ -982,7 +985,8 @@ function issueTitle(f) {
 // body from it, so an issue reads the same either way.
 export function issueDraftOptions(f) {
   const repoFallback = findingRepoTarget(f)
-  return { sourceUrl: findingUrl(f, repoFallback), evidence: evidenceMarkdown(f, { repoFallback }), showRevalidation: revalidationShown() }
+  const shipped = (row) => bundleDependencyRepo(f, row)
+  return { sourceUrl: findingUrl(f, repoFallback), evidence: evidenceMarkdown(f, { repoFallback, shipped }), showRevalidation: revalidationShown() }
 }
 
 // Issue body — the finding detail for the pre-filled `?body=`, every

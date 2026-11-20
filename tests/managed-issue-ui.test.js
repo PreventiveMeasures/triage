@@ -90,6 +90,34 @@ test('an untouched draft keeps every section for the API and only Impact for the
   assert.equal(new URL(dialog.fallbackUrl()).searchParams.get('body'), body)
 })
 
+// The opener's later options (events.js: once the finding's bundle says
+// where its dependency evidence is) draft the untouched body, but not one
+// the reader edited meanwhile.
+test('an untouched draft takes the options the opener has ready by the repository check', async t => {
+  t.mock.method(globalThis, 'fetch', () => Response.json({ mode: 'api', labels: [] }))
+  const unlinked = { evidence: '**Evidence:**\n1. `node_modules/a/b.js:9`' }
+  const linked = { evidence: '**Evidence:**\n1. [node_modules/a/b.js:9](https://github.com/o/a/blob/abc/b.js#L9)' }
+  const open = (ready) => {
+    const dialog = dialogFixture(t)
+    dialog.finding = { description: 'Main description' }
+    dialog.draftOptions = unlinked
+    dialog.draftOptionsReady = ready
+    Object.assign(dialog, createIssueDraft(dialog.finding, { ...unlinked, allSections: true }))
+    return dialog
+  }
+  const ready = Promise.withResolvers()
+  const dialog = open(ready.promise)
+  const checked = dialog.check()
+  ready.resolve(linked)
+  await checked
+  assert.match(dialog.body, /\[node_modules\/a\/b\.js:9\]\(https:\/\/github\.com\/o\/a\/blob\/abc\/b\.js#L9\)/u)
+
+  const edited = open(Promise.resolve(linked))
+  edited.editBody(`${edited.body}\n\nMine.`)
+  await edited.check()
+  assert.match(edited.body, /`node_modules\/a\/b\.js:9`[^]*Mine\.$/u)
+})
+
 test('section checkboxes remain editable during access checks but lock during creation and uncertain outcomes', t => {
   const dialog = dialogFixture(t)
   Object.assign(dialog, createIssueDraft({ impact: 'Impact text', reproduction: 'Steps' }))

@@ -8,14 +8,17 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { highlight } from '../ui/prism.js'
 import { langForPath } from '../common/code-language.js'
 import { bundleSourceLinkImports } from '../common/bundle-source-links.js'
-import { bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
+import { bundlePackageDirs, bundlePackageRepos, bundleSourcesAsMap } from '../common/bundle-sources.js'
+import { createBundleMetadata } from '../common/bundle-metadata.js'
 
 let fullBundleLoads = 0, localDetails, localFile = 'src/main.js', localIntegrity = 'bundle', managed = true
+const bundleIndexes = new Map(), indexReads = []
 const state = { focusCodeTick: 0, focusCodeStack: [], focusCodeAt: 0, bundles: [] }
 mock.module('../client/index.js', { namedExports: {
   state, isManagedUiMode: () => managed,
   bundleFilePath: (_integrity, path) => path,
   bundlesForFileHash: () => [{ integrity: localIntegrity, file: localFile }],
+  readBundleIndex: (integrity) => { indexReads.push(integrity); return Promise.resolve(bundleIndexes.get(integrity) ?? null) },
 } })
 mock.module('../ui/view/client-managed.js', { namedExports: { fetchReportSources, readReportSources } })
 mock.module('../ui/view/bundle-load.js', { namedExports: { buildBundleDetails: () => {
@@ -27,7 +30,7 @@ mock.module('../ui/view/format.js', { namedExports: { lineRange: line => line ? 
 mock.module('../ui/view/render.js', { namedExports: { render: () => {} } })
 mock.module('../ui/view/dom.js', { namedExports: { report: { querySelectorAll: () => [] } } })
 mock.module('../ui/view/prism-highlight.js', { namedExports: { langForPath, highlight: (...args) => Promise.resolve(highlight(...args)) } })
-const { attachedBundle, bundleSource, findingSourcePath, focusCodeHistory, focusCodeLinkPosition, focusCodePosition, getFocusCode } = await import('../ui/view/focus-code.js')
+const { attachedBundle, bundleDependencyRepo, bundleSource, findingSourcePath, focusCodeHistory, focusCodeLinkPosition, focusCodePosition, getFocusCode, loadBundleDependencyRepos } = await import('../ui/view/focus-code.js')
 const finding = { _managedReportId: 'report/id', _bundleHashes: ['bundle'], file: 'main.js', line: 1, evidence: [{ file: 'evidence.js' }] }
 const payload = { integrity: 'bundle', files: [['src/main.js', 'main source'], ['src/evidence.js', 'proof source']], paths: [['main.js', 'src/main.js'], ['evidence.js', 'src/evidence.js']] }
 let calls, gate
@@ -401,4 +404,71 @@ test('bundle removal evicts scoped and privileged source caches and cancels stal
   assert.ok(readReportSources('other', 'unrelated').data, 'other team sources stay cached')
   gate.resolve(); await rejected
   assert.equal(readReportSources('report/id', 'team'), undefined, 'old bytes cannot repopulate the cache')
+})
+
+// Where a finding's bundle places its evidence in a dependency: the
+// repository and commit the package records (format.js evidenceUrl's
+// `shipped`). A card only peeks; the issue dialog asks.
+const DEP_COMMIT = '0123456789abcdef0123456789abcdef01234567'
+const depModules = () => new Map([
+  ['.', { name: 'app', version: '1.0.0', files: { 'src/main.js': 'main' } }],
+  ['node_modules/axios', { name: 'axios', version: '1.6.0', repo: { github: 'axios/axios', commit: DEP_COMMIT }, files: { 'lib/http.js': 'http' } }],
+  ['node_modules/axios/node_modules/qs', { name: 'qs', version: '6.0.0', files: { 'index.js': 'qs' } }],
+  ['node_modules/babel-core', { name: 'babel-core', version: '7.0.0', repo: { github: 'babel/babel', directory: 'packages/babel-core', commit: DEP_COMMIT }, files: { 'index.js': 'babel' } }],
+])
+
+test('bundlePackageRepos: what each package records, with a full commit, never the root\'s', () => {
+  const details = { kind: 'stasis', bundle: new Bundle({ modules: depModules(), formats: new Map(), imports: new Map() }) }
+  assert.deepEqual(bundlePackageRepos(details), new Map([
+    ['node_modules/axios', { github: 'axios/axios', commit: DEP_COMMIT }],
+    ['node_modules/babel-core', { github: 'babel/babel', directory: 'packages/babel-core', commit: DEP_COMMIT }],
+  ]))
+  assert.deepEqual([...bundlePackageRepos(details, new Set(['node_modules/babel-core'])).keys()], ['node_modules/babel-core'])
+  assert.deepEqual(bundlePackageRepos({ kind: 'sourcemap', json: {} }), new Map())
+})
+
+test('managed dependency evidence: read from the report\'s sources, asked for only by the dialog', async t => {
+  const fetched = []
+  t.mock.method(globalThis, 'fetch', (url) => {
+    fetched.push(url)
+    return Promise.resolve(Response.json({
+      integrity: 'dep-bundle', files: [['src/main.js', 'main'], ['node_modules/axios/lib/http.js', 'http']],
+      paths: [['main.js', 'src/main.js'], ['node_modules/axios/lib/http.js', 'node_modules/axios/lib/http.js']],
+      packageDirs: [['src/main.js', '.'], ['node_modules/axios/lib/http.js', 'node_modules/axios']],
+      packageRepos: [['node_modules/axios', { github: 'axios/axios', commit: DEP_COMMIT }]],
+    }))
+  })
+  const cited = { ...finding, _managedReportId: 'dep-report', _bundleHashes: ['dep-bundle'] }
+  const row = { file: 'node_modules/axios/lib/http.js', line: '9' }
+  assert.equal(bundleDependencyRepo(cited, row), null)
+  assert.deepEqual(fetched, [], 'a card asks the server for nothing')
+  await loadBundleDependencyRepos(cited)
+  assert.equal(fetched.length, 1)
+  assert.deepEqual(bundleDependencyRepo(cited, row), { file: 'lib/http.js', repo: { github: 'axios/axios', commit: DEP_COMMIT } })
+  assert.equal(bundleDependencyRepo(cited, { file: 'main.js' }), null, 'own source records no package repository')
+  assert.equal(bundleDependencyRepo(cited, { file: 'node_modules/qs/index.js' }), null, 'nor does a file the sources lack')
+})
+
+test('local dependency evidence: read off the bundle\'s index once, the bundle itself never opened', async () => {
+  managed = false; localIntegrity = 'dep-local'; localFile = 'src/main.js'
+  const details = { integrity: 'dep-local', kind: 'stasis', size: 1, bundle: new Bundle({ modules: depModules(), formats: new Map(), imports: new Map() }) }
+  bundleIndexes.set('dep-local', await createBundleMetadata(details))
+  const cited = { file: 'src/main.js', fileHash: 'hash', line: 1, evidence: [], _bundleHashes: ['dep-local'] }
+  const row = { file: 'node_modules/axios/lib/http.js', line: '9' }
+  assert.equal(bundleDependencyRepo(cited, row), null, 'nothing read yet')
+  assert.equal(bundleDependencyRepo(cited, row), null)
+  await loadBundleDependencyRepos(cited)
+  assert.deepEqual(indexReads.filter((integrity) => integrity === 'dep-local'), ['dep-local'])
+  assert.deepEqual(bundleDependencyRepo(cited, row), { file: 'lib/http.js', repo: { github: 'axios/axios', commit: DEP_COMMIT } })
+  // A package inside another is its own, and this one records nothing.
+  assert.equal(bundleDependencyRepo(cited, { file: 'node_modules/axios/node_modules/qs/index.js' }), null)
+  assert.deepEqual(bundleDependencyRepo(cited, { file: 'node_modules/babel-core/index.js' }),
+    { file: 'index.js', repo: { github: 'babel/babel', directory: 'packages/babel-core', commit: DEP_COMMIT } })
+  assert.equal(fullBundleLoads, 0)
+  // A bundle without an index is not opened for this.
+  localIntegrity = 'dep-unindexed'
+  const unindexed = { ...cited, _bundleHashes: ['dep-unindexed'] }
+  await loadBundleDependencyRepos(unindexed)
+  assert.equal(bundleDependencyRepo(unindexed, row), null)
+  assert.equal(fullBundleLoads, 0)
 })
