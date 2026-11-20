@@ -195,7 +195,7 @@ function labelChips(item) {
 }
 
 // Why a version can't be reviewed, as a tile tells it.
-const UNSUPPORTED = { git: 'from git', tarball: 'a tarball not npm’s registry’s', integrity: 'locked with no integrity' }
+const UNSUPPORTED = { git: 'from git', tarball: 'a tarball not npm’s registry’s', integrity: 'locked with no integrity', unlocked: 'locked by no lockfile read' }
 // What fails a pull request's review, as its tile tells it on hover.
 function failedTold({ versions, count, unread, unchecked, cut }) {
   const rest = count - Math.min(versions.length, TOLD_PACKAGES)
@@ -214,13 +214,14 @@ function failedTold({ versions, count, unread, unchecked, cut }) {
 // lockfiles lock can't be reviewed or they couldn't all be read (`failed`,
 // reviewFailures); a check where every version they lock passes; else how
 // many of its own want reviews and how many others they lock do, the line
-// shown for those alone too.
+// shown for those alone too; and that Stasis still works out what a
+// stasis.config.json its review holds to reaches (`pending`), where it does.
 function dependencyLine(entry) {
   if (entry.status !== 'ready') return nothing
   const { versions, fresh, updated, more, toReview } = addedVersions(entry)
   const others = entry.review ? unreviewedVersions(entry).count : 0
   const failed = reviewFailures(entry)
-  if (versions.length === 0 && others === 0 && !failed) return nothing
+  if (versions.length === 0 && others === 0 && !failed && !entry.pending) return nothing
   const plus = more ? '+' : ''
   const reviewed = pkg => {
     const review = reviewOf(pkg, entry.review)
@@ -232,13 +233,15 @@ function dependencyLine(entry) {
   const rest = versions.length - TOLD_PACKAGES
   const told = [versions.length > 0 ? `New in its lockfiles: ${versions.slice(0, TOLD_PACKAGES).map(named).join(', ')}${rest > 0 ? ` and ${rest.toLocaleString('en-US')}${plus} more` : more ? ' and more' : ''}` : null,
     others > 0 ? `${others.toLocaleString('en-US')} other ${others === 1 ? 'version' : 'versions'} in its lockfiles unreviewed` : null,
-    failed ? `Its review fails: ${failedTold(failed)}` : null].filter(Boolean).join('. ')
+    failed ? `Its review fails: ${failedTold(failed)}` : null,
+    entry.pending ? 'Stasis is still working out what its stasis.config.json’s entries reach' : null].filter(Boolean).join('. ')
   const counted = [fresh ? `${fresh.toLocaleString('en-US')} new` : null, updated ? `${updated.toLocaleString('en-US')} updated` : null].filter(Boolean).join(', ')
   const wanted = toReview && others ? `${toReview.toLocaleString('en-US')} + ${others.toLocaleString('en-US')} to review`
     : toReview ? `${toReview.toLocaleString('en-US')} to review` : others ? `${others.toLocaleString('en-US')} unreviewed` : ''
   return html`<span class="issue-deps" data-tooltip=${told}>${PACKAGE_ICON}<span class="issue-deps-names">${[...new Set(versions.map(pkg => pkg.name))].join(', ')}</span>
     ${counted ? html`<span class="issue-deps-count">${counted}${plus}</span>` : nothing}
     ${failed ? html`<span class="issue-deps-review is-failed">${failed.count > 0 ? `${failed.count.toLocaleString('en-US')} can’t be reviewed` : 'lockfiles unread'}</span>`
+      : entry.pending ? html`<span class="issue-deps-review is-pending" role="status">${wanted ? `${wanted}, ` : ''}Stasis building…</span>`
       : entry.review ? wanted ? html`<span class="issue-deps-review is-wanted">${wanted}</span>`
       : html`<span class="issue-deps-review is-passed" role="img" aria-label="Every version reviewed">${CHECKS.success[1]}</span>` : nothing}</span>`
 }

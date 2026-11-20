@@ -277,6 +277,8 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
     2: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 2 }, { name: 'local', version: '1.0.0', source: 'file' }] })],
     3: [dir({ added: [mine], unsupported: [mine, { name: 'mirrored', version: '1.0.0', source: 'mirror', unsupported: 'tarball' }], moreUnsupported: 1 })],
     4: [{ paths: ['berry/yarn.lock'], error: 'lockfile-unreadable' }],
+    6: [{ paths: ['stasis.config.json'], error: 'stasis-pending' }],
+    7: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0 }] }), { paths: ['stasis.config.json'], error: 'stasis-pending' }],
     5: [dir({ added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 2 }], unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 200 }),
       dir({ paths: ['web/package-lock.json'], added: [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0 }],
         unreviewed: [{ name: 'other', version: '1.0.0', source: 'registry', reviews: 0 }], moreUnreviewed: 200 })],
@@ -284,7 +286,7 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
   // Two workspaces locking the same versions, which the server counts once.
   const counts = { 5: { unreviewed: 201 } }
   dependencies = (repoId, number) => Promise.resolve({ number, cut: false, review: { ...terms, ...counts[number] }, lockfiles: replies[number] })
-  answer = () => Promise.resolve({ items: [1, 2, 3, 4, 5].map(number => pull(number, { touchesLockfile: true })), counts: { open: 5, closed: 0 }, more: false })
+  answer = () => Promise.resolve({ items: [1, 2, 3, 4, 5, 6, 7].map(number => pull(number, { touchesLockfile: true })), counts: { open: 7, closed: 0 }, more: false })
   const view = shown('pulls')
   view.render()
   await setImmediate()
@@ -304,6 +306,9 @@ test('an open pull request\'s tile, where its repository reviews dependencies, s
   assert.match(tiles[3], /data-tooltip=Its review fails: not every lockfile it changes was read>[^]*<span class="issue-deps-review is-failed">lockfiles unread<\/span>/u,
     'shown with no version new, its lockfiles unread')
   assert.match(tiles[4], /is-wanted">1 \+ 201 to review</u, 'a version two directories lock as passing as the less passing of them; the others counted once, as the server tells')
+  assert.match(tiles[5], /data-tooltip=Stasis is still working out what its stasis\.config\.json’s entries reach>[^]*<span class="issue-deps-review is-pending" role="status">Stasis building…<\/span>/u,
+    'one whose stasis.config.json Stasis still builds: neither failing nor passing yet')
+  assert.match(tiles[6], /<span class="issue-deps-review is-pending" role="status">1 to review, Stasis building…<\/span>/u, 'with what already wants reviews')
 
   // A repository's review set anew: each asked again.
   const asked = dependencyOptions.length

@@ -33,7 +33,7 @@ interface BundleBuildInput {
 
 // A name git takes for a branch (git check-ref-format --branch), at most
 // GitHub's length for one.
-function branchName(value: unknown): value is string {
+export function branchName(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 255
     && !/[\p{Cc}\s~^:?*[\\]|\.\.|@\{|\/\/|^-|^\/|\/$|\.$|^@$|(?:^|\/)\.|\.lock(?:\/|$)/u.test(value)
 }
@@ -127,10 +127,29 @@ interface BuildRequest {
   // VERCEL_ENV alone.
   cacheDir: string | null
 }
+// A version a Stasis lockfile holds, as the worker tells it in place of a
+// bundle (bundle-build-worker.js buildStasisLockfile); and what it is asked
+// to build one of, with the `branch` the commit is of, where its asker knows
+// it, as a bundle's is (BundleBuildInput).
+export interface StasisDependency { name: string; version: string; integrity?: string; patch?: string }
+export interface LockfileInput { repoId: number; commit: string; config: string; branch?: string }
+interface LockfileRequest { input: LockfileInput; github: string; token: string | null; cacheDir: string | null }
 // An extra per-process ceiling, one build at a time, its worker given the heap
 // buildHeapLimitMib sizes; admission must also hold the shared DB lease.
 const active = new Set<string>()
 const MAX_ACTIVE_BUILDS = 1
+// The build running behind no request (buildRepositoryLockfile), which one
+// asked for takes the slot and the lease of: told to yield
+// (`build-yielded`), and gone once its lease is released.
+let behind: { yield: () => void; gone: Promise<void> } | null = null
+// Who builds behind no request, as `active` and the shared lease name it.
+const LOCKFILE_BUILDER = 'dependency-review'
+async function yielded(): Promise<void> {
+  const running = behind
+  if (!running) return
+  running.yield()
+  await running.gone
+}
 
 // What a build's worker may take of the JS heap, in MiB: the memory the
 // process may use, its container's limit else the machine's, less
@@ -148,6 +167,9 @@ export function buildHeapLimitMib(memory = processMemory()): number {
   return Math.max(MIN_BUILD_HEAP_MIB, Math.floor(memory / 1024 ** 2) - RESERVED_MIB)
 }
 
+// `work` under one of the deployment's leases, `userId`'s one at a time. One
+// asked for first has this instance's build behind no request yield, and
+// waits for its lease to be released, lest that hold a lease against it.
 export async function withBundleBuildLease<T>(db: BundleBuildLeaseStore, userId: string, signal: AbortSignal,
   work: (signal: AbortSignal) => Promise<T>): Promise<T> {
   signal.throwIfAborted()
@@ -157,6 +179,7 @@ export async function withBundleBuildLease<T>(db: BundleBuildLeaseStore, userId:
   const combined = AbortSignal.any([signal, timeout.signal])
   let claimed = false
   try {
+    if (userId !== LOCKFILE_BUILDER && behind) await yielded()
     claimed = await db.claimBundleBuildLease(userId, owner)
     if (!claimed) throw new BundleBuildError(429, 'build-busy')
     // Account for a slow/lost claim response or a suspended invocation before
@@ -178,10 +201,52 @@ export async function withBundleBuildLease<T>(db: BundleBuildLeaseStore, userId:
 // Parsing repositories and compressing bundles stays off the HTTP event loop.
 // Cap concurrent builds, terminate disconnected/timed-out work, and share no
 // credentials or mutable Stasis state between requests.
-export async function buildRepositoryBundle(userId: string, request: BuildRequest, signal: AbortSignal): Promise<BuiltBundle> {
-  if (active.has(userId) || active.size >= MAX_ACTIVE_BUILDS) throw new BundleBuildError(429, 'build-busy')
+export function buildRepositoryBundle(userId: string, request: BuildRequest, signal: AbortSignal): Promise<BuiltBundle> {
+  const context = { repoId: request.input.repoId, github: request.github, commit: request.input.commit, directory: request.input.directory, entryCount: request.input.entries.length }
+  return runBuild<BuiltBundle & { bytes: Uint8Array }, BuiltBundle>(userId, request, context, signal, message => {
+    // A view of the bytes the worker handed over, not a copy of them.
+    const { bytes } = message
+    return { value: { bytes: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), directory: message.directory, filename: message.filename }, logged: { byteSize: bytes.length } }
+  })
+}
+
+// A Stasis lockfile's dependencies in place of a bundle, for a repository's
+// dependency review (stasis-dependencies.ts), built behind no request, under
+// the deployment's lease as its one builder of them: in the same one slot,
+// which it gives up to a build asked for, with its lease (`build-yielded`),
+// and is refused while another holds (`build-busy`), to be built later.
+export async function buildRepositoryLockfile(db: BundleBuildLeaseStore, request: LockfileRequest, signal: AbortSignal): Promise<StasisDependency[]> {
+  if (behind || active.size >= MAX_ACTIVE_BUILDS) throw new BundleBuildError(429, 'build-busy')
+  const context = { repoId: request.input.repoId, github: request.github, commit: request.input.commit, config: request.input.config, branch: request.input.branch, lockfileOnly: true }
+  const asked = { ...request, lockfileOnly: true }
+  const yielding = new AbortController()
+  let gone = () => {}
+  behind = { yield: () => yielding.abort(new BundleBuildError(429, 'build-yielded')), gone: new Promise(resolve => { gone = resolve }) }
+  try {
+    return await withBundleBuildLease(db, LOCKFILE_BUILDER, AbortSignal.any([signal, yielding.signal]), leased => runBuild<{ dependencies: StasisDependency[] }, StasisDependency[]>(
+      LOCKFILE_BUILDER, asked, context, leased, ({ dependencies }) => ({ value: dependencies, logged: { dependencies: dependencies.length } }), true))
+  } finally {
+    behind = null
+    gone()
+  }
+}
+
+// What a build's worker told last, by its type: its progress, memory or a
+// note, its failure, else what it built.
+type WorkerMessage<M> = M & { type?: string; stage?: BundleBuildStage; error?: string; status?: number; diagnostic?: BundleBuildDiagnostic
+  memory?: Record<string, number>; event?: string; details?: Record<string, unknown> }
+
+// `request` built in a worker of its own, `owner`'s one build at a time, what
+// it built told by `built` of its last message, with what its log keeps of
+// it; `background`, behind no request.
+async function runBuild<M, T>(owner: string, request: { token: string | null }, about: Record<string, unknown>, signal: AbortSignal,
+  built: (message: M) => { value: T; logged: Record<string, unknown> }, background = false): Promise<T> {
+  const { token } = request
+  // One asked for takes the slot of one running behind no request, where its lease didn't already.
+  if (!background && behind) await yielded()
+  if (active.has(owner) || active.size >= MAX_ACTIVE_BUILDS) throw new BundleBuildError(429, 'build-busy')
   signal.throwIfAborted()
-  active.add(userId)
+  active.add(owner)
   let worker: Worker | undefined
   let workerUrl: URL | undefined
   let stage: BundleBuildStage = 'worker-start'
@@ -189,8 +254,7 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
   const heapLimitMib = buildHeapLimitMib()
   // How this Node was built, as it decides what a heap holds the same objects in.
   const { v8_enable_pointer_compression: pointerCompression, v8_enable_sandbox: v8Sandbox } = process.config.variables as Record<string, unknown>
-  const context = { buildId, repoId: request.input.repoId, github: request.github, commit: request.input.commit,
-    directory: request.input.directory, entryCount: request.input.entries.length, node: process.version, v8: process.versions.v8, pointerCompression, v8Sandbox,
+  const context = { buildId, ...about, node: process.version, v8: process.versions.v8, pointerCompression, v8Sandbox,
     memoryMib: Math.round(processMemory() / 1024 ** 2), heapLimitMib }
   const log = (event: string, details: Record<string, unknown> = {}) => {
     const write = event === 'failed' ? console.error : console.info
@@ -217,16 +281,15 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
         if (settled) return
         settled = true
         cleanup()
-        log(code === 'build-cancelled' ? 'cancelled' : 'failed', { code, ...details })
+        log(code === 'build-cancelled' || code === 'build-yielded' ? 'cancelled' : 'failed', { code, ...details })
         reject(new BundleBuildError(status, code))
       }
       const timer = setTimeout(() => fail(504, 'build-timeout'), BUNDLE_BUILD_TIMEOUT_MS)
       const abort = () => signal.reason instanceof BundleBuildError ? fail(signal.reason.status, signal.reason.code) : fail(499, 'build-cancelled')
       signal.addEventListener('abort', abort, { once: true })
       // The worker's memory and notes are the log's alone: the response tells
-      // the bundle, or the error's code, and nothing of them.
-      running.on('message', (message: Omit<BuiltBundle, 'bytes'> & { bytes: Uint8Array; type?: string; stage?: BundleBuildStage; error?: string; status?: number;
-        diagnostic?: BundleBuildDiagnostic; memory?: Record<string, number>; event?: string; details?: Record<string, unknown> }) => {
+      // what it built, or the error's code, and nothing of them.
+      running.on('message', (message: WorkerMessage<M>) => {
         if (settled) return
         if (message.type === 'progress' && message.stage) { stage = message.stage; log('progress', { memory: message.memory }); return }
         if (message.type === 'memory') { log('memory', { memory: message.memory }); return }
@@ -234,25 +297,24 @@ export async function buildRepositoryBundle(userId: string, request: BuildReques
         if (message.error) { fail(message.status ?? 422, message.error, { diagnostic: message.diagnostic, memory: message.memory }); return }
         settled = true
         cleanup()
-        log('completed', { byteSize: message.bytes.length })
-        // A view of the bytes the worker handed over, not a copy of them.
-        const { bytes } = message
-        resolve({ bytes: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), directory: message.directory, filename: message.filename })
+        const { value, logged } = built(message)
+        log('completed', logged)
+        resolve(value)
       })
       // Past its heap (heapLimitMib), Node terminates the worker with ERR_WORKER_OUT_OF_MEMORY.
       running.once('error', error => {
         const outOfMemory = (error as { code?: unknown }).code === 'ERR_WORKER_OUT_OF_MEMORY'
-        fail(outOfMemory ? 413 : 422, outOfMemory ? 'build-memory' : 'build-failed', { diagnostic: bundleBuildDiagnostic(error, request.token) })
+        fail(outOfMemory ? 413 : 422, outOfMemory ? 'build-memory' : 'build-failed', { diagnostic: bundleBuildDiagnostic(error, token) })
       })
       running.once('exit', exitCode => fail(422, 'build-failed', { exitCode }))
       if (signal.aborted) abort()
     })
   } catch (error) {
     if (!(error instanceof BundleBuildError)) {
-      log('failed', { code: 'build-failed', diagnostic: bundleBuildDiagnostic(error, request.token) })
+      log('failed', { code: 'build-failed', diagnostic: bundleBuildDiagnostic(error, token) })
     }
     throw error
   } finally {
-    try { await worker?.terminate() } finally { active.delete(userId) }
+    try { await worker?.terminate() } finally { active.delete(owner) }
   }
 }

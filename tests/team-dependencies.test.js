@@ -20,6 +20,8 @@ const state = { managedSession: { id: 's', role: 'triage' }, managedTeams: [{ id
 const asked = { teams: [], dependencies: [], deltas: [] }
 // Each team read's signal, as asked.
 const reads = []
+// A pull request's answer once it is asked alone, by its repository and number: unanswered where none is.
+const answers = new Map()
 const terms = { required: 2, since: null, canReview: true }
 const dir = (more = {}) => ({ paths: ['package-lock.json'], added: [], more: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, moreLocked: 0, ...more })
 const wants = (name, more = {}) => ({ name, version: '1.0.0', source: 'registry', reviews: 0, ...more })
@@ -98,7 +100,10 @@ mock.module('../ui/view/client-managed.js', { exports: {
       onLine(line)
     }
   },
-  fetchPullDependencies(repoId, number, options) { asked.dependencies.push([repoId, number, options]); return new Promise(() => {}) },
+  fetchPullDependencies(repoId, number, options) {
+    asked.dependencies.push([repoId, number, options])
+    return answers.has(`${repoId}#${number}`) ? Promise.resolve(answers.get(`${repoId}#${number}`)) : new Promise(() => {})
+  },
   fetchPullDependenciesOf(repoId, numbers, options) { asked.dependencies.push([repoId, numbers, options]); return new Promise(() => {}) },
 } })
 const opened = []
@@ -174,8 +179,8 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
     'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
   assert.doesNotMatch(cards.slice(1).join(''), /dependency-review-copy/u, 'none where it formats none')
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
-  assert.match(cards[0], /shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>[^]*rej[^]*<npm-delta \.name=rej /u,
-    'the lines each wanting reviews changes, a new one\'s whole')
+  assert.match(cards[0], /rej[^]*<npm-delta \.name=rej [^]*shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>/u,
+    'the lines each wanting reviews changes, a new one\'s whole; the one reviewed there already first')
   assert.match(cards[1], />b#6<[^]*class="team-deps-count">3 deps<[^]*and 3 more versions past those listed</u, 'one whose versions wanting reviews aren\'t listed kept')
   assert.doesNotMatch(cards[1], /<li>/u)
   assert.match(cards[2], />a#1<[^]*class="team-deps-count is-failed">review fails</u)
@@ -500,5 +505,96 @@ test('a version several pull requests add: listed under one of those reviewing i
   } finally {
     Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
     routes.length = 0
+  }
+})
+
+test('a pull request awaiting a build of Stasis\'s is asked again alone, its repository not read again for it; one whose default branch awaits it is read again sooner; none said to want nothing meanwhile', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() })
+  const waiting = { paths: ['stasis.config.json'], error: 'stasis-pending' }
+  const none = { ...terms, toReview: 0, unreviewed: 0, unsupported: 0 }
+  TEAM.push(21, 22)
+  branches[21] = { cut: false, review: none, lockfiles: [dir()] }
+  pulls[21] = { items: [pull(1)], more: false }
+  dependencies['21#1'] = { cut: false, review: none, lockfiles: [waiting] }
+  Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
+  asked.teams.length = asked.dependencies.length = 0
+  const view = shown([repo(21, 'org/built')])
+  const text = await read(view)
+  assert.match(text, /role="status">Stasis is still working out what some <code>stasis\.config\.json<\/code> entries reach; they are asked again as it does\.</u)
+  assert.doesNotMatch(text, /No open pull request/u, 'nothing known to want none till it is built')
+  t.mock.timers.tick(30_000)
+  await read(view)
+  assert.deepEqual([asked.teams, asked.dependencies.map(([repoId, number]) => [repoId, number])], [[['team-1', null]], [[21, 1]]], 'the pull request asked again alone, its repository read once')
+
+  // Its default branch awaiting one: its repository read again, 30 s on.
+  branches[22] = { cut: false, review: none, lockfiles: [dir(), waiting] }
+  pulls[22] = { items: [], more: false }
+  asked.teams.length = 0
+  const branch = shown([repo(22, 'org/building')])
+  state.teamDependenciesTab = 'branch'
+  assert.match(await read(branch), /role="status">Stasis is still working out what some <code>stasis\.config\.json<\/code> entries reach/u)
+  t.mock.timers.tick(15_000)
+  await read(branch)
+  assert.equal(asked.teams.length, 1, 'not yet')
+  t.mock.timers.tick(15_000)
+  await read(branch)
+  assert.equal(asked.teams.length, 2)
+  state.teamDependenciesTab = 'pulls'
+})
+
+test('a version its lockfile alone asks for, the stasis.config.json beside it reaching it not, is marked in each list, every other row as it was; a lockfile\'s are listed while Stasis builds, marked once it has; those reviewed already first, those marked last', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() })
+  const stasis = more => dir({ paths: ['stasis.config.json'], ...more })
+  const lone = name => wants(name, { unreached: true })
+  const waiting = { paths: ['stasis.config.json'], error: 'stasis-pending' }
+  TEAM.push(23, 24)
+  // 23 holds to its lockfile and the stasis.config.json beside it; 24 to its lockfile alone.
+  branches[23] = { cut: false, review: { ...terms, unreviewed: 2 }, lockfiles: [dir({ unreviewed: [lone('devtool'), wants('bundled')] }), stasis({ unreviewed: [wants('bundled')] })] }
+  pulls[23] = { items: [pull(1), pull(2)], more: false }
+  dependencies['23#1'] = { cut: false, review: terms, lockfiles: [dir({ added: [lone('only-pm'), wants('by-both'), lone('mixed'), wants('tooling', { unreached: true, reviews: 1 })] }),
+    stasis({ added: [wants('by-both'), wants('only-stasis', { reviews: 1 })] })] }
+  dependencies['23#2'] = { cut: false, review: terms, lockfiles: [dir({ added: [wants('early')] }), waiting] }
+  branches[24] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
+  pulls[24] = { items: [pull(1)], more: false }
+  dependencies['24#1'] = { cut: false, review: terms, lockfiles: [dir({ added: [wants('mixed'), wants('plain')] })] }
+  Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
+  asked.teams.length = asked.dependencies.length = 0
+  // Each row's version, and whether it is marked.
+  const rows = text => text.split('<li>').slice(1).map(row => [row.match(/data-tooltip=([^@]+)@/u)[1], row.includes('class="team-deps-unreached"')])
+  const cards = text => new Map(cardsOf(text).map(card => [nameOf(card), rows(card)]))
+  try {
+    const view = shown([repo(23, 'org/both'), repo(24, 'org/plain')])
+    const text = await read(view)
+    assert.deepEqual(cards(text), new Map([['plain#1', [['mixed', false], ['plain', false]]], ['both#2', [['early', false]]],
+      ['both#1', [['only-stasis', false], ['by-both', false], ['tooling', true], ['only-pm', true], ['mixed', true]]]]),
+    'its lockfile\'s alone marked; one Stasis reaches, alone or with it, and one of a lockfile with none beside it, not; one still built, listed unmarked. ' +
+    'Those reviewed there already first, those marked last, a reviewed one first among them')
+    assert.deepEqual(rows(cardsOf(text).find(card => nameOf(card) === 'both#1').split('team-deps-versions is-same')[1]), [['mixed', true]], 'above the one another lists, dimmed, which comes after all')
+    assert.match(text, /role="status">Stasis is still working out what some <code>stasis\.config\.json<\/code> entries reach/u)
+    assert.doesNotMatch(text, /review fails/u, 'one awaiting it fails nothing')
+    const marked = text.split('<li>').find(row => row.includes('data-tooltip=only-pm@'))
+    assert.match(marked, /<span class="team-deps-unreached" role="img" aria-label=Asked for by its lockfile alone: the stasis\.config\.json beside it reaches it by no entry>!<\/span>/u, 'an exclamation mark, named')
+    assert.match(marked, /<span class="compare-tip-label">Asked for<\/span><span>by its lockfile alone: the stasis\.config\.json beside it reaches it by no entry<\/span>/u, 'and said in its tooltip')
+    assert.doesNotMatch(text.split('<li>').find(row => row.includes('data-tooltip=by-both@')), /Asked for/u)
+
+    view.pick('versions')
+    assert.deepEqual(rows(templateText(view.render())), [['only-stasis', false], ['early', false], ['mixed', false], ['plain', false], ['by-both', false], ['tooling', true], ['only-pm', true]],
+      'each once, in that order too: not marked where another pull request\'s lockfile asks for it too')
+    view.pick('branch')
+    assert.deepEqual(rows(templateText(view.render())), [['bundled', false], ['devtool', true]], 'its default branch\'s too')
+    view.pick('pulls')
+
+    // Built: asked again alone, its rows marked as it tells them, the rest as they were.
+    answers.set('23#2', { number: 2, cut: false, review: terms, lockfiles: [dir({ added: [lone('early'), wants('late')] }), stasis({ added: [wants('late')] })] })
+    t.mock.timers.tick(30_000)
+    const built = await read(view)
+    assert.deepEqual(asked.dependencies.map(([repoId, number]) => [repoId, number]), [[23, 2]])
+    assert.deepEqual([cards(built).get('both#2'), cards(built).get('both#1')], [[['late', false], ['early', true]], cards(text).get('both#1')])
+    assert.doesNotMatch(built, /Stasis is still working/u)
+    assert.deepEqual(asked.teams, [['team-1', null]], 'its repositories not read again for it')
+  } finally {
+    answers.clear()
+    routes.length = 0
+    Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
   }
 })

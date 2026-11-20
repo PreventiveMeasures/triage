@@ -21,13 +21,19 @@ mock.module('../server-managed/lru.ts', { exports: { lru: (...args) => {
   return { get: key => memory.held.get(key), set: (key, value) => memory.held.set(key, value) }
 } } })
 const coldInstance = () => { for (const forget of memories) forget() }
+// A Stasis lockfile's build, in place of the worker's, as a test tells it
+// (lockfileBuilds): none expected of any other.
+const builder = await import('../server-managed/bundle-build.ts')
+const noBuild = () => Promise.reject(new Error('no lockfile build expected'))
+let buildLockfile = noBuild
+mock.module('../server-managed/bundle-build.ts', { exports: { ...builder, buildRepositoryLockfile: (...args) => buildLockfile(...args) } })
 const { openSqliteManagedDb } = await import('../server-managed/db.ts')
 const { createManagedRequestHandler } = await import('../server-managed/http.ts')
 const { lockedAt, lockedIn } = await import('../server-managed/commit-lockfiles.ts')
 const { lockedPackages } = await import('../server-managed/locked-packages.ts')
 const { MAX_UNREVIEWED, reviewBaseline, reviewedDependencies, reviewedPackages } = await import('../server-managed/pull-dependency-reviews.ts')
 const { MAX_ADDED } = await import('../server-managed/pull-dependencies.ts')
-const { repositoryLabel } = await import('../server-managed/repository-issues.ts')
+const { repositoryLabel, repositoryOpenPulls } = await import('../server-managed/repository-issues.ts')
 const { checkRepositoryDependencyReviews, context, people, publish } = await import('./_managed-repository-dependency-reviews.js')
 const { readLines } = await import('./_managed-lines.js')
 const { npmDeltaStore, npmVersionStore } = await import('../server-managed/npm-kept.ts')
@@ -338,7 +344,8 @@ function github(t, { files, compared = [], missing = [], failing = [], graphql =
     asked.push(`${url.pathname}${url.search}`)
     if (failing.includes(asked.at(-1))) return Promise.resolve(Response.json({ message: 'Service Unavailable' }, { status: 503 }))
     if (url.pathname === '/repos/org/repo/pulls/5') {
-      return Promise.resolve(Response.json({ number: 5, state: 'open', base: { sha: tip, repo: { full_name: 'org/repo' } }, head: { sha: head } }))
+      return Promise.resolve(Response.json({ number: 5, state: 'open', base: { sha: tip, ref: 'main', repo: { full_name: 'org/repo' } },
+        head: { sha: head, ref: 'bump-ms', repo: { full_name: 'org/repo' } } }))
     }
     // A query's data, or GitHub's whole answer to it, where it is given one.
     if (url.pathname === '/graphql') {
@@ -348,7 +355,9 @@ function github(t, { files, compared = [], missing = [], failing = [], graphql =
     if (url.pathname === `/repos/org/repo/compare/${tip}...${head}`) return Promise.resolve(Response.json({ merge_base_commit: { sha: mergeBase }, files: compared }))
     const commit = /^\/repos\/org\/repo\/git\/commits\/([a-f\d]{40})$/u.exec(url.pathname)?.[1]
     if (commits[commit]) return Promise.resolve(Response.json({ sha: commit, tree: { sha: commits[commit].root } }))
-    const tree = /^\/repos\/org\/repo\/git\/trees\/([a-f\d]{40})$/u.exec(url.pathname)?.[1]
+    // A commit names its own tree too, as GitHub lists one by either.
+    const named = /^\/repos\/org\/repo\/git\/trees\/([a-f\d]{40})$/u.exec(url.pathname)?.[1]
+    const tree = commits[named]?.root ?? named
     const listed = Object.values(commits).find(({ trees }) => trees.has(tree))
     if (listed) return Promise.resolve(Response.json({ sha: tree, tree: deepListing(listed.trees, tree), truncated: false }))
     const path = url.pathname.startsWith('/repos/org/repo/contents/') ? decodeURIComponent(url.pathname.slice('/repos/org/repo/contents/'.length)) : null
@@ -458,6 +467,15 @@ test('a repository\'s review is in effect once enabled and a team that reviews d
 
 // The app's API as `who` asks it: GET, or POST of `body`; with `more` of
 // the server's assembly, its reviewed dependencies say.
+// The lockfile builds asked for while test `t` runs, each as asked, built
+// as reaching what `reached` tells of its commit.
+function lockfileBuilds(t, reached = () => []) {
+  const builds = []
+  buildLockfile = (leases, request) => { builds.push(request); return Promise.resolve(reached(request.input.commit)) }
+  t.after(() => { buildLockfile = noBuild })
+  return builds
+}
+
 function api(db, users, more = {}) {
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {}, ...more })
   return async (path, { who = 'admin', body } = {}) => {
@@ -748,6 +766,87 @@ test('the default branch\'s dependencies, with their review, tell what its lockf
   assert.equal((await send('/api/admin/repositories/lockfiles?repoId=0')).status, 400)
 })
 
+test('a review holding to a stasis.config.json tells what its entries reach, of the default branch and of a pull request: built behind the answers, told as pending meanwhile, and kept', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  const behind = []
+  const send = api(db, users, { track: work => { behind.push(work) } })
+  const entries = JSON.stringify({ entries: { 'index.js': {} } })
+  const files = { ...PULL.files, [head]: { ...PULL.files[head], 'stasis.config.json': entries, 'app/stasis.config.json': entries, 'node_modules/dep/stasis.config.json': entries } }
+  github(t, { ...PULL, files, graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {} })
+  // What Stasis reaches of each commit: of those its lockfile locks, not `kept`, nor the git dependency.
+  const reached = { [head]: [{ name: 'ms', version: '2.1.3', integrity: sri('ms@2.1.3') }, { name: 'left-pad', version: '1.3.0', integrity: sri('left-pad@1.3.0') }],
+    [mergeBase]: [{ name: 'ms', version: '2.1.2', integrity: sri('ms@2.1.2') }] }
+  const builds = lockfileBuilds(t, commit => reached[commit])
+  const built = async () => { while (behind.length > 0) await behind.shift() }
+
+  // Its settings list the stasis.config.json files of its default branch, to name; one left out is refused.
+  assert.deepEqual((await send('/api/admin/repositories/lockfiles?repoId=1')).body.configs, ['app/stasis.config.json', 'stasis.config.json'], 'none of a package installed')
+  const setting = lockfiles => send('/api/admin/repositories/dependency-review', { body: { repoId: 1, enabled: true, required: 1, since: null, lockfiles } })
+  assert.equal((await setting({ mode: 'exclude', paths: ['stasis.config.json'] })).status, 400)
+  const scope = { mode: 'include', paths: ['stasis.config.json'] }
+  assert.deepEqual((await setting(scope)).body.dependencyReview.lockfiles, scope)
+  assert.equal(builds.length, 0, 'nothing built till it is asked for')
+
+  const branch = () => send('/api/admin/repositories/branch-dependencies?repoId=1')
+  const pending = (await branch()).body
+  const none = { paths: [], added: [], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0 }
+  assert.deepEqual(pending.lockfiles, [none, { paths: ['stasis.config.json'], error: 'stasis-pending' }], 'answered at once, the build not waited for; no lockfile held to')
+  await built()
+  assert.deepEqual(builds.map(({ input, github: repo, token }) => [input, repo, token]), [[{ repoId: 1, commit: head, config: 'stasis.config.json' }, 'org/repo', 'token']],
+    'a default branch\'s head, said to be of no branch: Stasis asks its default branch first')
+  const wanting = pkg => ({ ...pkg, source: 'registry', reviews: 0 })
+  const ready = (await branch()).body
+  assert.deepEqual(ready.lockfiles, [none, { paths: ['stasis.config.json'], added: [], more: 0, moreLocked: 0,
+    unreviewed: [wanting({ name: 'ms', version: '2.1.3' }), wanting({ name: 'left-pad', version: '1.3.0' })], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0 }],
+  'what its entries reach, as package-lock.json locks them: neither `kept`, which nothing reaches, nor the git dependency')
+  assert.deepEqual([ready.review.unreviewed, ready.review.unsupported, ready.review.lockfiles], [2, 0, scope])
+  assert.equal(builds.length, 1, 'kept: built once')
+
+  // A pull request: what they reach at its head that they didn't at its merge base.
+  await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
+  const pull = () => send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`)
+  assert.deepEqual((await pull()).body.lockfiles, [{ paths: ['stasis.config.json'], error: 'stasis-pending' }], 'its merge base still to be built; its lockfile, held to by none, left out')
+  await built()
+  assert.deepEqual(builds.map(({ input }) => [input.commit, input.branch]), [[head, undefined], [mergeBase, 'main']],
+    'its head\'s kept already; its merge base said to be of its base\'s branch')
+  const answer = (await pull()).body
+  assert.deepEqual(answer.lockfiles, [{ paths: ['stasis.config.json'], more: 0, moreLocked: 0,
+    added: [wanting({ name: 'left-pad', version: '1.3.0' }), { name: 'ms', version: '2.1.3', source: 'registry', was: ['2.1.2'], reviews: 1, reviewers: [by('alice')] }],
+    unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0 }])
+  assert.deepEqual([answer.review.toReview, answer.review.unreviewed, answer.review.unsupported], [1, 0, 0])
+  // Each of a pull request's builds is told the branch its commit is of: its head's own, and its base's.
+  await setting({ mode: 'include', paths: ['web/stasis.config.json'] })
+  for (const _commit of [head, mergeBase]) {
+    await pull()
+    await built()
+  }
+  assert.deepEqual(new Map(builds.slice(2).map(({ input }) => [input.commit, [input.config, input.branch]])),
+    new Map([[head, ['web/stasis.config.json', 'bump-ms']], [mergeBase, ['web/stasis.config.json', 'main']]]))
+
+  // One that couldn't be built fails its review, why told; beside a lockfile held to, each is reviewed.
+  buildLockfile = () => Promise.reject(new builder.BundleBuildError(422, 'config-invalid'))
+  await setting({ mode: 'include', paths: ['app/stasis.config.json', 'package-lock.json'] })
+  assert.deepEqual((await branch()).body.lockfiles.map(dir => [dir.paths, dir.error ?? null]), [[['package-lock.json'], null], [['app/stasis.config.json'], 'stasis-pending']])
+  await built()
+  const failed = (await branch()).body
+  assert.deepEqual(failed.lockfiles[1], { paths: ['app/stasis.config.json'], error: 'stasis-failed', detail: 'config-invalid' })
+  assert.deepEqual(failed.lockfiles[0].unreviewed.map(pkg => pkg.name), ['kept', 'left-pad'], 'the lockfile\'s own, all it locks')
+  assert.ok(failed.lockfiles[0].unreviewed.every(pkg => !Object.hasOwn(pkg, 'unreached')), 'none marked by one in another directory, nor by one not built')
+
+  // Beside the lockfile, in its directory, both held to: the lockfile's versions told as they are, each Stasis reaches not marked as its package manager's alone to ask for.
+  await setting({ mode: 'include', paths: ['stasis.config.json', 'package-lock.json'] })
+  const marks = list => list.map(pkg => [pkg.name, pkg.unreached ?? false])
+  const both = (await branch()).body
+  assert.deepEqual(both.lockfiles.map(dir => dir.paths), [['package-lock.json'], ['stasis.config.json']])
+  assert.deepEqual(both.lockfiles.map(dir => [marks(dir.unreviewed), marks(dir.unsupported)]), [[[['kept', true], ['left-pad', false]], [['mine', true]]], [[['left-pad', false]], []]],
+    'kept and the git dependency, which no entry reaches; not left-pad, asked for by both')
+  const pulled = (await pull()).body
+  assert.deepEqual(pulled.lockfiles.map(dir => [marks(dir.added), marks(dir.unreviewed), marks(dir.unsupported)]),
+    [[[['left-pad', false], ['ms', false]], [['kept', true]], [['mine', true]]], [[['left-pad', false], ['ms', false]], [], []]], 'a pull request\'s too, those it adds reached')
+})
+
 test('the default branch\'s dependencies, read on a cold instance of what another kept, ask GitHub for none of its lockfiles nor its listing, nor its access again', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
@@ -770,8 +869,8 @@ test('the default branch\'s dependencies, read on a cold instance of what anothe
 // alice's team `one` has org/repo, which reviews its dependencies, org/other,
 // which reviews none, and src of org/part, which she may read only some of;
 // org/repo's open pull request 5 with `pull` as its page reads it; a query
-// `answers` answers, answered so.
-async function teamFixture(t, pull = {}, answers = () => null) {
+// `answers` answers, answered so; work behind its answers handed to `track`.
+async function teamFixture(t, pull = {}, answers = () => null, track = () => {}) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const users = await people(db)
@@ -787,7 +886,7 @@ async function teamFixture(t, pull = {}, answers = () => null) {
   const asked = github(t, { ...PULL, graphql: body => answers(body) ?? (body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } }
     : body.query.includes('page: pullRequests') ? { repository: { open: { totalCount: 1 }, closed: { totalCount: 0 }, page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node] } } }
       : {}) })
-  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track() {} })
+  const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track })
   const read = (path = '/api/teams/one/dependencies', who = 'alice') => readLines(t, handler, path, users[who].setCookie.split(';')[0])
   return { db, users, asked, read, send: api(db, users) }
 }
@@ -993,6 +1092,27 @@ test('a team\'s Dependencies read each open pull request\'s by the commits its p
     assert.deepEqual((await other.read()).lines.find(line => line.dependencies)?.dependencies, told, JSON.stringify(page))
     assert.ok(other.asked.includes('/repos/org/repo/pulls/5'), JSON.stringify(page))
   }
+})
+
+test('a page of open pull requests names the branches each one\'s commits are of, its head\'s where it is no fork\'s; a build of its merge base is told its base\'s', async t => {
+  const node = (number, more) => ({ number, title: `Pull ${number}`, state: 'OPEN', baseRefOid: tip, headRefOid: head, files: { totalCount: 0, nodes: [] }, ...more })
+  const nodes = [node(5, { baseRefName: 'main', headRefName: 'bump-ms', isCrossRepository: false }), node(6, { baseRefName: 'release/1.2', headRefName: 'patch-1', isCrossRepository: true }),
+    node(7, { baseRefName: 'a..b', headRefName: 'bump-ms' }), node(8, {})]
+  const queries = []
+  github(t, { files: {}, graphql: body => { queries.push(body.query); return { repository: { page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } } } } })
+  assert.deepEqual((await repositoryOpenPulls('org/repo', 'token', null, null, 50)).commits, [{ number: 5, base: tip, head, baseRef: 'main', headRef: 'bump-ms' },
+    { number: 6, base: tip, head, baseRef: 'release/1.2' }, { number: 7, base: tip, head }, { number: 8, base: tip, head }], 'a fork\'s head, or one not told its own, of none; a name no branch\'s, none')
+  assert.ok(['baseRefName', 'headRefName', 'isCrossRepository'].every(field => queries[0].includes(field)))
+  t.mock.restoreAll()
+
+  // Read by a team's Dependencies, by the commits its page names: its merge base's build told its base's branch.
+  const behind = [], builds = lockfileBuilds(t)
+  const { db, read } = await teamFixture(t, { baseRefOid: tip, headRefOid: head, baseRefName: 'main', headRefName: 'bump-ms', isCrossRepository: false }, undefined,
+    work => { behind.push(work) })
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null, lockfiles: { mode: 'include', paths: ['stasis.config.json'] } })
+  await read()
+  while (behind.length > 0) await behind.shift()
+  assert.deepEqual(builds.map(({ input }) => input).find(input => input.commit === mergeBase), { repoId: 1, commit: mergeBase, config: 'stasis.config.json', branch: 'main' })
 })
 
 // A bundle's npm versions (bundle-dependency-reviews.ts), as the lockfiles

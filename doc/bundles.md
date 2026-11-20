@@ -113,6 +113,7 @@ If the bytes match an existing bundle, it reuses that one.
 | Limit | Value | Error |
 | --- | --- | --- |
 | Concurrent builds | 2 per deployment, across all instances that share the managed database; 1 per server process; 1 per user | `429 build-busy` |
+| [Dependency review](./dependency-review.md#stasis-entries)'s builds of what a `stasis.config.json` reaches | Share those limits as one user: at most 1 per deployment, and none while a bundle is being created in the same process | A running one in the same process stops for a bundle's build, freeing its place, and starts again later; one in another server instance can't be stopped |
 | Build time | 3 minutes, including the wait for a build slot | `504 build-timeout` |
 | Worker memory | The memory the server process may use (its container's limit, else the machine's) less 512 MiB for the server and the worker's file bytes and output, at least 512 MiB of heap: 3.5 GiB on a 4 GiB function | `413 build-memory` |
 | Output | 512 MiB of JSON before compression, and the upload size limit after it | `413 too-large` |

@@ -8,11 +8,13 @@ import { bundleBuildDiagnostic } from '../server-managed/bundle-build-diagnostic
 class Worker extends EventEmitter {
   static start
   static env
+  static data
   static resourceLimits
   constructor(url, options) {
     super()
     assert.ok(url.href.endsWith('/bundle-build-worker.js'))
     Worker.env = options.env
+    Worker.data = options.workerData
     Worker.resourceLimits = options.resourceLimits
     assert.deepEqual(options.execArgv, [])
     Worker.start(this)
@@ -20,7 +22,7 @@ class Worker extends EventEmitter {
   terminate() { this.emit('exit', 1); return Promise.resolve(1) }
 }
 mock.module('node:worker_threads', { namedExports: { Worker } })
-const { BundleBuildError, buildHeapLimitMib, buildRepositoryBundle, parseBundleBuild } = await import('../server-managed/bundle-build.ts')
+const { BundleBuildError, buildHeapLimitMib, buildRepositoryBundle, buildRepositoryLockfile, parseBundleBuild } = await import('../server-managed/bundle-build.ts')
 const token = 'private-test-credential'
 const input = parseBundleBuild({ repoId: 12, commit: 'a'.repeat(40), entries: ['src/index.js'], conditions: { preset: 'node', conditions: ['node'] } })
 const request = { input, github: 'org/repo', token, maxBytes: 1_000_000, scopes: [null] }
@@ -73,6 +75,26 @@ test('progress messages do not settle a build; success and termination log one o
   assert.equal(new Set(logs.map(log => log.buildId)).size, 1)
   assert.ok(logs.every(log => log.repoId === 12 && log.entryCount === 1 && log.elapsedMs >= 0))
   assert.ok(!JSON.stringify(logs).includes(token))
+})
+
+test('a lockfile’s build asks the worker for one in place of a bundle, and answers the dependencies it tells, logged as one', async t => {
+  const logs = capture(t)
+  const dependencies = [{ name: 'ms', version: '2.1.3', integrity: 'sha512-x' }, { name: 'tool', version: '1.0.0' }]
+  Worker.start = worker => queueMicrotask(() => {
+    worker.emit('message', { type: 'progress', stage: 'lockfile' })
+    worker.emit('message', { dependencies })
+  })
+  const asked = { input: { repoId: 12, commit: 'a'.repeat(40), config: 'app/stasis.config.json' }, github: 'org/repo', token, cacheDir: null }
+  const leases = { claimBundleBuildLease: () => Promise.resolve(true), releaseBundleBuildLease: () => Promise.resolve() }
+  assert.deepEqual(await buildRepositoryLockfile(leases, asked, new AbortController().signal), dependencies)
+  assert.deepEqual(Worker.data, { ...asked, lockfileOnly: true, type: 'managed-bundle-build' })
+  assert.deepEqual(logs.map(log => log.event), ['started', 'progress', 'completed'])
+  assert.deepEqual([logs.at(-1).stage, logs.at(-1).dependencies, logs.at(-1).config, logs.at(-1).lockfileOnly], ['lockfile', 2, 'app/stasis.config.json', true])
+  assert.ok(!JSON.stringify(logs).includes(token))
+  Worker.start = worker => queueMicrotask(() => worker.emit('message', { error: 'config-invalid', status: 422, diagnostic: { message: 'stasis.config.json is not valid JSON' } }))
+  await assert.rejects(buildRepositoryLockfile(leases, asked, new AbortController().signal), { code: 'config-invalid', status: 422 })
+  await assert.rejects(buildRepositoryLockfile({ ...leases, claimBundleBuildLease: () => Promise.resolve(false) }, asked, new AbortController().signal), { code: 'build-busy' },
+    'the deployment\'s builds busy')
 })
 
 test('worker construction, runtime errors, and premature exits log the actual failure once', async t => {

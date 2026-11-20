@@ -5,7 +5,7 @@ import { parseBundleBuild } from '../server-managed/bundle-build.ts'
 
 let build
 mock.module('@exodus/stasis/vfs-bundle', { namedExports: { buildGitHubBundle: options => build(options), setCacheDir: () => {} } })
-const { MAX_SERIALIZED_BYTES, buildStasisBundle } = await import('../server-managed/bundle-build-worker.js')
+const { MAX_SERIALIZED_BYTES, buildStasisBundle, buildStasisLockfile } = await import('../server-managed/bundle-build-worker.js')
 
 const commit = 'a'.repeat(40)
 const file = (path, mode = '100644') => ({ path, mode, type: 'blob', sha: 'b'.repeat(40) })
@@ -276,4 +276,17 @@ test('a bundle past 512 MiB of JSON is too large, as one with a module too long 
   }
   const failing = await fixture(['app/index.js'], [file('app/package.json')], { serializedBytes: () => { throw new TypeError('not a size') } })
   await assert.rejects(failing.run(), { message: 'not a size' }, 'any other failure is its own')
+})
+
+test('a lockfile\'s build gives Stasis the branch its commit is said to be of, and none where none is said', async () => {
+  const asked = []
+  build = options => { asked.push(options); return Promise.resolve({ lockfile: { modules: new Map() } }) }
+  const client = { listRepoDir: ({ directory }) => Promise.resolve(directory ? [file('stasis.config.json')] : [{ path: 'app', mode: '040000', type: 'tree' }]),
+    getRepoFile: () => Promise.resolve(config({ 'index.js': {} })) }
+  const run = more => buildStasisLockfile({ input: { repoId: 1, commit, config: 'app/stasis.config.json', ...more }, github: 'org/repo', token: null }, client)
+  assert.deepEqual(await run({ branch: 'release/1.2' }), [])
+  await run({})
+  assert.deepEqual(asked.map(({ github, sha, directory, branch, lockfile }) => [github, sha, directory, branch, lockfile]),
+    [['release/1.2', 'stasis.lock.json'], [undefined, 'stasis.lock.json']].map(told => ['org/repo', commit, 'app', ...told]))
+  assert.ok(!Object.hasOwn(asked[1], 'branch'), 'none given where none is said')
 })

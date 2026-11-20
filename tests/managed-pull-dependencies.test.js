@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
-import { MAX_ADDED, MAX_DIRECTORIES, lockfileFormat, pullDependencies, pullDependenciesAt, touchesLockfile } from '../server-managed/pull-dependencies.ts'
+import { MAX_ADDED, MAX_DIRECTORIES, lockfileFormat, pullDependencies, pullDependenciesAt, pullRefs, touchesLockfile } from '../server-managed/pull-dependencies.ts'
 import { createSession } from '../server-managed/session.ts'
 
 const config = { sessionCookieName: 'sid', cookieSecure: false, sessionTtlMs: 60_000 }
@@ -116,14 +116,16 @@ function contents(path, text) {
 // base at `tip` and head at `head`, compared from `mergeBase`, as any head
 // before it; `asked` what was asked of it, and `compared` the files GitHub's
 // comparison lists.
-function github(t, { compared = COMPARED, files = FILES, pullFiles = null, headAt = FILES_HEAD, baseAt = FILES_BASE } = {}) {
+function github(t, { compared = COMPARED, files = FILES, pullFiles = null, headAt = FILES_HEAD, baseAt = FILES_BASE, refs = {} } = {}) {
   const asked = []
   t.mock.method(globalThis, 'fetch', input => {
     const url = new URL(typeof input === 'string' ? input : input.url)
     const at = `${url.pathname}${url.search}`
     if (url.pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
     asked.push(at)
-    if (url.pathname === '/repos/org/repo/pulls/5') return Promise.resolve(Response.json({ number: 5, base: { sha: tip, repo: { full_name: 'org/repo' } }, head: { sha: headAt } }))
+    if (url.pathname === '/repos/org/repo/pulls/5') {
+      return Promise.resolve(Response.json({ number: 5, base: { sha: tip, repo: { full_name: 'org/repo' }, ...refs.base }, head: { sha: headAt, ...refs.head } }))
+    }
     if (url.pathname.startsWith(`/repos/org/repo/compare/${tip}...`)) {
       return Promise.resolve(Response.json({ merge_base_commit: { sha: baseAt }, files: compared }))
     }
@@ -287,6 +289,29 @@ test('given its commits, as a page of open pull requests names them, GitHub isn\
   assert.deepEqual([pushed.commits, pushed.told.head, pushed.told.lockfiles.map(dir => dir.paths)], [`${tip}...${head}`, head, [['package-lock.json']]],
     'pushed to since its page was read: read by the commits its own list of its files is of')
   assert.ok(listed.includes('/repos/org/repo/pulls/5'), 'its commits asked for, as its own list of its files is read')
+})
+
+test('the branches a pull request\'s commits are of are told with them: its base\'s, and its head\'s where that is the repository\'s own, not a fork\'s; a name that is no branch\'s, by none', async t => {
+  assert.deepEqual(pullRefs('main', 'dependabot/npm_and_yarn/ms-2.1.3'), { baseRef: 'main', headRef: 'dependabot/npm_and_yarn/ms-2.1.3' })
+  for (const bad of [undefined, null, 5, '', '-x', '@', 'a..b', 'a b', 'a:b', 'a\\b', 'a~1', 'a^', 'a?', 'a*', 'a[', '/a', 'a/', 'a//b', '.a', 'a/.b', 'a.lock', 'a.lock/b', 'a.', 'a@{1}', 'a\nb',
+    'x'.repeat(256)]) assert.deepEqual(pullRefs(bad, bad), {}, JSON.stringify(bad))
+  assert.deepEqual(pullRefs('a.b/c-d_e@f', 'x'.repeat(255)), { baseRef: 'a.b/c-d_e@f', headRef: 'x'.repeat(255) })
+
+  // Read by its number, of GitHub's own answer: its head's where its repository is its base's, not a fork's; none where GitHub names none.
+  const named = from => ({ base: { ref: 'main' }, head: { ref: 'bump-ms', repo: { full_name: from } } })
+  for (const [refs, told] of [[named('Org/Repo'), { baseRef: 'main', headRef: 'bump-ms' }], [named('fork/repo'), { baseRef: 'main' }], [{}, {}]]) {
+    github(t, { refs })
+    const { told: _told, ...read } = await pullDependenciesAt('org/repo', 'token', 5, memory())
+    assert.deepEqual(read, { ...told, commits: `${tip}...${head}` }, JSON.stringify(refs))
+    t.mock.restoreAll()
+  }
+  github(t)
+  // Given with its commits, as a page of open pull requests names them: told as given, kept or read.
+  const kept = memory()
+  for (const round of ['read', 'kept']) {
+    const { told: _given, ...given } = await pullDependenciesAt('org/repo', 'token', 5, kept, undefined, { base: tip, head, baseRef: 'main', headRef: 'bump-ms' })
+    assert.deepEqual(given, { baseRef: 'main', headRef: 'bump-ms', commits: `${tip}...${head}` }, round)
+  }
 })
 
 test('GitHub naming another pull request, or failing, is the answer\'s failure, nothing kept', async t => {

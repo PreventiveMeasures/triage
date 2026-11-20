@@ -19,13 +19,15 @@
 import { type CommitLockfiles, lockedIn } from './commit-lockfiles.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { MAX_LOCKED, type PullDependencies, lockedWith, lockfileFormat } from './pull-dependencies.ts'
-import { MAX_UNREVIEWED } from './pull-dependency-reviews.ts'
+import { MAX_UNREVIEWED, hashesOf } from './pull-dependency-reviews.ts'
 
-// A version a bundle holds: its package's name and its version.
-export interface BundledVersion { name: string; version: string }
+// A version a bundle holds: its package's name and its version; and, as a
+// Stasis lockfile tells one (stasis-dependencies.ts), how it was installed:
+// its tarball's integrity, and pnpm's hash of the patch applied to it.
+export interface BundledVersion { name: string; version: string; integrity?: string; patch?: string }
 
-// The directory a lockfile at `path` is in, '' for the repository's root.
-const directoryOf = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+// The directory a file at `path` is in, '' for the repository's root.
+export const directoryOf = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
 // A bundle's directory as one is compared: without the slashes either end.
 const bundleDirectory = (directory: string) => directory.replaceAll(/^\/+|\/+$/gu, '')
 const depth = (dir: string) => dir === '' ? 0 : dir.split('/').length
@@ -37,32 +39,46 @@ export function installsBundle(path: string, directory: string): boolean {
   return dir === '' || at === dir || at.startsWith(`${dir}/`)
 }
 
-// The versions `bundled` as `read`'s lockfiles (those installing the bundle,
-// read at `commit`) lock them, as one directory of a pull request's
-// lockfiles (pull-dependencies.ts) whose versions it adds none of, each as
-// the nearest of their directories locking it locks it, those past
-// MAX_LOCKED counted (`moreLocked`), and each lockfile left unread a
-// directory of its own failing the review; with those none lock
-// (`unlocked`, as many as MAX_UNREVIEWED, how many more `moreUnlocked`) and
-// how many versions it bundles (`versions`), each once.
-export function bundleDependencies(bundled: BundledVersion[], read: CommitLockfiles, commit: string) {
-  const versions = [...new Map(bundled.map(one => [`${one.name}@${one.version}`, one])).values()]
+// Whether `pkg` is locked as `one` was installed, where it tells how: with
+// its tarball's integrity among its own, and its patch, or none.
+const lockedAsInstalled = (one: BundledVersion, pkg: LockedPackage) => one.integrity !== undefined
+  && hashesOf(pkg).includes(one.integrity) && (pkg.patchHash ?? '') === (one.patch ?? '')
+
+// The versions `bundled` as `read`'s lockfiles lock them (`locked`), each as
+// the nearest of their directories locking it locks it; one told with how it
+// was installed, as the nearest locking it so does, where one does. With
+// those none lock (`unlocked`), how many versions there are (`versions`),
+// and the lockfiles' paths, the nearest first.
+export function lockedVersions(bundled: BundledVersion[], read: CommitLockfiles) {
   const byDirectory = Map.groupBy(read.lockfiles.map(({ path }) => path), directoryOf)
   // Each directory's versions by their name and version, the nearest first.
   const nearest = [...byDirectory].toSorted(([a], [b]) => depth(b) - depth(a)).map(([dir, paths]) =>
     ({ paths, locked: Map.groupBy(lockedIn(read, path => directoryOf(path) === dir).packages, pkg => `${pkg.name}@${pkg.version ?? ''}`) }))
   const found = new Map<string, LockedPackage>()
-  const unlocked: BundledVersion[] = []
-  for (const one of versions) {
+  const unlocked = new Map<string, BundledVersion>()
+  for (const one of bundled) {
     const key = `${one.name}@${one.version}`
-    const variants = nearest.find(({ locked }) => locked.has(key))?.locked.get(key)
-    if (!variants) { unlocked.push(one); continue }
+    const locking = nearest.flatMap(({ locked }) => locked.has(key) ? [locked.get(key)!] : [])
+    const variants = locking.map(locks => locks.filter(pkg => lockedAsInstalled(one, pkg))).find(locks => locks.length > 0) ?? locking[0]
+    if (!variants) { unlocked.set(key, { name: one.name, version: one.version }); continue }
     for (const pkg of variants) if (!found.has(lockedWith(pkg))) found.set(lockedWith(pkg), pkg)
   }
-  const locked = [...found.values()]
+  return { locked: [...found.values()], unlocked: [...unlocked.values()], versions: new Set(bundled.map(one => `${one.name}@${one.version}`)).size,
+    paths: nearest.flatMap(({ paths }) => paths) }
+}
+
+// The versions `bundled` as `read`'s lockfiles (those installing the bundle,
+// read at `commit`) lock them (lockedVersions), as one directory of a pull
+// request's lockfiles (pull-dependencies.ts) whose versions it adds none of,
+// those past MAX_LOCKED counted (`moreLocked`), and each lockfile left
+// unread a directory of its own failing the review; with those none lock
+// (`unlocked`, as many as MAX_UNREVIEWED, how many more `moreUnlocked`) and
+// how many versions it bundles (`versions`), each once.
+export function bundleDependencies(bundled: BundledVersion[], read: CommitLockfiles, commit: string) {
+  const { locked, unlocked, versions, paths } = lockedVersions(bundled, read)
   const told: PullDependencies = { base: commit, head: commit, cut: false, lockfiles: [
-    { paths: nearest.flatMap(({ paths }) => paths), added: [], more: 0, locked: locked.slice(0, MAX_LOCKED), moreLocked: Math.max(0, locked.length - MAX_LOCKED) },
+    { paths, added: [], more: 0, locked: locked.slice(0, MAX_LOCKED), moreLocked: Math.max(0, locked.length - MAX_LOCKED) },
     ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' })),
   ] }
-  return { told, versions: versions.length, unlocked: unlocked.slice(0, MAX_UNREVIEWED), moreUnlocked: Math.max(0, unlocked.length - MAX_UNREVIEWED) }
+  return { told, versions, unlocked: unlocked.slice(0, MAX_UNREVIEWED), moreUnlocked: Math.max(0, unlocked.length - MAX_UNREVIEWED) }
 }

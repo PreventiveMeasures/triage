@@ -29,9 +29,11 @@
 import { createClient } from '@preventive/upstream/github.js'
 import { GithubApiError, upstreamGithub } from './github-errors.ts'
 import { USER_AGENT, githubJson, repoApi } from './github-requests.ts'
+import { branchName } from './bundle-build.ts'
 import { SHA } from './github-values.ts'
 import { compareVersions, isExactVersion } from '@preventive/upstream/semver.js'
 import { type LockedPackage, isTestFixture, lockedPackages, patchedIn } from './locked-packages.ts'
+import { isStasisConfig } from './lockfile-scope.ts'
 import { type Lru, lru } from './lru.ts'
 import { eachOf } from './queue.ts'
 import { type ChangedFile, commitChanges } from './repository-changes.ts'
@@ -74,11 +76,11 @@ export function lockfileFormat(path: string): Format | null {
   return name === 'yarn.lock' ? 'yarn' : null
 }
 
-// Whether a pull request changing `paths` changes a lockfile read here: null
-// where none of them is one but they are fewer than it changes
-// (`changed`), which it may yet.
+// Whether a pull request changing `paths` changes a lockfile read here, or
+// a stasis.config.json, which a review may hold to: null where none of them
+// is one but they are fewer than it changes (`changed`), which it may yet.
 export function touchesLockfile(paths: string[], changed: number): boolean | null {
-  if (paths.some(path => lockfileFormat(path) !== null)) return true
+  if (paths.some(path => lockfileFormat(path) !== null || isStasisConfig(path))) return true
   return changed > paths.length ? null : false
 }
 
@@ -94,6 +96,8 @@ export type AddedPackage = LockedPackage & { was?: string[] }
 // `moreLocked`); or why they couldn't be told, a lockfile's reader refusing one
 // (`lockfile-unreadable`, with what it said), one of a format not read
 // (`lockfile-unsupported`, Bun's) or GitHub having none at a commit compared.
+// A stasis.config.json a review holds to is told as one too, by its own path
+// (stasis-dependencies.ts stasisDirectory), or as `stasis-pending` or `stasis-failed`.
 export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage[]; more: number; locked: LockedPackage[]; moreLocked: number }
   | { error: string; detail?: string })
 // What a pull request's lockfiles add: the commits compared (`base`, its
@@ -142,15 +146,23 @@ const readKey = (ref: string, { path, format, sha }: { path: string; format: For
 
 // The pull request's base's and head's commits, as GitHub has them now: its
 // base's moving on as it does, its head's with each push, both kept once it
-// is merged or closed.
-export interface PullCommits { base: string; head: string }
+// is merged or closed. With the branches they are of, where told: its base's
+// (`baseRef`), whose history holds its merge base, and its head's
+// (`headRef`) where that is the repository's own, not a fork's.
+export interface PullRefs { baseRef?: string; headRef?: string }
+export interface PullCommits extends PullRefs { base: string; head: string }
+// Those of `base` and `head` that are a branch's name.
+export const pullRefs = (base: unknown, head: unknown): PullRefs => ({ ...branchName(base) ? { baseRef: base } : {}, ...branchName(head) ? { headRef: head } : {} })
 async function pullCommits(fullName: string, token: string, number: number, fetchImpl: typeof fetch): Promise<PullCommits> {
   const pull = await githubJson(`${repoApi(fullName)}/pulls/${number}`, token, fetchImpl) as
-    { number?: unknown; base?: { sha?: unknown; repo?: { full_name?: unknown } | null }; head?: { sha?: unknown } } | null
+    { number?: unknown; base?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } | null }
+      head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } | null } } | null
   const base = pull?.base?.sha, head = pull?.head?.sha, repo = pull?.base?.repo?.full_name
   if (pull?.number !== number || typeof base !== 'string' || !SHA.test(base) || typeof head !== 'string' || !SHA.test(head)
     || typeof repo !== 'string' || repo.toLowerCase() !== fullName.toLowerCase()) throw new GithubApiError(502, 'github-malformed')
-  return { base, head }
+  const from = pull.head?.repo?.full_name
+  const own = typeof from === 'string' && from.toLowerCase() === repo.toLowerCase()
+  return { base, head, ...pullRefs(pull.base?.ref, own ? pull.head?.ref : undefined) }
 }
 
 // The pull request's merge base and the files it changes from it: as GitHub
@@ -264,38 +276,42 @@ const byName = (a: AddedPackage, b: AddedPackage) => a.name < b.name ? -1 : a.na
 export const lockedAs = (pkg: LockedPackage) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}\0${pkg.patchHash ?? ''}`
 export const lockedWith = (pkg: LockedPackage) => `${lockedAs(pkg)}\0${pkg.integrity ?? ''}\0${pkg.shasum ?? ''}\0${pkg.lockfile ?? ''}`
 
-// What a directory's lockfiles add, from each read before and after: the
-// package versions after none before has, each once, by name and version,
-// each with the versions of its name before, those past MAX_ADDED counted
-// (`more`), not told but reviewed as they are; and every one after, each
-// integrity it is locked with (`locked`), as many as MAX_LOCKED, each patch's
-// file from the repository's root, and its lockfile's directory (patchedIn);
-// or the first failure among them.
+// What a directory's lockfiles add, from each read before and after
+// (addedBetween), each patch's file from the repository's root, and its
+// lockfile's directory (patchedIn); or the first failure among them.
 function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[]): DirectoryDependencies {
   const failed = [...before, ...after].find(read => 'error' in read)
   if (failed) return { paths, error: failed.error, ...failed.detail ? { detail: failed.detail } : {} }
+  const packages = (reads: LockfileRead[]) => reads.flatMap(read => 'packages' in read ? read.packages : [])
+  return addedBetween(paths, packages(before), packages(after).map(pkg => patchedIn(paths[0]!, pkg)))
+}
+
+// What the versions locked `after` add to those locked `before`, as a
+// directory's lockfiles' at `paths`: the package versions after none before
+// has, each once, by name and version, each with the versions of its name
+// before, those past MAX_ADDED counted (`more`), not told but reviewed as
+// they are; and every one after, each integrity it is locked with
+// (`locked`), as many as MAX_LOCKED.
+export function addedBetween(paths: string[], before: LockedPackage[], after: LockedPackage[]): DirectoryDependencies {
   const known = new Set<string>()
   const versions = new Map<string, Set<string>>()
-  for (const pkg of before.flatMap(read => 'packages' in read ? read.packages : [])) {
+  for (const pkg of before) {
     known.add(lockedAs(pkg))
     const of = versions.get(pkg.name) ?? versions.set(pkg.name, new Set()).get(pkg.name)!
     if (pkg.version) of.add(pkg.version)
   }
   const added = new Map<string, AddedPackage>()
   const locked = new Map<string, LockedPackage>()
-  for (const read of after) {
-    for (const found of 'packages' in read ? read.packages : []) {
-      const pkg = patchedIn(paths[0]!, found)
-      const key = lockedAs(pkg)
-      const held = locked.get(lockedWith(pkg))
-      if (!held) locked.set(lockedWith(pkg), { ...pkg })
-      else if (held.dev && !pkg.dev) delete held.dev
-      if (known.has(key)) continue
-      const had = added.get(key)
-      const was = versions.get(pkg.name)
-      if (!had) added.set(key, { ...pkg, ...was ? { was: [...was].toSorted(byVersion) } : {} })
-      else if (had.dev && !pkg.dev) delete had.dev
-    }
+  for (const pkg of after) {
+    const key = lockedAs(pkg)
+    const held = locked.get(lockedWith(pkg))
+    if (!held) locked.set(lockedWith(pkg), { ...pkg })
+    else if (held.dev && !pkg.dev) delete held.dev
+    if (known.has(key)) continue
+    const had = added.get(key)
+    const was = versions.get(pkg.name)
+    if (!had) added.set(key, { ...pkg, ...was ? { was: [...was].toSorted(byVersion) } : {} })
+    else if (had.dev && !pkg.dev) delete had.dev
   }
   const all = [...added.values()].toSorted(byName)
   return { paths, added: all.slice(0, MAX_LOCKED), more: Math.max(0, all.length - MAX_ADDED),
@@ -312,14 +328,15 @@ export async function pullDependencies(fullName: string, token: string, number: 
 // The same, with the commits it is kept by (`commits`), its base's and
 // head's, by which `kept` reads it: those `given`, as a page of its
 // repository's open pull requests read them (repository-issues.ts), else as
-// GitHub has them now. Commits given that its own list of its files is no
-// longer of are read as GitHub has them now.
+// GitHub has them now; and the branches they are of, where told (PullRefs).
+// Commits given that its own list of its files is no longer of are read as
+// GitHub has them now.
 export async function pullDependenciesAt(fullName: string, token: string, number: number, kept: PullDependencyStore,
-  fetchImpl: typeof fetch = globalThis.fetch, given?: PullCommits): Promise<{ commits: string; told: PullDependencies }> {
-  const { base, head } = given ?? await pullCommits(fullName, token, number, fetchImpl)
+  fetchImpl: typeof fetch = globalThis.fetch, given?: PullCommits): Promise<PullRefs & { commits: string; told: PullDependencies }> {
+  const { base, head, ...refs } = given ?? await pullCommits(fullName, token, number, fetchImpl)
   const key = `${base}...${head}`
   const held = await kept.read(key)
-  if (held) return { commits: key, told: held }
+  if (held) return { ...refs, commits: key, told: held }
   const current = async () => {
     const now = given && await pullCommits(fullName, token, number, fetchImpl)
     return !now || (now.base === base && now.head === head)
@@ -337,5 +354,5 @@ export async function pullDependenciesAt(fullName: string, token: string, number
   })
   const told = { base: mergeBase, head, lockfiles, cut: filesCut || cut, ...cut && !filesCut && omitted.length <= MAX_OMITTED ? { omitted } : {} }
   await kept.write(key, told)
-  return { commits: key, told }
+  return { ...refs, commits: key, told }
 }

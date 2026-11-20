@@ -256,6 +256,24 @@ test('where the server registers reviewed dependencies, its terms say so, with i
   assert.match(text, /<p>Its review fails: not every lockfile it changes was read\.<\/p>/u, 'which fails its review')
 })
 
+test('a stasis.config.json its review holds to is told by its path: that Stasis still works out what its entries reach, or why it couldn’t; a version no lockfile locks can’t be reviewed', async () => {
+  const gone = { name: 'gone', version: '1.0.0', source: 'registry', unsupported: 'unlocked' }
+  const paths = ['app/stasis.config.json', 'stasis.config.json', 'web/stasis.config.json']
+  dependencies = number => Promise.resolve({ number, cut: false, review: { required: 1, since: null, canReview: true, toReview: 0, unreviewed: 0, unsupported: 1,
+    lockfiles: { mode: 'include', paths } }, lockfiles: [{ paths: [paths[0]], error: 'stasis-pending' }, { paths: [paths[1]], error: 'stasis-failed', detail: 'config-invalid' },
+    { paths: [paths[2]], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [gone], moreUnsupported: 0, added: [gone] }] })
+  answer = () => new Promise(() => {})
+  const dialog = shown()
+  dialog.open({ number: 42, preview: { ...tile, number: 42, touchesLockfile: true } })
+  templateText(dialog.render())
+  await setImmediate()
+  const text = templateText(dialog.render())
+  assert.match(text, /<code>app\/stasis\.config\.json<\/code><\/p>\s*<p class="repo-item-quiet" role="status">Stasis is still working out what its entries reach, which can take a few minutes\./u)
+  assert.match(text, /<code>stasis\.config\.json<\/code><\/p>\s*<p class="repo-item-quiet" role="alert">Stasis couldn’t work out what its entries reach \(config-invalid\)\./u)
+  assert.match(text, /gone<span class="repo-item-version">@1\.0\.0<\/span>[^]*is-failed" data-tooltip=Locked by none of the lockfiles read for it at its commit, so nothing holds its reviews to an integrity>can’t review</u)
+  assert.match(text, /<p>Its review fails: not every lockfile it changes was read\.<\/p>/u, 'the one that couldn’t be built fails it; the one still built, nothing yet')
+})
+
 test('a pull request whose lockfiles add none says so; one changing none, or an issue, shows nothing of them; one failing says why', async () => {
   answer = number => Promise.resolve({ ...tile, number, body: '', closes: [], commits: 1, files: 1, mergedBy: null, touchesLockfile: number === 23 ? null : number !== 26 })
   const replies = { 22: { cut: false, lockfiles: [{ paths: ['yarn.lock'], added: [], more: 0 }] }, 23: { cut: false, lockfiles: [] } }

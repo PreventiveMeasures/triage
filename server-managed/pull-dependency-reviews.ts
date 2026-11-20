@@ -51,18 +51,20 @@ export interface ReviewBaselineStore {
 const baselines: Lru<Baseline> = lru(500_000, baseline => baseline.versions.size + baseline.unread.length + 1)
 
 // Why a version can't be reviewed: from git, of a tarball not npm's
-// registry's of its version, or locked with no integrity.
-export type Unsupported = 'git' | 'tarball' | 'integrity'
+// registry's of its version, locked with no integrity, or, a Stasis build's
+// (stasis-dependencies.ts), locked by no lockfile read (`unlocked`).
+export type Unsupported = 'git' | 'tarball' | 'integrity' | 'unlocked'
 // How a version is reviewed: by its name, version and integrity
 // (`version`), not at all (`skip`), or why it can't be.
 function reviewedAs(pkg: LockedPackage): 'version' | 'skip' | Unsupported {
+  if (pkg.unlocked) return 'unlocked'
   if (pkg.source === 'file') return 'skip'
   if (pkg.source === 'git') return 'git'
   if (pkg.source !== 'registry' || pkg.version === null) return 'tarball'
   return pkg.integrity ? 'version' : 'integrity'
 }
 // The hashes an integrity names, each of which is npm's of it.
-const hashesOf = (pkg: LockedPackage) => (pkg.integrity ?? '').split(/\s+/u).filter(Boolean)
+export const hashesOf = (pkg: LockedPackage) => (pkg.integrity ?? '').split(/\s+/u).filter(Boolean)
 // A version as a baseline holds it: its name and version with each hash,
 // and its patch.
 const baselineKeys = (pkg: LockedPackage) => hashesOf(pkg).map(hash => `${pkg.name}@${pkg.version ?? ''}\0${hash}\0${pkg.patchHash ?? ''}`)
@@ -138,9 +140,9 @@ type Reviewer = { login: string; status: PublishedReview['status']; passes?: tru
 // reviews are held to, and its file, where its lockfile names one or it
 // was found, from the repository's root, whence its reviews read it.
 type Patch = { hash: string; path?: string }
-function shown<T extends LockedPackage>(pkg: T): Omit<T, 'integrity' | 'shasum' | 'patchHash' | 'patchPath' | 'patchDir' | 'lockfile'> & { patch?: Patch } {
+function shown<T extends LockedPackage>(pkg: T): Omit<T, 'integrity' | 'shasum' | 'patchHash' | 'patchPath' | 'patchDir' | 'lockfile' | 'unlocked'> & { patch?: Patch } {
   const copy = { ...pkg }
-  for (const field of ['integrity', 'shasum', 'patchHash', 'patchPath', 'patchDir', 'lockfile'] as const) delete copy[field]
+  for (const field of ['integrity', 'shasum', 'patchHash', 'patchPath', 'patchDir', 'lockfile', 'unlocked'] as const) delete copy[field]
   return { ...copy, ...pkg.patchHash ? { patch: { hash: pkg.patchHash, ...pkg.patchPath ? { path: pkg.patchPath } : {} } } : {} }
 }
 

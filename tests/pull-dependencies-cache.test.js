@@ -144,3 +144,27 @@ test('a version two directories lock patched alike is told with the patch of one
   assert.deepEqual(addedVersions(ready).versions.map(({ name, patch, was }) => ({ name, patch, was })), [{ name: 'pat', patch: named, was: ['0.9.0'] }])
   assert.deepEqual(unreviewedVersions(ready).versions.map(({ name, patch }) => ({ name, patch })), [{ name: 'old', patch: named }])
 })
+
+test('an answer telling a stasis.config.json Stasis still builds is held a short while, those showing it told then, to ask of it again', async t => {
+  asked.length = 0
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() })
+  const told = []
+  const unsubscribe = subscribePullDependencies(pull => told.push(pull))
+  const waiting = { cut: false, review: { required: 1 }, lockfiles: [{ paths: ['stasis.config.json'], error: 'stasis-pending' }] }
+  pullDependencies(9, 1, true)
+  pending.shift().resolve(waiting)
+  await setImmediate()
+  const held = pullDependencies(9, 1, true)
+  assert.deepEqual([held.status, held.pending, reviewFailures(held), asked], ['ready', true, null, [1]], 'ready, failing nothing yet, held meanwhile')
+  told.length = 0
+  t.mock.timers.tick(30_000)
+  assert.deepEqual(told, [{ repoId: 9, number: 1 }], 'those showing it told once it may be built')
+  const again = pullDependencies(9, 1, true)
+  assert.deepEqual([again.refreshing, again.pending, asked], [true, true, [1, 1]], 'asked again, shown as it was meanwhile')
+  pending.shift().resolve(answer('built'))
+  await setImmediate()
+  told.length = 0
+  t.mock.timers.tick(30_000)
+  assert.deepEqual([pullDependencies(9, 1, true).pending, told, asked], [false, [], [1, 1]], 'built, held as any other is, none told again')
+  unsubscribe()
+})

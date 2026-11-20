@@ -10,6 +10,7 @@ import { appMarkup } from '../view/markup.js'
 import { ROLES, roleAtLeast } from '../../common/managed/roles.ts'
 import { VISIBILITY_PERMISSION_LABELS } from '../../common/managed/permissions.ts'
 import { normalizeNpmScope } from '../../common/managed/npm-packages.js'
+import { isStasisConfig } from '../../common/managed/stasis-config.ts'
 import { REPORT_LOGOS } from '../view/report-logos.js'
 import { displayName } from '../../common/report-display-name.js'
 import { DELETE_ICON_SVG, EDIT_ICON_SVG } from '../view/icons.js'
@@ -821,18 +822,23 @@ class ManagedAdminRepos extends ManagedPage {
   // The lockfiles its review holds to (`draft.scope`): every one, all but
   // those selected, or those selected alone, of the default branch's, read for
   // it, those named before though no longer there, and another path, or a
-  // directory ending in /, typed in.
+  // directory ending in /, typed in. Among those selected alone, its
+  // stasis.config.json files too, each holding it to what its entries reach.
   _lockfileScope(repo, draft, busy) {
     const { mode, paths } = draft.scope
-    const read = mode === 'all' ? { status: 'ready', paths: [] } : this._lockfilesFor(repo)
+    const read = mode === 'all' ? { status: 'ready', paths: [], configs: [] } : this._lockfilesFor(repo)
     const set = scope => { this._reviewDraft = { ...draft, scope } }
-    const listed = [...new Set([...read.paths, ...paths])].toSorted()
+    const configs = mode === 'include' ? read.configs : []
+    const listedThere = new Set([...read.paths, ...configs])
+    const listed = [...new Set([...listedThere, ...paths])].toSorted()
+    // Those named as `next` names them: a stasis.config.json among those reviewed alone only.
+    const named = next => next === 'include' ? paths : paths.filter(path => !isStasisConfig(path))
     const add = () => {
       const path = draft.adding.trim().replace(/^\.?\/+/u, '')
       if (path) this._reviewDraft = { ...draft, adding: '', scope: { mode, paths: [...new Set([...paths, path])].toSorted() } }
     }
     return html`<fieldset class="dependency-review-lockfiles" ?disabled=${busy}><legend>Lockfiles reviewed</legend>
-      <select aria-label="Lockfiles reviewed" .value=${mode} @change=${event => set({ mode: event.target.value, paths })}>
+      <select aria-label="Lockfiles reviewed" .value=${mode} @change=${event => set({ mode: event.target.value, paths: named(event.target.value) })}>
         <option value="all">Every lockfile</option><option value="exclude">All but those selected</option><option value="include">Only those selected</option>
       </select>
       ${mode === 'all' ? nothing : html`
@@ -840,9 +846,11 @@ class ManagedAdminRepos extends ManagedPage {
           : read.status === 'error' ? html`<p class="dependency-review-hint is-warning" role="alert">Its lockfiles couldn’t be read (${read.error}); name them below.</p>` : nothing}
         ${listed.length > 0 ? html`<ul class="dependency-review-lockfile-list">${listed.map(path => html`<li><label>
           <input type="checkbox" .checked=${paths.includes(path)} @change=${event => set({ mode, paths: event.target.checked ? [...paths, path].toSorted() : paths.filter(one => one !== path) })}>
-          <code>${path}</code>${read.status === 'ready' && !read.paths.includes(path) ? html`<span>${path.endsWith('/') ? 'every lockfile under it' : 'not on the default branch'}</span>` : nothing}
+          <code>${path}</code>${read.status === 'ready' && !listedThere.has(path) ? html`<span>${path.endsWith('/') ? 'every lockfile under it' : 'not on the default branch'}</span>` : nothing}
         </label></li>`)}</ul>` : read.status === 'ready' ? html`<p class="dependency-review-hint">Its default branch has no lockfile its review reads.</p>` : nothing}
-        <label class="dependency-review-lockfile-add"><span>Another lockfile, or a directory ending in /</span>
+        ${paths.some(isStasisConfig) ? html`<p class="dependency-review-hint">A <code>stasis.config.json</code> holds the review to the versions its entries reach, in place of
+          all a lockfile locks. Stasis builds them for each commit as it is first asked for, which can take minutes; until then they show as being worked out.</p>` : nothing}
+        <label class="dependency-review-lockfile-add"><span>${mode === 'include' ? 'Another lockfile, a directory ending in /, or a stasis.config.json' : 'Another lockfile, or a directory ending in /'}</span>
           <input type="text" placeholder="examples/" autocomplete="off" spellcheck="false" .value=${draft.adding}
             @input=${event => { this._reviewDraft = { ...draft, adding: event.target.value } }}
             @keydown=${event => { if (event.key === 'Enter') { event.preventDefault(); add() } }}></label>
@@ -850,13 +858,14 @@ class ManagedAdminRepos extends ManagedPage {
     </fieldset>`
   }
 
-  // The lockfiles of its default branch its review reads, read once as its
-  // settings show, its page told again as they arrive.
+  // The lockfiles of its default branch its review reads, and its
+  // stasis.config.json files, read once as its settings show, its page told
+  // again as they arrive.
   _lockfilesFor(repo) {
     if (this._lockfileRead?.repoId !== repo.id) {
-      const read = { repoId: repo.id, status: 'loading', paths: [] }
+      const read = { repoId: repo.id, status: 'loading', paths: [], configs: [] }
       this._lockfileRead = read
-      fetchRepositoryLockfiles(repo.id).then(paths => Object.assign(read, { status: 'ready', paths }),
+      fetchRepositoryLockfiles(repo.id).then(({ paths, configs }) => Object.assign(read, { status: 'ready', paths, configs }),
         err => Object.assign(read, { status: 'error', error: err?.message ?? String(err) }))
         .finally(() => { if (this._lockfileRead === read) this.requestUpdate() })
     }
