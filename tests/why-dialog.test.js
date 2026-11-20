@@ -25,7 +25,11 @@ test('why titles and captions distinguish all-version queries from exact-version
   let markup = text(dialog.render())
   assert.match(markup, /<h3 id="why-title">dep<\/h3>/u)
   assert.match(markup, /3 packages · 3 installations/u)
-  assert.doesNotMatch(markup, /of this version|heading-version/u)
+  assert.doesNotMatch(markup, /of this version|heading-version|Scope:|Entry point:/u)
+  dialog.scope = 'reason:run'
+  assert.match(text(dialog.render()), /3 installations · Scope: run</u)
+  dialog.scope = 'entry:src/main.js'
+  assert.match(text(dialog.render()), /3 installations · Entry point: src\/main\.js</u)
   dialog.version = '1.0.0'
   markup = text(dialog.render())
   assert.match(markup, /<span class="heading-version">1\.0\.0<\/span>/u)

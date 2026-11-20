@@ -3,7 +3,8 @@ import { it } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, createBundleSummary, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
 import { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundleSourceSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
-import { bundleGraphReasons, bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
+import { bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
+import { bundleScopes } from '../common/bundle-reasons.js'
 import { computeFileHash } from '@preventive/report'
 
 function details() {
@@ -57,7 +58,7 @@ it('round-trips hashes, UTF-8 byte sizes, package identity, imports, reasons, an
   assert.deepEqual(cached.bundle.repo, full.bundle.repo)
   assert.deepEqual({ ...cached.bundle.modules.get('node_modules/dep').repo }, full.bundle.modules.get('node_modules/dep').repo)
   assert.deepEqual(cached.bundle.package, full.bundle.package)
-  assert.deepEqual(bundleGraphReasons(cached, cached.fileHashes.keys()), bundleGraphReasons(full, full.fileHashes.keys()))
+  assert.deepEqual(bundleScopes(cached, cached.fileHashes.keys()).reasons, bundleScopes(full, full.fileHashes.keys()).reasons)
   assert.equal(bundleSourcesAsMap(cached).size, 0, 'metadata cannot masquerade as source bodies')
   for (const [file, content] of bundleSourcesAsMap(full)) assert.equal(cached.fileHashes.get(file), await computeFileHash(content))
 })

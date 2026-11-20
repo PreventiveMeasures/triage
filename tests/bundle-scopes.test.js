@@ -1,15 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { bundleEntryPoints, bundleScopeOptions, bundleScopes } from '../common/bundle-reasons.js'
-
-// A template's text, a `live` binding's value spelled out in its place.
-function templateText(value) {
-  if (Array.isArray(value)) return value.map(templateText).join('')
-  if (value?.strings) return value.strings.map((part, i) => part + templateText(value.values[i])).join('')
-  if (value?.['_$litDirective$']) return templateText(value.values[0])
-  return typeof value === 'symbol' ? '' : String(value ?? '')
-}
+import { bundleScopeOptions, bundleScopes, entryScope, reasonScope, scopeParts } from '../common/bundle-reasons.js'
+import { templateText } from './_lit.js'
 
 const FILES = ['src/a.js', 'src/b.js', 'src/cli.js', 'src/shared.js', 'src/only-a.js', 'src/loose.js']
 
@@ -18,6 +11,7 @@ function details({ entries = [], reason, imports = {} } = {}) {
   const byParent = new Map(Object.entries(imports).map(([parent, targets]) => [parent, new Map(targets.map((target, i) => [`./${i}`, target]))]))
   return { kind: 'stasis', bundle: { entries: new Set(entries), reason, imports: new Map([['default', byParent]]) } }
 }
+const bundleEntryPoints = (bundle, paths) => bundleScopes(bundle, paths).entries
 
 test('entry points are offered only where some reason records more than one of them', () => {
   const entries = ['src/b.js', 'src/a.js', 'src/cli.js']
@@ -50,6 +44,7 @@ test('an entry point\'s files are those it reaches through the recorded imports,
   }), FILES)
   assert.deepEqual(scopes.entries, ['src/a.js', 'src/b.js'])
   assert.deepEqual([...scopes.reasons.keys()], ['bundle', 'run'])
+  assert.deepEqual(scopes.ids, ['reason:bundle', 'reason:run', 'entry:src/a.js', 'entry:src/b.js'])
   assert.deepEqual([...scopes.files('entry:src/a.js')].toSorted(), ['src/a.js', 'src/only-a.js', 'src/shared.js'])
   assert.deepEqual([...scopes.files('entry:src/b.js')].toSorted(), ['src/b.js', 'src/shared.js'])
   assert.deepEqual([...scopes.files('reason:run')], ['src/cli.js'])
@@ -78,7 +73,15 @@ test('scopes read a parsed Stasis bundle, its metadata the same, and every platf
   assert.equal(scopes.reasons.size, 0)
   assert.deepEqual([...scopes.files('entry:ios.js')].toSorted(), ['ios.js', 'node_modules/dep/index.js', 'node_modules/dep/native.js', 'shared.js'])
   assert.deepEqual([...scopes.files('entry:web.js')].toSorted(), ['shared.js', 'web.js'])
-  assert.deepEqual(bundleScopes({ kind: 'stasis' }).entries, [], 'a bundle known by its identity alone has no scopes')
+  assert.deepEqual(bundleScopes({ kind: 'stasis' }).ids, [], 'a bundle known by its identity alone has no scopes')
+  assert.deepEqual(bundleScopes({ kind: 'stasis', bundle: { modules: new Map() } }).ids, [], 'nor one recording nothing to scope by, its files not read')
+})
+
+test('a scope id names a reason or an entry point, and nothing else is one', () => {
+  assert.deepEqual([reasonScope('run'), entryScope('src/a.js')], ['reason:run', 'entry:src/a.js'])
+  assert.deepEqual(scopeParts('reason:run'), { reason: 'run' })
+  assert.deepEqual(scopeParts('entry:src/reason:a.js'), { entry: 'src/reason:a.js' })
+  for (const id of ['', 'all', 'run', 'reasons:a|b', null, undefined, 1]) assert.deepEqual(scopeParts(id), {})
 })
 
 test('scope options name a reason by itself and an entry point by its path, less the directories they share', () => {
@@ -101,39 +104,39 @@ test('the scope selector offers entry points beside reasons, one of either chose
   const entries = [{ id: 'entry:src/a.js', label: 'a.js' }, { id: 'entry:src/b.js', label: 'b.js' }]
   const known = [{ id: 'reason:metro', label: 'metro' }, { id: 'reason:run', label: 'run' }]
   const checked = markup => [...markup.matchAll(/<input type="radio" name="scope" value=([^\s>]*) \.checked=(true|false)/gu)].filter(match => match[2] === 'true').map(match => match[1])
-  // Each select's value as bound, and the options it offers, the selected one's value first.
-  const selects = markup => [...markup.matchAll(/<select[^.]*\.value=(\S*) @change.*?<\/select>/gsu)].map(([select, value]) => {
+  // The options each select offers, and the values of those chosen: an option says so itself.
+  const selects = markup => [...markup.matchAll(/<select.*?<\/select>/gsu)].map(([select]) => {
     const options = [...select.matchAll(/<option value=("")?(\S*?) \.selected=(true|false)>([^<]*)</gu)]
-    return { value, selected: options.filter(option => option[3] === 'true').map(option => option[2]), labels: options.map(option => option[4]) }
+    return { selected: options.filter(option => option[3] === 'true').map(option => option[2]), labels: options.map(option => option[4]) }
   })
 
   const toggle = render({ reasons: known, entries, value: 'reason:run' })
   assert.deepEqual(checked(toggle), ['reason:run'])
-  assert.deepEqual(selects(toggle), [{ value: '', selected: [''], labels: ['Any entry point', 'a.js', 'b.js'] }], 'no entry point chosen beside a reason')
+  assert.deepEqual(selects(toggle), [{ selected: [''], labels: ['Any entry point', 'a.js', 'b.js'] }], 'no entry point chosen beside a reason')
   assert.match(toggle, /<select class="scope-entry" aria-label="Entry point"/u)
   assert.match(toggle, /Node\.js CLI/u)
 
   const entry = render({ reasons: known, entries, value: 'entry:src/b.js' })
   assert.deepEqual(checked(entry), [], 'an entry point chosen leaves every reason, and All files, unchecked')
-  assert.deepEqual(selects(entry), [{ value: 'entry:src/b.js', selected: ['entry:src/b.js'], labels: ['Any entry point', 'a.js', 'b.js'] }],
-    'chosen by its option too: a select just created has no options yet to take its value by')
+  assert.deepEqual(selects(entry), [{ selected: ['entry:src/b.js'], labels: ['Any entry point', 'a.js', 'b.js'] }])
+  assert.doesNotMatch(entry, /<select[^>]*\.value=/u, 'chosen by its option alone: a select just created has no options yet to take a value by')
   assert.match(entry, /Files this entry point imports/u)
   const gone = render({ reasons: known, entries, value: 'entry:src/gone.js' })
   assert.deepEqual([checked(gone), selects(gone)[0].selected], [[''], ['']], 'an entry point it has none of is All files')
   assert.doesNotMatch(render({ reasons: known, value: 'reason:run' }), /<select/u, 'no entry points: the toggle alone, as before')
 
   const custom = render({ reasons: [{ id: 'reason:mine', label: 'mine' }], entries, value: 'entry:src/a.js' })
-  assert.deepEqual(selects(custom), [{ value: 'entry:src/a.js', selected: ['entry:src/a.js'], labels: ['All files', 'mine', 'a.js', 'b.js'] }])
+  assert.deepEqual(selects(custom), [{ selected: ['entry:src/a.js'], labels: ['All files', 'mine', 'a.js', 'b.js'] }])
   assert.match(custom, /<span>Scope<\/span><select aria-label=Choose scope/u)
-  assert.match(custom, /<optgroup label="Reason"><option value=reason:mine .*?<\/optgroup><optgroup label="Entry point"><option value=entry:src\/a\.js /u)
+  assert.match(custom, /<optgroup label=Reason><option value=reason:mine .*?<\/optgroup><optgroup label=Entry point><option value=entry:src\/a\.js /u)
   const reasonsOnly = render({ reasons: [{ id: 'reason:mine', label: 'mine' }], value: 'reason:mine' })
   assert.doesNotMatch(reasonsOnly, /<optgroup/u, 'reasons alone stay an ungrouped list')
-  assert.deepEqual(selects(reasonsOnly), [{ value: 'reason:mine', selected: ['reason:mine'], labels: ['All files', 'mine'] }])
-  assert.deepEqual(selects(render({ reasons: [{ id: 'reason:mine', label: 'mine' }], value: 'reason:stale' })), [{ value: '', selected: [''], labels: ['All files', 'mine'] }],
+  assert.deepEqual(selects(reasonsOnly), [{ selected: ['reason:mine'], labels: ['All files', 'mine'] }])
+  assert.deepEqual(selects(render({ reasons: [{ id: 'reason:mine', label: 'mine' }], value: 'reason:stale' })), [{ selected: [''], labels: ['All files', 'mine'] }],
     'a scope it has none of shows as All files')
 
   const alone = render({ reasons: [], entries, value: '' })
   assert.match(alone, /<span>Entry point<\/span><select aria-label=Choose scope/u)
-  assert.deepEqual(selects(alone), [{ value: '', selected: [''], labels: ['All files', 'a.js', 'b.js'] }])
+  assert.deepEqual(selects(alone), [{ selected: [''], labels: ['All files', 'a.js', 'b.js'] }])
   assert.equal(render({ reasons: [], entries: [], value: '' }), '')
 })

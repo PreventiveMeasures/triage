@@ -41,8 +41,6 @@ function advisoryScope(details) {
   return scopes.get(details)
 }
 function cacheKey(details, scope = advisoryScope(details).selected) { return JSON.stringify([details.managedId ?? details.integrity, scope]) }
-// A scope id's name where it is of `kind` ('reason:' or 'entry:'), else ''.
-const scopeName = (id, kind) => id.startsWith(kind) ? id.slice(kind.length) : ''
 
 // Local/e2e bundles are private from the server. Ask before sending their
 // package inventory through the proxy to npm. Managed bundles are already
@@ -226,7 +224,7 @@ async function loadBundleAdvisories(details, renderFn, repoAdvisories = false) {
     let json, skipped = []
     if (details.managedId) {
       // Fetch full descriptions only on an explicit repository recheck.
-      const result = await fetchBundleAdvisories(details.managedId, undefined, scopeName(selected, 'reason:'), repoAdvisories, repoAdvisories, scopeName(selected, 'entry:'))
+      const result = await fetchBundleAdvisories(details.managedId, undefined, selected, repoAdvisories, repoAdvisories)
       // Accept the former npm-only shape during a client/server upgrade.
       query = Array.isArray(result.packages)
         ? new Map(result.packages.map(pkg => [packageKey(pkg), new Set(pkg.versions)]))
@@ -428,7 +426,7 @@ function renderAdvisorySection(details, pkg, advisories, queriedVersions, isCurr
       ${versions.length > 0 ? html`<span class="bundle-advisories-section-versions">
         ${versions.map(version => html`<button type="button" class="bundle-advisories-version" aria-haspopup="dialog"
           aria-label=${`Why is ${pkg}@${version} here?`}
-          @click=${() => openWhyDialog({ details, packageKey: pkg, version, reason: scopeName(advisoryScope(details).selected, 'reason:'), entry: scopeName(advisoryScope(details).selected, 'entry:'), isCurrent })}>${version}</button>`)}
+          @click=${() => openWhyDialog({ details, packageKey: pkg, version, scope: advisoryScope(details).selected, isCurrent })}>${version}</button>`)}
       </span>` : nothing}
     </div>
     <ul class="bundle-advisories-rows">

@@ -1,8 +1,22 @@
 import { type Advisory, type CacheStore, type Package, advisories } from '@preventive/upstream/advisories.js'
 import { type Client, HttpError, createClient } from '@preventive/upstream/github.js'
 import { USER_AGENT } from './github-requests.ts'
+import { entryScope, reasonScope, scopeParts } from '../common/bundle-reasons.js'
 
 export const ADVISORIES_TIMEOUT_MS = 30_000
+
+// The scope a request asks a bundle's advisories of, as bundleScopes names
+// it: its ?reason=, or its ?entry= point instead. '' for the whole bundle,
+// null for both at once.
+export function requestedScope(params: URLSearchParams): string | null {
+  const entry = params.get('entry') ?? '', reason = params.get('reason') ?? ''
+  if (entry && reason) return null
+  return reason ? reasonScope(reason) : entry ? entryScope(entry) : ''
+}
+
+// Why a requested scope has no inventory: it is none (requestedScope), or one
+// the bundle has none of.
+export const scopeError = (scope: string | null) => scope === null ? 'bad-scope' : scopeParts(scope).entry === undefined ? 'unknown-reason' : 'unknown-entry'
 
 function advisoryGithubClient(token: string | null, signal: AbortSignal): Client {
   const authenticated = createClient({ token, userAgent: USER_AGENT })

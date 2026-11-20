@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
-import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphFiles } from '../ui/view/bundle-graph-inputs.js'
+import { bundleEntryPackages, bundleFlowEntries, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphFiles } from '../ui/view/bundle-graph-inputs.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
+import { bundleScopes } from '../common/bundle-reasons.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundlePackageDirs } from '../ui/view/bundle-sources.js'
 
@@ -28,6 +29,8 @@ it('size flow keeps entry files and virtual imports without reviving reason-filt
     { file: 'project/helper.js', origFile: 'project/helper.js', virtual: true, entry: false, pkg: '__own__', imports: ['dep.js', 'project/absent.js'] },
   ])
 })
+
+const bundleGraphReasons = (details, paths) => bundleScopes(details, paths).reasons
 
 function inputs({ dirs, entries = [], imports = {} }) {
   const details = { kind: 'stasis', bundle: {

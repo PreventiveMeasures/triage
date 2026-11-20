@@ -164,7 +164,7 @@ export class ScanPage extends LitElement {
   _scopeLabel() {
     const scope = this._reasonData
     if (scope?.label == null) return 'All files'
-    return String(scope.id).startsWith('entry:') ? `Entry point ${scope.label}` : scope.label
+    return this._bundle.entries?.includes(scope) ? `Entry point ${scope.label}` : scope.label
   }
 
   get _scopeFiles() {

@@ -3391,9 +3391,6 @@ body.report-fullscreen {
   min-width: 0;
   max-width: 100%;
 }
-/* The buttons either side of the scope selector keep their one line: short
-   of room, the selector wraps its own controls instead. */
-.bundle-advisories-scopes > .bundle-advisories-retry { flex-shrink: 0; white-space: nowrap; }
 .bundle-advisories-panel > .bundle-advisories {
   padding: 0 .75rem;
   overflow-y: auto;
@@ -3497,6 +3494,7 @@ body.report-fullscreen {
   background: var(--surface);
   color: var(--text);
   font-size: .72rem;
+  white-space: nowrap;
   cursor: default;
 }
 .bundle-advisories-retry:hover { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }

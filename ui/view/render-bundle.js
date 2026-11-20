@@ -236,16 +236,14 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
 // layout for (graph/canvas.js).
 export function buildBundleGraphData(details) {
   const full = buildBundleTree(details)
-  if (graph2.bundleReasonFor !== details.integrity) {
-    graph2.bundleReasonFor = details.integrity
+  if (graph2.bundleScopeFor !== details.integrity) {
+    graph2.bundleScopeFor = details.integrity
     graph2.dependencyPackagesView = false
-    graph2.bundleReason = null
-    graph2.bundleEntry = null
+    graph2.bundleScope = ''
   }
-  const scope = bundleGraphScope(details, full, graph2.bundleReason, graph2.bundleEntry)
+  const scope = bundleGraphScope(details, full, graph2.bundleScope)
   const { tree, origToStripped } = scope
-  graph2.bundleReason = scope.reason
-  graph2.bundleEntry = scope.entry
+  graph2.bundleScope = scope.id
   const allFiles = scope.files
   if (allFiles.length === 0) return null
   let strippedHashes = null
@@ -367,31 +365,32 @@ export function buildBundleGraphData(details) {
     entryPackages: bundleEntryPackages(details, origToStripped, pkgOf),
     // Preserve recorded file ownership for dependency-cycle classification.
     ownSourceFiles: new Set(ownFiles),
-    reasons: [...scope.scopes.reasons.keys()],
+    reasons: scope.options.reasons,
     entries: scope.options.entries,
   }
 }
 
-// The bundle's tree for a scope, its files, and each focused package's of
-// them, by the full tree (buildBundleTree keeps one a bundle): the reason's
-// where `reason` is one of its, else the entry point's where `entry` is one
-// it offers, else every file's. A hidden selector must never keep filtering
-// after switching bundles, so a scope the bundle has none of is dropped.
+// The bundle's tree for a scope (bundleScopes), its files, and each focused
+// package's of them, by the full tree (buildBundleTree keeps one a bundle).
+// A scope the bundle has none of is every file: a hidden selector must never
+// keep filtering after switching bundles. Beside every file's, the last scope
+// filtered by is kept: an entry point's is most of the bundle, and a bundle
+// may record a hundred.
 const bundleGraphScopes = new WeakMap()
-function bundleGraphScope(details, full, reason, entry) {
+function bundleGraphScope(details, full, requested) {
   if (!bundleGraphScopes.has(full)) {
     const scopes = bundleScopes(details, full.origToStripped.keys())
-    bundleGraphScopes.set(full, { scopes, options: bundleScopeOptions(scopes), kept: new Map() })
+    const all = { ...full, id: '', files: Object.keys(full.tree), focused: new Map(), options: bundleScopeOptions(scopes) }
+    bundleGraphScopes.set(full, { scopes, all, last: all })
   }
-  const { scopes, options, kept } = bundleGraphScopes.get(full)
-  const id = [reason === null ? null : `reason:${reason}`, entry === null ? null : `entry:${entry}`].find((scope) => scopes.has(scope)) ?? ''
-  if (!kept.has(id)) {
-    const files = scopes.files(id)
-    const scope = files ? filterBundleGraphFiles(full.tree, full.origToStripped, files) : full
-    kept.set(id, { tree: scope.tree, origToStripped: scope.origToStripped, files: Object.keys(scope.tree), focused: new Map(),
-      scopes, options, reason: id.startsWith('reason:') ? reason : null, entry: id.startsWith('entry:') ? entry : null })
+  const kept = bundleGraphScopes.get(full)
+  const id = kept.scopes.has(requested) ? requested : ''
+  if (id === '') return kept.all
+  if (kept.last.id !== id) {
+    const scope = filterBundleGraphFiles(full.tree, full.origToStripped, kept.scopes.files(id))
+    kept.last = { ...kept.all, ...scope, id, files: Object.keys(scope.tree), focused: new Map() }
   }
-  return kept.get(id)
+  return kept.last
 }
 
 // Always bundle context — these helpers serve only the bundle Graph

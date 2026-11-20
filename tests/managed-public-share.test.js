@@ -383,9 +383,9 @@ test('link listings include creators, scope managers to their teams, and let adm
 test('a public link asks its bundle\'s advisories of a reason, or of an entry point instead', async t => {
   const h = await fixture(t), token = await h.mint('whole')
   const asked = []
-  h.deps.bundleCache = { advisoryInventory(_bundle, reason, entry) {
-    asked.push([reason, entry])
-    return Promise.resolve((reason && entry) || [reason, entry].includes('missing') ? undefined : { packages: [], skipped: [] })
+  h.deps.bundleCache = { advisoryInventory(_bundle, scope) {
+    asked.push(scope)
+    return Promise.resolve(scope.endsWith(':missing') ? undefined : { packages: [], skipped: [] })
   } }
   await h.db.insertBundle({ id: 'stasis', integrity: 'stasis', filename: 'sources.stasis', kind: 'stasis', byteSize: 2, uploadedBy: h.sessions.manage.userId, uploadedByLogin: 'manage', repoId: 1 }, Date.now())
   assert.equal((await h.request(`/api/teams/whole/share/${hashToken(token)}`, { role: 'manage', method: 'PATCH', body: { security: true } })).status, 200)
@@ -397,7 +397,7 @@ test('a public link asks its bundle\'s advisories of a reason, or of an entry po
     assert.equal(response.status, 400)
     assert.deepEqual(response.body, { error })
   }
-  assert.deepEqual(asked, [['', 'src/main.js'], ['run', ''], ['', 'missing'], ['missing', ''], ['run', 'src/main.js']])
+  assert.deepEqual(asked, ['entry:src/main.js', 'reason:run', 'entry:missing', 'reason:missing'], 'a reason and an entry point at once are refused unasked')
 })
 
 test('public security advisories require security opt-in and permission changes invalidate slow reads', async t => {

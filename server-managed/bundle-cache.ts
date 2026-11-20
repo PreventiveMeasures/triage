@@ -7,7 +7,7 @@ import { bundleEdges } from '@preventive/sourcemap/edges.js'
 import { BUNDLE_METADATA_VERSION, type BundleDetails, createBundleMetadata, createBundleSummary, parseBundleContents, parseBundleMetadata } from '../common/bundle-metadata.js'
 import { bundleScopes } from '../common/bundle-reasons.js'
 import { sourcemapEdges } from '../common/bundle-sourcemap.js'
-import { type BundleAdvisoryInventory, bundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
+import { type BundleAdvisoryInventory, advisoryInventoryOf, advisoryModules, bundleAdvisoryInventory, inventoryOfRows, inventoryRows } from './bundle-advisory-inventory.ts'
 import { decodeUtf8 } from '../common/utf8.js'
 import { type OpenedBlob, readBytes } from './blob-store.ts'
 import type { BundleStore } from './bundle-store.ts'
@@ -20,9 +20,6 @@ const decompress = promisify(brotliDecompress)
 const MAX_DECODED_BYTES = 512 * 1024 * 1024
 export const MAX_PACKAGE_INVENTORY_BYTES = 1024 * 1024
 export type BundleCachePart = 'metadata' | 'contents'
-// Why advisoryInventory had no inventory for the scope asked for: of a reason
-// and an entry point at once, or of one the bundle has none of.
-export const unknownScope = (reason: string, entry: string) => reason && entry ? 'bad-scope' : entry ? 'unknown-entry' : 'unknown-reason'
 export type BundleCacheRecord = Pick<ManagedBundle, 'id' | 'integrity' | 'filename' | 'kind' | 'byteSize'>
 export interface BundleSummary { files: number; codeFiles: number; lines: number; commit?: string; stasisVersion?: number; versionedPackages?: number }
 
@@ -51,40 +48,12 @@ export interface BundleCacheStorage {
 const filename = `v${BUNDLE_METADATA_VERSION}-metadata.json.br`
 const packagesFilename = 'v7-advisory-inventory.json'
 
-// A row of an inventory, by what tells it from every other: a package's
-// version (GitHub names whatever their case, as the inventory merges them),
-// or a skipped one.
-const versionKey = (pkg: { ecosystem: string; name: string }, version: string) =>
-  JSON.stringify([pkg.ecosystem, pkg.ecosystem === 'github' ? pkg.name.toLowerCase() : pkg.name, version])
-const skippedKey = (pkg: { ecosystem: string; name: string; version: string }) => JSON.stringify([pkg.ecosystem, pkg.name, pkg.version])
-
-// An entry point's inventory is some rows of the bundle's own: kept as a bit
-// each, a package's versions in order and then the skipped, in base64. A
-// hundred entry points of a thousand packages each would not fit the budget
-// spelled out. A package's repository is the one the whole bundle names.
-function inventoryRows(all: BundleAdvisoryInventory, scoped: BundleAdvisoryInventory): string {
-  const kept = new Set([...scoped.packages.flatMap(pkg => pkg.versions.map(version => versionKey(pkg, version))), ...scoped.skipped.map(skippedKey)])
-  const rows = [...all.packages.flatMap(pkg => pkg.versions.map(version => versionKey(pkg, version))), ...all.skipped.map(skippedKey)]
-  const bits = Buffer.alloc(Math.ceil(rows.length / 8))
-  for (const [i, row] of rows.entries()) if (kept.has(row)) bits[i >> 3]! |= 1 << (i & 7)
-  return bits.toString('base64')
-}
-
-// The inventory `rows` keeps of `all` (inventoryRows), undefined where they are no rows of it.
-function inventoryOfRows(all: BundleAdvisoryInventory, rows: unknown): BundleAdvisoryInventory | undefined {
-  if (typeof rows !== 'string') return undefined
-  const bits = Buffer.from(rows, 'base64')
-  let row = 0
-  const kept = () => { const i = row++; return ((bits[i >> 3] ?? 0) & (1 << (i & 7))) !== 0 }
-  const packages = all.packages.map(pkg => ({ ...pkg, versions: pkg.versions.filter(kept) })).filter(pkg => pkg.versions.length > 0)
-  return { packages, skipped: all.skipped.filter(kept) }
-}
-
-// All scopes share one bounded derivative. Never decode full bundle metadata
-// on advisory requests, including when selecting a reason or an entry point.
-// Persist null when the combined inventory exceeds the budget, without
-// disabling metadata; entry points alone are left out where only they don't
-// fit, every other scope kept.
+// All scopes share one bounded derivative: the bundle's own inventory, and
+// each scope's (a reason's, an entry point's) as the rows of it the scope
+// keeps. Never decode full bundle metadata on advisory requests, including
+// when selecting a scope. Persist null when the bundle's own exceeds the
+// budget, without disabling metadata; where only its scopes don't fit after
+// it, they alone are left out.
 function encodePackageInventory(details: BundleDetails): Buffer {
   const parts: string[] = []
   let size = 0
@@ -106,17 +75,13 @@ function encodePackageInventory(details: BundleDetails): Buffer {
     return append(close)
   }
   const rows = (items: unknown[]) => list('[', items, row => append(JSON.stringify(row)), ']')
-  function inventory({ packages, skipped }: BundleAdvisoryInventory) {
-    return append('{"packages":') && rows(packages) && append(',"skipped":') && rows(skipped) && append('}')
-  }
-  const all = bundleAdvisoryInventory(details), scopes = bundleScopes(details)
-  const whole = append('{"all":') && inventory(all)
-    && list(',"reasons":{', scopes.reasons, ([reason, paths]) => append(`${JSON.stringify(reason)}:`) && inventory(bundleAdvisoryInventory(details, paths)), '}')
-  if (!whole) return Buffer.from('null')
+  const modules = advisoryModules(details), scopes = bundleScopes(details)
+  const all = advisoryInventoryOf(modules, null)
+  if (!(append('{"all":{"packages":') && rows(all.packages) && append(',"skipped":') && rows(all.skipped) && append('}'))) return Buffer.from('null')
   const fit = parts.length, fitSize = size
-  const entries = list(',"entries":{', scopes.entries, entry =>
-    append(`${JSON.stringify(entry)}:${JSON.stringify(inventoryRows(all, bundleAdvisoryInventory(details, scopes.files(`entry:${entry}`))))}`), '}')
-  if (!entries) { parts.length = fit; size = fitSize }
+  const scoped = list(',"scopes":{', scopes.ids, id =>
+    append(`${JSON.stringify(id)}:${JSON.stringify(inventoryRows(all, advisoryInventoryOf(modules, scopes.files(id))))}`), '}')
+  if (!scoped) { parts.length = fit; size = fitSize }
   return Buffer.from(append('}') ? parts.join('') : 'null')
 }
 
@@ -216,11 +181,9 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
       const decoded = await decompress(await readBytes(await openCached(record, filename)), { maxOutputLength: MAX_DECODED_BYTES })
       return parseBundleMetadata(JSON.parse(decodeUtf8(decoded)), record.integrity).edges
     },
-    // The bundle's inventory, or that of one of its scopes: of `reason`, or
-    // of entry point `entry` instead. Undefined for a scope it has none of
-    // (and for both at once), null for one past the budget.
-    async advisoryInventory(record: ManagedBundle, reason = '', entry = ''): Promise<BundleAdvisoryInventory | null | undefined> {
-      if (reason && entry) return undefined
+    // The bundle's inventory, or that of `scope`, one of its (bundleScopes):
+    // undefined for one it has none of, null for one past the budget.
+    async advisoryInventory(record: ManagedBundle, scope = ''): Promise<BundleAdvisoryInventory | null | undefined> {
       if (record.kind !== 'stasis') return { packages: [], skipped: [] }
       const cached = await openCached(record, packagesFilename)
       if (cached.size != null && cached.size > MAX_PACKAGE_INVENTORY_BYTES) { cached.stream.destroy(); return null }
@@ -228,10 +191,10 @@ export function createBundleCache(storage: BundleCacheStorage, db: ManagedDb, st
       if (!bytes) return null
       const inventory = JSON.parse(decodeUtf8(bytes))
       if (inventory === null) return null
-      if (reason) return Object.hasOwn(inventory.reasons, reason) ? inventory.reasons[reason] : undefined
-      if (!entry) return inventory.all
-      if (inventory.entries === undefined) return null
-      return Object.hasOwn(inventory.entries, entry) ? inventoryOfRows(inventory.all, inventory.entries[entry]) : undefined
+      if (!scope) return inventory.all
+      // Scopes left out for the budget: none of them fits.
+      if (inventory.scopes === undefined) return null
+      return Object.hasOwn(inventory.scopes, scope) ? inventoryOfRows(inventory.all, inventory.scopes[scope]) : undefined
     },
     async delete(id: string) {
       // Call after deleting the row. Waiting prevents an in-flight builder

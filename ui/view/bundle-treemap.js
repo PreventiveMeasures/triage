@@ -347,6 +347,7 @@ class BundleTreemap extends LitElement {
     this._kind = _sharedKind
     this._mixedKinds = false
     this._scopeOptions = { reasons: [], entries: [] }
+    this._scoped = null
     this._dirByPath = new Map()
     this._status = 'loading'
     this._meta = { total: 0, prefix: '' }
@@ -451,13 +452,20 @@ class BundleTreemap extends LitElement {
     const sizes = bundleFileSizes(this.details)
     const origPaths = [...sizes.keys()].filter((path) => sizes.get(path) !== null)
     if (origPaths.length === 0) { this._status = 'empty'; return }
-    const scopes = bundleScopes(this.details, origPaths)
-    this._scopeOptions = bundleScopeOptions(scopes)
-    if (!scopes.has(this._scope)) {
+    // A bundle's scopes, and the files of the one chosen, are worked out
+    // once: the Code | Resources pill changes neither.
+    if (this._scoped?.details !== this.details) {
+      const scopes = bundleScopes(this.details, origPaths)
+      this._scoped = { details: this.details, scopes, options: bundleScopeOptions(scopes), id: '', files: null }
+    }
+    const scoped = this._scoped
+    this._scopeOptions = scoped.options
+    if (!scoped.scopes.has(this._scope)) {
       this._scope = ''
       _scopeByBundle.delete(this.details.integrity)
     }
-    const scopeFiles = scopes.files(this._scope)
+    if (scoped.id !== this._scope) Object.assign(scoped, { id: this._scope, files: scoped.scopes.files(this._scope) })
+    const scopeFiles = scoped.files
     // Stasis package boundaries (keyed by original path) so each leaf
     // is colored by its authoritative package — sibling workspace
     // packages stay distinct instead of merging under a shared parent

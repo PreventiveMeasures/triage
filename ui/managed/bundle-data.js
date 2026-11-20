@@ -2,6 +2,7 @@ import { managedFetch } from '../../client/managed/request.js'
 import { managedAppState } from './state.js'
 import { reportRepoGithub } from '@preventive/report'
 import { commonFileDirectory } from '../../common/managed/repository-alias.ts'
+import { scopeParts } from '../../common/bundle-reasons.js'
 
 export async function fetchManagedBundleCatalog({ signal } = {}) {
   signal = signal ? AbortSignal.any([signal, managedAppState.sessionController.signal]) : managedAppState.sessionController.signal
@@ -63,7 +64,10 @@ export async function fetchBundleContents(id, { signal } = {}) {
 }
 
 // Advisory queries send only the bundle identity; inventory stays server-owned.
-export function fetchBundleAdvisories(id, teamId, reason = '', repoAdvisories = false, details = false, entry = '') {
+// Of one `scope` of the bundle where given (bundleScopes): a reason's, or an
+// entry point's.
+export function fetchBundleAdvisories(id, teamId, scope = '', repoAdvisories = false, details = false) {
+  const { entry, reason } = scopeParts(scope)
   const params = [teamId ? `team=${encodeURIComponent(teamId)}` : '', reason ? `reason=${encodeURIComponent(reason)}` : '', entry ? `entry=${encodeURIComponent(entry)}` : '', repoAdvisories ? 'repoAdvisories=true' : '', details ? 'details=true' : ''].filter(Boolean).join('&')
   const part = `advisories${params ? `?${params}` : ''}`
   return requestBundle(id, part, managedAppState.sessionController.signal)

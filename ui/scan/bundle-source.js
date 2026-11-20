@@ -33,7 +33,7 @@ export function storedScanBundle(entry, details) {
   const scopes = bundleScopes(details, files.map(file => file.path))
   const options = bundleScopeOptions(scopes)
   const reasons = [{ id: 'all', label: 'All', filePaths: null },
-    ...options.reasons.map(({ id, label }) => ({ id, label, filePaths: [...scopes.reasons.get(label)] }))]
+    ...options.reasons.map(({ id, label }) => ({ id, label, filePaths: [...scopes.files(id)] }))]
   // The scopes to scan instead of a reason's, where the bundle offers them
   // (bundleScopes). An entry point's files are read once it is chosen.
   const entries = options.entries.map(({ id, label }) => {

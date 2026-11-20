@@ -1,9 +1,11 @@
 import type { BundleDetails } from './bundle-metadata.js'
-export function bundleReasons(details: BundleDetails, sourcePaths?: Iterable<string>): Map<string, Set<string>>
-export function bundleEntryPoints(details: BundleDetails, sourcePaths?: Iterable<string>): string[]
+export function reasonScope(reason: string): string
+export function entryScope(entry: string): string
+export function scopeParts(id: unknown): { reason?: string; entry?: string }
 export interface BundleScopes {
   reasons: Map<string, Set<string>>
   entries: string[]
+  ids: string[]
   has(id: unknown): boolean
   files(id: unknown): Set<string> | null
 }

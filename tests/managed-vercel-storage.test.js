@@ -413,7 +413,7 @@ test('a second Blob-backed instance reads the bounded package inventory without 
   assert.deepEqual(await cold.advisoryInventory(record), { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.2.3'] }], skipped: [] })
   assert.equal(calls.filter(call => call.op === 'get').length, 1)
   const inventory = objects.get(`.managed/cache/bundles/${id}/v7-advisory-inventory.json`)
-  assert.deepEqual(JSON.parse(inventory.bytes), { all: { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.2.3'] }], skipped: [] }, reasons: {}, entries: {} })
+  assert.deepEqual(JSON.parse(inventory.bytes), { all: { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.2.3'] }], skipped: [] }, scopes: {} })
   await cold.delete(id)
   assert.equal([...objects.keys()].some(key => key.includes('/cache/')), false)
 })

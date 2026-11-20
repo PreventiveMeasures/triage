@@ -1,10 +1,12 @@
 // Lit templates as tests read them.
 import { guard } from 'lit/directives/guard.js'
+import { live } from 'lit/directives/live.js'
 import { styleMap } from '../ui/view/style-map.js'
 
 // `styleMap`'s and `guard`'s directives, to know their results by.
 const STYLE_MAP = styleMap({})['_$litDirective$']
 const GUARD = guard([], () => null)['_$litDirective$']
+const LIVE = live(null)['_$litDirective$']
 
 // Whether a value is a `guard`'s result, and what it draws: its function's.
 export const isGuard = value => value?.['_$litDirective$'] === GUARD
@@ -20,13 +22,15 @@ function repeated(value) {
 }
 
 // A template's text, its values spelled out in place: arrays joined, and
-// `repeat`'s items, a `guard`'s; a `styleMap`'s declarations as `name: value; …`;
+// `repeat`'s items, a `guard`'s, a `live` binding's value; a `styleMap`'s
+// declarations as `name: value; …`;
 // `nothing` and other symbols, null and undefined as none, anything else
 // as String() gives it.
 export const templateText = value => Array.isArray(value) ? value.map(templateText).join('')
   : value?.strings ? value.strings.map((part, i) => part + templateText(value.values[i])).join('')
   : value?.['_$litDirective$'] === STYLE_MAP ? Object.entries(value.values[0]).filter(([, set]) => set != null && set !== '').map(([name, set]) => `${name}: ${set}`).join('; ')
   : isGuard(value) ? templateText(guarded(value))
+  : value?.['_$litDirective$'] === LIVE ? templateText(value.values[0])
   : repeated(value) ? templateText(repeated(value))
   : typeof value === 'symbol' ? '' : String(value ?? '')
 

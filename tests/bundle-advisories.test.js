@@ -6,22 +6,21 @@ import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-meta
 import { templateText as renderText, templates } from './_lit.js'
 
 const state = { managedSession: { id: 'alice', role: 'view', csrfToken: 'session' }, managedTeams: [], currentManagedTeam: 'team' }
-let allowed = false, detailRequests = [], managedCalls = [], managedEntries = [], managedReasons = [], openedDetails = [], openedWhy = [], pending = null, repositoryChecks = [], result
+let allowed = false, detailRequests = [], managedCalls = [], managedScopes = [], openedDetails = [], openedWhy = [], pending = null, repositoryChecks = [], result
 mock.module('../ui/view/lazy-dialogs.js', { exports: { ...await import('../ui/view/lazy-dialogs.js'),
   openAdvisoryDetailsDialog: props => { openedDetails.push(props) }, openWhyDialog: props => { openedWhy.push(props) } } })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : 'sourcemap' } })
-mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason, repoAdvisories, details, entry) => {
+mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, scope, repoAdvisories, details) => {
   managedCalls.push(id)
-  managedReasons.push(reason)
-  managedEntries.push(entry)
+  managedScopes.push(scope)
   repositoryChecks.push(repoAdvisories)
   detailRequests.push(details)
   return pending ?? Promise.resolve(result)
 } } })
 const { ensureBundleAdvisories, grantAdvisoriesProxyConsent, recheckBundleAdvisories, renderBundleAdvisoriesTab, retryBundleAdvisories, showAdvisoriesTab } = await import('../ui/view/render-bundle-advisories.js')
 beforeEach(t => {
-  managedCalls = []; managedReasons = []; managedEntries = []; repositoryChecks = []; detailRequests = []; openedDetails = []; openedWhy = []; allowed = false; pending = null
+  managedCalls = []; managedScopes = []; repositoryChecks = []; detailRequests = []; openedDetails = []; openedWhy = []; allowed = false; pending = null
   state.managedSession = { id: 'alice', role: 'view', csrfToken: 'session' }
   state.currentManagedTeam = 'team'
   state.managedTeams = [{ id: 'team', permissions: { security: true, dependencies: false }, bundles: [{ id: 'bundle-id' }] }]
@@ -439,7 +438,7 @@ function reasonBundle(integrity) {
     assert.match(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u)
     assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /2\.0\.0/u)
     await selectReason(details, '')
-    if (managed) assert.deepEqual(managedReasons, ['', 'metro', 'run'])
+    if (managed) assert.deepEqual(managedScopes, ['', 'reason:metro', 'reason:run'])
     else assert.deepEqual(queries, [{ dep: ['1.0.0', '2.0.0'] }, { dep: ['1.0.0'] }, { dep: ['2.0.0'] }])
     result = { packages: {}, advisories: {} }
     await selectReason(details, 'reason:add')
@@ -497,7 +496,7 @@ function entryBundle(integrity) {
     assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u)
     const version = templates(renderBundleAdvisoriesTab(details)).find(template => template.strings.join('').includes('class="bundle-advisories-version"'))
     version.values.find(value => typeof value === 'function')()
-    assert.deepEqual([openedWhy.at(-1).reason, openedWhy.at(-1).entry], ['', 'src/worker.js'], 'a version\'s chains are the entry point\'s')
+    assert.equal(openedWhy.at(-1).scope, 'entry:src/worker.js', 'a version\'s chains are the entry point\'s')
     result = { packages: {}, advisories: {} }
     await selectReason(details, 'reason:run')
     assert.match(renderText(renderBundleAdvisoriesTab(details)), /No advisories for the 0 packages in this scope/u)
@@ -505,10 +504,8 @@ function entryBundle(integrity) {
     assert.match(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u, 'each scope keeps its own result')
     await selectReason(details, 'entry:src/cli.js')
     assert.equal(scopeControl(renderBundleAdvisoriesTab(details)).values[2], '', 'a file that is no entry point is every package')
-    if (managed) {
-      assert.deepEqual(managedReasons, ['', '', 'run', ''], 'a reason and an entry point are never asked for together')
-      assert.deepEqual(managedEntries, ['src/app.js', 'src/worker.js', '', ''])
-    } else assert.deepEqual(queries, [{ dep: ['1.0.0'] }, { dep: ['2.0.0'] }, { dep: ['1.0.0', '2.0.0'] }])
+    if (managed) assert.deepEqual(managedScopes, ['entry:src/app.js', 'entry:src/worker.js', 'reason:run', ''])
+    else assert.deepEqual(queries, [{ dep: ['1.0.0'] }, { dep: ['2.0.0'] }, { dep: ['1.0.0', '2.0.0'] }])
   })
 })
 
@@ -539,12 +536,12 @@ test('each advisory version opens its exact dependency chains in the current sco
   assert.deepEqual(openedWhy.map(props => props.version), ['1.0.0', '2.0.0'])
   assert.equal(openedWhy[0].details, details)
   assert.equal(openedWhy[0].packageKey, 'dep')
-  assert.equal(openedWhy[0].reason, '')
+  assert.equal(openedWhy[0].scope, '')
   assert.equal(openedWhy[0].isCurrent(), true)
   await selectReason(details, 'reason:run')
   assert.equal(openedWhy[0].isCurrent(), false)
   versions()[0].values.find(value => typeof value === 'function')()
-  assert.equal(openedWhy.at(-1).reason, 'run')
+  assert.equal(openedWhy.at(-1).scope, 'reason:run')
   assert.equal(openedWhy.at(-1).isCurrent(), true)
   state.currentManagedTeam = 'another-team'
   assert.equal(openedWhy.at(-1).isCurrent(), false)
@@ -591,7 +588,7 @@ test('repository rechecks and skipped lists stay scoped when the selected reason
   const text = renderText(renderBundleAdvisoriesTab(details))
   assert.match(text, /run-crate/u)
   assert.doesNotMatch(text, /metro\/pkg|Rechecking…/u)
-  assert.deepEqual(managedReasons, ['metro', 'metro', 'run'])
+  assert.deepEqual(managedScopes, ['reason:metro', 'reason:metro', 'reason:run'])
   assert.deepEqual(repositoryChecks, [false, true, false])
 })
 

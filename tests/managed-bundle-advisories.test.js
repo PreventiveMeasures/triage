@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { bundleAdvisoryInventory } from '../server-managed/bundle-advisory-inventory.ts'
+import { advisoryInventoryOf, advisoryModules, bundleAdvisoryInventory, inventoryOfRows, inventoryRows } from '../server-managed/bundle-advisory-inventory.ts'
 import { fetchBundleAdvisories } from '../server-managed/bundle-advisories.ts'
 import { bundleSummary } from '../server-managed/bundle-cache.ts'
 
@@ -71,6 +71,39 @@ test('conflicting repository hints fall back to discovery without affecting reas
   assert.deepEqual(inventoryOf(modules).packages, [{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0', '2.0.0', '3.0.0'] }])
   assert.deepEqual(inventoryOf(modules, ['node_modules/copy1/node_modules/dep/index.js']).packages,
     [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'], github: 'org/moved' }])
+})
+
+test('a scope\'s inventory is kept as the rows of the bundle\'s own it holds, with the repositories it names otherwise', () => {
+  const modules = [
+    ...['org/original', 'org/moved', 'org/original'].map((github, index) => [
+      `node_modules/copy${index}/node_modules/dep`, { name: 'dep', version: `${index + 1}.0.0`, repo: { github }, files: { 'index.js': 'source' } }]),
+    ['node_modules/hinted', { name: 'hinted', version: '1.0.0', repo: { github: 'org/hinted' }, files: { 'index.js': 'source' } }],
+    ['node_modules/old/node_modules/hinted', { name: 'hinted', version: '0.1.0', files: { 'index.js': 'source' } }],
+    ['vendor/git-crate', { ecosystem: 'cargo-git', name: 'git-crate', version: '1.0.0', files: { 'src/lib.rs': 'source' } }],
+    ['lib/Dep', { ecosystem: 'github', name: 'Org/Dep', version: '.', files: { 'src/File.sol': 'code' } }],
+    ...Array.from({ length: 9 }, (_, i) => [`node_modules/pad${i}`, { name: `pad${i}`, version: '1.0.0', files: { 'index.js': 'source' } }]),
+  ]
+  const details = { kind: 'stasis', bundle: Bundle.parse(new Bundle({ modules: new Map(modules) }).serialize()) }
+  const read = advisoryModules(details)
+  const all = advisoryInventoryOf(read, null)
+  assert.deepEqual(all, bundleAdvisoryInventory(details))
+  const scopes = [
+    [], ['node_modules/copy1/node_modules/dep/index.js'], ['node_modules/old/node_modules/hinted/index.js'],
+    ['vendor/git-crate/src/lib.rs', 'lib/Dep/src/File.sol', 'node_modules/pad8/index.js'],
+    modules.map(([dir, info]) => `${dir}/${Object.keys(info.files)[0]}`),
+  ]
+  for (const paths of scopes) {
+    const scoped = bundleAdvisoryInventory(details, paths)
+    const kept = JSON.parse(JSON.stringify(inventoryRows(all, scoped)))
+    assert.deepEqual(inventoryOfRows(all, kept), scoped, `the scope of ${paths.length} files reads back as it was`)
+    assert.deepEqual(advisoryInventoryOf(read, new Set(paths)), scoped)
+  }
+  // 15 package versions and a skipped one: two bytes of rows, and only the repositories that differ.
+  const rows = paths => inventoryRows(all, bundleAdvisoryInventory(details, paths))
+  assert.deepEqual(rows(scopes[0]), { rows: 'AAA=' })
+  assert.deepEqual(rows(scopes[1]), { rows: Buffer.from([0b100, 0]).toString('base64'), github: { 1: 'org/moved' } }, 'a repository the whole bundle\'s versions disagree on')
+  assert.deepEqual(rows(scopes[2]).github, { 2: null }, 'none named in the scope, one in the bundle')
+  assert.deepEqual(rows(scopes[4]), { rows: Buffer.from([0xff, 0xff]).toString('base64') })
 })
 
 test('npm packages without a recorded repository use the one their bundled package.json names', () => {

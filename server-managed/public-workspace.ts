@@ -10,9 +10,9 @@ import { sendJson, sendLines, writeResponse } from './http-response.ts'
 import { hashToken } from './crypto.ts'
 import { TeamReportsError, loadTeamAnnotations, loadTeamReportsResponse, teamReportVisibility, teamResponsePart } from './team-reports.ts'
 import { triageWireEntry } from './triage-response.ts'
-import { MAX_PACKAGE_INVENTORY_BYTES, unknownScope } from './bundle-cache.ts'
+import { MAX_PACKAGE_INVENTORY_BYTES } from './bundle-cache.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
-import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
+import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories, requestedScope, scopeError } from './bundle-advisories.ts'
 import { auditCache, auditedKeys } from './upstream-cache.ts'
 import { serveTeamFeed } from './team-feed.ts'
 import { type ComparedSide, PrettyError, compared, prettyRequest, prettyText } from './pretty-print.ts'
@@ -202,11 +202,11 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
   if (!deps.bundleCache) { json(res, 503, { error: 'unavailable' }); return }
   if (part === 'advisories') {
     if (bundle.kind !== 'stasis') { json(res, 422, { error: 'unsupported-bundle' }); return }
-    const entry = url.searchParams.get('entry') ?? '', reason = url.searchParams.get('reason') ?? ''
-    const inventory = await deps.bundleCache.advisoryInventory(bundle, reason, entry)
+    const scope = requestedScope(url.searchParams)
+    const inventory = scope === null ? undefined : await deps.bundleCache.advisoryInventory(bundle, scope)
     await recheck()
     if (inventory === null) { json(res, 413, { error: 'payload-too-large' }); return }
-    if (inventory === undefined) { json(res, 400, { error: unknownScope(reason, entry) }); return }
+    if (inventory === undefined) { json(res, 400, { error: scopeError(scope) }); return }
     if (Buffer.byteLength(JSON.stringify(inventory)) > MAX_PACKAGE_INVENTORY_BYTES) { json(res, 413, { error: 'payload-too-large' }); return }
     const signal = AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)
     const repoAdvisories = url.searchParams.get('repoAdvisories') === 'true'

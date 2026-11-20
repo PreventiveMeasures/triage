@@ -4,6 +4,7 @@ import './_polyfills.js'
 
 const { renderStage, renderTopBar } = await import('../ui/view/graph/render.js')
 const { graph2 } = await import('../ui/view/graph/state.js')
+const { templates } = await import('./_lit.js')
 
 function renderText(value) {
   if (Array.isArray(value)) return value.map(renderText).join('')
@@ -41,7 +42,7 @@ test('the bundle graph offers Issues only when findings matched, and shows issue
 })
 
 test('the bundle graph ends its first row with the scope selector, Issues, then fullscreen pinned after the wrapping controls', () => {
-  const [[, main]] = rows(renderText(renderTopBar({ ...graph, reasons: ['run'] }, { ...bundle, hasIssues: true })))
+  const [[, main]] = rows(renderText(renderTopBar({ ...graph, reasons: [{ id: 'reason:run', label: 'run' }] }, { ...bundle, hasIssues: true })))
   assert.match(main, /graph2-topbar-row-pinned/u)
   const at = part => main.indexOf(part)
   assert.ok(at('class="g2-topbar-controls"') >= 0)
@@ -50,29 +51,21 @@ test('the bundle graph ends its first row with the scope selector, Issues, then 
   assert.doesNotMatch(main, /<select/u, 'the full scope selector replaces the plain reason select')
 })
 
-test('the bundle graph selects an entry point in place of a reason, and offers the selector for entry points alone', t => {
-  t.after(() => { graph2.bundleReason = null; graph2.bundleEntry = null })
+test('the bundle graph hands its selector the scope chosen, a reason\'s or an entry point\'s, and offers it for entry points alone', t => {
+  t.after(() => { graph2.bundleScope = '' })
   const entries = [{ id: 'entry:src/a.js', label: 'a.js' }, { id: 'entry:src/b.js', label: 'b.js' }]
-  const selector = top => top.values.flatMap(function find(value) {
-    if (Array.isArray(value)) return value.flatMap(find)
-    if (!value?.strings) return []
-    return value.strings.join('').includes('<bundle-scope-selector') ? [value] : value.values.flatMap(find)
-  })[0]
+  const reasons = [{ id: 'reason:run', label: 'run' }]
+  const selector = top => templates(top).find(template => template.strings.join('').includes('<bundle-scope-selector'))
   const changed = (control, value) => {
     let detail
     control.values.find(item => typeof item === 'function')({ detail: { value }, currentTarget: { dispatchEvent: event => { detail = [event.type, event.detail] } } })
     return detail
   }
-  graph2.bundleEntry = 'src/b.js'
-  const control = selector(renderTopBar({ ...graph, reasons: ['run'], entries }, bundle))
-  assert.deepEqual(control.values.slice(0, 3), [[{ id: 'reason:run', label: 'run' }], entries, 'entry:src/b.js'])
-  assert.deepEqual(changed(control, 'entry:src/a.js'), ['bundle-graph-scope-change', { reason: null, entry: 'src/a.js' }])
-  assert.deepEqual(changed(control, 'reason:run'), ['bundle-graph-scope-change', { reason: 'run', entry: null }])
-  assert.deepEqual(changed(control, ''), ['bundle-graph-scope-change', { reason: null, entry: null }])
-  graph2.bundleReason = 'run'
-  assert.equal(selector(renderTopBar({ ...graph, reasons: ['run'], entries }, bundle)).values[2], 'reason:run')
-  graph2.bundleReason = null
-  graph2.bundleEntry = null
+  graph2.bundleScope = 'entry:src/b.js'
+  const control = selector(renderTopBar({ ...graph, reasons, entries }, bundle))
+  assert.deepEqual(control.values.slice(0, 3), [reasons, entries, 'entry:src/b.js'])
+  for (const scope of ['entry:src/a.js', 'reason:run', '']) assert.deepEqual(changed(control, scope), ['bundle-graph-scope-change', { scope }])
+  graph2.bundleScope = ''
   assert.deepEqual(selector(renderTopBar({ ...graph, entries }, bundle)).values.slice(0, 3), [[], entries, ''], 'a bundle without reasons still filters by entry point')
   assert.equal(selector(renderTopBar(graph, bundle)), undefined, 'neither: no selector')
 })
