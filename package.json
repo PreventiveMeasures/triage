@@ -428,8 +428,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@exodus/stasis": "1.0.0-rc.5",
-    "@exodus/stasis-core": "1.0.0-rc.5",
+    "@exodus/stasis": "1.0.0-rc.6",
+    "@exodus/stasis-core": "1.0.0-rc.6",
     "@preventive/archive": "^1.4.1",
     "@preventive/compare": "^1.2.13",
     "@preventive/diff": "^1.1.1",
