@@ -202,7 +202,12 @@ function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null, bas
   const others = locked.filter(pkg => !adds.has(lockedAs(pkg))).map(pkg => ({ pkg, judged: review(pkg, 'any') }))
   const unsupported = locked.flatMap(pkg => { const as = reviewedAs(pkg); return as === 'version' || as === 'skip' ? [] : [{ ...shown(pkg), unsupported: as }] })
   const listed = baseless ? own.filter(({ judged }) => judged.wants || 'unsupported' in judged.review) : own
-  return { ...told, ...baseless ? { more: Math.max(0, listed.length - MAX_ADDED) } : {}, added: listed.slice(0, MAX_ADDED).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review })),
+  // Its row told by the least passing way it is locked, against that one's base.
+  const row = ({ pkg, judged }: (typeof own)[number]) => {
+    const { base: _base, ...rest } = shown(pkg as AddedPackage), { base } = judged.variant as AddedPackage
+    return { ...rest, ...base ? { base } : {}, ...judged.review }
+  }
+  return { ...told, ...baseless ? { more: Math.max(0, listed.length - MAX_ADDED) } : {}, added: listed.slice(0, MAX_ADDED).map(row),
     toReview: own.flatMap(({ wanting }) => wanting.map(shown)),
     unreviewed: others.filter(({ judged }) => judged.wants).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review })), unsupported, moreLocked }
 }

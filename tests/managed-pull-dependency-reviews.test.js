@@ -274,6 +274,8 @@ test('a version added locked with another integrity too is asked its base as eac
   const crossed = await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews: [passing(pkg, 'u1', '1.0.0'), passing(variant, 'u1', '1.0.0')] },
     { reviewed: { lookup: () => Promise.resolve(false), base } })
   assert.equal(crossed.review.toReview, 1, 'not against the other\'s')
+  assert.deepEqual([crossed.lockfiles[0].added[0].base, crossed.lockfiles[0].added[0].reviews], [{ name: 'dual', version: '1.5.0' }, 0],
+    'its row told by the way it is locked that still wants one, against that one\'s base, to review it against')
 })
 
 test('a version added past those told is judged as one added, against the versions it was, and counted as wanting a review', async () => {
