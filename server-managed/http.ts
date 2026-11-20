@@ -151,7 +151,7 @@ import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTip
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { type NpmDelta, deltaKey, keptNpmDeltas, npmDelta } from './npm-delta.ts'
-import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories, requestedScope, scopeError } from './bundle-advisories.ts'
+import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
 import { auditCache, auditedKeys, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
@@ -3479,8 +3479,7 @@ async function handleBundleChanges(res: ServerResponse, deps: ManagedHttpDeps, s
 
 // Published dependency advisories require security access, independently of access to
 // unpublished dependency findings. Managers retain their normal bundle access.
-// Of the whole bundle, or of the one `scope` of it asked for (requestedScope).
-async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, teamId: string | null, scope: string | null, repoAdvisories: boolean, details: boolean) {
+async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, teamId: string | null, reason: string, entry: string, repoAdvisories: boolean, details: boolean) {
   const authorize = async () => {
     const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id, teamId)
     if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
@@ -3495,11 +3494,11 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
   if (!deps.bundleCache) { sendJson(res, 503, { error: 'unavailable' }); return }
   let inventory: BundleAdvisoryInventory | null | undefined
-  try { inventory = scope === null ? undefined : await deps.bundleCache.advisoryInventory(record, scope) }
+  try { inventory = await deps.bundleCache.advisoryInventory(record, reason, entry) }
   catch { sendJson(res, 422, { error: 'bundle-unavailable' }); return }
   if (!(await authorize())) return
   if (inventory === null) { sendJson(res, 413, { error: 'payload-too-large' }); return }
-  if (inventory === undefined) { sendJson(res, 400, { error: scopeError(scope) }); return }
+  if (inventory === undefined) { sendJson(res, 400, { error: entry ? 'unknown-entry' : 'unknown-reason' }); return }
   if (Buffer.byteLength(JSON.stringify(inventory)) > MAX_PACKAGE_INVENTORY_BYTES) { sendJson(res, 413, { error: 'payload-too-large' }); return }
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
@@ -5575,7 +5574,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const bundleAdvisories = /^\/api\/bundles\/([a-f\d-]{36})\/advisories$/iu.exec(path)
     if (bundleAdvisories) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), requestedScope(url.searchParams), url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
+      await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('entry') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
       return
     }
     const bundleValidationRoute = /^\/api\/bundles\/([a-f\d-]{36})\/validation$/iu.exec(path)

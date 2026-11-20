@@ -9,7 +9,7 @@ import { state } from '#client/index.js'
 import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
-import { bundleScopeOptions, bundleScopes } from '../../common/bundle-reasons.js'
+import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
 import { SCAN_ICON_SVG } from './icons.js'
 import { advisoryRow } from './advisory-parts.js'
 import './bundle-scope-selector.js'
@@ -30,17 +30,12 @@ function advisoryCache(details) {
   }
   return managedCache
 }
-// The scope audited: one of the bundle's reasons or of its entry points
-// (bundleScopes), by its id, '' for every package.
 const scopes = new WeakMap()
 function advisoryScope(details) {
-  if (!scopes.has(details)) {
-    const all = bundleScopes(details)
-    scopes.set(details, { scopes: all, options: bundleScopeOptions(all), selected: '' })
-  }
+  if (!scopes.has(details)) scopes.set(details, { reasons: bundleScopes(details), selected: '' })
   return scopes.get(details)
 }
-function cacheKey(details, scope = advisoryScope(details).selected) { return JSON.stringify([details.managedId ?? details.integrity, scope]) }
+function cacheKey(details, reason = advisoryScope(details).selected) { return JSON.stringify([details.managedId ?? details.integrity, reason]) }
 
 // Local/e2e bundles are private from the server. Ask before sending their
 // package inventory through the proxy to npm. Managed bundles are already
@@ -217,8 +212,8 @@ async function loadBundleAdvisories(details, renderFn, repoAdvisories = false) {
     cache.set(key, { ...previous, recheckingRepositories: true, repositoryError: null })
     renderFn()
   } else if (previous) return
-  const { scopes: all, selected } = advisoryScope(details)
-  let query = details.managedId ? new Map() : bundlePackageVersions(details, all.files(selected))
+  const { reasons, selected } = advisoryScope(details)
+  let query = details.managedId ? new Map() : bundlePackageVersions(details, reasons.files(selected))
   if (!repoAdvisories) cache.set(key, { state: 'loading', query })
   try {
     let json, skipped = []
@@ -309,24 +304,23 @@ function renderConsentPrompt() {
 //                package name (or a one-line summary when none)
 //
 // `onScan`, when the viewer may scan the bundle, opens its Dependency
-// alerts scan from a Validate button, the last of the toolbar's right side:
-// the managed recheck button, the scope selector, then it. Neither button
-// shows for a bundle without dependency packages.
+// alerts scan from a Validate button right of the managed recheck button and
+// the scope selector.
+// Neither button shows for a bundle without dependency packages.
 export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan = null) {
   const scope = details ? advisoryScope(details) : null
-  const { reasons, entries } = scope?.options ?? { reasons: [], entries: [] }
-  const scoped = reasons.length > 0 || entries.length > 0
+  const reasons = scope ? scopeOptions(scope.reasons) : []
   const summary = renderAdvisoriesSummary(details)
   const actions = Boolean(details?.managedId) && !managedBundleHasNoDependencies(details)
   return html`<div class="bundle-advisories-panel">
-    ${summary !== nothing || scoped || actions ? html`<div class="bundle-advisories-toolbar">
+    ${summary !== nothing || reasons.length > 0 || actions ? html`<div class="bundle-advisories-toolbar">
     ${summary}
-    ${scoped || actions ? html`<div class="bundle-advisories-scopes">
+    ${reasons.length > 0 || actions ? html`<div class="bundle-advisories-scopes">
     ${actions ? renderRepositoryRecheck(details, renderFn) : nothing}
-    ${scoped ? html`<bundle-scope-selector
-      .reasons=${reasons} .entries=${entries} .value=${scope.selected} label="Choose advisory scope"
+    ${reasons.length > 0 ? html`<bundle-scope-selector
+      .reasons=${reasons} .value=${scope.selected} label="Choose advisory scope"
       @scope-change=${event => {
-        scope.selected = scope.scopes.has(event.detail.value) ? event.detail.value : ''
+        scope.selected = scope.reasons.has(event.detail.value) ? event.detail.value : ''
         const loading = ensureBundleAdvisories(details, renderFn)
         renderFn()
         return loading

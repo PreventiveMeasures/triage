@@ -128,16 +128,15 @@ export function renderTopBar(graph, options, extraControls = null, placement = {
     data-g2-packages-view
   ></mode-switch>` : null
 
-  // Bundle scope filter, by a reason or by an entry point instead — the
-  // full selector the Advisories, Treemap and Scan views use: one-click
-  // options with their description for recognized scopes, a select for
-  // custom ones and for entry points. The element is defined by the main
-  // bundle (render-bundle-advisories.js imports it); importing it here
-  // would bundle a second Lit into this lazy chunk.
-  const reasonFilter = graph.reasons?.length > 0 || graph.entries?.length > 0 ? html`<bundle-scope-selector class="g2-reason-scope"
-    .reasons=${graph.reasons ?? []} .entries=${graph.entries ?? []} .value=${graph2.bundleScope} label="Filter files"
-    @scope-change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-scope-change', {
-      detail: { scope: e.detail.value }, bubbles: true, composed: true,
+  // Bundle scope (reason or entry point) filter — the full selector the Advisories,
+  // Treemap and Scan views use: one-click options with their description
+  // for recognized scopes, a select for custom ones. The element is
+  // defined by the main bundle (render-bundle-advisories.js imports it);
+  // importing it here would bundle a second Lit into this lazy chunk.
+  const reasonFilter = graph.reasons?.length > 0 ? html`<bundle-scope-selector class="g2-reason-scope"
+    .reasons=${graph.reasons} .value=${graph2.bundleReason ?? ''} label="Filter files"
+    @scope-change=${(e) => e.currentTarget.dispatchEvent(new CustomEvent('bundle-graph-reason-change', {
+      detail: { reason: e.detail.value || null }, bubbles: true, composed: true,
     }))}
   ></bundle-scope-selector>` : null
 

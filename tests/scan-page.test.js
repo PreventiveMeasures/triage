@@ -10,7 +10,7 @@ import { codeScanFiles, sourceMetrics, sourceStats } from '../ui/scan/metrics.js
 import { appFindingCount, linkableReport, localReportSources, managedReportSources } from '../ui/scan/report-source.js'
 import { ReportInputs } from '../ui/scan/report-inputs.js'
 import { ScanPage } from '../ui/scan/page.js'
-import { templateText as renderText, templates } from './_lit.js'
+import { templateText as renderText } from './_lit.js'
 import { cloneScanFixtures } from '../ui/scan/fixtures.js'
 import { bundleOptions } from '../ui/view/bundle-selector.js'
 import { createBundleMetadata, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
@@ -84,39 +84,6 @@ describe('Scan scopes', () => {
     assert.equal(page._reason, 'reason:run')
     page._changeReason('')
     assert.equal(page._scopeFiles.length, 3)
-    for (const timer of page._timers) clearTimeout(timer)
-  })
-
-
-  test('an entry point is a scan scope in place of a reason, named as one in the history and restored on restart', () => {
-    const page = new ScanPage()
-    const entries = [{ id: 'entry:src/a.js', label: 'a.js', filePaths: ['src/a.js', 'src/shared.js'] }, { id: 'entry:src/b.js', label: 'b.js', filePaths: ['src/b.js'] }]
-    const files = ['src/a.js', 'src/b.js', 'src/shared.js', 'src/cli.js'].map(path => ({ path, module: '__own__', bytes: 10 }))
-    page.source = { bundles: [
-      { id: 'bundle', repoId: 'repo', filename: 'app.stasis', files, entries,
-        reasons: [{ id: 'all', label: 'All', filePaths: null }, { id: 'reason:run', label: 'run', filePaths: ['src/cli.js'] }] },
-      { id: 'plain', repoId: 'repo', filename: 'plain.stasis', files, entries, reasons: [{ id: 'all', label: 'All', filePaths: null }] },
-    ] }
-    page.willUpdate(new Map([['source', null]]))
-    const selector = () => templates(page._newScan()).find(template => template.strings.join('').includes('<bundle-scope-selector'))
-    assert.deepEqual(selector().values.slice(0, 3), [[{ id: 'reason:run', label: 'run', filePaths: ['src/cli.js'] }], entries, 'all'])
-    page._changeReason('entry:src/a.js')
-    assert.deepEqual(page._scopeFiles.map(file => file.path).toSorted(), ['src/a.js', 'src/shared.js'])
-    assert.equal(selector().values[2], 'entry:src/a.js')
-    page._runScan()
-    const scan = page._scans[0]
-    assert.equal(scan.files, 2)
-    assert.equal(scan.reason, 'Entry point a.js')
-    assert.equal(scan.scopeId, 'entry:src/a.js')
-    page._stopScan(scan)
-    page._changeReason('reason:run')
-    assert.deepEqual(page._scopeFiles.map(file => file.path), ['src/cli.js'], 'a reason chosen replaces the entry point')
-    page._restartScan(scan)
-    assert.equal(page._reason, 'entry:src/a.js')
-    page._changeReason('')
-    assert.equal(page._scopeFiles.length, 4)
-    page._selectBundleById('plain')
-    assert.deepEqual(selector().values.slice(0, 2), [[], entries], 'a bundle recording no reasons still offers its entry points')
     for (const timer of page._timers) clearTimeout(timer)
   })
 

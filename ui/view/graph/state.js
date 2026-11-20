@@ -35,9 +35,8 @@ export const graph2 = {
   // graph's: Dependencies, then the last one picked. The lockfile viewer
   // draws by bundleLayout while it is on the page, and gives it back after.
   lockfileLayout: 'dependencies',
-  // The scope filtered by (bundleScopes), a reason's id or an entry point's; '' = every file. Shared by every layout.
-  bundleScope: '',
-  bundleScopeFor: null, // bundle integrity; reset selection on bundle changes
+  bundleReason: null, // null = all files, else a scope's id (bundleScopes); shared by graph and layers
+  bundleReasonFor: null, // bundle integrity; reset selection on bundle changes
   selected: null,        // file path or null
   // Package focus mode — when set, the canvas drops the spiral
   // and renders ONLY this package's intra-imports in graph v1

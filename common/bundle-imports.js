@@ -1,15 +1,8 @@
 import { bundleSourcemapImports } from './bundle-sourcemap.js'
 
-// The files a resolution names: a single resolved path, or each of a Metro
-// platform -> file map's.
-function resolvedFiles(resolved) {
-  const targets = typeof resolved === 'string' ? [resolved] : resolved instanceof Map ? [...resolved.values()] : []
-  return targets.filter((target) => typeof target === 'string')
-}
-
-// Include every recorded platform/condition variant (resolvedFiles). A
-// sourcemap records no imports: its edges are what bundle-sourcemap.js reads
-// of it.
+// Include every recorded platform/condition variant; a Metro resolution can
+// be a platform -> file map instead of a single resolved path. A sourcemap
+// records no imports: its edges are what bundle-sourcemap.js reads of it.
 export function bundleImportsAsMap(details) {
   if (details?.kind === 'sourcemap') return bundleSourcemapImports(details)
   const result = new Map()
@@ -17,8 +10,10 @@ export function bundleImportsAsMap(details) {
   for (const byParent of details.bundle.imports.values()) {
     for (const [parent, specMap] of byParent) {
       if (!result.has(parent)) result.set(parent, new Set())
-      const targets = result.get(parent)
-      for (const resolved of specMap.values()) resolvedFiles(resolved).forEach((target) => targets.add(target))
+      for (const resolved of specMap.values()) {
+        const targets = typeof resolved === 'string' ? [resolved] : resolved instanceof Map ? resolved.values() : []
+        for (const target of targets) if (typeof target === 'string') result.get(parent).add(target)
+      }
     }
   }
   return result

@@ -28,8 +28,6 @@ export function bundleWhyQuery(details, dir) {
 // is the identity: merging copies would invent routes between their importers.
 // Omitting version selects every installed version of the package. Overview
 // queries use its package group instead, preserving the clicked row's scope.
-// Within `scope`, a reason's files or those an entry point reaches, where the
-// bundle has it (bundleScopes): else among all of its files.
 export function bundleWhy(details, { packageKey, packageGroup, version, scope = '' }) {
   const importedBy = new Map(), imports = new Map(), nodes = new Map()
   const dirs = bundlePackageDirs(details) ?? new Map()

@@ -2715,10 +2715,10 @@ report.addEventListener('bundle-search-mode-change', (e) => {
 })
 // Native select changes do not cross shadow roots; graph-layout emits this
 // composed event so the main and lazy graph bundles share one selection.
-report.addEventListener('bundle-graph-scope-change', (e) => {
-  const scope = e.detail?.scope
-  if (typeof scope !== 'string') return
-  graph2.bundleScope = scope
+report.addEventListener('bundle-graph-reason-change', (e) => {
+  const reason = e.detail?.reason
+  if (reason !== null && typeof reason !== 'string') return
+  graph2.bundleReason = reason
   graph2.layoutCache = null
   graph2.selected = null
   graph2.solo = null

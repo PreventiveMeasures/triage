@@ -22,8 +22,7 @@ function repeated(value) {
 }
 
 // A template's text, its values spelled out in place: arrays joined, and
-// `repeat`'s items, a `guard`'s, a `live` binding's value; a `styleMap`'s
-// declarations as `name: value; …`;
+// `repeat`'s items, a `guard`'s; a `styleMap`'s declarations as `name: value; …`;
 // `nothing` and other symbols, null and undefined as none, anything else
 // as String() gives it.
 export const templateText = value => Array.isArray(value) ? value.map(templateText).join('')

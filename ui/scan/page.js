@@ -155,17 +155,9 @@ export class ScanPage extends LitElement {
 
   get _bundle() { return this._repoBundles.find((bundle) => bundle.id === this._selectedBundleId) }
 
-  // The scope chosen: a reason, or one of the bundle's entry points instead.
-  get _reasonData() { return [...this._bundle?.reasons ?? [], ...this._bundle?.entries ?? []].find((scope) => scope.id === this._reason) ?? this._bundle?.reasons[0] }
+  get _reasonData() { return this._bundle?.reasons.find((reason) => reason.id === this._reason) ?? this._bundle?.reasons[0] }
 
   _packageLabel(module) { return module === '__own__' ? 'Own code' : module }
-
-  // A scan's scope as its history names it: an entry point's path alone could be taken for a reason.
-  _scopeLabel() {
-    const scope = this._reasonData
-    if (scope?.label == null) return 'All files'
-    return this._bundle.entries?.includes(scope) ? `Entry point ${scope.label}` : scope.label
-  }
 
   get _scopeFiles() {
     const reason = this._reasonData
@@ -255,9 +247,9 @@ export class ScanPage extends LitElement {
 
   _scopeField(bundle) {
     if (!['code', 'agentic', 'dependencies'].includes(this._mode)) return nothing
-    const entries = bundle?.entries ?? [], reasons = (bundle?.reasons ?? []).filter(reason => reason.id !== 'all')
-    if (reasons.length === 0 && entries.length === 0) return nothing
-    return html`<bundle-scope-selector .reasons=${reasons} .entries=${entries} .value=${this._reason} label=${this._mode === 'agentic' ? 'Choose agentic scope' : 'Choose scan scope'} @scope-change=${event => this._changeReason(event.detail.value)}></bundle-scope-selector>`
+    const reasons = (bundle?.reasons ?? []).filter(reason => reason.id !== 'all')
+    if (reasons.length === 0) return nothing
+    return html`<bundle-scope-selector .reasons=${reasons} .value=${this._reason} label=${this._mode === 'agentic' ? 'Choose agentic scope' : 'Choose scan scope'} @scope-change=${event => this._changeReason(event.detail.value)}></bundle-scope-selector>`
   }
 
   _optionsPanel(mode, bundle, count) {
@@ -379,7 +371,7 @@ export class ScanPage extends LitElement {
       : mode === 'dependencies' ? this._scopeFiles : (bundle?.files ?? [])
     if (mode === 'report' && (!reportInput?.source || reports.length === 0)) return
     if (mode !== 'report' && (!bundle || files.length === 0)) return
-    const scan = { id: `scan-${Date.now()}`, mode, bundleId: mode === 'report' ? (this._reportMode === 'merge' ? reportInput.source.id : null) : bundle?.id ?? null, bundleName: mode === 'report' ? reportInput.source.label : bundle.filename, reason: mode === 'report' ? this._reportMode === 'merge' ? 'Merge scan results' : 'Link saved reports' : this._scopeLabel(), status: 'running', createdAt: 'Just now', duration: '', files: mode === 'report' ? reports.length : files.length, reportSaved: false, cached: this._options.cached, isolate: mode === 'code' && this._options.isolate, model: this._options.model, effort: this._options.effort }
+    const scan = { id: `scan-${Date.now()}`, mode, bundleId: mode === 'report' ? (this._reportMode === 'merge' ? reportInput.source.id : null) : bundle?.id ?? null, bundleName: mode === 'report' ? reportInput.source.label : bundle.filename, reason: mode === 'report' ? this._reportMode === 'merge' ? 'Merge scan results' : 'Link saved reports' : this._reasonData?.label ?? 'All files', status: 'running', createdAt: 'Just now', duration: '', files: mode === 'report' ? reports.length : files.length, reportSaved: false, cached: this._options.cached, isolate: mode === 'code' && this._options.isolate, model: this._options.model, effort: this._options.effort }
     if (mode !== 'report') { scan.repoId = this._selectedRepoId; scan.scopeId = this._reason }
     if (mode === 'code') scan.analyzer = this._options.analyzer
     if (advanced) {

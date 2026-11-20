@@ -2,6 +2,7 @@ import { bundleImportsAsMap } from '../../common/bundle-imports.js'
 import { bundlePkgOf, isOwnSourcePath } from './bundle-pkg-of.js'
 
 export { bundleImportsAsMap }
+export { bundleReasons as bundleGraphReasons } from '../../common/bundle-reasons.js'
 
 // Named workspace modules are own code too, even when another workspace
 // imports them. Use recorded directories before display-prefix stripping;
@@ -23,15 +24,16 @@ export function bundleEntryPackages(details, origToStripped, pkgOf) {
   return packages
 }
 
-// The tree of the files `kept` names (original paths), with the imports
-// between them: a scope's, a reason's or an entry point's (bundleScopes).
-export function filterBundleGraphFiles(tree, origToStripped, kept) {
-  const paths = new Map([...origToStripped].filter(([orig]) => kept.has(orig)))
+export function filterBundleGraphReason(tree, origToStripped, reasons, requested) {
+  // A hidden selector must never keep filtering after switching bundles.
+  const selected = reasons.has(requested) ? requested : null
+  if (selected === null) return { tree, origToStripped, selected }
+  const paths = new Map([...origToStripped].filter(([orig]) => reasons.get(selected).has(orig)))
   const files = new Set(paths.values())
   const filtered = Object.fromEntries([...files].map((file) => [file, {
     ...tree[file], imports: (tree[file].imports ?? []).filter((target) => files.has(target)),
   }]))
-  return { tree: filtered, origToStripped: paths }
+  return { tree: filtered, origToStripped: paths, selected }
 }
 
 // Keep actual entry files, including entries whose source was not bundled.

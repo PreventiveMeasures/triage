@@ -76,8 +76,8 @@ import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
 import { bundleWhyQuery } from './bundle-why.js'
 import { openWhyDialog } from './lazy-dialogs.js'
 import { renderBundleCodeImporters } from './bundle-code-importers.js'
-import { bundleEntryPackages, bundleFlowEntries, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphFiles } from './bundle-graph-inputs.js'
-import { bundleScopeOptions, bundleScopes } from '../../common/bundle-reasons.js'
+import { bundleEntryPackages, bundleFlowEntries, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from './bundle-graph-inputs.js'
+import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
 import { tabKey } from './group.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts } from './file-counts.js'
@@ -229,21 +229,22 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
 // graph would never light up findings — they'd be looked up under
 // original paths while nodes live under stripped ones.
 //
-// Every file in the chosen scope is a node: a reason's, or an entry point's
-// instead (bundleScopes); All includes the full bundle. Its files are kept
-// for the scope (bundleGraphScope), and in a focused package, so a render
-// with neither changed hands the canvas the same array, which it keeps its
-// layout for (graph/canvas.js).
+// Every file in the chosen scope, a reason's or an entry point's
+// (bundleScopes), is a node; All includes the full bundle.
+// Its files are kept for the reason (bundleGraphScope), and in a focused
+// package, so a render with neither changed hands the canvas the same
+// array, which it keeps its layout for (graph/canvas.js).
 export function buildBundleGraphData(details) {
   const full = buildBundleTree(details)
-  if (graph2.bundleScopeFor !== details.integrity) {
-    graph2.bundleScopeFor = details.integrity
+  const reasons = bundleScopes(details, full.origToStripped.keys())
+  if (graph2.bundleReasonFor !== details.integrity) {
+    graph2.bundleReasonFor = details.integrity
     graph2.dependencyPackagesView = false
-    graph2.bundleScope = ''
+    graph2.bundleReason = null
   }
-  const scope = bundleGraphScope(details, full, graph2.bundleScope)
-  const { tree, origToStripped } = scope
-  graph2.bundleScope = scope.id
+  const scope = bundleGraphScope(full, reasons, graph2.bundleReason)
+  const { tree, origToStripped, selected } = scope
+  graph2.bundleReason = selected
   const allFiles = scope.files
   if (allFiles.length === 0) return null
   let strippedHashes = null
@@ -365,32 +366,23 @@ export function buildBundleGraphData(details) {
     entryPackages: bundleEntryPackages(details, origToStripped, pkgOf),
     // Preserve recorded file ownership for dependency-cycle classification.
     ownSourceFiles: new Set(ownFiles),
-    reasons: scope.options.reasons,
-    entries: scope.options.entries,
+    reasons: scopeOptions(reasons),
   }
 }
 
-// The bundle's tree for a scope (bundleScopes), its files, and each focused
-// package's of them, by the full tree (buildBundleTree keeps one a bundle).
-// A scope the bundle has none of is every file: a hidden selector must never
-// keep filtering after switching bundles. Beside every file's, the last scope
-// filtered by is kept: an entry point's is most of the bundle, and a bundle
-// may record a hundred.
+// The bundle's tree for a reason (filterBundleGraphReason; null for every
+// file), its files, and each focused package's of them, by the full tree
+// (buildBundleTree keeps one a bundle).
 const bundleGraphScopes = new WeakMap()
-function bundleGraphScope(details, full, requested) {
-  if (!bundleGraphScopes.has(full)) {
-    const scopes = bundleScopes(details, full.origToStripped.keys())
-    const all = { ...full, id: '', files: Object.keys(full.tree), focused: new Map(), options: bundleScopeOptions(scopes) }
-    bundleGraphScopes.set(full, { scopes, all, last: all })
+function bundleGraphScope(full, reasons, requested) {
+  const selected = reasons.has(requested) ? requested : null
+  if (!bundleGraphScopes.has(full)) bundleGraphScopes.set(full, new Map())
+  const scopes = bundleGraphScopes.get(full)
+  if (!scopes.has(selected)) {
+    const scope = filterBundleGraphReason(full.tree, full.origToStripped, new Map(selected === null ? [] : [[selected, reasons.files(selected)]]), selected)
+    scopes.set(selected, { ...scope, files: Object.keys(scope.tree), focused: new Map() })
   }
-  const kept = bundleGraphScopes.get(full)
-  const id = kept.scopes.has(requested) ? requested : ''
-  if (id === '') return kept.all
-  if (kept.last.id !== id) {
-    const scope = filterBundleGraphFiles(full.tree, full.origToStripped, kept.scopes.files(id))
-    kept.last = { ...kept.all, ...scope, id, files: Object.keys(scope.tree), focused: new Map() }
-  }
-  return kept.last
+  return scopes.get(selected)
 }
 
 // Always bundle context — these helpers serve only the bundle Graph
