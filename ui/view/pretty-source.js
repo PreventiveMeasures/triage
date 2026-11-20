@@ -13,7 +13,7 @@ import { html } from 'lit'
 import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
-import { jsonPrinted, prettyJsonText } from '../../common/pretty-json.js'
+import { jsonPrinted, laidOutAs, prettyJsonText } from '../../common/pretty-json.js'
 import { needsPrettyPrint, prettyExtension, printableSize } from '../../common/pretty-print.js'
 import { fetchPrettyBundleChanges, fetchPrettyBundleFile, fetchPrettyNpmChanges, fetchPrettyNpmFile, fetchPrettyNpmFiles } from './client-managed.js'
 import { npmFileReadabilityRead } from './file-readability.js'
@@ -108,20 +108,24 @@ const versions = new Map()
 const comparisons = new Map()
 
 // JSON files by details and path: the text each was read from, whether it
-// can be formatted (JSON, not too large), and its copy in the layout last
-// asked for.
+// can be formatted (JSON, not too large), whether every layout is the text
+// already (`same`, as `{}` is), and its copy in the layout last asked for.
 const jsonFiles = new WeakMap()
-
-const parses = text => {
-  try { JSON.parse(text); return true } catch { return false }
-}
 
 function jsonFile(details, path, content) {
   let files = jsonFiles.get(details)
   if (!files) jsonFiles.set(details, files = new Map())
   let file = files.get(path)
-  if (file?.content !== content) files.set(path, file = { content, printable: printableSize(content) && parses(content), layout: null, copy: null })
+  if (file?.content !== content) files.set(path, file = { content, ...readJson(content), layout: null, copy: null })
   return file
+}
+
+function readJson(text) {
+  if (!printableSize(text)) return { printable: false, same: false }
+  let value
+  try { value = JSON.parse(text) } catch { return { printable: false, same: false } }
+  // Folded first: a file indented, as npm writes one, differs from it at once.
+  return { printable: true, same: ['folded', 'indented'].every(layout => laidOutAs(text, value, JSON_LAYOUTS[layout].width)) }
 }
 
 // A JSON file's copy in the layout the toggle is in, made here as it is first
@@ -146,15 +150,20 @@ function prettyJsonCopy(details, path, content) {
 const formattable = new WeakMap()
 
 // Whether the open file can be pretty-printed: JSON, in any bundle, or a
-// formattable file of a managed bundle or an npm version.
+// formattable file of a managed bundle or an npm version; not where that
+// changes nothing, as `{}` or a file its copy came the same as.
 export function prettyPrintable(details, entry, path, content) {
   if (typeof content !== 'string') return false
-  if (jsonPrinted(path)) return jsonFile(details, path, content).printable
+  if (jsonPrinted(path)) {
+    const file = jsonFile(details, path, content)
+    return file.printable && !file.same
+  }
   if (!(entry?.managedId || entry?.npm)) return false
   let files = formattable.get(details)
   if (!files) formattable.set(details, files = new Map())
   if (!files.has(path)) files.set(path, needsPrettyPrint(path, content, () => npmFileReadabilityRead(details, path, content)))
-  return files.get(path)
+  const known = entry.npm ? versions.get(details.integrity)?.copies.get(path) : copies.get(copyKey(details, path))
+  return files.get(path) && !(known?.status === 'ready' && known.text === content)
 }
 
 // Copies asked for in the task now running and in the last one that asked,
@@ -385,6 +394,13 @@ async function loadComparison(key, comparison, base, other) {
 export function comparedPrintable(base, other, side, path, content) {
   return jsonPrinted(path) ? jsonFile(side === 'base' ? base : other, path, content).printable
     : renameDiffable(base, other) && prettyExtension(path) !== null && printableSize(content)
+}
+
+// Whether pretty-printing one side's file of a comparison changes nothing, in
+// any state of the toggle: JSON every layout of which is its text, or other
+// code its copy (`copy`, as comparedCopy has it) came the same as.
+export function comparedSame(base, other, side, path, content, copy) {
+  return jsonPrinted(path) ? jsonFile(side === 'base' ? base : other, path, content).same : copy.status === 'ready' && copy.text === content
 }
 
 // One side's file of a comparison of two managed bundles, or two versions of

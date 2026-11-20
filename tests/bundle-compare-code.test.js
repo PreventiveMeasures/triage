@@ -134,7 +134,7 @@ const { bundleCompareResolutions } = await import('../ui/view/bundle-compare-inp
 const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
 const { resolutionRows } = await import('../ui/view/bundle-compare-files.js')
 const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks.js')
-await import('../ui/view/bundle-compare-code.js')
+const { prettyToggle } = await import('../ui/view/bundle-compare-code.js')
 const CompareCode = customElements.get('bundle-compare-code')
 // The bundles each view is drawn with, for the mock server's comparisons.
 const willUpdate = CompareCode.prototype.willUpdate
@@ -473,6 +473,51 @@ test('a file minified on one side alone is offered pretty-printed at once, and d
   state.bundleSourcePretty = 'indented'
   assert.equal(await untilPrinted(element, 'dist/half.js'), 'ready')
   assert.match(renderText(element.render()), /class="add">\+1<\/span><span class="del">−0/u, 'its copies diffed')
+})
+
+test('a file pretty-printing changes nothing on either side of is offered it no longer once its copies came, whatever state the toggle is in', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const data = side => `var data = "${side.repeat(1500)}"\n`
+  const element = view('dist/data.js', [{ 'dist/data.js': data('a') }, { 'dist/data.js': data('b') }])
+  element.base.managedId = 'b61'
+  element.other.managedId = 'b62'
+  pretty.set('b61:dist/data.js', data('a'))
+  pretty.set('b62:dist/data.js', data('b'))
+  assert.match(renderText(element.render()), /aria-label="Pretty-print"/u, 'offered before its copies came: minified')
+  assert.equal(await untilPrinted(element, 'dist/data.js'), 'ready')
+  for (const shown of [false, 'indented', 'folded']) {
+    state.bundleSourcePretty = shown
+    assert.doesNotMatch(renderText(element.render()), /aria-label="Pretty-print"/u, `its copies its texts, ${shown || 'off'}`)
+  }
+})
+
+test('JSON is not offered pretty-printed where every state of the toggle reads alike on both sides, as {} does', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  for (const shown of [false, 'indented', 'folded']) {
+    state.bundleSourcePretty = shown
+    assert.doesNotMatch(renderText(view('a.json', [{ 'a.json': '{}\n' }, { 'a.json': '[]\n' }]).render()), /aria-label="Pretty-print"/u, `${shown || 'off'}`)
+    assert.match(renderText(view('a.json', [{ 'a.json': '{}\n' }, { 'a.json': '{"a":1}\n' }]).render()), /aria-label="Pretty-print"/u, 'one side changed by it')
+  }
+})
+
+test('the toggle on a file other than JSON has two states, folded left for off, never reached from it', async t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const element = view('dist/half.js', [{ 'dist/half.js': `var Y = 1\n${'q(Y)\n'.repeat(250)}` }, { 'dist/half.js': `var Y=1;${'q(Y);'.repeat(250)}q(2);\n` }])
+  element.base.managedId = 'b63'
+  element.other.managedId = 'b64'
+  pretty.set('b63:dist/half.js', 'var Y = 1;\nq(Y);\n')
+  pretty.set('b64:dist/half.js', 'var Y = 1;\nq(Y);\nq(2);\n')
+  const handlers = value => Array.isArray(value) ? value.flatMap(handlers) : value?.values ? value.values.flatMap(handlers) : typeof value === 'function' ? [value] : []
+  const press = () => { for (const click of handlers(element._toggles(false, prettyToggle(element._fileState('dist/half.js', element._entries.get('dist/half.js')))))) click() }
+  state.bundleSourcePretty = 'folded'
+  assert.equal(await untilPrinted(element, 'dist/half.js'), 'ready')
+  assert.match(renderText(element.render()), /class=bundle-compare-code-toggle\s+aria-pressed=true/u, 'on, not drawn folded')
+  const states = []
+  for (let i = 0; i < 4; i++) {
+    press()
+    states.push(state.bundleSourcePretty)
+  }
+  assert.deepEqual(states, [false, 'indented', false, 'indented'])
 })
 
 test('a file whose copy a comparison brought none of is asked for alone, and drawn printed', async t => {

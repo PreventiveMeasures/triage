@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { prettyJSON, prettyJsonText } from '../common/pretty-json.js'
+import { laidOutAs, prettyJSON, prettyJsonText } from '../common/pretty-json.js'
 
 // Random JSON values, the same each run.
 function values(count) {
@@ -72,6 +72,17 @@ test('prettyJsonText pretty-prints a JSON text, keeping whether it ends in a lin
   assert.equal(prettyJsonText('{\r\n  "a": 1\r\n}\r\n'), '{ "a": 1 }\n')
   assert.equal(prettyJsonText('["\\ud800", "é", {"__proto__": {"x": 1}}]'), '["\\ud800", "é", { "__proto__": { "x": 1 } }]', 'escaped as JSON.stringify escapes it')
   for (const text of ['module.exports = {}', '{ // c\n "a": 1 }', '{"a":1,}', '﻿{"a":1}', '']) assert.equal(prettyJsonText(text), null, text)
+})
+
+test('laidOutAs tells a text laid out at a width already, but for a last line end, at its first line that differs', () => {
+  const cases = [['{}', {}, true, true], ['{}\n', {}, true, true], ['{ }', {}, false, false], ['{\n  "a": 1\n}\n', { a: 1 }, true, false],
+    ['{ "a": 1 }\n', { a: 1 }, false, true], ['1\n\n', 1, false, false], ['{\n  "a": 1\n}x', { a: 1 }, false, false], ['{\r\n  "a": 1\r\n}\r\n', { a: 1 }, false, false]]
+  for (const [text, value, indented, folded] of cases) assert.deepEqual([laidOutAs(text, value, 0), laidOutAs(text, value, 120)], [indented, folded], JSON.stringify(text))
+  for (const value of values(500)) {
+    for (const width of [0, 120]) assert.equal(laidOutAs(`${prettyJSON(value, { width })}\n`, value, width), true)
+  }
+  const nested = JSON.parse(`${'['.repeat(500)}${'0,'.repeat(100_000)}0${']'.repeat(500)}`)
+  assert.equal(laidOutAs('[]', nested, 0), false, 'given up at once, the layout never built')
 })
 
 test('prettyJSON gives up past its limit, which deep nesting reaches from a short text', () => {

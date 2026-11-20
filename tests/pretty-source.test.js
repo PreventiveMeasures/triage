@@ -222,6 +222,27 @@ test('JSON is pretty-printed here, in any bundle, its copy made once the toggle 
   assert.equal(renders.length, 0)
 })
 
+test('a file pretty-printing changes nothing of is not offered it, whatever state the toggle is in: JSON each layout of which is its text, other code once its copy came the same', async () => {
+  const same = { 'empty.json': '{}\n', 'long.json': `[\n  "${'x'.repeat(130)}"\n]\n`, 'one.json': '1' }
+  const details = bundleOf({ ...same, 'data.json': '{\n  "a": 1\n}\n' })
+  for (const shown of [false, 'indented', 'folded']) {
+    state.bundleSourcePretty = shown
+    for (const [path, text] of Object.entries(same)) assert.equal(prettyPrintable(details, {}, path, text), false, `${path}, ${shown || 'off'}`)
+    assert.equal(prettyPrintable(details, {}, 'data.json', '{\n  "a": 1\n}\n'), true, 'indented already, but folded otherwise')
+  }
+  state.bundleSourcePretty = false
+  const code = `var data = "${'a'.repeat(1500)}"\n`
+  const bundle = bundleOf({ 'dist/data.js': code })
+  assert.equal(prettyPrintable(bundle, managed, 'dist/data.js', code), true, 'offered till its copy came: minified')
+  togglePrettySource()
+  answers.push(code)
+  prettyCopy(bundle, managed, 'dist/data.js', code)
+  await settledUntil(() => renders.length > 0)
+  assert.equal(prettyPrintable(bundle, managed, 'dist/data.js', code), false, 'its copy its text')
+  togglePrettySource()
+  assert.equal(prettyPrintable(bundle, managed, 'dist/data.js', code), false, 'off too')
+})
+
 test('the toggle on JSON has a third state: indented as JSON.stringify writes it, then folded, then off; the copy last asked for kept', () => {
   const text = '{"a":1,"b":[1,2]}\n'
   const details = bundleOf({ 'data.json': text })

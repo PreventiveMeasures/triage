@@ -39,7 +39,7 @@ import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
-import { PRETTY_ICON, comparedCopy, comparedPrintable, prettyFolded, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { PRETTY_ICON, comparedCopy, comparedPrintable, comparedSame, prettyFolded, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { jsonPrinted } from '../../common/pretty-json.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory, npmTextKindTag } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
@@ -1237,7 +1237,8 @@ export class BundleCompareCode extends LitElement {
   // the Code tab prints a file (`minified`), or, where both sides have text
   // and once both copies came, where their diff has fewer changed lines than
   // the files' (`smaller`: formatting changed, as a semicolon added to every
-  // line; an added file has nothing to compare). Its copies (`copies`): the
+  // line; an added file has nothing to compare); never where no state of the
+  // toggle changes either side (comparedSame). Its copies (`copies`): the
   // first failure of either, else one still coming, else one not made while
   // the toggle is off (JSON's), else their texts and hashes. Null for a file
   // whose sides can't both be printed.
@@ -1251,8 +1252,9 @@ export class BundleCompareCode extends LitElement {
     const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
     const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading') ?? both.find(copy => copy.status === 'off')
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }
-    const smaller = !json && !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
-    return { copies, json, minified: unreadable, smaller, applies: json || unreadable || smaller }
+    const same = sides.every(([side, , file, text], i) => text === '' || comparedSame(this.base, this.other, side, file, text, both[i]))
+    const smaller = !json && !same && !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
+    return { copies, json, minified: unreadable, smaller, applies: !same && (json || unreadable || smaller) }
   }
 
   // Whether the texts a file shows are too large to diff unasked

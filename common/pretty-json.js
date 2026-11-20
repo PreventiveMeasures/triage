@@ -31,15 +31,8 @@ function oneLine(value, room) {
 // `data`, a value JSON.parse returned, laid out as `JSON.stringify(data,
 // undefined, 2)` does, but for each object or array whose one-line form fits
 // its line within `width`, kept on it, and an array of strings alone that
-// doesn't, as many to a line as fit. Throws past `limit` characters, which
-// deep nesting can run to from a short text.
-export function prettyJSON(data, { width = 120, limit = Infinity } = {}) {
-  const lines = []
-  let length = -1 // no line end before the first line
-  const push = line => {
-    if ((length += line.length + 1) > limit) throw new RangeError(`The copy would run past ${limit.toLocaleString('en')} characters.`)
-    lines.push(line)
-  }
+// doesn't, as many to a line as fit: each line to `push`, in order.
+function layOut(data, width, push) {
   const write = (value, indent, head, tail) => {
     const line = oneLine(value, width - indent.length - head.length - tail.length)
     if (line !== null || !isContainer(value)) {
@@ -69,7 +62,37 @@ export function prettyJSON(data, { width = 120, limit = Infinity } = {}) {
     push(`${indent}${array ? ']' : '}'}${tail}`)
   }
   write(data, '', '', '')
+}
+
+// `data` laid out (layOut) at `width`, 120 unless given. Throws past `limit`
+// characters, which deep nesting can run to from a short text.
+export function prettyJSON(data, { width = 120, limit = Infinity } = {}) {
+  const lines = []
+  let length = -1 // no line end before the first line
+  layOut(data, width, line => {
+    if ((length += line.length + 1) > limit) throw new RangeError(`The copy would run past ${limit.toLocaleString('en')} characters.`)
+    lines.push(line)
+  })
   return lines.join('\n')
+}
+
+const DIFFERS = Symbol('differs')
+
+// Whether `text` is `data` laid out at `width` already (prettyJSON), but for
+// a last line end: told at the first line that differs, never past its end.
+export function laidOutAs(text, data, width) {
+  let at = 0, lines = 0
+  try {
+    layOut(data, width, line => {
+      if (lines++ > 0 && text[at++] !== '\n') throw DIFFERS
+      if (!text.startsWith(line, at)) throw DIFFERS
+      at += line.length
+    })
+  } catch (err) {
+    if (err === DIFFERS) return false
+    throw err
+  }
+  return at === text.length || (at === text.length - 1 && text[at] === '\n')
 }
 
 // The most characters a text's copy (prettyJsonText) runs to: four times the
