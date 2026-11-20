@@ -177,8 +177,10 @@ Its sub-tabs are:
 Where several pull requests add a version, its reviews in each are compared: who passes it and who rejects it there, by login.
 
 - Reviewed alike, one pull request lists it, the one with the fewest reviews left to make, and the others show it dimmed, naming that one.
-- A pull request lacking a review that counts in another (one made in that one's comments, say) shows it red, and its tooltip names whose review and where.
+- A pull request that holds some reviews of it but lacks one that counts in another (one made in that one's comments, say) shows it red, and its tooltip names whose review and where.
   Where each lacks a review of the other's, both are red; where one holds every review, it lists the version as usual.
+- A pull request with no reviews of it is never red: it is simply unreviewed, and shows it dimmed under a pull request that has reviews of it and still wants it.
+  Where none of those wanting it has any, one of them lists it and the rest show it dimmed.
 
 A patched version stands by its patch, as each patch of it is reviewed apart.
 A version with a review of those it needs shows how many (`1/2`), and its tooltip names the reviewers; one with none shows no count.
