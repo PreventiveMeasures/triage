@@ -325,10 +325,16 @@ function packageStampKey(stamp) {
 // dependency finding (evidenceUrl rule 3) — when that `repo` names a
 // commit. Without one a link would be to HEAD, a version of the file the
 // install need not hold, so such a `repo` says nothing here. Findings
-// that disagree (another repo, directory or commit) leave the install or
-// package unknown (null), as the Packages view leaves a package with two
-// upstreams; a `repo` the app ignores (common/finding-repo.js) counts for
-// nothing.
+// that disagree (another repo, directory, commit or package) leave the
+// install or package unknown (null), as the Packages view leaves a
+// package with two upstreams; a `repo` the app ignores
+// (common/finding-repo.js) counts for nothing.
+//
+// An install path is a path in one report's tree: another report's
+// `node_modules/axios` may hold another version. So an install answers
+// only for its own report's findings (reportKeyOf), and keeps the package
+// its finding named, which a row naming its own must match. A package at
+// a version is the same package in any report.
 //
 // Called from render.js once per render, beside configureDepsDir, so
 // evidence rows in OTHER dependencies than their finding's can link
@@ -336,6 +342,9 @@ function packageStampKey(stamp) {
 // identity: the findings' paths and stamps never change once ingested.
 let dependencyRepoSet = null
 let dependencyRepos = { byRoot: new Map(), byPackage: new Map() }
+// The report a finding came from, as ingest stamps it.
+const reportKeyOf = (f) => `${f?._managedReportId ?? ''}\0${f?._reportName ?? ''}`
+const installKey = (f, root) => `${reportKeyOf(f)}\0${root}`
 const repoSlugOf = (target) => reportRepoGithub({ repo: { github: target.id } }) ?? target.id
 // Two `repo`s, or null where they name different places. A short hash and
 // the full one it abbreviates are one commit; the longer is kept.
@@ -359,8 +368,13 @@ export function configureDependencyRepos(reports) {
         const target = repoTarget(f.repo)
         if (!target.id || !target.commit) continue
         const root = nodePackageRoot(f.file)
-        if (root !== null) note(byRoot, root, f.repo)
         const pkg = packageStampKey(f.package)
+        if (root !== null) {
+          const key = installKey(f, root)
+          const known = byRoot.get(key)
+          const repo = known === undefined ? f.repo : known && known.pkg === pkg ? agreeingRepo(known.repo, f.repo) : null
+          byRoot.set(key, repo && { repo, pkg })
+        }
         if (pkg !== null && !pkg.endsWith('@')) note(byPackage, pkg, f.repo)
       }
     }
@@ -1285,10 +1299,12 @@ export function evidenceUrl(row, f, repoFallback, index, shipped = null) {
 
   // 4. A package — another, or the finding's own when the finding names
   //    no repo — whose upstream a loaded finding names at the commit it
-  //    read, in that same install or of that package at that version:
+  //    read, of that package at that version, or in that same install of
+  //    the finding's own report, where the row names no other package:
   //    linked there, pinned, as that finding's own location is.
+  const install = pkg === null ? null : dependencyRepos.byRoot.get(installKey(f, pkg))
   const known = (rowPackage === null ? null : dependencyRepos.byPackage.get(rowPackage))
-    ?? (pkg === null ? null : dependencyRepos.byRoot.get(pkg))
+    ?? (install && (rowPackage === null || install.pkg === rowPackage) ? install.repo : null)
   if (known) return findingUrl({ file, line: row?.line, repo: known }, repoFallback)
 
   if (hasDependencyMarker(file)) {

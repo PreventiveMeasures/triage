@@ -444,6 +444,35 @@ describe('evidence rows', () => {
           `https://github.com/Axios/Axios/blob/${COMMIT}/lib/http.js#L90`)
       })
 
+      // An install path is one report's: another report's
+      // `node_modules/axios` may be another version. A package at a
+      // version is the same anywhere.
+      it('answers by install only for its own report, by package and version for any', () => {
+        const fromA = { ...own, _reportName: 'a.json' }
+        loaded(fromA, { ...axios({ github: 'axios/axios', commit: COMMIT }), _reportName: 'b.json' })
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), fromA, REPORT, 1), null)
+        assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), { ...own, _reportName: 'b.json' }, REPORT, 1),
+          `https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90`)
+        loaded(fromA, { ...axios({ github: 'axios/axios', commit: COMMIT }), _reportName: 'b.json', package: { npm: { name: 'axios', version: '1.6.0' } } })
+        assert.equal(evidenceUrl({ ...row('node_modules/axios/lib/http.js', '90'), package: { npm: { name: 'axios', version: '1.6.0' } } }, fromA, REPORT, 1),
+          `https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90`)
+      })
+
+      // A row naming its package at a version takes an install's repo only
+      // where the install's finding named that same package.
+      it('takes no install whose package the row\'s own stamp contradicts', () => {
+        const stamped = (version) => ({ npm: { name: 'axios', version } })
+        loaded(own, { ...axios({ github: 'axios/axios', commit: COMMIT }), package: stamped('1.6.0') })
+        const at = (pkg) => evidenceUrl({ ...row('node_modules/axios/lib/http.js', '90'), package: pkg }, own, REPORT, 1)
+        assert.equal(at(stamped('1.7.0')), null)
+        assert.equal(at(stamped('1.6.0')), `https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90`)
+        assert.equal(at(undefined), `https://github.com/axios/axios/blob/${COMMIT}/lib/http.js#L90`)
+        // Nor one whose findings name two packages.
+        loaded(own, { ...axios({ github: 'axios/axios', commit: COMMIT }), package: stamped('1.6.0') },
+          { ...axios({ github: 'axios/axios', commit: COMMIT }), package: stamped('1.7.0') })
+        assert.equal(at(undefined), null)
+      })
+
       it('counts no repo the app ignores', () => {
         loaded(own, { file: 'node_modules/axios/index.js', advisory: { package: 'axios' }, repo: { github: 'axios/axios', commit: COMMIT } })
         assert.equal(evidenceUrl(row('node_modules/axios/lib/http.js', '90'), own, REPORT, 1), null)
