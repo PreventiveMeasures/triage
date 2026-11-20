@@ -599,6 +599,10 @@ test('a review against its base as a patch kept changes it, named by its hash al
   const opened = { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '1.0.0' }
   assert.deepEqual([picked('Review base', '@scope/lib@1.0.0 unpatched'), picked('Review base', '@scope/lib@1.0.0'), picked('Version to review', '1.5.0')],
     [opened, { ...opened, basePatch }, { ...opened, packageSpec: '1.5.0', basePatch }], 'its base unpatched; as it is; another version against it still')
+  // A review listed against its base otherwise opens against it so: as npm has it, or as another patch changes it.
+  navigations.length = 0
+  for (const basePatchHash of [null, 'f'.repeat(64)]) await page._openReview({ ...review, id: `listed-${basePatchHash}`, basePatchHash, publishedAt: 200 })
+  assert.deepEqual(navigations, [opened, { ...opened, basePatch: 'f'.repeat(64) }], 'each against its own base')
 
   // Its patch not kept: the reason in place of the comparison, the selectors above it, to pick another.
   patchFailure = 'The patch isn’t kept here.'

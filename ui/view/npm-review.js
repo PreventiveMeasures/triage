@@ -96,12 +96,12 @@ export class NpmReview extends LitElement {
   }
   // The route's location of a review against `target`, of this version as
   // its patch changes it, where it is patched, but where `patched` is false,
-  // as another version's is; `target` as its base's patch changes it where
-  // that is the base patched (`basePatched`), the same as now.
-  _location(target, patched = true, basePatched = target === this._target) {
+  // as another version's is; `target` as the patch `basePatch` names (its
+  // hash) changes it, by default the base's now where it is the same.
+  _location(target, patched = true, basePatch = target === this._target ? this._basePatch : null) {
     const parsed = target && target !== '(empty)' ? parseNpmPackageInput(target) : null
     return { ...parsed ? { reviewPackage: parsed.name, reviewSpec: parsed.spec } : {}, ...patched && this._patch ? { patch: this._patch } : {},
-      ...parsed && basePatched && this._basePatch ? { basePatch: this._basePatch } : {} }
+      ...parsed && basePatch ? { basePatch } : {} }
   }
   // `subject`'s context, the page's or a review's, as a change to it is
   // asked: a patched one's with where its patch is read, a review's own,
@@ -112,7 +112,9 @@ export class NpmReview extends LitElement {
     return context.patchHash && source?.repoId != null
       ? { ...context, patchRepoId: source.repoId, patchCommit: source.commit, ...source.path == null ? {} : { patchPath: source.path } } : context
   }
-  _navigate(target, basePatched = target === this._target) { return this._navigateTo(npmPackageRoute(this.entry, 'review', this._location(target, true, basePatched))) }
+  _navigate(target, basePatch = target === this._target ? this._basePatch : null) {
+    return this._navigateTo(npmPackageRoute(this.entry, 'review', this._location(target, true, basePatch)))
+  }
   async _navigateTo(route) {
     if (this._blocked || this._loading) return
     const key = this._key, navigation = this._navigation = {}
@@ -169,7 +171,7 @@ export class NpmReview extends LitElement {
     this._resetEditor(this._path); this._saving = false
     void this._refresh(true)
     if (state.bundleDetailsTab === 'review' && state.selectedBundle === this.entry.integrity) {
-      const location = this._location(base.npm ? dependency(base.npm.name, base.npm.version) : '(empty)', true, Boolean(base.npmPatch))
+      const location = this._location(base.npm ? dependency(base.npm.name, base.npm.version) : '(empty)', true, base.npmPatch?.patch.hash ?? null)
       state.npmReview = { bundle: this.entry.integrity, ...location }
       // Pin tags to the exact bytes shown without loading the same base again.
       this._baseKey = JSON.stringify([this.entry.integrity, base.npm ? dependency(base.npm.name, base.npm.version) : '(empty)', this._patch, this._basePatch, this.session?.id,
@@ -243,7 +245,7 @@ export class NpmReview extends LitElement {
     const key = this._key
     if (this._unsaved && !await this._saveAll() || key !== this._key) return
     selectReviewOnOpen(review, continueReview)
-    await this._navigate(review.basePackage ? dependency(review.basePackage, review.baseVersion) : '(empty)')
+    await this._navigate(review.basePackage ? dependency(review.basePackage, review.baseVersion) : '(empty)', review.basePatchHash ?? null)
   }
   _closePanel() {
     if (this._blocked) return

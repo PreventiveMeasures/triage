@@ -58,7 +58,7 @@ function reviewHeader(page) {
   if (baseTag) choices.splice(baseAt, 1, { ...choices[baseAt], detail: baseTag.detail, detailNote: baseTag.detailNote }, { ...choices[baseAt], id: baseUnpatched })
   return renderComparisonHeader(renderComparisonPicker({ source: tag || baseTag ? { ...source, widest: tag || baseTag } : source, label: 'Review', disabled: busy(page),
     from: { options: choices, value: hasBase ? page._target : null, label: 'Review base',
-      pick: value => void page._navigate(value === baseUnpatched ? page._target : value, value === page._target) },
+      pick: value => void page._navigate(value === baseUnpatched ? page._target : value, value === page._target ? page._basePatch : null) },
     to: { options: versions, value: page.entry.npm.version, label: 'Version to review', pick: value => void page._navigateTo({
       view: 'npm', packageName: page.entry.npm.name, packageSpec: value === unpatched ? page.entry.npm.version : value, bundleTab: 'review',
       ...page._location(page._target, value === page.entry.npm.version),
