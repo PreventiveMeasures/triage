@@ -2017,10 +2017,8 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   color: var(--text); font-size: .78rem; text-decoration: none;
   &:is(a):hover { background: var(--surface-active); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  & svg {
-    flex: none; width: 12px; height: 12px;
-    color: var(--medium); fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linejoin: round;
-  }
+  /* Its ecosystem's icon, as the Code views' trees draw it. */
+  & svg { flex: none; width: 12px; height: 12px; }
 }
 .team-deps-name {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2041,7 +2039,7 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 /* Reviewed in another pull request's comments, which count there alone,
    blue; the pull request a version is listed under, muted; and the reviews
    it lacks that count in others, whose and where, or the pull requests
-   lacking them, red, as its row's name is. */
+   lacking them, red, as its row's name is, its icon as any row's. */
 .team-deps-elsewhere, .team-deps-under, .team-deps-lacks {
   flex: none; padding: 0 .4rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent); font-size: .66rem; line-height: 1.5; white-space: nowrap;
@@ -2052,7 +2050,7 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical);
 }
 .team-deps-row.is-behind {
-  & .team-deps-name, & > svg { color: var(--critical); }
+  & .team-deps-name { color: var(--critical); }
   & .team-deps-version { color: color-mix(in srgb, var(--critical) 70%, var(--muted)); }
 }
 .team-deps-also { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }

@@ -30,7 +30,8 @@ import { fetchTeamDependencies } from './client-managed.js'
 import { addedVersions, checked, heldPullDependencies, readsDependencies, reviewFailures, reviewOf, seedPullDependencies, subscribePullDependencies,
   unreviewedVersions, versionKey } from './pull-dependencies.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
-import { PACKAGE_ICON, icon } from './repository-tiles.js'
+import { icon } from './repository-tiles.js'
+import { sourcePackageIcon } from './source-file-icon.js'
 import { dialogTabs } from './header-tabs.js'
 import { withCompare } from './compare-load.js'
 import { deltaBase, seedNpmDeltas } from './npm-delta.js'
@@ -355,8 +356,8 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
   </div>`
 }
 
-// A version as a row, its details its tooltip (versionTip): its name and
-// version, opening its review where its reader reviews it and it can be,
+// A version as a row, its details its tooltip (versionTip): its ecosystem's
+// icon (npm's, where it names none), its name and version, opening its review where its reader reviews it and it can be,
 // against the version it was where it was one, a patched one's as patched,
 // against the version it patches where that was one, its patch alone, its
 // patch read of repository `repoId` at `head`, the commit its lockfiles were
@@ -383,7 +384,7 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
   const inReview = elsewhere.filter(name => !lacking.includes(name))
   const unnamed = adders ? others.filter(name => !elsewhere.includes(name) && !lacking.includes(name)) : others
   const places = placesOf(lacks)
-  const label = html`${PACKAGE_ICON}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
+  const label = html`${sourcePackageIcon(pkg.ecosystem)}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
     ${pkg.patch ? html`<span class="team-deps-patched">patched</span>` : nothing}
     ${npm && !pkg.patch && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${deltaBase(pkg)}></npm-delta>` : nothing}
     ${reviewBadge(pkg, review)}
