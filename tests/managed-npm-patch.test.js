@@ -384,6 +384,15 @@ test('a patch its lockfile names by its hash alone is told its file as its versi
   githubFiles(t, { 'web/pnpm-workspace.yaml@3': Response.json([{ type: 'file' }]), 'web/pnpm-workspace.yaml@4': Response.json({ message: 'Service Unavailable' }, { status: 503 }) })
   assert.deepEqual(filesOf(await withPatchFiles(toldOf('3'.repeat(40), [lockedBy('odd', 'c'.repeat(64))]), 41, 'org/repo', 'token', store)), { odd: null })
   await assert.rejects(withPatchFiles(toldOf('4'.repeat(40), [lockedBy('odd', 'c'.repeat(64))]), 41, 'org/repo', 'token', store), { message: 'github-status-503' })
+
+  // As many looked for an answer as MAX_FOUND, its pnpm-workspace.yaml read for all of them once; the rest by the next.
+  t.mock.restoreAll()
+  const many = Array.from({ length: 102 }, (_, at) => lockedBy(`p${at}`, sha256(`p${at}`)))
+  const looked = githubFiles(t, { 'web/pnpm-workspace.yaml@5': `patchedDependencies:\n${many.map(pkg => `  ${pkg.name}: fixes/${pkg.name}.patch\n`).join('')}` })
+  await withPatchFiles(toldOf('5'.repeat(40), many), 41, 'org/repo', 'token', store)
+  assert.equal(looked.length, 101)
+  await withPatchFiles(toldOf('5'.repeat(40), many), 41, 'org/repo', 'token', store)
+  assert.equal(looked.length, 104)
 })
 
 test('a patch kept beyond the instance is read of it, held to its hash again, GitHub asked for none of it; one kept other than its hash says read anew', async t => {
@@ -393,7 +402,7 @@ test('a patch kept beyond the instance is read of it, held to its hash again, Gi
   const store = patchesKept(new Map([[patchKey(31, where.hash), { commit: 'a'.repeat(40), path: 'was/here.patch', text }], [patchKey(32, where.hash), { commit, path: 'x', text: `${text}\n` }]]))
   const told = { github: false }
   const read = await readPatch('org/repo', 'token', where, store, told)
-  assert.deepEqual([read.commit, read.path, read.files.length, asked, told.github], ['a'.repeat(40), 'was/here.patch', 4, [], false], 'as kept, where it was read')
+  assert.deepEqual([read.source, read.files.length, asked, told.github], [{ repoId: 31, commit: 'a'.repeat(40), path: 'was/here.patch' }, 4, [], false], 'as kept, where it was read')
   await readPatch('org/repo', 'token', { ...where, repoId: 32 }, store, told)
   assert.deepEqual([asked, told.github, store.kept.get(patchKey(32, where.hash))], [['patches/x.patch@c'], true, { commit, path: 'patches/x.patch', text }], 'and kept in its place')
 })

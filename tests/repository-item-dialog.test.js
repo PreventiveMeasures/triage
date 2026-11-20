@@ -222,7 +222,7 @@ test('an open pull request\'s dependencies, where its repository reviews them, s
   assert.match(templateText(cut.render()), /<div class="repo-item-failed" role="alert">\s*<p>Its review fails: not every lockfile it changes was read\.<\/p>/u)
 })
 
-test('where the server registers reviewed dependencies, its terms say so, with its comments\' reviews; a version they pass is reviewed, one rejected so; a patched one reviewed as patched, its patch read where its lockfile names it, at the commit its lockfiles were read at, else unlinked to reviewing it', async () => {
+test('where the server registers reviewed dependencies, its terms say so, with its comments\' reviews; a version they pass is reviewed, one rejected so; a patched one reviewed as patched, its patch read at its file, at the commit its lockfiles were read at; one told no file of its patch unlinked to reviewing it', async () => {
   const [hash, head] = ['a'.repeat(64), 'b'.repeat(40)]
   dependencies = number => Promise.resolve({ number, cut: false, head, formatted: 'Reviewed refused', review: { required: 2, since: null, canReview: true, reviewedDependencies: true, unasked: 1,
     commentReviews: 2, commentsFailed: true, lockfiles: { mode: 'exclude', paths: ['docs/'] } }, lockfiles: [
@@ -249,8 +249,8 @@ test('where the server registers reviewed dependencies, its terms say so, with i
   assert.match(text, new RegExp(`<a class="repo-item-row" href=/npm/patched@1\\.0\\.0/review\\?patch=${hash}&repo=7&commit=${head}&path=patches/patched%401\\.0\\.0\\.patch [^]*`
     + 'class=repo-item-review is-wanted data-tooltip=0 full, accepting reviews of 2 required>0/2<[^]*data-tooltip=pnpm patches it as it installs it, by patches/patched@1\\.0\\.0\\.patch, which its reviews are of>patched<', 'u'),
     'a patched one reviewed as patched, its patch read of its repository at the commit its lockfiles were read at')
-  assert.match(text, /<a class="repo-item-row" href=\/npm\/nameless@1\.0\.0 [^]*>0\/2<[^]*by a patch its lockfile names no file of, which reviews here can’t read>patched</u,
-    'one whose lockfile names no file of its patch opens its version')
+  assert.match(text, /<a class="repo-item-row" href=\/npm\/nameless@1\.0\.0 [^]*>0\/2<[^]*by a patch whose file isn’t known, which reviews here can’t read>patched</u,
+    'one told no file of its patch opens its version')
   assert.match(text, /<a class="repo-item-row" href=\/npm\/hashed-md5@1\.0\.0 [^]*>patched</u, 'one pnpm 9 patches by an md5, read no more, patched still')
   assert.match(text, /<code>web\/bun\.lock<\/code><\/p>\s*<p class="repo-item-quiet" role="alert">Bun’s lockfile here isn’t read\.</u)
   assert.match(text, /<p>Its review fails: not every lockfile it changes was read\.<\/p>/u, 'which fails its review')

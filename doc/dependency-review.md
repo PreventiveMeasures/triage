@@ -68,7 +68,7 @@ It is applied as pnpm applies it (the patch-package code pnpm 10 and 11 bundle):
 What it changes of a file's mode isn't shown.
 
 The Dependencies tab and a pull request's popup link a patched version to its review where its patch's file is known, against the version it patches where that was one, and mark it **patched**; they count no lines it changes, as those would be npm's.
-A review keeps where its patch was read, its page reading it there again, so one listed under **My reviews** or a team's **Reviews** opens as patched for a reader who may still read that repository.
+A review keeps where its patch was read, so one listed under **My reviews** or a team's **Reviews** opens as patched for a reader who may still read that repository.
 
 ## Repository settings
 
@@ -269,6 +269,7 @@ It is given only the asker's own published, unrevoked reviews, however it is ask
 | The Dependencies tab's request runs over 4 minutes | The repositories left are read again, up to 3 times; any still left show as failed until the tab is drawn again 30 seconds or more later |
 | A note over 20,000 characters | Refused |
 | A patch over 8 MiB | It isn't read, and the version can't be reviewed as patched |
+| Over 100 patches named by their hash alone not yet found | The rest are looked for as their versions are listed again |
 | A review changed elsewhere meanwhile, or a version or integrity that no longer matches | `409`, and the change is not saved |
 | GitHub refuses the repository's contents or the pull request | The popup says so (`502 github-status-403`) |
 

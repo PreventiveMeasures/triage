@@ -390,12 +390,12 @@ test('a team\'s read stopped once no tab shows it, its tab left or showing anoth
   view.disconnectedCallback()
 })
 
-test('a version pull requests add patched alike links to its review as patched by the first whose lockfiles name its patch\'s file, read at its commit', async () => {
+test('a version pull requests add patched alike links to its review as patched by the first told its patch\'s file, read at its commit', async () => {
   const hash = 'b'.repeat(64), named = { hash, path: 'patches/twice@1.0.0.patch' }
   TEAM.push(13)
   branches[13] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
   pulls[13] = { items: [pull(1), pull(2)], more: false }
-  // The first, adding fewest, names no file of its patch.
+  // The first, adding fewest, is told no file of its patch.
   dependencies['13#1'] = { cut: false, head: '1'.repeat(40), review: terms, lockfiles: [dir({ added: [wants('twice', { patch: { hash } })] })] }
   dependencies['13#2'] = { cut: false, head: '2'.repeat(40), review: terms, lockfiles: [dir({ added: [wants('twice', { patch: named }), wants('extra')] })] }
   Object.assign(state, { teamDependenciesTab: 'versions', teamDependenciesSort: 'fewest' })

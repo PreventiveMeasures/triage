@@ -82,7 +82,7 @@ export const versionKey = pkg => `${pkg.name}@${pkg.version ?? ''}\0${pkg.patch?
 
 // A version as an answer names it: the versions it was, those it names, its
 // patch where it is patched (`patch`: its hash, and its file's path where
-// its lockfile names one), and its review, where it tells one: why it can't be
+// its lockfile names one or it was found), and its review, where it tells one: why it can't be
 // reviewed (`unsupported`), needing none (`baseline`), passed by the
 // server's reviewed dependencies (`reviewed`), or how many pass it
 // (`reviews`), whether a reviewer rejects it (`rejected`), how many
@@ -285,8 +285,8 @@ function added({ lockfiles, review }) {
 }
 
 // The patch of a version two directories lock patched alike, the first's,
-// else the other's where only its lockfile names its file, as only one
-// naming it can be reviewed.
+// else the other's where only it tells its file, as only one told it can
+// be reviewed.
 const patchedOf = (had, pkg) => !had.patch?.path && pkg.patch?.path ? { patch: pkg.patch } : {}
 
 // The review of a version two directories lock, the less passing of theirs

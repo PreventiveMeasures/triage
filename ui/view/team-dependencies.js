@@ -299,8 +299,8 @@ const few = (names, more = names.length - 1) => `${names[0]}${more > 0 ? ` +${mo
 // A version's details, its row's tooltip, formatted: its name and version
 // whole, as its row may cut them short; the versions of it present before,
 // where it is one a pull request adds (`added`); where it is from, other
-// than npm's registry; its patch's file, where it is patched, or that its
-// lockfile names none, which reviews here then read none of; its review; the
+// than npm's registry; its patch's file, where it is patched, or that it
+// is told none, which reviews here then read none of; its review; the
 // pull request listing it, where another does (`under`); the reviews it
 // lacks (`lacks`, each `{ login, status, where }`); the pull requests adding
 // it, or locking it otherwise (`involved`, each `{ name, adds, pkg, review
@@ -311,7 +311,7 @@ const few = (names, more = names.length - 1) => `${names[0]}${more > 0 ? ` +${mo
 function versionTip(pkg, review, { added, under, lacks, involved, here }) {
   const stance = reviewState(pkg, review)
   const facts = [added ? ['Present', pkg.was?.join(', ') || 'none, new'] : null, pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
-    pkg.patch ? ['Patched', pkg.patch.path ?? 'by a patch its lockfile names no file of, which reviews here can’t read'] : null,
+    pkg.patch ? ['Patched', pkg.patch.path ?? 'by a patch whose file isn’t known, which reviews here can’t read'] : null,
     stance ? ['Review', stance.said ?? stance.label] : null, under ? ['Listed', `under ${under}`] : null,
     lacks.length > 0 ? ['Lacks', lacks.map(one => `${isReader(one) ? 'your' : `${one.login}’s`} review in ${one.where.join(', ')}`).join('; ')] : null]
     .filter(Boolean)
@@ -341,7 +341,7 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
 // against the version it was where it was one, a patched one's as patched,
 // against the version it patches where that was one, its patch alone, its
 // patch read of repository `repoId` at `head`, the commit its lockfiles were
-// read at, where its lockfile names its file, else its page; its review;
+// read at, where it is told its file, else its page; its review;
 // the lines it changes against the version it was, or whole, where it
 // wants reviews and isn't patched, as they are npm's (npm-delta.js); the
 // reviews it lacks that others hold (`lacks`, standings), its row red,
@@ -498,8 +498,7 @@ class TeamDependencies extends StateElement {
     const unread = reviewed.filter(({ read }) => read.pulls.error)
     // Each version wanting reviews, as the first adding it tells it, by the
     // pull requests adding it, each with it as it is there (`told`); and the
-    // first whose lockfiles name its patch's file, whence that is read
-    // (`patched`).
+    // first told its patch's file, whence that is read (`patched`).
     const adding = new Map()
     for (const pull of wanting) {
       for (const pkg of pull.wanted) {

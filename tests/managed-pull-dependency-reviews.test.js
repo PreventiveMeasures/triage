@@ -80,6 +80,8 @@ snapshots:
 
   is-number@7.0.0(patch_hash=${PATCH}): {}
 `
+// pnpm 11's names a patch by its hash alone.
+const hashOnly = pnpmPatched.replace(`\n    hash: ${PATCH}\n    path: patches/is-number@7.0.0.patch`, ` ${PATCH}`)
 const memory = () => {
   const kept = new Map()
   return { kept, read: key => Promise.resolve(kept.get(key) ?? null), write: (key, value) => { kept.set(key, value); return Promise.resolve() } }
@@ -99,8 +101,6 @@ test('read for its reviews, a version keeps its integrity, Yarn\'s sha1, pnpm\'s
   assert.deepEqual(lockedPackages('pnpm', pnpmPatched, { review: true }), [
     { name: 'is-number', version: '7.0.0', source: 'registry', integrity: sri('is-number@7.0.0'), patchHash: PATCH, patchPath: 'patches/is-number@7.0.0.patch', lockfile: 'pnpm' },
   ])
-  // pnpm 11's names a patch by its hash alone.
-  const hashOnly = pnpmPatched.replace(`\n    hash: ${PATCH}\n    path: patches/is-number@7.0.0.patch`, ` ${PATCH}`)
   assert.deepEqual(lockedPackages('pnpm', hashOnly, { review: true }), [
     { name: 'is-number', version: '7.0.0', source: 'registry', integrity: sri('is-number@7.0.0'), patchHash: PATCH, lockfile: 'pnpm' },
   ], 'a patch named by its hash alone, no file')
@@ -559,8 +559,7 @@ test('an open pull request\'s dependencies, asked with their review, tell each v
 // its hash alone: the file its workspace names of it, in a directory of its own.
 const PATCH_TEXT = 'diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -1 +1 @@\n-old\n+new\n'
 const PATCH_HASH = createHash('sha256').update(PATCH_TEXT).digest('hex')
-const hashOnly = pnpmPatched.replace(`\n    hash: ${PATCH}\n    path: patches/is-number@7.0.0.patch`, ` ${PATCH_HASH}`).replaceAll(PATCH, PATCH_HASH)
-const PATCHED = { 'web/pnpm-lock.yaml': hashOnly, 'web/pnpm-workspace.yaml': 'patchedDependencies:\n  is-number@7.0.0: fixes/is-number.patch\n', 'web/fixes/is-number.patch': PATCH_TEXT }
+const PATCHED = { 'web/pnpm-lock.yaml': hashOnly.replaceAll(PATCH, PATCH_HASH), 'web/pnpm-workspace.yaml': 'patchedDependencies:\n  is-number@7.0.0: fixes/is-number.patch\n', 'web/fixes/is-number.patch': PATCH_TEXT }
 const patchReads = asked => asked.filter(path => /pnpm-workspace\.yaml|\.patch/u.test(path)).map(path => decodeURIComponent(path.slice('/repos/org/repo/contents/'.length)))
 
 test('a version patched by a patch its lockfile names by its hash alone is told its patch\'s file where its review is in effect: found once, of a pull request or the default branch, and kept beyond the instance for good', async t => {
