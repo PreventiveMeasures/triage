@@ -283,10 +283,11 @@ const counting = pkg => new Map((pkg.reviewers ?? []).flatMap(one => one.passes 
 // those taking a tie first), by its key, then the pull request's name;
 // `involved` the pull requests each is among the versions of (render).
 // One holding reviews of it but lacking one that counts in another:
-// `lacks`, each `{ login, status, pulls }`; one holding none lacks none, as
-// it is but unreviewed. Of the rest, those reviewed alike, none too, have
-// one list it, that with the fewest reviews left (`left`); the others tell
-// it `under` that one.
+// `lacks`, each `{ login, status, pulls }`. Of the rest, those reviewed
+// alike have one list it, that with the fewest reviews left (`left`); the
+// others tell it `under` that one. One holding none, but unreviewed, tells
+// it under the one listing it with reviews, else under that holding most of
+// those lacking some; where none wanting it holds any, one of them lists it.
 function standings(wanting, involved) {
   const wanted = new Map()
   for (const pull of wanting) {
@@ -302,14 +303,26 @@ function standings(wanting, involved) {
       for (const [stance, one] of counting(pkg)) (made.get(stance) ?? made.set(stance, { login: one.login, status: one.status, pulls: [] }).get(stance)).pulls.push(pull)
     }
     const of = new Map()
-    // The one listing it of those holding the same reviews, by those.
+    // The one listing it of those holding the same reviews, by those; and
+    // of those lacking some, the one holding most, then leaving fewest.
     const listing = new Map()
-    for (const { pull, has, alike } of wanters) {
+    let most = null
+    for (const wanter of wanters) {
+      const { pull, has, alike } = wanter
       const lacks = has.size > 0 ? [...made].filter(([stance]) => !has.has(stance)).map(([, review]) => review) : []
-      if (lacks.length > 0) of.set(pullName(pull), { lacks })
-      else if (!listing.has(alike) || pull.left < listing.get(alike).left) listing.set(alike, pull)
+      if (lacks.length === 0) {
+        if (!listing.has(alike) || pull.left < listing.get(alike).left) listing.set(alike, pull)
+        continue
+      }
+      of.set(pullName(pull), { lacks })
+      if (!most || has.size > most.has.size || (has.size === most.has.size && pull.left < most.pull.left)) most = wanter
     }
-    for (const { pull, alike } of wanters) if (!of.has(pullName(pull))) of.set(pullName(pull), pull === listing.get(alike) ? {} : { under: listing.get(alike) })
+    const reviewed = [...listing].find(([alike]) => alike !== '')?.[1] ?? most?.pull ?? null
+    for (const { pull, alike } of wanters) {
+      if (of.has(pullName(pull))) continue
+      const lister = alike === '' && reviewed ? reviewed : listing.get(alike)
+      of.set(pullName(pull), pull === lister ? {} : { under: lister })
+    }
     stood.set(key, of)
   }
   return stood
@@ -691,15 +704,15 @@ class TeamDependencies extends StateElement {
   }
 
   // Every version the pull requests add wanting reviews, each once, as the
-  // pull request listing it with the most reviews tells it, else the first
-  // adding it; those lacking reviews red, the others reviewing it in their
-  // comments blue; one marked where every pull request adding it marks it.
+  // pull request listing it tells it, else the one holding most reviews of
+  // it; those lacking reviews red, the others reviewing it in their comments
+  // blue; one marked where every pull request adding it marks it.
   renderVersions(adding, reading, { elsewhere, named, among, standing }) {
     if (adding.size === 0) return reading ? nothing : html`<p class="workspace-content-empty">No version an open pull request adds wants a review.</p>`
     const versions = [...adding.values()].map(({ pulls, told, patched }) => {
       const stands = pulls.map((pull, at) => standing(told[at], pull))
       const listing = stands.flatMap(({ under, lacks }, one) => !under && lacks.length === 0 ? [one] : [])
-      const at = listing.reduce((most, other) => counting(told[other]).size > counting(told[most]).size ? other : most, listing[0] ?? 0)
+      const at = (listing.length > 0 ? listing : stands.map((_, one) => one)).reduce((most, other) => counting(told[other]).size > counting(told[most]).size ? other : most)
       return { pulls, stands, at, patched, pkg: { ...told[at], ...patched ? { patch: patched.patch } : {}, unreached: told.every(one => one.unreached) } }
     })
     return html`<section class="team-deps-section" aria-label="Versions to review">
