@@ -99,12 +99,15 @@ export const versionKey = pkg => `${pkg.name}@${pkg.version ?? ''}\0${pkg.patch?
 // (`reviews`), whether a reviewer rejects it (`rejected`), how many
 // review it in its pull request's comments alone, which count for it alone
 // (`commented`), and its reviewers (`reviewers`, checkedReviewers). And
-// whether its package manager alone asks for it (`unreached`).
+// whether its package manager alone asks for it (`unreached`). And the
+// version the host's reviewed dependencies name to review it against
+// (`base`, its package's name and version), where they name one.
 function checkedVersion(pkg) {
   if (typeof pkg?.name !== 'string') return []
-  const { was, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patch, unreached, ...version } = pkg
+  const { was, base, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patch, unreached, ...version } = pkg
   const by = checkedReviewers(reviewers)
   return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {},
+    ...typeof base?.name === 'string' && typeof base.version === 'string' ? { base: { name: base.name, version: base.version } } : {},
     ...typeof patch?.hash === 'string' ? { patch: { hash: patch.hash, ...isPatchPath(patch.path) ? { path: patch.path } : {} } } : {},
     ...unreached === true ? { unreached } : {},
     ...UNSUPPORTED.has(unsupported) ? { unsupported } : baseline === true ? { baseline } : reviewed === true ? { reviewed }
@@ -123,7 +126,8 @@ const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : 
 // lockfiles were read at (`head`), whence its patches are, and its review's
 // terms, where it tells them, with how many versions across its directories
 // want reviews and can't be reviewed, whether the server's reviewed
-// dependencies pass them, and how many those failed to answer; by how many
+// dependencies pass them, and how many those failed to answer, and whether
+// they name each version's base (`reviewedBases`); by how many
 // reviewers its comments review them, or that they couldn't be read, and
 // whether reviews count by comments alone, those published here not; the
 // lockfiles it holds to, where not every one, those of the rest told to none;
@@ -144,7 +148,8 @@ export function checked(answer) {
     ...count(review.toReview) === null ? {} : { toReview: review.toReview },
     ...count(review.unreviewed) === null ? {} : { unreviewed: review.unreviewed }, ...count(review.unsupported) === null ? {} : { unsupported: review.unsupported },
     ...Array.isArray(review.baselineUnread) && review.baselineUnread.every(path => typeof path === 'string') ? { baselineUnread: review.baselineUnread } : {},
-    ...review.reviewedDependencies === true ? { reviewedDependencies: true } : {}, ...count(review.unasked) > 0 ? { unasked: review.unasked } : {},
+    ...review.reviewedDependencies === true ? { reviewedDependencies: true } : {}, ...review.reviewedBases === true ? { reviewedBases: true } : {},
+    ...count(review.unasked) > 0 ? { unasked: review.unasked } : {},
     ...count(review.commentReviews) > 0 ? { commentReviews: review.commentReviews } : {}, ...review.commentsFailed === true ? { commentsFailed: true } : {},
     ...review.byComments === true ? { byComments: true } : {},
     ...typeof review.baselineError === 'string' ? { baselineError: review.baselineError } : {},
@@ -288,8 +293,8 @@ function once(name, { lockfiles, review }, work) {
 // (`toReview`), as its review counts them, those it didn't send among
 // them. A version new to one directory's lockfiles and an update in
 // another's is an update, with the versions it was in each, whichever
-// directory comes first; and its review the less passing of theirs
-// (bothReviewed).
+// directory comes first; and its review the less passing of theirs, with
+// the base the host names it there (bothReviewed).
 export function addedVersions(answer) {
   return once('added', answer, () => added(answer))
 }
@@ -299,9 +304,9 @@ function added({ lockfiles, review }) {
     const key = versionKey(pkg)
     const had = all.get(key)
     if (!had) { all.set(key, pkg); continue }
-    const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, reviewers: _reviewers, ...version } = had
-    all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...!had.base && pkg.base ? { base: pkg.base } : {},
-      ...patchedOf(had, pkg), ...bothReviewed(had, pkg, review) })
+    const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, reviewers: _reviewers, base: _base, ...version } = had
+    all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...patchedOf(had, pkg),
+      ...bothReviewed(had, pkg, review) })
   }
   const versions = [...all.values()]
   const fresh = versions.filter(pkg => !pkg.was)
@@ -316,14 +321,15 @@ const patchedOf = (had, pkg) => !had.patch?.path && pkg.patch?.path ? { patch: p
 
 // The review of a version two directories lock, the less passing of theirs
 // (reviewOf, one that can't be reviewed the least), of the fewer reviews
-// where both want them, with its reviewers.
+// where both want them, with its reviewers, and the base the host names it
+// there (`base`), none where it names none, to review it against.
 const PASSING = { unsupported: 0, wanted: 1, passed: 2, baseline: 3 }
 function bothReviewed(had, pkg, review) {
   const passing = one => PASSING[reviewOf(one, review)] ?? 4
   const less = passing(pkg) < passing(had) || (passing(pkg) === passing(had) && (pkg.reviews ?? Infinity) < (had.reviews ?? Infinity)) ? pkg : had
-  const { unsupported, baseline, reviewed, reviews, rejected, reviewers } = less
+  const { unsupported, baseline, reviewed, reviews, rejected, reviewers, base } = less
   const commented = Math.max(had.commented ?? 0, pkg.commented ?? 0)
-  return { ...unsupported ? { unsupported } : baseline ? { baseline } : reviewed ? { reviewed }
+  return { ...base ? { base } : {}, ...unsupported ? { unsupported } : baseline ? { baseline } : reviewed ? { reviewed }
     : reviews == null ? {} : { reviews, ...rejected ? { rejected } : {}, ...commented > 0 ? { commented } : {}, ...reviewers ? { reviewers } : {} } }
 }
 

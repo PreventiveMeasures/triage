@@ -278,6 +278,17 @@ test('a version added locked with another integrity too is asked its base as eac
     'its row told by the way it is locked that still wants one, against that one\'s base, to review it against')
 })
 
+test('the client reads the host\'s bases as told, a version two directories add merged against the base of the less passing of its reviews, none where it has none', async () => {
+  const { addedVersions, checked } = await import('../ui/view/pull-dependencies.js')
+  const row = (name, base, reviews) => ({ name, version: '2.0.0', source: 'registry', ...base === undefined ? {} : { base }, reviews })
+  const told = checked({ lockfiles: [{ paths: ['package-lock.json'], more: 0, added: [row('dual', { name: 'dual', version: '1.0.0' }, 1), row('lone', { name: 'lone', version: '1.0.0' }, 1)] },
+    { paths: ['web/yarn.lock'], more: 0, added: [row('dual', { name: 'dual', version: '1.5.0' }, 0), row('lone', undefined, 0), row('odd', 'odd@1.0.0', 0)] }],
+  review: { required: 1, canReview: true, reviewedBases: true } })
+  assert.equal(told.review.reviewedBases, true)
+  assert.deepEqual(addedVersions(told).versions.map(pkg => [pkg.name, pkg.base ?? null, pkg.reviews]),
+    [['dual', { name: 'dual', version: '1.5.0' }, 0], ['lone', null, 0], ['odd', null, 0]], 'the one still wanting reviews, against its own base; one named oddly, none')
+})
+
 test('a version added past those told is judged as one added, against the versions it was, and counted as wanting a review', async () => {
   const added = Array.from({ length: MAX_ADDED }, (_, n) => at(`new-${String(n).padStart(3, '0')}`, '1.0.0'))
   const tail = at('zz-tail', '2.0.0', { was: ['1.0.0'] })
@@ -705,6 +716,10 @@ test('where the host names each version\'s base, a pull request into the default
     { name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' },
     { name: 'ms', version: '2.1.3', source: 'registry', base: bases.ms, reviews: 0 }], 'kept, which `lookup` passes, left out; ms told none it was')
   assert.deepEqual([answer.body.review.reviewedBases, answer.body.review.toReview, answer.body.review.unreviewed], [true, 2, 0])
+  const { addedVersions, checked } = await import('../ui/view/pull-dependencies.js')
+  const told = checked(JSON.parse(JSON.stringify(answer.body)))
+  assert.deepEqual([told.review.reviewedBases, addedVersions(told).versions.map(pkg => [pkg.name, pkg.base ?? null])],
+    [true, [['left-pad', bases['left-pad']], ['mine', null], ['ms', bases.ms]]], 'as the client reads them')
   assert.ok(!read.some(request => request.includes(`ref=${mergeBase}`)), 'none of its merge base\'s lockfiles read')
   // Asked with no review, or into another branch, it is read against its merge base, kept apart.
   read.length = 0
