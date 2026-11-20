@@ -605,7 +605,8 @@ class TeamDependencies extends StateElement {
   // reader's reviews of its versions to copy, where the server's host
   // formats them (dependency-review-copy.js). Those adding only versions
   // others list come after the rest, each its head alone till opened, all
-  // hidden once asked. One wanting none is not listed, its copy in its
+  // hidden once asked; one whose lockfiles lock other versions wanting
+  // reviews says how many in its head, as none else lists those. One wanting none is not listed, its copy in its
   // popup. Every card a column wide, however many versions it lists; how
   // many it wants reviewed told where more than one, muted.
   renderPulls(cards, adding, reading, unchecked, { elsewhere, named, among, standing }) {
@@ -626,7 +627,8 @@ class TeamDependencies extends StateElement {
         <div class="team-deps-pull-top">${covered ? html`<button type="button" class="team-deps-fold" aria-expanded=${String(opened)} aria-label=${`${named(pull)}’s versions`}
           @click=${() => this.toggle(`${key}:covered`)}>${CHEVRON}</button>` : nothing}<a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
           <span class="team-deps-pull-name">${named(pull)}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
-          ${covered ? html`<span class="team-deps-under">${few([...new Set(same.map(pkg => standing(pkg, pull).under))])}</span>`
+          ${covered ? html`${pull.others > 0 ? html`<span class="team-deps-count is-wanted">${pull.others.toLocaleString('en-US')} ${pull.others === 1 ? 'other' : 'others'} unreviewed</span>` : nothing}
+            <span class="team-deps-under">${few([...new Set(same.map(pkg => standing(pkg, pull).under))])}</span>`
             : pull.failed ? html`<span class="team-deps-count is-failed">review fails</span>`
             : pull.size === 0 ? html`<span class="team-deps-count is-wanted">${plural(pull.others, 'other version')} unreviewed</span>`
             : pull.toReview > 1 ? html`<span class="team-deps-count">${pull.toReview.toLocaleString('en-US')} deps</span>` : nothing}

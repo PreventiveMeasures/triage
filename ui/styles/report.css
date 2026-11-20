@@ -2083,7 +2083,7 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   &:hover, &:focus-within { border-color: var(--border); }
   & .team-deps-pull-title { color: var(--muted); font-size: .8rem; font-weight: 400; }
   & .team-deps-pull-top { gap: .25rem; min-height: 1.5rem; }
-  & .team-deps-under { align-self: center; }
+  & .team-deps-under, & .team-deps-count { align-self: center; }
   & > .team-deps-versions, & > .team-deps-disclosed { margin-left: 1.5rem; }
   & > .team-deps-versions { margin-top: 0; }
 }

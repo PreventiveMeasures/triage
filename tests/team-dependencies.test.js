@@ -416,7 +416,8 @@ test('a version several pull requests add: listed under one of those reviewing i
   Object.assign(dependencies, {
     // Reviewed alike in three: the two adding it alone leave a review each, the newer listing it, the other set apart; the one adding more tells it under that one.
     '14#1': adds(wants('alike', by('ann')), wants('solo')),
-    '14#2': { ...adds(wants('alike', by('ann'))), formatted: 'Reviewed alike' },
+    // Its lockfiles lock another version wanting reviews, which no other lists.
+    '14#2': { cut: false, review: { ...terms, unreviewed: 1 }, formatted: 'Reviewed alike', lockfiles: [dir({ added: [wants('alike', by('ann'))], unreviewed: [wants('before')] })] },
     '14#3': adds(wants('alike', by('ann'))),
     // One holds a review the other lacks: the one lacking it red, the other as it was.
     '14#4': adds(wants('part')),
@@ -463,15 +464,17 @@ test('a version several pull requests add: listed under one of those reviewing i
     assert.match(text, /<\/ol>\s*<section class="team-deps-covered" aria-label="Pull requests adding only versions listed above">\s*<button type="button" class="team-deps-more" aria-expanded=true [^]*?<\/svg>2 more\s+add only versions listed above<\/button>/u)
     const apart = apartOf(text)
     assert.deepEqual(apart.map(nameOf), ['m#8', 'm#2'], 'in the order picked')
-    assert.match(apart[1], /<button type="button" class="team-deps-fold" aria-expanded=false aria-label=m#2’s versions\s[^]*>m#2<[^]*>Pull 2<\/span>\s*<span class="team-deps-under">m#3<\/span>\s*<\/a><dependency-review-copy \.text=Reviewed alike /u,
-      'its head alone, naming the one listing its versions, the reader\'s reviews of them to copy still')
+    assert.match(apart[1], /<button type="button" class="team-deps-fold" aria-expanded=false aria-label=m#2’s versions\s[^]*>m#2<[^]*>Pull 2<\/span>\s*<span class="team-deps-count is-wanted">1 other unreviewed<\/span>\s*<span class="team-deps-under">m#3<\/span>\s*<\/a><dependency-review-copy \.text=Reviewed alike /u,
+      'its head alone, naming the one listing its versions, the reader\'s reviews of them to copy still; and how many other versions its lockfiles lock want reviews, which none else lists')
     assert.match(apart[0], /<span class="team-deps-under">m#9<\/span>/u, 'one reviewed by the same reviewer, her login cased otherwise, alike')
-    assert.doesNotMatch(apart.join(''), /<li>|team-deps-count/u, 'none of their versions listed till asked for')
+    assert.doesNotMatch(apart.join(''), /<li>/u, 'none of their versions listed till asked for')
+    assert.doesNotMatch(apart[0], /team-deps-count/u, 'nothing told of one whose lockfiles lock no others')
     assert.match(card(9), /<a class="team-deps-row" href=\/npm\/cased@/u)
 
     view.toggle('org/m#2:covered')
     const unfolded = apartOf(templateText(view.render()))
-    assert.match(unfolded[1], /aria-expanded=true [^]*<ul class="team-deps-versions is-same"><li><a class="team-deps-row" href=\/npm\/alike@[^]*<span class="team-deps-under">m#3<\/span>/u, 'its versions once opened, dimmed')
+    assert.match(unfolded[1], /aria-expanded=true [^]*<ul class="team-deps-versions is-same"><li><a class="team-deps-row" href=\/npm\/alike@[^]*<span class="team-deps-under">m#3<\/span>[^]*<\/svg>1 other version its lockfiles lock wants reviews<\/button>/u,
+      'its versions once opened, dimmed, and those others to open under them')
     assert.doesNotMatch(unfolded[0], /<li>/u, 'the others as they were')
     view.toggle('covered')
     const hidden = templateText(view.render())
