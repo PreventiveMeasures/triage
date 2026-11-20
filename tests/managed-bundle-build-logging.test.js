@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { totalmem } from 'node:os'
+import { tmpdir, totalmem } from 'node:os'
+import { join } from 'node:path'
 import { mock, test } from 'node:test'
 import { bundleBuildDiagnostic } from '../server-managed/bundle-build-diagnostics.js'
 
@@ -87,7 +88,7 @@ test('a lockfile’s build asks the worker for one in place of a bundle, and ans
   const asked = { input: { repoId: 12, commit: 'a'.repeat(40), config: 'app/stasis.config.json' }, github: 'org/repo', token, cacheDir: null }
   const leases = { claimBundleBuildLease: () => Promise.resolve(true), releaseBundleBuildLease: () => Promise.resolve() }
   assert.deepEqual(await buildRepositoryLockfile(leases, asked, new AbortController().signal), dependencies)
-  assert.deepEqual(Worker.data, { ...asked, lockfileOnly: true, type: 'managed-bundle-build' })
+  assert.deepEqual(Worker.data, { ...asked, instanceDir: join(tmpdir(), 'triage-stasis-cache'), lockfileOnly: true, type: 'managed-bundle-build' })
   assert.deepEqual(logs.map(log => log.event), ['started', 'progress', 'completed'])
   assert.deepEqual([logs.at(-1).stage, logs.at(-1).dependencies, logs.at(-1).config, logs.at(-1).lockfileOnly], ['lockfile', 2, 'app/stasis.config.json', true])
   assert.ok(!JSON.stringify(logs).includes(token))

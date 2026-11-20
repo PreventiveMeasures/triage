@@ -5,8 +5,9 @@
 // commit and the file's path, which never change, in this instance and in
 // the database, the versions alone. A build takes minutes, so none is waited
 // for: one not kept is told as pending and built behind the answer, one at a
-// time; one whose slot is busy is built when asked for again, as its page
-// asks. A failed one is held in this instance, then built again as asked.
+// time, the one asked for last meanwhile following a quick one at once; any
+// other is built when asked for again, as its page asks. A failed one is
+// held in this instance, then built again as asked.
 import { BundleBuildError, type LockfileInput, type StasisDependency } from './bundle-build.ts'
 import { directoryOf, installsBundle, lockedVersions } from './bundle-dependency-reviews.ts'
 import type { CommitLockfiles } from './commit-lockfiles.ts'
@@ -26,6 +27,10 @@ const FAILED_HELD_MS = 60 * 60_000
 const TRANSIENT = new Set(['github-rate-limited', 'github-build-failed'])
 // How long no build is tried again once one found its slot busy.
 const BUSY_MS = 10_000
+// How long after the first of them began builds follow one another at once:
+// later, the next is built when asked for again, lest they outlast the
+// invocation they run behind (serverless).
+const FOLLOWED_WITHIN_MS = 60_000
 // How often a build under way looks whether the server is stopping.
 const STOPPING_EVERY_MS = 1000
 
@@ -46,6 +51,7 @@ interface ReaderOptions {
   stopping(): boolean
 }
 
+type Job = { key: string; input: LockfileInput; github: string; token: string }
 const optional = (value: unknown) => value === undefined || typeof value === 'string'
 const dependenciesOf = (value: unknown) => Array.isArray(value) && value.every(one => plainObject(one) && typeof one['name'] === 'string'
   && typeof one['version'] === 'string' && optional(one['integrity']) && optional(one['patch'])) ? value as StasisDependency[] : null
@@ -53,10 +59,10 @@ const dependenciesOf = (value: unknown) => Array.isArray(value) && value.every(o
 export function stasisDependencyReader({ store, build, behind, stopping }: ReaderOptions): StasisDependencyReader {
   const known: Lru<{ read: StasisRead; until: number }> = lru(500_000, ({ read }) => read.status === 'ready' ? read.dependencies.length + 1 : 1)
   const hold = (key: string, read: StasisRead, until = Infinity) => { known.set(key, { read, until }); return read }
-  // Whether one is being built here, and till when none is tried after one found its slot busy.
-  let building = false, busyTill = 0
+  // The one being built here, till when none is tried after one found its slot busy, and the one asked for last meanwhile.
+  let building: string | null = null, busyTill = 0, next: Job | null = null
 
-  async function built(key: string, input: LockfileInput, github: string, token: string) {
+  async function built({ key, input, github, token }: Job) {
     const stop = new AbortController()
     const watching = setInterval(() => { if (stopping()) stop.abort() }, STOPPING_EVERY_MS)
     watching.unref()
@@ -73,10 +79,19 @@ export function stasisDependencyReader({ store, build, behind, stopping }: Reade
       if (!refused) console.warn('managed: stasis dependencies build failed:', err)
       const transient = !refused || TRANSIENT.has(code)
       hold(key, { status: 'failed', error: code, transient }, Date.now() + (transient ? TRANSIENT_HELD_MS : FAILED_HELD_MS))
-    } finally {
-      clearInterval(watching)
-      building = false
-    }
+    } finally { clearInterval(watching) }
+  }
+
+  // `first` built, then the one asked for last meanwhile, and so on while the first began FOLLOWED_WITHIN_MS ago or less.
+  async function run(first: Job) {
+    const began = Date.now()
+    try {
+      for (let job: Job | null = first; job; job = Date.now() - began < FOLLOWED_WITHIN_MS && Date.now() >= busyTill && !stopping() ? next : null) {
+        building = job.key
+        next = null
+        await built(job)
+      }
+    } finally { building = next = null }
   }
 
   return {
@@ -86,9 +101,11 @@ export function stasisDependencyReader({ store, build, behind, stopping }: Reade
       if (held && Date.now() < held.until) return held.read
       const kept = dependenciesOf((await store.read(key))?.value)
       if (kept) return hold(key, { status: 'ready', dependencies: kept })
-      if (!building && Date.now() >= busyTill && !stopping()) {
-        building = true
-        behind(built(key, { repoId, commit, config, ...branch !== undefined && { branch } }, fullName, token))
+      const job = { key, input: { repoId, commit, config, ...branch !== undefined && { branch } }, github: fullName, token }
+      if (building !== null) next = building === key ? next : job
+      else if (Date.now() >= busyTill && !stopping()) {
+        building = key
+        behind(run(job))
       }
       return { status: 'pending' }
     },

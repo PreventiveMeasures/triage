@@ -1101,7 +1101,8 @@ test('a page of open pull requests names the branches each one\'s commits are of
   const queries = []
   github(t, { files: {}, graphql: body => { queries.push(body.query); return { repository: { page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } } } } })
   assert.deepEqual((await repositoryOpenPulls('org/repo', 'token', null, null, 50)).commits, [{ number: 5, base: tip, head, baseRef: 'main', headRef: 'bump-ms' },
-    { number: 6, base: tip, head, baseRef: 'release/1.2' }, { number: 7, base: tip, head }, { number: 8, base: tip, head }], 'a fork\'s head, or one not told its own, of none; a name no branch\'s, none')
+    { number: 6, base: tip, head, baseRef: 'release/1.2', fork: true }, { number: 7, base: tip, head }, { number: 8, base: tip, head }],
+  'a fork\'s head, told one, or one not told its own, of none; a name no branch\'s, none')
   assert.ok(['baseRefName', 'headRefName', 'isCrossRepository'].every(field => queries[0].includes(field)))
   t.mock.restoreAll()
 
@@ -1113,6 +1114,15 @@ test('a page of open pull requests names the branches each one\'s commits are of
   await read()
   while (behind.length > 0) await behind.shift()
   assert.deepEqual(builds.map(({ input }) => input).find(input => input.commit === mergeBase), { repoId: 1, commit: mergeBase, config: 'stasis.config.json', branch: 'main' })
+
+  // A fork's head is no commit of the repository's own, which Stasis refuses: told so, nothing built for it, nor for its merge base.
+  builds.length = 0
+  const fork = await teamFixture(t, { baseRefOid: tip, headRefOid: head, baseRefName: 'main', headRefName: 'patch-1', isCrossRepository: true }, undefined, work => { behind.push(work) })
+  await fork.db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null, lockfiles: { mode: 'include', paths: ['stasis.config.json'] } })
+  const answers = (await fork.read()).lines.find(line => line.dependencies).dependencies
+  while (behind.length > 0) await behind.shift()
+  assert.deepEqual(answers.map(answer => answer.lockfiles), [[{ paths: ['stasis.config.json'], error: 'stasis-failed', detail: 'commit-not-own' }]])
+  assert.deepEqual(builds.map(({ input }) => [input.commit, input.branch]), [[head, undefined]], 'the default branch\'s own head alone')
 })
 
 // A bundle's npm versions (bundle-dependency-reviews.ts), as the lockfiles

@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { brotliDecompressSync, gzipSync } from 'node:zlib'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { buildGitHubBundle } from '@exodus/stasis/vfs-bundle'
-import { buildErrorCode, buildStasisBundle, buildStasisLockfile, lockfileDependencies } from '../server-managed/bundle-build-worker.js'
+import { buildErrorCode, buildStasisBundle, buildStasisLockfile, instanceCache, lockfileDependencies } from '../server-managed/bundle-build-worker.js'
 import { buildRepositoryBundle, buildRepositoryLockfile, githubBundleFilename, parseBundleBuild, withBundleBuildLease } from '../server-managed/bundle-build.ts'
 import { HttpError } from '@preventive/upstream/github.js'
 import { packageOf, registry } from './_managed-npm.js'
@@ -509,6 +512,53 @@ test('real Stasis’s lockfile tells a version pnpm patches with its patch’s h
     'pnpm-workspace.yaml': 'patchedDependencies:\n  tool@1.0.0: patches/tool@1.0.0.patch\n', 'patches/tool@1.0.0.patch': patch,
     'stasis.config.json': JSON.stringify({ entries: { 'index.js': {} } }) })
   assert.deepEqual(await lockfileOf(project, 'app/stasis.config.json'), [{ name: 'tool', version: '1.0.0', integrity: tool.doc.dist.integrity, patch: hash }])
+})
+
+// How many bytes the files in `dir` hold.
+const sizeOf = async dir => (await Promise.all((await readdir(dir)).map(name => stat(join(dir, name))))).reduce((sum, file) => sum + file.size, 0)
+
+test('a lockfile’s build keeps what it downloads of npm in its instance’s directory, where no cache is set: the builds after it there download none of it again', async t => {
+  const [tool, other] = [moduleOf('tool', '1.0.0'), moduleOf('other', '1.0.0')]
+  const calls = registry(t, [tool, other])
+  const dir = await mkdtemp(join(tmpdir(), 'triage-instance-cache-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const locked = pkg => ({ version: pkg.doc.version, resolved: pkg.doc.dist.tarball, integrity: pkg.doc.dist.integrity })
+  const project = (...packages) => {
+    const dependencies = Object.fromEntries(packages.map(pkg => [pkg.doc.name, pkg.doc.version]))
+    return { 'package.json': JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', dependencies }),
+      'index.js': packages.map(pkg => `import "${pkg.doc.name}"\n`).join(''), 'stasis.config.json': JSON.stringify({ entries: { 'index.js': {} } }),
+      'package-lock.json': lockOf({ name: 'app', version: '1.0.0', dependencies }, Object.fromEntries(packages.map(pkg => [`node_modules/${pkg.doc.name}`, locked(pkg)]))) }
+  }
+  const build = (tree, instanceDir = dir) => buildStasisLockfile({ input: { repoId: 1, commit, config: 'stasis.config.json' }, github: 'org/repo', token: null, instanceDir }, projectClient(tree))
+  const asked = () => calls.splice(0).map(({ url }) => url.slice('https://registry.npmjs.org/'.length))
+  assert.deepEqual((await build(project(tool))).map(one => one.name), ['tool'])
+  assert.deepEqual(asked(), ['tool/1.0.0', 'tool/-/tool-1.0.0.tgz'], 'its version’s document and its tarball')
+  assert.deepEqual((await build(project(tool))).map(one => one.name), ['tool'])
+  assert.deepEqual(asked(), [], 'the next build there asks npm for nothing')
+  assert.deepEqual((await build(project(tool, other))).map(one => one.name), ['other', 'tool'])
+  assert.deepEqual(asked(), ['other/1.0.0', 'other/-/other-1.0.0.tgz'], 'nor for what it holds of another’s')
+  await build(project(tool), null)
+  assert.equal(asked().length, 2, 'with no directory, nothing is kept, as before')
+  // A bundle's build reads and keeps them there too.
+  const bundled = { ...project(tool, other), 'index.ts': 'import "tool"\nimport "other"\n' }
+  await buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null], instanceDir: dir }, projectClient(bundled))
+  assert.deepEqual(asked(), [], 'a bundle’s build asks npm for none of them either')
+
+  // As much as its budget: nothing written past it; found past it, emptied; a file half-written removed; none but npm’s kept.
+  const store = await instanceCache(dir, (await sizeOf(dir)) + 12)
+  await store.write('npm/tarballs', 'big@1.0.0', new Uint8Array(13))
+  await store.write('github/trees', 'tree', new Uint8Array(1))
+  await store.write('npm/versions', 'small@1.0.0', { ok: true })
+  assert.deepEqual([await store.read('npm/tarballs', 'big@1.0.0'), await store.read('github/trees', 'tree'), await store.read('npm/versions', 'small@1.0.0')], [null, null, { ok: true }])
+  await writeFile(join(dir, 'half.1.tmp'), 'x')
+  const kept = (await readdir(dir)).length
+  await instanceCache(dir, 1_000_000)
+  assert.equal((await readdir(dir)).length, kept - 1, 'the half-written one gone, the rest kept')
+  await instanceCache(dir, 1)
+  assert.deepEqual(await readdir(dir), [], 'emptied once past its budget')
+  await (await instanceCache(dir)).write('npm/versions', 'small@1.0.0', { ok: true })
+  await instanceCache(dir, 1_000_000, Infinity)
+  assert.deepEqual(await readdir(dir), [], 'or once its disk is nearly full')
 })
 
 test('a Stasis lockfile’s dependencies are its npm versions with an evidence file, each once as installed', () => {

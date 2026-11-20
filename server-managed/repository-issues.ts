@@ -179,11 +179,11 @@ export async function repositoryItem(fullName: string, token: string, number: nu
 // An open pull request's base's and head's commits, by its number, as GitHub
 // has them now: those its REST API names `base.sha` and `head.sha`
 // (pull-dependencies.ts pullCommits), with the branches they are of
-// (pullRefs), its head's where it is no fork's. None where either isn't a
-// commit's id.
+// (pullRefs), its head's where it is no fork's, and that it is one's where
+// it is. None where either isn't a commit's id.
 const commitsOf = (number: number, { baseRefOid: base, headRefOid: head, baseRefName, headRefName, isCrossRepository }: Node) =>
   typeof base === 'string' && SHA.test(base) && typeof head === 'string' && SHA.test(head)
-    ? [{ number, base, head, ...pullRefs(baseRefName, isCrossRepository === false ? headRefName : undefined) }] : []
+    ? [{ number, base, head, ...pullRefs(baseRefName, isCrossRepository === false ? headRefName : undefined, isCrossRepository) }] : []
 
 // The label the pull requests changing a repository's dependencies carry,
 // as Dependabot's do: where it has one, a team's Dependencies reads its open

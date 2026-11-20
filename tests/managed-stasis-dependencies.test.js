@@ -39,16 +39,18 @@ test('what a stasis.config.json reaches at a commit is built behind the answer a
   assert.deepEqual(await one.read(repo, 'token', head, config, 'release'), pending, 'not kept: built, and told so at once')
   assert.deepEqual(one.builds.map(({ input, github, token }) => [input, github, token]), [[{ repoId: 1, commit: head, config, branch: 'release' }, 'org/repo', 'token']],
     'told the branch its commit is said to be of')
-  // While it is built, neither it nor another is: one at a time, the rest when asked for again.
-  assert.deepEqual([await one.read(repo, 'token', head, config), await one.read(repo, 'token', base, config)], [pending, pending])
+  // While it is built, neither it nor another is, one at a time: the one asked for last meanwhile follows it at once, the rest when asked for again.
+  for (const commit of [head, '2'.repeat(40), base, head]) assert.deepEqual(await one.read(repo, 'token', commit, config), pending)
   assert.equal(one.builds.length, 1)
   const dependencies = [dep('ms', '2.1.3'), dep('tool', '1.0.0', { patch: PATCH })]
   one.builds.shift().resolve(dependencies)
+  await new Promise(resolve => { setImmediate(resolve) })
+  assert.deepEqual(one.builds.map(({ input }) => input), [{ repoId: 1, commit: base, config }], 'the one asked for last, not waiting to be asked again; of no branch where none is said')
+  one.builds.shift().resolve([])
   await one.settled()
   assert.deepEqual(await one.read(repo, 'token', head, config), { status: 'ready', dependencies })
-  assert.deepEqual([...one.store.kept].map(([at, { value }]) => [at, value]), [[key(head), dependencies]], 'its versions, nothing else of the lockfile built')
-  assert.deepEqual(await one.read(repo, 'token', base, config), pending)
-  assert.deepEqual(one.builds.map(({ input }) => input), [{ repoId: 1, commit: base, config }], 'the next, once asked for again; of no branch where none is said')
+  assert.deepEqual([...one.store.kept].map(([at, { value }]) => [at, value]), [[key(head), dependencies], [key(base), []]], 'its versions, nothing else of the lockfile built')
+  assert.equal(one.builds.length, 0, 'the other asked for meanwhile, not till it is asked for again')
   // Another instance, cold: kept beyond the one that built it; what is kept that isn't one, built again.
   const other = reader({ store: one.store })
   assert.deepEqual(await other.read(repo, 'another', head, config), { status: 'ready', dependencies })
@@ -57,7 +59,7 @@ test('what a stasis.config.json reaches at a commit is built behind the answer a
   assert.deepEqual(await other.read(repo, 'token', '1'.repeat(40), config), pending)
 })
 
-test('a failed build is held in this instance, GitHub\'s for less; one whose slot is busy, or that gave it up, is built when asked for again; one under way stops with the server', async t => {
+test('a failed build is held in this instance, GitHub\'s for less; one whose slot is busy, or that gave it up, or that a long build came before, is built when asked for again; one under way stops with the server', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_000_000 })
   const warn = mock.method(console, 'warn', () => {})
   t.after(() => warn.mock.restore())
@@ -79,6 +81,13 @@ test('a failed build is held in this instance, GitHub\'s for less; one whose slo
   one.builds.shift().resolve([])
   await one.settled()
   t.mock.timers.tick(60 * 60_000)
+  // One begun a minute ago or longer is followed by none, lest builds on end outlast what they run behind: the next is built when asked for again.
+  assert.deepEqual(await one.read(repo, 'token', '4'.repeat(40), config), pending)
+  t.mock.timers.tick(60_000)
+  assert.deepEqual(await one.read(repo, 'token', '5'.repeat(40), config), pending)
+  one.builds.shift().resolve([])
+  await one.settled()
+  assert.equal(one.builds.length, 0)
   // Busy, or yielding to a build asked for: none tried for ten seconds, then built as asked.
   for (const code of ['build-busy', 'build-yielded']) {
     assert.deepEqual(await fails('1'.repeat(40), new BundleBuildError(429, code)), pending, code)
