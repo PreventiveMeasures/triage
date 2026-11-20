@@ -1180,10 +1180,18 @@ export function evidenceUrl(row, f, repoFallback, index) {
   const inFindingRepo = () => (repo ? findingUrl({ file, line: row?.line, repo: f.repo, auditedCommit }, repoFallback) : null)
 
   // 1. The row that restates the finding's own location. Wherever the
-  //    finding is, this row is in the same place, so the finding's repo
-  //    answers for it — including when that location carries a marker
-  //    the rules below would otherwise refuse.
-  if (index === 0 && file === main) return inFindingRepo()
+  //    finding is, this row is in the same place, so it links where the
+  //    finding's own location does (findingUrl) — the finding's repo, or
+  //    the report's when the finding names none — including when that
+  //    location carries a marker the rules below would otherwise refuse.
+  //    At the finding's own lines it is the finding's own link outright,
+  //    the report's `location` link included: the one the issue body's
+  //    `File:` line and the card's location link carry.
+  if (index === 0 && file === main) {
+    const sameLines = String(row?.line ?? '').trim() === String(f?.line ?? '').trim()
+    return sameLines ? findingUrl(f, repoFallback)
+      : findingUrl({ file, line: row?.line, repo: f.repo, auditedCommit }, repoFallback)
+  }
 
   // 2. The same installed package as the finding's location. The
   //    finding's repo is that package's upstream (that is what

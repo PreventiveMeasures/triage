@@ -318,6 +318,23 @@ describe('evidence rows', () => {
       assert.equal(evidenceUrl(row('vendor/acme/lib/Other.php', '12'), dep, REPORT, 0), null)
     })
 
+    // The first row links wherever the finding's own location does, so
+    // the issue body never links the finding and leaves the same place
+    // in its evidence a code span.
+    it('links the first row where the finding links, with no repo of its own', () => {
+      const own = { file: 'src/proxy.ts', line: '8' }
+      assert.equal(findingUrl(own, REPORT), 'https://github.com/acme/monorepo/blob/HEAD/src/proxy.ts#L8')
+      assert.equal(evidenceUrl(row('src/proxy.ts', '8'), own, REPORT, 0), 'https://github.com/acme/monorepo/blob/HEAD/src/proxy.ts#L8')
+      assert.equal(evidenceUrl(row('src/proxy.ts', '20'), own, REPORT, 0), 'https://github.com/acme/monorepo/blob/HEAD/src/proxy.ts#L20')
+      // The finding's repo as a bare slug answers the same way.
+      assert.equal(evidenceUrl(row('src/proxy.ts', '8'), { ...own, repo: 'acme/app' }, REPORT, 0),
+        'https://github.com/acme/app/blob/HEAD/src/proxy.ts#L8')
+      // And at the finding's own lines, the report's own link for them.
+      const located = { ...own, location: 'https://github.com/o/r/blob/abc/src/proxy.ts#L8' }
+      assert.equal(evidenceUrl(row('src/proxy.ts', '8'), located, '', 0), located.location)
+      assert.equal(evidenceUrl(row('src/proxy.ts', '8'), own, '', 0), null)
+    })
+
     it('takes the finding repo for a row in the same installed package', () => {
       const dep = { file: 'node_modules/lodash/index.js', repo: { github: 'lodash/lodash' } }
       assert.equal(
@@ -407,6 +424,11 @@ describe('evidence rows', () => {
     // The search haystack: the path as written.
     assert.ok(evidenceMarkdown(dep).endsWith('\n5. node_modules/@scope/pkg/a.js\n   Via @scope/pkg.'))
     assert.equal(evidenceMarkdown(f, { repoFallback: null }).split('\n')[3], '2. [libs/b.ts:30](https://github.com/acme/widgets/blob/HEAD/libs/b.ts#L30)')
+    // The first row restating the finding's location is linked as the
+    // finding is, through the report's repo too, never a code span.
+    const own = { file: 'src/a.ts', line: '10', evidence: [{ file: 'src/a.ts', line: '10', text: 'The sink.' }] }
+    assert.equal(evidenceMarkdown(own, { repoFallback: { github: 'acme/monorepo', directory: '' } }).split('\n')[1],
+      '1. [src/a.ts:10](https://github.com/acme/monorepo/blob/HEAD/src/a.ts#L10)')
   })
 
   // The issue body's form links a note's line references too, each to
