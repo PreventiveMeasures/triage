@@ -21,8 +21,8 @@ Each npm version opens in the npm viewer, an update compared with the highest ve
 ## When a pull request passes
 
 Review is in effect for a repository once it is [turned on](#repository-settings) and a visible team that reviews dependencies has the repository.
-Each version the pull request adds then needs the required number of counting reviews, of it whole or compared with a version it replaced.
-Every other version its lockfiles lock needs them too, of it whole or compared with any version of its package, unless the [baseline commit](#repository-settings) or the [host](#host-reviewed-dependencies) passes it.
+Each version the pull request adds then needs the required number of counting reviews, of it whole, compared with a version it replaced, or compared with any version of another package.
+Every other version its lockfiles lock needs them too, of it whole or compared with any version of its package or another, unless the [baseline commit](#repository-settings) or the [host](#host-reviewed-dependencies) passes it.
 A version is reviewed as npm's registry has it, by name, version and integrity, so a version locked with several integrities needs reviews of each.
 A patched version is reviewed as its patch changes it, by its patch too (see [Patched versions](#patched-versions)).
 
@@ -143,6 +143,8 @@ They publish only to enabled, visible teams they review in (any such team, for a
 
 A package version's **Review** tab opens `/npm/<package>@<version>/review`, and with no base every file is reviewed as an addition.
 Append `/<basePackage>@<baseVersion>` to review an update, or a bare version for the same package; tags resolve to exact versions.
+The base can be a version of another package, as for a fork or a renamed package (`/npm/@fork/lib@2.0.0/review/lib@1.0.0`): its picker doesn't offer one, but a link names it.
+Such a review counts for the version reviewed wherever it is locked, whatever a pull request replaced, but where the host reads reviews from comments ([`parseComments`](#parsecomments)), as no published review does.
 A [patched version](#patched-versions)'s names its patch after them, by its hash and where it is read: `?patch=<hash>&repo=<repository>&commit=<commit>&path=<path>`.
 `repo` is a connected repository's id, as the links here write it, or its name (`owner/name`), which is matched only against the connected repositories its reader reads.
 `path` can be left out where the repository's dependency review is on: the patch is then looked for at that commit, among the `.patch` files of each `patches/` directory beside a pnpm lockfile or a `stasis.config.json`, which are each kept by their hash, so the commit is looked in once.
@@ -190,7 +192,7 @@ Where several pull requests add a version, its reviews in each are compared: who
 - A pull request that holds some reviews of it but lacks one made in another's comments shows it red, and its tooltip names whose review and where.
   Where each lacks a review of the other's, both are red; where one holds every such review, it lists the version as usual.
   Only reviews made in comments are compared this way, as they count where they were posted and can be posted again.
-  A review published to a team is never "lacked": it counts wherever the rules above let it (a version a pull request adds needs it whole or compared with a version it replaced, one it only locks takes it compared with any), so without `parseComments` it may count in a pull request stacked on another and not in the one it stacks on.
+  A review published to a team is never "lacked": it counts wherever the rules above let it (a version a pull request adds needs it whole, compared with a version it replaced, or compared with another package's, one it only locks takes it compared with any), so without `parseComments` it may count in a pull request stacked on another and not in the one it stacks on.
 - A pull request with no reviews of it is never red: it is simply unreviewed, and shows it dimmed under a pull request that has reviews of it and still wants it.
   Where none of those wanting it has any, one of them lists it and the rest show it dimmed.
 
@@ -217,7 +219,7 @@ It checks the npm package versions the bundle holds, those it has code of as `st
 They are read from the lockfiles in the bundle's directory and the directories above it, as an install there reads a workspace's root lockfile; a sibling directory's are not.
 Each version is checked as the nearest of those directories that locks it locks it, every integrity and patch it locks it with.
 
-They are held to the rules a pull request's other versions are: each needs the required number of counting reviews, of it whole or compared with any version of its package, unless the [baseline commit](#repository-settings) or the [host](#host-reviewed-dependencies) passes it.
+They are held to the rules a pull request's other versions are: each needs the required number of counting reviews, of it whole or compared with any version of its package or another, unless the [baseline commit](#repository-settings) or the [host](#host-reviewed-dependencies) passes it.
 The review fails for a version that [can't be reviewed](#what-cant-be-reviewed), for one none of those lockfiles locks (`not locked at its commit`), as nothing holds its reviews to an integrity, and for one of those lockfiles that can't be read.
 
 The line says **Passes**, how many versions want reviews (`3 to review`, of the versions the bundle holds), or **Fails** and why.
@@ -305,7 +307,7 @@ It receives `reviews`, each entry with:
 | `reviewer`, `publishedAt` | The author's login and the publication time |
 
 It is asked of each of the asker's reviews alone, wherever it is shown to its author.
-For an open pull request, it is asked of all the asker's reviews published to a team counting for its repository of the versions it adds (matched by integrity and patch; where the host has no `parseComments`, only those whole or compared with a version they replaced), with `pullRequest` as `{ repository, number }`, for its popup and its card on a team's Dependencies tab to copy.
+For an open pull request, it is asked of all the asker's reviews published to a team counting for its repository of the versions it adds (matched by integrity and patch; where the host has no `parseComments`, only those whole, compared with a version they replaced, or compared with another package's), with `pullRequest` as `{ repository, number }`, for its popup and its card on a team's Dependencies tab to copy.
 Reviews of versions `lookup` already passes are left out, as they want no review there, and so are those the asker's own comments on that pull request already make with the same verdict; where none is left, there is nothing to copy.
 It returns the text to copy, and an empty, null or undefined answer, one over a million characters, or a failure (logged) gives nothing to copy.
 It is given only the asker's own published, unrevoked reviews, however it is asked, so another author's review never offers the button.
