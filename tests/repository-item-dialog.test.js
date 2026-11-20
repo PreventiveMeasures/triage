@@ -228,7 +228,8 @@ test('where the server registers reviewed dependencies, its terms say so, with i
     commentReviews: 2, commentsFailed: true, lockfiles: { mode: 'exclude', paths: ['docs/'] } }, lockfiles: [
     { paths: ['pnpm-lock.yaml'], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0, unsupported: [], moreUnsupported: 0, added: [
       { name: 'vouched', version: '1.0.0', source: 'registry', reviewed: true }, { name: 'patched', version: '1.0.0', source: 'registry', patch: { hash, path: 'patches/patched@1.0.0.patch' }, reviews: 0 },
-      { name: 'nameless', version: '1.0.0', source: 'registry', patch: { hash }, reviews: 0 }, { name: 'refused', version: '1.0.0', source: 'registry', reviews: 3, rejected: true }] },
+      { name: 'nameless', version: '1.0.0', source: 'registry', patch: { hash }, reviews: 0 }, { name: 'refused', version: '1.0.0', source: 'registry', reviews: 3, rejected: true },
+      { name: 'hashed-md5', version: '1.0.0', source: 'registry', patch: { hash: 'btaxlooa6g3kqmodthrgs5zgme' }, reviews: 0 }] },
     { paths: ['web/bun.lock'], error: 'lockfile-unsupported' }] })
   answer = () => new Promise(() => {})
   const dialog = shown()
@@ -250,6 +251,7 @@ test('where the server registers reviewed dependencies, its terms say so, with i
     'a patched one reviewed as patched, its patch read of its repository at the commit its lockfiles were read at')
   assert.match(text, /<a class="repo-item-row" href=\/npm\/nameless@1\.0\.0 [^]*>0\/2<[^]*by a patch its lockfile names no file of, which reviews here can’t read>patched</u,
     'one whose lockfile names no file of its patch opens its version')
+  assert.match(text, /<a class="repo-item-row" href=\/npm\/hashed-md5@1\.0\.0 [^]*>patched</u, 'one pnpm 9 patches by an md5, read no more, patched still')
   assert.match(text, /<code>web\/bun\.lock<\/code><\/p>\s*<p class="repo-item-quiet" role="alert">Bun’s lockfile here isn’t read\.</u)
   assert.match(text, /<p>Its review fails: not every lockfile it changes was read\.<\/p>/u, 'which fails its review')
 })

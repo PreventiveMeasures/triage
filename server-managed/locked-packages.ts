@@ -7,6 +7,7 @@ import { LockfileError, parseNpmLockfile } from '@preventive/lockfile/npm.js'
 import { parsePnpmLockfile } from '@preventive/lockfile/pnpm.js'
 import { parseYarn1Lockfile } from '@preventive/lockfile/yarn1.js'
 import type { LockfileFormat } from '@preventive/upstream/github.js'
+import { isPatchHash } from '../common/managed/npm-packages.js'
 import type { ReviewedLockfile } from './reviewed-dependencies.ts'
 
 export interface LockedPackage {
@@ -27,12 +28,16 @@ export interface LockedPackage {
   // Where its reviews ask: the sha1 Yarn 1 writes after a tarball's `#`, in
   // hex (`shasum`); the hash of the patch pnpm applies to it
   // (`patchHash`, its patchedDependencies'), and the patch's file, where the
-  // lockfile names one (`patchPath`, pnpm 9's and 10's): from the lockfile's
+  // lockfile names one (`patchPath`, pnpm 10's): from the lockfile's
   // directory as read, from the repository's root once that is known
-  // (patchedIn); and the lockfile's format.
+  // (patchedIn), with that directory then (`patchDir`, '' the root), whence
+  // a patch its lockfile names by its hash alone, as pnpm 11 and later do,
+  // is found, its file told as one named is (npm-patch.ts withPatchFiles);
+  // and the lockfile's format.
   shasum?: string
   patchHash?: string
   patchPath?: string
+  patchDir?: string
   lockfile?: ReviewedLockfile
   // Where only the importers' devDependencies reach it, as npm's `dev` flag
   // says, and an install of no devDependencies leaves it out: in npm's and
@@ -51,13 +56,14 @@ interface ReadPackage { name: string; version: string | undefined; resolution: R
   patchPath?: string | undefined }
 
 // The packages of a lockfile of `format`, as its reader resolves them, a
-// patched one of pnpm's with its patch's file where the lockfile names it.
+// patched one of pnpm's with its patch's file where the lockfile names it,
+// but one pnpm 9 names by an md5, which reviews don't read (isPatchHash).
 // Versions go unchecked against ranges, as only what is locked is asked for.
 function packagesOf(format: LockfileFormat, text: string): ReadPackage[] {
   if (format === 'npm') return Object.values(parseNpmLockfile(text, { checkVersions: false }).packages)
   if (format === 'pnpm') {
     const { lockfile, env } = parsePnpmLockfile(text)
-    const files = new Map(Object.values(lockfile?.patchedDependencies ?? {}).flatMap(({ hash, path }) => path ? [[hash, path] as const] : []))
+    const files = new Map(Object.values(lockfile?.patchedDependencies ?? {}).flatMap(({ hash, path }) => path && isPatchHash(hash) ? [[hash, path] as const] : []))
     return [...Object.values(env?.packages ?? {}), ...Object.values(lockfile?.packages ?? {})]
       .map(pkg => pkg.patchHash !== undefined && files.has(pkg.patchHash) ? { ...pkg, patchPath: files.get(pkg.patchHash) } : pkg)
   }
@@ -126,18 +132,27 @@ export function lockedPackages(format: LockfileFormat, text: string, { review = 
   return [...found.values()]
 }
 
-// `pkg` as a lockfile at `path` locks it, read with its patch's file from
-// the lockfile's directory (LockedPackage `patchPath`): that file from the
-// repository's root, none where it names one outside it.
-export function patchedIn<T extends LockedPackage>(path: string, pkg: T): T {
-  if (pkg.patchPath === undefined) return pkg
-  const { patchPath, ...rest } = pkg
-  const parts = path.split('/').slice(0, -1)
-  for (const part of patchPath.split('/')) {
-    if (part === '..') { if (parts.pop() === undefined) return rest as T }
+// `path`, from directory `dir` ('' the repository's root), from the root;
+// null where it leads outside the repository, or names nothing.
+export function pathFrom(dir: string, path: string): string | null {
+  const parts = dir === '' ? [] : dir.split('/')
+  for (const part of path.split('/')) {
+    if (part === '..') { if (parts.pop() === undefined) return null }
     else if (part !== '.' && part !== '') parts.push(part)
   }
-  return parts.length > 0 ? { ...rest, patchPath: parts.join('/') } as T : rest as T
+  return parts.length > 0 ? parts.join('/') : null
+}
+
+// `pkg` as a lockfile at `path` locks it, a patched one with the lockfile's
+// directory (LockedPackage `patchDir`); and, read with its patch's file
+// from that directory (`patchPath`), with that file from the repository's
+// root, none where it names one outside it.
+export function patchedIn<T extends LockedPackage>(path: string, pkg: T): T {
+  if (pkg.patchHash === undefined) return pkg
+  const { patchPath, ...rest } = pkg
+  const patchDir = path.slice(0, Math.max(path.lastIndexOf('/'), 0))
+  const file = patchPath === undefined ? null : pathFrom(patchDir, patchPath)
+  return { ...rest, patchDir, ...file === null ? {} : { patchPath: file } } as T
 }
 
 // Whether a lockfile at `path` is a test's fixture or example: under a

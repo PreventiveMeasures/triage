@@ -221,13 +221,15 @@ test('a version pnpm patches is new where its patch is, its patch\'s file as its
     [repatched.headAt]: { 'web/pnpm-lock.yaml': patched(hash, '../patches/is-number@7.0.0.patch') },
   } })
   const told = await pullDependencies('org/repo', 'token', 5, memory())
-  assert.deepEqual(told.lockfiles[0].added.map(({ name, patchHash, patchPath, was }) => ({ name, patchHash, patchPath, was })),
-    [{ name: 'is-number', patchHash: hash, patchPath: 'patches/is-number@7.0.0.patch', was: ['7.0.0'] }], 'its patch new, a version it was the same, its file from the root')
+  assert.deepEqual(told.lockfiles[0].added.map(({ name, patchHash, patchPath, patchDir, was }) => ({ name, patchHash, patchPath, patchDir, was })),
+    [{ name: 'is-number', patchHash: hash, patchPath: 'patches/is-number@7.0.0.patch', patchDir: 'web', was: ['7.0.0'] }],
+    'its patch new, a version it was the same, its file from the root, with its lockfile\'s directory')
   t.mock.restoreAll()
   const unnamed = fresh()
   github(t, { ...unnamed, compared: [{ filename: 'web/pnpm-lock.yaml', status: 'added' }], files: { [unnamed.headAt]: { 'web/pnpm-lock.yaml': patched(hash, null) } } })
   const added = (await pullDependencies('org/repo', 'token', 5, memory())).lockfiles[0].added.find(pkg => pkg.name === 'is-number')
-  assert.deepEqual([added.patchHash, added.patchPath], [hash, undefined], 'pnpm 11\'s, its file not named')
+  assert.deepEqual([added.patchHash, added.patchPath, added.patchDir], [hash, undefined, 'web'], 'pnpm 11\'s, its file not named, its lockfile\'s directory whence it is found')
+  assert.equal(told.lockfiles[0].locked.find(pkg => pkg.name !== 'is-number' && 'patchDir' in pkg), undefined, 'one not patched told no directory')
 })
 
 test('a pull request\'s lockfiles changed but none new tells each directory\'s none; one changing none, no directory', async t => {

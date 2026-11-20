@@ -53,18 +53,21 @@ Where its lockfiles locked the version it patches before, unpatched or patched o
 Its reviews are held to its patch's hash, as its lockfile names it, so they are apart from those of the version unpatched or patched otherwise, and a version patched alike in several pull requests is reviewed once.
 Locked the same way at the baseline commit, patch included, it needs none.
 
-Its review page reads the patch of the repository at the commit the pull request's lockfiles were read at, from the file the lockfile names, as pnpm 9 and 10 write it.
-pnpm 11 names a patch by its hash alone, so a version it patches has no review page here: it passes by the host's `lookup`, by reviews of its patch in the open pull request's comments through `parseComments`, or by the baseline commit.
+Its review page reads the patch of the repository at the commit the pull request's lockfiles were read at, from its file.
+A lockfile of pnpm 10 names that file. pnpm 11 and later name a patch by its hash alone, so its file is found as its version is listed, where the repository's review is in effect: the one the `pnpm-workspace.yaml` beside the lockfile names for the package under `patchedDependencies`, held to the lockfile's hash.
+A version whose patch isn't found, or that pnpm 9 patches, by an md5, has no review page here: it passes by the host's `lookup`, by reviews of its patch in the open pull request's comments through `parseComments`, or by the baseline commit.
+
+A patch read is kept by its repository and its hash, for good: what a sha256 names never changes, so it is found once, and read of GitHub no more, whatever commit and path a later request names.
 The patch is read only where:
 
 - the reader may read all of that repository, with their own GitHub access, which is checked again after GitHub answers;
-- the file hashes to the lockfile's hash of it, as pnpm hashes it (a sha256 in hex, or pnpm 9's md5 in base32), its CRLFs read as LFs;
+- the file hashes to the lockfile's hash of it, as pnpm hashes it (a sha256 in hex), its CRLFs read as LFs;
 - it is as git writes a diff, of no file's bytes (a binary patch) and of no file outside the package.
 
-It is applied as pnpm applies it (the patch-package code pnpm 9, 10 and 11 bundle): each file it deletes, creates, renames or changes, each hunk found in the file as it was, where its header says, else as many as 20 lines either side, its lines matched but for the whitespace they end in, the lines it keeps left as the file has them, and the lines it adds as the patch has them, CRs and all. The review page says why where it doesn't apply.
+It is applied as pnpm applies it (the patch-package code pnpm 10 and 11 bundle): each file it deletes, creates, renames or changes, each hunk found in the file as it was, where its header says, else as many as 20 lines either side, its lines matched but for the whitespace they end in, the lines it keeps left as the file has them, and the lines it adds as the patch has them, CRs and all. The review page says why where it doesn't apply.
 What it changes of a file's mode isn't shown.
 
-The Dependencies tab and a pull request's popup link a patched version to its review where its lockfile names its patch's file, against the version it patches where that was one, and mark it **patched**; they count no lines it changes, as those would be npm's.
+The Dependencies tab and a pull request's popup link a patched version to its review where its patch's file is known, against the version it patches where that was one, and mark it **patched**; they count no lines it changes, as those would be npm's.
 A review keeps where its patch was read, its page reading it there again, so one listed under **My reviews** or a team's **Reviews** opens as patched for a reader who may still read that repository.
 
 ## Repository settings
@@ -104,7 +107,8 @@ They publish only to enabled, visible teams they review in (any such team, for a
 
 A package version's **Review** tab opens `/npm/<package>@<version>/review`, and with no base every file is reviewed as an addition.
 Append `/<basePackage>@<baseVersion>` to review an update, or a bare version for the same package; tags resolve to exact versions.
-A [patched version](#patched-versions)'s names its patch after them, by its hash and where it is read: `?patch=<hash>&repo=<repository id>&commit=<commit>&path=<path>`.
+A [patched version](#patched-versions)'s names its patch after them, by its hash and where it is read: `?patch=<hash>&repo=<repository>&commit=<commit>&path=<path>`.
+`repo` is a connected repository's id, as the links here write it, or its name (`owner/name`), which is matched only against the connected repositories its reader reads.
 Picking another version to review leaves the patch out.
 
 Changed files under 50,000 lines and 2 MiB across both versions show as one diff, and larger reviews use the per-file Code view.

@@ -53,8 +53,9 @@ const READ_PARALLEL = 4
 // The rules what is told was told by, kept with it (http.ts
 // pullDependencyKept), and the lockfiles read for it (lockfileKept): one
 // told or read by others is told or read again, as those read before pnpm's
-// patches' files were.
-export const PULL_DEPENDENCIES_READ = 4
+// patches' files were, and those told before their lockfiles' directories,
+// or read with the files of patches pnpm 9 names by an md5.
+export const PULL_DEPENDENCIES_READ = 5
 
 type Format = 'npm' | 'pnpm' | 'yarn' | 'bun'
 
@@ -268,8 +269,8 @@ export const lockedWith = (pkg: LockedPackage) => `${lockedAs(pkg)}\0${pkg.integ
 // each with the versions of its name before, those past MAX_ADDED counted
 // (`more`), not told but reviewed as they are; and every one after, each
 // integrity it is locked with (`locked`), as many as MAX_LOCKED, each patch's
-// file from the repository's root (patchedIn); or the first failure among
-// them.
+// file from the repository's root, and its lockfile's directory (patchedIn);
+// or the first failure among them.
 function addedIn(paths: string[], before: LockfileRead[], after: LockfileRead[]): DirectoryDependencies {
   const failed = [...before, ...after].find(read => 'error' in read)
   if (failed) return { paths, error: failed.error, ...failed.detail ? { detail: failed.detail } : {} }

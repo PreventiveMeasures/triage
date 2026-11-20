@@ -3,7 +3,9 @@
 // it by, read as git writes a diff, applied to the version's files as pnpm
 // applies it; and a version's review as patched (http.ts), its files and its
 // comparison as the patch changes them, the patch read of a repository its
-// reader reads all of, at the commit and path the request names.
+// reader reads all of, at the commit and path the request names, and kept
+// by its repository and hash for good; one its lockfile names by its hash
+// alone found as its versions are told.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer, request } from 'node:http'
@@ -13,7 +15,8 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
-import { isPatchOf, parsePatch, patchWeight, patchedFiles, requestedPatch } from '../server-managed/npm-patch.ts'
+import { isPatchOf, parsePatch, patchKey, patchWeight, patchedFiles, readPatch, requestedPatch, withPatchFiles } from '../server-managed/npm-patch.ts'
+import { patchStore } from '../server-managed/npm-kept.ts'
 import { isPatchHash } from '../common/managed/npm-packages.js'
 import { packageOf, registry } from './_managed-npm.js'
 
@@ -146,20 +149,26 @@ test('a patch read is kept by about the bytes it takes, as V8 takes them: its ch
   assert.ok(tiny > 15, `many tiny hunks, many times their characters (${tiny})`)
 })
 
-test('a patch is held to the hash a lockfile names it by, as pnpm hashes it: a sha256 in hex, or pnpm 9\'s md5 in base32, of its text with its CRLFs as LFs', () => {
-  const sha256 = text => createHash('sha256').update(text).digest('hex')
+const sha256 = text => createHash('sha256').update(text).digest('hex')
+// PATCH as another patch of the same changes, of a hash of its own: what
+// comes before a patch's first file is no part of what it changes.
+const variant = name => `# ${name}\n${PATCH}`
+// RFC 4648's base32 of md5('a'), lowercase, unpadded, as pnpm 9 named a patch.
+const MD5 = 'btaxlooa6g3kqmodthrgs5zgme'
+
+test('a patch is held to the hash a lockfile names it by, as pnpm 10 and later hash it: a sha256 in hex of its text with its CRLFs as LFs; pnpm 9\'s md5 in base32 names none', () => {
   assert.equal(isPatchOf(PATCH, sha256(PATCH)), true)
   assert.equal(isPatchOf(`${PATCH}\n`, sha256(PATCH)), false)
-  // RFC 4648's base32 of md5('a'), lowercase, unpadded.
-  assert.equal(isPatchOf('a', 'btaxlooa6g3kqmodthrgs5zgme'), true)
-  assert.equal(isPatchOf('b', 'btaxlooa6g3kqmodthrgs5zgme'), false)
+  assert.equal(isPatchOf('a', MD5), false)
   assert.equal(isPatchOf(PATCH.replaceAll('\n', '\r\n'), sha256(PATCH)), true, 'as pnpm reads it, its CRLFs as LFs')
   assert.equal(isPatchOf(PATCH.replaceAll('\n', '\r\n'), sha256(PATCH.replaceAll('\n', '\r\n'))), true, 'or as it is')
-  assert.deepEqual(['a'.repeat(64), 'btaxlooa6g3kqmodthrgs5zgme', 'A'.repeat(64), 'a'.repeat(63), 'a'.repeat(32), null].map(isPatchHash), [true, true, false, false, false, false])
+  assert.deepEqual(['a'.repeat(64), MD5, 'A'.repeat(64), 'a'.repeat(63), 'a'.repeat(32), null].map(isPatchHash), [true, false, false, false, false, false])
   const where = { hash: 'a'.repeat(64), repoId: '1', commit: 'c'.repeat(40), path: 'patches/x.patch' }
   assert.deepEqual(requestedPatch(where), { ...where, repoId: 1 })
+  assert.deepEqual(requestedPatch({ ...where, repoId: 'Org/some.repo-1' }), { ...where, repoId: 'Org/some.repo-1' }, 'its repository by its name')
   assert.equal(requestedPatch({ hash: 'a'.repeat(64), repoId: null, commit: null, path: null }), null, 'its hash alone names not where it is')
-  for (const wrong of [{ repoId: '0' }, { repoId: 'x' }, { commit: 'c' }, { path: '../x.patch' }, { path: '/x.patch' }, { path: 'a//x.patch' }, { hash: 'nope' }, { hash: null }]) {
+  for (const wrong of [{ repoId: '0' }, { repoId: 'x' }, { repoId: 'org/repo/more' }, { commit: 'c' }, { path: '../x.patch' }, { path: '/x.patch' }, { path: 'a//x.patch' }, { hash: 'nope' },
+    { hash: null }, { hash: MD5 }]) {
     assert.equal(requestedPatch({ ...where, ...wrong }), 'invalid', JSON.stringify(wrong))
   }
 })
@@ -234,11 +243,12 @@ async function setup(t, pkg, held) {
   return { db, users, send, asked }
 }
 
-test('a version as a patch changes it is read, compared and reviewed by one who reads the whole of the repository the patch is read of, the patch held to its hash', async t => {
+test('a version as a patch changes it is read, compared and reviewed by one who reads the whole of the repository the patch is read of, the patch held to its hash, and kept by its repository and hash for good', async t => {
   const pkg = packageOf('patched-lib', '1.0.0', PACKAGE)
   const path = 'patches/patched-lib@1.0.0.patch'
-  const h = await setup(t, pkg, { [path]: PATCH, 'patches/crlf.patch': PATCH.replaceAll('\n', '\r\n') })
-  const hash = createHash('sha256').update(PATCH).digest('hex')
+  const crlf = variant('crlf')
+  const h = await setup(t, pkg, { [path]: PATCH, 'patches/crlf.patch': crlf.replaceAll('\n', '\r\n'), 'patches/other.patch': variant('other') })
+  const hash = sha256(PATCH)
   const patch = { patchHash: hash, patchRepoId: '1', patchCommit: commit, patchPath: path }
   const query = more => new URLSearchParams({ name: 'patched-lib', version: '1.0.0', ...more })
 
@@ -250,9 +260,11 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
   assert.equal(body.files.find(([file]) => file === 'index.js')[2], 'one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\n')
   assert.deepEqual(h.asked, [`/repos/org/repo/contents/${path.replace('@', '%40')}`], 'its patch read of the repository at the commit named')
   h.asked.length = 0
-  assert.equal((await h.send(`/api/npm/package?${query(patch)}`)).status, 200)
-  assert.deepEqual(h.asked, [], 'and kept, what a commit holds never changing')
-  assert.deepEqual((await h.send(`/api/npm/package?${query({ ...patch, patchPath: 'patches/crlf.patch' })}`)).json().files.map(([file, , text]) => [file, text]),
+  // What its hash names is the same wherever a request says it is: read of GitHub no more, and told where it was read.
+  const elsewhere = await h.send(`/api/npm/package?${query({ ...patch, patchCommit: 'd'.repeat(40), patchPath: 'moved/since.patch' })}`)
+  assert.deepEqual([elsewhere.status, elsewhere.json().patch, h.asked], [200, { hash, repoId: 1, commit, path }, []], 'kept by its repository and hash, another commit and path its request\'s')
+  assert.deepEqual((await patchStore(h.db).read(patchKey(1, hash))).value, { commit, path, text: PATCH }, 'beyond this instance, for good')
+  assert.deepEqual((await h.send(`/api/npm/package?${query({ ...patch, patchHash: sha256(crlf), patchPath: 'patches/crlf.patch' })}`)).json().files.map(([file, , text]) => [file, text]),
     [['added.js', 'added\r\nlast\r'], ['image.bin', null], ['index.js', 'one\nTWO\r\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\r\n'], ['new name.js', 'new\r\n'],
       ['package.json', '{}\n']], 'one committed with CRLFs, its hash as pnpm hashes it, applied as pnpm applies it, the lines it adds with their CRs')
 
@@ -261,10 +273,18 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
   assert.deepEqual((await h.send(`/api/npm/comparison?${query({ otherVersion: '(empty)' })}`)).json().files.onlyOther.map(row => row.path).toSorted(),
     ['gone.js', 'image.bin', 'index.js', 'old name.js', 'package.json'], 'and unpatched apart')
 
+  // Its repository by its name, a connected one its reader reads, whatever its case, as by its id.
+  const other = { ...patch, patchRepoId: 'Org/Repo', patchHash: sha256(variant('other')), patchPath: 'patches/other.patch' }
+  const named = await h.send(`/api/npm/package?${query(other)}`)
+  assert.deepEqual([named.status, named.json().patch], [200, { hash: other.patchHash, repoId: 1, commit, path: 'patches/other.patch' }], 'read of the repository of that name, told by its id')
+
   for (const [why, more, status, error] of [['one who reads none of its repository', { who: 'outsider' }, 404, 'no-repository'],
+    ['one who reads none of it, by its name', { who: 'outsider', patchRepoId: 'org/repo' }, 404, 'no-repository'],
+    ['a repository none connected has the name of', { patchRepoId: 'org/unconnected' }, 404, 'no-repository'],
     ['one signed out', { who: null }, 401, 'unauthenticated'],
     ['a patch other than its hash says', { patchHash: 'b'.repeat(64) }, 409, 'patch-mismatch'],
-    ['one not at that commit', { patchCommit: 'd'.repeat(40) }, 404, 'patch-not-found'],
+    ['one read at no commit yet, not at that one', { patchHash: 'e'.repeat(64), patchCommit: 'd'.repeat(40) }, 404, 'patch-not-found'],
+    ['one pnpm 9 names by an md5', { patchHash: MD5 }, 400, 'bad-patch'],
     ['one outside the repository', { patchPath: '../x.patch' }, 400, 'bad-patch'],
     ['its hash alone', { patchRepoId: undefined, patchCommit: undefined, patchPath: undefined }, 400, 'bad-patch']]) {
     const { who = 'reviewer', ...fields } = more
@@ -272,6 +292,7 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
     const answer = await h.send(`/api/npm/package?${query(asked)}`, who)
     assert.deepEqual([answer.status, answer.json().error], [status, error], why)
   }
+  assert.equal(h.asked.filter(asked => asked.includes('unconnected')).length, 0, 'GitHub asked of no repository by a name none connected has')
   assert.equal((await h.send(`/api/npm/versions?${new URLSearchParams({ name: 'patched-lib', ...patch })}`)).json().error, 'bad-patch', 'nor of what isn\'t a version\'s files')
 
   const context = { ecosystem: 'npm', package: 'patched-lib', version: '1.0.0', integrity: pkg.doc.dist.integrity, patchHash: hash }
@@ -282,7 +303,8 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
   assert.equal((await save('image.bin')).json().error, 'non-text-review-file')
   const outsider = await h.send('/api/npm/reviews', 'outsider', { ...context, ...patch, action: 'save', file: 'added.js', status: 'accept', comment: '' })
   assert.deepEqual([outsider.status, outsider.json().error], [404, 'no-repository'], 'one who reads none of the repository its patch is in reviews none of it')
-  let review = (await save('added.js')).json().review
+  // Asked by its repository's name, at another commit and path: kept as read, by its repository's id, where it was.
+  let review = (await save('added.js', { patchRepoId: 'org/repo', patchCommit: 'd'.repeat(40), patchPath: 'moved/since.patch' })).json().review
   assert.deepEqual([review.patchHash, review.patchSource], [hash, { repoId: 1, commit, path }], 'a review of it as patched, where its patch was read kept')
   for (const file of ['index.js', 'new name.js', 'package.json']) review = (await save(file, { reviewId: review.id, revision: review.revision })).json().review
   const published = await h.send('/api/npm/reviews', 'reviewer', { ...context, ...patch, action: 'publish', reviewId: review.id, revision: review.revision, teamIds: ['reviewers'],
@@ -300,4 +322,78 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
   assert.equal((await h.send(`/api/npm/reviews/latest?${new URLSearchParams({ package: 'patched-lib', version: '1.0.0', integrity: context.integrity })}`)).json().review, null)
   assert.equal((await h.send('/api/npm/reviews', 'reviewer', { ...context, action: 'revoke', reviewId: review.id, revision: review.revision })).status, 200,
     'revoked with no need to read its patch')
+})
+
+// A repository's files, by path and the first character of the commit asked at, as GitHub's contents API answers them; and what was asked of it.
+function githubFiles(t, held) {
+  const asked = []
+  t.mock.method(globalThis, 'fetch', input => {
+    const url = new URL(String(input))
+    const path = decodeURIComponent(url.pathname.slice('/repos/org/repo/contents/'.length))
+    asked.push(`${path}@${url.searchParams.get('ref')[0]}`)
+    const text = held[asked.at(-1)]
+    if (text instanceof Response) return Promise.resolve(text.clone())
+    return Promise.resolve(text === undefined ? Response.json({ message: 'Not Found' }, { status: 404 }) : Response.json(contents(path, text)))
+  })
+  return asked
+}
+// Patches kept beyond an instance, as npm-kept.ts patchStore keeps them.
+const patchesKept = (kept = new Map()) => ({ kept, read: key => Promise.resolve(kept.has(key) ? { value: kept.get(key) } : null),
+  readMany: keys => Promise.resolve(new Map(keys.flatMap(key => kept.has(key) ? [[key, { value: kept.get(key) }]] : []))),
+  write: (key, patch) => { kept.set(key, patch); return Promise.resolve() } })
+// A pull request's dependencies as told (pull-dependencies.ts), its lockfile in `web` read at `head`, locking `packages`.
+const toldOf = (head, packages) => ({ base: 'b'.repeat(40), head, cut: false, lockfiles: [{ paths: ['web/pnpm-lock.yaml'], more: 0, moreLocked: 0, added: packages.slice(0, 1),
+  locked: packages.map(pkg => ({ ...pkg })) }, { paths: ['bun.lock'], error: 'lockfile-unsupported' }] })
+const lockedBy = (name, hash, more = {}) => ({ name, version: '1.0.0', source: 'registry', integrity: 'sha512-x', lockfile: 'pnpm', patchHash: hash, patchDir: 'web', ...more })
+const filesOf = told => Object.fromEntries(told.lockfiles[0].locked.map(pkg => [pkg.name, pkg.patchPath ?? null]))
+
+test('a patch its lockfile names by its hash alone is told its file as its versions are: the one its pnpm-workspace.yaml names, held to its hash, found once and kept by its repository and hash for good', async t => {
+  const [named, every, moved] = [variant('named'), variant('every'), variant('moved')]
+  const asked = githubFiles(t, { 'web/pnpm-workspace.yaml@1': 'patchedDependencies:\n  named@1.0.0: fixes/named.patch\n  every: ../shared/every.patch\n  moved@1.0.0: fixes/moved.patch\n',
+    'web/fixes/named.patch@1': named, 'shared/every.patch@1': every, 'web/fixes/moved.patch@1': 'another\n' })
+  const head = '1'.repeat(40)
+  const packages = [lockedBy('named', sha256(named)), lockedBy('every', sha256(every)), lockedBy('moved', sha256(moved)), lockedBy('absent', 'd'.repeat(64)),
+    lockedBy('listed', 'f'.repeat(64), { patchPath: 'web/patches/listed.patch' }), lockedBy('md5', MD5), { name: 'plain', version: '1.0.0', source: 'registry', lockfile: 'pnpm' }]
+  const store = patchesKept()
+  const told = { github: false }
+  const answer = await withPatchFiles(toldOf(head, packages), 41, 'org/repo', 'token', store, told)
+  assert.deepEqual(filesOf(answer), { named: 'web/fixes/named.patch', every: 'shared/every.patch', moved: null, absent: null, listed: 'web/patches/listed.patch', md5: null, plain: null },
+    'its version\'s, else its package\'s, from its lockfile\'s directory; none where the file named is another patch, none is named, or pnpm 9 names it by an md5')
+  assert.deepEqual([answer.lockfiles[0].added[0].patchPath, answer.lockfiles[1], told.github], ['web/fixes/named.patch', { paths: ['bun.lock'], error: 'lockfile-unsupported' }, true])
+  assert.deepEqual(asked.toSorted(), ['shared/every.patch@1', 'web/fixes/moved.patch@1', 'web/fixes/named.patch@1', 'web/pnpm-workspace.yaml@1'], 'each file read once')
+  assert.deepEqual(store.kept.get(patchKey(41, sha256(named))), { commit: head, path: 'web/fixes/named.patch', text: named }, 'kept with its text')
+  assert.equal(store.kept.size, 2)
+
+  // Told again: none looked for; at another commit, only those not found at the first.
+  asked.length = 0
+  const again = { github: false }
+  assert.deepEqual(filesOf(await withPatchFiles(toldOf(head, packages), 41, 'org/repo', 'token', store, again)), filesOf(answer))
+  assert.deepEqual([asked, again.github], [[], false], 'GitHub asked for none of them')
+  assert.deepEqual(filesOf(await withPatchFiles(toldOf('2'.repeat(40), packages), 41, 'org/repo', 'token', store)), filesOf(answer), 'where each was found, its hash naming it at any commit')
+  assert.deepEqual(asked, ['web/pnpm-workspace.yaml@2'], 'those not found looked for at the other commit')
+
+  // Another repository's are none of this one's; one kept beyond the instance is told as kept.
+  asked.length = 0
+  const kept = patchesKept(new Map([[patchKey(42, sha256(named)), { commit: 'a'.repeat(40), path: 'kept/named.patch', text: named }]]))
+  assert.deepEqual([filesOf(await withPatchFiles(toldOf(head, [lockedBy('named', sha256(named))]), 42, 'org/repo', 'token', kept)), asked], [{ named: 'kept/named.patch' }, []])
+  assert.deepEqual(filesOf(await withPatchFiles(toldOf(head, [lockedBy('named', sha256(named))]), 43, 'org/repo', 'token', patchesKept())), { named: 'web/fixes/named.patch' })
+  assert.ok(asked.includes('web/fixes/named.patch@1'), 'found anew for a repository none is kept of')
+
+  // A file GitHub has no text of is none; GitHub failing fails the whole, as a lockfile's read does.
+  t.mock.restoreAll()
+  githubFiles(t, { 'web/pnpm-workspace.yaml@3': Response.json([{ type: 'file' }]), 'web/pnpm-workspace.yaml@4': Response.json({ message: 'Service Unavailable' }, { status: 503 }) })
+  assert.deepEqual(filesOf(await withPatchFiles(toldOf('3'.repeat(40), [lockedBy('odd', 'c'.repeat(64))]), 41, 'org/repo', 'token', store)), { odd: null })
+  await assert.rejects(withPatchFiles(toldOf('4'.repeat(40), [lockedBy('odd', 'c'.repeat(64))]), 41, 'org/repo', 'token', store), { message: 'github-status-503' })
+})
+
+test('a patch kept beyond the instance is read of it, held to its hash again, GitHub asked for none of it; one kept other than its hash says read anew', async t => {
+  const text = variant('kept')
+  const asked = githubFiles(t, { 'patches/x.patch@c': text })
+  const where = { hash: sha256(text), repoId: 31, commit, path: 'patches/x.patch' }
+  const store = patchesKept(new Map([[patchKey(31, where.hash), { commit: 'a'.repeat(40), path: 'was/here.patch', text }], [patchKey(32, where.hash), { commit, path: 'x', text: `${text}\n` }]]))
+  const told = { github: false }
+  const read = await readPatch('org/repo', 'token', where, store, told)
+  assert.deepEqual([read.commit, read.path, read.files.length, asked, told.github], ['a'.repeat(40), 'was/here.patch', 4, [], false], 'as kept, where it was read')
+  await readPatch('org/repo', 'token', { ...where, repoId: 32 }, store, told)
+  assert.deepEqual([asked, told.github, store.kept.get(patchKey(32, where.hash))], [['patches/x.patch@c'], true, { commit, path: 'patches/x.patch', text }], 'and kept in its place')
 })

@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit'
 import { appMarkup } from './markup.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
+import { isPatchHash } from '../../common/managed/npm-packages.js'
 import { discardDependencyReview, myDependencyReviews, teamDependencyReviews } from './client-managed.js'
 import { openDiscardReviewDialog } from './lazy-dialogs.js'
 import { managedHistory } from './managed-history.js'
@@ -10,10 +11,11 @@ import { showToast } from './toast.js'
 import { reviewAuthor, reviewBadge, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel } from './npm-review-presentation.js'
 
 // A review's page: of its version against its base, as patched where it is
-// a patched one's, the patch read where it was.
+// a patched one's, the patch read where it was; one of a patch pnpm 9 named
+// by an md5, which is read no more, its version's.
 export const dependencyReviewRoute = review => ({ view: 'npm', packageName: review.package, packageSpec: review.version, bundleTab: 'review',
   ...(review.basePackage === null ? {} : { reviewPackage: review.basePackage, reviewSpec: review.baseVersion }),
-  ...(review.patchHash && review.patchSource ? { patch: { hash: review.patchHash, ...review.patchSource } } : {}) })
+  ...(isPatchHash(review.patchHash) && review.patchSource ? { patch: { hash: review.patchHash, ...review.patchSource } } : {}) })
 
 const compactDate = time => {
   const date = new Date(time)

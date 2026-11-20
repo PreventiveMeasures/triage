@@ -59,7 +59,8 @@ export async function lockedAt(fullName: string, token: string, sha: string, kep
 
 // The versions those of `read`'s lockfiles `held` holds to lock, each once,
 // each patch's file from the repository's root (patchedIn), the first of
-// them that names one there, and their paths.
+// them that names one there, with the directory of the first lockfile that
+// locks it so, and their paths.
 export function lockedIn(read: CommitLockfiles, held: (path: string) => boolean = () => true) {
   const packages = new Map<string, LockedPackage>()
   const paths: string[] = []
