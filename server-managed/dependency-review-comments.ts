@@ -2,16 +2,19 @@
 // button to give (reviewed-dependencies.ts `formatDependencyReviews`): of each
 // of one's reviews, as their lists and the review page show them
 // (`withFormatted`), and of those of the versions an open pull request adds
-// (`formattedPull`). It is given one's own published reviews alone, never
+// (`formattedPull`), but the versions the host's `lookup` passes already,
+// which want no review there, and those one's own comments there review
+// alike already. It is given one's own published reviews alone, never
 // another's, a draft or a revoked one, however it is asked (`formatOwn`, the
 // only caller of the hook); and is told of none where it answers nothing, or
 // fails, which is logged.
 import type { DependencyReview, DependencyReviewStore } from './dependency-reviews.ts'
+import type { LockedPackage } from './locked-packages.ts'
 import type { PullDependencies } from './pull-dependencies.ts'
-import { comparedWith, reviewsByVersion, reviewsOf } from './pull-dependency-reviews.ts'
+import { askedOf, comparedWith, reviewsByVersion, reviewsOf } from './pull-dependency-reviews.ts'
 import { eachOf } from './queue.ts'
 import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
-import type { DependencyReviewEntry, ReviewedDependencies } from './reviewed-dependencies.ts'
+import { type DependencyReviewEntry, type ReviewedDependencies, askReviewed } from './reviewed-dependencies.ts'
 
 const FORMAT_AT_ONCE = 8
 // The longest comment told, past which none is.
@@ -63,17 +66,21 @@ export function withFormatted<T extends DependencyReview>(reviewed: ReviewedDepe
   })
 }
 
-// The ids of those of `reviews` `user` published of the versions `told`
-// adds, as its lockfiles lock each: of its version, of an integrity it is
-// locked with and of its patch, whole or compared with a version it was
-// (pull-dependency-reviews.ts reviewsOf, comparedWith).
-function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string): Set<string> {
+// Those of `reviews` `user` published of the versions `told` adds, by their
+// ids, each with the versions it is of, as its lockfiles lock each: of its
+// version, of an integrity it is locked with and of its patch, whole or
+// compared with a version it was (pull-dependency-reviews.ts reviewsOf,
+// comparedWith).
+interface Own { review: PublishedReview; pkgs: LockedPackage[] }
+function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string): Map<string, Own> {
   // Theirs by the version they are of, each version probed once.
   const theirs = reviewsByVersion(reviews.filter(review => review.id !== undefined && review.reviewer === user))
-  const mine = new Set<string>()
+  const mine = new Map<string, Own>()
   if (theirs.size === 0) return mine
   for (const pkg of told.lockfiles.flatMap(dir => 'added' in dir ? dir.added : [])) {
-    for (const review of reviewsOf(pkg, theirs)) if (comparedWith(review, pkg, pkg.was ?? [])) mine.add(review.id!)
+    for (const review of reviewsOf(pkg, theirs)) {
+      if (comparedWith(review, pkg, pkg.was ?? [])) (mine.get(review.id!) ?? mine.set(review.id!, { review, pkgs: [] }).get(review.id!)!).pkgs.push(pkg)
+    }
   }
   return mine
 }
@@ -81,12 +88,22 @@ function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: str
 // The comment the host formats of `user`'s reviews of the versions pull
 // request `number` of `repository` adds (`told`), those its review's state
 // tells of, published to a team counting for it; none where it has none.
+// A review is left out where every version it is of, as locked, wants no
+// comment of it there: the host's `lookup` passes it already, or `user`'s
+// own comments there (of `commented`, the reviews its comments make) review
+// it with the same verdict, as copying it would but repeat them. A version
+// `lookup` fails to answer of keeps its review.
 export async function formattedPull(reviewed: ReviewedDependencies | null, db: Pick<DependencyReviewStore, 'listOwnDependencyReviewsById'>, user: string,
-  told: PullDependencies, state: RepoReviewState | null, pullRequest: { repository: string; number: number }): Promise<string | null> {
+  told: PullDependencies, state: RepoReviewState | null, pullRequest: { repository: string; number: number }, commented: PublishedReview[] = []): Promise<string | null> {
   if (!reviewed?.formatDependencyReviews || !state) return null
   const mine = ownOfPull(told, state.reviews, user)
   if (mine.size === 0) return null
-  const ids = [...mine], reviews: DependencyReview[] = []
+  const { passed } = await askReviewed(reviewed.lookup, new Map([...mine.values()].flatMap(({ pkgs }) => pkgs.map(askedOf))))
+  const there = reviewsByVersion(commented.filter(review => review.reviewer === user))
+  const ids = [...mine].filter(([, { review, pkgs }]) => pkgs.some(pkg => !passed.has(askedOf(pkg)[0]) && !reviewsOf(pkg, there).some(made => made.status === review.status)))
+    .map(([id]) => id)
+  if (ids.length === 0) return null
+  const reviews: DependencyReview[] = []
   for (let at = 0; at < ids.length; at += REVIEWS_AT_ONCE) reviews.push(...await db.listOwnDependencyReviewsById(user, ids.slice(at, at + REVIEWS_AT_ONCE)))
   return formatOwn(reviewed, user, reviews, pullRequest)
 }

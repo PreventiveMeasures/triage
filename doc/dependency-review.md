@@ -147,7 +147,7 @@ Where several pull requests add a version, its reviews in each are compared: who
   Where each lacks a review of the other's, both are red; where one holds every review, it lists the version as usual.
 
 A patched version stands by its patch, as each patch of it is reviewed apart.
-A version with a review of those it needs names who passes it so far (`alice 1/2`), the reader as `you`; one with none shows no count.
+A version with a review of those it needs shows how many (`1/2`), and its tooltip names the reviewers; one with none shows no count.
 
 The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
 A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.
@@ -249,6 +249,7 @@ It receives `reviews`, each entry with:
 
 It is asked of each of the asker's reviews alone, wherever it is shown to its author.
 For an open pull request, it is asked of all the asker's reviews published to a team counting for its repository of the versions it adds (matched by integrity and patch, whole or compared with a version they replaced), with `pullRequest` as `{ repository, number }`, for its popup and its card on a team's Dependencies tab to copy.
+Reviews of versions `lookup` already passes are left out, as they want no review there, and so are those the asker's own comments on that pull request already make with the same verdict; where none is left, there is nothing to copy.
 It returns the text to copy, and an empty, null or undefined answer, one over a million characters, or a failure (logged) gives nothing to copy.
 It is given only the asker's own published, unrevoked reviews, however it is asked, so another author's review never offers the button.
 

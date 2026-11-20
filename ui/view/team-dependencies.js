@@ -228,33 +228,27 @@ const isReader = one => one.login.toLowerCase() === reader()
 
 // A version's review: that it can't be reviewed, a reviewer rejects it, or
 // how many reviews pass it of those it needs, a patched one's of it as
-// patched; its label, tint and what it says, none where it wants no review;
-// and whose reviews tell where it stands (`by`): those rejecting it, else
-// those passing it so far.
+// patched; its label, tint and what it says, none where it wants no review.
 const WHY = { git: 'From git, which isn’t reviewed', tarball: 'A tarball not npm’s registry’s of its version, which isn’t reviewed',
   integrity: 'Locked with no integrity, which its reviews are held to',
   unlocked: 'Locked by none of the lockfiles installing the bundle at its commit, so nothing holds its reviews to an integrity' }
 function reviewState(pkg, review) {
   const shown = reviewOf(pkg, review)
   if (shown === 'unsupported') return { label: 'can’t review', tint: 'is-failed', said: WHY[pkg.unsupported] }
-  if (pkg.rejected) {
-    return { label: 'rejected', tint: 'is-failed', said: 'A reviewer rejects it: it wants their newer accepting review', by: (pkg.reviewers ?? []).filter(one => one.status === 'reject') }
-  }
+  if (pkg.rejected) return { label: 'rejected', tint: 'is-failed', said: 'A reviewer rejects it: it wants their newer accepting review' }
   if (shown === 'wanted') {
-    return { label: `${pkg.reviews}/${review.required}`, tint: 'is-wanted', by: (pkg.reviewers ?? []).filter(one => one.passes),
+    return { label: `${pkg.reviews}/${review.required}`, tint: 'is-wanted',
       said: `${plural(pkg.reviews, 'review')} of ${review.required} required${pkg.commented ? `; ${plural(pkg.commented, 'reviewer')} in its comments, which count here alone` : ''}` }
   }
   return null
 }
-// A review's badge: whose reviews it stands on, the first by name, the
-// reader's as theirs, then its label; none for one no review passes yet,
-// which most are. What it says is its row's tooltip's to tell (versionTip).
+// A review's badge, its label alone; none for one no review passes yet,
+// which most are. What it says, and whose its reviews are, is its row's
+// tooltip's to tell (versionTip).
 function reviewBadge(pkg, review) {
   const stance = reviewState(pkg, review)
   if (!stance || (stance.tint === 'is-wanted' && pkg.reviews === 0)) return nothing
-  const by = stance.by ?? []
-  return html`<span class="team-deps-review ${stance.tint}">${by.length > 0
-    ? html`<span class="team-deps-by">${few([isReader(by[0]) ? 'you' : by[0].login], by.length - 1)}</span>` : nothing}${stance.label}</span>`
+  return html`<span class="team-deps-review ${stance.tint}">${stance.label}</span>`
 }
 
 // Each verdict as a reviewer's line of a version's tooltip says it, and

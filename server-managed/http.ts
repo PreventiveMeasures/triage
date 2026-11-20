@@ -241,10 +241,10 @@ import { type GithubAsked, type ListedLockfile, type LockfileRead, type Lockfile
   type PullDependencyStore, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
 import { eachOf } from './queue.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
-import { MAX_REQUIRED_REVIEWS, type RepoDependencyReview } from './repository-dependency-reviews.ts'
+import { MAX_REQUIRED_REVIEWS, type PublishedReview, type RepoDependencyReview } from './repository-dependency-reviews.ts'
 import { EVERY_LOCKFILE, heldTo, reviewedIn, scopeOf } from './lockfile-scope.ts'
 import { type BundledVersion, bundleDependencies, installsBundle } from './bundle-dependency-reviews.ts'
-import { type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
+import { type CommentReviews, type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import { formattedPull, withFormatted } from './dependency-review-comments.ts'
 import type { ReviewedDependencies } from './reviewed-dependencies.ts'
 import { commentReviews } from './pull-comment-reviews.ts'
@@ -2594,10 +2594,18 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   // open (pull-comment-reviews.ts reads whether it is with them).
   const parse = reviewed?.parseComments
   const comments = state && parse ? commentReviews({ fullName, number, token, parse, reviewers: accounts => repoReviewers(deps, repoId, accounts) }) : null
-  // The comment the host formats of the reader's reviews of its versions, for its copy button.
-  const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number })
-  return { value: { number: told.number, ...await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: comments }),
-    ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null }
+  // The reviews its comments make, as read for its review, the reader's own among them.
+  const commented: PublishedReview[] = []
+  const noting: CommentReviews | null = comments && (async wanting => {
+    const read = await comments(wanting)
+    commented.push(...read.reviews)
+    return read
+  })
+  const dependencies = await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting })
+  // The comment the host formats of the reader's reviews of its versions, for
+  // its copy button, but those its comments make of theirs already.
+  const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented)
+  return { value: { number: told.number, ...dependencies, ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null }
 
 }
 

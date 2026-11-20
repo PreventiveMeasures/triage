@@ -144,7 +144,7 @@ function shown<T extends LockedPackage>(pkg: T): Omit<T, 'integrity' | 'shasum' 
 
 // A version as the registered reviewed dependencies are asked of it, by
 // what it is asked.
-function askedOf(pkg: LockedPackage): [string, ReviewedDependency] {
+export function askedOf(pkg: LockedPackage): [string, ReviewedDependency] {
   const dependency: ReviewedDependency = { ecosystem: 'npm', lockfile: pkg.lockfile ?? 'npm', name: pkg.name, version: pkg.version ?? '', integrity: pkg.integrity ?? '',
     ...pkg.shasum ? { shasum: pkg.shasum } : {}, ...pkg.patchHash ? { patchHash: pkg.patchHash } : {} }
   return [JSON.stringify(dependency), dependency]
