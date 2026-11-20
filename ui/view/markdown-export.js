@@ -103,7 +103,11 @@ function documentTitle(reports, workspace) {
   return prefix || `${names.length} reports`
 }
 
-export function reportsToMarkdown({ oneSamplePerGroup = false } = {}) {
+// `shipped(f, row)` places a finding's evidence in a dependency where its
+// bundle records the package (focus-code.js bundleDependencyRepo), as the
+// card does; the caller hands it in, so this module loads no view code.
+export function reportsToMarkdown({ oneSamplePerGroup = false, shipped = null } = {}) {
+  const hooks = shipped ? { ...HOOKS, evidence: (row, f, i) => evidenceUrl(row, f, findingRepoTarget(f), i, (r) => shipped(f, r)) } : HOOKS
   const reports = state.reports
   // The selection in force — the confirm dialog's relaxed copy while an
   // export runs under one, the toolbar's otherwise. The same one the
@@ -145,7 +149,7 @@ export function reportsToMarkdown({ oneSamplePerGroup = false } = {}) {
     filters: activeFilterDescriptions(fields),
     counts: { included: groups.length, total: bucket.length },
     groups,
-  }, HOOKS)
+  }, hooks)
 }
 
 // The file's name: the workspace's, a single report's own (its

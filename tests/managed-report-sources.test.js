@@ -148,6 +148,29 @@ function sourcesTests(backend) {
     assert.equal(sourceLinkResolver(sources, parent, imports, sources, new Map(data.packageDirs))('#local'), null, 'the transmitted workspace boundary blocks the root manifest')
   })
 
+  // The repository and commit a cited dependency records, which its
+  // evidence rows link to; none for a package recording no commit, or one
+  // no visible finding cites.
+  test('Stasis source responses carry the cited packages\' recorded repositories and commits', async t => {
+    const commit = '0123456789abcdef0123456789abcdef01234567'
+    const h = await setup(t, 'stasis', new Map([
+      ['.', { name: 'root', version: '1', files }],
+      ['node_modules/axios', { name: 'axios', version: '1.6.0', repo: { github: 'axios/axios', commit }, files: { 'lib/http.js': 'http' } }],
+      ['node_modules/babel-core', { name: 'babel-core', version: '7.0.0', repo: { github: 'babel/babel', directory: 'packages/babel-core', commit }, files: { 'index.js': 'babel' } }],
+      ['node_modules/qs', { name: 'qs', version: '6.0.0', repo: { github: 'ljharb/qs' }, files: { 'index.js': 'qs' } }],
+      ['node_modules/uncited', { name: 'uncited', version: '1.0.0', repo: { github: 'o/uncited', commit }, files: { 'index.js': 'uncited' } }],
+    ]))
+    const report = await h.seed(JSON.stringify({ findings: [{ file: 'src/main.js', evidence: [
+      { file: 'node_modules/axios/lib/http.js' }, { file: 'node_modules/babel-core/index.js' }, { file: 'node_modules/qs/index.js' },
+    ] }] }))
+    const data = (await h.send(report.id)).json()
+    assert.equal(new Map(data.packageDirs).get('node_modules/axios/lib/http.js'), 'node_modules/axios')
+    assert.deepEqual(new Map(data.packageRepos), new Map([
+      ['node_modules/axios', { github: 'axios/axios', commit }],
+      ['node_modules/babel-core', { github: 'babel/babel', directory: 'packages/babel-core', commit }],
+    ]))
+  })
+
   for (const format of ['commonjs', 'resource']) {
     test(`managed package aliases resolve without exposing an uncited ${format} manifest`, async t => {
       const parent = 'packages/app/src/main.js', target = 'packages/app/_local/linking/index.js'

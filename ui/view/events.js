@@ -13,7 +13,7 @@ import { downloadBlob, report } from './dom.js'
 import { commonPrefix, configureRevalidation, depsDirName, handoffBlock, isModule, lineRange } from './format.js'
 import { activeTabFor, canApplyFixToGroup, canEditTriage, canTriageFinding, findGroupById, findingRepo, fixApplies, getShownGroups, groupState, groupWithPassRows, syncGroupTriage, tabKey, triageActionPlan, triageEntry, triageScope } from './group.js'
 import { applyOpeningFilters, clearFilterOverride, defaultConfidenceFloor, defaultRevalidateFilter, resetFilters, setFilterOverride } from './filters.js'
-import { focusCodeHistory, focusCodeLinkPosition, revealFocusCodeLines } from './focus-code.js'
+import { bundleDependencyRepo, focusCodeHistory, focusCodeLinkPosition, loadBundleDependencyRepos, revealFocusCodeLines } from './focus-code.js'
 import { pushed, stepped } from './focus-code-history.js'
 import { bundleFileHistory, stepBundleFile, visitBundleFile } from './bundle-code-history.js'
 import { refreshGraph2Sidebar, refreshGraph2TopPkgs, render } from './render.js'
@@ -1411,6 +1411,10 @@ report.addEventListener('click', (e) => {
         context: { reportId: finding._managedReportId, findingId: finding.id, repository: url.pathname.split('/').slice(1, 3).join('/') },
         formUrl: url.href, title: url.searchParams.get('title') ?? '',
         finding, draftOptions: { ...issueDraftOptions(finding), findingLink: findingLinkFor(finding) },
+        // The draft again once the bundle says where the evidence in
+        // dependencies is (focus-code.js), which a card need not have read.
+        draftOptionsReady: loadBundleDependencyRepos(finding)
+          .then(() => ({ ...issueDraftOptions(finding), findingLink: findingLinkFor(finding) })),
         renderBody: renderHighlighted, render,
       }).catch(() => showToast('Could not open issue creation. Please retry.'))
       return
@@ -2579,7 +2583,7 @@ document.addEventListener('download-requested', async () => {
   // unwritten, and the button is one click away for a reader who has
   // seen what they wanted to see.
   if (view) {
-    await openExportViewDialog(withExportFilters(fields, () => reportsToMarkdown({ oneSamplePerGroup })))
+    await openExportViewDialog(withExportFilters(fields, () => reportsToMarkdown({ oneSamplePerGroup, shipped: bundleDependencyRepo })))
     return
   }
   if (!confirmed) return
@@ -2587,7 +2591,7 @@ document.addEventListener('download-requested', async () => {
     await runPrint(fields, { oneSamplePerGroup })
     return
   }
-  withExportFilters(fields, () => downloadReportsAsMarkdown({ oneSamplePerGroup }))
+  withExportFilters(fields, () => downloadReportsAsMarkdown({ oneSamplePerGroup, shipped: bundleDependencyRepo }))
 })
 
 // `<analyzer-select>` dispatches this when a row in its analyzer /

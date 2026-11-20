@@ -22,6 +22,7 @@ export async function fetchReportSources(id, teamId) {
       imports: new Map((data.imports ?? []).map(([parent, targets]) => [parent, new Map(targets)])),
       formats: new Map(data.formats ?? []),
       packageDirs: new Map(data.packageDirs ?? []),
+      packageRepos: new Map(data.packageRepos ?? []),
     }
   })
   const owner = readReportSources(id, teamId)

@@ -27,6 +27,7 @@
 // a new bundle kind or field handled here is visible to both.
 
 import { Bundle } from '@exodus/stasis-core/bundle'
+import { bundleCommitHash } from './bundle-commit.js'
 import { sourcemapEntries } from './bundle-sourcemap.js'
 import { utf8ByteLength } from './utf8.js'
 
@@ -296,6 +297,27 @@ export function bundlePackageDirs(details) {
   }
   packageDirsCache.set(details.bundle, map)
   return map
+}
+
+// The repository and commit each package in a (stasis) bundle records
+// for itself, by its module directory (bundlePackageDirs's values): what
+// Stasis stamps on a module from its package.json `repository`, at its
+// `gitHead`. Only modules recording both a GitHub repository and a full
+// commit, and never the root module, whose repository is the bundle's.
+// `dirs`, when given, limits it to those directories. Empty for anything
+// else, sourcemaps and v0 bundles among them.
+export function bundlePackageRepos(details, dirs = null) {
+  const repos = new Map()
+  if (details?.kind !== 'stasis' || !details.bundle?.modules) return repos
+  for (const [dir, info] of details.bundle.modules) {
+    if (dir === '.' || (dirs && !dirs.has(dir))) continue
+    const github = info?.repo?.github
+    const commit = bundleCommitHash(info?.repo?.commit)
+    if (typeof github !== 'string' || github === '' || !commit) continue
+    const directory = typeof info.repo.directory === 'string' ? info.repo.directory : ''
+    repos.set(dir, { github, ...(directory ? { directory } : {}), commit })
+  }
+  return repos
 }
 
 // Map each named npm dependency a (stasis) bundle carries to the set of

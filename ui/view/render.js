@@ -11,7 +11,7 @@ import { resolveTriageConflicts } from './dialogs/triage-conflict-dialog.js'
 import { differingReports, isBundleInRemote, isInRemote, remoteCount, triageSync } from './client-sync.js'
 import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
-import { SEVERITIES, canDropRevalidation, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, isRevalidation, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
+import { SEVERITIES, canDropRevalidation, configureDependencyRepos, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, isRevalidation, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, runFiltersOffered, scopeRows, shouldLockConfirmed } from './filters.js'
 import { ANALYZER_LABELS } from './analyzer-select.js'
@@ -1956,6 +1956,9 @@ function renderImpl() {
   // (fallback). Once per render is enough — every helper call below
   // sees the freshly chosen dir.
   configureDepsDir(state.reports)
+  // And the installs whose upstream a loaded finding names at a commit,
+  // which evidence rows in them link to (format.js evidenceUrl).
+  configureDependencyRepos(state.reports)
   if (migrateLoadedIgnores()) queueMicrotask(() => { void saveTriage() })
   // With the dir settled, the source-layer findings that sit in it can
   // be marked as upstream code. Idempotent — it only fills a field in —
