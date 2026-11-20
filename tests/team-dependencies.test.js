@@ -2,8 +2,8 @@
 // repositories whose review is in effect for its reader, the open pull
 // requests whose versions want reviews, in the order picked, each version
 // listed under one of those reviewing it alike, dimmed under the rest naming
-// it, red under those holding reviews but lacking one that counts in another,
-// dimmed under one holding none where another holds some, with its review
+// it, red under those holding reviews but lacking one made in another's
+// comments, dimmed under one holding none where another holds some, with its review
 // and its details as its tooltip; those adding only versions others list
 // apart, a line each; every version apart, each once; and what each default
 // branch locks that wants reviews; each sub-tab at its address; a pull
@@ -409,14 +409,14 @@ test('a version pull requests add patched alike links to its review as patched b
   state.teamDependenciesTab = 'pulls'
 })
 
-test('a version several pull requests add: listed under one of those reviewing it alike, that with the fewest reviews left, dimmed under the rest; red under those holding reviews but lacking one counting in another; dimmed under one holding none where another holds some; those adding only versions others list apart, a line each', async () => {
+test('a version several pull requests add: listed under one of those reviewing it alike, that with the fewest reviews left, dimmed under the rest; red under those holding reviews but lacking one made in another\'s comments; dimmed under one holding none where another holds some; those adding only versions others list apart, a line each', async () => {
   // Reviewers of a version, each passing it: in its pull request's comments, or published to the team.
   const by = (...logins) => ({ reviews: logins.length, reviewers: logins.map(login => ({ login, status: 'accept', passes: true, comment: true })), commented: logins.length })
   const three = { ...terms, required: 3 }
   const adds = (...added) => ({ cut: false, review: three, lockfiles: [dir({ added })] })
   TEAM.push(14)
   branches[14] = { cut: false, review: { ...three, unreviewed: 0 }, lockfiles: [dir()] }
-  pulls[14] = { items: Array.from({ length: 13 }, (_, at) => pull(at + 1)), more: false }
+  pulls[14] = { items: Array.from({ length: 15 }, (_, at) => pull(at + 1)), more: false }
   Object.assign(dependencies, {
     // Reviewed alike in three: the two adding it alone leave as many reviews, the newer listing it, the other set apart; the one adding more tells it under that one.
     '14#1': adds(wants('alike', by('ann')), wants('solo')),
@@ -438,14 +438,18 @@ test('a version several pull requests add: listed under one of those reviewing i
     '14#12': adds(wants('none')),
     // One holding no review of what the two above differ on: under the first of them, as none holds every review.
     '14#13': adds(wants('differ')),
+    // One adding a version with a review in its comments, one published to the team not counting of it there, as compared with a version it doesn't replace;
+    // and one stacked on it, which but locks the version, that review counting there: the first lacks nothing, as none of it is another's comments'.
+    '14#14': adds(wants('stacked', { reviews: 1, commented: 1, reviewers: [{ login: 'dee', status: 'accept' }, { login: 'ann', status: 'accept', passes: true, comment: true }] })),
+    '14#15': { cut: false, review: { ...three, unreviewed: 1 }, lockfiles: [dir({ unreviewed: [wants('stacked', { reviews: 1, reviewers: [{ login: 'dee', status: 'accept', passes: true }] })] })] },
   })
   state.managedSession = { id: 'stood', role: 'triage', login: 'Bo' }
   Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'newest' })
   const view = shown([repo(14, 'org/m')])
   try {
     const text = await read(view)
-    assert.deepEqual(tabs(text).slice(0, 2), [['Pull requests', '13', true], ['Versions', '6', false]], 'counted with the rest')
-    const main = ['m#11', 'm#9', 'm#7', 'm#6', 'm#5', 'm#4', 'm#3', 'm#1']
+    assert.deepEqual(tabs(text).slice(0, 2), [['Pull requests', '15', true], ['Versions', '7', false]], 'counted with the rest')
+    const main = ['m#15', 'm#14', 'm#11', 'm#9', 'm#7', 'm#6', 'm#5', 'm#4', 'm#3', 'm#1']
     assert.deepEqual(cardsOf(text).map(nameOf), main, 'those listing a version, or lacking a review of one, in the order picked')
     const card = number => cardsOf(text).find(one => nameOf(one) === `m#${number}`)
     const rows = one => one.split('<li>').slice(1)
@@ -470,6 +474,10 @@ test('a version several pull requests add: listed under one of those reviewing i
     assert.match(card(7), /<a class="team-deps-row is-behind" href=\/npm\/differ@[^]*<span class="compare-tip-label">Lacks<\/span><span>ann’s review in m#6<\/span>[^]*1\/3<\/span>\s*<span class="team-deps-also">\+2<\/span>/u)
     assert.doesNotMatch(cardsOf(text).join(''), /team-deps-lacks/u, 'what each lacks in its tooltip alone')
     assert.match(text, /<p class="team-deps-quiet team-deps-key">3 versions lack reviews made elsewhere<\/p>/u, 'each counted in the line above them')
+
+    // A review published to the team, counting where a pull request but locks the version and not where one adds it: not lacked there, as it is no comment's.
+    assert.match(card(14), /<ul class="team-deps-versions"><li><a class="team-deps-row" href=\/npm\/stacked@[^]*<span class=>m#15<\/span>\s*<span>locks it, 1\/3<\/span>[^]*1\/3<\/span>\s*<\/a>/u)
+    assert.doesNotMatch(card(14), /is-behind|compare-tip-label">Lacks|is-same/u)
 
     // One holding no review of it: never red, but dimmed under the one holding one, which lists it.
     assert.match(card(11), /<ul class="team-deps-versions"><li><a class="team-deps-row" href=\/npm\/none@[^]*1\/3<\/span>\s*<span class="team-deps-also">\+2<\/span>/u)
@@ -498,12 +506,12 @@ test('a version several pull requests add: listed under one of those reviewing i
     const hidden = templateText(view.render())
     assert.deepEqual(apartOf(hidden), [], 'all of them hidden once asked')
     assert.match(hidden, /class="team-deps-more" aria-expanded=false [^]*?<\/svg>5 more\s+add only versions listed above<\/button>\s*<\/section>/u)
-    assert.equal(cardsOf(hidden).length, 8)
+    assert.equal(cardsOf(hidden).length, 10)
 
     // Whatever order is picked, each stands as it did.
     state.teamDependenciesSort = 'fewest'
     const fewest = templateText(view.render())
-    assert.deepEqual(cardsOf(fewest).map(nameOf), main)
+    assert.deepEqual(cardsOf(fewest).map(nameOf), [...main.slice(1), 'm#15'], 'the one holding none of its own last')
     view.toggle('covered')
     assert.deepEqual(apartOf(templateText(view.render())).map(nameOf), aside)
 
@@ -626,7 +634,11 @@ test('however reviews fall across the pull requests adding a version, some pull 
   branches[15] = { cut: false, review: { ...terms, required: 4, unreviewed: 0 }, lockfiles: [dir()] }
   let seed = 11
   const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
-  const stance = login => random() < 0.15 ? { login, status: 'reject', comment: true } : { login, status: 'accept', passes: true, comment: true }
+  // In its comments mostly, else published to the team, which counts in some pull requests and not others.
+  const stance = login => {
+    const where = random() < 0.7 ? { comment: true } : {}
+    return random() < 0.15 ? { login, status: 'reject', ...where } : { login, status: 'accept', ...where.comment || random() < 0.6 ? { passes: true } : {}, ...where }
+  }
   Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'newest' })
   // How many rows were dimmed, and red, over all of them: each some, lest none be tried.
   const seen = { dimmed: 0, red: 0 }

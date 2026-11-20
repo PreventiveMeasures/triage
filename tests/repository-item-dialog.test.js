@@ -240,6 +240,10 @@ test('where the server registers reviewed dependencies, its terms say so, with i
   assert.match(text, /Each version needs 2 full, accepting reviews by as many reviewers, or the server’s reviewed dependencies to pass it\./u)
   assert.match(text, /role="alert">The server’s reviewed dependencies didn’t answer for 1 version, so it wants reviews\./u)
   assert.match(text, /Reviews in its comments by 2 reviewers count too while it is open\./u)
+  // Where reviews count by its comments alone, those published here not: told so, nothing of theirs counting "too".
+  const alone = templateText(dialog.renderReviewTerms({ required: 2, reviewedDependencies: true, commentReviews: 2, byComments: true }))
+  assert.match(alone, /Each version needs 2 accepting reviews\s+in its comments by as many reviewers, or the server’s reviewed dependencies to pass it\./u)
+  assert.doesNotMatch(alone, /count too/u)
   assert.match(text, /role="alert">Its comments couldn’t be read for reviews, so none of theirs count\./u)
   assert.match(text, /These lockfiles aren’t reviewed: <code>docs\/<\/code>\./u)
   assert.match(text, /<h4 class="repo-item-deps-heading">New dependency versions<dependency-review-copy \.text=Reviewed refused \.label=Copy your dependency reviews of its versions>/u,

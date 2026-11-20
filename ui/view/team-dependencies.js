@@ -282,12 +282,16 @@ const counting = pkg => new Map((pkg.reviewers ?? []).flatMap(one => one.passes 
 // How each version stands under each pull request wanting it (`wanting`,
 // those taking a tie first), by its key, then the pull request's name;
 // `involved` the pull requests each is among the versions of (render).
-// One holding reviews of it but lacking one that counts in another:
-// `lacks`, each `{ login, status, pulls }`. Of the rest, those reviewed
-// alike have one list it, that with the fewest reviews left (`left`); the
-// others tell it `under` that one. One holding none, but unreviewed, tells
-// it under the one listing it with reviews, else under that holding most of
-// those lacking some; where none wanting it holds any, one of them lists it.
+// One holding reviews of it but lacking one made in another's comments,
+// which count there alone and could be made here too: `lacks`, each `{
+// login, status, pulls }`. A review published to the team isn't lacked:
+// where it counts is the server's to tell (of a version a pull request adds,
+// whole or against one it was; of one it locks besides, against any), not
+// where it was made. Of the rest, those reviewed alike have one list it,
+// that with the fewest reviews left (`left`); the others tell it `under`
+// that one. One holding none, but unreviewed, tells it under the one listing
+// it with most reviews, else under that holding most of those lacking some;
+// where none wanting it holds any, one of them lists it.
 function standings(wanting, involved) {
   const wanted = new Map()
   for (const pull of wanting) {
@@ -296,31 +300,35 @@ function standings(wanting, involved) {
       ;(wanted.get(versionKey(pkg)) ?? wanted.set(versionKey(pkg), []).get(versionKey(pkg))).push({ pull, has, alike: [...has.keys()].toSorted().join('\0') })
     }
   }
+  // Of two, the one holding more reviews, then leaving fewer, then the first.
+  const more = (one, other) => !one || other.has.size > one.has.size || (other.has.size === one.has.size && other.pull.left < one.pull.left) ? other : one
   const stood = new Map()
   for (const [key, wanters] of wanted) {
     const made = new Map()
     for (const { pull, pkg } of involved.get(key)?.values() ?? []) {
-      for (const [stance, one] of counting(pkg)) (made.get(stance) ?? made.set(stance, { login: one.login, status: one.status, pulls: [] }).get(stance)).pulls.push(pull)
+      for (const [stance, one] of counting(pkg)) {
+        if (one.comment) (made.get(stance) ?? made.set(stance, { login: one.login, status: one.status, pulls: [] }).get(stance)).pulls.push(pull)
+      }
     }
     const of = new Map()
     // The one listing it of those holding the same reviews, by those; and
-    // of those lacking some, the one holding most, then leaving fewest.
+    // of those lacking some, the one holding most.
     const listing = new Map()
     let most = null
     for (const wanter of wanters) {
       const { pull, has, alike } = wanter
       const lacks = has.size > 0 ? [...made].filter(([stance]) => !has.has(stance)).map(([, review]) => review) : []
       if (lacks.length === 0) {
-        if (!listing.has(alike) || pull.left < listing.get(alike).left) listing.set(alike, pull)
+        if (!listing.has(alike) || pull.left < listing.get(alike).pull.left) listing.set(alike, wanter)
         continue
       }
       of.set(pullName(pull), { lacks })
-      if (!most || has.size > most.has.size || (has.size === most.has.size && pull.left < most.pull.left)) most = wanter
+      most = more(most, wanter)
     }
-    const reviewed = [...listing].find(([alike]) => alike !== '')?.[1] ?? most?.pull ?? null
+    const reviewed = [...listing.values()].filter(({ has }) => has.size > 0).reduce(more, null) ?? most
     for (const { pull, alike } of wanters) {
       if (of.has(pullName(pull))) continue
-      const lister = alike === '' && reviewed ? reviewed : listing.get(alike)
+      const lister = (alike === '' && reviewed ? reviewed : listing.get(alike)).pull
       of.set(pullName(pull), pull === lister ? {} : { under: lister })
     }
     stood.set(key, of)

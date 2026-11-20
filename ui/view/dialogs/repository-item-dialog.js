@@ -223,18 +223,20 @@ class RepositoryItemDialog extends AppDialog {
   // lockfiles there (`baselineUnread`, the first few named), or the
   // reviewed dependencies answer, that the versions they would pass want
   // reviews. By how many reviewers its comments review its versions, which
-  // count while it is open, or that they couldn't be read. The lockfiles it
+  // count while it is open, or that they couldn't be read; where reviews
+  // count by its comments alone (`byComments`), told so in place of that. The lockfiles it
   // holds to, where not every one.
-  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [], commentReviews, commentsFailed, lockfiles }) {
+  renderReviewTerms({ required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [], commentReviews, commentsFailed, byComments, lockfiles }) {
     const named = baselineUnread.slice(0, 5)
-    return html`<p class="repo-item-quiet">Each version needs ${plural(required, 'full, accepting review')} by as many reviewers${reviewedDependencies
+    return html`<p class="repo-item-quiet">Each version needs ${plural(required, byComments ? 'accepting review' : 'full, accepting review')}${byComments
+      ? ' in its comments' : ''} by as many reviewers${reviewedDependencies
       ? ', or the server’s reviewed dependencies to pass it' : since
       ? html`; those the repository’s lockfiles locked at <code>${since.slice(0, 7)}</code> need none` : nothing}.</p>
       ${baselineError ? html`<p class="repo-item-quiet" role="alert">The versions its lockfiles locked at that commit couldn’t be read (${baselineError}), so every version wants its reviews.</p>` : nothing}
       ${named.length > 0 ? html`<p class="repo-item-quiet" role="alert">At that commit, ${named.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}${baselineUnread.length > named.length
         ? ` and ${(baselineUnread.length - named.length).toLocaleString('en-US')} more` : ''} couldn’t be read, so the versions ${baselineUnread.length === 1 ? 'it' : 'they'} locked want reviews.</p>` : nothing}
       ${unasked ? html`<p class="repo-item-quiet" role="alert">The server’s reviewed dependencies didn’t answer for ${plural(unasked, 'version')}, so ${unasked === 1 ? 'it wants' : 'they want'} reviews.</p>` : nothing}
-      ${commentReviews ? html`<p class="repo-item-quiet">Reviews in its comments by ${plural(commentReviews, 'reviewer')} count too while it is open.</p>` : nothing}
+      ${commentReviews && !byComments ? html`<p class="repo-item-quiet">Reviews in its comments by ${plural(commentReviews, 'reviewer')} count too while it is open.</p>` : nothing}
       ${commentsFailed ? html`<p class="repo-item-quiet" role="alert">Its comments couldn’t be read for reviews, so none of theirs count.</p>` : nothing}
       ${lockfiles ? html`<p class="repo-item-quiet">${lockfiles.mode === 'include' ? 'Only these lockfiles are reviewed: ' : 'These lockfiles aren’t reviewed: '}${lockfiles.paths.length === 0 ? 'none'
         : lockfiles.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}.</p>` : nothing}`

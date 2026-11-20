@@ -234,7 +234,8 @@ export function heldDependencies<T extends PullDependencies>(told: T, scope: Loc
 // wanting one of the reviews its comments make (`commentReviews`, where the
 // host reads them), and the review's terms (`review`), with how many
 // reviewers' its comments count (`commentReviews`), or that they couldn't be
-// read (`commentsFailed`), and how many versions across its directories want
+// read (`commentsFailed`), and that reviews count by comments alone, those
+// published here not (`byComments`, where the host reads them), and how many versions across its directories want
 // reviews, of those it adds (`toReview`) and the rest (`unreviewed`), and
 // can't be reviewed (`unsupported`), each once; how many the reviewed dependencies failed to
 // answer (`unasked`), and whether they are registered (`reviewedDependencies`,
@@ -253,7 +254,13 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   const answered = heldDependencies(told, scope)
   if (!state) return { ...answered, lockfiles: answered.lockfiles.map(dir => reviewedDirectory(dir, null)) }
   const { cut, lockfiles: held } = answered
-  let context = { state, reviews: reviewsByVersion(state.reviews), baseline: reviewed ? null : baseline }
+  // Reviews published here count but where the host reads those pull
+  // requests' comments make (`parseComments`): what is reviewed is then the
+  // host's to tell, by those and its `lookup`, and one published here counts
+  // for nothing, whatever it was compared with: of a pull request's versions,
+  // a default branch's or a bundle's. Its author still copies it as a comment.
+  const published = reviewed?.parseComments ? [] : state.reviews
+  let context = { state, reviews: reviewsByVersion(published), baseline: reviewed ? null : baseline }
   // What wants a review, as `lookup` is asked of, each once.
   const wanting = () => {
     const asked = new Map<string, ReviewedDependency>()
@@ -292,7 +299,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   }
   const comments = parsing.size > 0 && commentReviews ? await commentReviews([...parsing.values()]) : { reviews: [], failed: false }
   if (comments.reviews.length > 0) {
-    context = { ...context, reviews: reviewsByVersion([...state.reviews, ...comments.reviews.map(review => ({ ...review, comment: true as const }))]) }
+    context = { ...context, reviews: reviewsByVersion([...published, ...comments.reviews.map(review => ({ ...review, comment: true as const }))]) }
     await ask(new Map([...wanting()].filter(([key]) => !asked.has(key))))
   }
   const dirs = held.map(dir => reviewedDirectory(dir, (pkg, bases) => {
@@ -302,7 +309,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   const unread = baselineUnread.filter(path => heldTo(scope, path))
   const listed = dirs.filter(dir => 'unreviewed' in dir)
   return { ...answered, cut, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required,
-    since: reviewed ? null : state.since, canReview: state.canReview, ...reviewed ? { reviewedDependencies: true } : {},
+    since: reviewed ? null : state.since, canReview: state.canReview, ...reviewed ? { reviewedDependencies: true } : {}, ...reviewed?.parseComments ? { byComments: true } : {},
     toReview: distinct(listed.map(dir => dir.toReview), versionKey), unreviewed: distinct(listed.map(dir => dir.unreviewed), versionKey),
     unsupported: distinct(listed.map(dir => dir.unsupported), sourceKey),
     ...unasked > 0 ? { unasked } : {}, ...baselineError && !reviewed ? { baselineError } : {},

@@ -36,6 +36,8 @@ A review counts where it is:
 Each reviewer counts once, and their latest review of a version decides where they stand.
 A reviewer whose latest review is **Reject** holds the version as rejected, however many others accept it, until they accept it again.
 
+Where a host reads reviews from pull request comments ([`parseComments`](#parsecomments)), none of this applies: reviews published here count for nothing, and the comments and the host's `lookup` alone decide.
+
 The tile shows whether every version passes, how many want reviews (`1 + 4 to review`), or that the review fails, and the popup shows what fails it and each version's state (`2/2`, **reviewed** by the host, **rejected**, **baseline** or **can't review**).
 For a reader who publishes to a counting team, each version links to its review page, an update's compared with the version it replaced.
 
@@ -177,8 +179,10 @@ Its sub-tabs are:
 Where several pull requests add a version, its reviews in each are compared: who passes it and who rejects it there, by login.
 
 - Reviewed alike, one pull request lists it, the one with the fewest reviews left to make, and the others show it dimmed, naming that one.
-- A pull request that holds some reviews of it but lacks one that counts in another (one made in that one's comments, say) shows it red, and its tooltip names whose review and where.
-  Where each lacks a review of the other's, both are red; where one holds every review, it lists the version as usual.
+- A pull request that holds some reviews of it but lacks one made in another's comments shows it red, and its tooltip names whose review and where.
+  Where each lacks a review of the other's, both are red; where one holds every such review, it lists the version as usual.
+  Only reviews made in comments are compared this way, as they count where they were posted and can be posted again.
+  A review published to a team is never "lacked": it counts wherever the rules above let it (a version a pull request adds needs it whole or compared with a version it replaced, one it only locks takes it compared with any), so without `parseComments` it may count in a pull request stacked on another and not in the one it stacks on.
 - A pull request with no reviews of it is never red: it is simply unreviewed, and shows it dimmed under a pull request that has reviews of it and still wants it.
   Where none of those wanting it has any, one of them lists it and the rest show it dimmed.
 
@@ -249,13 +253,21 @@ Each version is asked once per request, up to sixteen at once, and an answer may
 ### `parseComments`
 
 `parseComments`, optional, reads the reviews an open pull request's comments make, and is asked only about an open pull request whose held lockfiles change.
+
+Once it is registered, reviews published in the app count for nothing in any repository's dependency review, whatever they were compared with:
+
+- an open pull request's versions pass by the reviews its comments make, or by `lookup`;
+- the default branch's and a bundle's versions pass by `lookup` alone;
+- a version reads the same whether a pull request adds it or only locks it, so a pull request stacked on another tells it as that one does.
+
+Published reviews still list under **Reviews** and **My reviews**, and are what `formatDependencyReviews` formats for their author to post as a comment.
+
 It receives the pull request (`repository`, `number`), its comments (`comments`, up to a thousand), and the versions it may review (`dependencies`).
 Each comment has `kind`, `id`, `author` (a GitHub login), `body`, `createdAt`, `editedAt` where edited, and `url`.
 `kind` is `comment`, `review` (a review's own comment, with its `state`), or `review-comment` (on a line of the diff).
 `dependencies` are:
 
-- every reviewable version the held lockfiles add that neither the teams' reviews nor `lookup` pass;
-- those the teams' reviews pass but `lookup` doesn't, so that other pull requests learn what this one reviews;
+- every reviewable version the held lockfiles add that `lookup` doesn't pass;
 - the other versions its lockfiles lock that still want reviews.
 
 A version that `lookup` passes is never given.
@@ -285,7 +297,7 @@ It receives `reviews`, each entry with:
 | `reviewer`, `publishedAt` | The author's login and the publication time |
 
 It is asked of each of the asker's reviews alone, wherever it is shown to its author.
-For an open pull request, it is asked of all the asker's reviews published to a team counting for its repository of the versions it adds (matched by integrity and patch, whole or compared with a version they replaced), with `pullRequest` as `{ repository, number }`, for its popup and its card on a team's Dependencies tab to copy.
+For an open pull request, it is asked of all the asker's reviews published to a team counting for its repository of the versions it adds (matched by integrity and patch; where the host has no `parseComments`, only those whole or compared with a version they replaced), with `pullRequest` as `{ repository, number }`, for its popup and its card on a team's Dependencies tab to copy.
 Reviews of versions `lookup` already passes are left out, as they want no review there, and so are those the asker's own comments on that pull request already make with the same verdict; where none is left, there is nothing to copy.
 It returns the text to copy, and an empty, null or undefined answer, one over a million characters, or a failure (logged) gives nothing to copy.
 It is given only the asker's own published, unrevoked reviews, however it is asked, so another author's review never offers the button.
