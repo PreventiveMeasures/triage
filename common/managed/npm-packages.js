@@ -10,9 +10,9 @@ const PACKAGE_SPEC = /^(?=.{1,256}$)[\dA-Za-z][\w.+-]*$/u
 // npm's rule for a scope: lowercase, and not starting with `.` or `_`.
 const SCOPE = /^@[\da-z~-][\w.~-]*$/u
 export const MAX_TEAM_NPM_SCOPES = 100
-// A pnpm patch's hash as a lockfile names it: a sha256 in hex, or pnpm 9's
-// md5 in base32.
-const PATCH_HASH = /^(?:[\da-f]{64}|[2-7a-z]{26})$/u
+// A pnpm patch's hash as a lockfile of pnpm 10 or later names it, by which
+// its reviews read it: a sha256 in hex. One pnpm 9 names by an md5 is none.
+const PATCH_HASH = /^[\da-f]{64}$/u
 
 export function isNpmPackageName(value) {
   return typeof value === 'string' && PACKAGE_NAME.test(value)

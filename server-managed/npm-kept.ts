@@ -24,6 +24,7 @@
 import { createHash } from 'node:crypto'
 import { plainObject } from './npm-manifest.ts'
 import { type NpmPublishTimeStore, type NpmVersionStore, VERSION_KEPT_MS } from './npm-packages.ts'
+import type { KeptPatch } from './npm-patch.ts'
 import type { UpstreamCacheStore } from './upstream-cache.ts'
 
 // A value kept by key, as JSON, `at` when it was.
@@ -228,6 +229,10 @@ export const reviewBaselineStore = (db: UpstreamCacheStore, debug = false): Kept
 // what their reviews are held to.
 export const lockfileReadStore = <T>(db: UpstreamCacheStore, type: 'listings' | 'lockfiles', debug = false): KeptStore<T> =>
   keptStore<T>(db, `repository/review-${type}`, HISTORY_PAGE_KEPT_MS, debug)
+// The pnpm patches a repository's dependency reviews read (npm-patch.ts), by
+// the repository and each's hash, a sha256, which names its text wherever
+// and whenever it is read: kept for good.
+export const patchStore = (db: UpstreamCacheStore, debug = false): KeptStore<KeptPatch> => keptStore<KeptPatch>(db, 'repository/patches', Infinity, debug)
 // A bundle's validations (bundle-validation.ts), by the bundle, where it is,
 // what its reader could check and the rules they were made by: kept a month
 // after they were made, as what they check never changes.

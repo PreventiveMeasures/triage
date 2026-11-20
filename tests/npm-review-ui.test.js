@@ -600,6 +600,14 @@ test('a version as a pnpm patch changes it is reviewed as patched: its files the
   assert.equal(parseManagedRoute(new URL(`/npm/lib@2.0.0/review?patch=${patch.hash}&repo=7`, 'https://triage.test')), null, 'one naming not where its patch is')
   assert.deepEqual(dependencyReviewRoute({ ...review, patchHash: patch.hash, patchSource: { repoId: 7, commit: patch.commit, path: patch.path } }).patch, patch,
     'a patched review opens its patch where it was read')
+  // Its repository by its name, in its id's place; a patch pnpm 9 named by an md5, read no more, none.
+  const named = { ...route, patch: { ...patch, repoId: 'Org/some.repo-1' } }
+  assert.equal(managedRoutePath(named), `/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0?patch=${patch.hash}&repo=Org/some.repo-1&commit=${patch.commit}&path=patches/lib.patch`)
+  assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(named), 'https://triage.test')), named)
+  for (const wrong of [{ ...patch, repoId: 'repo' }, { ...patch, repoId: 'org/repo/more' }, { ...patch, hash: 'btaxlooa6g3kqmodthrgs5zgme' }]) {
+    assert.equal(managedRoutePath({ ...route, patch: wrong }), null, JSON.stringify(wrong))
+  }
+  assert.equal(dependencyReviewRoute({ ...review, patchHash: 'btaxlooa6g3kqmodthrgs5zgme', patchSource: { repoId: 7, commit: patch.commit, path: patch.path } }).patch, undefined)
   Object.assign(state, { bundleDetailsTab: undefined, selectedBundle: undefined, npmReview: undefined })
 })
 

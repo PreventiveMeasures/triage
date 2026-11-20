@@ -19,9 +19,11 @@
 // with, either whole, or compared with a version of its package: for a
 // version the pull request adds, one it was; for another, any. A patched
 // one's (`patch`) are of it as patched, by its patch's hash, its patch read
-// of the repository where its lockfile names the patch's file (npm-patch.ts):
-// compared with the version it patches, where that is one it was, they review
-// the patch alone. Locked so at that commit, its patch too, it needs none.
+// of the repository at its file, which its lockfile names, or which is found
+// where it names it by its hash alone (npm-patch.ts withPatchFiles):
+// compared with the version it patches, where that is one it was, they
+// review the patch alone. Locked so at that commit, its patch too, it needs
+// none.
 // Which versions the repository's lockfiles locked at that commit never
 // changes: it is read once, every lockfile there of those read here
 // (pull-dependencies.ts), and kept by the commit (`baselines` in this
@@ -133,12 +135,12 @@ type Reviewer = { login: string; status: PublishedReview['status']; passes?: tru
 
 // A version as the client is told it: what its reviews are held to left
 // out, but its patch, where it is patched (`patch`): its hash, which its
-// reviews are held to, and its file, where its lockfile names one, from the
-// repository's root, whence its reviews read it.
+// reviews are held to, and its file, where its lockfile names one or it
+// was found, from the repository's root, whence its reviews read it.
 type Patch = { hash: string; path?: string }
-function shown<T extends LockedPackage>(pkg: T): Omit<T, 'integrity' | 'shasum' | 'patchHash' | 'patchPath' | 'lockfile'> & { patch?: Patch } {
+function shown<T extends LockedPackage>(pkg: T): Omit<T, 'integrity' | 'shasum' | 'patchHash' | 'patchPath' | 'patchDir' | 'lockfile'> & { patch?: Patch } {
   const copy = { ...pkg }
-  for (const field of ['integrity', 'shasum', 'patchHash', 'patchPath', 'lockfile'] as const) delete copy[field]
+  for (const field of ['integrity', 'shasum', 'patchHash', 'patchPath', 'patchDir', 'lockfile'] as const) delete copy[field]
   return { ...copy, ...pkg.patchHash ? { patch: { hash: pkg.patchHash, ...pkg.patchPath ? { path: pkg.patchPath } : {} } } : {} }
 }
 

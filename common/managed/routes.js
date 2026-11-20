@@ -1,6 +1,7 @@
 // Managed client pages only. API paths and E2E share hashes are not routes.
 import { BUNDLE_TABS } from '../bundle-tabs.js'
 import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../finding-id.js'
+import { isGithubRepoName } from '../github-pr.ts'
 import { isNpmPackageName, isNpmPackageSpec, isPatchHash, isPatchPath } from './npm-packages.js'
 import { filtersOf, filtersQuery } from './team-filters.js'
 
@@ -101,11 +102,13 @@ export function managedRoutePath(route) {
 // its mode past the Overview: `/compare/<version>/code` or `/diff`. Review
 // names the version reviewed against, and, of a version as a pnpm patch
 // changes it, the patch (`patch`): its hash, and where it is read, a
-// repository by its id, a commit and its file's path there,
-// `?patch=<hash>&repo=<repo id>&commit=<commit>&path=<path>`.
+// repository by its id, or by its name (`owner/name`) in its place, a commit
+// and its file's path there,
+// `?patch=<hash>&repo=<repo id or name>&commit=<commit>&path=<path>`.
 export const NPM_TABS = new Set(['overview', 'code', 'search', 'compare', 'review', 'treemap'])
 // A patch as the server reads one (server-managed/npm-patch.ts requestedPatch).
-const isPatch = patch => isPatchHash(patch?.hash) && isRepoId(patch.repoId) && COMMIT.test(patch.commit ?? '') && isPatchPath(patch.path)
+const isPatch = patch => isPatchHash(patch?.hash) && (isRepoId(patch.repoId) || typeof patch.repoId === 'string' && isGithubRepoName(patch.repoId))
+  && COMMIT.test(patch.commit ?? '') && isPatchPath(patch.path)
 function npmPackagePath(route) {
   if (route.packageName == null) return '/npm'
   const tab = route.bundleTab ?? 'overview'
@@ -134,7 +137,7 @@ function parseNpmRoute(path, hash, search) {
     // The full dependency form is canonical; a bare version is a shortcut.
     const versionOnly = review[3] && /^\d+\.\d+\.\d+(?:[-+].*)?$/u.test(review[3]) && review[4] == null
     const patch = search.has('patch')
-      ? { hash: search.get('patch'), repoId: /^[1-9]\d*$/u.test(search.get('repo') ?? '') ? Number(search.get('repo')) : null, commit: search.get('commit'), path: search.get('path') } : null
+      ? { hash: search.get('patch'), repoId: /^[1-9]\d*$/u.test(search.get('repo') ?? '') ? Number(search.get('repo')) : search.get('repo'), commit: search.get('commit'), path: search.get('path') } : null
     if (patch && !isPatch(patch)) return null
     return { view: 'npm', packageName: review[1], packageSpec: review[2] ?? null, bundleTab: 'review',
       ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}), ...(patch ? { patch } : {}) }

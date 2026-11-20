@@ -148,7 +148,8 @@ import { pipeline } from 'node:stream/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTipStore, bundleValidationStore, codeHeadStore, codeTreeStore, commitPullStore, githubTagStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
   issueListStore, lockfileReadStore,
-  npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore, scanReadStore } from './npm-kept.ts'
+  npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, patchStore, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore,
+  scanReadStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { type NpmDelta, deltaKey, keptNpmDeltas, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
@@ -228,7 +229,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, VERSION_KEPT_MS, canReadPrivateNpm, npmFileRows, npmPublishTime, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
-import { type NpmPatch, type PatchedFile, patchedFiles, readPatch, requestedPatch } from './npm-patch.ts'
+import { type PatchSource, type PatchedFile, type RequestedPatch, patchedFiles, readPatch, requestedPatch, withPatchFiles } from './npm-patch.ts'
 import { type RepositoryCodeKept, loadRepositoryCodeBody, repositoryCodeFits, repositoryCodeKept } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
 import { COAUTHORS_READ, coauthorsOf } from './commit-coauthors.ts'
@@ -2386,15 +2387,20 @@ function sendRefusal(res: ServerResponse, { status, error, retryAfter }: Refusal
 // GitHub's failure `err`, as a request is refused for it: a token GitHub
 // rejects told as GitHub failing (502), never as the reader's session refused.
 const githubRefusal = (err: GithubApiError) => refusal(err.status === 401 ? 502 : err.status, err.message, err.retryAfter)
-// The whole of repository `repoId`, where the session `cookie` names may
+// The whole of repository `repo`, where the session `cookie` names may
 // read all of it, and who reads it; else why not: none of it
-// (`no-repository`), or only some (`no-directory`).
+// (`no-repository`), or only some (`no-directory`). `repo` its id, or its
+// name (`owner/name`), which the one connected repository its reader reads
+// answers to: one none has, or several, is none of theirs.
 type WholeAccess = { repo: SelectedRepo; user: StoredUser }
-async function wholeRepositoryAccess(deps: ManagedHttpDeps, cookie: string | undefined, repoId: number, { handed = false } = {}): Promise<WholeAccess | Refusal> {
+async function wholeRepositoryAccess(deps: ManagedHttpDeps, cookie: string | undefined, repo: number | string, { handed = false } = {}): Promise<WholeAccess | Refusal> {
   const s = await readSession(deps.config, deps.db, cookie, Date.now(), { handed })
   if (s == null) return refusal(401, 'unauthenticated')
   if (!roleAtLeast(s.user.role, 'view')) return refusal(403, 'forbidden')
-  return wholeAccessIn(await repositoryGrants(deps, s.user), s.user, repoId)
+  const grants = await repositoryGrants(deps, s.user)
+  if (typeof repo === 'number') return wholeAccessIn(grants, s.user, repo)
+  const named = grants.repos.filter(item => item.fullName.toLowerCase() === repo.toLowerCase())
+  return named.length === 1 ? wholeAccessIn(grants, s.user, named[0]!.repoId) : refusal(404, 'no-repository')
 }
 function wholeAccessIn(grants: Awaited<ReturnType<typeof repositoryGrants>>, user: StoredUser, repoId: number): WholeAccess | Refusal {
   const access = repositoryAccessIn(grants, repoId, '')
@@ -2424,18 +2430,21 @@ async function readWholeRepositoryOf<T>(deps: ManagedHttpDeps, access: WholeAcce
   }
 }
 
-// The patch `patch` names (npm-patch.ts), read of the whole of its repository
-// as readWholeRepositoryOf reads it, with its reader's own GitHub access, and
-// held to its hash: as kept, else with that access checked again after; else
-// why it was refused. Its failing to read or to apply throws.
-async function npmPatchOf(deps: ManagedHttpDeps, cookie: string | undefined, patch: NpmPatch): Promise<{ files: PatchedFile[] } | Refusal> {
+// The patch `patch` names (npm-patch.ts), and where it was read (`source`),
+// read of the whole of its repository as readWholeRepositoryOf reads it,
+// with its reader's own GitHub access, and held to its hash: as kept, for
+// good (patchStore), else with that access checked again after; else why it
+// was refused. Its failing to read or to apply throws.
+async function npmPatchOf(deps: ManagedHttpDeps, cookie: string | undefined, patch: RequestedPatch): Promise<{ source: PatchSource; files: PatchedFile[] } | Refusal> {
   const access = await wholeRepositoryAccess(deps, cookie, patch.repoId)
   if ('error' in access) return access
+  const { repoId } = access.repo
   const read = await readWholeRepositoryOf(deps, access, async (fullName, token) => {
     const asked: GithubAsked = { github: false }
-    return { value: await readPatch(fullName, token, patch, asked), kept: !asked.github }
-  }, () => wholeRepositoryAccess(deps, cookie, patch.repoId))
-  return 'error' in read ? read : { files: read.value }
+    const { commit, path, files } = await readPatch(fullName, token, { ...patch, repoId }, patchStore(deps.db, deps.config.debug), asked)
+    return { value: { source: { repoId, commit, path }, files }, kept: !asked.github }
+  }, () => wholeRepositoryAccess(deps, cookie, repoId))
+  return 'error' in read ? read : read.value
 }
 // The patch a request's fields name, as npm-patch.ts requestedPatch takes them.
 const patchFields = (field: (key: string) => unknown) => requestedPatch({ hash: field('patchHash'), repoId: field('patchRepoId'), commit: field('patchCommit'), path: field('patchPath') })
@@ -2601,11 +2610,14 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
     commented.push(...read.reviews)
     return read
   })
-  const dependencies = await reviewedDependencies(told, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting })
+  // Each patch its lockfiles name by its hash alone with its file (npm-patch.ts), where its review is in effect.
+  const asked: GithubAsked = { github: false }
+  const patched = state ? await withPatchFiles(told, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked) : told
+  const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting })
   // The comment the host formats of the reader's reviews of its versions, for
   // its copy button, but those its comments make of theirs already.
   const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented)
-  return { value: { number: told.number, ...dependencies, ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null }
+  return { value: { number: told.number, ...dependencies, ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null && !asked.github }
 
 }
 
@@ -2641,10 +2653,11 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   const reads = lockfileKept(deps, repoId)
   const read = await lockedAt(fullName, token, head, reads, path => heldTo(setting.lockfiles, path), asked)
   const { packages, paths } = lockedIn(read)
-  const told = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
+  const locked = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
     ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
-  const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told))
+  const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(locked))
   if (!now) return { value: { head, review: null }, kept: !asked.github }
+  const told = await withPatchFiles(locked, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked)
   // Told by the lockfiles it held to as they were read, though they have
   // changed since.
   const state = { ...now, lockfiles: setting.lockfiles }
@@ -3604,9 +3617,10 @@ async function bundleDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   const installing = (await lockfilesAt(fullName, token, commit, reads, asked)).map(({ path }) => path).filter(path => installsBundle(path, directory))
   if (!reviewedIn(setting.lockfiles, installing)) return { value: { review: null }, kept: !asked.github }
   const read = await lockedAt(fullName, token, commit, reads, path => installsBundle(path, directory) && heldTo(setting.lockfiles, path), asked)
-  const { told, ...bundle } = bundleDependencies(bundled, read, commit)
-  const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(told), setting)
+  const { told: locked, ...bundle } = bundleDependencies(bundled, read, commit)
+  const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(locked), setting)
   if (!now) return { value: { review: null }, kept: !asked.github }
+  const told = await withPatchFiles(locked, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked)
   const state = { ...now, lockfiles: setting.lockfiles }
   const reviewed = deps.reviewedDependencies ?? null
   const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null }
@@ -4938,8 +4952,7 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     try {
       const files = await Promise.all(loads.map(load => load.result))
       if (loads.length > 0) {
-        tarballs = { shasum: doc.dist.shasum, baseShasum: base?.dist.shasum ?? null,
-          ...patchRead && patch ? { patch: { repoId: patch.repoId, commit: patch.commit, path: patch.path } } : {} }
+        tarballs = { shasum: doc.dist.shasum, baseShasum: base?.dist.shasum ?? null, ...patchRead ? { patch: patchRead.source } : {} }
       }
       if (change?.action === 'publish' || change?.action === 'save') {
         const maps = files.map((list, at) => new Map<string, unknown>(npmFileRows(at === 0 && patchRead ? patchedFiles(list, patchRead.files) : list)
@@ -5276,7 +5289,7 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
       if ('error' in patched) { sendRefusal(res, patched); return }
       const load = loadNpmFiles(doc)
       let body
-      try { body = await patchedVersionBody(doc, patch, patchedFiles(await load.result, patched.files)) } finally { load.release() }
+      try { body = await patchedVersionBody(doc, { hash: patch.hash, ...patched.source }, patchedFiles(await load.result, patched.files)) } finally { load.release() }
       if (!(await recheck(doc.private))) { body.stream.destroy(); return }
       dropIdle(res)
       await sendEncoded(req, res, body, 'application/json')

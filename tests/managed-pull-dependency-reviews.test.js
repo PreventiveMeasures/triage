@@ -104,6 +104,11 @@ test('read for its reviews, a version keeps its integrity, Yarn\'s sha1, pnpm\'s
   assert.deepEqual(lockedPackages('pnpm', hashOnly, { review: true }), [
     { name: 'is-number', version: '7.0.0', source: 'registry', integrity: sri('is-number@7.0.0'), patchHash: PATCH, lockfile: 'pnpm' },
   ], 'a patch named by its hash alone, no file')
+  // pnpm 9's names it by an md5 in base32, which reviews read none of: held to it still, its file left out.
+  const md5 = 'btaxlooa6g3kqmodthrgs5zgme'
+  assert.deepEqual(lockedPackages('pnpm', pnpmPatched.replaceAll(PATCH, md5), { review: true }), [
+    { name: 'is-number', version: '7.0.0', source: 'registry', integrity: sri('is-number@7.0.0'), patchHash: md5, lockfile: 'pnpm' },
+  ], 'a patch named by an md5, no file')
 })
 
 // A version as a lockfile locks it, of npm's registry with its integrity.
@@ -118,13 +123,17 @@ const bare = ({ was: _was, ...pkg }) => pkg
 // passing it where it is an accepting one that does.
 const by = (login, status = 'accept', passes = status === 'accept') => ({ login, status, ...passes ? { passes: true } : {} })
 
-test('a version a commit\'s lockfiles each lock patched alike keeps the first of their patch\'s files in the repository, from its root, past those that name none there', () => {
+test('a version a commit\'s lockfiles each lock patched alike keeps the first of their patch\'s files in the repository, from its root, past those that name none there, and the first\'s directory', () => {
   const pkg = at('patched', '1.0.0', { patchHash: PATCH, lockfile: 'pnpm' })
   const read = { unread: [], lockfiles: [{ path: 'a/pnpm-lock.yaml', packages: [pkg] },
     { path: 'b/pnpm-lock.yaml', packages: [{ ...pkg, patchPath: '../../outside.patch' }] },
     { path: 'c/pnpm-lock.yaml', packages: [{ ...pkg, patchPath: 'patches/patched@1.0.0.patch', dev: true }] },
     { path: 'd/pnpm-lock.yaml', packages: [{ ...pkg, patchPath: 'patches/patched@1.0.0.patch' }] }] }
-  assert.deepEqual(lockedIn(read).packages, [{ ...pkg, patchPath: 'c/patches/patched@1.0.0.patch' }])
+  assert.deepEqual(lockedIn(read).packages, [{ ...pkg, patchDir: 'a', patchPath: 'c/patches/patched@1.0.0.patch' }])
+  // One none of them names a file of: the directory of the first locking it, whence it is found; one not patched, none.
+  const plain = at('plain', '1.0.0', { lockfile: 'pnpm' })
+  assert.deepEqual(lockedIn({ unread: [], lockfiles: [{ path: 'pnpm-lock.yaml', packages: [pkg, plain] }, { path: 'web/pnpm-lock.yaml', packages: [pkg] }] }).packages,
+    [{ ...pkg, patchDir: '' }, plain], 'the repository\'s root')
 })
 
 test('each version a pull request adds is told its review: how many pass it, of its integrity and compared with a version it was; that it needs none; or why it can\'t be reviewed, a file not reviewed', async () => {
@@ -228,6 +237,11 @@ test('a patched version passes by reviews of it as patched, its patch\'s hash th
   const shownAs = ({ integrity: _integrity, lockfile: _lockfile, shasum: _shasum, patchHash, patchPath, ...pkg }) => ({ ...pkg,
     ...patchHash ? { patch: { hash: patchHash, ...patchPath ? { path: patchPath } : {} } } : {} })
   assert.deepEqual(shownAs(patched).patch, { hash: PATCH, path: 'patches/patched@1.0.0.patch' }, 'its patch told by its hash and its file')
+  // Its lockfile's directory, whence a patch named by its hash alone is found, told to none.
+  const inDirectory = await reviewedDependencies({ ...told, lockfiles: [{ ...told.lockfiles[0], added: [{ ...patched, patchDir: 'web' }, { ...vouched, patchDir: 'web' }], locked: [] }] },
+    { ...state, reviews: [] })
+  assert.deepEqual(inDirectory.lockfiles[0].added.map(pkg => pkg.patch), [{ hash: PATCH, path: 'patches/patched@1.0.0.patch' }, { hash: PATCH }])
+  assert.deepEqual(Object.keys(inDirectory.lockfiles[0].added[1]).toSorted(), ['name', 'patch', 'reviews', 'source', 'version'], 'what its reviews are held to left out')
   const unpatchedBaseline = new Set([`patched@1.0.0\0${sri('patched@1.0.0')}\0`])
   const alone = await reviewedDependencies(told, state, { baseline: unpatchedBaseline })
   assert.deepEqual(alone.lockfiles[0].added, [{ ...shownAs(plain), reviews: 1, reviewers: [by('u1')] }, { ...shownAs(patched), reviews: 0 }, { ...shownAs(vouched), reviews: 0 }],
@@ -539,6 +553,41 @@ test('an open pull request\'s dependencies, asked with their review, tell each v
   github(t, PULL)
   await db.setRepoDependencyReview(1, { enabled: false, required: 1 })
   assert.equal((await ask({})).body.lockfiles.length, 1)
+})
+
+// is-number patched at `head`, by a patch its lockfile, pnpm 11's, names by
+// its hash alone: the file its workspace names of it, in a directory of its own.
+const PATCH_TEXT = 'diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -1 +1 @@\n-old\n+new\n'
+const PATCH_HASH = createHash('sha256').update(PATCH_TEXT).digest('hex')
+const hashOnly = pnpmPatched.replace(`\n    hash: ${PATCH}\n    path: patches/is-number@7.0.0.patch`, ` ${PATCH_HASH}`).replaceAll(PATCH, PATCH_HASH)
+const PATCHED = { 'web/pnpm-lock.yaml': hashOnly, 'web/pnpm-workspace.yaml': 'patchedDependencies:\n  is-number@7.0.0: fixes/is-number.patch\n', 'web/fixes/is-number.patch': PATCH_TEXT }
+const patchReads = asked => asked.filter(path => /pnpm-workspace\.yaml|\.patch/u.test(path)).map(path => decodeURIComponent(path.slice('/repos/org/repo/contents/'.length)))
+
+test('a version patched by a patch its lockfile names by its hash alone is told its patch\'s file where its review is in effect: found once, of a pull request or the default branch, and kept beyond the instance for good', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  // What it read of `head`, another's lockfiles in the tests after it, held by none of them.
+  t.after(() => { coldInstance(); return db.close() })
+  const send = api(db, await people(db))
+  const asked = github(t, { compared: [{ filename: 'web/pnpm-lock.yaml', status: 'added' }], files: { [mergeBase]: {}, [head]: PATCHED },
+    graphql: body => body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {} })
+  const pull = query => send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', ...query })}`)
+  const told = { name: 'is-number', version: '7.0.0', source: 'registry' }
+  assert.deepEqual((await pull({})).body.lockfiles[0].added, [{ ...told, patch: { hash: PATCH_HASH } }], 'where none is in effect, by its hash alone')
+  assert.deepEqual(patchReads(asked), [], 'its file not looked for')
+  await db.setRepoDependencyReview(1, { enabled: true, required: 1 })
+  const answer = await pull({ review: '1' })
+  assert.deepEqual(answer.body.lockfiles[0].added, [{ ...told, patch: { hash: PATCH_HASH, path: 'web/fixes/is-number.patch' }, reviews: 0 }], 'the file its workspace names of it, from the repository\'s root')
+  assert.deepEqual(patchReads(asked), [`web/pnpm-workspace.yaml?ref=${head}`, `web/fixes/is-number.patch?ref=${head}`], 'found of the repository at the commit its lockfiles were read at')
+  asked.length = 0
+  assert.deepEqual((await pull({ review: '1' })).body, answer.body)
+  assert.deepEqual(patchReads(asked), [], 'once')
+
+  // The default branch's, on a cold instance: of what is kept beyond it, by its repository and hash.
+  coldInstance()
+  asked.length = 0
+  const branch = (await send(`/api/admin/repositories/branch-dependencies?${new URLSearchParams({ repoId: '1' })}`)).body
+  assert.deepEqual(branch.lockfiles[0].unreviewed, [{ ...told, patch: { hash: PATCH_HASH, path: 'web/fixes/is-number.patch' }, reviews: 0 }])
+  assert.deepEqual(patchReads(asked), [], 'GitHub asked for neither its workspace\'s file nor its patch again')
 })
 
 test('where the host registers reviewed dependencies, they replace the commit reviewed since: none is set, nor read, and every version wanting a review is asked of them', async t => {
@@ -971,6 +1020,7 @@ test('a bundle\'s versions are those the nearest lockfile at or above its direct
     ['patched', sri('patched again'), null, null],
     ['root-only', sri('root-only@1.0.0'), null, null],
   ], 'as the nearest locking each locks it, its patch\'s file from the repository\'s root; the root\'s where it alone does')
+  assert.deepEqual(told.lockfiles[0].locked.map(pkg => pkg.patchDir), [undefined, 'web', undefined, undefined], 'a patched one with the directory of the lockfile locking it')
   assert.deepEqual(told.lockfiles.slice(1), [{ paths: ['web/bun.lock'], error: 'lockfile-unsupported' }, { paths: ['web/berry/yarn.lock'], error: 'lockfile-unreadable' }])
   assert.deepEqual([told.base, told.head, told.cut, told.lockfiles[0].added, told.lockfiles[0].moreLocked], [head, head, false, [], 0])
 })
