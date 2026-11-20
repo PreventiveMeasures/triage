@@ -290,6 +290,12 @@ test('missing, ambiguous and named-but-missing lockfiles are reported as the loc
     ['buildVfsBundle: stasis.config.json: entries "a.ts", "b.ts": allowedModules allows none of 2 packages: x@1.0.0, y@1.0.0', 'config-policy'],
     ['buildVfsBundle: stasis.config.json: entries "index.ts": allowedPaths does not allow secret.ts', 'config-policy'],
     ['buildVfsBundle: stasis.config.json: entries "index.ts": disallowedPaths must be an array of non-empty strings', 'config-invalid'],
+    ['buildVfsBundle: stasis.config.json: excludeModules excludes tool@1.0.0 at node_modules/tool ("tool")', 'config-policy'],
+    ['entry not found: /node_modules/tool/cli.js (stasis.config.json: entries "cli.js": excludeModules excludes node_modules/tool ("tool"))', 'config-policy'],
+    ['JS bundle would be broken at load time:\n  unresolved import tool from index.js (excluded by excludeModules)\n  unresolved require tool/x from a.js (excluded by excludeModules; resolves to x.ts under --typescript)', 'config-policy'],
+    ['JS bundle would be broken at load time (ios):\n  unresolved import tool from index.js (excluded by excludeModules)', 'config-policy'],
+    ['JS bundle would be broken at load time:\n  unresolved import tool from index.js (excluded by excludeModules)\n  unresolved import other from index.js (not found)', 'build-failed'],
+    [`JS bundle would be broken at load time:\n${'  unresolved import tool from index.js (excluded by excludeModules)\n'.repeat(10)}  ... and 2 more`, 'build-failed'],
     ['app/stasis.lock.json: content mismatch for \'value.ts\'', 'stasis-lock'],
     ['stasis.lock.json isn\'t there, and lock = frozen holds the build to it', 'stasis-lock'],
     ['stasis.lock.json (lock = frozen) doesn\'t attest extra.ts', 'stasis-lock'],
@@ -434,6 +440,24 @@ test('real Stasis builds the entries stasis.config.json lists in a package the l
   assert.equal(built.directory, '')
   assert.deepEqual([...bundle.entries].toSorted(), ['index.js', 'node_modules/tool/cli.js'])
   assert.ok(bundle.sources.has('node_modules/tool/lib/run.js'), 'what it imports, from the tree laid out')
+})
+
+test('real Stasis leaves out the packages stasis.config.json’s excludeModules names: a build needing one is the policy’s', async t => {
+  const tool = packageOf('tool', '1.0.0', { 'package.json': JSON.stringify({ name: 'tool', version: '1.0.0', type: 'module', bin: { tool: 'cli.js' } }),
+    'cli.js': 'import { run } from "./lib/run.js"\nrun()\n', 'lib/run.js': 'export const run = () => {}\n' })
+  registry(t, [tool])
+  const app = { name: 'app', version: '1.0.0', type: 'module', dependencies: { tool: '1.0.0' } }
+  const project = (index, config) => ({ 'package.json': JSON.stringify(app), 'index.js': index,
+    'package-lock.json': lockOf({ name: app.name, version: app.version, dependencies: app.dependencies },
+      { 'node_modules/tool': { version: '1.0.0', resolved: tool.doc.dist.tarball, integrity: tool.doc.dist.integrity, bin: { tool: 'cli.js' } } }),
+    'stasis.config.json': JSON.stringify(config) })
+  const plain = 'export const app = 1\n'
+  assert.deepEqual(await entriesOf(configured(project(plain, { entries: { 'index.js': {} }, excludeModules: ['tool'] }), ['index.js'])), ['index.js'], 'one nothing needs')
+  assert.equal(await codeOf(configured(project('import "tool/lib/run.js"\nexport const app = 1\n', { entries: { 'index.js': {} }, excludeModules: ['tool'] }), ['index.js'])),
+    'config-policy', 'one an import needs')
+  assert.equal(await codeOf(configured(project(plain, { entries: { 'index.js': {}, 'node_modules/tool/cli.js': {} }, excludeModules: ['tool'] }), ['index.js', 'node_modules/tool/cli.js'])),
+    'config-policy', 'one an entry is in')
+  assert.equal(await codeOf(configured(project(plain, { entries: { 'index.js': {} }, excludeModules: 'tool' }), ['index.js'])), 'config-invalid', 'one Stasis can’t read')
 })
 
 test('real Stasis lays a pnpm tree out for no Node: engineStrict takes an engines.node the server’s Node isn’t', async () => {

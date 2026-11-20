@@ -199,7 +199,7 @@ function readMore(key, entry, ask, settle) {
 const SHA = /^[a-f\d]{40}$/u
 const isCommit = commit => typeof commit?.sha === 'string' && SHA.test(commit.sha) && Array.isArray(commit.parents)
 function checked(answer) {
-  if (!Array.isArray(answer?.commits)) throw new Error('The server answered with no history.')
+  if (!Array.isArray(answer?.commits)) throw new TypeError('The server answered with no history.')
   const commits = answer.commits.filter(isCommit)
   const unread = Array.isArray(answer.unread) ? answer.unread.filter(head => typeof head?.name === 'string' && typeof head.sha === 'string' && SHA.test(head.sha)) : []
   // The pull requests squashed into its commits, each with its own commits,

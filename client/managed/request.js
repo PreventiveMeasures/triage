@@ -73,7 +73,7 @@ async function sealBody(options, send) {
   if (response.status === 404 || response.status === 405) return options
   if (!response.ok) return response
   const key = (await response.json())?.key
-  if (typeof key !== 'string') throw new Error('The server sent an invalid upload key')
+  if (typeof key !== 'string') throw new TypeError('The server sent an invalid upload key')
   const headers = new Headers(options.headers)
   headers.set(UPLOAD_SEAL_HEADER, '1')
   return { ...options, headers, body: await sealUpload(options.body, Uint8Array.fromBase64(key, { alphabet: 'base64url' }), options.signal) }

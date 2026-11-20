@@ -83,6 +83,7 @@ They are built as `stasis bundle` builds them:
   `stasis bundle` takes these only with the same flag given as consent; a server build has none to give.
 - The `lockfiles` it names are the ones laid out, a Solidity project's included.
 - Its `allowedPaths`, `disallowedPaths`, `allowedModules` and `disallowedModules`, the file's or an entry's, hold the bundle: one holding a path or package they refuse fails (`422 config-policy`).
+  Its `excludeModules` leaves the packages it names out, as if they weren't installed: an entry point in one fails the same way, as does a build whose only unresolved imports are of them.
 - A `stasis.config.json` whose entries can't be read, whose options Stasis refuses, or whose `lockfiles` it can't lay out, fails the build (`422 config-invalid`).
 
 Creating a bundle requires:

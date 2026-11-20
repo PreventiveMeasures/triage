@@ -59,7 +59,7 @@ subscribePullDependencies(pull => {
 // A server's answer, its items those it names by number, and when it read
 // them from GitHub.
 function checked(answer) {
-  if (!Array.isArray(answer?.items)) throw new Error('The server answered with no list.')
+  if (!Array.isArray(answer?.items)) throw new TypeError('The server answered with no list.')
   const items = answer.items.filter(item => Number.isSafeInteger(item?.number) && typeof item.title === 'string' && Array.isArray(item.labels))
   return { items, counts: { open: answer.counts?.open ?? 0, closed: answer.counts?.closed ?? 0 }, more: answer.more === true, after: answer.more === true ? answer.after : null,
     readAt: readAtOf(answer) }

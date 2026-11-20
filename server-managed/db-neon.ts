@@ -292,7 +292,7 @@ export async function openPostgresManagedDb(leased: PgConnect, options: ManagedD
           for (const row of result.rows) {
             if (row[field.name] == null) continue
             const value = Number(row[field.name])
-            if (!Number.isSafeInteger(value)) throw new Error('Managed integer exceeds safe range')
+            if (!Number.isSafeInteger(value)) throw new RangeError('Managed integer exceeds safe range')
             row[field.name] = value
           }
         }

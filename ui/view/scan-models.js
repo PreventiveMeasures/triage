@@ -81,6 +81,9 @@ export async function fetchScanModels(signal, request = fetch) {
 }
 
 export function scanModelCatalogue(body) {
+  // An answer without one, not a TypeError, which scan/access.js takes for a
+  // server it couldn't reach.
+  // oxlint-disable-next-line unicorn/prefer-type-error
   if (!Array.isArray(body?.models)) throw new Error('No model catalogue returned')
   const models = body.models.filter((model) => typeof model?.id === 'string' && model.id.length > 0)
     .map((model) => ({
