@@ -243,8 +243,11 @@ test('where the host names the version to review each against (`base`), each ver
   const reviewed = { lookup: dependency => Promise.resolve(dependency.name === 'vouched'),
     base: dependency => { asked.push(dependency.name); return Promise.resolve(bases[dependency.name] ?? null) } }
   const state = { required: 1, since: null, canReview: true, reviews: [passing(fresh, 'u1', '1.0.0'), passing(bumped, 'u1', '2.5.0')] }
-  const answer = await reviewedDependencies(told, state, { reviewed })
+  const namedBases = new Map()
+  const answer = await reviewedDependencies(told, state, { reviewed, namedBases })
   assert.deepEqual(asked.toSorted(), ['@fork/lib', 'fresh', 'lib', 'whole'], 'each but the one `lookup` passes')
+  assert.deepEqual(Object.fromEntries([...namedBases].map(([key, one]) => [JSON.parse(key).name, one])), { 'fresh': bases.fresh, '@fork/lib': bases['@fork/lib'], 'lib': bases.lib },
+    'each named told its caller too, by what it is asked, for the comment copying one\'s reviews to hold to')
   assert.deepEqual(answer.lockfiles[0].added, [{ ...strip(fresh), base: bases.fresh, reviews: 1, reviewers: [by('u1')] }, { ...strip(forked), base: bases['@fork/lib'], reviews: 0 },
     { ...strip(bumped), base: bases.lib, reviews: 1, reviewers: [by('u1')] }, { ...strip(vouched), reviewed: true }, { ...strip(whole), reviews: 0 }],
   'a review against the version it names passing it; one against a version it was still')

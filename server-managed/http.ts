@@ -249,7 +249,7 @@ import { type StasisDependencyReader, stasisDependencyReader, stasisDirectory, w
 import { type BundledVersion, bundleDependencies, installsBundle } from './bundle-dependency-reviews.ts'
 import { type CommentReviews, type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import { formattedPull, withFormatted } from './dependency-review-comments.ts'
-import type { ReviewedDependencies } from './reviewed-dependencies.ts'
+import type { ReviewedBase, ReviewedDependencies } from './reviewed-dependencies.ts'
 import { commentReviews } from './pull-comment-reviews.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseNarrowing, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince,
   repositoryActivity, repositoryLines,
@@ -2664,10 +2664,12 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   })
   // Each patch its lockfiles name by its hash alone with its file (npm-patch.ts), where its review is in effect.
   const patched = state ? await withPatchFiles(told, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked) : told
-  const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting })
+  const bases = new Map<string, ReviewedBase>()
+  const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting, namedBases: bases })
   // The comment the host formats of the reader's reviews of its versions, for
-  // its copy button, but those its comments make of theirs already.
-  const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented)
+  // its copy button, but those its comments make of theirs already, reviews
+  // against the bases the host names among them.
+  const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented, bases)
   return { value: { number: told.number, ...dependencies, ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null && !asked.github }
 }
 

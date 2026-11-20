@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { formattedPull, withFormatted } from '../server-managed/dependency-review-comments.ts'
+import { askedOf } from '../server-managed/pull-dependency-reviews.ts'
 
 const sri = text => `sha512-${createHash('sha512').update(text).digest('base64')}`
 const sha1 = text => createHash('sha1').update(text).digest('hex')
@@ -65,6 +66,9 @@ test('a pull request\'s, of one\'s own published reviews of the versions it adds
   assert.equal(await formattedPull({ lookup: reviewed.lookup }, db, 'me', told, state, pullRequest), null, 'nor where none is registered')
   assert.equal(await formattedPull(reviewed, db, 'nobody', told, state, pullRequest), null, 'nor for one with no review of its versions')
   assert.equal(asked.length, 1, 'the store asked of none of them')
+  // One compared with the version the host names its base, as its review was told it, too.
+  await formattedPull(reviewed, db, 'me', told, state, pullRequest, [], new Map([[askedOf(pkg)[0], { name: 'ms', version: '1.0.0' }]]))
+  assert.deepEqual(asked.at(-1), ['me', ['mine', 'other-base', 'forked']])
 })
 
 test('a pull request\'s reviews are read a page at a time, every one formatted, however many', async () => {

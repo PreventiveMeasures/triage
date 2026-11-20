@@ -37,7 +37,7 @@ import { EVERY_LOCKFILE, type LockfileScope, heldTo, isEvery, reviewedIn } from 
 import { type Lru, lru } from './lru.ts'
 import { type AddedPackage, type DirectoryDependencies, type GithubAsked, type LockfileStore, MAX_ADDED, type PullDependencies, lockedAs, lockedWith } from './pull-dependencies.ts'
 import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
-import { type ReviewedDependencies, type ReviewedDependency, askBases, askReviewed } from './reviewed-dependencies.ts'
+import { type ReviewedBase, type ReviewedDependencies, type ReviewedDependency, askBases, askReviewed } from './reviewed-dependencies.ts'
 
 // The other versions told unreviewed, and those told unsupported, of each
 // directory, those past them counted.
@@ -221,15 +221,17 @@ const sourceKey = (pkg: Shown) => `${pkg.source}\0${pkg.name}@${pkg.version ?? '
 
 // The versions of its own package an added version's reviews may be
 // compared with: those it was, and the one the host names (`base`).
-const basesOf = (pkg: AddedPackage) => [...pkg.was ?? [], ...pkg.base?.name === pkg.name ? [pkg.base.version] : []]
+export const basesOf = (pkg: AddedPackage) => [...pkg.was ?? [], ...pkg.base?.name === pkg.name ? [pkg.base.version] : []]
 // `dirs`, each version they add that can be reviewed, of those `asking`
 // takes (by what it is asked), with the version `base` names to review it
 // against (`base`), where it names one: of its own package or another,
 // which its row then reviews it against and counts its lines against, in
-// place of those it was, and against which reviews of it pass it.
-async function withBases(dirs: DirectoryDependencies[], base: NonNullable<ReviewedDependencies['base']>, asking: (key: string) => boolean): Promise<DirectoryDependencies[]> {
+// place of those it was, and against which reviews of it pass it; each
+// named onto `named` too, by what it is asked.
+async function withBases(dirs: DirectoryDependencies[], base: NonNullable<ReviewedDependencies['base']>, asking: (key: string) => boolean,
+  named: Map<string, ReviewedBase>): Promise<DirectoryDependencies[]> {
   const asked = new Map(dirs.flatMap(dir => 'error' in dir ? [] : dir.added.filter(pkg => reviewedAs(pkg) === 'version').map(askedOf)).filter(([key]) => asking(key)))
-  const named = asked.size > 0 ? await askBases(base, asked) : new Map()
+  for (const [key, one] of asked.size > 0 ? await askBases(base, asked) : []) named.set(key, one)
   const based = (pkg: AddedPackage) => { const one = named.get(askedOf(pkg)[0]); return one ? { ...pkg, base: one } : pkg }
   return dirs.map(dir => 'error' in dir ? dir : { ...dir, added: dir.added.map(based) })
 }
@@ -251,7 +253,8 @@ export function heldDependencies<T extends PullDependencies>(told: T, scope: Loc
 // A pull request's dependencies as the client is told them: without the
 // versions its directories lock; with `state`, a repository's review in
 // effect, each version's review (reviewedDirectory), those wanting one asked
-// of the registered reviewed dependencies (`reviewed`), and those still
+// of the registered reviewed dependencies (`reviewed`), the bases they name
+// onto `namedBases` (by what each is asked, askedOf), and those still
 // wanting one of the reviews its comments make (`commentReviews`, where the
 // host reads them), and the review's terms (`review`), with how many
 // reviewers' its comments count (`commentReviews`), or that they couldn't be
@@ -271,8 +274,8 @@ export function heldDependencies<T extends PullDependencies>(told: T, scope: Loc
 // lockfiles the review holds to (`lockfiles`, lockfile-scope.ts, told in its
 // terms where not every one) are left out (heldDependencies).
 export async function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null,
-  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null }: { baseline?: Set<string> | null; baselineUnread?: string[]
-    baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null } = {}) {
+  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null, namedBases = new Map() }: { baseline?: Set<string> | null
+    baselineUnread?: string[]; baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null; namedBases?: Map<string, ReviewedBase> } = {}) {
   const scope = state?.lockfiles ?? EVERY_LOCKFILE
   const answered = heldDependencies(told, scope)
   const baseless = told.baseless === true
@@ -308,7 +311,7 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   await ask(asked)
   // Those it adds that `lookup` doesn't pass with the version the host names
   // to review each against, where it names them; the rest pass already.
-  if (reviewed?.base) held = await withBases(held, reviewed.base, key => !passed.has(key))
+  if (reviewed?.base) held = await withBases(held, reviewed.base, key => !passed.has(key), namedBases)
   // Of those still wanting one, and every other one the lockfiles it holds
   // to add that its teams' reviews pass, telling other pull requests those
   // it reviews (`commented`), but those `lookup` passes, reviewed, the
