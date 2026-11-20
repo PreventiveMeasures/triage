@@ -418,20 +418,33 @@ test('a file whose copies diff in as many lines as it is not offered pretty-prin
 
 test('minified JSON is offered pretty-printed at once in any comparison, printed by the viewer, indented then folded', t => {
   t.after(() => { state.bundleSourcePretty = false })
-  const json = v => `${JSON.stringify({ items: Array.from({ length: 60 }, (_, id) => ({ id, name: `item ${id}` })), v })}\n`
-  const element = view('data/items.json', [{ 'data/items.json': json(1) }, { 'data/items.json': json(2) }])
+  const json = v => `${JSON.stringify({ items: Array.from({ length: 60 }, (_, id) => ({ id, name: `item ${id === 59 ? v : id}` })) })}\n`
+  const element = view('data/items.json', [{ 'data/items.json': json('old') }, { 'data/items.json': json('new') }])
   const asked = comparisons.length
   assert.match(renderText(element.render()), /aria-pressed=false aria-busy= aria-label="Pretty-print"/u, 'offered in a local comparison, its sides minified')
   state.bundleSourcePretty = 'indented'
   const indented = renderText(element.render())
   assert.match(indented, /class=bundle-compare-code-toggle\s+aria-pressed=true aria-busy= aria-label="Pretty-print"/u)
-  assert.match(indented, /<span class=diff-code> {6}"name": "item 59"<\/span>/u, 'each value on a line of its own')
-  assert.match(indented, /<span class="diff-sign">−<\/span><span class=diff-code> {2}"v": <mark class="diff-word">1<\/mark><\/span>/u, 'the one line changed')
+  assert.match(indented, /<span class=diff-code> {6}"id": 59,<\/span>/u, 'each value on a line of its own')
   state.bundleSourcePretty = 'folded'
   const folded = renderText(element.render())
   assert.match(folded, /class=bundle-compare-code-toggle is-folded\s+aria-pressed=true/u, 'its third state')
-  assert.match(folded, /<span class=diff-code> {4}\{ "id": 59, "name": "item 59" \}<\/span>/u, 'each item on a line of its own')
+  assert.match(folded, /<span class=diff-code> {4}\{ "id": 58, "name": "item 58" \},<\/span>/u, 'each item on a line of its own')
   assert.equal(comparisons.length, asked, 'nothing asked of the server')
+})
+
+test('JSON folding changes nothing of the diff of from indenting it has two states, drawn indented where the toggle is folded', t => {
+  t.after(() => { state.bundleSourcePretty = false })
+  const json = v => `${JSON.stringify({ items: Array.from({ length: 60 }, (_, id) => ({ id, name: `item ${id}` })), v })}\n`
+  const element = view('data/items.json', [{ 'data/items.json': json(1) }, { 'data/items.json': json(2) }])
+  const toggle = () => prettyToggle(element._fileState('data/items.json', element._entries.get('data/items.json')))
+  assert.equal(toggle().json, true, 'off, not known yet')
+  state.bundleSourcePretty = 'indented'
+  assert.equal(toggle().json, false, 'its one changed line the same either way')
+  state.bundleSourcePretty = 'folded'
+  const folded = renderText(element.render())
+  assert.match(folded, /class=bundle-compare-code-toggle\s+aria-pressed=true/u, 'not drawn folded')
+  assert.match(folded, /<span class=diff-code> {6}"name": "item 59"<\/span>/u, 'its copies indented')
 })
 
 test('readable JSON, changed or added, is offered pretty-printed too, as the Code tab offers it, its copies made once the toggle is on', t => {

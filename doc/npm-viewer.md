@@ -83,7 +83,7 @@ Compare's Overview lists the dependencies only one version has and the ranges th
 A new dependency is tagged with its package's download tier, and with its age or `published later` where its package did not exist when the older version was published.
 Compare's Files section lists every changed file; files that are not text compare by digest.
 
-In Code, the pretty-print toggle is offered wherever formatting changes the diff, and on any JSON file it changes, with its three states, as in Review; folded is reached from a JSON file's own toggle alone.
+In Code, the pretty-print toggle is offered wherever formatting changes the diff, and on any JSON file it changes, with its three states, as in Review; folded is reached from a JSON file's own toggle alone, and only where folding changes the diff's changed lines from indenting, else the file is drawn indented.
 For JavaScript minified on both sides, lines that differ only in names the minifier renamed are drawn faint and counted apart.
 **Hide renamed names** gives the old side the new side's names; where either side reads names (`.name`, `.toString`, `.stack`), a note warns that values may change.
 **Hide type-only changes** hides a declaration file's change where the server proves it touches types alone.

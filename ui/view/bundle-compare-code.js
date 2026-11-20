@@ -39,7 +39,7 @@ import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
-import { PRETTY_ICON, comparedCopy, comparedPrintable, comparedSame, prettyFolded, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { PRETTY_ICON, comparedCopy, comparedPrintable, comparedSame, jsonLaidOut, prettyFolded, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { jsonPrinted } from '../../common/pretty-json.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory, npmTextKindTag } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
@@ -234,8 +234,9 @@ function countLines(text) {
 
 // The pretty-print toggle a file shown has (_fileState): where printing
 // changes its diff, its copies' state while they are drawn, else off, and
-// whether it is JSON's (`json`); none where printing would change nothing.
-export const prettyToggle = file => (file.printing?.applies ? { ...file.pretty ?? { status: 'off' }, json: file.printing.json } : null)
+// whether it has JSON's third state (`json`, _printing's `foldable`); none
+// where printing would change nothing.
+export const prettyToggle = file => (file.printing?.applies ? { ...file.pretty ?? { status: 'off' }, json: file.printing.foldable } : null)
 
 // The files a toggle drawing many applies to, on lines after its own: listed,
 // as many as AFFECTS_LISTED, else counted.
@@ -401,6 +402,8 @@ export class BundleCompareCode extends LitElement {
     this._spaced = new Map()
     // Whether a file's printed copies diff in fewer lines than it (_smaller).
     this._shorter = new Map()
+    // Whether folding a JSON file changes its diff from indenting it (_foldable).
+    this._foldables = new Map()
     // Whether the texts a file shows are too large to diff unasked (_large).
     this._larges = new Map()
     // A model's key (modelKey) → fold run → lines revealed, and the rows
@@ -1238,7 +1241,9 @@ export class BundleCompareCode extends LitElement {
   // and once both copies came, where their diff has fewer changed lines than
   // the files' (`smaller`: formatting changed, as a semicolon added to every
   // line; an added file has nothing to compare); never where no state of the
-  // toggle changes either side (comparedSame). Its copies (`copies`): the
+  // toggle changes either side (comparedSame). JSON is folded only where that
+  // changes its diff from indenting it (`foldable`), else indented, as told
+  // once the toggle is on (_foldable). Its copies (`copies`): the
   // first failure of either, else one still coming, else one not made while
   // the toggle is off (JSON's), else their texts and hashes. Null for a file
   // whose sides can't both be printed.
@@ -1249,12 +1254,31 @@ export class BundleCompareCode extends LitElement {
     if (!sides.every(([side, , file, text]) => text === '' || comparedPrintable(this.base, this.other, side, file, text))) return null
     const json = sides.every(([, , file, text]) => text === '' || jsonPrinted(file))
     const unreadable = !json && sides.some(([, details, file, text]) => text !== '' && minified(details, file, text))
-    const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
+    const foldable = json && (!state.bundleSourcePretty || this._foldable(path, before, after))
+    const layout = foldable ? state.bundleSourcePretty : state.bundleSourcePretty && 'indented'
+    const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint, layout)))
     const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading') ?? both.find(copy => copy.status === 'off')
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }
     const same = sides.every(([side, , file, text], i) => text === '' || comparedSame(this.base, this.other, side, file, text, both[i]))
     const smaller = !json && !same && !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
-    return { copies, json, minified: unreadable, smaller, applies: !same && (json || unreadable || smaller) }
+    return { copies, json, foldable, minified: unreadable, smaller, applies: !same && (json || unreadable || smaller) }
+  }
+
+  // Whether folding a JSON file's sides changes its diff from indenting them:
+  // its changed lines, kept for its texts; so where either can't be laid out,
+  // or the diff is too large to find unasked.
+  _foldable(path, before, after) {
+    const kept = this._foldables.get(path)
+    if (kept?.before === before && kept.after === after) return kept.foldable
+    const changes = layout => {
+      const [a, b] = [before, after].map(text => (text === '' ? '' : jsonLaidOut(text, layout)))
+      const [aLines, bLines] = [textLines(a), textLines(b)]
+      return JSON.stringify(changeBlocks(a, b).map(({ a0, a1, b0, b1 }) => [aLines.slice(a0, a1), bLines.slice(b0, b1)]))
+    }
+    let foldable = true
+    try { foldable = this._large(path, before, after) || changes('indented') !== changes('folded') } catch {}
+    this._foldables.set(path, { before, after, foldable })
+    return foldable
   }
 
   // Whether the texts a file shows are too large to diff unasked

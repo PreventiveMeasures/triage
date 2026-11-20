@@ -39,6 +39,10 @@ const JSON_LAYOUTS = {
 // Whether a toggle shows JSON's third state, folded.
 export const prettyFolded = json => json && state.bundleSourcePretty === 'folded'
 
+// A JSON text in one of its layouts, made for the asker alone (Compare's
+// _foldable) and kept by none; throws as prettyJsonText does.
+export const jsonLaidOut = (text, layout) => prettyJsonText(text, { width: JSON_LAYOUTS[layout].width })
+
 // Bundle copies kept, the one read last last; each can run to megabytes.
 const KEPT_COPIES = 8
 // npm versions whose copies are kept, the one read last last: Compare shows two.
@@ -128,11 +132,11 @@ function readJson(text) {
   return { printable: true, same: ['folded', 'indented'].every(layout => laidOutAs(text, value, JSON_LAYOUTS[layout].width)) }
 }
 
-// A JSON file's copy in the layout the toggle is in, made here as it is first
-// asked for in it: ready, or an error where it would read otherwise than the
-// file; null where it can't be.
-function prettyJsonCopy(details, path, content) {
-  const file = jsonFile(details, path, content), layout = state.bundleSourcePretty
+// A JSON file's copy in the layout the toggle is in, or `layout`, made here as
+// it is first asked for in it: ready, or an error where it would read
+// otherwise than the file; null where it can't be.
+function prettyJsonCopy(details, path, content, layout = state.bundleSourcePretty) {
+  const file = jsonFile(details, path, content)
   if (!file.printable) return null
   if (file.layout !== layout) {
     file.layout = layout
@@ -408,10 +412,11 @@ export function comparedSame(base, other, side, path, content, copy) {
 // `other`, `notify` called once it comes; the comparison's files asked for
 // the first time one is, whether or not the toggle is on, and one it brought
 // none of asked for alone once it ended. A text other than the side's file
-// has none. JSON, of any comparison, is formatted here, once the toggle is on.
-export function comparedCopy(base, other, side, path, content, notify) {
+// has none. JSON, of any comparison, is formatted here, once the toggle is on,
+// in its `layout`.
+export function comparedCopy(base, other, side, path, content, notify, layout = state.bundleSourcePretty) {
   const details = side === 'base' ? base : other
-  if (jsonPrinted(path)) return state.bundleSourcePretty ? prettyJsonCopy(details, path, content) : { status: 'off' }
+  if (jsonPrinted(path)) return state.bundleSourcePretty ? prettyJsonCopy(details, path, content, layout) : { status: 'off' }
   const key = `${base.integrity}\0${other.integrity}`
   let comparison = comparisons.get(key)
   comparisons.delete(key)
