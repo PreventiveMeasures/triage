@@ -790,12 +790,18 @@ describe('finding deep links — managed resolution', () => {
     }
   })
 
-  it('prefers the named report in another team to another report of the named team', async () => {
+  it('prefers another report of the named team to the named report in another team', async () => {
     const third = { id: 'third', filename: 'third.json' }
-    state.managedTeams = [{ id: 'solo', reports: [third] }, ...state.managedTeams]
-    assert.ok(await locateLinkedFinding({ id: UUID_B, teamId: 'solo', reportId: 'second' }, navigation))
-    assert.deepEqual(calls, [['team', 'second']])
-    assert.deepEqual(reads, [], 'the named report is opened by the managed loader, wherever it is')
+    state.managedTeams = [...state.managedTeams, { id: 'solo', reports: [third] }]
+    content.third = content.second
+    try {
+      assert.ok(await locateLinkedFinding({ id: UUID_B, teamId: 'solo', reportId: 'second' }, navigation))
+      assert.deepEqual(calls, [['solo', 'third']])
+      // Its team without the finding, the named report opens where it is held.
+      calls.length = 0
+      assert.ok(await locateLinkedFinding({ id: UUID_A, teamId: 'solo', reportId: 'first' }, navigation))
+      assert.deepEqual(calls, [['team', 'first']])
+    } finally { delete content.third }
   })
 
   it('keeps the view shown when it holds the finding and the route names nothing accessible', async () => {

@@ -48,21 +48,24 @@ export async function locateManagedFinding(ref, { openManagedReport, readTeam = 
   // A managed URL names the copy to open, a report's in a team or the team's
   // own (common/managed/routes.js resolveManagedRoute), and that copy opens
   // even if another report holds the id too. Where it is gone, not this
-  // user's to open, or without the finding, the nearest copy does: its report
-  // in another team, the same findings and annotations, read as the link's
-  // own is, by the loader, which reads a hidden report too; then another
-  // report of its team; then any, as a link naming neither finds one below.
+  // user's to open, or without the finding, the nearest copy does: another
+  // report of its team; then its report in another team, read as the link's
+  // own is, by the loader, which reads a hidden report too; then any, as a
+  // link naming neither finds one below.
   if (ref.teamId || ref.reportId) {
     const named = teams.find(team => team.id === ref.teamId)
-    const copies = ref.teamOnly ? teams.filter(team => team === named)
-      : teams.filter(team => ref.reportId && team.reports.some(report => report.id === ref.reportId)).toSorted((a, b) => (b === named) - (a === named))
-    for (const team of copies) {
+    const holders = teams.filter(team => ref.reportId && team.reports.some(report => report.id === ref.reportId))
+    const load = async team => {
       const hit = await open(team, ref.reportId ?? null)
-      if (hit || !current()) return hit
       checked.add(`${team.id}:${ref.reportId}`)
+      return hit
     }
-    if (named && !ref.teamOnly) {
-      const hit = await search(candidates.filter(({ team }) => team === named))
+    for (const step of [
+      () => named && (ref.teamOnly || holders.includes(named)) ? load(named) : null,
+      () => named && !ref.teamOnly ? search(candidates.filter(({ team }) => team === named)) : null,
+      ...holders.filter(team => team !== named).map(team => () => load(team)),
+    ]) {
+      const hit = await step()
       if (hit || !current()) return hit
     }
   }

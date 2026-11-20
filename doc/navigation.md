@@ -103,8 +103,8 @@ Finding IDs are percent-encoded as one path component, and a finding opens only 
 A finding link has to match only its finding, and its team and report say which copy to prefer.
 Where that copy is gone, not the user's to open, or without the finding, the nearest accessible one opens instead, and the URL changes to it:
 
-1. the same report in another team
-2. another report of the same team
+1. another report of the same team
+2. the same report in another team
 3. any other report holding the finding, or for a link naming no report, the team holding that report
 
 Access and serving:
