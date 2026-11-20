@@ -40,6 +40,7 @@ const prettyJson = await import('../common/pretty-json.js')
 let jsonCopies = 0
 mock.module('../common/pretty-json.js', { exports: { ...prettyJson, prettyJsonText: (...args) => { jsonCopies++; return prettyJson.prettyJsonText(...args) } } })
 const { comparedCopy, comparedPrintable, prettyCopy: copyOf, prettyPrintable, prettySettled, prettyTooltip, togglePrettySource } = await import('../ui/view/pretty-source.js')
+const { renameDiffable } = await import('../ui/view/rename-diff.js')
 // Each copy asked for here notes its path once it comes, as a view repaints,
 // in the list of the test that asked: one that comes after its test ended
 // counts for no later test.
@@ -136,6 +137,15 @@ test('an npm comparison\'s changed files are asked of the two versions', async (
   await settledUntil(() => requests.length > 1)
   assert.deepEqual(requests[1], ['npm file', '@scope/lib', '2.0.0', 'a.min.js', hashOf(minified)], 'one it brought none of asked of its version alone')
   await settledUntil(() => comparedCopy(base, other, 'base', 'a.min.js', minified, () => {}).status === 'ready')
+})
+
+test('an npm comparison with a side as a pnpm patch changes it, a review\'s patched base\'s, is formatted and diffed by none of the registry\'s requests, whose files are npm\'s', () => {
+  const files = { 'a.min.js': minified }
+  const [base, other] = [npmOf(files), { ...npmOf(files), npm: { name: '@scope/lib', version: '3.0.0' } }]
+  const patched = { ...base, npmPatch: { name: '@scope/lib', version: '2.0.0', integrity: base.integrity, patch: { hash: 'a'.repeat(64) } } }
+  assert.deepEqual([[base, other], [patched, other], [other, patched]].map(([one, two]) => [comparedPrintable(one, two, 'other', 'a.min.js', minified), renameDiffable(one, two)]),
+    [[true, true], [false, false], [false, false]])
+  assert.equal(requests.length, 0)
 })
 
 // Timers set for a failure to be asked again, kept to be fired by the test.
