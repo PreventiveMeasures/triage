@@ -693,7 +693,9 @@ test('the reviews a pull request gives to copy leave out those the reader\'s own
     reviews: { pageInfo: { hasNextPage: false }, nodes: [] } } } }) })
   const path = `/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`
   const bobs = await send(path, { who: 'bob' })
-  assert.equal(bobs.body.lockfiles[0].added.find(pkg => pkg.name === 'ms').reviews, 2, 'his review counted, once')
+  const ms = bobs.body.lockfiles[0].added.find(pkg => pkg.name === 'ms')
+  assert.deepEqual([ms.reviews, ms.reviewers, bobs.body.review.byComments], [1, [{ login: 'bob', status: 'accept', passes: true, comment: true }], true],
+    'his review in its comments counted; hers and his published here for nothing, as the host reads comments')
   assert.equal(Object.hasOwn(bobs.body, 'formatted'), false, 'his made in its comments already, with the same verdict: nothing to copy')
   assert.equal((await send(path, { who: 'alice' })).body.formatted, 'ms by alice', 'hers not made there, though his is')
   // The host passing the version: no review of it wanted there.
@@ -1222,4 +1224,33 @@ test('a bundle of no commit, or of no npm versions, is told no review, GitHub no
     assert.equal(globalThis.fetch.mock.callCount(), 0)
     t.mock.restoreAll()
   }
+})
+
+test('where the host reads reviews of pull requests\' comments, those published here count for nothing, whatever they were compared with; where it doesn\'t, as they did', async () => {
+  const pkg = more => ({ name: 'v', version: '1.1.0', source: 'registry', integrity: sri('v@1.1.0'), lockfile: 'npm', ...more })
+  // Published of it compared with a version no pull request replaces, as one made of a package new to its lockfile is.
+  const published = { id: 'r', package: 'v', version: '1.1.0', integrity: sri('v@1.1.0'), basePackage: 'v', baseVersion: '0.9.0', reviewer: 'u1', login: 'alice', status: 'accept', full: true, time: 1 }
+  const state = { required: 2, since: null, canReview: true, lockfiles: { mode: 'exclude', paths: [] }, reviews: [published] }
+  const dir = (added, locked = [pkg()]) => ({ paths: ['package-lock.json'], more: 0, moreLocked: 0, added, locked })
+  // One adding it new, and one stacked on that, which but locks it.
+  const adding = { cut: false, lockfiles: [dir([pkg()])] }, stacked = { cut: false, lockfiles: [dir([])] }
+  const lookup = () => Promise.resolve(false)
+  const told = async (pull, options) => {
+    const answer = await reviewedDependencies(pull, state, options)
+    const [of] = [...answer.lockfiles[0].added, ...answer.lockfiles[0].unreviewed]
+    return [of.reviews, of.reviewers?.map(one => `${one.login}${one.passes ? '' : ' not counted'}${one.comment ? ' in comments' : ''}`) ?? [], answer.review.byComments ?? false]
+  }
+  // No host, or one that reads no comments: counted by what it was compared with, the one adding it and the one locking it told otherwise.
+  for (const reviewed of [null, { lookup }]) {
+    assert.deepEqual(await told(adding, { reviewed }), [0, ['alice not counted'], false])
+    assert.deepEqual(await told(stacked, { reviewed }), [1, ['alice'], false])
+  }
+  // A host reading comments: by them alone, both told alike.
+  const comment = { package: 'v', version: '1.1.0', integrity: sri('v@1.1.0'), basePackage: null, baseVersion: null, reviewer: 'u2', login: 'bob', status: 'accept', full: true, time: 2 }
+  const reviewed = { lookup, parseComments: () => Promise.resolve([]) }
+  for (const pull of [adding, stacked]) {
+    assert.deepEqual(await told(pull, { reviewed }), [0, [], true], 'one published here not told of at all')
+    assert.deepEqual(await told(pull, { reviewed, commentReviews: () => Promise.resolve({ reviews: [comment], failed: false }) }), [1, ['bob in comments'], true])
+  }
+  assert.deepEqual(state.reviews, [published], 'kept as read, for its author to copy')
 })

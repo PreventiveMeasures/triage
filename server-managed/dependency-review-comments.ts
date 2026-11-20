@@ -70,16 +70,16 @@ export function withFormatted<T extends DependencyReview>(reviewed: ReviewedDepe
 // ids, each with the versions it is of, as its lockfiles lock each: of its
 // version, of an integrity it is locked with and of its patch, whole or
 // compared with a version it was (pull-dependency-reviews.ts reviewsOf,
-// comparedWith).
+// comparedWith), or, `any`, with any version of its package.
 interface Own { review: PublishedReview; pkgs: LockedPackage[] }
-function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string): Map<string, Own> {
+function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string, any: boolean): Map<string, Own> {
   // Theirs by the version they are of, each version probed once.
   const theirs = reviewsByVersion(reviews.filter(review => review.id !== undefined && review.reviewer === user))
   const mine = new Map<string, Own>()
   if (theirs.size === 0) return mine
   for (const pkg of told.lockfiles.flatMap(dir => 'added' in dir ? dir.added : [])) {
     for (const review of reviewsOf(pkg, theirs)) {
-      if (comparedWith(review, pkg, pkg.was ?? [])) (mine.get(review.id!) ?? mine.set(review.id!, { review, pkgs: [] }).get(review.id!)!).pkgs.push(pkg)
+      if (comparedWith(review, pkg, any ? 'any' : pkg.was ?? [])) (mine.get(review.id!) ?? mine.set(review.id!, { review, pkgs: [] }).get(review.id!)!).pkgs.push(pkg)
     }
   }
   return mine
@@ -94,11 +94,13 @@ function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: str
 // it with the same verdict, as copying it would but repeat them: by their
 // latest of it, which tells where they stand there (pull-dependency-
 // reviews.ts stancesOf), an older one of that verdict not counting. A
-// version `lookup` fails to answer of keeps its review.
+// version `lookup` fails to answer of keeps its review. Where the host reads
+// reviews of comments (`parseComments`), what a review was compared with is
+// its to weigh, so one compared with any version is given.
 export async function formattedPull(reviewed: ReviewedDependencies | null, db: Pick<DependencyReviewStore, 'listOwnDependencyReviewsById'>, user: string,
   told: PullDependencies, state: RepoReviewState | null, pullRequest: { repository: string; number: number }, commented: PublishedReview[] = []): Promise<string | null> {
   if (!reviewed?.formatDependencyReviews || !state) return null
-  const mine = ownOfPull(told, state.reviews, user)
+  const mine = ownOfPull(told, state.reviews, user, reviewed.parseComments !== undefined)
   if (mine.size === 0) return null
   const { passed } = await askReviewed(reviewed.lookup, new Map([...mine.values()].flatMap(({ pkgs }) => pkgs.map(askedOf))))
   const there = reviewsByVersion(commented.filter(review => review.reviewer === user))

@@ -124,7 +124,8 @@ const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : 
 // terms, where it tells them, with how many versions across its directories
 // want reviews and can't be reviewed, whether the server's reviewed
 // dependencies pass them, and how many those failed to answer; by how many
-// reviewers its comments review them, or that they couldn't be read; the
+// reviewers its comments review them, or that they couldn't be read, and
+// whether reviews count by comments alone, those published here not; the
 // lockfiles it holds to, where not every one, those of the rest told to none;
 // and the comment the server's host formats of the reader's own reviews of
 // its versions, to copy (`formatted`), where it formats one. Whether a
@@ -145,6 +146,7 @@ export function checked(answer) {
     ...Array.isArray(review.baselineUnread) && review.baselineUnread.every(path => typeof path === 'string') ? { baselineUnread: review.baselineUnread } : {},
     ...review.reviewedDependencies === true ? { reviewedDependencies: true } : {}, ...count(review.unasked) > 0 ? { unasked: review.unasked } : {},
     ...count(review.commentReviews) > 0 ? { commentReviews: review.commentReviews } : {}, ...review.commentsFailed === true ? { commentsFailed: true } : {},
+    ...review.byComments === true ? { byComments: true } : {},
     ...typeof review.baselineError === 'string' ? { baselineError: review.baselineError } : {},
     ...['exclude', 'include'].includes(review.lockfiles?.mode) && Array.isArray(review.lockfiles.paths) && review.lockfiles.paths.every(path => typeof path === 'string')
       ? { lockfiles: { mode: review.lockfiles.mode, paths: review.lockfiles.paths } } : {} } } : {} }

@@ -112,12 +112,13 @@ function told(answer) {
 // The review's terms, as a pull request's popup tells them, the lockfiles
 // read and where, and what they couldn't tell.
 function terms(answer, unread) {
-  const { required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [], lockfiles } = answer.review
+  const { required, since, reviewedDependencies, unasked, baselineError, baselineUnread = [], byComments, lockfiles } = answer.review
   const read = answer.lockfiles.filter(dir => !dir.error).flatMap(dir => dir.paths)
   const at = answer.head ? html` at <code>${answer.head.slice(0, 7)}</code>` : nothing
-  return html`<p class="team-deps-quiet">Each version needs ${plural(required, 'full, accepting review')} by as many reviewers, of it whole or compared with any
+  return html`<p class="team-deps-quiet">${byComments ? 'Each version needs the server’s reviewed dependencies to pass it'
+    : html`Each version needs ${plural(required, 'full, accepting review')} by as many reviewers, of it whole or compared with any
     version of its package${reviewedDependencies ? ', or the server’s reviewed dependencies to pass it' : since
-      ? html`; those the repository’s lockfiles locked at <code>${since.slice(0, 7)}</code> need none` : nothing}.</p>
+      ? html`; those the repository’s lockfiles locked at <code>${since.slice(0, 7)}</code> need none` : nothing}`}.</p>
     <p class="team-deps-quiet">${read.length > 0 ? html`As ${paths(read)} ${read.length === 1 ? 'locks' : 'lock'} them${at}, the nearest first.`
       : html`No lockfile installing it was read${at}.`}</p>
     ${unread.length > 0 ? html`<p class="team-deps-quiet" role="alert">Unread, so what ${unread.length === 1 ? 'it locks isn’t' : 'they lock aren’t'} checked: ${paths(unread)}.</p>` : nothing}

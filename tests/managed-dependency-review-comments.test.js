@@ -130,3 +130,16 @@ test('a pull request\'s leaves out one\'s reviews its own comments there make al
   assert.equal(await formattedPull(reviewed, db, 'me', told, state, pullRequest), '5 reviewed', 'all of them where its comments make none')
   assert.equal(await formattedPull(reviewed, db, 'me', told, state, pullRequest, pkgs.map(pkg => published(pkg, { comment: true }))), null, 'nothing to copy once its comments make them all')
 })
+
+test('a pull request\'s gives one\'s review compared with a version it doesn\'t replace only where the host reads comments, what it was compared with then the host\'s to weigh', async () => {
+  const pkg = { name: 'fresh', version: '1.0.0', source: 'registry', integrity: sri('fresh'), lockfile: 'npm' }
+  const told = { base: 'c'.repeat(40), head: 'b'.repeat(40), cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: [pkg], locked: [pkg] }] }
+  // Of a package new to its lockfiles, compared with an older version of it.
+  const state = { required: 1, since: null, canReview: true, lockfiles: { mode: 'exclude', paths: [] }, reviews: [{ id: 'against', package: 'fresh', version: '1.0.0', integrity: pkg.integrity,
+    basePackage: 'fresh', baseVersion: '0.9.0', reviewer: 'me', login: 'grace', status: 'accept', full: true, time: 1 }] }
+  const db = { listOwnDependencyReviewsById: (user, ids) => Promise.resolve(ids.map(id => review(id, { package: 'fresh', version: '1.0.0', baseVersion: '0.9.0' }))) }
+  const hooks = more => ({ lookup: () => Promise.resolve(false), formatDependencyReviews: input => Promise.resolve(`${input.reviews.length} reviewed`), ...more })
+  const pullRequest = { repository: 'org/a', number: 5 }
+  assert.equal(await formattedPull(hooks(), db, 'me', told, state, pullRequest), null, 'not where reviews published here count, as it counts for nothing there')
+  assert.equal(await formattedPull(hooks({ parseComments: () => Promise.resolve([]) }), db, 'me', told, state, pullRequest), '1 reviewed')
+})
