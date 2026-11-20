@@ -319,13 +319,19 @@ export function resolveManagedRoute(route, teams, adminBundles = []) {
   if (!['findings', 'files'].includes(route.view)) return route
   const { teamSlug, reportSlug, ...rest } = route
   const matches = teams.filter(team => team.slug === teamSlug)
-  if (!teamSlug || matches.length !== 1) return null
-  const team = matches[0]
+  const team = teamSlug && matches.length === 1 ? matches[0] : null
+  const ids = new Set(teams.flatMap(entry => entry.reports ?? []).filter(report => report.slug === reportSlug).map(report => report.id))
+  const reportId = reportSlug != null && ids.size === 1 ? [...ids][0] : null
+  // A finding's link has to name its finding alone. Its team and report are
+  // where it was copied, and its reader may hold the finding elsewhere: each
+  // resolves where its slug names one alone, the report in any team, and
+  // else to null, for the finding's lookup to prefer
+  // (ui/view/managed-finding-link.js). `teamOnly` tells a link to a team's
+  // own findings from one whose report resolved to none.
+  if (rest.finding) return { ...rest, teamId: team?.id ?? null, reportId, teamOnly: reportSlug == null }
+  if (!team) return null
   if (reportSlug == null) return { ...rest, teamId: team.id, reportId: null }
-  const reports = teams.flatMap(entry => entry.reports ?? []).filter(report => report.slug === reportSlug)
-  const ids = new Set(reports.map(report => report.id))
-  const report = (team.reports ?? []).find(entry => entry.slug === reportSlug)
-  return report && ids.size === 1 ? { ...rest, teamId: team.id, reportId: report.id } : null
+  return (team.reports ?? []).some(entry => entry.id === reportId) ? { ...rest, teamId: team.id, reportId } : null
 }
 
 export function managedRouteForIds(route, teams, adminBundles = []) {
@@ -359,5 +365,8 @@ export function managedRouteForIds(route, teams, adminBundles = []) {
   const report = reportId == null ? null : team?.reports?.find(entry => entry.id === reportId)
   if (!team?.slug || (reportId != null && !report?.slug)) return null
   const result = { ...rest, teamSlug: team.slug, reportSlug: report?.slug ?? null }
-  return resolveManagedRoute(result, teams) ? result : null
+  // Its slugs have to name this team and report, which a finding's link
+  // resolves without.
+  const resolved = resolveManagedRoute(result, teams)
+  return resolved?.teamId === team.id && resolved.reportId === (report?.id ?? null) ? result : null
 }

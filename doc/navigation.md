@@ -100,11 +100,18 @@ Older names still open: `/diff` opens Code, `history` opens Commits, and `/manag
 Teams, reports and bundles have persistent, server-assigned slugs: the last UUID component when it is unique, and otherwise the full ID.
 Finding IDs are percent-encoded as one path component, and a finding opens only under a team or report.
 
+A finding link has to match only its finding, and its team and report say which copy to prefer.
+Where that copy is gone, not the user's to open, or without the finding, the nearest accessible one opens instead, and the URL changes to it:
+
+1. the same report in another team
+2. another report of the same team
+3. any other report holding the finding, or for a link naming no report, the team holding that report
+
 Access and serving:
 
 - Manage pages require a manager or admin, and the admin pages require an admin.
 - Team, report and team bundle URLs require the user's access to that team.
-- A page the user cannot open returns to the landing page.
+- A page the user cannot open returns to the landing page, as does a finding link whose finding is in no report they can open.
 - Finding triage history requires an authenticated `triage`, `manage` or `admin` role and access to the finding.
   Triage users must name their team, whose security and dependency filters apply.
 - Browser history holds only a navigation generation, never report or triage data.

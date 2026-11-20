@@ -2336,7 +2336,7 @@ async function restoreManagedPageContent(route, isCurrent) {
   if (!isCurrent() || !isManagedUiMode()) return false
   if (route.view !== 'home' && (!state.managedSession || state.managedSession.role === 'none')) return false
   if (route.finding) {
-    const result = await revealFinding({ ...route.finding, teamId: route.teamId, reportId: route.reportId }, {
+    const result = await revealFinding({ ...route.finding, teamId: route.teamId, reportId: route.reportId, teamOnly: route.teamOnly }, {
       openManagedReport: (team, reportId) => switchToManagedTeam(team, reportId, { history: false }),
       isCurrent,
     })
