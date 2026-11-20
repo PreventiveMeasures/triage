@@ -13,11 +13,11 @@ export function compareSourceOptions(options, valueOf = option => option.id) {
 }
 
 // Both selects share a width, initially fitting the widest name or placeholder,
-// then every loaded choice and as many of its smaller tags as fit TAGS_FIT.
-// Menus size themselves.
+// then every loaded choice and as many of its smaller tags as fit TAGS_FIT, a
+// marked one's (`detailNote`) with room for its pill. Menus size themselves.
 export function comparePickerStyle(source) {
   if (!source) return nothing
-  const fit = ({ name = '', detail = '' } = {}) => name.length + Math.min(detail.length, TAGS_FIT) * .87 + 1
+  const fit = ({ name = '', detail = '', detailNote = null } = {}) => name.length + Math.min(detail.length, TAGS_FIT) * .87 + (detailNote ? 3 : 1)
   const chars = (source.choices ?? []).reduce((most, choice) => Math.max(most, fit(choice)), Math.max(`Choose a ${source.noun ?? 'bundle'}…`.length, fit(source.widest)))
   return styleMap({ '--compare-select-chars': `${Math.ceil(chars)}` })
 }

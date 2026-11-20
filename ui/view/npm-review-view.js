@@ -45,10 +45,18 @@ function reviewHeader(page) {
   if (hasBase && !choices.some(row => row.id === page._target)) choices.push(...compareSourceOptions([{ id: page._target, name: page._target, format: 'npm' }]))
   const versions = compareSourceOptions(source.choices)
   if (!versions.some(row => row.id === page.entry.npm.version)) versions.push(...compareSourceOptions([{ id: page.entry.npm.version, name: page.entry.npm.version, format: 'npm' }]))
-  return renderComparisonHeader(renderComparisonPicker({ source, label: 'Review', disabled: busy(page),
+  // The version reviewed, where its review is of it patched, listed twice: tagged by its patch's hash alone
+  // (its sha256's first 5 digits), marked, and after it as npm has it (`unpatched`), as the others open; the
+  // selects as wide as it takes (`widest`).
+  const at = versions.findIndex(row => row.id === page.entry.npm.version), unpatched = `${page.entry.npm.version} unpatched`
+  const tag = page._patch && { name: `${page.entry.npm.name}@${page.entry.npm.version}`, detail: `patch:${page._patch.hash.slice(0, 5)}`,
+    detailNote: `As pnpm’s patch ${page._patch.path} changes it` }
+  if (tag) versions.splice(at, 1, { ...versions[at], detail: tag.detail, detailNote: tag.detailNote }, { ...versions[at], id: unpatched })
+  return renderComparisonHeader(renderComparisonPicker({ source: tag ? { ...source, widest: tag } : source, label: 'Review', disabled: busy(page),
     from: { options: choices, value: hasBase ? page._target : null, label: 'Review base', pick: value => void page._navigate(value) },
     to: { options: versions, value: page.entry.npm.version, label: 'Version to review', pick: value => void page._navigateTo({
-      view: 'npm', packageName: page.entry.npm.name, packageSpec: value, bundleTab: 'review', ...page._location(page._target, value === page.entry.npm.version),
+      view: 'npm', packageName: page.entry.npm.name, packageSpec: value === unpatched ? page.entry.npm.version : value, bundleTab: 'review',
+      ...page._location(page._target, value === page.entry.npm.version),
     }) },
     clear: hasBase ? { label: 'Clear review base', run: () => void page._navigate('(empty)') } : null,
     openLine: detail => page._openLine(detail),
@@ -58,7 +66,7 @@ function reviewHeader(page) {
 
 // The patch a patched version's review is of, where it was read, as its tag
 // tells it.
-const patchTag = page => page._patch ? html`<span class="npm-review-patched" data-tooltip=${`As pnpm’s patch ${page._patch.path} changes it, read at ${page._patch.commit.slice(0, 7)}`}>patched</span>`
+const patchTag = page => page._patch ? html`<span class="npm-review-patched" data-tooltip=${`As pnpm’s patch ${page._patch.path} changes it, read at ${page._patch.commit.slice(0, 7)}`}>patch:${page._patch.hash}</span>`
   : nothing
 
 function toolbar(page) {

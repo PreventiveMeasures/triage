@@ -627,6 +627,9 @@ test('a source\'s selects are one width, its widest at least from the start, the
   // pkg@1.0.0 and 24 characters of its tags: 9 + 24 × .87 + 1.
   const { view: tagged } = sourced({ options: [{ id: '1.0.0', name: 'pkg@1.0.0', displayLabel: '1.0.0', format: 'npm', detail: Array.from({ length: 12 }, (_, i) => `ts${i}.0`).join(', ') }] })
   assert.equal(width(tagged), '31', 'its tags only as many as fit')
+  // pkg@1.0.0 and a marked tag, with room for its pill: 9 + 11 × .87 + 3.
+  const { view: marked } = sourced({ options: [{ id: '1.0.0', name: 'pkg@1.0.0', displayLabel: '1.0.0', format: 'npm', detail: 'patch:abcde', detailNote: 'Patched' }] })
+  assert.equal(width(marked), '22', 'a marked tag whole in its pill')
 })
 
 test('a source opens the other side to swap, which compares with the old base once it arrives', async () => {

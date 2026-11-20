@@ -100,7 +100,7 @@ export class DependencyReviewList extends LitElement {
       <a class="dependency-review-title" href=${managedRoutePath(route)} @click=${open}>${sourcePackageIcon(review.ecosystem)}
         ${review.basePackage !== null && review.basePackage !== review.package ? html`<span>${review.basePackage} ${review.baseVersion} → </span>` : nothing}
         <strong>${review.package}</strong> <span>${review.basePackage === review.package ? `${review.baseVersion} → ` : ''}${review.version}${review.patchHash
-          ? html` <span class="dependency-review-patched">patched</span>` : nothing}</span></a>
+          ? html` <span class="dependency-review-patched">patch:${review.patchHash}</span>` : nothing}</span></a>
       <span class="dependency-review-result">${published ? verdictLabel(review.status) : html`<span class="dependency-review-checked">${checked} ${checked === 1 ? 'file' : 'files'} checked</span>`}</span>
       <button type="button" class="dependency-review-coverage" aria-expanded=${expanded} aria-controls=${`review-details-${review.id}`}
         data-tooltip=${published ? `${review.checkedFiles} of ${review.totalFiles} files checked` : nothing} @click=${() => this._toggleDetails(review.id)}>${published

@@ -42,6 +42,7 @@ export class SearchableSelector extends LitElement {
     .option-copy { flex: 1; min-width: 0; display: grid; gap: .08rem; }
     .secondary { color: var(--muted); font-size: .64rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .secondary.is-warning { color: var(--warning); font-weight: 600; }
+    .detail.is-noted { padding: 0 .35rem; border-radius: 3px; color: var(--accent); background: rgb(from var(--accent) r g b / .13); font-weight: 600; }
     .avatar { display: grid; place-items: center; flex: 0 0 1.5rem; width: 1.5rem; height: 1.5rem; border-radius: 50%; color: var(--accent); background: rgb(from var(--accent) r g b / .13); font-family: sans-serif; font-size: .62rem; font-weight: 600; }
     .detail, .count { flex: 0 0 auto; color: var(--muted); font-size: .66rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
     svg { flex: 0 0 auto; width: .9rem; height: .9rem; color: var(--muted); }
@@ -144,7 +145,7 @@ export class SearchableSelector extends LitElement {
     const enabled = visible.filter(option => !option.disabled)
     const tabValue = enabled.find(option => option.value === this.value)?.value ?? enabled[0]?.value
     return html`<button type="button" class="trigger" popovertarget="selector-menu" aria-label=${this.label} aria-haspopup="dialog" aria-expanded=${this._open} ?disabled=${this.disabled}>
-      ${selected ? this.optionIcon(selected) : nothing}<span class="name" data-tooltip-truncated data-tooltip=${selected?.label ?? nothing}>${selected?.label ?? this.placeholder}</span>${selected?.detail ? html`<span class="detail" data-tooltip-truncated data-tooltip=${selected.detail}>${selected.detail}</span>` : nothing}
+      ${selected ? this.optionIcon(selected) : nothing}<span class="name" data-tooltip-truncated data-tooltip=${selected?.label ?? nothing}>${selected?.label ?? this.placeholder}</span>${selected?.detail ? html`<span class=${selected.detailNote ? 'detail is-noted' : 'detail'} ?data-tooltip-truncated=${!selected.detailNote} data-tooltip=${selected.detailNote ?? selected.detail}>${selected.detail}</span>` : nothing}
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
     </button><div class="menu" id="selector-menu" popover="auto" role="dialog" aria-label=${this.label} @beforetoggle=${this._beforeToggle} @toggle=${this._toggle} @keydown=${this._keyDown}>
       <div class="search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>
@@ -178,7 +179,7 @@ export class SearchableSelector extends LitElement {
     const label = option.displayLabel ?? (grouped ? option.name : option.label)
     const tooltip = this.optionTooltip(option)
     return html`<button type="button" class="option" role="option" ?data-reset=${option.reset} ?disabled=${option.disabled} aria-label=${option.label} aria-selected=${option.value === this.value} tabindex=${option.value === tabValue ? 0 : -1} @click=${() => this._pick(option.value)}>
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}<span class="option-copy"><span class="name" ?data-tooltip-truncated=${label === tooltip} data-tooltip=${tooltip}>${label}</span>${option.secondary ? html`<span class=${option.secondaryWarning ? 'secondary is-warning' : 'secondary'} ?data-tooltip-truncated=${!option.secondaryWarning} data-tooltip=${option.secondaryWarning ?? option.secondary}>${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class="detail">${option.detail}</span>` : nothing}
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg>${this.optionIcon(option)}<span class="option-copy"><span class="name" ?data-tooltip-truncated=${label === tooltip} data-tooltip=${tooltip}>${label}</span>${option.secondary ? html`<span class=${option.secondaryWarning ? 'secondary is-warning' : 'secondary'} ?data-tooltip-truncated=${!option.secondaryWarning} data-tooltip=${option.secondaryWarning ?? option.secondary}>${option.secondary}</span>` : nothing}</span>${option.detail ? html`<span class=${option.detailNote ? 'detail is-noted' : 'detail'} data-tooltip=${option.detailNote ?? nothing}>${option.detail}</span>` : nothing}
     </button>`
   }
 

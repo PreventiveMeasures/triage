@@ -9,7 +9,8 @@ import { sourceMetrics } from '../scan/metrics.js'
 // An npm package version (npm-package.js npmCompareSource) names its
 // dist-tags as its detail, its number alone as `displayLabel`, how the list
 // names it, and the day it was published (`date`) under it, flagged where
-// it has a `dateWarning`, which its tooltip says.
+// it has a `dateWarning`, which its tooltip says; its tags marked where it
+// has a `detailNote`, which theirs says.
 export function bundleOptions(bundles) {
   return bundles.map(bundle => {
     const format = bundle.format === 'npm' ? 'npm'
@@ -27,7 +28,7 @@ export function bundleOptions(bundles) {
       if (Number.isSafeInteger(bundle.summary.lines) && bundle.summary.lines >= 0) metadata.push(`${bundle.summary.lines.toLocaleString()} LoC`)
     }
     return { value: bundle.id, label: bundle.filename, displayLabel: bundle.displayLabel, detail, format, secondary: metadata.join(' · '),
-      ...bundle.dateWarning && { secondaryWarning: bundle.dateWarning } }
+      ...bundle.dateWarning && { secondaryWarning: bundle.dateWarning }, ...bundle.detailNote && { detailNote: bundle.detailNote } }
   })
 }
 
@@ -51,10 +52,11 @@ class BundleSelector extends SearchableSelector {
     .option .bundle-icon { flex-basis: 1.35rem; width: 1.35rem; height: 1.35rem; margin-right: .15rem; }
     .secondary { line-height: 1.25; font-variant-numeric: tabular-nums; }
     /* A column fits the longest number and the longest line under it, set in
-       .76em, so its characters are .76 of the number's wide. */
+       .76em, so its characters are .76 of the number's wide, and the longest
+       marked tag, a pill's. */
     :host([versions]) .group {
       display: grid; gap: .1rem; font-size: .76rem;
-      grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(max(var(--option-width, 6ch), var(--secondary-width, 0ch) * .76) + 1rem)), 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(max(var(--option-width, 6ch), var(--secondary-width, 0ch) * .76, var(--note-width, 0ch) * .8 + .7rem) + 1rem)), 1fr));
     }
     :host([versions]) .secondary { font-size: .76em; }
     :host([versions]) .option { flex-wrap: wrap; align-content: start; gap: 0 .8rem; padding: .3rem .45rem; font-variant-numeric: tabular-nums; }
@@ -66,6 +68,7 @@ class BundleSelector extends SearchableSelector {
        their tooltip). */
     :host([versions]) .trigger .name:has(+ .detail) { flex: 0 1 auto; }
     :host([versions]) .trigger .detail { flex: 1 1 0%; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+    :host([versions]) .trigger .detail.is-noted { flex: none; margin-left: auto; }
   `]
 
   constructor() {
@@ -85,6 +88,7 @@ class BundleSelector extends SearchableSelector {
       const longest = text => Math.min(Math.max(0, ...this.options.map(option => text(option)?.length ?? 0)), 28)
       this.style.setProperty('--option-width', `${longest(shownLabel)}ch`)
       this.style.setProperty('--secondary-width', `${longest(option => option.secondary)}ch`)
+      this.style.setProperty('--note-width', `${longest(option => option.detailNote && option.detail)}ch`)
     }
   }
 
