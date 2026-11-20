@@ -41,14 +41,17 @@ mock.module('../ui/view/bundle-comparison.js', { namedExports: {
   bundleComparisonDiff: (base, other, scope) => { comparisonsAsked.push([base, other]); return Promise.resolve(prepareComparison(base, other, scope)) },
 } })
 mock.module('../ui/view/npm-compare-source.js', { namedExports: { npmComparisonSource: () => ({ choices: [], options: [] }) } })
-// A version as a patch changes it, each asked for noted.
+// A version as a patch changes it, each asked for noted; failing, where `patchFailure` says why.
 const loadedPatches = []
+let patchFailure = null
 mock.module('../ui/view/npm-package.js', { namedExports: {
-  loadNpmVersion: (name, version) => { loadedBases.push([name, version]); return Promise.resolve({ details: base }) }, npmCompareSource: () => ({ choices: [], options: [] }),
+  loadNpmVersion: (name, version) => { loadedBases.push([name, version]); return Promise.resolve({ entry: base, details: base }) }, npmCompareSource: () => ({ choices: [], options: [] }),
   loadPatchedNpmVersion: (version, patch) => {
     loadedPatches.push([version.npm.name, version.npm.version, patch])
+    if (patchFailure) return Promise.reject(new Error(patchFailure))
     return Promise.resolve({ integrity: `${version.integrity} patch:${patch.hash}`, kind: 'sourcemap', size: 0,
-      json: { version: 3, sources: ['index.js', 'patched.js'], sourcesContent: ['patched\n', 'added by the patch\n'] }, npmPatch: { name: version.npm.name, version: version.npm.version, patch } })
+      json: { version: 3, sources: ['index.js', 'patched.js'], sourcesContent: ['patched\n', 'added by the patch\n'] },
+      npmPatch: { name: version.npm.name, version: version.npm.version, integrity: version.integrity, patch } })
   },
   npmPackageRoute: (entry, tab, location) => ({ view: 'npm', packageName: entry.npm.name, packageSpec: entry.npm.version, bundleTab: tab, ...location }),
   parseNpmPackageInput: input => ({ name: input.slice(0, input.lastIndexOf('@')), spec: input.slice(input.lastIndexOf('@') + 1) }),
@@ -559,6 +562,61 @@ test('Review resumes the latest saved base while explicit links and new reviews 
   assert.equal(empty._context.basePackage, null, 'a saved full-package review overrides Compare’s base too')
 })
 
+test('a review against its base as a patch kept changes it, named by its hash alone (`basePatch`): its base read so, its reviews apart, its base listed twice; one not kept failing under its selectors, which pick another', async () => {
+  const basePatch = 'e'.repeat(64), patch = { hash: 'a'.repeat(64), repoId: 7, commit: 'b'.repeat(40), path: 'patches/lib.patch' }
+  const route = { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '1.0.0', basePatch }
+  assert.equal(managedRoutePath(route), `/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0?basePatch=${basePatch}`)
+  assert.equal(managedRoutePath({ ...route, patch }), `/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0?patch=${patch.hash}&repo=7&commit=${patch.commit}&path=patches/lib.patch&basePatch=${basePatch}`)
+  for (const one of [route, { ...route, patch }]) assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(one), 'https://triage.test')), one, 'its route read back')
+  const { reviewPackage: _reviewPackage, reviewSpec: _reviewSpec, ...baseless } = route
+  for (const wrong of [{ ...route, basePatch: 'nope' }, { ...route, basePatch: 'btaxlooa6g3kqmodthrgs5zgme' }, baseless]) assert.equal(managedRoutePath(wrong), null, JSON.stringify(wrong))
+  assert.equal(parseManagedRoute(new URL(`/npm/lib@2.0.0/review?basePatch=${basePatch}`, 'https://triage.test')), null, 'of no base')
+  assert.deepEqual(dependencyReviewRoute({ ...review, basePatchHash: basePatch }).basePatch, basePatch, 'a review against one opens against it')
+  assert.equal(reviewTitle({ ...review, basePatchHash: basePatch }), '@scope/lib 1.0.0 (patched) -> 2.0.0')
+
+  const opening = () => {
+    const page = component()
+    page.details = { kind: 'sourcemap', npm: entry.npm, integrity: entry.integrity, json: { version: 3, sources: ['index.js'], sourcesContent: ['new\n'] } }
+    page.request = { bundle: entry.integrity, reviewPackage: '@scope/lib', reviewSpec: '1.0.0', basePatch }
+    page._key = null
+    return page
+  }
+  Object.assign(state, { bundleDetailsTab: 'review', selectedBundle: entry.integrity })
+  answer = { reviews: [], teams: TEAMS }
+  latestAnswer = null
+  loadedPatches.length = 0; requests.length = 0
+  const page = opening()
+  page.render()
+  for (let turn = 0; turn < 6; turn++) await Promise.resolve()
+  assert.deepEqual(loadedPatches, [['@scope/lib', '1.0.0', { hash: basePatch }]], 'its base as its patch changes it, by its hash alone')
+  assert.deepEqual([page._context.baseVersion, page._context.baseIntegrity, page._context.basePatchHash], ['1.0.0', base.integrity, basePatch], 'against its base as npm has it, and its patch')
+  assert.equal(state.npmReview.basePatch, basePatch, 'its route keeps it')
+  assert.equal(requests[0][0].basePatchHash, basePatch, 'its reviews those against it')
+  const picker = label => templates(renderReview(page)).find(one => one.strings[0].includes('<bundle-selector') && one.values.includes(label)).values
+  assert.deepEqual(picker('Review base')[0].map(row => [row.id, row.detail ?? '', Boolean(row.detailNote)]), [['@scope/lib@1.0.0', 'patch:eeeee', true], ['@scope/lib@1.0.0 unpatched', '', false]],
+    'its base listed twice: as patched, marked, then as npm has it')
+  const picked = (label, value) => { navigations.length = 0; picker(label).find(one => typeof one === 'function')({ stopPropagation() {}, detail: { value } }); return navigations[0] }
+  const opened = { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '1.0.0' }
+  assert.deepEqual([picked('Review base', '@scope/lib@1.0.0 unpatched'), picked('Review base', '@scope/lib@1.0.0'), picked('Version to review', '1.5.0')],
+    [opened, { ...opened, basePatch }, { ...opened, packageSpec: '1.5.0', basePatch }], 'its base unpatched; as it is; another version against it still')
+  // A review listed against its base otherwise opens against it so: as npm has it, or as another patch changes it.
+  navigations.length = 0
+  for (const basePatchHash of [null, 'f'.repeat(64)]) await page._openReview({ ...review, id: `listed-${basePatchHash}`, basePatchHash, publishedAt: 200 })
+  assert.deepEqual(navigations, [opened, { ...opened, basePatch: 'f'.repeat(64) }], 'each against its own base')
+
+  // Its patch not kept: the reason in place of the comparison, the selectors above it, to pick another.
+  patchFailure = 'The patch isn’t kept here.'
+  const failing = opening()
+  failing.render()
+  for (let turn = 0; turn < 6; turn++) await Promise.resolve()
+  patchFailure = null
+  const shown = text(renderReview(failing))
+  assert.match(shown, /label=Review base[^]*label=Version to review[^]*role=alert>The patch isn’t kept here\.[^]*>Retry</u)
+  failing._basePatch = null
+  assert.doesNotMatch(text(renderReview(failing)), /label=Review base/u, 'any other failure the page\'s alone, as it was')
+  Object.assign(state, { bundleDetailsTab: undefined, selectedBundle: undefined, npmReview: undefined })
+})
+
 test('a version as a pnpm patch changes it is reviewed as patched: its files the patched ones, its context the patch\'s hash, each change asked with where the patch is, its route keeping the patch but for another version', async () => {
   const patch = { hash: 'a'.repeat(64), repoId: 7, commit: 'b'.repeat(40), path: 'patches/lib.patch' }
   const page = component()
@@ -604,6 +662,17 @@ test('a version as a pnpm patch changes it is reviewed as patched: its files the
   await page._setFileStatus('patched.js', 'accept')
   assert.deepEqual(requests[0][0], { ...page._context, patchRepoId: 7, patchCommit: patch.commit, patchPath: patch.path }, 'each change asked with where its patch is')
   assert.equal(reviewTitle(page._context), '@scope/lib 1.0.0 -> 2.0.0 (patched)')
+  // Its path left out, looked for at its commit, or its hash alone, as kept: each change asked so, its tag telling where the server read it.
+  const { _patch: whole, _patched: served } = page
+  const tooltip = () => /class="npm-review-patched" data-tooltip=([^>]*)>/u.exec(text(renderReview(page)))[1]
+  for (const [less, asked, told] of [[{ hash: patch.hash, repoId: 7, commit: patch.commit }, { patchRepoId: 7, patchCommit: patch.commit }, 'As pnpm’s patch changes it, read at bbbbbbb'],
+    [{ hash: patch.hash }, {}, 'As pnpm’s patch changes it']]) {
+    Object.assign(page, { _patch: less, _patched: { ...served, npmPatch: { ...served.npmPatch, patch: less } } })
+    assert.deepEqual([page._asked(), tooltip()], [{ ...page._context, ...asked }, told], JSON.stringify(less))
+    page._patched = served
+    assert.equal(tooltip(), 'As pnpm’s patch patches/lib.patch changes it, read at bbbbbbb', 'as read')
+  }
+  Object.assign(page, { _patch: whole })
   const route = { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '1.0.0', patch }
   assert.equal(managedRoutePath(route), `/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0?patch=${patch.hash}&repo=7&commit=${patch.commit}&path=patches/lib.patch`)
   assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route, 'its route read back')
@@ -617,6 +686,14 @@ test('a version as a pnpm patch changes it is reviewed as patched: its files the
     assert.equal(managedRoutePath({ ...route, patch: wrong }), null, JSON.stringify(wrong))
   }
   assert.equal(parseManagedRoute(new URL(`/npm/lib@2.0.0/review?patch=${patch.hash}&repo=7`, 'https://triage.test')), null, 'one naming not where its patch is')
+  for (const [less, query] of [[{ hash: patch.hash, repoId: 7, commit: patch.commit }, `patch=${patch.hash}&repo=7&commit=${patch.commit}`], [{ hash: patch.hash }, `patch=${patch.hash}`]]) {
+    const short = { ...route, patch: less }
+    assert.equal(managedRoutePath(short), `/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0?${query}`, 'its path left out, or all but its hash')
+    assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(short), 'https://triage.test')), short, query)
+  }
+  for (const wrong of [`commit=${patch.commit}`, 'path=patches/lib.patch', 'repo=7&path=patches/lib.patch']) {
+    assert.equal(parseManagedRoute(new URL(`/npm/lib@2.0.0/review?patch=${patch.hash}&${wrong}`, 'https://triage.test')), null, wrong)
+  }
   assert.deepEqual(dependencyReviewRoute({ ...review, patchHash: patch.hash, patchSource: { repoId: 7, commit: patch.commit, path: patch.path } }).patch, patch,
     'a patched review opens its patch where it was read')
   // Its repository by its name, in its id's place; a patch pnpm 9 named by an md5, read no more, none.

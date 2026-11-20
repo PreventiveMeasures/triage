@@ -6,10 +6,11 @@ import { REVIEW_VERDICTS, type ReviewSummary, type ReviewVerdict, allowedReviewV
 
 // A review is of a version, as npm's registry has it, by its integrity; of
 // it as pnpm patches it (`patchHash`, the patch's hash as a lockfile names
-// it), where it is patched; and compared with a version (its base), or none.
+// it), where it is patched; and compared with a version (its base), or none,
+// that as a patch changes it too (`basePatchHash`), where named so.
 export interface ReviewContext {
   ecosystem: 'npm'; package: string; version: string; integrity: string; patchHash: string | null
-  basePackage: string | null; baseVersion: string | null; baseIntegrity: string | null
+  basePackage: string | null; baseVersion: string | null; baseIntegrity: string | null; basePatchHash: string | null
 }
 // The shasums (sha1s, in hex) of the tarballs a review reads, its version's
 // and its base's, where npm tells them: each held, with its integrity, to the
@@ -67,7 +68,8 @@ CREATE TABLE IF NOT EXISTS managed_dependency_review (
   base_package TEXT NOT NULL, base_version TEXT NOT NULL, base_integrity TEXT NOT NULL,
   time INTEGER NOT NULL, revision INTEGER NOT NULL, published_at INTEGER, revoked_at INTEGER, files TEXT,
   status TEXT CHECK (status IN ('accept', 'accept-with-nits', 'request-changes', 'reject')), comment TEXT NOT NULL DEFAULT '',
-  shasum TEXT NOT NULL DEFAULT '', base_shasum TEXT NOT NULL DEFAULT '', patch_hash TEXT NOT NULL DEFAULT '', patch_source TEXT
+  shasum TEXT NOT NULL DEFAULT '', base_shasum TEXT NOT NULL DEFAULT '', patch_hash TEXT NOT NULL DEFAULT '', patch_source TEXT,
+  base_patch_hash TEXT NOT NULL DEFAULT ''
 ) STRICT;
 CREATE INDEX IF NOT EXISTS managed_dependency_review_context_idx
   ON managed_dependency_review(ecosystem, package, version, integrity, base_package, base_version, base_integrity, time);
@@ -87,22 +89,23 @@ CREATE INDEX IF NOT EXISTS managed_dependency_review_team_idx ON managed_depende
 `
 // The columns added since the table was, for a database that has it already.
 export const DEPENDENCY_REVIEW_COLUMNS = [['shasum', "TEXT NOT NULL DEFAULT ''"], ['base_shasum', "TEXT NOT NULL DEFAULT ''"],
-  ['patch_hash', "TEXT NOT NULL DEFAULT ''"], ['patch_source', 'TEXT']] as const
-// Each author's one draft of a comparison, its patch's too, made once those
-// columns are: the index held to it before patches were reviewed gone.
+  ['patch_hash', "TEXT NOT NULL DEFAULT ''"], ['patch_source', 'TEXT'], ['base_patch_hash', "TEXT NOT NULL DEFAULT ''"]] as const
+// Each author's one draft of a comparison, its patches' too, made once those
+// columns are: those held to it before patches, then its base's, were reviewed gone.
 export const DEPENDENCY_REVIEW_INDEXES = `
 DROP INDEX IF EXISTS managed_dependency_review_unpublished_idx;
-CREATE UNIQUE INDEX IF NOT EXISTS managed_dependency_review_draft_idx
-  ON managed_dependency_review(user_id, ecosystem, package, version, integrity, patch_hash, base_package, base_version, base_integrity)
+DROP INDEX IF EXISTS managed_dependency_review_draft_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS managed_dependency_review_drafts_idx
+  ON managed_dependency_review(user_id, ecosystem, package, version, integrity, patch_hash, base_package, base_version, base_integrity, base_patch_hash)
   WHERE published_at IS NULL;`
-const values = (c: ReviewContext) => [c.ecosystem, c.package, c.version, c.integrity, c.patchHash ?? '', c.basePackage ?? '', c.baseVersion ?? '', c.baseIntegrity ?? '']
+const values = (c: ReviewContext) => [c.ecosystem, c.package, c.version, c.integrity, c.patchHash ?? '', c.basePackage ?? '', c.baseVersion ?? '', c.baseIntegrity ?? '', c.basePatchHash ?? '']
 const targetWhere = 'ecosystem = ? AND package = ? AND version = ? AND integrity = ? AND patch_hash = ?'
-const contextWhere = `${targetWhere} AND base_package = ? AND base_version = ? AND base_integrity = ?`
+const contextWhere = `${targetWhere} AND base_package = ? AND base_version = ? AND base_integrity = ? AND base_patch_hash = ?`
 // Its author by the login they reviewed as, and by the name the app's user
 // has now (null once they are none, or have none), as the lists show them.
 const columns = `id, user_id AS user, user_login AS userLogin, (SELECT n.name FROM managed_user n WHERE n.id = user_id) AS userName, ecosystem, package, version, integrity,
   NULLIF(patch_hash, '') AS patchHash, NULLIF(base_package, '') AS basePackage, NULLIF(base_version, '') AS baseVersion, NULLIF(base_integrity, '') AS baseIntegrity,
-  NULLIF(shasum, '') AS shasum, NULLIF(base_shasum, '') AS baseShasum, patch_source AS patchSource,
+  NULLIF(base_patch_hash, '') AS basePatchHash, NULLIF(shasum, '') AS shasum, NULLIF(base_shasum, '') AS baseShasum, patch_source AS patchSource,
   time, revision, published_at AS publishedAt, revoked_at AS revokedAt, files, status, comment`
 const conflict = () => { throw new ManagedMutationError(409, 'review-conflict') }
 // What a review keeps of the bytes it read: its tarballs' shasums, and where
@@ -225,7 +228,7 @@ async function listContext(db: ManagedSql, context: ReviewContext, user: string,
     AND (user_id = ? OR (published_at IS NOT NULL AND EXISTS (
       SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id JOIN managed_user u ON u.id = ?
       WHERE rt.review_id = r.id AND ${reviewsIn(false)})))
-    ORDER BY time, id`).all(...values(context).slice(0, allBases ? 5 : 8), user, user)
+    ORDER BY time, id`).all(...values(context).slice(0, allBases ? 5 : 9), user, user)
   return expandReviews(db, rows, user)
 }
 
@@ -329,8 +332,8 @@ export function dependencyReviewMethods(db: ManagedSql): DependencyReviewStore {
         if (await unpublished()) return conflict()
         const next = randomUUID()
         await db.prepare(`INSERT INTO managed_dependency_review
-          (id, user_id, user_login, ecosystem, package, version, integrity, patch_hash, base_package, base_version, base_integrity, shasum, base_shasum, patch_source, time, revision)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`).run(next, user.id, user.login, ...values(context), ...shasums(tarballs), now)
+          (id, user_id, user_login, ecosystem, package, version, integrity, patch_hash, base_package, base_version, base_integrity, base_patch_hash, shasum, base_shasum, patch_source, time, revision)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`).run(next, user.id, user.login, ...values(context), ...shasums(tarballs), now)
         return next
       }
       if (change.action === 'start') {

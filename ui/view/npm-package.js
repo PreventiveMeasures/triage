@@ -148,14 +148,15 @@ export async function loadNpmVersion(name, spec, options) {
 }
 
 // A version's files as a pnpm patch changes them (`patch`, as a review's
-// route names it, `{ hash, repoId, commit, path }`), as Review reads them:
-// details of their own (`npmPatch`), which the server pairs with the patch
-// (bundle-comparison.js), with none of what is read of the version as npm
-// has it, which the server reads of that alone.
+// route names it, `{ hash, repoId, commit, path }`, its path, or all but its
+// hash, left out), as Review reads them: details of their own (`npmPatch`,
+// the patch as where the server read it), which the server pairs with the
+// patch (bundle-comparison.js), with none of what is read of the version as
+// npm has it, which the server reads of that alone.
 export async function loadPatchedNpmVersion(entry, patch, options) {
   const data = await fetchNpmPackage(entry.npm.name, entry.npm.version, { ...options, patch })
   return { ...fileRowDetails({ integrity: `${entry.integrity} patch:${patch.hash}`, size: entry.size }, data.files),
-    npmPatch: { name: entry.npm.name, version: entry.npm.version, patch } }
+    npmPatch: { name: entry.npm.name, version: entry.npm.version, integrity: entry.integrity, patch: { ...patch, ...data.patch } } }
 }
 
 // What the server sent with a version about its package (npm-insights.ts
@@ -395,7 +396,8 @@ export async function openNpmRoute(route, isCurrent, renderSidebar) {
   const compared = state.bundleCompare?.bundle === entry.integrity ? state.bundleCompare : null
   if (tab === 'review') {
     state.npmReview = { bundle: entry.integrity,
-      ...(route.reviewPackage ? { reviewPackage: route.reviewPackage, reviewSpec: route.reviewSpec ?? null } : {}), ...(route.patch ? { patch: route.patch } : {}) }
+      ...(route.reviewPackage ? { reviewPackage: route.reviewPackage, reviewSpec: route.reviewSpec ?? null } : {}), ...(route.patch ? { patch: route.patch } : {}),
+      ...(route.basePatch ? { basePatch: route.basePatch } : {}) }
   }
   state.bundles = [entry]
   selectBundle(entry.integrity, tab)

@@ -48,7 +48,8 @@ test('reviews written before patches were reviewed are of no patch, and a databa
   await original.close()
   // As a database was before: no patch columns, its drafts one a comparison of the version alone.
   const raw = new DatabaseSync(path)
-  raw.exec(`DROP INDEX managed_dependency_review_draft_idx; ALTER TABLE managed_dependency_review DROP COLUMN patch_hash; ALTER TABLE managed_dependency_review DROP COLUMN patch_source;
+  raw.exec(`DROP INDEX managed_dependency_review_drafts_idx; ALTER TABLE managed_dependency_review DROP COLUMN base_patch_hash;
+    ALTER TABLE managed_dependency_review DROP COLUMN patch_hash; ALTER TABLE managed_dependency_review DROP COLUMN patch_source;
     CREATE UNIQUE INDEX managed_dependency_review_unpublished_idx ON managed_dependency_review(user_id, ecosystem, package, version, integrity, base_package, base_version, base_integrity)
     WHERE published_at IS NULL`)
   raw.close()

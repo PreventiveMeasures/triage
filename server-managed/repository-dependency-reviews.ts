@@ -26,7 +26,9 @@ export interface RepoDependencyReview { enabled: boolean; required: number; sinc
 // lockfile names it), the version it was compared with (none for a whole package's),
 // who wrote it (`reviewer`, their id, else their login then), their login
 // as it was then (`login`), its verdict, whether it checked every file
-// (`full`), and when it was published.
+// (`full`), and when it was published. One compared with a version as a patch
+// changes it counts for none: what a pull request replaced isn't told by its
+// patch.
 // One made in a pull request's comments (`comment`) counts for it alone;
 // one published here has its `id`.
 export interface PublishedReview {
@@ -83,7 +85,7 @@ async function publishedReviews(db: ManagedSql, repoId: number, versions: Review
     const rows = (await db.prepare(`SELECT r.id, r.user_id AS userId, r.user_login AS userLogin, r.package, r.version, r.integrity, r.patch_hash AS patchHash,
         NULLIF(r.base_package, '') AS basePackage, NULLIF(r.base_version, '') AS baseVersion, r.files, r.status, r.published_at AS publishedAt
       FROM managed_dependency_review r
-      WHERE r.ecosystem = 'npm' AND r.published_at IS NOT NULL AND r.revoked_at IS NULL AND r.status IS NOT NULL
+      WHERE r.ecosystem = 'npm' AND r.published_at IS NOT NULL AND r.revoked_at IS NULL AND r.status IS NOT NULL AND r.base_patch_hash = ''
         AND r.package IN (${names.map(() => '?').join(',')}) AND r.version IN (${numbers.map(() => '?').join(',')})
         AND EXISTS (SELECT 1 FROM managed_dependency_review_team rt JOIN managed_team t ON t.id = rt.team_id
           WHERE rt.review_id = r.id AND ${COUNTING_TEAM})`).all(...names, ...numbers, repoId) as

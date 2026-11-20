@@ -35,9 +35,11 @@ const TELL_MS = 30
 const MISMATCH = "The server's diff doesn't match this file as shown."
 
 // Whether the server can diff a comparison's files: both a managed bundle's,
-// or both a version's of one npm package.
+// or both a version's of one npm package as npm has it, neither as a pnpm
+// patch changes it (`npmPatch`, npm-package.js loadPatchedNpmVersion), whose
+// files the registry's are not.
 export const renameDiffable = (base, other) => !!(base?.managedId && other?.managedId)
-  || (!!base?.npm && !!other?.npm && base.npm.name === other.npm.name)
+  || (!!base?.npm && !!other?.npm && !base.npmPatch && !other.npmPatch && base.npm.name === other.npm.name)
 
 // Whether asking again for a diff that failed with `status` may succeed.
 const retryable = status => !(status >= 400 && status < 500 && status !== 429)

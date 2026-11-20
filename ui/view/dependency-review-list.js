@@ -11,11 +11,13 @@ import { showToast } from './toast.js'
 import { reviewAuthor, reviewBadge, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel } from './npm-review-presentation.js'
 
 // A review's page: of its version against its base, as patched where it is
-// a patched one's, the patch read where it was; one of a patch pnpm 9 named
-// by an md5, which is read no more, its version's.
+// a patched one's, the patch read where it was, and against its base as
+// patched, as kept; one of a patch pnpm 9 named by an md5, which is read no
+// more, its version's.
 export const dependencyReviewRoute = review => ({ view: 'npm', packageName: review.package, packageSpec: review.version, bundleTab: 'review',
   ...(review.basePackage === null ? {} : { reviewPackage: review.basePackage, reviewSpec: review.baseVersion }),
-  ...(isPatchHash(review.patchHash) && review.patchSource ? { patch: { hash: review.patchHash, ...review.patchSource } } : {}) })
+  ...(isPatchHash(review.patchHash) && review.patchSource ? { patch: { hash: review.patchHash, ...review.patchSource } } : {}),
+  ...(isPatchHash(review.basePatchHash) && review.basePackage !== null ? { basePatch: review.basePatchHash } : {}) })
 
 const compactDate = time => {
   const date = new Date(time)

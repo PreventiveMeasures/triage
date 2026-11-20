@@ -50,24 +50,32 @@ function reviewHeader(page) {
   // selects as wide as it takes (`widest`).
   const at = versions.findIndex(row => row.id === page.entry.npm.version), unpatched = `${page.entry.npm.version} unpatched`
   const tag = page._patch && { name: `${page.entry.npm.name}@${page.entry.npm.version}`, detail: `patch:${page._patch.hash.slice(0, 5)}`,
-    detailNote: `As pnpm’s patch ${page._patch.path} changes it` }
+    detailNote: patchNote(readPatch(page)) }
   if (tag) versions.splice(at, 1, { ...versions[at], detail: tag.detail, detailNote: tag.detailNote }, { ...versions[at], id: unpatched })
-  return renderComparisonHeader(renderComparisonPicker({ source: tag ? { ...source, widest: tag } : source, label: 'Review', disabled: busy(page),
-    from: { options: choices, value: hasBase ? page._target : null, label: 'Review base', pick: value => void page._navigate(value) },
+  // Its base likewise, where it is a version as a patch changes it (`_basePatch`), as kept.
+  const baseAt = choices.findIndex(row => row.id === page._target), baseUnpatched = `${page._target} unpatched`
+  const baseTag = hasBase && page._basePatch && { name: page._target, detail: `patch:${page._basePatch.slice(0, 5)}`, detailNote: patchNote(page._base?.npmPatch?.patch) }
+  if (baseTag) choices.splice(baseAt, 1, { ...choices[baseAt], detail: baseTag.detail, detailNote: baseTag.detailNote }, { ...choices[baseAt], id: baseUnpatched })
+  return renderComparisonHeader(renderComparisonPicker({ source: tag || baseTag ? { ...source, widest: tag || baseTag } : source, label: 'Review', disabled: busy(page),
+    from: { options: choices, value: hasBase ? page._target : null, label: 'Review base',
+      pick: value => void page._navigate(value === baseUnpatched ? page._target : value, value === page._target ? page._basePatch : null) },
     to: { options: versions, value: page.entry.npm.version, label: 'Version to review', pick: value => void page._navigateTo({
       view: 'npm', packageName: page.entry.npm.name, packageSpec: value === unpatched ? page.entry.npm.version : value, bundleTab: 'review',
       ...page._location(page._target, value === page.entry.npm.version),
     }) },
     clear: hasBase ? { label: 'Clear review base', run: () => void page._navigate('(empty)') } : null,
     openLine: detail => page._openLine(detail),
-    comparison: { base: page._base, other: page._other, files: page._diff.files },
-  }), renderComparisonSummary(page._diff))
+    comparison: page._base ? { base: page._base, other: page._other, files: page._diff.files } : null,
+  }), page._base ? renderComparisonSummary(page._diff) : nothing)
 }
 
 // The patch a patched version's review is of, where it was read, as its tag
-// tells it.
-const patchTag = page => page._patch ? html`<span class="npm-review-patched" data-tooltip=${`As pnpm’s patch ${page._patch.path} changes it, read at ${page._patch.commit.slice(0, 7)}`}>patch:${page._patch.hash}</span>`
-  : nothing
+// tells it: as the server read it, else as the page names it, whose path
+// and commit may be left out.
+const readPatch = page => page._patched?.npmPatch?.patch ?? page._patch
+const patchNote = patch => `As pnpm’s patch${patch?.path ? ` ${patch.path}` : ''} changes it`
+const patchTag = page => page._patch ? html`<span class="npm-review-patched" data-tooltip=${`${patchNote(readPatch(page))}${readPatch(page).commit
+  ? `, read at ${readPatch(page).commit.slice(0, 7)}` : ''}`}>patch:${page._patch.hash}</span>` : nothing
 
 function toolbar(page) {
   return html`<div class="npm-review-toolbar"><nav class="npm-review-toolbar-group" aria-label="Review breadcrumbs">
@@ -227,11 +235,15 @@ export function reviewExtensions(page) {
 }
 
 export function renderReview(page) {
-  if (!page._base) {return html`<div class="npm-review-empty" role=${page._baseError ? 'alert' : 'status'}>${page._baseError ?? 'Loading comparison…'}
-    ${page._baseError ? html`<button type="button" class="npm-review-button" @click=${() => { page._baseKey = null; void page._loadBase(page._target, page.request?.resume) }}>Retry</button>` : nothing}</div>`}
+  if (!page._base) {
+    const shown = html`<div class="npm-review-empty" role=${page._baseError ? 'alert' : 'status'}>${page._baseError ?? 'Loading comparison…'}
+    ${page._baseError ? html`<button type="button" class="npm-review-button" @click=${() => { page._baseKey = null; void page._loadBase(page._target, page.request?.resume) }}>Retry</button>` : nothing}</div>`
+    // A patched base failing, its patch not kept: in place of what is under the selectors, which pick another still.
+    return page._baseError && page._basePatch ? html`${reviewHeader(page)}${shown}` : shown
+  }
   return html`${reviewHeader(page)}${toolbar(page)}${page._panel ? nothing : errorMessage(page)}
     ${renderComparisonViewer({ base: page._base, other: page._other, diff: page._diff, source: page.source, path: page._path, seek: page._seek,
-      baseName: page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}` : 'Empty package',
+      baseName: page._base.npm ? `${page._base.npm.name}@${page._base.npm.version}${page._base.npmPatch ? ' (patched)' : ''}` : 'Empty package',
       otherName: `${page.entry.npm.name}@${page.entry.npm.version}${page._patch ? ' (patched)' : ''}`,
       select: path => page._selectFile(path), extensions: reviewExtensions(page), mode: page._mode,
     })}

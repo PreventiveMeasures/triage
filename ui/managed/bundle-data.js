@@ -74,7 +74,7 @@ export function fetchBundleAdvisories(id, teamId, scope = '', repoAdvisories = f
 // Why a pnpm patch of a version couldn't be read of its repository, or
 // applied (server-managed/npm-patch.ts), as Review reads one.
 export const PATCH_ERRORS = {
-  'patch-not-found': 'The patch isn’t at the commit it was read at.',
+  'patch-not-found': 'The patch isn’t at the commit it was looked for at.',
   'patch-mismatch': 'The file at the commit the patch was read at isn’t the patch its lockfile names.',
   'patch-unreadable': 'The patch couldn’t be read as git writes one.',
   'patch-unsupported': 'The patch changes a file’s bytes, which isn’t reviewed here.',
@@ -83,10 +83,12 @@ export const PATCH_ERRORS = {
   'no-repository': 'The repository the patch is in isn’t available to you.',
   'no-directory': 'Only some of the repository the patch is in is available to you.',
   'github-token-required': 'Reading the patch needs your GitHub sign-in.',
+  'patch-not-kept': 'The patch isn’t kept here: a review of a version it patches keeps it, as does a team’s Dependencies tab of its repository’s default branch.',
 }
 // A patch's fields as the npm endpoints take them, where `patch` names one
 // (`{ hash, repoId, commit, path }`).
-export const patchParams = patch => patch ? { patchHash: patch.hash, patchRepoId: String(patch.repoId), patchCommit: patch.commit, patchPath: patch.path } : {}
+export const patchParams = patch => patch ? { patchHash: patch.hash,
+  ...patch.repoId == null ? {} : { patchRepoId: String(patch.repoId), patchCommit: patch.commit }, ...patch.path == null ? {} : { patchPath: patch.path } } : {}
 
 const NPM_ERRORS = {
   ...PATCH_ERRORS,
@@ -634,7 +636,8 @@ export function fetchBundleComparison(id, other, { signal, scope = '' } = {}) {
 // Two versions' of a package: `version` the one shown, as `patch` changes it
 // where given, compared with `otherVersion`, of `otherName` where another
 // package's, or with none as `(empty)`.
-export function fetchNpmComparison(name, version, otherVersion, { signal, otherName = name, patch = null } = {}) {
-  const params = new URLSearchParams({ name, version, otherVersion, ...otherName === name ? {} : { otherName }, ...patchParams(patch) })
+export function fetchNpmComparison(name, version, otherVersion, { signal, otherName = name, patch = null, otherPatch = null } = {}) {
+  const params = new URLSearchParams({ name, version, otherVersion, ...otherName === name ? {} : { otherName }, ...patchParams(patch),
+    ...otherPatch ? { otherPatchHash: otherPatch.hash } : {} })
   return request(`/api/npm/comparison?${params}`, NPM_ERRORS, readComparison, signal)
 }

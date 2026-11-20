@@ -103,12 +103,15 @@ export function managedRoutePath(route) {
 // names the version reviewed against, and, of a version as a pnpm patch
 // changes it, the patch (`patch`): its hash, and where it is read, a
 // repository by its id, or by its name (`owner/name`) in its place, a commit
-// and its file's path there,
-// `?patch=<hash>&repo=<repo id or name>&commit=<commit>&path=<path>`.
+// and its file's path there, or none, the patch looked for there,
+// `?patch=<hash>&repo=<repo id or name>&commit=<commit>&path=<path>`, or by
+// its hash alone, which only one kept answers (`?patch=<hash>`); and,
+// against a version as a patch changes it, that patch by its hash alone
+// (`basePatch`, `&basePatch=<hash>`).
 export const NPM_TABS = new Set(['overview', 'code', 'search', 'compare', 'review', 'treemap'])
 // A patch as the server reads one (server-managed/npm-patch.ts requestedPatch).
-const isPatch = patch => isPatchHash(patch?.hash) && (isRepoId(patch.repoId) || typeof patch.repoId === 'string' && isGithubRepoName(patch.repoId))
-  && COMMIT.test(patch.commit ?? '') && isPatchPath(patch.path)
+const isPatch = patch => isPatchHash(patch?.hash) && (patch.repoId == null ? patch.commit == null && patch.path == null
+  : (isRepoId(patch.repoId) || typeof patch.repoId === 'string' && isGithubRepoName(patch.repoId)) && COMMIT.test(patch.commit ?? '') && (patch.path == null || isPatchPath(patch.path)))
 function npmPackagePath(route) {
   if (route.packageName == null) return '/npm'
   const tab = route.bundleTab ?? 'overview'
@@ -116,11 +119,12 @@ function npmPackagePath(route) {
       || (route.compareSpec != null && !isNpmPackageSpec(route.compareSpec))) return null
   if (tab === 'review') {
     if (route.reviewPackage != null && !isNpmPackageName(route.reviewPackage) || route.reviewSpec != null && !isNpmPackageSpec(route.reviewSpec)
-      || route.patch != null && !isPatch(route.patch)) return null
+      || route.patch != null && !isPatch(route.patch) || route.basePatch != null && (!isPatchHash(route.basePatch) || route.reviewPackage == null)) return null
     const base = route.reviewPackage == null ? '' : `/${route.reviewPackage}${route.reviewSpec == null ? '' : `@${route.reviewSpec}`}`
-    const patch = route.patch == null ? ''
-      : `?patch=${route.patch.hash}&repo=${route.patch.repoId}&commit=${route.patch.commit}&path=${route.patch.path.split('/').map(encodeURIComponent).join('/')}`
-    return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}/review${base}${patch}`
+    const { patch } = route
+    const query = [...patch == null ? [] : [`patch=${patch.hash}`], ...patch?.repoId == null ? [] : [`repo=${patch.repoId}&commit=${patch.commit}`],
+      ...patch?.path == null ? [] : [`path=${patch.path.split('/').map(encodeURIComponent).join('/')}`], ...route.basePatch == null ? [] : [`basePatch=${route.basePatch}`]].join('&')
+    return `/npm/${route.packageName}${route.packageSpec == null ? '' : `@${route.packageSpec}`}/review${base}${query ? `?${query}` : ''}`
   }
   const file = tab === 'code' && isLineNumber(route.file) ? `/${route.file}` : ''
   const lines = file && isLineNumber(route.line)
@@ -136,11 +140,14 @@ function parseNpmRoute(path, hash, search) {
       || review[3] != null && !isNpmPackageName(review[3]) || review[4] != null && !isNpmPackageSpec(review[4])) return null
     // The full dependency form is canonical; a bare version is a shortcut.
     const versionOnly = review[3] && /^\d+\.\d+\.\d+(?:[-+].*)?$/u.test(review[3]) && review[4] == null
-    const patch = search.has('patch')
-      ? { hash: search.get('patch'), repoId: /^[1-9]\d*$/u.test(search.get('repo') ?? '') ? Number(search.get('repo')) : search.get('repo'), commit: search.get('commit'), path: search.get('path') } : null
-    if (patch && !isPatch(patch)) return null
+    const at = ['repo', 'commit', 'path'].some(key => search.has(key))
+      ? { repoId: /^[1-9]\d*$/u.test(search.get('repo') ?? '') ? Number(search.get('repo')) : search.get('repo'), commit: search.get('commit') } : {}
+    const patch = search.has('patch') ? { hash: search.get('patch'), ...at, ...search.has('path') ? { path: search.get('path') } : {} } : null
+    const basePatch = search.get('basePatch')
+    if (patch && !isPatch(patch) || basePatch !== null && (!isPatchHash(basePatch) || !review[3])) return null
     return { view: 'npm', packageName: review[1], packageSpec: review[2] ?? null, bundleTab: 'review',
-      ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}), ...(patch ? { patch } : {}) }
+      ...(review[3] ? { reviewPackage: versionOnly ? review[1] : review[3], reviewSpec: versionOnly ? review[3] : review[4] ?? null } : {}), ...(patch ? { patch } : {}),
+      ...(basePatch ? { basePatch } : {}) }
   }
   const match = /^\/npm(?:\/((?:@[^/@]+\/)?[^/@]+)(?:@([^/]+))?(?:\/(code|search|compare|treemap)(?:\/([^/]+)(?:\/([a-z]+))?)?)?)?$/u.exec(path)
   if (!match) return undefined
