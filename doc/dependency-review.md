@@ -137,7 +137,8 @@ Its sub-tabs are:
   Pull requests that add only versions listed under others come after the rest, one line each, and can be hidden; one whose lockfiles lock other versions that want reviews says how many on its line.
 - **Versions**: every added version that wants reviews, once, with the pull requests that add it; those lacking a review made in another are red.
 - **Default branch**, where anything there wants reviews: what each repository's default branch locks that wants reviews or fails them, and its lockfiles left unread.
-- **Reviews**: the reviews published to the team, revoked ones too, latest first, with their authors.
+- **Reviews**: the reviews published to the team, revoked ones too, latest first, one line each: the version, the verdict, how much was checked (`Partial · 22/24`), the author, any other teams it is published to, and when.
+  Clicking how much was checked opens the review's notes and file verdicts under its line.
   Each author shows with their avatar and their name in the app, with their GitHub login in its tooltip.
 
 Where several pull requests add a version, its reviews in each are compared: who passes it and who rejects it there, by login.
