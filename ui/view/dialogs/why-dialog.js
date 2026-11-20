@@ -153,7 +153,7 @@ class WhyDialog extends AppDialog {
         <button type="button" aria-label="Close dependency chains" @click=${this._onClose}>×</button>
       </header>
       <div class="graph-caption">
-        <span>${nodes.size} ${nodes.size === 1 ? 'package' : 'packages'}${targets.length > 1 ? ` · ${targets.length} installations${this.version === undefined ? '' : ' of this version'}` : ''}${this.reason ? ` · Scope: ${this.reason}` : ''}</span>
+        <span>${nodes.size} ${nodes.size === 1 ? 'package' : 'packages'}${targets.length > 1 ? ` · ${targets.length} installations${this.version === undefined ? '' : ' of this version'}` : ''}${this.reason ? ` · Scope: ${this.reason}` : this.entry ? ` · Entry point: ${this.entry}` : ''}</span>
         <span>↓ imports</span>
       </div>
       ${targets.length > 0 ? this.renderGraph() : html`<p class="empty">Dependency metadata for this ${this.version === undefined ? 'package' : 'version'} is not available in this bundle scope.</p>`}

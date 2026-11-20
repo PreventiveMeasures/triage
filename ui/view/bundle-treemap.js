@@ -62,7 +62,7 @@ import { LitElement, html, render as litRender, nothing, svg } from 'lit'
 import { styleMap } from './style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs } from './bundle-sources.js'
-import { bundleGraphReasons } from './bundle-graph-inputs.js'
+import { bundleScopeOptions, bundleScopes } from '../../common/bundle-reasons.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { mixedColor, paletteColor, pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
@@ -87,7 +87,9 @@ const MIN_ARC = 1.5   // px — sunburst arcs thinner than this along their oute
 // path string, not node refs — `_rebuild` re-resolves it against
 // the fresh tree and silently drops paths that no longer exist.
 const _focusPathByBundle = new Map()
-const _reasonByBundle = new Map()
+// The scope filtered by, too: a reason's or an entry point's id
+// (common/bundle-reasons.js bundleScopes).
+const _scopeByBundle = new Map()
 
 // Last chosen projection ('treemap' | 'sunburst'). Outlives instances
 // for the same reason as the focus store above; a single slot rather
@@ -323,7 +325,8 @@ class BundleTreemap extends LitElement {
     _focus: { state: true },
     // Active projection, 'treemap' | 'sunburst' (the header switch).
     _mode: { state: true },
-    _reason: { state: true },
+    // The scope filtered by, '' for every file: `reason:<name>` or `entry:<path>`.
+    _scope: { state: true },
     // Code | Resources pill: '' (all), 'code' or 'resources'.
     _kind: { state: true },
   }
@@ -340,10 +343,10 @@ class BundleTreemap extends LitElement {
     this._root = null
     this._focus = []
     this._mode = _sharedMode
-    this._reason = ''
+    this._scope = ''
     this._kind = _sharedKind
     this._mixedKinds = false
-    this._reasons = new Map()
+    this._scopeOptions = { reasons: [], entries: [] }
     this._dirByPath = new Map()
     this._status = 'loading'
     this._meta = { total: 0, prefix: '' }
@@ -354,8 +357,8 @@ class BundleTreemap extends LitElement {
   }
 
   willUpdate(changed) {
-    if (changed.has('details')) this._reason = _reasonByBundle.get(this.details?.integrity) ?? ''
-    if (changed.has('details') || changed.has('_reason') || changed.has('_kind')) this._rebuild()
+    if (changed.has('details')) this._scope = _scopeByBundle.get(this.details?.integrity) ?? ''
+    if (changed.has('details') || changed.has('_scope') || changed.has('_kind')) this._rebuild()
   }
 
   firstUpdated() {
@@ -428,7 +431,7 @@ class BundleTreemap extends LitElement {
     if (this._tooltip) this._tooltip.classList.remove('show')
   }
 
-  // Parse the bundle into a path tree once per bundle or reason change:
+  // Parse the bundle into a path tree once per bundle or scope change:
   // build dirs from prefix-stripped paths, collapse single-child
   // chains, then roll up sizes/counts. Layout itself happens per
   // render (it depends on the measured size).
@@ -440,7 +443,7 @@ class BundleTreemap extends LitElement {
     // ref-keyed) is re-resolved at the end once the new tree stands.
     this._focus = []
     this._dirByPath = new Map()
-    this._reasons = new Map()
+    this._scopeOptions = { reasons: [], entries: [] }
     this._mixedKinds = false
     this._meta = { total: 0, prefix: '' }
     this._hideTooltip()
@@ -448,12 +451,13 @@ class BundleTreemap extends LitElement {
     const sizes = bundleFileSizes(this.details)
     const origPaths = [...sizes.keys()].filter((path) => sizes.get(path) !== null)
     if (origPaths.length === 0) { this._status = 'empty'; return }
-    this._reasons = bundleGraphReasons(this.details, origPaths)
-    if (!this._reasons.has(this._reason)) {
-      this._reason = ''
-      _reasonByBundle.delete(this.details.integrity)
+    const scopes = bundleScopes(this.details, origPaths)
+    this._scopeOptions = bundleScopeOptions(scopes)
+    if (!scopes.has(this._scope)) {
+      this._scope = ''
+      _scopeByBundle.delete(this.details.integrity)
     }
-    const reasonFiles = this._reasons.get(this._reason)
+    const scopeFiles = scopes.files(this._scope)
     // Stasis package boundaries (keyed by original path) so each leaf
     // is colored by its authoritative package — sibling workspace
     // packages stay distinct instead of merging under a shared parent
@@ -480,7 +484,7 @@ class BundleTreemap extends LitElement {
     for (let i = 0; i < origPaths.length; i++) {
       // Keep the full bundle's display prefix and original source paths
       // stable while filtering either projection.
-      if (reasonFiles && !reasonFiles.has(origPaths[i])) continue
+      if (scopeFiles && !scopeFiles.has(origPaths[i])) continue
       if (kind && isResource(origPaths[i]) !== (kind === 'resources')) continue
       const size = sizes.get(origPaths[i])
       if (size <= 0) continue
@@ -602,12 +606,12 @@ class BundleTreemap extends LitElement {
     _sharedKind = this._kind
   }
 
-  _changeReason(e) {
-    this._reason = e.detail.value.replace(/^reason:/u, '')
+  _changeScope(e) {
+    this._scope = e.detail.value
     const integrity = this.details?.integrity
     if (integrity) {
-      if (this._reason) _reasonByBundle.set(integrity, this._reason)
-      else _reasonByBundle.delete(integrity)
+      if (this._scope) _scopeByBundle.set(integrity, this._scope)
+      else _scopeByBundle.delete(integrity)
     }
   }
 
@@ -835,10 +839,10 @@ class BundleTreemap extends LitElement {
         ${this._renderCrumbs()}
         <span class="bundle-treemap-head-right">
           <span class="bundle-treemap-sub">${curFiles} ${curFiles === 1 ? 'file' : 'files'} · ${formatBytes(curBytes)}${prefix ? html` · <span class="mono">${prefix}</span>` : ''}</span>
-          ${this._reasons.size > 0 ? html`<bundle-scope-selector compact
-            .reasons=${[...this._reasons.keys()].map(reason => ({ id: `reason:${reason}`, label: reason }))}
-            .value=${this._reason ? `reason:${this._reason}` : ''} label="Filter files"
-            @scope-change=${this._changeReason}
+          ${this._scopeOptions.reasons.length > 0 || this._scopeOptions.entries.length > 0 ? html`<bundle-scope-selector compact
+            .reasons=${this._scopeOptions.reasons} .entries=${this._scopeOptions.entries}
+            .value=${this._scope} label="Filter files"
+            @scope-change=${this._changeScope}
           ></bundle-scope-selector>` : nothing}
           ${this._mixedKinds ? html`<span class="bundle-treemap-kind" role="group" aria-label="Show only">
             ${[['code', 'Code'], ['resources', 'Resources']].map(([kind, label]) => html`<button

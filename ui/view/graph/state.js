@@ -36,6 +36,8 @@ export const graph2 = {
   // draws by bundleLayout while it is on the page, and gives it back after.
   lockfileLayout: 'dependencies',
   bundleReason: null, // null = all reasons; shared by graph and layers
+  // An entry point's path, filtered by instead of a reason: one of the two at most is set.
+  bundleEntry: null,
   bundleReasonFor: null, // bundle integrity; reset selection on bundle changes
   selected: null,        // file path or null
   // Package focus mode — when set, the canvas drops the spiral

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
-import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
+import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphFiles } from '../ui/view/bundle-graph-inputs.js'
 import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundlePackageDirs } from '../ui/view/bundle-sources.js'
@@ -170,7 +170,7 @@ it('ignores malformed and unavailable reason files and preserves shared membersh
   assert.deepEqual([...reasons], [['build', new Set(['shared.js'])], ['run', new Set(['app.js', 'shared.js'])]])
 })
 
-it('filters both nodes and edges by reason while preserving original-path mapping and bytes', () => {
+it('filters both nodes and edges by a scope while preserving original-path mapping and bytes', () => {
   const tree = {
     'app.js': { imports: ['run.js', 'build.js', 'shared.js'], size: 100 },
     'run.js': { imports: ['shared.js'], size: 200 },
@@ -184,22 +184,15 @@ it('filters both nodes and edges by reason while preserving original-path mappin
     ['build', new Set(['project/app.js', 'project/build.js', 'project/shared.js'])],
   ])
   const before = structuredClone({ tree, paths, reasons })
-  const filtered = filterBundleGraphReason(tree, paths, reasons, 'run')
-  assert.equal(filtered.selected, 'run')
+  const filtered = filterBundleGraphFiles(tree, paths, reasons.get('run'))
   assert.deepEqual(Object.keys(filtered.tree), ['app.js', 'run.js', 'shared.js'])
   assert.deepEqual(filtered.tree['app.js'].imports, ['run.js', 'shared.js'])
   assert.equal(Object.values(filtered.tree).reduce((sum, file) => sum + file.size, 0), 350)
   assert.deepEqual([...filtered.origToStripped], [['project/app.js', 'app.js'], ['project/run.js', 'run.js'], ['project/shared.js', 'shared.js']])
   assert.deepEqual({ tree, paths, reasons }, before)
-  for (const reason of [null, 'not-present']) {
-    const all = filterBundleGraphReason(tree, paths, reasons, reason)
-    assert.equal(all.tree, tree)
-    assert.equal(all.selected, null)
-  }
-  const single = filterBundleGraphReason(tree, paths, new Map([['build', reasons.get('build')]]), 'build')
-  assert.equal(single.selected, 'build')
+  const single = filterBundleGraphFiles(tree, paths, reasons.get('build'))
   assert.deepEqual(Object.keys(single.tree), ['app.js', 'build.js', 'shared.js'])
-  assert.equal(filterBundleGraphReason(tree, paths, new Map(), 'build').selected, null)
+  assert.deepEqual(Object.keys(filterBundleGraphFiles(tree, paths, new Set()).tree), [])
 })
 
 it('does not restore reason-excluded app imports as virtual connections', () => {
@@ -223,7 +216,7 @@ it('does not restore reason-excluded app imports as virtual connections', () => 
     ['deps', new Set(['project/node_modules/dep/index.js'])],
   ])
   for (const reason of reasons.keys()) {
-    const filtered = filterBundleGraphReason(tree, paths, reasons, reason)
+    const filtered = filterBundleGraphFiles(tree, paths, reasons.get(reason))
     assert.deepEqual(bundleLayerRoots(details, filtered.origToStripped, pkgOf, undefined, paths), {
       roots: reason === 'run' ? ['__own__'] : [], appImports: [],
     })
@@ -235,7 +228,7 @@ it('does not restore reason-excluded app imports as virtual connections', () => 
     ['dep', 'project/node_modules/dep/index.js'],
     ['other', 'project/node_modules/other/index.js'],
   ]))
-  const filtered = filterBundleGraphReason(tree, paths, reasons, 'deps')
+  const filtered = filterBundleGraphFiles(tree, paths, reasons.get('deps'))
   assert.deepEqual(bundleLayerRoots(details, filtered.origToStripped, pkgOf, undefined, paths), {
     roots: ['__own__'], appImports: ['dep'],
   })

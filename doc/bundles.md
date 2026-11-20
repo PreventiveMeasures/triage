@@ -257,6 +257,10 @@ The bundle view's **Advisories** tab audits the bundle's dependencies:
 | Soldeer, GitHub | Published repository advisories |
 
 - A dependency counts only when the bundle records an evidence file for it, as `stasis audit` does.
+- The audit can be limited to one scope of the bundle: the packages one of its reasons recorded (`?reason=`), or those one of its entry points reaches through its imports instead (`?entry=`), never both (`400 bad-scope`).
+  Entry points are offered only where some reason records more than one of them; a bundle recording no reasons counts as one.
+  The Treemap, the Graph and Scans filter by the same scopes.
+  A scope the bundle has none of is `400 unknown-reason` or `400 unknown-entry`.
 - Composer dev versions, git or unknown-source crates and unsupported ecosystems are listed as skipped and never sent upstream.
 - **Recheck against repositories** also asks GitHub for maintainer-published advisories, as `stasis audit --repo-advisories` does.
 - View and triage users need bundle access and the team's `security` permission; `dependencies` is not required.

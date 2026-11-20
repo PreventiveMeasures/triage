@@ -204,7 +204,7 @@ test('advisories send only an encoded bundle ID and team, using managed session 
 })
 
 
-test('advisory reason and team are encoded independently without sending inventory', async t => {
+test('advisory reason, entry point and team are encoded independently without sending inventory', async t => {
   const { fetchBundleAdvisories } = await import('../ui/managed/bundle-data.js')
   const calls = []
   t.mock.method(globalThis, 'fetch', (url, options) => {
@@ -216,11 +216,15 @@ test('advisory reason and team are encoded independently without sending invento
   await fetchBundleAdvisories('bundle/id', undefined, 'run')
   await fetchBundleAdvisories('bundle/id', 'team/id', 'custom & build', true)
   await fetchBundleAdvisories('bundle/id', 'team/id', 'custom & build', true, true)
+  await fetchBundleAdvisories('bundle/id', 'team/id', '', false, false, 'src/a & b.js')
+  await fetchBundleAdvisories('bundle/id', undefined, '', true, true, 'src/main.js')
   assert.deepEqual(calls, [
     '/api/bundles/bundle%2Fid/advisories?team=team%2Fid&reason=custom%20%26%20build',
     '/api/bundles/bundle%2Fid/advisories?reason=run',
     '/api/bundles/bundle%2Fid/advisories?team=team%2Fid&reason=custom%20%26%20build&repoAdvisories=true',
     '/api/bundles/bundle%2Fid/advisories?team=team%2Fid&reason=custom%20%26%20build&repoAdvisories=true&details=true',
+    '/api/bundles/bundle%2Fid/advisories?team=team%2Fid&entry=src%2Fa%20%26%20b.js',
+    '/api/bundles/bundle%2Fid/advisories?entry=src%2Fmain.js&repoAdvisories=true&details=true',
   ])
 })
 

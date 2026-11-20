@@ -1,6 +1,7 @@
-import { bundleSourcemapImports } from '../../common/bundle-sourcemap.js'
+import { bundleImportsAsMap } from '../../common/bundle-imports.js'
 import { bundlePkgOf, isOwnSourcePath } from './bundle-pkg-of.js'
 
+export { bundleImportsAsMap }
 export { bundleReasons as bundleGraphReasons } from '../../common/bundle-reasons.js'
 
 // Named workspace modules are own code too, even when another workspace
@@ -23,35 +24,15 @@ export function bundleEntryPackages(details, origToStripped, pkgOf) {
   return packages
 }
 
-export function filterBundleGraphReason(tree, origToStripped, reasons, requested) {
-  // A hidden selector must never keep filtering after switching bundles.
-  const selected = reasons.has(requested) ? requested : null
-  if (selected === null) return { tree, origToStripped, selected }
-  const paths = new Map([...origToStripped].filter(([orig]) => reasons.get(selected).has(orig)))
+// The tree of the files `kept` names (original paths), with the imports
+// between them: a scope's, a reason's or an entry point's (bundleScopes).
+export function filterBundleGraphFiles(tree, origToStripped, kept) {
+  const paths = new Map([...origToStripped].filter(([orig]) => kept.has(orig)))
   const files = new Set(paths.values())
   const filtered = Object.fromEntries([...files].map((file) => [file, {
     ...tree[file], imports: (tree[file].imports ?? []).filter((target) => files.has(target)),
   }]))
-  return { tree: filtered, origToStripped: paths, selected }
-}
-
-// Include every recorded platform/condition variant; a Metro resolution can
-// be a platform -> file map instead of a single resolved path. A sourcemap
-// records no imports: its edges are what bundle-sourcemap.js reads of it.
-export function bundleImportsAsMap(details) {
-  if (details?.kind === 'sourcemap') return bundleSourcemapImports(details)
-  const result = new Map()
-  if (details?.kind !== 'stasis' || !details.bundle) return result
-  for (const byParent of details.bundle.imports.values()) {
-    for (const [parent, specMap] of byParent) {
-      if (!result.has(parent)) result.set(parent, new Set())
-      for (const resolved of specMap.values()) {
-        const targets = typeof resolved === 'string' ? [resolved] : resolved instanceof Map ? resolved.values() : []
-        for (const target of targets) if (typeof target === 'string') result.get(parent).add(target)
-      }
-    }
-  }
-  return result
+  return { tree: filtered, origToStripped: paths }
 }
 
 // Keep actual entry files, including entries whose source was not bundled.

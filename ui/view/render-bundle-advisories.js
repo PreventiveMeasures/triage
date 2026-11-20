@@ -9,7 +9,7 @@ import { state } from '#client/index.js'
 import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
-import { bundleReasons } from '../../common/bundle-reasons.js'
+import { bundleScopeOptions, bundleScopes } from '../../common/bundle-reasons.js'
 import { SCAN_ICON_SVG } from './icons.js'
 import { advisoryRow } from './advisory-parts.js'
 import './bundle-scope-selector.js'
@@ -30,12 +30,19 @@ function advisoryCache(details) {
   }
   return managedCache
 }
+// The scope audited: one of the bundle's reasons or of its entry points
+// (bundleScopes), by its id, '' for every package.
 const scopes = new WeakMap()
 function advisoryScope(details) {
-  if (!scopes.has(details)) scopes.set(details, { reasons: bundleReasons(details), selected: '' })
+  if (!scopes.has(details)) {
+    const all = bundleScopes(details)
+    scopes.set(details, { scopes: all, options: bundleScopeOptions(all), selected: '' })
+  }
   return scopes.get(details)
 }
-function cacheKey(details, reason = advisoryScope(details).selected) { return JSON.stringify([details.managedId ?? details.integrity, reason]) }
+function cacheKey(details, scope = advisoryScope(details).selected) { return JSON.stringify([details.managedId ?? details.integrity, scope]) }
+// A scope id's name where it is of `kind` ('reason:' or 'entry:'), else ''.
+const scopeName = (id, kind) => id.startsWith(kind) ? id.slice(kind.length) : ''
 
 // Local/e2e bundles are private from the server. Ask before sending their
 // package inventory through the proxy to npm. Managed bundles are already
@@ -212,14 +219,14 @@ async function loadBundleAdvisories(details, renderFn, repoAdvisories = false) {
     cache.set(key, { ...previous, recheckingRepositories: true, repositoryError: null })
     renderFn()
   } else if (previous) return
-  const { reasons, selected } = advisoryScope(details)
-  let query = details.managedId ? new Map() : bundlePackageVersions(details, reasons.get(selected) ?? null)
+  const { scopes: all, selected } = advisoryScope(details)
+  let query = details.managedId ? new Map() : bundlePackageVersions(details, all.files(selected))
   if (!repoAdvisories) cache.set(key, { state: 'loading', query })
   try {
     let json, skipped = []
     if (details.managedId) {
       // Fetch full descriptions only on an explicit repository recheck.
-      const result = await fetchBundleAdvisories(details.managedId, undefined, selected, repoAdvisories, repoAdvisories)
+      const result = await fetchBundleAdvisories(details.managedId, undefined, scopeName(selected, 'reason:'), repoAdvisories, repoAdvisories, scopeName(selected, 'entry:'))
       // Accept the former npm-only shape during a client/server upgrade.
       query = Array.isArray(result.packages)
         ? new Map(result.packages.map(pkg => [packageKey(pkg), new Set(pkg.versions)]))
@@ -304,27 +311,28 @@ function renderConsentPrompt() {
 //                package name (or a one-line summary when none)
 //
 // `onScan`, when the viewer may scan the bundle, opens its Dependency
-// alerts scan from a Validate button right of the managed recheck button.
-// Neither button shows for a bundle without dependency packages.
+// alerts scan from a Validate button, the last of the toolbar's right side:
+// the managed recheck button, the scope selector, then it. Neither button
+// shows for a bundle without dependency packages.
 export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan = null) {
   const scope = details ? advisoryScope(details) : null
-  const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
+  const { reasons, entries } = scope?.options ?? { reasons: [], entries: [] }
+  const scoped = reasons.length > 0 || entries.length > 0
   const summary = renderAdvisoriesSummary(details)
   const actions = Boolean(details?.managedId) && !managedBundleHasNoDependencies(details)
   return html`<div class="bundle-advisories-panel">
-    ${summary !== nothing || reasons.length > 0 || actions ? html`<div class="bundle-advisories-toolbar">
+    ${summary !== nothing || scoped || actions ? html`<div class="bundle-advisories-toolbar">
     ${summary}
-    ${reasons.length > 0 || actions ? html`<div class="bundle-advisories-scopes">
-    ${reasons.length > 0 ? html`<bundle-scope-selector
-      .reasons=${reasons} .value=${scope.selected ? `reason:${scope.selected}` : ''} label="Choose advisory scope"
+    ${scoped || actions ? html`<div class="bundle-advisories-scopes">
+    ${actions ? renderRepositoryRecheck(details, renderFn) : nothing}
+    ${scoped ? html`<bundle-scope-selector
+      .reasons=${reasons} .entries=${entries} .value=${scope.selected} label="Choose advisory scope"
       @scope-change=${event => {
-        const reason = event.detail.value.replace(/^reason:/u, '')
-        scope.selected = scope.reasons.has(reason) ? reason : ''
+        scope.selected = scope.scopes.has(event.detail.value) ? event.detail.value : ''
         const loading = ensureBundleAdvisories(details, renderFn)
         renderFn()
         return loading
       }}></bundle-scope-selector>` : nothing}
-    ${actions ? renderRepositoryRecheck(details, renderFn) : nothing}
     ${actions && onScan ? html`<button type="button" class="bundle-advisories-retry bundle-advisories-scan" @click=${onScan}>
       ${appMarkup(SCAN_ICON_SVG)}<span>Validate</span>
     </button>` : nothing}
@@ -420,7 +428,7 @@ function renderAdvisorySection(details, pkg, advisories, queriedVersions, isCurr
       ${versions.length > 0 ? html`<span class="bundle-advisories-section-versions">
         ${versions.map(version => html`<button type="button" class="bundle-advisories-version" aria-haspopup="dialog"
           aria-label=${`Why is ${pkg}@${version} here?`}
-          @click=${() => openWhyDialog({ details, packageKey: pkg, version, reason: advisoryScope(details).selected, isCurrent })}>${version}</button>`)}
+          @click=${() => openWhyDialog({ details, packageKey: pkg, version, reason: scopeName(advisoryScope(details).selected, 'reason:'), entry: scopeName(advisoryScope(details).selected, 'entry:'), isCurrent })}>${version}</button>`)}
       </span>` : nothing}
     </div>
     <ul class="bundle-advisories-rows">

@@ -50,6 +50,33 @@ test('the bundle graph ends its first row with the scope selector, Issues, then 
   assert.doesNotMatch(main, /<select/u, 'the full scope selector replaces the plain reason select')
 })
 
+test('the bundle graph selects an entry point in place of a reason, and offers the selector for entry points alone', t => {
+  t.after(() => { graph2.bundleReason = null; graph2.bundleEntry = null })
+  const entries = [{ id: 'entry:src/a.js', label: 'a.js' }, { id: 'entry:src/b.js', label: 'b.js' }]
+  const selector = top => top.values.flatMap(function find(value) {
+    if (Array.isArray(value)) return value.flatMap(find)
+    if (!value?.strings) return []
+    return value.strings.join('').includes('<bundle-scope-selector') ? [value] : value.values.flatMap(find)
+  })[0]
+  const changed = (control, value) => {
+    let detail
+    control.values.find(item => typeof item === 'function')({ detail: { value }, currentTarget: { dispatchEvent: event => { detail = [event.type, event.detail] } } })
+    return detail
+  }
+  graph2.bundleEntry = 'src/b.js'
+  const control = selector(renderTopBar({ ...graph, reasons: ['run'], entries }, bundle))
+  assert.deepEqual(control.values.slice(0, 3), [[{ id: 'reason:run', label: 'run' }], entries, 'entry:src/b.js'])
+  assert.deepEqual(changed(control, 'entry:src/a.js'), ['bundle-graph-scope-change', { reason: null, entry: 'src/a.js' }])
+  assert.deepEqual(changed(control, 'reason:run'), ['bundle-graph-scope-change', { reason: 'run', entry: null }])
+  assert.deepEqual(changed(control, ''), ['bundle-graph-scope-change', { reason: null, entry: null }])
+  graph2.bundleReason = 'run'
+  assert.equal(selector(renderTopBar({ ...graph, reasons: ['run'], entries }, bundle)).values[2], 'reason:run')
+  graph2.bundleReason = null
+  graph2.bundleEntry = null
+  assert.deepEqual(selector(renderTopBar({ ...graph, entries }, bundle)).values.slice(0, 3), [[], entries, ''], 'a bundle without reasons still filters by entry point')
+  assert.equal(selector(renderTopBar(graph, bundle)), undefined, 'neither: no selector')
+})
+
 test('a bundle Issues switch that does not fit in the first row leads the issue row, before its filters', t => {
   t.after(() => { graph2.bundleIssues = false })
   for (const on of [false, true]) {

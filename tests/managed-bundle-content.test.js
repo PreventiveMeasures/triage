@@ -613,7 +613,7 @@ test('Stasis contents bypass a pending metadata build', async t => {
   await assert.rejects(readdir(join(h.cacheDir, record.id)), { code: 'ENOENT' })
   gate.resolve()
   await build
-  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v5-summary.json', 'v6-advisory-inventory.json', 'v6-metadata.json.br'])
+  assert.deepEqual(await readdir(join(h.cacheDir, record.id)), ['v5-summary.json', 'v6-metadata.json.br', 'v7-advisory-inventory.json'])
   assert.deepEqual((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).bytes, bytes)
   await h.store.delete(record.id)
   assert.equal((await h.send(`/api/bundles/${record.id}/contents`, 'viewer')).status, 422, 'missing source bytes are unavailable')
@@ -670,7 +670,7 @@ test('upload prebuilds, deduplicates and deletes cached files; unauthorized uplo
   assert.equal(uploaded.status, 201)
   await Promise.allSettled([...h.pending])
   const id = uploaded.json().id
-  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v5-summary.json', 'v6-advisory-inventory.json', 'v6-metadata.json.br'])
+  assert.deepEqual(await readdir(join(h.cacheDir, id)), ['v5-summary.json', 'v6-metadata.json.br', 'v7-advisory-inventory.json'])
   assert.equal((await h.send('/api/admin/bundles', 'manager', 'POST', bytes, headers)).status, 409)
   assert.equal((await h.send('/api/admin/bundles', 'owner', 'POST', bytes, headers)).status, 200)
   assert.equal((await h.send(`/api/admin/bundles/${id}`, 'owner', 'DELETE')).status, 200)
@@ -928,8 +928,8 @@ test('advisories use cached inventory, handle upstream failures, and reject unsu
 test('package inventories persist separately; concurrent cache upgrades build once', async t => {
   const h = await setup(t), record = await h.seed({ repoId: 1 })
   await h.cache.prebuild(record)
-  const inventory = join(h.cacheDir, record.id, 'v6-advisory-inventory.json')
-  assert.deepEqual(JSON.parse(await readFile(inventory, 'utf8')), { all: { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'] }], skipped: [] }, reasons: {} })
+  const inventory = join(h.cacheDir, record.id, 'v7-advisory-inventory.json')
+  assert.deepEqual(JSON.parse(await readFile(inventory, 'utf8')), { all: { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['2.0.0'] }], skipped: [] }, reasons: {}, entries: {} })
   // Both older npm-only and unfiltered inventories must rebuild, once even with simultaneous requests.
   await rm(inventory)
   await writeFile(join(h.cacheDir, record.id, 'v3-advisory-packages.json'), JSON.stringify({ all: [{ ecosystem: 'npm', name: 'wrong', versions: ['1.0.0'] }], reasons: {} }))
@@ -953,7 +953,7 @@ test('oversized inventories persist a rejection marker and return 413 without co
   const large = stasis.replace('2.0.0', '1'.repeat(MAX_PACKAGE_INVENTORY_BYTES))
   const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(large)) })
   await h.cache.prebuild(record)
-  assert.equal(await readFile(join(h.cacheDir, record.id, 'v6-advisory-inventory.json'), 'utf8'), 'null')
+  assert.equal(await readFile(join(h.cacheDir, record.id, 'v7-advisory-inventory.json'), 'utf8'), 'null')
   t.mock.method(globalThis, 'fetch', () => { throw new Error('must reject before contacting npm') })
   t.mock.method(h.store, 'get', () => { throw new Error('must not rebuild rejected inventories') })
   const response = await h.send(`/api/bundles/${record.id}/advisories`, 'viewer')
@@ -973,7 +973,7 @@ for (const reportedSize of [MAX_PACKAGE_INVENTORY_BYTES + 1, null, 1]) {
     const cache = createBundleCache({
       exists: () => Promise.resolve(true),
       open: (_id, name) => {
-        assert.equal(name, 'v6-advisory-inventory.json')
+        assert.equal(name, 'v7-advisory-inventory.json')
         return Promise.resolve({ size: reportedSize, stream })
       },
     }, {}, { get() { throw new Error('must use inventory') } })
@@ -1025,6 +1025,87 @@ test('advisory reasons select exact package versions from persisted inventory', 
   assert.equal(calls.length, 3, 'empty and unknown scopes never contact npm')
   await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
   assert.equal((await h.send(`${path}&reason=metro`, 'viewer')).status, 403)
+})
+
+// Two entry points of one reason: `app` reaches dep 1.0.0, `worker` dep 2.0.0
+// and a Composer dev version no advisory source audits.
+function entryBundle(entries = ['src/app.js', 'src/worker.js'], version = '1.0.0') {
+  const [app, worker] = entries
+  return new Bundle({
+    modules: new Map([
+      ['.', { name: 'app', version: '1', files: { [app]: 'app', [worker]: 'worker', 'src/cli.js': 'cli' } }],
+      ['node_modules/dep', { name: 'dep', version, files: { 'index.js': 'one' } }],
+      ['node_modules/tool/node_modules/dep', { name: 'dep', version: '2.0.0', files: { 'index.js': 'two' } }],
+      ['vendor/vendor/pkg', { ecosystem: 'composer', name: 'vendor/pkg', version: 'dev-main', files: { 'src/file.php': 'private source' } }],
+    ]),
+    entries: new Set(entries),
+    imports: new Map([['default', new Map([
+      [app, new Map([['dep', 'node_modules/dep/index.js']])],
+      [worker, new Map([['dep', 'node_modules/tool/node_modules/dep/index.js'], ['pkg', 'vendor/vendor/pkg/src/file.php']])],
+    ])]]),
+    reason: { bundle: [app, worker, 'node_modules/dep/index.js', 'node_modules/tool/node_modules/dep/index.js', 'vendor/vendor/pkg/src/file.php'], run: ['src/cli.js'] },
+  }).serialize()
+}
+
+test('advisory entry points select the versions each reaches from the persisted inventory, in place of a reason', async t => {
+  const h = await setup(t)
+  const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(entryBundle())) })
+  await h.cache.prebuild(record)
+  const skipped = [{ ecosystem: 'composer', name: 'vendor/pkg', version: 'dev-main', because: 'Composer dev versions cannot be matched against release advisories.' }]
+  const persisted = JSON.parse(await readFile(join(h.cacheDir, record.id, 'v7-advisory-inventory.json'), 'utf8'))
+  assert.deepEqual(persisted.all, { packages: [{ ecosystem: 'npm', name: 'dep', versions: ['1.0.0', '2.0.0'] }], skipped })
+  // A bit a row of `all`: dep 1.0.0, dep 2.0.0, then the skipped one.
+  assert.deepEqual(persisted.entries, { 'src/app.js': Buffer.from([0b001]).toString('base64'), 'src/worker.js': Buffer.from([0b110]).toString('base64') })
+  // Scope switches must not read full bundle contents or decode full metadata.
+  t.mock.method(h.store, 'get', () => { throw new Error('must use bounded inventory') })
+  await writeFile(join(h.cacheDir, record.id, 'v6-metadata.json.br'), 'not compressed metadata')
+  const calls = []
+  t.mock.method(globalThis, 'fetch', (url, init) => {
+    if (url === OSV) return Promise.resolve(osvNone(init))
+    const packages = JSON.parse(Buffer.from(init.body))
+    calls.push(packages)
+    return Promise.resolve(Response.json({ dep: [npmAdvisory(packages.dep.join(', '))] }))
+  })
+  const path = `/api/bundles/${record.id}/advisories?team=${h.team}`
+  for (const [entry, versions, unaudited] of [['src/app.js', ['1.0.0'], []], ['src/worker.js', ['2.0.0'], skipped]]) {
+    const response = await h.send(`${path}&entry=${encodeURIComponent(entry)}`, 'viewer')
+    assert.equal(response.status, 200)
+    assert.deepEqual(response.json().packages, [{ ecosystem: 'npm', name: 'dep', versions }])
+    assert.deepEqual(response.json().skipped, unaudited)
+    assert.equal(response.json().advisories[0].title, versions.join(', '))
+    assert.deepEqual(calls.at(-1), { dep: versions })
+  }
+  for (const entry of ['src/cli.js', 'node_modules/dep/index.js', 'missing', '__proto__', 'constructor']) {
+    const response = await h.send(`${path}&entry=${encodeURIComponent(entry)}`, 'viewer')
+    assert.equal(response.status, 400)
+    assert.deepEqual(response.json(), { error: 'unknown-entry' })
+  }
+  const both = await h.send(`${path}&reason=bundle&entry=src%2Fapp.js`, 'viewer')
+  assert.equal(both.status, 400)
+  assert.deepEqual(both.json(), { error: 'bad-scope' }, 'a reason or an entry point, never both')
+  assert.equal(calls.length, 2, 'unknown scopes never contact npm')
+  assert.deepEqual((await h.send(`${path}&reason=run`, 'viewer')).json(), { packages: [], skipped: [], advisories: [] })
+  await h.db.setTeamMember(h.team, h.users.viewer.userId, { dependencies: true, security: false })
+  assert.equal((await h.send(`${path}&entry=src%2Fapp.js`, 'viewer')).status, 403)
+})
+
+test('entry points past the inventory budget are left out alone, every other scope kept', async t => {
+  const h = await setup(t)
+  // The bundle's own inventory and its reasons' nearly fill the budget: its entry points' rows don't fit after them.
+  const entries = ['app', 'worker'].map(name => `src/${name.repeat(40)}/${name.repeat(40)}.js`)
+  const bundled = entryBundle(entries, '1'.repeat(MAX_PACKAGE_INVENTORY_BYTES / 2 - 400))
+  const record = await h.seed({ repoId: 1, bytes: brotliCompressSync(Buffer.from(bundled)) })
+  await h.cache.prebuild(record)
+  const persisted = await readFile(join(h.cacheDir, record.id, 'v7-advisory-inventory.json'), 'utf8')
+  assert.ok(persisted.length <= MAX_PACKAGE_INVENTORY_BYTES && persisted.length > MAX_PACKAGE_INVENTORY_BYTES - 400)
+  assert.deepEqual(Object.keys(JSON.parse(persisted)), ['all', 'reasons'])
+  t.mock.method(h.store, 'get', () => { throw new Error('must not rebuild the inventory') })
+  t.mock.method(globalThis, 'fetch', (url, init) => Promise.resolve(url === OSV ? osvNone(init) : Response.json({})))
+  const path = `/api/bundles/${record.id}/advisories`
+  const scoped = await h.send(`${path}?entry=${encodeURIComponent(entries[0])}`, 'viewer')
+  assert.equal(scoped.status, 413)
+  assert.deepEqual(scoped.json(), { error: 'payload-too-large' })
+  assert.equal((await h.send(`${path}?reason=run`, 'viewer')).status, 200)
 })
 
 test('managed non-npm advisories use persisted ecosystem inventory and respect reason scopes', async t => {

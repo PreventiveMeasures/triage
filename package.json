@@ -260,6 +260,7 @@
     "common/bundle-compare-diff.d.ts",
     "common/bundle-compare-inputs.d.ts",
     "common/bundle-compare-inputs.js",
+    "common/bundle-imports.js",
     "common/bundle-metadata.d.ts",
     "common/bundle-pkg-of.d.ts",
     "common/bundle-pkg-of.js",

@@ -6,21 +6,22 @@ import { createBundleMetadata, parseBundleMetadata } from '../common/bundle-meta
 import { templateText as renderText, templates } from './_lit.js'
 
 const state = { managedSession: { id: 'alice', role: 'view', csrfToken: 'session' }, managedTeams: [], currentManagedTeam: 'team' }
-let allowed = false, detailRequests = [], managedCalls = [], managedReasons = [], openedDetails = [], openedWhy = [], pending = null, repositoryChecks = [], result
+let allowed = false, detailRequests = [], managedCalls = [], managedEntries = [], managedReasons = [], openedDetails = [], openedWhy = [], pending = null, repositoryChecks = [], result
 mock.module('../ui/view/lazy-dialogs.js', { exports: { ...await import('../ui/view/lazy-dialogs.js'),
   openAdvisoryDetailsDialog: props => { openedDetails.push(props) }, openWhyDialog: props => { openedWhy.push(props) } } })
 mock.module('../client/index.js', { namedExports: { state } })
 mock.module('../ui/view/ingest.js', { namedExports: { bundleKind: name => name.endsWith('.br') ? 'stasis' : 'sourcemap' } })
-mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason, repoAdvisories, details) => {
+mock.module('../ui/view/client-managed.js', { namedExports: { fetchBundleAdvisories: (id, _team, reason, repoAdvisories, details, entry) => {
   managedCalls.push(id)
   managedReasons.push(reason)
+  managedEntries.push(entry)
   repositoryChecks.push(repoAdvisories)
   detailRequests.push(details)
   return pending ?? Promise.resolve(result)
 } } })
 const { ensureBundleAdvisories, grantAdvisoriesProxyConsent, recheckBundleAdvisories, renderBundleAdvisoriesTab, retryBundleAdvisories, showAdvisoriesTab } = await import('../ui/view/render-bundle-advisories.js')
 beforeEach(t => {
-  managedCalls = []; managedReasons = []; repositoryChecks = []; detailRequests = []; openedDetails = []; openedWhy = []; allowed = false; pending = null
+  managedCalls = []; managedReasons = []; managedEntries = []; repositoryChecks = []; detailRequests = []; openedDetails = []; openedWhy = []; allowed = false; pending = null
   state.managedSession = { id: 'alice', role: 'view', csrfToken: 'session' }
   state.currentManagedTeam = 'team'
   state.managedTeams = [{ id: 'team', permissions: { security: true, dependencies: false }, bundles: [{ id: 'bundle-id' }] }]
@@ -447,6 +448,85 @@ function reasonBundle(integrity) {
     // The bundle itself has dependency packages: an empty scope keeps its recheck.
     if (managed) assert.match(text, /bundle-advisories-recheck/u)
   })
+})
+
+// Two entry points of one reason, each reaching its own version of `dep`.
+function entryBundle(integrity) {
+  return { kind: 'stasis', integrity, size: 123, bundle: Bundle.parse(new Bundle({
+    modules: new Map([
+      ['.', { name: 'app', version: '1', files: { 'src/app.js': 'app', 'src/worker.js': 'worker', 'src/cli.js': 'cli' } }],
+      ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'one' } }],
+      ['node_modules/tool/node_modules/dep', { name: 'dep', version: '2.0.0', files: { 'index.js': 'two' } }],
+    ]),
+    entries: new Set(['src/app.js', 'src/worker.js']),
+    imports: new Map([['default', new Map([
+      ['src/app.js', new Map([['dep', 'node_modules/dep/index.js']])],
+      ['src/worker.js', new Map([['dep', 'node_modules/tool/node_modules/dep/index.js']])],
+    ])]]),
+    reason: { bundle: ['src/app.js', 'src/worker.js', 'node_modules/dep/index.js', 'node_modules/tool/node_modules/dep/index.js'], run: ['src/cli.js'] },
+  }).serialize()) }
+}
+
+;[false, true].forEach(managed => {
+  test(`${managed ? 'managed' : 'e2e'} advisories scope by an entry point in place of a reason`, async t => {
+    let details = entryBundle(`entries-${managed}`)
+    const queries = []
+    if (managed) {
+      details = { ...parseBundleMetadata(await createBundleMetadata(details), details.integrity), managedId: 'entry-bundle' }
+    } else {
+      grantAdvisoriesProxyConsent()
+      t.mock.method(globalThis, 'fetch', (_url, options) => {
+        const query = JSON.parse(options.body)
+        queries.push(query)
+        return Promise.resolve(Response.json({ dep: [{ title: query.dep.join(', '), severity: 'high' }] }))
+      })
+    }
+    const control = scopeControl(renderBundleAdvisoriesTab(details))
+    assert.deepEqual(control.values.slice(0, 3), [
+      [{ id: 'reason:bundle', label: 'bundle' }, { id: 'reason:run', label: 'run' }],
+      [{ id: 'entry:src/app.js', label: 'app.js' }, { id: 'entry:src/worker.js', label: 'worker.js' }], '',
+    ])
+    result = { packages: { dep: ['1.0.0'] }, advisories: { dep: [{ title: 'App vulnerability', severity: 'high' }] } }
+    await selectReason(details, 'entry:src/app.js')
+    assert.equal(scopeControl(renderBundleAdvisoriesTab(details)).values[2], 'entry:src/app.js')
+    assert.match(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u)
+    assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /2\.0\.0/u)
+    result = { packages: { dep: ['2.0.0'] }, advisories: { dep: [{ title: 'Worker vulnerability', severity: 'high' }] } }
+    await selectReason(details, 'entry:src/worker.js')
+    assert.match(renderText(renderBundleAdvisoriesTab(details)), /2\.0\.0/u)
+    assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u)
+    const version = templates(renderBundleAdvisoriesTab(details)).find(template => template.strings.join('').includes('class="bundle-advisories-version"'))
+    version.values.find(value => typeof value === 'function')()
+    assert.deepEqual([openedWhy.at(-1).reason, openedWhy.at(-1).entry], ['', 'src/worker.js'], 'a version\'s chains are the entry point\'s')
+    result = { packages: {}, advisories: {} }
+    await selectReason(details, 'reason:run')
+    assert.match(renderText(renderBundleAdvisoriesTab(details)), /No advisories for the 0 packages in this scope/u)
+    await selectReason(details, 'entry:src/app.js')
+    assert.match(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u, 'each scope keeps its own result')
+    await selectReason(details, 'entry:src/cli.js')
+    assert.equal(scopeControl(renderBundleAdvisoriesTab(details)).values[2], '', 'a file that is no entry point is every package')
+    if (managed) {
+      assert.deepEqual(managedReasons, ['', '', 'run', ''], 'a reason and an entry point are never asked for together')
+      assert.deepEqual(managedEntries, ['src/app.js', 'src/worker.js', '', ''])
+    } else assert.deepEqual(queries, [{ dep: ['1.0.0'] }, { dep: ['2.0.0'] }, { dep: ['1.0.0', '2.0.0'] }])
+  })
+})
+
+test('entry points alone are an advisory scope, and none are offered with one entry point a reason', () => {
+  const alone = entryBundle('entries-alone')
+  alone.bundle.reason = undefined
+  assert.deepEqual(scopeControl(renderBundleAdvisoriesTab(alone)).values.slice(0, 2), [[], [{ id: 'entry:src/app.js', label: 'app.js' }, { id: 'entry:src/worker.js', label: 'worker.js' }]])
+  const each = entryBundle('entries-each')
+  each.bundle.reason = { bundle: ['src/app.js', 'node_modules/dep/index.js'], metro: ['src/worker.js'] }
+  assert.deepEqual(scopeControl(renderBundleAdvisoriesTab(each)).values.slice(0, 2), [[{ id: 'reason:bundle', label: 'bundle' }, { id: 'reason:metro', label: 'metro' }], []])
+})
+
+test('the managed recheck button sits left of the scope selector, Validate right of it', async () => {
+  const details = { ...entryBundle('toolbar-order'), managedId: 'toolbar-order' }
+  await ensureBundleAdvisories(details, () => {})
+  const text = renderText(renderBundleAdvisoriesTab(details, () => {}, () => {}))
+  const order = ['class="bundle-advisories-scopes"', 'bundle-advisories-recheck', '<bundle-scope-selector', 'bundle-advisories-scan'].map(part => text.indexOf(part))
+  assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), 'recheck, scope selector, Validate')
 })
 
 test('each advisory version opens its exact dependency chains in the current scope', async () => {

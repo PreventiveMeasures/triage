@@ -2086,14 +2086,15 @@ function renderImpl() {
             const attached = bundleGraphAttachment
             const host = graphSlot.querySelector('graph-layout')
             if (!prep.issuesShown && attached && !attached.issuesShown && host
-                && attached.state === graph2.graphState && attached.details === details && attached.reason === graph2.bundleReason) {
+                && attached.state === graph2.graphState && attached.details === details
+                && attached.reason === graph2.bundleReason && attached.entry === graph2.bundleEntry) {
               host.options = options
             } else {
               bundleGraphAttachment = null
               void attachGraphLayout(graphSlot, prep, options,
                 refreshBundleGraphSidebar, refreshBundleGraphTopPkgs).then((attachedHost) => {
                 if (attachedHost && graph2.graphState) {
-                  bundleGraphAttachment = { state: graph2.graphState, details, reason: graph2.bundleReason, issuesShown: prep.issuesShown }
+                  bundleGraphAttachment = { state: graph2.graphState, details, reason: graph2.bundleReason, entry: graph2.bundleEntry, issuesShown: prep.issuesShown }
                 }
                 return null
               })

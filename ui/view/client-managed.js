@@ -333,8 +333,8 @@ export async function watchTeamFeed(teamId, options) {
   return (await loadManagedBundle()).watchTeamFeed(teamId, options)
 }
 
-export async function fetchBundleAdvisories(id, teamId = state.currentManagedTeam, reason = '', repoAdvisories = false, details = false) {
-  return (await loadManagedBundle()).fetchBundleAdvisories(id, teamId, reason, repoAdvisories, details)
+export async function fetchBundleAdvisories(id, teamId = state.currentManagedTeam, reason = '', repoAdvisories = false, details = false, entry = '') {
+  return (await loadManagedBundle()).fetchBundleAdvisories(id, teamId, reason, repoAdvisories, details, entry)
 }
 
 export async function dependencyReviews(...args) {

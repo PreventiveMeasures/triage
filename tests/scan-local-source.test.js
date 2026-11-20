@@ -48,6 +48,24 @@ test('Stasis reasons keep exact file sets even when files share the same package
   assert.equal(result.size, '1.0 KiB')
 })
 
+test('Stasis entry points are scan scopes beside reasons where a reason records several, their files read once chosen', () => {
+  const entry = storedScanSource([{ integrity: 'test', name: 'test.stasis' }]).bundles[0]
+  const paths = ['src/a.js', 'src/b.js', 'src/shared.js', 'src/cli.js']
+  const details = reason => ({
+    kind: 'stasis', size: 1024, fileSizes: new Map(paths.map(path => [path, 10])), lineCounts: new Map(),
+    bundle: { modules: new Map([['.', { files: Object.fromEntries(paths.map(path => [path, ''])) }]]), reason,
+      entries: new Set(['src/a.js', 'src/b.js', 'src/cli.js']),
+      imports: new Map([['default', new Map([['src/a.js', new Map([['./shared', 'src/shared.js']])], ['src/b.js', new Map([['./a', 'src/a.js']])]])]]) },
+  })
+  const result = storedScanBundle(entry, details({ bundle: ['src/a.js', 'src/b.js', 'src/shared.js'], run: ['src/cli.js'] }))
+  assert.deepEqual(result.reasons.map(reason => reason.id), ['all', 'reason:bundle', 'reason:run'])
+  assert.deepEqual(result.entries.map(scope => [scope.id, scope.label]), [['entry:src/a.js', 'a.js'], ['entry:src/b.js', 'b.js'], ['entry:src/cli.js', 'cli.js']])
+  assert.deepEqual(result.entries.map(scope => scope.filePaths), [['src/a.js', 'src/shared.js'], ['src/b.js', 'src/a.js', 'src/shared.js'], ['src/cli.js']])
+  assert.equal(result.entries[0].filePaths, result.entries[0].filePaths, 'read once')
+  assert.deepEqual(storedScanBundle(entry, details({ bundle: ['src/a.js', 'src/shared.js'], metro: ['src/b.js'], run: ['src/cli.js'] })).entries, [], 'one entry point a reason: reasons alone')
+  assert.deepEqual(storedScanBundle(entry, { kind: 'sourcemap', size: 5, json: { sources: ['src/main.js'], sourcesContent: ['1'] } }).entries, [])
+})
+
 test('scan LoC matches source lines for parsed bundles and cached metadata, excluding resources', () => {
   const entry = storedScanSource([{ integrity: 'lines', name: 'lines.map' }]).bundles[0]
   const result = storedScanBundle(entry, { kind: 'sourcemap', size: 500, json: {

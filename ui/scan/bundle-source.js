@@ -1,7 +1,7 @@
 import { bundleFileSizes, bundlePackageDirs } from '../view/bundle-sources.js'
 import { bundleLineCounts } from '../view/bundle-metadata.js'
 import { bundlePkgOf } from '../view/bundle-pkg-of.js'
-import { bundleGraphReasons } from '../view/bundle-graph-inputs.js'
+import { bundleScopeOptions, bundleScopes } from '../../common/bundle-reasons.js'
 import { formatBytes } from './metrics.js'
 
 // Preserve every workspace membership: one stored bundle can be selected from
@@ -30,7 +30,15 @@ export function storedScanBundle(entry, details) {
   const lineCounts = bundleLineCounts(details)
   const files = [...bundleFileSizes(details)].filter(([, bytes]) => bytes != null)
     .map(([path, bytes]) => ({ path, format: formats?.get(path) ?? null, bytes, lines: lineCounts.get(path) ?? 0, size: formatBytes(bytes), module: bundlePkgOf(path, { packageDir: packages?.get(path) }) }))
-  const reasons = [{ id: 'all', label: 'All', filePaths: null }, ...[...bundleGraphReasons(details, files.map(file => file.path))]
-    .map(([reason, paths]) => ({ id: `reason:${reason}`, label: reason, filePaths: [...paths] }))]
-  return { ...entry, files, reasons, size: formatBytes(details.size) }
+  const scopes = bundleScopes(details, files.map(file => file.path))
+  const options = bundleScopeOptions(scopes)
+  const reasons = [{ id: 'all', label: 'All', filePaths: null },
+    ...options.reasons.map(({ id, label }) => ({ id, label, filePaths: [...scopes.reasons.get(label)] }))]
+  // The scopes to scan instead of a reason's, where the bundle offers them
+  // (bundleScopes). An entry point's files are read once it is chosen.
+  const entries = options.entries.map(({ id, label }) => {
+    let filePaths
+    return { id, label, get filePaths() { return filePaths ??= [...scopes.files(id)] } }
+  })
+  return { ...entry, files, reasons, entries, size: formatBytes(details.size) }
 }

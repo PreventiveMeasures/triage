@@ -75,7 +75,7 @@
 //   POST /api/admin/reports/set-repo → admin|manage attaches/detaches a report's repo | 401/403/404
 //   GET  /api/admin/reports/<id>/location → admin|manage live location suggestion | 401/403/404/503
 //   GET  /api/bundles/<id>/{metadata,contents} → authorized encoded bytes | 401/404/422
-//   GET  /api/bundles/<id>/advisories → published dependency advisories (security access) | 401/403/404
+//   GET  /api/bundles/<id>/advisories → published dependency advisories (security access), of one ?reason= or ?entry= point where given | 400/401/403/404
 //   GET  /api/bundles/<id>/dependency-review → what the npm versions it bundles want of review, as the lockfiles installing it lock
 //        them at the commit it was built from, where its repository's review is in effect for a reader of all of it | 401/404/409/413/422/429/502
 //   GET  /api/bundles/<id>/validation → its last validation the reader may see, else none; POST validates it anew: its own code
@@ -156,7 +156,7 @@ import { auditCache, auditedKeys, lastListing } from './upstream-cache.ts'
 import type { BundleAdvisoryInventory } from './bundle-advisory-inventory.ts'
 import { UPLOAD_CHUNK_BYTES, type UploadKind, deleteUpload, newUploadKey, openSessionUpload, putUploadPart, readUpload, uploadPublicKey, validUpload, validUploadPart } from './uploads.ts'
 import { UPLOAD_SEAL_HEADER, maxSealedBytes } from '../common/managed/upload-seal.ts'
-import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES, readBundleDetails } from './bundle-cache.ts'
+import { type BundleCache, type BundleCachePart, MAX_PACKAGE_INVENTORY_BYTES, readBundleDetails, unknownScope } from './bundle-cache.ts'
 import { BUNDLE_VALIDATION_READ, type BundleValidation, type PlannedBundle, validateAtCommit, validateDependencies, validationPlan } from './bundle-validation.ts'
 import type { CacheStorage } from './cache-storage.ts'
 import { backfillBundleSummaries, bundleSummaries } from './bundle-catalog.ts'
@@ -3479,7 +3479,8 @@ async function handleBundleChanges(res: ServerResponse, deps: ManagedHttpDeps, s
 
 // Published dependency advisories require security access, independently of access to
 // unpublished dependency findings. Managers retain their normal bundle access.
-async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, teamId: string | null, reason: string, repoAdvisories: boolean, details: boolean) {
+// Of the whole bundle, or of one scope of it: a `reason`, or an `entry` point instead.
+async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps, session: ManagedSession, id: string, teamId: string | null, reason: string, entry: string, repoAdvisories: boolean, details: boolean) {
   const authorize = async () => {
     const access = await deps.db.getBundleAccessSnapshot(session.id, Date.now(), id, teamId)
     if (!access) { sendJson(res, 401, { error: 'unauthenticated' }); return null }
@@ -3494,11 +3495,11 @@ async function handleBundleAdvisories(res: ServerResponse, deps: ManagedHttpDeps
   if (record.kind !== 'stasis') { sendJson(res, 422, { error: 'unsupported-bundle' }); return }
   if (!deps.bundleCache) { sendJson(res, 503, { error: 'unavailable' }); return }
   let inventory: BundleAdvisoryInventory | null | undefined
-  try { inventory = await deps.bundleCache.advisoryInventory(record, reason) }
+  try { inventory = await deps.bundleCache.advisoryInventory(record, reason, entry) }
   catch { sendJson(res, 422, { error: 'bundle-unavailable' }); return }
   if (!(await authorize())) return
   if (inventory === null) { sendJson(res, 413, { error: 'payload-too-large' }); return }
-  if (inventory === undefined) { sendJson(res, 400, { error: 'unknown-reason' }); return }
+  if (inventory === undefined) { sendJson(res, 400, { error: unknownScope(reason, entry) }); return }
   if (Buffer.byteLength(JSON.stringify(inventory)) > MAX_PACKAGE_INVENTORY_BYTES) { sendJson(res, 413, { error: 'payload-too-large' }); return }
   const controller = new AbortController()
   const onClose = () => { if (!res.writableEnded) controller.abort() }
@@ -5574,7 +5575,7 @@ export function createManagedRequestHandler(deps: ManagedHttpDeps): Handler {
     const bundleAdvisories = /^\/api\/bundles\/([a-f\d-]{36})\/advisories$/iu.exec(path)
     if (bundleAdvisories) {
       if (method !== 'GET') { send405(res, 'GET'); return }
-      await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
+      await handleBundleAdvisories(res, deps, workspaceSession!.session, bundleAdvisories[1]!, url.searchParams.get('team'), url.searchParams.get('reason') ?? '', url.searchParams.get('entry') ?? '', url.searchParams.get('repoAdvisories') === 'true', url.searchParams.get('details') === 'true')
       return
     }
     const bundleValidationRoute = /^\/api\/bundles\/([a-f\d-]{36})\/validation$/iu.exec(path)

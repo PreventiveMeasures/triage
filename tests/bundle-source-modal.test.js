@@ -1324,6 +1324,42 @@ test('the bundle graph offers Issues when the selected scope has no findings but
   }
 })
 
+test('the bundle graph filters by an entry point instead of a reason, never by both', t => {
+  const previous = { bundleReason: graph2.bundleReason, bundleEntry: graph2.bundleEntry, bundleReasonFor: graph2.bundleReasonFor }
+  t.after(() => { Object.assign(graph2, previous) })
+  const files = ['a', 'b', 'shared', 'only-b', 'cli'].map(name => `src/${name}.js`)
+  const stasis = integrity => ({ kind: 'stasis', integrity, bundle: Bundle.parse(new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: Object.fromEntries(files.map(path => [path, `${path}()`])) }]]),
+    entries: new Set(['src/a.js', 'src/b.js']),
+    imports: new Map([['default', new Map([
+      ['src/a.js', new Map([['./shared', 'src/shared.js']])],
+      ['src/b.js', new Map([['./shared', 'src/shared.js'], ['./only-b', 'src/only-b.js']])],
+    ])]]),
+    reason: { bundle: files.slice(0, 4), run: ['src/cli.js'] },
+  }).serialize()) })
+  const details = stasis('graph-entry-scope')
+  Object.assign(graph2, { bundleReasonFor: details.integrity, bundleReason: null, bundleEntry: 'src/b.js' })
+  const scoped = buildBundleGraphData(details)
+  assert.deepEqual(scoped.files, ['b.js', 'only-b.js', 'shared.js'], 'the files the entry point reaches (display prefix stripped)')
+  assert.deepEqual(scoped.treeData['b.js'].imports.toSorted(), ['only-b.js', 'shared.js'])
+  assert.deepEqual(scoped.reasons, ['bundle', 'run'])
+  assert.deepEqual(scoped.entries, [{ id: 'entry:src/a.js', label: 'a.js' }, { id: 'entry:src/b.js', label: 'b.js' }])
+  assert.equal(graph2.bundleEntry, 'src/b.js', 'the entry point stays selected')
+  assert.equal(buildBundleGraphData(details).files, scoped.files, 'an unchanged scope hands the canvas the same files')
+
+  graph2.bundleReason = 'run'
+  assert.deepEqual(buildBundleGraphData(details).files, ['cli.js'], 'a reason set too is the scope')
+  assert.equal(graph2.bundleEntry, null, 'and leaves no entry point chosen')
+
+  Object.assign(graph2, { bundleReason: null, bundleEntry: 'src/shared.js' })
+  assert.equal(buildBundleGraphData(details).files.length, files.length, 'a file that is no entry point filters nothing')
+  assert.equal(graph2.bundleEntry, null)
+
+  graph2.bundleEntry = 'src/a.js'
+  assert.equal(buildBundleGraphData(stasis('graph-entry-other')).files.length, files.length, 'another bundle starts unfiltered')
+  assert.equal(graph2.bundleEntry, null)
+})
+
 test('same-ID App and dependency findings remain selectable in package and bundle triage views', async t => {
   const { saveFile, deleteFile } = await import('../client/storage.js')
   const { ensureBundleFindingsIndexed, findingsForFileHash } = await import('../client/bundle-finding-index.js')
