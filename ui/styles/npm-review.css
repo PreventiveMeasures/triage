@@ -64,7 +64,7 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
   border-bottom: 1px solid var(--border);
   }
 .npm-review-toolbar-group { min-width: 0; gap: .15rem; color: var(--muted); }
-.npm-review-toolbar-group > :not(.npm-review-package) { flex: none; }
+.npm-review-toolbar-group > :not(.npm-review-package, .npm-review-patched) { flex: none; }
 .npm-review-toolbar-group .npm-review-text-button { padding: .3rem .5rem; }
 .npm-review-package { min-width: 0; }
 .npm-review-package > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -76,7 +76,12 @@ npm-review .npm-review-progress-block button { min-height: 0; padding: 0; line-h
   font-size: .68rem;
   }
 .npm-review-count { display: inline-block; padding: 0 .25rem; font-weight: 400; }
-.npm-review-patched, .dependency-review-patched { display: inline-block; padding: 0 .3rem; cursor: default; }
+/* A patch's whole hash: cut short before the package's name is, its start kept. */
+.npm-review-patched {
+  display: inline-block; flex: 0 10000 auto; min-width: 5rem; padding: 0 .3rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default;
+  }
+.dependency-review-patched { padding: 0 .3rem; cursor: default; }
 .npm-review-badge { display: inline-flex; padding: .1rem .4rem; cursor: default; }
 .npm-review-filters { gap: .7rem; padding: 0 .15rem; }
 npm-review .npm-review-filters button {

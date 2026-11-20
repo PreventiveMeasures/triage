@@ -5,6 +5,7 @@ import { bundleCompareFiles } from '../ui/view/bundle-compare-inputs.js'
 import { withinComparisonLimits } from '../ui/view/bundle-compare-files.js'
 import { computeBundleDiff } from '../ui/view/bundle-compare-diff.js'
 import { prepareComparison } from '../common/bundle-comparison.js'
+import { templates } from './_lit.js'
 
 const requests = [], state = {}
 // Teams the reader publishes to: two, so that neither is chosen for them.
@@ -274,6 +275,8 @@ test('My reviews lists each frozen set and its final verdict, with copy restrict
   assert.match(text(page._row(partial)), /Accept with nits/u)
   assert.match(text(page._row(full)), /data-tooltip=4 of 4 files checked @click=[^>]*>Full · 4\/4<\/button>/u)
   assert.match(text(page._row(full)), /<a class="dependency-review-title" href=[^>]*><svg class="bundle-code-tree-npm"/u, 'its ecosystem\'s icon before what it is of')
+  assert.match(text(page._row({ ...full, patchHash: 'c'.repeat(64), patchSource: { repoId: 7, commit: 'b'.repeat(40), path: 'patches/lib.patch' } })),
+    /2\.0\.0 <span class="dependency-review-patched">patch:c{64}<\/span>/u, 'a patched one\'s version tagged by its patch\'s whole hash')
   assert.doesNotMatch(text(page._row(full)), /dependency-review-identity|dependency-review-expand/u, 'each a line, nothing under its title, no toggle of its own')
   // Its details opened, and shut again, by that button.
   const press = () => page._row(full).values.findLast(value => typeof value === 'function' && String(value).includes('_toggleDetails'))()
@@ -578,8 +581,24 @@ test('a version as a pnpm patch changes it is reviewed as patched: its files the
   assert.deepEqual(page._location('@scope/lib@1.0.0'), { reviewPackage: '@scope/lib', reviewSpec: '1.0.0', patch })
   assert.deepEqual(page._location('@scope/lib@1.0.0', false), { reviewPackage: '@scope/lib', reviewSpec: '1.0.0' }, 'another version\'s, none')
   const shown = text(page.render())
-  assert.match(shown, /class="npm-review-patched" data-tooltip=As pnpm’s patch patches\/lib\.patch changes it, read at bbbbbbb>patched</u)
+  assert.match(shown, /class="npm-review-patched" data-tooltip=As pnpm’s patch patches\/lib\.patch changes it, read at bbbbbbb>patch:a{64}</u, 'its tag its patch\'s whole hash')
   assert.match(shown, /otherName=@scope\/lib@2\.0\.0 \(patched\)/u)
+  // Its version listed twice in the version selector: tagged by its patch's hash's start alone, marked, then as npm has it; the others once, as they open
+  // unpatched; unpatched, once.
+  const picker = () => templates(renderReview(page)).find(one => one.strings[0].includes('<bundle-selector') && one.values.includes('Version to review')).values
+  const versionsShown = () => picker()[0].map(row => [row.id, row.detail ?? '', row.detailNote ?? null])
+  const [tag, noted] = ['patch:aaaaa', 'As pnpm’s patch patches/lib.patch changes it']
+  page.source = { options: [], choices: [{ id: '2.0.0', name: '@scope/lib@2.0.0', format: 'npm', detail: 'latest' }, { id: '1.0.0', name: '@scope/lib@1.0.0', format: 'npm', detail: '' }] }
+  assert.deepEqual(versionsShown(), [['2.0.0', tag, noted], ['2.0.0 unpatched', 'latest', null], ['1.0.0', '', null]], 'its dist-tags on the unpatched one alone')
+  // Each picked opens its review against the same base: the unpatched one's without the patch.
+  const picked = value => { navigations.length = 0; picker().find(one => typeof one === 'function')({ stopPropagation() {}, detail: { value } }); return navigations[0] }
+  const opened = { view: 'npm', packageName: '@scope/lib', packageSpec: '2.0.0', bundleTab: 'review', reviewPackage: '@scope/lib', reviewSpec: '1.0.0' }
+  assert.deepEqual([picked('2.0.0 unpatched'), picked('2.0.0'), picked('1.0.0')], [opened, { ...opened, patch }, { ...opened, packageSpec: '1.0.0' }])
+  const { _patch: patched } = page
+  page._patch = null
+  assert.deepEqual(versionsShown(), [['2.0.0', 'latest', null], ['1.0.0', '', null]])
+  Object.assign(page, { _patch: patched, source: undefined })
+  assert.deepEqual(versionsShown(), [['2.0.0', tag, noted], ['2.0.0 unpatched', '', null]], 'a version not listed, as it is added')
   answer = { review: { ...review, ...page._context, id: 'patched', revision: 1, entries: [{ ...file, id: 'p', file: 'patched.js', status: 'accept', comment: '' }] }, reviews: [], teams: TEAMS }
   requests.length = 0
   await page._setFileStatus('patched.js', 'accept')
