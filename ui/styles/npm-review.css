@@ -266,17 +266,19 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
 /* A review a line: what it is of, its verdict, how much of it was checked,
    who (a team's), its teams and notes, when, and what to do with it, each a
    column of the list's; its details open under it, by how much of it was
-   checked, a button drawn as text. */
+   checked, a button drawn as text. What to do with it takes the room of as
+   many buttons as a row mostly has at most, one's own two, a team's one, so
+   every row's columns line up whichever it has. */
 .dependency-review-row { border-bottom: 1px solid var(--border); font-size: .78rem; }
 .dependency-review-row:hover, .dependency-review-row.is-expanded { background: var(--surface); }
 .dependency-review-row-main {
   display: grid; align-items: center; gap: 0 .75rem; min-height: 2rem; padding: .125rem .5rem;
   grid-template-areas: 'title result coverage meta date actions';
-  grid-template-columns: minmax(10rem, 1fr) 8rem 5.5rem minmax(0, 12rem) 7rem auto;
+  grid-template-columns: minmax(10rem, 1fr) 8rem 5.5rem minmax(0, 12rem) 7rem minmax(3.3rem, max-content);
 }
 .dependency-review-list.is-team .dependency-review-row-main {
   grid-template-areas: 'title result coverage author meta date actions';
-  grid-template-columns: minmax(10rem, 1fr) 8rem 5.5rem 9rem minmax(0, 10rem) 7rem auto;
+  grid-template-columns: minmax(10rem, 1fr) 8rem 5.5rem 9rem minmax(0, 10rem) 7rem minmax(1.6rem, max-content);
 }
 .dependency-review-row-main > * { min-width: 0; }
 .dependency-review-title {
@@ -320,6 +322,8 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
 }
 .dependency-review-row-actions { grid-area: actions; display: flex; align-items: center; justify-content: flex-end; gap: .1rem; }
 .dependency-review-row-actions dependency-review-copy { display: inline-flex; }
+/* One with nothing to copy takes no room, nor a gap. */
+.dependency-review-row-actions dependency-review-copy:empty { display: none; }
 .dependency-review-discard, .dependency-review-open {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 1.6rem; height: 1.6rem; border: 0;
@@ -350,11 +354,11 @@ dependency-review-copy svg, .dependency-review-discard svg { width: .95rem; heig
 @container review-list (width <= 860px) {
   .dependency-review-row-main {
     grid-template-areas: 'title result coverage date actions';
-    grid-template-columns: minmax(8rem, 1fr) 8rem 5.5rem 7rem auto;
+    grid-template-columns: minmax(8rem, 1fr) 8rem 5.5rem 7rem minmax(3.3rem, max-content);
   }
   .dependency-review-list.is-team .dependency-review-row-main {
     grid-template-areas: 'title result coverage author date actions';
-    grid-template-columns: minmax(8rem, 1fr) 8rem 5.5rem minmax(0, 8rem) 7rem auto;
+    grid-template-columns: minmax(8rem, 1fr) 8rem 5.5rem minmax(0, 8rem) 7rem minmax(1.6rem, max-content);
   }
   .dependency-review-meta { display: none; }
 }
