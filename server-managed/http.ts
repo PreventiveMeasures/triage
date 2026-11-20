@@ -115,7 +115,7 @@
 //        reads them there | 400/401/404
 //   GET  /api/npm/package?name=&version= → a published version's manifest and files | 400/401/404/413/429/502
 //   GET  /api/npm/package?name=&version=&patchHash=&patchRepoId=&patchCommit=&patchPath= → its files as a pnpm patch of a
-//        repository the reader reads all of changes them | 400/401/403/404/409/413/422/429/502
+//        repository the reader reads all of changes them, its path looked for where left out, as kept where all three are | 400/401/403/404/409/413/422/429/502
 //   GET  /api/npm/versions?name= → its dist-tags, versions, when each was published and its first was, and whether a team lists its scope | 400/401/404/429/502
 //   GET  /api/npm/download?name=&version= → its tarball | 400/401/404/413/429/502
 //   GET  /api/npm/stats?name= → its downloads over the last year and its GitHub repository's figures | 400/401/404/429/502
@@ -229,7 +229,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, buildRepositoryLockfile, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, VERSION_KEPT_MS, canReadPrivateNpm, npmFileRows, npmPublishTime, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
-import { type ReadPatch, type RequestedPatch, patchedFiles, readPatch, requestedPatch, withPatchFiles } from './npm-patch.ts'
+import { type ReadPatch, type RequestedPatch, foundPatch, keptPatch, patchedFiles, readPatch, requestedPatch, withPatchFiles } from './npm-patch.ts'
 import { type RepositoryCodeKept, loadRepositoryCodeBody, repositoryCodeFits, repositoryCodeKept } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges, repositoryTree } from './repository-changes.ts'
 import { COAUTHORS_READ, coauthorsOf } from './commit-coauthors.ts'
@@ -2439,16 +2439,40 @@ async function readWholeRepositoryOf<T>(deps: ManagedHttpDeps, access: WholeAcce
 // The patch `patch` names (npm-patch.ts), and where it was read (`source`),
 // read of the whole of its repository as readWholeRepositoryOf reads it,
 // with its reader's own GitHub access, and held to its hash: as kept, for
-// good (patchStore), else with that access checked again after; else why it
-// was refused. Its failing to read or to apply throws.
+// good (patchStore), else with that access checked again after; one named
+// without its path looked for among its commit's patches (foundPatch), of a
+// repository whose dependency review is on alone; one named by its hash
+// alone as kept alone (keptPatchOf); else why it was refused. Its failing to
+// read or to apply throws.
 async function npmPatchOf(deps: ManagedHttpDeps, cookie: string | undefined, patch: RequestedPatch): Promise<ReadPatch | Refusal> {
+  if (!('repoId' in patch)) return keptPatchOf(deps, cookie, patch.hash)
   const access = await wholeRepositoryAccess(deps, cookie, patch.repoId)
   if ('error' in access) return access
-  const { repoId } = access.repo
+  const { repoId } = access.repo, { hash, commit, path } = patch
   const read = await readWholeRepositoryOf(deps, access, async (fullName, token) => {
-    const asked: GithubAsked = { github: false }
-    return { value: await readPatch(fullName, token, { ...patch, repoId }, patchStore(deps.db, deps.config.debug), asked), kept: !asked.github }
+    const asked: GithubAsked = { github: false }, kept = patchStore(deps.db, deps.config.debug)
+    const listed = async () => (await deps.db.repoDependencyReview(repoId))?.enabled ? repositoryTree(fullName, token, commit, commitTreeKept(deps, repoId)) : null
+    const value = path === undefined ? await foundPatch(fullName, token, { hash, repoId, commit }, kept, listed, asked)
+      : await readPatch(fullName, token, { hash, repoId, commit, path }, kept, asked)
+    return { value, kept: !asked.github }
   }, () => wholeRepositoryAccess(deps, cookie, repoId))
+  return 'error' in read ? read : read.value
+}
+// The patch `hash` names as kept, of a connected repository its reader may
+// read all of, the first of theirs that keeps it (npm-patch.ts keptPatch), as
+// readWholeRepositoryOf reads what is kept, GitHub asked for none of it; else
+// `404 patch-not-kept`, as one never read here, or read only of a repository
+// they can't read all of, is none of theirs.
+async function keptPatchOf(deps: ManagedHttpDeps, cookie: string | undefined, hash: string): Promise<ReadPatch | Refusal> {
+  const s = await readSession(deps.config, deps.db, cookie, Date.now())
+  if (s == null) return refusal(401, 'unauthenticated')
+  if (!roleAtLeast(s.user.role, 'view')) return refusal(403, 'forbidden')
+  const grants = await repositoryGrants(deps, s.user)
+  const readable = grants.repos.flatMap(repo => { const whole = wholeAccessIn(grants, s.user, repo.repoId); return 'error' in whole ? [] : [whole] })
+  const held = await keptPatch(readable.map(one => one.repo.repoId), hash, patchStore(deps.db, deps.config.debug))
+  const access = held && readable.find(one => one.repo.repoId === held.source.repoId)
+  if (!access) return refusal(404, 'patch-not-kept')
+  const read = await readWholeRepositoryOf(deps, access, () => Promise.resolve({ value: held, kept: true }), () => wholeRepositoryAccess(deps, cookie, access.repo.repoId))
   return 'error' in read ? read : read.value
 }
 // The patch a request's fields name, as npm-patch.ts requestedPatch takes them.
@@ -2705,7 +2729,8 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
     ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, null, head, asked)] }, read.lockfiles)
   const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(locked))
   if (!now) return { value: { head, review: null }, kept: !asked.github }
-  const told = await withPatchFiles(locked, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked)
+  // Every patch there kept, those its lockfiles name the files of too, for a link to find by its hash alone.
+  const told = await withPatchFiles(locked, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked, { keepNamed: true })
   // Told by the lockfiles it held to as they were read, though they have
   // changed since.
   const state = { ...now, lockfiles: setting.lockfiles }
@@ -4943,7 +4968,8 @@ function reviewChange(res: ServerResponse, body: Record<string, unknown>): Revie
 // its files as its patch changes them, the patch read as kept, else where the
 // request says (`patchRepoId`, `patchCommit`, `patchPath`), of the whole of a
 // repository its reader reads (npmPatchOf), the review keeping where it was
-// read. Access to both versions is rechecked before returning or saving annotations.
+// read; and a patched base's (`basePatchHash`) as its patch, kept, changes
+// them. Access to both versions is rechecked before returning or saving annotations.
 async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, params: URLSearchParams): Promise<void> {
   const method = req.method ?? 'GET'
   if (!['GET', 'POST'].includes(method)) { send405(res, 'GET, POST'); return }
@@ -4961,17 +4987,19 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
   const baseVersion = field('baseVersion') ?? null
   const baseIntegrity = field('baseIntegrity') ?? null
   const patchHash = field('patchHash') ?? null
+  const basePatchHash = field('basePatchHash') ?? null
   // Where its patch is, where it names that: its hash alone where only listed.
   const patch = patchFields(field)
   const validIntegrity = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 1024
   if (field('ecosystem') !== 'npm' || !isNpmPackageName(name) || !isNpmPackageSpec(version) || !validIntegrity(integrity)
     || (basePackage !== null || baseVersion !== null || baseIntegrity !== null)
       && (!isNpmPackageName(basePackage) || !isNpmPackageSpec(baseVersion) || !validIntegrity(baseIntegrity))
-    || (patchHash !== null && !isPatchHash(patchHash)) || patch === 'invalid') {
+    || (patchHash !== null && !isPatchHash(patchHash)) || patch === 'invalid' || (basePatchHash !== null && (!isPatchHash(basePatchHash) || basePackage === null))) {
     sendJson(res, 400, { error: 'bad-review-context' }); return
   }
   const context: ReviewContext = { ecosystem: 'npm', package: name, version, integrity, patchHash: patchHash as string | null,
-    basePackage: basePackage as string | null, baseVersion: baseVersion as string | null, baseIntegrity: baseIntegrity as string | null }
+    basePackage: basePackage as string | null, baseVersion: baseVersion as string | null, baseIntegrity: baseIntegrity as string | null,
+    basePatchHash: basePatchHash as string | null }
   let change: ReviewChange | null = null
   if (mutation) {
     change = reviewChange(res, body)
@@ -4998,6 +5026,8 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
     const reading = change && change.action !== 'revoke'
     const patchRead = reading && patch ? await npmPatchOf(deps, cookie, patch) : null
     if (patchRead && 'error' in patchRead) { sendRefusal(res, patchRead); return }
+    const basePatchRead = reading && basePatchHash ? await npmPatchOf(deps, cookie, { hash: basePatchHash as string }) : null
+    if (basePatchRead && 'error' in basePatchRead) { sendRefusal(res, basePatchRead); return }
     const loads = reading ? [doc, ...base ? [base] : []].map(loadNpmFiles) : []
     let tarballs: ReviewedTarballs | undefined
     try {
@@ -5006,7 +5036,8 @@ async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps:
         tarballs = { shasum: doc.dist.shasum, baseShasum: base?.dist.shasum ?? null, ...patchRead ? { patch: patchRead.source } : {} }
       }
       if (change?.action === 'publish' || change?.action === 'save') {
-        const maps = files.map((list, at) => new Map<string, unknown>(npmFileRows(at === 0 && patchRead ? patchedFiles(list, patchRead.files) : list)
+        const patchOf = [patchRead, basePatchRead]
+        const maps = files.map((list, at) => new Map<string, unknown>(npmFileRows(patchOf[at] ? patchedFiles(list, patchOf[at].files) : list)
           .map(([path, size, text, digest]) => [path, text ?? { format: 'digest', size, digest }])))
         const after = maps[0]!, before = maps[1] ?? new Map<string, unknown>()
         const diff = computeBundleDiff(before, after, () => '.')
@@ -5130,9 +5161,12 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
   const diffed = path === NPM_RENAME_DIFF_PATH && params.has('path') ? renameDiffRequest(params) : null
   if (path === NPM_RENAME_DIFF_PATH && params.has('path') && !diffed) { sendJson(res, 400, { error: 'bad-file' }); return }
   // The patch a patched version's files and comparison are of, where named
-  // (`patchHash`, `patchRepoId`, `patchCommit`, `patchPath`), as Review reads them.
+  // (`patchHash`, `patchRepoId`, `patchCommit`, `patchPath`), as Review reads them;
+  // and the one a comparison's other version is of, by its hash alone, as kept (`otherPatchHash`).
   const patch = patchFields(key => params.get(key))
-  if (patch === 'invalid' || (params.has('patchHash') && !patch) || (patch && path !== NPM_PACKAGE_PATH && path !== NPM_COMPARISON_PATH)) {
+  const otherPatch = params.has('otherPatchHash') ? requestedPatch({ hash: params.get('otherPatchHash') }) : null
+  if (patch === 'invalid' || (patch && path !== NPM_PACKAGE_PATH && path !== NPM_COMPARISON_PATH)
+    || otherPatch === 'invalid' || (otherPatch && (path !== NPM_COMPARISON_PATH || otherSpec === '(empty)'))) {
     sendJson(res, 400, { error: 'bad-patch' }); return
   }
   const reader = await npmReader(deps, cookie, otherName === name ? [name] : [name, otherName], { handed: true })
@@ -5259,18 +5293,20 @@ async function handleNpm(req: IncomingMessage, res: ServerResponse, deps: Manage
     // Overview reads beside them (comparison.ts): the version shown against
     // the one compared with, or `(empty)`, none, as Review reads a first
     // version; as `patch` changes its files, where named, the patch read
-    // first (npmPatchOf). Read of both, each package's access checked again
-    // once worked out.
+    // first (npmPatchOf), and `otherPatch` the other's. Read of both, each
+    // package's access checked again once worked out.
     if (path === NPM_COMPARISON_PATH) {
       const old = otherSpec === '(empty)' ? null : await otherDoc()
       const patched = patch ? await npmPatchOf(deps, cookie, patch) : null
       if (patched && 'error' in patched) { sendRefusal(res, patched); return }
+      const oldPatched = otherPatch ? await npmPatchOf(deps, cookie, otherPatch) : null
+      if (oldPatched && 'error' in oldPatched) { sendRefusal(res, oldPatched); return }
       dropIdle(res)
       const loads = [doc, ...old ? [old] : []].map(loadNpmFiles)
       let body
       try {
         const [files, oldFiles] = await Promise.all(loads.map(load => load.result))
-        body = await comparisonBody(old ? npmComparedSide(old.dist.integrity, oldFiles!) : emptySide(),
+        body = await comparisonBody(old ? npmComparedSide(old.dist.integrity, oldPatched ? patchedFiles(oldFiles!, oldPatched.files) : oldFiles!) : emptySide(),
           npmComparedSide(doc.dist.integrity, patched ? patchedFiles(files!, patched.files) : files!))
       } finally { for (const load of loads) load.release() }
       const current = await npmReader(deps, cookie, otherName === name ? [name] : [name, otherName])

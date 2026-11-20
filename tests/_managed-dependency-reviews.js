@@ -400,4 +400,18 @@ export async function checkPatchedReviews(db) {
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
   const state = await db.repoDependencyReviewState(1, users.author.userId, [{ name: reviewContext.package, version: reviewContext.version }])
   assert.deepEqual(state.reviews.map(one => [one.id, one.patchHash ?? null]), [[review.id, patched.patchHash]], 'a published one told a repository\'s pull requests by its patch')
+
+  // Compared with its base as a patch changes it: a comparison of its own, its draft and reviews apart, counting for no pull request.
+  const onPatchedBase = { ...patched, basePatchHash: 'e'.repeat(64) }
+  let based = await change(save(null, 'patched.js'), onPatchedBase, 600, read)
+  assert.notEqual(based.id, continued.id, 'a draft beside the one against its base unpatched')
+  assert.equal(based.basePatchHash, onPatchedBase.basePatchHash)
+  await assert.rejects(change({ action: 'start', reviewId: null, revision: null }, onPatchedBase, 610, read), /review-conflict/u, 'one draft of that comparison')
+  assert.deepEqual([ids(await db.listDependencyReviews(onPatchedBase, users.author.userId)), ids(await db.listDependencyReviews(patched, users.author.userId))],
+    [[based.id], [continued.id, review.id].toSorted()], 'each listed by its base\'s patch')
+  based = await change({ action: 'publish', reviewId: based.id, revision: based.revision, teamIds: ['first'], files: ['patched.js'], nonTextFiles: [],
+    final: { status: 'accept', comment: '' } }, onPatchedBase, 700, read)
+  assert.equal(based.basePatchHash, onPatchedBase.basePatchHash)
+  assert.deepEqual((await db.repoDependencyReviewState(1, users.author.userId, [{ name: reviewContext.package, version: reviewContext.version }])).reviews.map(one => one.id),
+    [review.id], 'not told a repository\'s pull requests')
 }

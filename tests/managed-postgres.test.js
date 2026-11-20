@@ -1676,10 +1676,10 @@ test('Postgres adds the patch dependency reviews are of to an existing installat
   const draft = await db.changeDependencyReview(context('pkg', '2.0.0', '1.0.0'), users.alice.sid, { action: 'start', reviewId: null, revision: null }, Date.now())
   const legacy = await connect()
   try {
-    await legacy.query(`DROP INDEX managed_dependency_review_draft_idx; ALTER TABLE managed_dependency_review DROP COLUMN patch_hash, DROP COLUMN patch_source;
+    await legacy.query(`DROP INDEX managed_dependency_review_drafts_idx; ALTER TABLE managed_dependency_review DROP COLUMN patch_hash, DROP COLUMN patch_source, DROP COLUMN base_patch_hash;
       CREATE UNIQUE INDEX managed_dependency_review_unpublished_idx ON managed_dependency_review(user_id, ecosystem, package, version, integrity, base_package, base_version, base_integrity)
         WHERE published_at IS NULL;
-      DELETE FROM managed_schema_version WHERE version = 33;`)
+      DELETE FROM managed_schema_version WHERE version IN (33, 36);`)
   } finally { await legacy.release() }
   await db.close()
   const upgraded = await openPostgresManagedDb(connect)

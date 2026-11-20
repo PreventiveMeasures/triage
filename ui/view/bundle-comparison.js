@@ -56,7 +56,8 @@ function pair(base, other, scope) {
   if (base.managedId && other.managedId) return fetchBundleComparison(base.managedId, other.managedId, { scope })
   if (served(base, other)) {
     const { name, version, patch } = other.npm ?? other.npmPatch
-    return fetchNpmComparison(name, version, base.npm?.version ?? '(empty)', { otherName: base.npm?.name ?? name, ...patch ? { patch } : {} })
+    return fetchNpmComparison(name, version, base.npm?.version ?? '(empty)', { otherName: base.npm?.name ?? name, ...patch ? { patch } : {},
+      ...base.npmPatch ? { otherPatch: base.npmPatch.patch } : {} })
   }
   return import('./bundle-comparison-local.js').then(module => {
     local = module

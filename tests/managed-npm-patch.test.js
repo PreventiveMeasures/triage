@@ -15,7 +15,7 @@ import { openSqliteManagedDb } from '../server-managed/db.ts'
 import { createManagedRequestHandler } from '../server-managed/http.ts'
 import { createSession } from '../server-managed/session.ts'
 import { hashToken } from '../server-managed/crypto.ts'
-import { isPatchOf, parsePatch, patchKey, patchWeight, patchedFiles, readPatch, requestedPatch, withPatchFiles } from '../server-managed/npm-patch.ts'
+import { foundPatch, isPatchOf, keptPatch, parsePatch, patchKey, patchWeight, patchedFiles, readPatch, requestedPatch, withPatchFiles } from '../server-managed/npm-patch.ts'
 import { patchStore } from '../server-managed/npm-kept.ts'
 import { isPatchHash } from '../common/managed/npm-packages.js'
 import { packageOf, registry } from './_managed-npm.js'
@@ -161,13 +161,17 @@ test('a patch is held to the hash a lockfile names it by, as pnpm 10 and later h
   assert.equal(isPatchOf(`${PATCH}\n`, sha256(PATCH)), false)
   assert.equal(isPatchOf('a', MD5), false)
   assert.equal(isPatchOf(PATCH.replaceAll('\n', '\r\n'), sha256(PATCH)), true, 'as pnpm reads it, its CRLFs as LFs')
-  assert.equal(isPatchOf(PATCH.replaceAll('\n', '\r\n'), sha256(PATCH.replaceAll('\n', '\r\n'))), true, 'or as it is')
+  assert.equal(isPatchOf(PATCH.replaceAll('\n', '\r\n'), sha256(PATCH.replaceAll('\n', '\r\n'))), false, 'not as it is')
+  assert.deepEqual([sha256('+a\rb\n'), sha256('+ab\n')].map(hash => isPatchOf('+a\rb\r\n', hash)), [true, false], 'a CR that ends no line kept, as pnpm 12 keeps it')
   assert.deepEqual(['a'.repeat(64), MD5, 'A'.repeat(64), 'a'.repeat(63), 'a'.repeat(32), null].map(isPatchHash), [true, false, false, false, false, false])
   const where = { hash: 'a'.repeat(64), repoId: '1', commit: 'c'.repeat(40), path: 'patches/x.patch' }
   assert.deepEqual(requestedPatch(where), { ...where, repoId: 1 })
   assert.deepEqual(requestedPatch({ ...where, repoId: 'Org/some.repo-1' }), { ...where, repoId: 'Org/some.repo-1' }, 'its repository by its name')
-  assert.equal(requestedPatch({ hash: 'a'.repeat(64), repoId: null, commit: null, path: null }), null, 'its hash alone names not where it is')
-  for (const wrong of [{ repoId: '0' }, { repoId: 'x' }, { repoId: 'org/repo/more' }, { commit: 'c' }, { path: '../x.patch' }, { path: '/x.patch' }, { path: 'a//x.patch' }, { hash: 'nope' },
+  assert.deepEqual(requestedPatch({ ...where, path: null }), { hash: where.hash, repoId: 1, commit: where.commit }, 'its path left out, looked for at the commit')
+  assert.deepEqual(requestedPatch({ hash: 'a'.repeat(64), repoId: null, commit: null, path: null }), { hash: 'a'.repeat(64) }, 'by its hash alone, as kept')
+  assert.equal(requestedPatch({ hash: MD5 }), 'invalid')
+  assert.equal(requestedPatch({ hash: null }), null, 'none named')
+  for (const wrong of [{ repoId: '0' }, { repoId: 'x' }, { repoId: 'org/repo/more' }, { commit: 'c' }, { commit: null }, { repoId: null }, { path: '../x.patch' }, { path: '/x.patch' }, { path: 'a//x.patch' }, { hash: 'nope' },
     { hash: null }, { hash: MD5 }]) {
     assert.equal(requestedPatch({ ...where, ...wrong }), 'invalid', JSON.stringify(wrong))
   }
@@ -219,6 +223,9 @@ async function setup(t, pkg, held) {
     if (url.hostname !== 'api.github.com') return registryFetch(input, init)
     if (url.pathname === '/repos/org/repo') return Promise.resolve(Response.json(publicMetadata))
     asked.push(url.pathname)
+    if (url.pathname === `/repos/org/repo/git/trees/${commit}`) {
+      return Promise.resolve(Response.json({ tree: Object.entries(held).map(([path, text]) => ({ type: 'blob', path, size: Buffer.byteLength(text) })), truncated: false }))
+    }
     const path = url.pathname.startsWith('/repos/org/repo/contents/') ? decodeURIComponent(url.pathname.slice('/repos/org/repo/contents/'.length)) : null
     const text = url.searchParams.get('ref') === commit ? held[path] : undefined
     return Promise.resolve(text === undefined ? Response.json({ message: 'Not Found' }, { status: 404 }) : Response.json(contents(path, text)))
@@ -246,8 +253,9 @@ async function setup(t, pkg, held) {
 test('a version as a patch changes it is read, compared and reviewed by one who reads the whole of the repository the patch is read of, the patch held to its hash, and kept by its repository and hash for good', async t => {
   const pkg = packageOf('patched-lib', '1.0.0', PACKAGE)
   const path = 'patches/patched-lib@1.0.0.patch'
-  const crlf = variant('crlf')
-  const h = await setup(t, pkg, { [path]: PATCH, 'patches/crlf.patch': crlf.replaceAll('\n', '\r\n'), 'patches/other.patch': variant('other') })
+  const [crlf, found] = [variant('crlf'), variant('found')]
+  const h = await setup(t, pkg, { [path]: PATCH, 'patches/crlf.patch': crlf.replaceAll('\n', '\r\n'), 'patches/other.patch': variant('other'), 'patches/found.patch': found,
+    'pnpm-lock.yaml': 'lockfileVersion: \'9.0\'\n' })
   const hash = sha256(PATCH)
   const patch = { patchHash: hash, patchRepoId: '1', patchCommit: commit, patchPath: path }
   const query = more => new URLSearchParams({ name: 'patched-lib', version: '1.0.0', ...more })
@@ -278,6 +286,21 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
   const named = await h.send(`/api/npm/package?${query(other)}`)
   assert.deepEqual([named.status, named.json().patch], [200, { hash: other.patchHash, repoId: 1, commit, path: 'patches/other.patch' }], 'read of the repository of that name, told by its id')
 
+  // Its path left out: looked for among the commit's patches beside its pnpm lockfile, of a repository whose dependency review is on alone, each kept.
+  const pathless = { patchHash: sha256(found), patchRepoId: '1', patchCommit: commit }
+  assert.equal((await h.send(`/api/npm/package?${query(pathless)}`)).json().error, 'patch-not-found', 'none looked for where its dependency review is off')
+  await h.db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
+  h.asked.length = 0
+  assert.deepEqual((await h.send(`/api/npm/package?${query(pathless)}`, 'outsider')).json().error, 'no-repository', 'nor by one who reads none of it')
+  const looked = await h.send(`/api/npm/package?${query(pathless)}`)
+  assert.deepEqual([looked.status, looked.json().patch], [200, { hash: pathless.patchHash, repoId: 1, commit, path: 'patches/found.patch' }], 'found, and told where')
+  assert.deepEqual(h.asked.toSorted(), [...['crlf', 'found', 'other', 'patched-lib%401.0.0'].map(name => `/repos/org/repo/contents/patches/${name}.patch`),
+    `/repos/org/repo/git/trees/${commit}`], 'each of its patches read once')
+  h.asked.length = 0
+  assert.equal((await h.send(`/api/npm/package?${query({ patchHash: pathless.patchHash })}`)).json().patch.path, 'patches/found.patch', 'kept, by its hash alone as well')
+  assert.equal((await h.send(`/api/npm/package?${query({ ...pathless, patchHash: 'e'.repeat(64) })}`)).json().error, 'patch-not-found', 'one none of them is')
+  assert.deepEqual(h.asked, [], 'the commit looked in once')
+
   for (const [why, more, status, error] of [['one who reads none of its repository', { who: 'outsider' }, 404, 'no-repository'],
     ['one who reads none of it, by its name', { who: 'outsider', patchRepoId: 'org/repo' }, 404, 'no-repository'],
     ['a repository none connected has the name of', { patchRepoId: 'org/unconnected' }, 404, 'no-repository'],
@@ -286,7 +309,9 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
     ['one read at no commit yet, not at that one', { patchHash: 'e'.repeat(64), patchCommit: 'd'.repeat(40) }, 404, 'patch-not-found'],
     ['one pnpm 9 names by an md5', { patchHash: MD5 }, 400, 'bad-patch'],
     ['one outside the repository', { patchPath: '../x.patch' }, 400, 'bad-patch'],
-    ['its hash alone', { patchRepoId: undefined, patchCommit: undefined, patchPath: undefined }, 400, 'bad-patch']]) {
+    ['by its hash alone, one never kept', { patchHash: 'f'.repeat(64), patchRepoId: undefined, patchCommit: undefined, patchPath: undefined }, 404, 'patch-not-kept'],
+    ['by its hash alone, one kept of a repository they read none of', { who: 'outsider', patchRepoId: undefined, patchCommit: undefined, patchPath: undefined }, 404, 'patch-not-kept'],
+    ['a comparison\'s other version\'s patch for a version\'s files', { otherPatchHash: hash }, 400, 'bad-patch']]) {
     const { who = 'reviewer', ...fields } = more
     const asked = Object.fromEntries(Object.entries({ ...patch, ...fields }).filter(([, value]) => value !== undefined))
     const answer = await h.send(`/api/npm/package?${query(asked)}`, who)
@@ -297,8 +322,8 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
 
   const context = { ecosystem: 'npm', package: 'patched-lib', version: '1.0.0', integrity: pkg.doc.dist.integrity, patchHash: hash }
   const save = (file, more = {}) => h.send('/api/npm/reviews', 'reviewer', { ...context, ...patch, action: 'save', file, status: 'accept', comment: '', ...more })
-  assert.deepEqual((await h.send('/api/npm/reviews', 'reviewer', { ...context, action: 'save', file: 'added.js', status: 'accept', comment: '' })).json().error,
-    'bad-review-context', 'a change asked with where its patch is')
+  assert.deepEqual((await h.send('/api/npm/reviews', 'reviewer', { ...context, patchHash: 'f'.repeat(64), action: 'save', file: 'added.js', status: 'accept', comment: '' })).json().error,
+    'patch-not-kept', 'a change asked with where its patch is, or of one kept')
   assert.equal((await save('gone.js')).json().error, 'unknown-review-file', 'a file the patch deletes isn\'t among it')
   assert.equal((await save('image.bin')).json().error, 'non-text-review-file')
   const outsider = await h.send('/api/npm/reviews', 'outsider', { ...context, ...patch, action: 'save', file: 'added.js', status: 'accept', comment: '' })
@@ -322,6 +347,33 @@ test('a version as a patch changes it is read, compared and reviewed by one who 
   assert.equal((await h.send(`/api/npm/reviews/latest?${new URLSearchParams({ package: 'patched-lib', version: '1.0.0', integrity: context.integrity })}`)).json().review, null)
   assert.equal((await h.send('/api/npm/reviews', 'reviewer', { ...context, action: 'revoke', reviewId: review.id, revision: review.revision })).status, 200,
     'revoked with no need to read its patch')
+
+  // By its hash alone, as kept: the version's files as it changes them; and, as a comparison's base, its files so, its review of that comparison apart.
+  h.asked.length = 0
+  const alone = await h.send(`/api/npm/package?${query({ patchHash: hash })}`)
+  assert.deepEqual([alone.status, alone.json().patch, h.asked], [200, { hash, repoId: 1, commit, path }, []], 'as kept, where it was read, GitHub asked for none of it')
+  const unpatching = (await h.send(`/api/npm/comparison?${query({ otherVersion: '1.0.0', otherPatchHash: hash })}`)).json().files
+  assert.deepEqual([unpatching.changed.map(row => row.path), unpatching.onlyBase.map(row => row.path), unpatching.onlyOther.map(row => row.path)].map(paths => paths.filter(one => !one.includes('name')).toSorted()),
+    [['index.js'], ['added.js'], ['gone.js']], 'compared with the version as its patch changes it')
+  for (const [why, more, status, error] of [['of no base', { otherVersion: '(empty)', otherPatchHash: hash }, 400, 'bad-patch'], ['by more than its hash', { otherPatchHash: 'nope' }, 400, 'bad-patch'],
+    ['one never kept', { otherPatchHash: 'f'.repeat(64) }, 404, 'patch-not-kept']]) {
+    const answer = await h.send(`/api/npm/comparison?${query({ otherVersion: '1.0.0', ...more })}`)
+    assert.deepEqual([answer.status, answer.json().error], [status, error], why)
+  }
+  const onPatched = { ecosystem: 'npm', package: 'patched-lib', version: '1.0.0', integrity: pkg.doc.dist.integrity, basePackage: 'patched-lib', baseVersion: '1.0.0',
+    baseIntegrity: pkg.doc.dist.integrity, basePatchHash: hash }
+  const based = await h.send('/api/npm/reviews', 'reviewer', { ...onPatched, action: 'save', file: 'index.js', status: 'accept', comment: '' })
+  assert.deepEqual([based.status, based.json().review?.basePatchHash], [200, hash], 'a review against it, of the files that comparison changes')
+  assert.equal((await h.send('/api/npm/reviews', 'reviewer', { ...onPatched, action: 'save', file: 'package.json', status: 'accept', comment: '' })).json().error, 'unknown-review-file')
+  assert.deepEqual((await h.send(`/api/npm/reviews?${new URLSearchParams(onPatched)}`)).json().reviews.map(one => one.id), [based.json().review.id], 'listed by it')
+  assert.deepEqual((await h.send(`/api/npm/reviews?${new URLSearchParams({ ...onPatched, basePatchHash: undefined })}`)).json().error, 'bad-review-context')
+  const { basePatchHash: _basePatchHash, ...againstUnpatched } = onPatched
+  assert.deepEqual((await h.send(`/api/npm/reviews?${new URLSearchParams(againstUnpatched)}`)).json().reviews, [], 'not against it unpatched')
+  for (const [why, more, error] of [['of no base', { basePackage: undefined, baseVersion: undefined, baseIntegrity: undefined }, 'bad-review-context'],
+    ['one never kept', { basePatchHash: 'f'.repeat(64) }, 'patch-not-kept']]) {
+    const answer = await h.send('/api/npm/reviews', 'reviewer', { ...onPatched, ...more, action: 'save', file: 'index.js', status: 'accept', comment: '' })
+    assert.equal(answer.json().error, error, why)
+  }
 })
 
 // A repository's files, by path and the first character of the commit asked at, as GitHub's contents API answers them; and what was asked of it.
@@ -395,6 +447,24 @@ test('a patch its lockfile names by its hash alone is told its file as its versi
   assert.equal(looked.length, 104)
 })
 
+test('a default branch\'s patches whose files its lockfiles name are kept too, held to their hashes, so a link naming one by its hash alone finds it later', async t => {
+  const text = variant('named file')
+  const asked = githubFiles(t, { 'web/patches/named.patch@1': text, 'web/patches/other.patch@1': 'another\n' })
+  const store = patchesKept()
+  const pkgs = [lockedBy('named', sha256(text), { patchPath: 'web/patches/named.patch' }), lockedBy('other', sha256(variant('other file')), { patchPath: 'web/patches/other.patch' })]
+  const told = toldOf('1'.repeat(40), pkgs)
+  assert.deepEqual(filesOf(await withPatchFiles(told, 51, 'org/repo', 'token', store)), { named: 'web/patches/named.patch', other: 'web/patches/other.patch' })
+  assert.deepEqual([asked, store.kept.size], [[], 0], 'a pull request\'s, not read')
+  await withPatchFiles(told, 51, 'org/repo', 'token', store, undefined, { keepNamed: true })
+  assert.deepEqual(asked.toSorted(), ['web/patches/named.patch@1', 'web/patches/other.patch@1'])
+  assert.deepEqual([...store.kept], [[patchKey(51, sha256(text)), { commit: '1'.repeat(40), path: 'web/patches/named.patch', text }]], 'one other than its hash says, not')
+  assert.deepEqual((await keptPatch([50, 51], sha256(text), store))?.source, { repoId: 51, commit: '1'.repeat(40), path: 'web/patches/named.patch' }, 'found by its hash alone')
+  assert.equal(await keptPatch([50], sha256(text), store), null, 'of none of another repository')
+  asked.length = 0
+  await withPatchFiles(told, 51, 'org/repo', 'token', store, undefined, { keepNamed: true })
+  assert.deepEqual(asked, [], 'each read once')
+})
+
 test('a patch kept beyond the instance is read of it, held to its hash again, GitHub asked for none of it; one kept other than its hash says read anew', async t => {
   const text = variant('kept')
   const asked = githubFiles(t, { 'patches/x.patch@c': text })
@@ -405,4 +475,28 @@ test('a patch kept beyond the instance is read of it, held to its hash again, Gi
   assert.deepEqual([read.source, read.files.length, asked, told.github], [{ repoId: 31, commit: 'a'.repeat(40), path: 'was/here.patch' }, 4, [], false], 'as kept, where it was read')
   await readPatch('org/repo', 'token', { ...where, repoId: 32 }, store, told)
   assert.deepEqual([asked, told.github, store.kept.get(patchKey(32, where.hash))], [['patches/x.patch@c'], true, { commit, path: 'patches/x.patch', text }], 'and kept in its place')
+})
+
+test('a patch named at a commit without its path is found among the commit\'s patches, each `.patch` file in a patches directory beside a pnpm lockfile or a stasis.config.json, each kept by its own hash, the commit looked in once', async t => {
+  const [wanted, beside] = [variant('wanted'), variant('beside')]
+  const asked = githubFiles(t, { 'web/patches/wanted.patch@1': wanted, 'patches/beside.patch@1': beside, 'web/patches/sub/nested.patch@1': variant('nested'),
+    'docs/patches/elsewhere.patch@1': variant('elsewhere'), 'web/patches/notes.md@1': 'notes\n' })
+  const paths = ['docs/patches/elsewhere.patch', 'package.json', 'patches/beside.patch', 'patches/large.patch', 'pnpm-lock.yaml', 'tools/patches/gone.patch',
+    'tools/stasis.config.json', 'web/patches/notes.md', 'web/patches/sub/nested.patch', 'web/patches/wanted.patch', 'web/stasis.config.json']
+  let lists = 0
+  const listed = () => { lists += 1; return Promise.resolve({ files: paths, sizes: paths.map(path => path === 'patches/large.patch' ? 9 * 1024 * 1024 : 10) }) }
+  const store = patchesKept()
+  const where = { hash: sha256(wanted), repoId: 61, commit: '1'.repeat(40) }
+  const told = { github: false }
+  const read = await foundPatch('org/repo', 'token', where, store, listed, told)
+  assert.deepEqual([read.source, read.files.length, told.github], [{ repoId: 61, commit: where.commit, path: 'web/patches/wanted.patch' }, 4, true])
+  assert.deepEqual(asked.toSorted(), ['patches/beside.patch@1', 'tools/patches/gone.patch@1', 'web/patches/wanted.patch@1'], 'none elsewhere, nested, of another kind, or past MAX_PATCH_BYTES')
+  assert.deepEqual([...store.kept.keys()].toSorted(), [patchKey(61, sha256(beside)), patchKey(61, sha256(wanted))].toSorted(), 'each kept by its own hash')
+
+  asked.length = 0
+  assert.equal((await foundPatch('org/repo', 'token', { ...where, hash: sha256(beside) }, store, listed)).source.path, 'patches/beside.patch', 'another of them, as kept')
+  await assert.rejects(foundPatch('org/repo', 'token', { ...where, hash: 'd'.repeat(64) }, store, listed), failure('patch-not-found'), 'one none of them is')
+  assert.deepEqual([asked, lists], [[], 1], 'the commit looked in once')
+  await assert.rejects(foundPatch('org/repo', 'token', { ...where, repoId: 62 }, store, () => Promise.resolve(null)), failure('patch-not-found'), 'none where a repository isn\'t looked in')
+  assert.equal((await foundPatch('org/repo', 'token', where, store, () => Promise.resolve(null))).source.path, 'web/patches/wanted.patch', 'but as kept')
 })

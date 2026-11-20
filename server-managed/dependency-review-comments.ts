@@ -24,11 +24,11 @@ const MAX_FORMATTED = 1_000_000
 const REVIEWS_AT_ONCE = 200
 
 // `review` as the hook is given it: each version with the integrity and
-// shasum the review keeps of the tarball it read, and the version it is of
-// with the patch it is of, where it is a patched one's.
+// shasum the review keeps of the tarball it read, and the patch it is of,
+// where it is a patched one's.
 function entryOf(review: DependencyReview): DependencyReviewEntry {
   return { ecosystem: 'npm', old: review.basePackage === null ? null : { name: review.basePackage, version: review.baseVersion ?? '', integrity: review.baseIntegrity ?? '',
-      ...review.baseShasum ? { shasum: review.baseShasum } : {} },
+      ...review.baseShasum ? { shasum: review.baseShasum } : {}, ...review.basePatchHash ? { patchHash: review.basePatchHash } : {} },
     new: { name: review.package, version: review.version, integrity: review.integrity, ...review.shasum ? { shasum: review.shasum } : {},
       ...review.patchHash ? { patchHash: review.patchHash } : {} },
     status: review.status!, coverage: review.coverage === 'full' ? 'full' : 'partial', comment: review.comment,

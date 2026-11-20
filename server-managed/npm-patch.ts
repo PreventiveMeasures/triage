@@ -1,11 +1,11 @@
 // A pnpm patch of an npm package version (patchedDependencies), as its
 // dependency review reads it (pull-dependency-reviews.ts): its file, which a
 // lockfile names (locked-packages.ts `patchPath`), or which is found where it
-// names it by its hash alone (withPatchFiles), read of a repository at a
-// commit, and held to the hash the lockfile names it by, as pnpm 10 and
-// later hash it, a sha256 in hex of its text with its CRLFs read as LFs
-// (one pnpm 9 names by an md5 isn't read), by which it is kept for good,
-// read of GitHub once; and applied to the version's files as pnpm applies
+// names it by its hash alone (withPatchFiles), or by its hash among a
+// commit's patches (foundPatch), read of a repository at a commit, and held
+// to the hash the lockfile names it by, as pnpm 10 and later hash it
+// (hashOfPatch; one pnpm 9 names by an md5 isn't read), by which it is kept
+// for good, read of GitHub once; and applied to the version's files as pnpm applies
 // it as it installs it (patch-package's applyPatch, which pnpm 10 and 11
 // bundle): each file it deletes, creates, renames or changes, a change's
 // hunks each found in the file as it was, where its header says, else as
@@ -20,22 +20,25 @@ import { YamlError, parseYaml } from '@preventive/lockfile/yaml.js'
 import { isGithubRepoName } from '../common/github-pr.ts'
 import { isPatchHash, isPatchPath } from '../common/managed/npm-packages.js'
 import { GithubApiError } from './github-errors.ts'
+import { isStasisConfig } from '../common/managed/stasis-config.ts'
 import { SHA, isId } from './github-values.ts'
 import { type LockedPackage, pathFrom } from './locked-packages.ts'
 import { type Lru, lru } from './lru.ts'
 import type { KeptStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { NpmPackageError, type NpmPackageFile, npmFileText, pathOrder } from './npm-packages.ts'
-import { type GithubAsked, type PullDependencies, repositoryFile } from './pull-dependencies.ts'
+import { type GithubAsked, type PullDependencies, lockfileFormat, repositoryFile } from './pull-dependencies.ts'
 import { eachOf } from './queue.ts'
 
 // Where a patch is read: its file in a repository (by its id) at a commit,
 // from the repository's root; and the patch, by its hash besides. A request
 // names its repository by its id, or by its name (`owner/name`) in its place
-// (http.ts wholeRepositoryAccess).
+// (http.ts wholeRepositoryAccess), and may leave its path out, the patch
+// looked for there (foundPatch); or the patch by its hash alone, which only
+// one kept answers (keptPatch).
 export interface PatchSource { repoId: number; commit: string; path: string }
 export interface NpmPatch extends PatchSource { hash: string }
-export type RequestedPatch = Omit<NpmPatch, 'repoId'> & { repoId: number | string }
+export type RequestedPatch = (Omit<NpmPatch, 'repoId' | 'path'> & { repoId: number | string; path?: string }) | { hash: string }
 
 // The most a patch's file may hold, and how many lines either side of where a
 // hunk says its lines are they are looked for; and how many patches an
@@ -47,21 +50,26 @@ const FIND_AT_ONCE = 4
 
 // The patch a request names, by its hash (`hash`), its repository's id
 // (`repoId`, a number or its digits) or name, the commit and its file's
-// path; null where it names none of where it is, and 'invalid' where it
-// names one otherwise.
-export function requestedPatch({ hash, repoId, commit, path }: { hash: unknown; repoId: unknown; commit: unknown; path: unknown }): RequestedPatch | null | 'invalid' {
-  if ([repoId, commit, path].every(field => field == null)) return null
+// path or none, or by its hash alone; null where it names none, and
+// 'invalid' where it names one otherwise.
+export function requestedPatch({ hash, repoId, commit, path }: { hash: unknown; repoId?: unknown; commit?: unknown; path?: unknown }): RequestedPatch | null | 'invalid' {
+  if ([repoId, commit, path].every(field => field == null)) return hash == null ? null : isPatchHash(hash) ? { hash } : 'invalid'
   const id = typeof repoId === 'string' && /^[1-9]\d{0,15}$/u.test(repoId) ? Number(repoId) : repoId
   if (!isPatchHash(hash) || !(isId(id) || typeof id === 'string' && isGithubRepoName(id)) || typeof commit !== 'string' || !SHA.test(commit)
-    || !isPatchPath(path)) return 'invalid'
-  return { hash, repoId: id, commit, path }
+    || path != null && !isPatchPath(path)) return 'invalid'
+  return { hash, repoId: id, commit, ...typeof path === 'string' ? { path } : {} }
 }
 
-// Whether `text` is the patch `hash` names, its sha256 in hex: of its text
-// with its CRLFs as LFs, as pnpm reads it, or as it is.
-export function isPatchOf(text: string, hash: string): boolean {
-  return [...new Set([text.replaceAll('\r\n', '\n'), text])].some(read => createHash('sha256').update(read).digest('hex') === hash)
-}
+// The hash pnpm names a patch's text by, a sha256 in hex of it with its
+// CRLFs as LFs, as pnpm 10 and later read a patch's file (the CRs of lines
+// it ends otherwise kept); and whether `text` is the patch `hash` names.
+export const hashOfPatch = (text: string) => createHash('sha256').update(text.replaceAll('\r\n', '\n')).digest('hex')
+export const isPatchOf = (text: string, hash: string) => hashOfPatch(text) === hash
+
+// The text of a patch's file in repository `fullName` at `commit`, read with
+// `token`; null where GitHub has no text of it, or it is past MAX_PATCH_BYTES.
+const patchFileAt = (fullName: string, token: string, path: string, commit: string) => repositoryFile(fullName, token, path, commit).then(text => text !== null
+  && Buffer.byteLength(text) > MAX_PATCH_BYTES ? null : text, (err: unknown) => { if (err instanceof GithubApiError && err.message === 'github-malformed') return null; throw err })
 
 // A change a patch makes to a file at `path` of the package: deleting it,
 // creating it, renaming it from another (`from`), and its hunks, as
@@ -302,7 +310,8 @@ export const patchKey = (repoId: number, hash: string) => `${repoId}\0${hash}`
 // Patches read lately, with where each was read, by their keys, as many as
 // MAX_KEPT_PATCHES of the bytes they take (patchWeight); and the path each
 // found or kept is at (`located`): '' by its key and a commit for one not
-// found there, lest each telling look again, none for one not looked for.
+// found there, lest each telling look again, none for one not looked for;
+// and '' by its repository's key and a commit whose patches were all kept.
 const MAX_KEPT_PATCHES = 64 * 1024 * 1024
 export interface ReadPatch { source: PatchSource; files: PatchedFile[] }
 const patches: Lru<ReadPatch> = lru(MAX_KEPT_PATCHES, read => patchWeight(read.files))
@@ -334,6 +343,52 @@ export async function readPatch(fullName: string, token: string, patch: NpmPatch
   return read
 }
 
+// The patch `hash` names as kept, of the first of repositories `repoIds`
+// that keeps it, in this instance, else beyond it (`kept`, held to its hash
+// again), GitHub asked for none of it; null where none does.
+export async function keptPatch(repoIds: number[], hash: string, kept: KeptStore<KeptPatch>): Promise<ReadPatch | null> {
+  const keys = repoIds.map(repoId => patchKey(repoId, hash))
+  const known = keys.map(key => patches.get(key)).find(Boolean)
+  if (known) return known
+  const stored = keys.length > 0 ? await kept.readMany(keys) : new Map()
+  for (const [at, key] of keys.entries()) {
+    const patch = stored.get(key)?.value
+    if (typeof patch?.text !== 'string' || !isPatchOf(patch.text, hash)) continue
+    const read = { source: { repoId: repoIds[at]!, commit: patch.commit, path: patch.path }, files: parsePatch(patch.text) }
+    patches.set(key, read)
+    return read
+  }
+  return null
+}
+
+// The patch `patch` names by its hash at a commit of its repository, its
+// file unnamed: as kept by its repository and hash (keptPatch); else among
+// the patches of the commit's files (`listed` lists them, with their bytes;
+// null where its repository isn't looked in), each `.patch` file in a
+// `patches` directory beside a pnpm lockfile or a stasis.config.json, where
+// pnpm patch-commit writes them, as many as MAX_FOUND, read of repository
+// `fullName` with `token` and each kept for good by its own hash, so a
+// commit is looked in once; `asked` told where GitHub was. One none of them
+// is fails as not found.
+export async function foundPatch(fullName: string, token: string, patch: Omit<NpmPatch, 'path'>, kept: KeptStore<KeptPatch>,
+  listed: () => Promise<{ files: string[]; sizes: number[] } | null>, asked?: GithubAsked): Promise<ReadPatch> {
+  const ofIt = () => keptPatch([patch.repoId], patch.hash, kept), searched = `${patchKey(patch.repoId, '')}\0${patch.commit}`
+  let found = await ofIt()
+  const tree = found || located.get(searched) !== undefined ? null : await listed()
+  if (tree) {
+    if (asked) asked.github = true
+    const dirOf = (path: string) => path.slice(0, path.lastIndexOf('/') + 1)
+    const beside = new Set(tree.files.filter(path => lockfileFormat(path) === 'pnpm' || isStasisConfig(path)).map(path => `${dirOf(path)}patches/`))
+    const paths = tree.files.filter((path, at) => path.endsWith('.patch') && beside.has(dirOf(path)) && (tree.sizes[at] ?? 0) <= MAX_PATCH_BYTES)
+    await eachOf(paths.slice(0, MAX_FOUND), FIND_AT_ONCE, path => patchFileAt(fullName, token, path, patch.commit)
+      .then(text => text === null ? undefined : kept.write(patchKey(patch.repoId, hashOfPatch(text)), { commit: patch.commit, path, text }, Date.now())))
+    located.set(searched, '')
+    found = await ofIt()
+  }
+  if (!found) throw new NpmPackageError(404, 'patch-not-found')
+  return found
+}
+
 // The files a pnpm-workspace.yaml (`workspace`, its text, null for none)
 // names its patches by, as pnpm 11 and later read their patchedDependencies
 // there alone, by a version or a package; none where its reader refuses it.
@@ -346,48 +401,51 @@ function patchedBy(workspace: string | null): Record<string, unknown> {
   return plainObject(patched) ? patched : {}
 }
 
-// A version pnpm patches by a patch its lockfile names by its hash alone
-// (pnpm 11's and later), a sha256, with its lockfile's directory.
-type Unnamed = LockedPackage & { patchHash: string; patchDir: string; version: string }
-const unnamed = (pkg: LockedPackage): pkg is Unnamed => pkg.patchPath === undefined && pkg.patchDir !== undefined && pkg.version !== null && isPatchHash(pkg.patchHash)
+// A version pnpm patches by a patch named by a sha256, with its lockfile's
+// directory: one its lockfile names by its hash alone (pnpm 11's and later),
+// which wants its file found; and, `keepNamed`, one whose file it names.
+type Patched = LockedPackage & { patchHash: string; patchDir: string; version: string }
+const patchedBy256 = (pkg: LockedPackage, keepNamed = false): pkg is Patched => (pkg.patchPath === undefined || keepNamed) && pkg.patchDir !== undefined
+  && pkg.version !== null && isPatchHash(pkg.patchHash)
 
-// `told`, each such version of its with its patch's file (`patchPath`), as
-// a lockfile naming one tells it: as kept by its repository and hash, else
-// the file the pnpm-workspace.yaml beside its lockfile names of it
-// (patchedBy: its version's, else its package's) at `told.head`, held to
-// its hash and kept for good, so each is found once, as many an answer as
-// MAX_FOUND; one not found left with none. `asked` told where GitHub was.
-// A file GitHub has no text of, or past MAX_PATCH_BYTES, is none; any other
-// failure of GitHub's is the whole answer's, as a lockfile's is.
+// `told`, each version of its that pnpm patches by a patch its lockfile names
+// by its hash alone with its patch's file (`patchPath`), as a lockfile naming
+// one tells it: as kept by its repository and hash, else the file the
+// pnpm-workspace.yaml beside its lockfile names of it (patchedBy: its
+// version's, else its package's) at `told.head`, held to its hash and kept
+// for good, so each is found once, as many an answer as MAX_FOUND; one not
+// found left with none. With `keepNamed`, as a default branch's are told,
+// each patch whose file a lockfile names is read there and kept as well, so
+// that a link naming it by its hash alone finds it later (keptPatch).
+// `asked` told where GitHub was. A file GitHub has no text of, or past
+// MAX_PATCH_BYTES, is none; any other failure of GitHub's is the whole
+// answer's, as a lockfile's is.
 export async function withPatchFiles<T extends PullDependencies>(told: T, repoId: number, fullName: string, token: string, kept: KeptStore<KeptPatch>,
-  asked?: GithubAsked): Promise<T> {
-  const wanted = new Map<string, Unnamed>()
+  asked?: GithubAsked, { keepNamed = false } = {}): Promise<T> {
+  const wanted = new Map<string, Patched>()
   for (const dir of told.lockfiles) {
-    for (const pkg of 'error' in dir ? [] : [...dir.added, ...dir.locked]) if (unnamed(pkg)) wanted.set(patchKey(repoId, pkg.patchHash), pkg)
+    for (const pkg of 'error' in dir ? [] : [...dir.added, ...dir.locked]) if (patchedBy256(pkg, keepNamed)) wanted.set(patchKey(repoId, pkg.patchHash), pkg)
   }
   if (wanted.size === 0) return told
   const at = (key: string) => located.get(key) ?? located.get(`${key}\0${told.head}`)
   const unknown = [...wanted.keys()].filter(key => at(key) === undefined)
   for (const [key, { value }] of unknown.length > 0 ? await kept.readMany(unknown) : []) if (typeof value?.path === 'string') located.set(key, value.path)
-  const files = new Map<string, Promise<string | null>>()
-  const read = (path: string) => files.get(path) ?? files.set(path, repositoryFile(fullName, token, path, told.head).then(
-    text => text !== null && Buffer.byteLength(text) > MAX_PATCH_BYTES ? null : text,
-    (err: unknown) => { if (err instanceof GithubApiError && err.message === 'github-malformed') return null; throw err })).get(path)!
+  const files = new Map<string, Promise<string | null>>(), read = (path: string) => files.get(path) ?? files.set(path, patchFileAt(fullName, token, path, told.head)).get(path)!
   const workspaces = new Map<string, Promise<Record<string, unknown>>>()
   const namedIn = (dir: string) => workspaces.get(dir) ?? workspaces.set(dir, read(pathFrom(dir, 'pnpm-workspace.yaml')!).then(patchedBy)).get(dir)!
   await eachOf(unknown.filter(key => at(key) === undefined).slice(0, MAX_FOUND), FIND_AT_ONCE, async key => {
     const pkg = wanted.get(key)!
     if (asked) asked.github = true
-    const patched = await namedIn(pkg.patchDir)
-    const file = patched[`${pkg.name}@${pkg.version}`] ?? patched[pkg.name]
-    const path = typeof file === 'string' ? pathFrom(pkg.patchDir, file) : null
+    const patched = pkg.patchPath === undefined ? await namedIn(pkg.patchDir) : {}
+    const file = pkg.patchPath ?? patched[`${pkg.name}@${pkg.version}`] ?? patched[pkg.name]
+    const path = typeof file === 'string' ? pkg.patchPath ?? pathFrom(pkg.patchDir, file) : null
     const text = path === null ? null : await read(path)
     if (path === null || text === null || !isPatchOf(text, pkg.patchHash)) { located.set(`${key}\0${told.head}`, ''); return }
     await kept.write(key, { commit: told.head, path, text }, Date.now())
     located.set(key, path)
   })
   const named = <P extends LockedPackage>(pkg: P): P => {
-    const patchPath = unnamed(pkg) && at(patchKey(repoId, pkg.patchHash))
+    const patchPath = patchedBy256(pkg) && at(patchKey(repoId, pkg.patchHash))
     return patchPath ? { ...pkg, patchPath } : pkg
   }
   return { ...told, lockfiles: told.lockfiles.map(dir => 'error' in dir ? dir : { ...dir, added: dir.added.map(named), locked: dir.locked.map(named) }) }
