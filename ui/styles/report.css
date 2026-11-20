@@ -2028,21 +2028,21 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .team-deps-version { color: var(--muted); }
+/* A version's review: what fails it red, in a pill; the reviews it has of
+   those it needs blue, plain, whose they are before their count, cut short
+   where long. */
 .team-deps-review {
   flex: none; padding: 0 .35rem; border: 1px solid currentcolor; border-radius: 999px;
   font-size: .66rem; line-height: 1.4; font-variant-numeric: tabular-nums;
   &.is-failed { color: var(--critical); }
-  &.is-wanted { color: var(--medium); }
+  &.is-wanted { padding: 0; border: 0; color: var(--accent); font-size: .7rem; }
 }
-/* One with a review of those it needs, filled, apart from one with none;
-   in it, before its count, whose it has, cut short where long. */
-.team-deps-review.is-started { background: color-mix(in srgb, var(--medium) 18%, transparent); }
 .team-deps-review:has(> .team-deps-by) { display: inline-flex; align-items: baseline; gap: .3rem; }
 .team-deps-by { max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Reviewed in another pull request's comments, which count there alone,
-   blue; the pull request a version is listed under, muted; and the reviews
-   it lacks that count in others, whose and where, or the pull requests
-   lacking them, red, as its row's name is, its icon as any row's. */
+   blue; the pull request a version is listed under, muted; and the pull
+   requests lacking reviews that count in others, red, as the name of a row
+   lacking them is, its icon as any row's. */
 .team-deps-elsewhere, .team-deps-under, .team-deps-lacks {
   flex: none; padding: 0 .4rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent); font-size: .66rem; line-height: 1.5; white-space: nowrap;

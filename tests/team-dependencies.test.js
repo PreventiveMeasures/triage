@@ -150,12 +150,12 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
     'one held only by the versions its lockfiles locked before it, last')
   assert.doesNotMatch(cards[3], /<li>/u, 'those not listed under it till asked for')
   assert.match(cards[0], /href=https:\/\/github\.com\/org\/b\/pull\/2 [^]*>b#2<[^]*>Pull 2<[^]*class="team-deps-count">2 deps</u, 'that adding fewest first, how many told, as more than one')
-  assert.match(cards[0], /href=\/npm\/shared@1\.0\.0\/review [^]*shared[^]*class="team-deps-review is-wanted" data-tooltip=0 reviews of 2 required \.tooltipContent=<div class="compare-tip"><div class="compare-tip-head">Reviews<\/div><div class="compare-tip-rows"><span class="compare-tip-label">Passing<\/span><span>0 of 2 required<\/span><\/div><\/div>>0\/2<[^]*<span class="team-deps-also">\+1<\/span>/u,
-    'its review\'s badge, what it says its tooltip, formatted')
-  assert.match(cards[0], /href=\/npm\/rej@1\.0\.0\/review [^]*class="team-deps-review is-failed" data-tooltip=A reviewer rejects it: it wants their newer accepting review \.tooltipContent=<div class="compare-tip"><div class="compare-tip-head">Rejected<\/div><div>A reviewer rejects it: it wants their newer accepting review<\/div><\/div>>rejected</u, 'one rejected, however many pass it')
-  assert.match(cards[0], /<a class="team-deps-row is-behind" href=\/npm\/shared@[^]*>0\/2<\/span>\s*<span class="team-deps-lacks">lacks kay’s · a#1<\/span>/u,
-    'one another pull request reviews in its comments, which count there alone, red: it lacks that review, whose and where told')
-  assert.equal(cards[0].split('team-deps-lacks').length - 1, 1)
+  assert.match(cards[0], /href=\/npm\/shared@1\.0\.0\/review [^]*<\/npm-delta>\s*<span class="team-deps-also">\+1<\/span>/u,
+    'one no review passes yet with no count of them')
+  assert.match(cards[0], /href=\/npm\/rej@1\.0\.0\/review [^]*<span class="team-deps-review is-failed">rejected</u, 'one rejected, however many pass it, its badge with no tooltip of its own')
+  assert.match(cards[0], /<a class="team-deps-row is-behind" href=\/npm\/shared@/u,
+    'one another pull request reviews in its comments, which count there alone, red: it lacks that review, its tooltip telling whose and where')
+  assert.doesNotMatch(cards.join(''), /team-deps-lacks/u, 'nothing of it in its row')
   assert.equal(cards[0].split('is-behind').length - 1, 1, 'its other, which no other reviews, as it was')
   assert.doesNotMatch(cards.join(''), /team-deps-elsewhere|is-same/u, 'none told reviewed elsewhere besides, nor under another')
   assert.match(text, /<div class="team-deps-bar">\s*<p class="team-deps-quiet team-deps-key">1 version lacks reviews made elsewhere<\/p>/u,
@@ -181,8 +181,8 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.match(cards[2], />a#1<[^]*class="team-deps-count is-failed">review fails</u)
   assert.equal(cards[2].split('<li>').length - 1, 12, 'as many as SHOWN_VERSIONS of its own')
   assert.doesNotMatch(cards[2], /fine@/u, 'nor one passed')
-  assert.match(cards[2], /<a class="team-deps-row" href=\/npm\/shared@1\.0\.0\/review [^]*class="team-deps-review is-wanted is-started" [^]*?<span class="team-deps-by">kay<\/span>1\/2<\/span>\s*<span class="team-deps-also">\+1<\/span>[^]*aria-expanded=false [^]*<\/svg>and 3 more<\/button>/u,
-    'the one holding every review made of it lists it, as it was, whoever is shown first: whose review it has in its badge, filled')
+  assert.match(cards[2], /<a class="team-deps-row" href=\/npm\/shared@1\.0\.0\/review [^]*<span class="team-deps-review is-wanted"><span class="team-deps-by">kay<\/span>1\/2<\/span>\s*<span class="team-deps-also">\+1<\/span>[^]*aria-expanded=false [^]*<\/svg>and 3 more<\/button>/u,
+    'the one holding every review made of it lists it, as it was, whoever is shown first: whose review it has before its count')
   assert.equal(cards[2].split('aria-expanded').length - 1, 1)
   assert.match(cards[2], /data-tooltip=shared@1\.0\.0 \.tooltipContent=[^]*<span class="compare-tip-label">Review<\/span><span>1 review of 2 required; 1 reviewer in its comments, which count here alone<\/span><\/div>[^]*<span class=team-deps-tip-here>a#1<\/span>[^]*<span>kay<\/span>\s*<span>accepts, in a#1’s comments<\/span>/u,
     'its tooltip telling neither a review it lacks nor another listing it')
@@ -194,8 +194,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.equal(expanded[2].split('<li>').length - 1, 15, 'all its own')
   assert.match(expanded[2], /gitdep[^]*<\/svg>Show fewer<\/button>/u)
   assert.match(expanded[3], /aria-expanded=true [^]*href=\/npm\/old@1\.0\.0\/review [^]*and 2 more, not listed</u, 'those its lockfiles locked before, as many as it tells')
-  assert.match(expanded[2], /shared[^]*data-tooltip=1 review of 2 required; 1 reviewer in its comments, which count here alone \.tooltipContent=[^]*<span class="compare-tip-label">Passing<\/span><span>1 of 2 required<\/span><span class="compare-tip-label">In its comments<\/span><span>1 reviewer, counting here alone<\/span><\/div><\/div>>1\/2</u,
-    'where its comments review it, its count says so')
+  assert.doesNotMatch(expanded.join(''), /team-deps-review[^>]*data-tooltip|>0\/2<\/span>\s*<span class="team-deps-(?:also|lacks)/u, 'no badge with a tooltip of its own, its row\'s telling it; none of no reviews')
   assert.match(expanded[3], /data-tooltip=pat@1\.0\.0 \(patched\) \.tooltipContent=[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u, 'a patched one\'s reviewers in its own comments')
   assert.match(expanded[3], new RegExp(`href=/npm/pat@1\\.0\\.0/review\\?patch=${patch.hash}&repo=7&commit=${'e'.repeat(40)}&path=patches/pat%401\\.0\\.0\\.patch `, 'u'),
     'a patched one reviewed as patched, its patch read of its repository at the commit its lockfiles were read at')
@@ -215,7 +214,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
     'its tooltip naming them all, none marked')
   assert.match(versions, />big-0<[^]*>1\/2<\/span>\s*<span class="team-deps-elsewhere">a#1</u, 'the first adding it too, all its pull requests\' alike')
   assert.doesNotMatch(versions.split('<li>').find(row => row.includes('>big-0<')), /team-deps-also/u, 'nor its adders\' pill, where it names all of them')
-  assert.match(versions, /<span class="team-deps-row" data-tooltip=gitdep@1\.0\.0 \.tooltipContent=[^]*<span class="compare-tip-label">From<\/span><span>git\+ssh:\/\/github\.com\/org\/gitdep\.git<\/span><span class="compare-tip-label">Review<\/span><span>From git, which isn’t reviewed<\/span>[^]*<span>adds it, can’t review<\/span>[^]*gitdep[^]*data-tooltip=From git, which isn’t reviewed \.tooltipContent=[^]*?<\/div>>can’t review</u)
+  assert.match(versions, /<span class="team-deps-row" data-tooltip=gitdep@1\.0\.0 \.tooltipContent=[^]*<span class="compare-tip-label">From<\/span><span>git\+ssh:\/\/github\.com\/org\/gitdep\.git<\/span><span class="compare-tip-label">Review<\/span><span>From git, which isn’t reviewed<\/span>[^]*<span>adds it, can’t review<\/span>[^]*gitdep[^]*<span class="team-deps-review is-failed">can’t review</u)
   assert.doesNotMatch(versions, /team-deps-pull"/u)
 
   view.pick('branch')
@@ -225,7 +224,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   const patched = branch.split('<li>').find(row => row.includes('>pat<'))
   assert.match(patched, new RegExp(`href=/npm/pat@1\\.0\\.0/review\\?patch=${patch.hash}&repo=7&commit=${'f'.repeat(40)}&path=patches/pat%401\\.0\\.0\\.patch `, 'u'),
     'a patched one reviewed as patched, its patch read at the default branch\'s head')
-  assert.match(patched, /<span class="team-deps-patched">patched<\/span>[^]*class="team-deps-review is-wanted"[^]*>0\/2<[^]*<span class="team-deps-elsewhere">a#9<\/span>/u,
+  assert.match(patched, /<span class="team-deps-patched">patched<\/span>\s*<span class="team-deps-elsewhere">a#9<\/span>/u,
     'its reviews of it as patched, those a pull request\'s comments make of the same patch told so')
   assert.match(patched, /<span class="compare-tip-label">Patched<\/span><span>patches\/pat@1\.0\.0\.patch<\/span>/u, 'its patch\'s file in its tooltip')
   assert.match(patched, /<span class=>a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u,
@@ -271,12 +270,12 @@ test('the pull requests in the order picked, the newest opened first where none 
     assert.equal(state.teamDependenciesSort, 'newest', 'its button picks it')
     text = templateText(view.render())
     // How a version stands under each is whatever order they are in.
-    assert.match(cardsOf(text)[0], />b#2<[^]*class="team-deps-lacks">lacks kay’s · a#1</u, 'one lacking another\'s review red, shown before that one')
-    assert.doesNotMatch(cardsOf(text)[2], /team-deps-lacks|team-deps-under/u, 'the one holding it listing it')
+    assert.match(cardsOf(text)[0], />b#2<[^]*class="team-deps-row is-behind" href=\/npm\/shared@/u, 'one lacking another\'s review red, shown before that one')
+    assert.doesNotMatch(cardsOf(text)[2], /is-behind|team-deps-under/u, 'the one holding it listing it')
     state.teamDependenciesSort = 'updated'
     text = templateText(view.render())
-    assert.match(cardsOf(text)[3], />b#2<[^]*class="team-deps-lacks">lacks kay’s · a#1</u, 'and shown after it')
-    assert.doesNotMatch(cardsOf(text)[1], /team-deps-lacks|team-deps-under/u)
+    assert.match(cardsOf(text)[3], />b#2<[^]*class="team-deps-row is-behind" href=\/npm\/shared@/u, 'and shown after it')
+    assert.doesNotMatch(cardsOf(text)[1], /is-behind|team-deps-under/u)
     routes.length = 0
   } finally { state.teamDependenciesSort = 'fewest' }
 })
@@ -449,14 +448,15 @@ test('a version several pull requests add: listed under one of those reviewing i
     assert.equal(rows(card(1)).length, 2)
 
     // One a subset of the other: the smaller red, the fuller as it was.
-    assert.match(card(4), /<a class="team-deps-row is-behind" href=\/npm\/part@[^]*>0\/2<\/span>\s*<span class="team-deps-lacks">lacks ann’s · m#5<\/span>\s*<span class="team-deps-also">\+1<\/span>/u)
+    assert.match(card(4), /<a class="team-deps-row is-behind" href=\/npm\/part@[^]*<span class="compare-tip-label">Lacks<\/span><span>ann’s review in m#5<\/span>[^]*<\/npm-delta>\s*<span class="team-deps-also">\+1<\/span>/u)
     assert.match(card(5), /<a class="team-deps-row" href=\/npm\/part@[^]*<span class="team-deps-by">ann<\/span>1\/2<\/span>\s*<span class="team-deps-also">\+1<\/span>/u)
-    assert.doesNotMatch(card(5), /is-behind|team-deps-lacks|is-same/u)
+    assert.doesNotMatch(card(5), /is-behind|compare-tip-label">Lacks|is-same/u)
 
     // Neither a subset of the other: both red, the reader's review told as theirs.
-    assert.match(card(6), /<a class="team-deps-row is-behind" href=\/npm\/differ@[^]*<span class="team-deps-by">ann<\/span>1\/2<\/span>\s*<span class="team-deps-lacks">lacks yours · m#7<\/span>/u)
+    assert.match(card(6), /<a class="team-deps-row is-behind" href=\/npm\/differ@[^]*<span class="team-deps-by">ann<\/span>1\/2<\/span>\s*<span class="team-deps-also">\+1<\/span>/u)
     assert.match(card(6), /<span class="compare-tip-label">Lacks<\/span><span>your review in m#7<\/span>/u)
-    assert.match(card(7), /<a class="team-deps-row is-behind" href=\/npm\/differ@[^]*<span class="team-deps-by">you<\/span>1\/2<\/span>\s*<span class="team-deps-lacks">lacks ann’s · m#6<\/span>/u)
+    assert.match(card(7), /<a class="team-deps-row is-behind" href=\/npm\/differ@[^]*<span class="compare-tip-label">Lacks<\/span><span>ann’s review in m#6<\/span>[^]*<span class="team-deps-by">you<\/span>1\/2<\/span>\s*<span class="team-deps-also">\+1<\/span>/u)
+    assert.doesNotMatch(cardsOf(text).join(''), /team-deps-lacks/u, 'what each lacks in its tooltip alone')
     assert.match(text, /<p class="team-deps-quiet team-deps-key">3 versions lack reviews made elsewhere<\/p>/u, 'each counted in the line above them')
 
     // Those adding only versions others list: apart, after the rest, a line each.

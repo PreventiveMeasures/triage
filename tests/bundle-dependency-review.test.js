@@ -76,7 +76,8 @@ test('a bundle whose versions pass says so, of how many it holds; one wanting re
   assert.match(details, /aria-expanded=true/u)
   assert.match(details, /Each version needs 2 full, accepting reviews by as many reviewers, of it whole or compared with any\s+version of its package; those the repository’s lockfiles locked at <code>ddddddd<\/code> need none/u)
   assert.match(details, /As <code>web\/yarn\.lock<\/code>, <code>package-lock\.json<\/code> lock them at <code>fffffff<\/code>, the nearest first/u)
-  assert.match(details, /href=\/npm\/ms@1\.0\.0\/review[^]*1\/2[^]*href=\/npm\/kept@1\.0\.0\/review[^]*0\/2/u, 'each opening its review, with how many pass it')
+  assert.match(details, /href=\/npm\/ms@1\.0\.0\/review[^]*>1\/2<[^]*href=\/npm\/kept@1\.0\.0\/review/u, 'each opening its review, with how many pass it')
+  assert.doesNotMatch(details, />0\/2</u, 'one no review passes yet with no count, its tooltip telling it')
   assert.match(details, /and 1 more, not listed/u)
 })
 

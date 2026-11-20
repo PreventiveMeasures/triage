@@ -143,11 +143,11 @@ Its sub-tabs are:
 Where several pull requests add a version, its reviews in each are compared: who passes it and who rejects it there, by login.
 
 - Reviewed alike, one pull request lists it, the one with the fewest reviews left to make, and the others show it dimmed, naming that one.
-- A pull request lacking a review that counts in another (one made in that one's comments, say) shows it red, naming whose review and where.
+- A pull request lacking a review that counts in another (one made in that one's comments, say) shows it red, and its tooltip names whose review and where.
   Where each lacks a review of the other's, both are red; where one holds every review, it lists the version as usual.
 
 A patched version stands by its patch, as each patch of it is reviewed apart.
-A version's badge names who passes it so far (`alice 1/2`), the reader as `you`.
+A version with a review of those it needs names who passes it so far (`alice 1/2`), the reader as `you`; one with none shows no count.
 
 The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
 A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.

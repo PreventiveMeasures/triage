@@ -228,38 +228,32 @@ const isReader = one => one.login.toLowerCase() === reader()
 
 // A version's review: that it can't be reviewed, a reviewer rejects it, or
 // how many reviews pass it of those it needs, a patched one's of it as
-// patched; its badge's label, tint, heading and what it says, in a line or
-// as rows (`rows`), none where it wants no review; and whose reviews tell
-// where it stands (`by`): those rejecting it, else those passing it so far.
+// patched; its label, tint and what it says, none where it wants no review;
+// and whose reviews tell where it stands (`by`): those rejecting it, else
+// those passing it so far.
 const WHY = { git: 'From git, which isn’t reviewed', tarball: 'A tarball not npm’s registry’s of its version, which isn’t reviewed',
   integrity: 'Locked with no integrity, which its reviews are held to',
   unlocked: 'Locked by none of the lockfiles installing the bundle at its commit, so nothing holds its reviews to an integrity' }
 function reviewState(pkg, review) {
   const shown = reviewOf(pkg, review)
-  if (shown === 'unsupported') return { label: 'can’t review', tint: 'is-failed', head: 'Can’t be reviewed', said: WHY[pkg.unsupported] }
+  if (shown === 'unsupported') return { label: 'can’t review', tint: 'is-failed', said: WHY[pkg.unsupported] }
   if (pkg.rejected) {
-    return { label: 'rejected', tint: 'is-failed', head: 'Rejected', said: 'A reviewer rejects it: it wants their newer accepting review',
-      by: (pkg.reviewers ?? []).filter(one => one.status === 'reject') }
+    return { label: 'rejected', tint: 'is-failed', said: 'A reviewer rejects it: it wants their newer accepting review', by: (pkg.reviewers ?? []).filter(one => one.status === 'reject') }
   }
   if (shown === 'wanted') {
-    return { label: `${pkg.reviews}/${review.required}`, tint: pkg.reviews > 0 ? 'is-wanted is-started' : 'is-wanted', head: 'Reviews',
-      said: `${plural(pkg.reviews, 'review')} of ${review.required} required${pkg.commented ? `; ${plural(pkg.commented, 'reviewer')} in its comments, which count here alone` : ''}`,
-      rows: [['Passing', `${pkg.reviews.toLocaleString('en-US')} of ${review.required} required`],
-        ...pkg.commented ? [['In its comments', `${plural(pkg.commented, 'reviewer')}, counting here alone`]] : []],
-      by: (pkg.reviewers ?? []).filter(one => one.passes) }
+    return { label: `${pkg.reviews}/${review.required}`, tint: 'is-wanted', by: (pkg.reviewers ?? []).filter(one => one.passes),
+      said: `${plural(pkg.reviews, 'review')} of ${review.required} required${pkg.commented ? `; ${plural(pkg.commented, 'reviewer')} in its comments, which count here alone` : ''}` }
   }
   return null
 }
-// A review's badge, what it says its tooltip, formatted; in it whose reviews
-// it stands on, the first by name, the reader's as theirs.
+// A review's badge: whose reviews it stands on, the first by name, the
+// reader's as theirs, then its label; none for one no review passes yet,
+// which most are. What it says is its row's tooltip's to tell (versionTip).
 function reviewBadge(pkg, review) {
   const stance = reviewState(pkg, review)
-  if (!stance) return nothing
-  const tip = html`<div class="compare-tip"><div class="compare-tip-head">${stance.head}</div>${stance.rows
-    ? html`<div class="compare-tip-rows">${stance.rows.map(([label, value]) => html`<span class="compare-tip-label">${label}</span><span>${value}</span>`)}</div>`
-    : html`<div>${stance.said}</div>`}</div>`
+  if (!stance || (stance.tint === 'is-wanted' && pkg.reviews === 0)) return nothing
   const by = stance.by ?? []
-  return html`<span class="team-deps-review ${stance.tint}" data-tooltip=${stance.said ?? nothing} .tooltipContent=${stance.said ? tip : null}>${by.length > 0
+  return html`<span class="team-deps-review ${stance.tint}">${by.length > 0
     ? html`<span class="team-deps-by">${few([isReader(by[0]) ? 'you' : by[0].login], by.length - 1)}</span>` : nothing}${stance.label}</span>`
 }
 
@@ -303,14 +297,6 @@ function standings(wanting, involved) {
     stood.set(key, of)
   }
   return stood
-}
-
-// The pull requests holding the reviews a version lacks, as few as name
-// them all.
-function placesOf(lacks) {
-  const places = []
-  for (const { where } of lacks) if (!where.some(name => places.includes(name))) places.push(where[0])
-  return places
 }
 
 // The first of `names`, and how many more there are.
@@ -364,8 +350,8 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
 // read at, where its lockfile names its file, else its page; its review;
 // the lines it changes against the version it was, or whole, where it
 // wants reviews and isn't patched, as they are npm's (npm-delta.js); the
-// reviews it lacks that others hold (`lacks`, standings), its row red:
-// whose and where; the pull requests reviewing it in their comments
+// reviews it lacks that others hold (`lacks`, standings), its row red,
+// its tooltip telling them; the pull requests reviewing it in their comments
 // (`elsewhere`), which count for them alone; the pull request listing it
 // (`under`); and the pull requests adding it besides, or, `adders`, all
 // those adding it, those lacking reviews (`lacking`) red, those reviewing
@@ -383,12 +369,10 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
   const tip = versionTip(pkg, review, { added, under, lacks, involved, here })
   const inReview = elsewhere.filter(name => !lacking.includes(name))
   const unnamed = adders ? others.filter(name => !elsewhere.includes(name) && !lacking.includes(name)) : others
-  const places = placesOf(lacks)
   const label = html`${sourcePackageIcon(pkg.ecosystem)}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
     ${pkg.patch ? html`<span class="team-deps-patched">patched</span>` : nothing}
     ${npm && !pkg.patch && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${deltaBase(pkg)}></npm-delta>` : nothing}
     ${reviewBadge(pkg, review)}
-    ${lacks.length > 0 ? html`<span class="team-deps-lacks">lacks ${few([isReader(lacks[0]) ? 'yours' : `${lacks[0].login}’s`], lacks.length - 1)} · ${few(places)}</span>` : nothing}
     ${under ? html`<span class="team-deps-under">${under}</span>` : nothing}
     ${lacking.length > 0 ? html`<span class="team-deps-lacks">${few(lacking)}</span>` : nothing}
     ${inReview.length > 0 ? html`<span class="team-deps-elsewhere">${few(inReview)}</span>` : nothing}
