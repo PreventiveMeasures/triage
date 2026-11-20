@@ -3494,6 +3494,7 @@ body.report-fullscreen {
   background: var(--surface);
   color: var(--text);
   font-size: .72rem;
+  white-space: nowrap;
   cursor: default;
 }
 .bundle-advisories-retry:hover { border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }

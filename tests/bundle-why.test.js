@@ -66,9 +66,17 @@ test('name-only queries retain all versions and their actual importers in full a
     assert.deepEqual(graph.importedBy.get(copy), new Set(['.']))
     assert.equal(graph.nodes.has('vendor/dep'), false)
     assert.ok(graph.targets.every(id => graph.nodes.get(id).target))
-    assert.deepEqual(bundleWhy(input, { packageKey: 'dep', reason: 'run' }).targets, [second])
+    assert.deepEqual(bundleWhy(input, { packageKey: 'dep', scope: 'reason:run' }).targets, [second])
     assert.deepEqual(bundleWhy(input, { packageKey: 'dep', version: '2.0.0' }).targets, [second])
   }
+})
+
+test('an entry point scopes a why query to the packages it reaches', () => {
+  const details = fixture({ modules: { '.': {}, 'packages/worker': { name: 'worker', version: '1.0.0' }, 'node_modules/dep': dep('dep'), 'node_modules/b/node_modules/dep': dep('dep', '2.0.0') },
+    entries: ['.', 'packages/worker'], links: [['.', 'node_modules/dep'], ['packages/worker', 'node_modules/b/node_modules/dep']] })
+  assert.equal(bundleWhy(details, { packageKey: 'dep' }).targets.length, 2)
+  assert.deepEqual(bundleWhy(details, { packageKey: 'dep', scope: 'entry:index.js' }).targets, ['node_modules/dep'])
+  assert.deepEqual(bundleWhy(details, { packageKey: 'dep', scope: 'entry:packages/worker/index.js' }).targets, ['node_modules/b/node_modules/dep'])
 })
 
 test('npm queries do not select untagged workspaces with the same recorded name', async () => {
@@ -124,7 +132,7 @@ test('directory queries keep same-name workspaces and Cargo installations separa
     }
     assert.deepEqual(bundleWhy(input, bundleWhyQuery(input, 'node_modules/dep')).targets, ['node_modules/dep'], 'the npm row excludes even explicitly npm-tagged workspace rows')
     assert.deepEqual(new Set(bundleWhy(input, { packageKey: 'cargo:rand' }).targets), new Set(['vendor/rand', 'vendor/rand-0.7.3']), 'explicit name-wide queries still select all versions')
-    const excluded = { ...bundleWhyQuery(input, 'vendor/rand'), reason: 'run' }
+    const excluded = { ...bundleWhyQuery(input, 'vendor/rand'), scope: 'reason:run' }
     assert.deepEqual(bundleWhy(input, excluded).targets, [], 'directory selection still respects reason scope')
   }
 })
@@ -165,12 +173,12 @@ test('scope filtering never restores an excluded bundled importer as virtual App
   const details = fixture({ modules: { '.': {}, 'node_modules/a': dep('a'), 'node_modules/dep': dep('dep') },
     links: [['.', 'node_modules/dep'], ['node_modules/a', 'node_modules/dep']],
     reason: { run: ['node_modules/a/index.js', 'node_modules/dep/index.js'], add: ['index.js'] } })
-  const graph = bundleWhy(details, { ...query, reason: 'run' })
+  const graph = bundleWhy(details, { ...query, scope: 'reason:run' })
   assert.equal(graph.nodes.has('.'), false)
   assert.deepEqual(graph.importedBy.get('node_modules/dep'), new Set(['node_modules/a']))
   assert.equal([...graph.nodes.values()].some(node => node.root), false)
-  assert.equal(bundleWhy(details, { ...query, reason: 'add' }).targets.length, 0)
-  assert.deepEqual(bundleWhy(details, { ...query, reason: 'stale' }), bundleWhy(details, query))
+  assert.equal(bundleWhy(details, { ...query, scope: 'reason:add' }).targets.length, 0)
+  assert.deepEqual(bundleWhy(details, { ...query, scope: 'reason:stale' }), bundleWhy(details, query))
 })
 
 test('retains imports from omitted app source and distinguishes direct entry packages from unexplained inclusion', () => {
@@ -253,7 +261,7 @@ for (const packageName of ['react-native', '@babel/core']) {
     assert.deepEqual(new Set(indirect.nodes.keys()), new Set(stop ? [framework, target] : ['.', addon, framework, target]))
     assert.equal(indirect.nodes.get(framework).traceBoundary ?? false, stop)
     const scoped = fixture({ modules, links: [...links, ['.', framework]], reason: { run: [addon, framework, target].map(file), add: ['index.js'] } })
-    const graph = bundleWhy(scoped, { ...query, reason: 'run' })
+    const graph = bundleWhy(scoped, { ...query, scope: 'reason:run' })
     assert.equal(graph.nodes.has('.'), false)
     assert.deepEqual(graph.importedBy.get(framework), new Set(stop ? [] : [addon]))
     assert.deepEqual(new Set(graph.nodes.keys()), new Set(stop ? [framework, target] : [addon, framework, target]))

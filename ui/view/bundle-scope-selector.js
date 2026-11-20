@@ -9,13 +9,19 @@ class BundleScopeSelector extends LitElement {
   static properties = { reasons: { attribute: false }, value: { attribute: false }, label: { type: String } }
   constructor() { super(); this.reasons = []; this.value = ''; this.label = 'Choose scope' }
   _select(value) { this.dispatchEvent(new CustomEvent('scope-change', { detail: { value }, bubbles: true, composed: true })) }
+  // An option says itself whether it is the one chosen: a select just created takes no value, having no options yet.
+  _options(scopes) { return scopes.map(scope => html`<option value=${scope.id} .selected=${live(scope.id === this.value)}>${scope.label ?? scope.id}</option>`) }
   render() {
-    const reasons = this.reasons.filter(reason => reason.id !== 'all')
-    if (reasons.length === 0) return nothing
+    // Entry points (`entry:<path>`) are chosen in place of a reason, from a list of their own.
+    const scopes = this.reasons.filter(reason => reason.id !== 'all')
+    const entries = scopes.filter(scope => String(scope.id).startsWith('entry:')), reasons = scopes.filter(scope => !String(scope.id).startsWith('entry:'))
+    if (scopes.length === 0) return nothing
+    const change = event => this._select(event.target.value)
     const options = scanScopeOptions(reasons)
-    if (!options) return html`<label class="scope-field"><span>Scope</span><select aria-label=${this.label} .value=${live(this.value === 'all' ? '' : this.value)} @change=${event => this._select(event.target.value)}><option value="">All files</option>${reasons.map(reason => html`<option value=${reason.id}>${reason.label ?? reason.id}</option>`)}</select></label>`
-    const selected = options.find(option => option.id === this.value) ?? options[0]
-    return html`<div class="scope-toggle"><div class="scope-options" role="radiogroup" aria-label=${this.label} aria-describedby="scope-description">${options.map(option => html`<label class="scope-option"><input type="radio" name="scope" value=${option.id} .checked=${selected.id === option.id} @change=${() => this._select(option.id)}><span>${option.label}</span></label>`)}</div><span class="scope-description" id="scope-description">${selected.subtitle}</span></div>`
+    if (!options) return html`<label class="scope-field"><span>Scope</span><select aria-label=${this.label} @change=${change}><option value="" .selected=${live(!scopes.some(scope => scope.id === this.value))}>All files</option>${this._options(reasons)}${reasons.length > 0 && entries.length > 0 ? html`<optgroup label="Entry point">${this._options(entries)}</optgroup>` : this._options(entries)}</select></label>`
+    const entry = entries.find(scope => scope.id === this.value)
+    const selected = entry ? null : options.find(option => option.id === this.value) ?? options[0]
+    return html`<div class="scope-toggle"><div class="scope-options" role="radiogroup" aria-label=${this.label} aria-describedby="scope-description">${options.map(option => html`<label class="scope-option"><input type="radio" name="scope" value=${option.id} .checked=${live(selected?.id === option.id)} @change=${() => this._select(option.id)}><span>${option.label}</span></label>`)}</div>${entries.length > 0 ? html`<select class="scope-entry" aria-label="Entry point" @change=${change}><option value="" .selected=${live(!entry)}>Any entry point</option>${this._options(entries)}</select>` : nothing}<span class="scope-description" id="scope-description">${entry ? 'Files this entry point imports' : selected.subtitle}</span></div>`
   }
   static styles = css`
     :host { display: block; min-width: 0; }
@@ -37,7 +43,8 @@ class BundleScopeSelector extends LitElement {
     :host([compact]) .scope-option span { height: auto; padding: 2px 8px; font-size: .68rem; line-height: 1.2; }
     :host([compact]) .scope-field { font-size: .68rem; }
     :host([compact]) .scope-description { display: none; }
-    :host([compact]) select { width: auto; max-width: 22ch; padding: 2px 6px; font-size: .68rem; line-height: 1.2; }
+    .scope-entry { width: auto; max-width: 13rem; height: var(--scope-height, 2rem); }
+    :host([compact]) select { width: auto; max-width: 22ch; height: auto; padding: 2px 6px; font-size: .68rem; line-height: 1.2; }
   `
 }
 if (!customElements.get('bundle-scope-selector')) customElements.define('bundle-scope-selector', BundleScopeSelector)

@@ -202,10 +202,11 @@ async function serveBundle(res: ServerResponse, deps: ManagedHttpDeps, bundle: M
   if (!deps.bundleCache) { json(res, 503, { error: 'unavailable' }); return }
   if (part === 'advisories') {
     if (bundle.kind !== 'stasis') { json(res, 422, { error: 'unsupported-bundle' }); return }
-    const inventory = await deps.bundleCache.advisoryInventory(bundle, url.searchParams.get('reason') ?? '')
+    const entry = url.searchParams.get('entry') ?? ''
+    const inventory = await deps.bundleCache.advisoryInventory(bundle, url.searchParams.get('reason') ?? '', entry)
     await recheck()
     if (inventory === null) { json(res, 413, { error: 'payload-too-large' }); return }
-    if (inventory === undefined) { json(res, 400, { error: 'unknown-reason' }); return }
+    if (inventory === undefined) { json(res, 400, { error: entry ? 'unknown-entry' : 'unknown-reason' }); return }
     if (Buffer.byteLength(JSON.stringify(inventory)) > MAX_PACKAGE_INVENTORY_BYTES) { json(res, 413, { error: 'payload-too-large' }); return }
     const signal = AbortSignal.timeout(ADVISORIES_TIMEOUT_MS)
     const repoAdvisories = url.searchParams.get('repoAdvisories') === 'true'

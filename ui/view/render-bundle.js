@@ -76,7 +76,8 @@ import { bundlePkgOf, ownSourceFirst, pkgLabel } from './bundle-pkg-of.js'
 import { bundleWhyQuery } from './bundle-why.js'
 import { openWhyDialog } from './lazy-dialogs.js'
 import { renderBundleCodeImporters } from './bundle-code-importers.js'
-import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from './bundle-graph-inputs.js'
+import { bundleEntryPackages, bundleFlowEntries, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from './bundle-graph-inputs.js'
+import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
 import { tabKey } from './group.js'
 import { langForPath, highlight as prismHighlight } from './prism-highlight.js'
 import { computeTransitiveCounts } from './file-counts.js'
@@ -228,13 +229,14 @@ function bundleFindingsByFile(fileHashes, mode = 'graph') {
 // graph would never light up findings — they'd be looked up under
 // original paths while nodes live under stripped ones.
 //
-// Every file in the chosen reason is a node; All includes the full bundle.
+// Every file in the chosen scope, a reason's or an entry point's
+// (bundleScopes), is a node; All includes the full bundle.
 // Its files are kept for the reason (bundleGraphScope), and in a focused
 // package, so a render with neither changed hands the canvas the same
 // array, which it keeps its layout for (graph/canvas.js).
 export function buildBundleGraphData(details) {
   const full = buildBundleTree(details)
-  const reasons = bundleGraphReasons(details, full.origToStripped.keys())
+  const reasons = bundleScopes(details, full.origToStripped.keys())
   if (graph2.bundleReasonFor !== details.integrity) {
     graph2.bundleReasonFor = details.integrity
     graph2.dependencyPackagesView = false
@@ -364,7 +366,7 @@ export function buildBundleGraphData(details) {
     entryPackages: bundleEntryPackages(details, origToStripped, pkgOf),
     // Preserve recorded file ownership for dependency-cycle classification.
     ownSourceFiles: new Set(ownFiles),
-    reasons: [...reasons.keys()],
+    reasons: scopeOptions(reasons),
   }
 }
 
@@ -377,7 +379,7 @@ function bundleGraphScope(full, reasons, requested) {
   if (!bundleGraphScopes.has(full)) bundleGraphScopes.set(full, new Map())
   const scopes = bundleGraphScopes.get(full)
   if (!scopes.has(selected)) {
-    const scope = filterBundleGraphReason(full.tree, full.origToStripped, reasons, selected)
+    const scope = filterBundleGraphReason(full.tree, full.origToStripped, new Map(selected === null ? [] : [[selected, reasons.files(selected)]]), selected)
     scopes.set(selected, { ...scope, files: Object.keys(scope.tree), focused: new Map() })
   }
   return scopes.get(selected)

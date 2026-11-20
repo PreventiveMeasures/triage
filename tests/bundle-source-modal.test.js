@@ -1315,13 +1315,35 @@ test('the bundle graph offers Issues when the selected scope has no findings but
   graph2.bundleReasonFor = id
   for (const issues of [false, true]) {
     graph2.bundleIssues = issues
-    graph2.bundleReason = 'run'
+    graph2.bundleReason = 'reason:run'
     const scoped = buildBundleGraphData(details)
-    assert.equal(graph2.bundleReason, 'run', 'the run scope stays selected')
+    assert.equal(graph2.bundleReason, 'reason:run', 'the run scope stays selected')
     assert.deepEqual(scoped.files, ['run.js'], 'only the run scope is drawn (display prefix stripped)')
     assert.equal(scoped.hasIssues, true, `Issues ${issues ? 'on' : 'off'}: the switch stays while the scope has no findings`)
     assert.equal(scoped.fileFindings.size, 0, 'nothing in the run scope to draw')
   }
+})
+
+test('the bundle graph filters by an entry point in place of a reason', t => {
+  const previous = { bundleReason: graph2.bundleReason, bundleReasonFor: graph2.bundleReasonFor }
+  t.after(() => { Object.assign(graph2, previous) })
+  const files = ['a', 'b', 'shared', 'only-b'].map(name => `src/${name}.js`)
+  const details = { kind: 'stasis', integrity: 'graph-entry-scope', bundle: Bundle.parse(new Bundle({
+    modules: new Map([['.', { name: 'app', version: '1.0.0', files: Object.fromEntries(files.map(path => [path, `${path}()`])) }]]),
+    entries: new Set(['src/a.js', 'src/b.js']),
+    imports: new Map([['default', new Map([
+      ['src/a.js', new Map([['./shared', 'src/shared.js']])],
+      ['src/b.js', new Map([['./shared', 'src/shared.js'], ['./only-b', 'src/only-b.js']])],
+    ])]]),
+  }).serialize()) }
+  Object.assign(graph2, { bundleReasonFor: details.integrity, bundleReason: 'entry:src/a.js' })
+  const scoped = buildBundleGraphData(details)
+  assert.deepEqual(scoped.files, ['a.js', 'shared.js'], 'the files the entry point reaches (display prefix stripped)')
+  assert.deepEqual(scoped.reasons, [{ id: 'entry:src/a.js', label: 'src/a.js' }, { id: 'entry:src/b.js', label: 'src/b.js' }])
+  assert.equal(buildBundleGraphData(details).files, scoped.files, 'an unchanged scope hands the canvas the same files')
+  graph2.bundleReason = 'entry:src/shared.js'
+  assert.equal(buildBundleGraphData(details).files.length, files.length, 'a file that is no entry point filters nothing')
+  assert.equal(graph2.bundleReason, null)
 })
 
 test('same-ID App and dependency findings remain selectable in package and bundle triage views', async t => {

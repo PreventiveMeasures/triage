@@ -9,7 +9,7 @@ import { state } from '#client/index.js'
 import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
-import { bundleReasons } from '../../common/bundle-reasons.js'
+import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
 import { SCAN_ICON_SVG } from './icons.js'
 import { advisoryRow } from './advisory-parts.js'
 import './bundle-scope-selector.js'
@@ -32,7 +32,7 @@ function advisoryCache(details) {
 }
 const scopes = new WeakMap()
 function advisoryScope(details) {
-  if (!scopes.has(details)) scopes.set(details, { reasons: bundleReasons(details), selected: '' })
+  if (!scopes.has(details)) scopes.set(details, { reasons: bundleScopes(details), selected: '' })
   return scopes.get(details)
 }
 function cacheKey(details, reason = advisoryScope(details).selected) { return JSON.stringify([details.managedId ?? details.integrity, reason]) }
@@ -213,7 +213,7 @@ async function loadBundleAdvisories(details, renderFn, repoAdvisories = false) {
     renderFn()
   } else if (previous) return
   const { reasons, selected } = advisoryScope(details)
-  let query = details.managedId ? new Map() : bundlePackageVersions(details, reasons.get(selected) ?? null)
+  let query = details.managedId ? new Map() : bundlePackageVersions(details, reasons.files(selected))
   if (!repoAdvisories) cache.set(key, { state: 'loading', query })
   try {
     let json, skipped = []
@@ -304,27 +304,27 @@ function renderConsentPrompt() {
 //                package name (or a one-line summary when none)
 //
 // `onScan`, when the viewer may scan the bundle, opens its Dependency
-// alerts scan from a Validate button right of the managed recheck button.
+// alerts scan from a Validate button right of the managed recheck button and
+// the scope selector.
 // Neither button shows for a bundle without dependency packages.
 export function renderBundleAdvisoriesTab(details, renderFn = () => {}, onScan = null) {
   const scope = details ? advisoryScope(details) : null
-  const reasons = [...(scope?.reasons.keys() ?? [])].map(reason => ({ id: `reason:${reason}`, label: reason }))
+  const reasons = scope ? scopeOptions(scope.reasons) : []
   const summary = renderAdvisoriesSummary(details)
   const actions = Boolean(details?.managedId) && !managedBundleHasNoDependencies(details)
   return html`<div class="bundle-advisories-panel">
     ${summary !== nothing || reasons.length > 0 || actions ? html`<div class="bundle-advisories-toolbar">
     ${summary}
     ${reasons.length > 0 || actions ? html`<div class="bundle-advisories-scopes">
+    ${actions ? renderRepositoryRecheck(details, renderFn) : nothing}
     ${reasons.length > 0 ? html`<bundle-scope-selector
-      .reasons=${reasons} .value=${scope.selected ? `reason:${scope.selected}` : ''} label="Choose advisory scope"
+      .reasons=${reasons} .value=${scope.selected} label="Choose advisory scope"
       @scope-change=${event => {
-        const reason = event.detail.value.replace(/^reason:/u, '')
-        scope.selected = scope.reasons.has(reason) ? reason : ''
+        scope.selected = scope.reasons.has(event.detail.value) ? event.detail.value : ''
         const loading = ensureBundleAdvisories(details, renderFn)
         renderFn()
         return loading
       }}></bundle-scope-selector>` : nothing}
-    ${actions ? renderRepositoryRecheck(details, renderFn) : nothing}
     ${actions && onScan ? html`<button type="button" class="bundle-advisories-retry bundle-advisories-scan" @click=${onScan}>
       ${appMarkup(SCAN_ICON_SVG)}<span>Validate</span>
     </button>` : nothing}
@@ -420,7 +420,7 @@ function renderAdvisorySection(details, pkg, advisories, queriedVersions, isCurr
       ${versions.length > 0 ? html`<span class="bundle-advisories-section-versions">
         ${versions.map(version => html`<button type="button" class="bundle-advisories-version" aria-haspopup="dialog"
           aria-label=${`Why is ${pkg}@${version} here?`}
-          @click=${() => openWhyDialog({ details, packageKey: pkg, version, reason: advisoryScope(details).selected, isCurrent })}>${version}</button>`)}
+          @click=${() => openWhyDialog({ details, packageKey: pkg, version, scope: advisoryScope(details).selected, isCurrent })}>${version}</button>`)}
       </span>` : nothing}
     </div>
     <ul class="bundle-advisories-rows">

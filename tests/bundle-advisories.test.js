@@ -438,7 +438,7 @@ function reasonBundle(integrity) {
     assert.match(renderText(renderBundleAdvisoriesTab(details)), /1\.0\.0/u)
     assert.doesNotMatch(renderText(renderBundleAdvisoriesTab(details)), /2\.0\.0/u)
     await selectReason(details, '')
-    if (managed) assert.deepEqual(managedReasons, ['', 'metro', 'run'])
+    if (managed) assert.deepEqual(managedReasons, ['', 'reason:metro', 'reason:run'])
     else assert.deepEqual(queries, [{ dep: ['1.0.0', '2.0.0'] }, { dep: ['1.0.0'] }, { dep: ['2.0.0'] }])
     result = { packages: {}, advisories: {} }
     await selectReason(details, 'reason:add')
@@ -447,6 +447,41 @@ function reasonBundle(integrity) {
     // The bundle itself has dependency packages: an empty scope keeps its recheck.
     if (managed) assert.match(text, /bundle-advisories-recheck/u)
   })
+})
+
+test('advisories scope by an entry point in place of a reason, the recheck button left of the selector', async () => {
+  // Two entry points of one reason, each reaching its own version of `dep`.
+  const bundle = Bundle.parse(new Bundle({
+    modules: new Map([
+      ['.', { name: 'app', version: '1', files: { 'src/app.js': 'app', 'src/worker.js': 'worker', 'src/cli.js': 'cli' } }],
+      ['node_modules/dep', { name: 'dep', version: '1.0.0', files: { 'index.js': 'one' } }],
+      ['node_modules/tool/node_modules/dep', { name: 'dep', version: '2.0.0', files: { 'index.js': 'two' } }],
+    ]),
+    entries: new Set(['src/app.js', 'src/worker.js']),
+    imports: new Map([['default', new Map([
+      ['src/app.js', new Map([['dep', 'node_modules/dep/index.js']])],
+      ['src/worker.js', new Map([['dep', 'node_modules/tool/node_modules/dep/index.js']])],
+    ])]]),
+    reason: { bundle: ['src/app.js', 'src/worker.js', 'node_modules/dep/index.js', 'node_modules/tool/node_modules/dep/index.js'], run: ['src/cli.js'] },
+  }).serialize())
+  const details = { kind: 'stasis', integrity: 'entry-scopes', size: 123, bundle, managedId: 'entry-scopes' }
+  assert.deepEqual(scopeControl(renderBundleAdvisoriesTab(details)).values[0].map(scope => scope.id), ['reason:bundle', 'reason:run', 'entry:src/app.js', 'entry:src/worker.js'])
+  result = { packages: { dep: ['2.0.0'] }, advisories: { dep: [{ title: 'Worker vulnerability', severity: 'high' }] } }
+  await selectReason(details, 'entry:src/worker.js')
+  const text = renderText(renderBundleAdvisoriesTab(details, () => {}, () => {}))
+  assert.match(text, /Worker vulnerability/u)
+  assert.deepEqual(managedReasons, ['entry:src/worker.js'])
+  const order = ['bundle-advisories-recheck', '<bundle-scope-selector', 'bundle-advisories-scan'].map(part => text.indexOf(part))
+  assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1])), 'recheck, scope selector, Validate')
+  await selectReason(details, 'entry:src/cli.js')
+  assert.equal(scopeControl(renderBundleAdvisoriesTab(details)).values[1], '', 'a file that is no entry point is every package')
+  // Local bundles ask npm of the versions the entry point reaches.
+  grantAdvisoriesProxyConsent()
+  const local = { ...details, managedId: undefined, integrity: 'entry-scopes-local' }, queries = []
+  mock.method(globalThis, 'fetch', (_url, options) => { queries.push(JSON.parse(options.body)); return Promise.resolve(Response.json({})) })
+  await selectReason(local, 'entry:src/app.js')
+  mock.restoreAll()
+  assert.deepEqual(queries, [{ dep: ['1.0.0'] }])
 })
 
 test('each advisory version opens its exact dependency chains in the current scope', async () => {
@@ -459,12 +494,12 @@ test('each advisory version opens its exact dependency chains in the current sco
   assert.deepEqual(openedWhy.map(props => props.version), ['1.0.0', '2.0.0'])
   assert.equal(openedWhy[0].details, details)
   assert.equal(openedWhy[0].packageKey, 'dep')
-  assert.equal(openedWhy[0].reason, '')
+  assert.equal(openedWhy[0].scope, '')
   assert.equal(openedWhy[0].isCurrent(), true)
   await selectReason(details, 'reason:run')
   assert.equal(openedWhy[0].isCurrent(), false)
   versions()[0].values.find(value => typeof value === 'function')()
-  assert.equal(openedWhy.at(-1).reason, 'run')
+  assert.equal(openedWhy.at(-1).scope, 'reason:run')
   assert.equal(openedWhy.at(-1).isCurrent(), true)
   state.currentManagedTeam = 'another-team'
   assert.equal(openedWhy.at(-1).isCurrent(), false)
@@ -511,7 +546,7 @@ test('repository rechecks and skipped lists stay scoped when the selected reason
   const text = renderText(renderBundleAdvisoriesTab(details))
   assert.match(text, /run-crate/u)
   assert.doesNotMatch(text, /metro\/pkg|Rechecking…/u)
-  assert.deepEqual(managedReasons, ['metro', 'metro', 'run'])
+  assert.deepEqual(managedReasons, ['reason:metro', 'reason:metro', 'reason:run'])
   assert.deepEqual(repositoryChecks, [false, true, false])
 })
 

@@ -63,8 +63,10 @@ export async function fetchBundleContents(id, { signal } = {}) {
 }
 
 // Advisory queries send only the bundle identity; inventory stays server-owned.
-export function fetchBundleAdvisories(id, teamId, reason = '', repoAdvisories = false, details = false) {
-  const params = [teamId ? `team=${encodeURIComponent(teamId)}` : '', reason ? `reason=${encodeURIComponent(reason)}` : '', repoAdvisories ? 'repoAdvisories=true' : '', details ? 'details=true' : ''].filter(Boolean).join('&')
+// Of one scope where given (bundleScopes): a reason's, or an entry point's (`entry:<path>`) instead.
+export function fetchBundleAdvisories(id, teamId, scope = '', repoAdvisories = false, details = false) {
+  const asked = scope ? `${scope.startsWith('entry:') ? 'entry' : 'reason'}=${encodeURIComponent(scope.slice(scope.indexOf(':') + 1))}` : ''
+  const params = [teamId ? `team=${encodeURIComponent(teamId)}` : '', asked, repoAdvisories ? 'repoAdvisories=true' : '', details ? 'details=true' : ''].filter(Boolean).join('&')
   const part = `advisories${params ? `?${params}` : ''}`
   return requestBundle(id, part, managedAppState.sessionController.signal)
 }

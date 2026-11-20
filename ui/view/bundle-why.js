@@ -1,7 +1,7 @@
 import { bundlePackageDirs } from './bundle-sources.js'
 import { bundlePkgOf } from './bundle-pkg-of.js'
 import { bundleImportsAsMap, bundleLayerRoots } from './bundle-graph-inputs.js'
-import { bundleReasons } from '../../common/bundle-reasons.js'
+import { bundleScopes } from '../../common/bundle-reasons.js'
 import { stronglyConnected } from './graph/matrix-model.js'
 import { countsTowardsCycles } from './graph/cycle-imports.js'
 import { WHY_DIALOG_GUTTER, layoutWhyGroup, layoutWhyRow, routeWhyEdges } from './why-layout.js'
@@ -28,11 +28,11 @@ export function bundleWhyQuery(details, dir) {
 // is the identity: merging copies would invent routes between their importers.
 // Omitting version selects every installed version of the package. Overview
 // queries use its package group instead, preserving the clicked row's scope.
-export function bundleWhy(details, { packageKey, packageGroup, version, reason = '' }) {
+export function bundleWhy(details, { packageKey, packageGroup, version, scope = '' }) {
   const importedBy = new Map(), imports = new Map(), nodes = new Map()
   const dirs = bundlePackageDirs(details) ?? new Map()
   const allPaths = new Map([...dirs.keys()].map(path => [path, path]))
-  const selected = bundleReasons(details).get(reason)
+  const selected = bundleScopes(details).files(scope)
   const paths = new Map([...allPaths].filter(([path]) => !selected || selected.has(path)))
   for (const dir of new Set([...paths.keys()].map(path => dirs.get(path)))) {
     nodes.set(dir, packageNode(dir, details.bundle.modules.get(dir)))

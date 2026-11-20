@@ -62,7 +62,7 @@ import { LitElement, html, render as litRender, nothing, svg } from 'lit'
 import { styleMap } from './style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { bundleFileKinds, bundleFileSizes, bundlePackageDirs } from './bundle-sources.js'
-import { bundleGraphReasons } from './bundle-graph-inputs.js'
+import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { mixedColor, paletteColor, pkgColor } from './graph/utils.js'
 import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
@@ -343,7 +343,7 @@ class BundleTreemap extends LitElement {
     this._reason = ''
     this._kind = _sharedKind
     this._mixedKinds = false
-    this._reasons = new Map()
+    this._reasons = { ids: [] }
     this._dirByPath = new Map()
     this._status = 'loading'
     this._meta = { total: 0, prefix: '' }
@@ -440,7 +440,7 @@ class BundleTreemap extends LitElement {
     // ref-keyed) is re-resolved at the end once the new tree stands.
     this._focus = []
     this._dirByPath = new Map()
-    this._reasons = new Map()
+    this._reasons = { ids: [] }
     this._mixedKinds = false
     this._meta = { total: 0, prefix: '' }
     this._hideTooltip()
@@ -448,12 +448,12 @@ class BundleTreemap extends LitElement {
     const sizes = bundleFileSizes(this.details)
     const origPaths = [...sizes.keys()].filter((path) => sizes.get(path) !== null)
     if (origPaths.length === 0) { this._status = 'empty'; return }
-    this._reasons = bundleGraphReasons(this.details, origPaths)
+    this._reasons = bundleScopes(this.details, origPaths)
     if (!this._reasons.has(this._reason)) {
       this._reason = ''
       _reasonByBundle.delete(this.details.integrity)
     }
-    const reasonFiles = this._reasons.get(this._reason)
+    const reasonFiles = this._reasons.files(this._reason)
     // Stasis package boundaries (keyed by original path) so each leaf
     // is colored by its authoritative package — sibling workspace
     // packages stay distinct instead of merging under a shared parent
@@ -603,7 +603,7 @@ class BundleTreemap extends LitElement {
   }
 
   _changeReason(e) {
-    this._reason = e.detail.value.replace(/^reason:/u, '')
+    this._reason = e.detail.value
     const integrity = this.details?.integrity
     if (integrity) {
       if (this._reason) _reasonByBundle.set(integrity, this._reason)
@@ -835,9 +835,8 @@ class BundleTreemap extends LitElement {
         ${this._renderCrumbs()}
         <span class="bundle-treemap-head-right">
           <span class="bundle-treemap-sub">${curFiles} ${curFiles === 1 ? 'file' : 'files'} · ${formatBytes(curBytes)}${prefix ? html` · <span class="mono">${prefix}</span>` : ''}</span>
-          ${this._reasons.size > 0 ? html`<bundle-scope-selector compact
-            .reasons=${[...this._reasons.keys()].map(reason => ({ id: `reason:${reason}`, label: reason }))}
-            .value=${this._reason ? `reason:${this._reason}` : ''} label="Filter files"
+          ${this._reasons.ids.length > 0 ? html`<bundle-scope-selector compact
+            .reasons=${scopeOptions(this._reasons)} .value=${this._reason} label="Filter files"
             @scope-change=${this._changeReason}
           ></bundle-scope-selector>` : nothing}
           ${this._mixedKinds ? html`<span class="bundle-treemap-kind" role="group" aria-label="Show only">

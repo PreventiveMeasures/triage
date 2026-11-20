@@ -48,6 +48,20 @@ test('Stasis reasons keep exact file sets even when files share the same package
   assert.equal(result.size, '1.0 KiB')
 })
 
+test('Stasis entry points are scan scopes beside reasons, where some reason records several', () => {
+  const entry = storedScanSource([{ integrity: 'test', name: 'test.stasis' }]).bundles[0]
+  const paths = ['src/a.js', 'src/b.js', 'src/shared.js', 'src/cli.js']
+  const scopes = reason => storedScanBundle(entry, {
+    kind: 'stasis', size: 1024, fileSizes: new Map(paths.map(path => [path, 10])), lineCounts: new Map(),
+    bundle: { modules: new Map([['.', { files: Object.fromEntries(paths.map(path => [path, ''])) }]]), reason, entries: new Set(['src/a.js', 'src/b.js']),
+      imports: new Map([['default', new Map([['src/a.js', new Map([['./shared', 'src/shared.js']])], ['src/b.js', new Map([['./a', 'src/a.js']])]])]]) },
+  }).reasons.map(scope => [scope.id, scope.filePaths])
+  assert.deepEqual(scopes({ bundle: ['src/a.js', 'src/b.js', 'src/shared.js'], run: ['src/cli.js'] }).slice(2), [
+    ['reason:run', ['src/cli.js']], ['entry:src/a.js', ['src/a.js', 'src/shared.js']], ['entry:src/b.js', ['src/b.js', 'src/a.js', 'src/shared.js']],
+  ])
+  assert.deepEqual(scopes({ bundle: ['src/a.js', 'src/shared.js'], metro: ['src/b.js'] }).map(([id]) => id), ['all', 'reason:bundle', 'reason:metro'], 'one entry point a reason: reasons alone')
+})
+
 test('scan LoC matches source lines for parsed bundles and cached metadata, excluding resources', () => {
   const entry = storedScanSource([{ integrity: 'lines', name: 'lines.map' }]).bundles[0]
   const result = storedScanBundle(entry, { kind: 'sourcemap', size: 500, json: {

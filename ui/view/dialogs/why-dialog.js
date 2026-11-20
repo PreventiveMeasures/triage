@@ -5,6 +5,7 @@ import { autorun } from '@rray/frontend/state-management'
 import { AppDialog, openAppDialog } from './app-dialog.js'
 import { bundleWhy, layoutWhy, traceWhy } from '../bundle-why.js'
 import { pkgLabel } from '../bundle-pkg-of.js'
+import { scopeLabel } from '../../../common/bundle-reasons.js'
 import { WHY_CARD_HEIGHT, WHY_CARD_WIDTH, WHY_DIALOG_GUTTER } from '../why-layout.js'
 import { pkgColor } from '../graph/utils.js'
 import styles from './dialog-why.css'
@@ -153,7 +154,7 @@ class WhyDialog extends AppDialog {
         <button type="button" aria-label="Close dependency chains" @click=${this._onClose}>×</button>
       </header>
       <div class="graph-caption">
-        <span>${nodes.size} ${nodes.size === 1 ? 'package' : 'packages'}${targets.length > 1 ? ` · ${targets.length} installations${this.version === undefined ? '' : ' of this version'}` : ''}${this.reason ? ` · Scope: ${this.reason}` : ''}</span>
+        <span>${nodes.size} ${nodes.size === 1 ? 'package' : 'packages'}${targets.length > 1 ? ` · ${targets.length} installations${this.version === undefined ? '' : ' of this version'}` : ''}${this.scope ? ` · Scope: ${scopeLabel(this.scope)}` : ''}</span>
         <span>↓ imports</span>
       </div>
       ${targets.length > 0 ? this.renderGraph() : html`<p class="empty">Dependency metadata for this ${this.version === undefined ? 'package' : 'version'} is not available in this bundle scope.</p>`}

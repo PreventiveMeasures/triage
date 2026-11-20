@@ -216,11 +216,15 @@ test('advisory reason and team are encoded independently without sending invento
   await fetchBundleAdvisories('bundle/id', undefined, 'run')
   await fetchBundleAdvisories('bundle/id', 'team/id', 'custom & build', true)
   await fetchBundleAdvisories('bundle/id', 'team/id', 'custom & build', true, true)
+  await fetchBundleAdvisories('bundle/id', undefined, 'reason:run')
+  await fetchBundleAdvisories('bundle/id', undefined, 'entry:src/a & b.js')
   assert.deepEqual(calls, [
     '/api/bundles/bundle%2Fid/advisories?team=team%2Fid&reason=custom%20%26%20build',
     '/api/bundles/bundle%2Fid/advisories?reason=run',
     '/api/bundles/bundle%2Fid/advisories?team=team%2Fid&reason=custom%20%26%20build&repoAdvisories=true',
     '/api/bundles/bundle%2Fid/advisories?team=team%2Fid&reason=custom%20%26%20build&repoAdvisories=true&details=true',
+    '/api/bundles/bundle%2Fid/advisories?reason=run',
+    '/api/bundles/bundle%2Fid/advisories?entry=src%2Fa%20%26%20b.js',
   ])
 })
 
