@@ -195,7 +195,7 @@ function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null, bas
     if (of && lockedWith(pkg) !== lockedWith(of.pkg)) of.variants.push(pkg)
   }
   const own = [...adds.values()].map(({ pkg, variants }) => {
-    const judged = variants.map(variant => ({ variant, ...review(variant, basesOf(pkg)) }))
+    const judged = variants.map(variant => ({ variant, ...review(variant, basesOf(pkg, (variant as AddedPackage).base ?? null)) }))
     const least = judged.find(one => 'unsupported' in one.review) ?? judged.find(one => one.wants) ?? judged[0]!
     return { pkg, judged: least, wanting: judged.filter(one => one.wants).map(({ variant }) => variant) }
   })
@@ -220,20 +220,27 @@ const versionKey = (pkg: Shown) => `${pkg.name}@${pkg.version ?? ''}\0${pkg.patc
 const sourceKey = (pkg: Shown) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
 
 // The versions of its own package an added version's reviews may be
-// compared with: those it was, and the one the host names (`base`).
-export const basesOf = (pkg: AddedPackage) => [...pkg.was ?? [], ...pkg.base?.name === pkg.name ? [pkg.base.version] : []]
-// `dirs`, each version they add that can be reviewed, of those `asking`
-// takes (by what it is asked), with the version `base` names to review it
-// against (`base`), where it names one: of its own package or another,
-// which its row then reviews it against and counts its lines against, in
-// place of those it was, and against which reviews of it pass it; each
-// named onto `named` too, by what it is asked.
+// compared with: those it was, and the one the host names (`base`, or that
+// of it as locked one way, null for none).
+export const basesOf = (pkg: AddedPackage, base: ReviewedBase | null | undefined = pkg.base) => [...pkg.was ?? [], ...base?.name === pkg.name ? [base.version] : []]
+// `dirs`, each version they add that can be reviewed, as locked each way
+// (another integrity of it, another lockfile's), of those `asking` takes (by
+// what it is asked), with the version `base` names to review it so against
+// (`base`), where it names one: of its own package or another, which its
+// row then reviews it against and counts its lines against, in place of
+// those it was, and against which reviews of it so pass it; each named onto
+// `named` too, by what it is asked.
 async function withBases(dirs: DirectoryDependencies[], base: NonNullable<ReviewedDependencies['base']>, asking: (key: string) => boolean,
   named: Map<string, ReviewedBase>): Promise<DirectoryDependencies[]> {
-  const asked = new Map(dirs.flatMap(dir => 'error' in dir ? [] : dir.added.filter(pkg => reviewedAs(pkg) === 'version').map(askedOf)).filter(([key]) => asking(key)))
+  const adds = (dir: DirectoryDependencies) => 'error' in dir ? new Set<string>() : new Set(dir.added.map(lockedAs))
+  const each = dirs.map(dir => { const of = adds(dir); return 'error' in dir ? [] : [...dir.added, ...dir.locked.filter(pkg => of.has(lockedAs(pkg)))] })
+  const asked = new Map(each.flat().filter(pkg => reviewedAs(pkg) === 'version').map(askedOf).filter(([key]) => asking(key)))
   for (const [key, one] of asked.size > 0 ? await askBases(base, asked) : []) named.set(key, one)
-  const based = (pkg: AddedPackage) => { const one = named.get(askedOf(pkg)[0]); return one ? { ...pkg, base: one } : pkg }
-  return dirs.map(dir => 'error' in dir ? dir : { ...dir, added: dir.added.map(based) })
+  const based = <P extends LockedPackage>(pkg: P) => { const one = named.get(askedOf(pkg)[0]); return one ? { ...pkg, base: one } : pkg }
+  return dirs.map(dir => {
+    const of = adds(dir)
+    return 'error' in dir ? dir : { ...dir, added: dir.added.map(based), locked: dir.locked.map(pkg => of.has(lockedAs(pkg)) ? based(pkg) : pkg) }
+  })
 }
 
 // The reviews an open pull request's comments make of `wanting`, the

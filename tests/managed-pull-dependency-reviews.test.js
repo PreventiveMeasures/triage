@@ -260,6 +260,22 @@ test('where the host names the version to review each against (`base`), each ver
   assert.deepEqual((await reviewedDependencies({ ...told, baseless: true }, null)).lockfiles[0], { paths: ['package-lock.json'], more: 0, added: [] }, 'none told where no review judges them')
 })
 
+test('a version added locked with another integrity too is asked its base as each, and judged as each against its own', async () => {
+  const pkg = at('dual', '2.0.0')
+  const variant = { ...pkg, integrity: sri('dual@2.0.0 again') }
+  const told = { base: mergeBase, head, cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: [pkg], locked: [bare(pkg), variant] }] }
+  const asked = []
+  const base = dependency => { asked.push(dependency.integrity); return Promise.resolve(dependency.integrity === pkg.integrity ? { name: 'dual', version: '1.0.0' } : { name: 'dual', version: '1.5.0' }) }
+  const reviews = [passing(pkg, 'u1', '1.0.0'), passing(variant, 'u1', '1.5.0')]
+  const answer = await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews }, { reviewed: { lookup: () => Promise.resolve(false), base } })
+  assert.deepEqual(asked.toSorted(), [pkg.integrity, variant.integrity].toSorted(), 'each as it is locked')
+  assert.deepEqual([answer.lockfiles[0].added[0].base, answer.lockfiles[0].added[0].reviews, answer.review.toReview], [{ name: 'dual', version: '1.0.0' }, 1, 0],
+    'each passed by a review against its own')
+  const crossed = await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews: [passing(pkg, 'u1', '1.0.0'), passing(variant, 'u1', '1.0.0')] },
+    { reviewed: { lookup: () => Promise.resolve(false), base } })
+  assert.equal(crossed.review.toReview, 1, 'not against the other\'s')
+})
+
 test('a version added past those told is judged as one added, against the versions it was, and counted as wanting a review', async () => {
   const added = Array.from({ length: MAX_ADDED }, (_, n) => at(`new-${String(n).padStart(3, '0')}`, '1.0.0'))
   const tail = at('zz-tail', '2.0.0', { was: ['1.0.0'] })

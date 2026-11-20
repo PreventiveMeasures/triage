@@ -80,8 +80,7 @@ function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: str
   const mine = new Map<string, Own>()
   if (theirs.size === 0) return mine
   for (const pkg of told.lockfiles.flatMap(dir => 'added' in dir ? dir.added : [])) {
-    const base = bases.get(askedOf(pkg)[0])
-    const against = any ? 'any' : basesOf(base ? { ...pkg, base } : pkg)
+    const against = any ? 'any' : basesOf(pkg, bases.get(askedOf(pkg)[0]) ?? null)
     for (const review of reviewsOf(pkg, theirs)) {
       if (comparedWith(review, pkg, against)) (mine.get(review.id!) ?? mine.set(review.id!, { review, pkgs: [] }).get(review.id!)!).pkgs.push(pkg)
     }
