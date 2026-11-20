@@ -609,6 +609,32 @@ test('where the host formats dependency reviews, a pull request tells the reader
   assert.equal(Object.hasOwn((await ask('carol')).body, 'formatted'), false, 'one with no review of its versions told none')
 })
 
+test('the reviews a pull request gives to copy leave out those the reader\'s own comments on it make already, and those of versions the host passes', async t => {
+  const db = openSqliteManagedDb(':memory:')
+  t.after(() => db.close())
+  const users = await people(db)
+  // Bob's review of ms made in its comments too; alice's not.
+  const parseComments = () => Promise.resolve([{ user: 'bob', dependencies: [{ name: 'ms', version: '2.1.3', integrity: sri('ms@2.1.3'), status: 'accept' }] },
+    { user: 'outsider', dependencies: [{ name: 'left-pad', version: '1.3.0', integrity: sri('left-pad@1.3.0'), status: 'accept' }] }])
+  const formatDependencyReviews = input => Promise.resolve(input.reviews.map(review => `${review.new.name} by ${review.reviewer}`).join('\n'))
+  const send = api(db, users, { reviewedDependencies: { lookup: () => Promise.resolve(false), parseComments, formatDependencyReviews } })
+  await db.setRepoDependencyReview(1, { enabled: true, required: 3, since: null })
+  await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
+  await publish(db, users.bob, context('ms', '2.1.3', '2.1.2'), ['one'])
+  const comment = (id, login, databaseId) => ({ id, author: { login, databaseId }, body: 'LGTM', createdAt: '2026-10-01T00:00:00Z', url: '' })
+  github(t, { ...PULL, graphql: () => ({ repository: { pullRequest: { state: 'OPEN',
+    comments: { pageInfo: { hasNextPage: false }, nodes: [comment('c1', 'bob', 3), comment('c2', 'outsider', 77)] },
+    reviews: { pageInfo: { hasNextPage: false }, nodes: [] } } } }) })
+  const path = `/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', review: '1' })}`
+  const bobs = await send(path, { who: 'bob' })
+  assert.equal(bobs.body.lockfiles[0].added.find(pkg => pkg.name === 'ms').reviews, 2, 'his review counted, once')
+  assert.equal(Object.hasOwn(bobs.body, 'formatted'), false, 'his made in its comments already, with the same verdict: nothing to copy')
+  assert.equal((await send(path, { who: 'alice' })).body.formatted, 'ms by alice', 'hers not made there, though his is')
+  // The host passing the version: no review of it wanted there.
+  const vouching = api(db, users, { reviewedDependencies: { lookup: dependency => Promise.resolve(dependency.name === 'ms'), formatDependencyReviews } })
+  assert.equal(Object.hasOwn((await vouching(path, { who: 'alice' })).body, 'formatted'), false)
+})
+
 test('the default branch\'s dependencies, with their review, tell what its lockfiles lock that wants reviews and what fails it; where none is in effect, none, GitHub not asked where it reviews none', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())

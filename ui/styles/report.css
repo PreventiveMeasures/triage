@@ -1939,12 +1939,12 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 /* A team's dependencies to review (team-dependencies.js), a sub-tab each,
    drawn as a dialog's header tabs are (dialog-tabs.css), each with its
    count, held under the team's header while the one open scrolls: its pull
-   requests wanting reviews, each a card of the versions it alone adds, the
-   rest of its lists opened from under them; every version wanting one; its
-   default branches'; and the reviews published to it. Versions fill as many
-   columns as fit, each a row: its name, then the lines it changes, its
-   review in the color the tiles tell it in, and the pull requests adding it
-   besides, at its end. */
+   requests wanting reviews, each a card of the versions it lists, the rest
+   of its lists opened from under them, those adding only versions others
+   list after them, a line each; every version wanting one; its default
+   branches'; and the reviews published to it. Versions fill as many columns
+   as fit, each a row: its name, then the lines it changes, how many
+   reviews it has, and the pull requests adding it besides, at its end. */
 #workspace-content-slot:has(team-dependencies), .workspace-content-view:has(> team-dependencies), team-dependencies, .team-deps {
   display: flex; flex-direction: column; flex: 1; min-height: 0;
 }
@@ -1974,21 +1974,25 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 
   & > .team-deps-quiet { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   & > .bundles-overview-sort { margin-left: auto; flex: none; }
+  /* What the red rows are, in their color. */
+  & > .team-deps-key { color: var(--critical); }
 }
 /* The pull requests' cards side by side in their order, each a column a
    little wider than its versions', however many it lists. */
 .team-deps-pulls {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 32rem), 1fr));
-  align-items: start; gap: .625rem; margin: 0; padding: 0; list-style: none;
+  align-items: start; gap: .5rem .625rem; margin: 0; padding: 0; list-style: none;
 }
 .team-deps-pull {
-  min-width: 0; padding: .625rem .875rem .5rem;
+  min-width: 0; padding: .4375rem .75rem .3125rem;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 10px); background: var(--surface);
 }
-/* Its head, the reader's reviews of its versions to copy at its end. */
+/* Its head, the reader's reviews of its versions to copy at its end: no
+   taller than its line, its icon's edge on that of the rows under it. */
 .team-deps-pull-top {
   display: flex; align-items: center; gap: .5rem; min-width: 0;
   & > dependency-review-copy { display: inline-flex; flex: none; }
+  & > dependency-review-copy .bundle-code-copy-path { width: 1.25rem; height: 1.25rem; margin-right: -.15rem; }
 }
 .team-deps-pull-head {
   display: flex; flex: 1 1 auto; align-items: baseline; gap: .625rem; min-width: 0; color: var(--text); text-decoration: none;
@@ -2001,12 +2005,13 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   transition: color .12s;
 }
 .team-deps-count {
-  flex: none; color: var(--medium); font-size: .75rem; font-variant-numeric: tabular-nums;
+  flex: none; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums;
   &.is-failed { color: var(--critical); }
+  &.is-wanted { color: var(--medium); }
 }
 .team-deps-versions {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr)); column-gap: 1.5rem;
-  margin: .375rem 0 0; padding: 0; list-style: none;
+  margin: .25rem 0 0; padding: 0; list-style: none;
 }
 .team-deps-row {
   display: flex; align-items: center; gap: .5rem; min-width: 0;
@@ -2014,30 +2019,39 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   color: var(--text); font-size: .78rem; text-decoration: none;
   &:is(a):hover { background: var(--surface-active); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  & svg {
-    flex: none; width: 12px; height: 12px;
-    color: var(--medium); fill: none; stroke: currentcolor; stroke-width: 1.5; stroke-linejoin: round;
-  }
+  /* Its ecosystem's icon, as the Code views' trees draw it. */
+  & svg { flex: none; width: 12px; height: 12px; }
 }
 .team-deps-name {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .team-deps-version { color: var(--muted); }
+/* A version's review: what fails it red, in a pill; how many reviews it
+   has of those it needs blue, plain. */
 .team-deps-review {
   flex: none; padding: 0 .35rem; border: 1px solid currentcolor; border-radius: 999px;
   font-size: .66rem; line-height: 1.4; font-variant-numeric: tabular-nums;
   &.is-failed { color: var(--critical); }
-  &.is-wanted { color: var(--medium); }
+  &.is-wanted { padding: 0; border: 0; color: var(--accent); font-size: .7rem; }
 }
-/* Reviewed in another pull request's comments, which count there alone;
-   and the pull request above a version is listed under, its tag blue where
-   it reviews it so. */
-.team-deps-elsewhere, .team-deps-above {
+/* Reviewed in another pull request's comments, which count there alone,
+   blue; the pull request a version is listed under, muted; and the pull
+   requests lacking reviews that count in others, red, as the name of a row
+   lacking them is, its icon as any row's. */
+.team-deps-elsewhere, .team-deps-under, .team-deps-lacks {
   flex: none; padding: 0 .4rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent); font-size: .66rem; line-height: 1.5; white-space: nowrap;
 }
-.team-deps-above:not(.is-reviewed) { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+.team-deps-under { background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--muted); }
+.team-deps-lacks {
+  flex: 0 1 auto; min-width: 4rem; overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical);
+}
+.team-deps-row.is-behind {
+  & .team-deps-name { color: var(--critical); }
+  & .team-deps-version { color: color-mix(in srgb, var(--critical) 70%, var(--muted)); }
+}
 .team-deps-also { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* A version pnpm patches, reviewed as patched. */
 .team-deps-patched { flex: none; color: var(--muted); font-size: .66rem; line-height: 1.5; white-space: nowrap; }
@@ -2045,11 +2059,41 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
    pull request it is listed under marked among those adding it. */
 .team-deps-tip-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .team-deps-tip-here { font-weight: 600; }
-/* The versions a pull request above adds, each naming the one it is listed
-   under: dimmed, but for the one hovered or focused. */
-.team-deps-versions.is-above > li {
+/* The versions another pull request lists, each naming that one: dimmed,
+   but for the one hovered or focused. */
+.team-deps-versions.is-same > li {
   opacity: .5; transition: opacity .12s;
   &:hover, &:focus-within { opacity: 1; }
+}
+/* The pull requests adding only versions others list, after the rest, under
+   their count, which hides them: each its head alone, a line, muted, naming
+   those listing its versions, till its toggle opens it. */
+.team-deps-covered {
+  display: flex; flex-direction: column; align-items: flex-start; gap: .375rem;
+  & > .team-deps-more { margin-top: 0; }
+  & > .team-deps-pulls { align-self: stretch; }
+}
+.team-deps-pulls.is-covered {
+  gap: .25rem .625rem;
+  /* Where any has reviews to copy, room for it on the rest, so their tags line up. */
+  &:has(dependency-review-copy) .team-deps-pull-top:not(:has(dependency-review-copy))::after { content: ''; flex: none; width: 1.1rem; }
+}
+.team-deps-pull.is-covered {
+  padding: .125rem .625rem .125rem .375rem; border-color: transparent; background: none;
+  &:hover, &:focus-within { border-color: var(--border); }
+  & .team-deps-pull-title { color: var(--muted); font-size: .8rem; font-weight: 400; }
+  & .team-deps-pull-top { gap: .25rem; min-height: 1.5rem; }
+  & .team-deps-under, & .team-deps-count { align-self: center; }
+  & > .team-deps-versions, & > .team-deps-disclosed { margin-left: 1.5rem; }
+  & > .team-deps-versions { margin-top: 0; }
+}
+.team-deps-fold {
+  display: inline-flex; flex: none; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem; padding: 0;
+  border: 0; border-radius: 6px; background: none; color: var(--muted);
+  &:hover { color: var(--text); background: var(--surface-active); }
+  &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  & svg { width: 10px; height: 10px; fill: none; stroke: currentcolor; stroke-width: 1.75; transition: transform .12s; }
+  &[aria-expanded='true'] svg { transform: rotate(90deg); }
 }
 .team-deps-quiet { margin: .25rem 0 0; color: var(--muted); font-size: .75rem; }
 /* A list's toggle: rows past those shown, or a list apart, its chevron

@@ -269,9 +269,19 @@ test('My reviews lists each frozen set and its final verdict, with copy restrict
   answer = { reviews: [partial, full], next: { time: 100, id: 'partial' } }
   await page._load()
   assert.equal(page._reviews.length, 2)
-  assert.match(text(page._row(partial)), />Partial<\/span> · 3\/4 files checked/u)
+  assert.match(text(page._row(partial)), /class="dependency-review-coverage" aria-expanded=false aria-controls=review-details-partial\s+data-tooltip=3 of 4 files checked @click=[^>]*>[^]*>Partial<\/span> · 3\/4<\/button>/u,
+    'how much of it was checked, in a line, whole in its tooltip, a button')
   assert.match(text(page._row(partial)), /Accept with nits/u)
-  assert.match(text(page._row(full)), /Full · 4\/4 files checked/u)
+  assert.match(text(page._row(full)), /data-tooltip=4 of 4 files checked @click=[^>]*>Full · 4\/4<\/button>/u)
+  assert.match(text(page._row(full)), /<a class="dependency-review-title" href=[^>]*><svg class="bundle-code-tree-npm"/u, 'its ecosystem\'s icon before what it is of')
+  assert.doesNotMatch(text(page._row(full)), /dependency-review-identity|dependency-review-expand/u, 'each a line, nothing under its title, no toggle of its own')
+  // Its details opened, and shut again, by that button.
+  const press = () => page._row(full).values.findLast(value => typeof value === 'function' && String(value).includes('_toggleDetails'))()
+  press()
+  assert.equal(page._expanded.has('full'), true)
+  assert.match(text(page._row(full)), /class="dependency-review-coverage" aria-expanded=true [^]*id=review-details-full class="dependency-review-details"/u)
+  press()
+  assert.equal(page._expanded.has('full'), false)
   assert.equal(managedRoutePath(dependencyReviewRoute(full)), '/npm/@scope/lib@2.0.0/review/@scope/lib@1.0.0')
   answer = { reviews: [{ ...review, id: 'older' }], next: null }
   await page._load(true)
@@ -309,6 +319,10 @@ test('a team\'s reviews list those published to it, by whom, by their avatar and
   assert.match(text(page._row({ ...full, user: null, userName: null })), /class="dependency-review-author">grace</u, 'one no longer the app\'s user by the login they reviewed as alone')
   assert.match(text(page._row({ ...full, userName: ' ' })), /<span class="app-user-name">grace</u, 'a blank name as none')
   assert.doesNotMatch(text(page._row({ ...full, formatted: 'Reviewed' })), /dependency-review-copy|dependency-review-discard/u, 'copying a dependency review is for one\'s own')
+  // The teams it is published to: the others alone, its own told by the list it is in.
+  const teams = [{ id: 'team-1', name: 'One' }, { id: 'team-2', name: 'Two' }]
+  assert.match(text(page._row({ ...full, teams })), /class="dependency-review-teams" data-tooltip-truncated data-tooltip=also Two>also Two</u)
+  assert.doesNotMatch(text(page._row({ ...full, teams: teams.slice(0, 1) })), /dependency-review-teams/u)
   answer = { reviews: [{ ...full, id: 'older', publishedAt: 100 }], next: null }
   await page._load(true)
   assert.deepEqual(requests.at(-1).slice(0, 3), ['team', 'team-1', { time: 200, id: 'full' }])

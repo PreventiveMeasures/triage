@@ -263,60 +263,74 @@ npm-review .npm-review-coverage button { min-height: 0; margin-left: .35rem; pad
   }
 .dependency-review-section ol { list-style: none; }
 .dependency-review-section > .npm-review-muted { margin: 0; padding: .4rem .5rem .25rem; line-height: 1.5; }
+/* A review a line: what it is of, its verdict, how much of it was checked,
+   who (a team's), its teams and notes, when, and what to do with it, each a
+   column of the list's; its details open under it, by how much of it was
+   checked, a button drawn as text. */
 .dependency-review-row { border-bottom: 1px solid var(--border); font-size: .78rem; }
 .dependency-review-row:hover, .dependency-review-row.is-expanded { background: var(--surface); }
 .dependency-review-row-main {
-  display: grid;
-  grid-template-columns: 1.35rem minmax(0, 1fr) 10rem 3.7rem;
-  align-items: center;
-  gap: .6rem;
-  padding: .65rem .5rem;
-  }
-.dependency-review-row-main > div { min-width: 0; }
+  display: grid; align-items: center; gap: 0 .75rem; min-height: 2rem; padding: .125rem .5rem;
+  grid-template-areas: 'title result coverage meta date actions';
+  grid-template-columns: minmax(10rem, 1fr) 8rem 5.5rem minmax(0, 12rem) 7rem auto;
+}
+.dependency-review-list.is-team .dependency-review-row-main {
+  grid-template-areas: 'title result coverage author meta date actions';
+  grid-template-columns: minmax(10rem, 1fr) 8rem 5.5rem 9rem minmax(0, 10rem) 7rem auto;
+}
+.dependency-review-row-main > * { min-width: 0; }
 .dependency-review-title {
+  grid-area: title;
   display: flex; align-items: baseline; gap: .4rem; overflow: hidden; white-space: nowrap;
   font: .78rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--text); text-decoration: none;
 }
 .dependency-review-title > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Its ecosystem's icon, as the Code views' trees draw it. */
+.dependency-review-title > svg { flex: none; align-self: center; overflow: visible; }
 .dependency-review-title > span:last-child { flex: none; max-width: 60%; }
 .dependency-review-title span { color: var(--muted); }
 .dependency-review-title:hover, .dependency-review-title:hover span { color: var(--accent); }
 .dependency-review-row.is-revoked .dependency-review-title { color: var(--muted); }
-.dependency-review-row.is-revoked .dependency-review-title > * { text-decoration: line-through; }
-.dependency-review-meta {
-  display: flex; align-items: center; gap: .65rem; min-width: 0; margin-top: .2rem;
-  color: var(--muted); font-size: .68rem; line-height: 1.5;
-}
-.dependency-review-meta time { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.dependency-review-meta time span { margin-left: .3rem; }
-.dependency-review-teams { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dependency-review-note-count, .dependency-review-author { flex: none; }
-.dependency-review-teams::before, .dependency-review-note-count::before, .dependency-review-author::before {
-  content: '·'; margin-right: .65rem;
-}
-.dependency-review-meta .npm-review-badge { flex: none; padding-block: 0; font-size: .65rem; }
-.dependency-review-result { display: flex; flex-direction: column; gap: .2rem; line-height: 1.5; }
+.dependency-review-row.is-revoked .dependency-review-title > :not(svg) { text-decoration: line-through; }
+.dependency-review-result { grid-area: result; overflow: hidden; white-space: nowrap; }
 .dependency-review-result .npm-review-verdict, .dependency-review-checked { font-size: .72rem; }
-.dependency-review-coverage { color: var(--muted); font-size: .68rem; font-variant-numeric: tabular-nums; }
+.dependency-review-coverage {
+  grid-area: coverage; justify-self: start; padding: .15rem .3rem; margin-left: -.3rem; border: 0; border-radius: var(--ui-radius, 4px);
+  background: none; color: var(--muted); font: inherit; font-size: .68rem; font-variant-numeric: tabular-nums; white-space: nowrap;
+  &:hover, &[aria-expanded='true'] { background: var(--surface-active); color: var(--text); }
+}
+.dependency-review-author {
+  grid-area: author; overflow: hidden; color: var(--muted); font-size: .72rem; white-space: nowrap; text-overflow: ellipsis;
+}
+.dependency-review-meta {
+  grid-area: meta; display: flex; align-items: center; gap: .65rem;
+  color: var(--muted); font-size: .68rem; line-height: 1.5; white-space: nowrap;
+}
+.dependency-review-date {
+  grid-area: date; color: var(--muted); font-size: .68rem; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.dependency-review-date span { margin-left: .3rem; }
+.dependency-review-teams { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dependency-review-note-count { flex: none; }
+.dependency-review-teams + .dependency-review-note-count::before { content: '·'; margin-right: .65rem; }
+.dependency-review-meta .npm-review-badge { flex: none; padding-block: 0; font-size: .65rem; }
 .dependency-review-partial {
   display: inline-block; padding: 0 .3rem; border-radius: var(--ui-radius, 4px);
   color: var(--warning); background: rgb(from var(--warning) r g b / .12);
 }
-.dependency-review-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: .1rem; }
+.dependency-review-row-actions { grid-area: actions; display: flex; align-items: center; justify-content: flex-end; gap: .1rem; }
 .dependency-review-row-actions dependency-review-copy { display: inline-flex; }
-.dependency-review-expand, .dependency-review-discard, .dependency-review-open {
+.dependency-review-discard, .dependency-review-open {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
-  width: 1.8rem; height: 1.8rem; border: 0;
+  width: 1.6rem; height: 1.6rem; border: 0;
   border-radius: var(--ui-radius, 4px); background: transparent; color: var(--muted); font: inherit;
   &:not(:disabled):hover { background: var(--surface-active); }
 }
 .dependency-review-open:hover { color: var(--accent); }
-.dependency-review-expand { width: 1.35rem; height: 1.35rem; }
-.dependency-review-expand[aria-expanded='true'] svg { transform: rotate(90deg); }
-dependency-review-copy .bundle-code-copy-path { width: 1.8rem; height: 1.8rem; }
+dependency-review-copy .bundle-code-copy-path { width: 1.6rem; height: 1.6rem; }
 dependency-review-copy svg, .dependency-review-discard svg { width: .95rem; height: .95rem; }
 .dependency-review-discard:not(:disabled):hover { color: var(--critical); }
-.dependency-review-details { margin: 0 .5rem .7rem 2.45rem; }
+.dependency-review-details { margin: .25rem .5rem .7rem 1.6rem; }
 .dependency-review-final-note { margin-bottom: .5rem; }
 .dependency-review-entries {
   list-style: none; margin-left: .75rem; max-height: 20rem; overflow: auto; overscroll-behavior: contain;
@@ -331,11 +345,25 @@ dependency-review-copy svg, .dependency-review-discard svg { width: .95rem; heig
 .dependency-review-entries .npm-review-verdict { font-size: .68rem; white-space: nowrap; }
 .dependency-review-row .npm-review-note { margin: 0; color: var(--text); font-size: .72rem; line-height: 1.5; }
 .dependency-review-final-note .npm-review-note { font-size: .78rem; }
+/* Narrower, its teams and notes left to its details; narrower still, two
+   lines: what it is of over its verdict, who and when. */
+@container review-list (width <= 860px) {
+  .dependency-review-row-main {
+    grid-template-areas: 'title result coverage date actions';
+    grid-template-columns: minmax(8rem, 1fr) 8rem 5.5rem 7rem auto;
+  }
+  .dependency-review-list.is-team .dependency-review-row-main {
+    grid-template-areas: 'title result coverage author date actions';
+    grid-template-columns: minmax(8rem, 1fr) 8rem 5.5rem minmax(0, 8rem) 7rem auto;
+  }
+  .dependency-review-meta { display: none; }
+}
 @container review-list (width <= 560px) {
-  .dependency-review-row-main { grid-template-columns: 1.35rem minmax(0, 1fr) auto; row-gap: .35rem; }
-  .dependency-review-result { grid-column: 2; grid-row: 2; flex-flow: row wrap; align-items: center; gap: .3rem .65rem; }
-  .dependency-review-row-actions { grid-column: 3; grid-row: 1 / 3; }
-  .dependency-review-meta { flex-wrap: wrap; gap: .15rem .5rem; }
+  .dependency-review-row-main, .dependency-review-list.is-team .dependency-review-row-main {
+    grid-template-areas: 'title title title actions' 'result coverage author date';
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    row-gap: .15rem; padding-block: .35rem;
+  }
   .dependency-review-entries > li { grid-template-columns: minmax(0, 1fr) 8.5rem; gap: .1rem .65rem; }
   .dependency-review-entries > li > div { grid-column: 1 / -1; }
   .dependency-review-entries > li > div:empty { display: none; }

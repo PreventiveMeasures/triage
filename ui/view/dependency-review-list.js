@@ -4,9 +4,8 @@ import { managedRoutePath } from '../../common/managed/routes.js'
 import { discardDependencyReview, myDependencyReviews, teamDependencyReviews } from './client-managed.js'
 import { openDiscardReviewDialog } from './lazy-dialogs.js'
 import { managedHistory } from './managed-history.js'
-import { NEXT_ICON } from './lit-icons.js'
 import { DELETE_ICON_SVG } from './icons.js'
-import { sourceFileIcon } from './source-file-icon.js'
+import { sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { showToast } from './toast.js'
 import { reviewAuthor, reviewBadge, reviewNote, reviewTitle, selectReviewOnOpen, verdictLabel } from './npm-review-presentation.js'
 
@@ -18,7 +17,7 @@ export const dependencyReviewRoute = review => ({ view: 'npm', packageName: revi
 
 const compactDate = time => {
   const date = new Date(time)
-  return html`<time datetime=${date.toISOString()} data-tooltip=${date.toLocaleString()}>${date.toLocaleDateString(undefined,
+  return html`<time class="dependency-review-date" datetime=${date.toISOString()} data-tooltip=${date.toLocaleString()}>${date.toLocaleDateString(undefined,
     { month: 'short', day: 'numeric', ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }) })}
     <span>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span></time>`
 }
@@ -27,7 +26,10 @@ const compactDate = time => {
 // or, given a team (`team`, its id), those published to it, the latest
 // first, by whom, as its Dependencies tab lists them, none to copy: copying
 // the comment the server's host formats of a dependency review
-// (dependency-review-copy.js) is for one's own.
+// (dependency-review-copy.js) is for one's own. Each a line: its ecosystem's
+// icon and what it is of, its verdict, how much of it was checked, who and
+// which teams (a team's list, the others alone), when; its notes and files
+// opened under it by how much of it was checked, a button.
 export class DependencyReviewList extends LitElement {
   static properties = { session: { attribute: false }, team: { attribute: false }, _reviews: { state: true }, _loading: { state: true }, _error: { state: true },
     _next: { state: true }, _discarding: { state: true }, _expanded: { state: true } }
@@ -84,26 +86,30 @@ export class DependencyReviewList extends LitElement {
     const expanded = this._expanded.has(review.id), published = review.publishedAt !== null
     const checked = new Set(review.entries.filter(entry => entry.status).map(entry => entry.file)).size
     const notes = review.entries.filter(entry => entry.status && entry.comment.trim()).length + Number(Boolean(review.comment.trim()))
+    // The teams it is published to: a team's list telling the others alone.
+    const others = review.teams.filter(team => team.id !== this.team).map(team => team.name).join(', ')
+    const teams = others && this.team ? `also ${others}` : others
     const open = event => {
         if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && managedHistory?.active) {
           event.preventDefault(); selectReviewOnOpen(review); void managedHistory.navigate(route)
         }
     }
     return html`<li class=${`dependency-review-row${expanded ? ' is-expanded' : ''}${review.revokedAt === null ? '' : ' is-revoked'}`}><div class="dependency-review-row-main">
-      <button type="button" class="dependency-review-expand" aria-expanded=${expanded} aria-controls=${`review-details-${review.id}`}
-        aria-label=${`${expanded ? 'Hide' : 'Show'} details for ${reviewTitle(review)}`} @click=${() => this._toggleDetails(review.id)}>${NEXT_ICON}</button>
-      <div class="dependency-review-identity"><a class="dependency-review-title" href=${managedRoutePath(route)} @click=${open}>
+      <a class="dependency-review-title" href=${managedRoutePath(route)} @click=${open}>${sourcePackageIcon(review.ecosystem)}
         ${review.basePackage !== null && review.basePackage !== review.package ? html`<span>${review.basePackage} ${review.baseVersion} → </span>` : nothing}
         <strong>${review.package}</strong> <span>${review.basePackage === review.package ? `${review.baseVersion} → ` : ''}${review.version}${review.patchHash
           ? html` <span class="dependency-review-patched">patched</span>` : nothing}</span></a>
-        <div class="dependency-review-meta">${compactDate(review.publishedAt ?? review.time)}
-          ${this.team ? html`<span class="dependency-review-author">${reviewAuthor(review)}</span>` : nothing}
-          ${published && review.teams.length > 0 ? html`<span class="dependency-review-teams">${review.teams.map(team => team.name).join(', ')}</span>` : nothing}
-          ${published && notes > 0 ? html`<span class="dependency-review-note-count">${notes} ${notes === 1 ? 'note' : 'notes'}</span>` : nothing}
-          ${review.revokedAt === null ? nothing : reviewBadge(review)}</div></div>
-      <div class="dependency-review-result">${published ? verdictLabel(review.status) : html`<span class="dependency-review-checked">${checked} ${checked === 1 ? 'file' : 'files'} checked</span>`}
-        <span class="dependency-review-coverage">${published ? html`${review.coverage === 'full' ? 'Full' : html`<span class="dependency-review-partial">Partial</span>`} · ${review.checkedFiles}/${review.totalFiles} files checked`
-          : notes ? `${notes} ${notes === 1 ? 'note' : 'notes'}` : 'No notes'}</span></div>
+      <span class="dependency-review-result">${published ? verdictLabel(review.status) : html`<span class="dependency-review-checked">${checked} ${checked === 1 ? 'file' : 'files'} checked</span>`}</span>
+      <button type="button" class="dependency-review-coverage" aria-expanded=${expanded} aria-controls=${`review-details-${review.id}`}
+        data-tooltip=${published ? `${review.checkedFiles} of ${review.totalFiles} files checked` : nothing} @click=${() => this._toggleDetails(review.id)}>${published
+          ? html`${review.coverage === 'full' ? 'Full' : html`<span class="dependency-review-partial">Partial</span>`} · ${review.checkedFiles}/${review.totalFiles}`
+          : notes ? `${notes} ${notes === 1 ? 'note' : 'notes'}` : 'No notes'}</button>
+      ${this.team ? html`<span class="dependency-review-author">${reviewAuthor(review)}</span>` : nothing}
+      <span class="dependency-review-meta">
+        ${published && teams ? html`<span class="dependency-review-teams" data-tooltip-truncated data-tooltip=${teams}>${teams}</span>` : nothing}
+        ${published && notes > 0 ? html`<span class="dependency-review-note-count">${notes} ${notes === 1 ? 'note' : 'notes'}</span>` : nothing}
+        ${review.revokedAt === null ? nothing : reviewBadge(review)}</span>
+      ${compactDate(review.publishedAt ?? review.time)}
       <div class="dependency-review-row-actions">
         ${this.team ? nothing : html`<dependency-review-copy .text=${review.formatted}></dependency-review-copy>`}
         ${this._canDiscard(review) ? html`<button type="button" class="dependency-review-discard" aria-label="Discard review" ?disabled=${this._loading || Boolean(this._discarding)}
