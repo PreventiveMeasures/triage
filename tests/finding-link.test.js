@@ -763,9 +763,52 @@ describe('finding deep links — managed resolution', () => {
     calls.length = 0
     assert.ok(await locateLinkedFinding({ id: UUID_A, teamId: 'team', reportId: 'first' }, navigation))
     assert.deepEqual(calls, [['team', 'first']])
-    assert.ok(await locateLinkedFinding({ id: UUID_A, teamId: 'team' }, navigation))
+    assert.ok(await locateLinkedFinding({ id: UUID_A, teamId: 'team', reportId: null, teamOnly: true }, navigation))
     assert.deepEqual(calls.at(-1), ['team', null])
     assert.deepEqual(reads, [], 'explicit routes use the normal managed loader directly')
+  })
+
+  // What resolveManagedRoute hands over: a team or report the link names
+  // that this user cannot open is null, and `teamOnly` a link naming no report.
+  it('opens the nearest accessible copy when an explicit route\'s team or report does not hold the finding', async () => {
+    for (const [ref, opened, why] of [
+      [{ id: UUID_B, teamId: 'team', reportId: null }, [['team', 'second']], 'another report of the named team, its own unknown'],
+      [{ id: UUID_B, teamId: 'team', reportId: 'first' }, [['team', 'first'], ['team', 'second']], 'another report of the named team, its own without the finding'],
+      [{ id: UUID_A, teamId: null, reportId: 'first' }, [['team', 'first']], 'the named report in another team, its own unknown'],
+      [{ id: UUID_A, teamId: 'shared', reportId: 'first' }, [['team', 'first']], 'the named report in another team, its own without the report'],
+      [{ id: UUID_B, teamId: 'shared', reportId: 'second' }, [['shared', 'second']], 'the named team first among those holding the report'],
+      [{ id: UUID_A, teamId: null, reportId: null }, [['team', 'first']], 'any report, neither named one known'],
+      [{ id: UUID_A, teamId: 'shared', reportId: null, teamOnly: true }, [['shared', null], ['team', null]], 'another team\'s own findings, the named team without the finding'],
+      [{ id: UUID_B, teamId: null, reportId: null, teamOnly: true }, [['team', null]], 'another team\'s own findings, the named team unknown'],
+    ]) {
+      state.reports = []
+      state.currentManagedTeam = state.currentManagedReport = state.currentWorkspace = null
+      calls.length = 0
+      const hit = await locateLinkedFinding(ref, navigation)
+      assert.equal(hit?.finding.id, ref.id, why)
+      assert.deepEqual(calls, opened, why)
+    }
+  })
+
+  it('prefers another report of the named team to the named report in another team', async () => {
+    const third = { id: 'third', filename: 'third.json' }
+    state.managedTeams = [...state.managedTeams, { id: 'solo', reports: [third] }]
+    content.third = content.second
+    try {
+      assert.ok(await locateLinkedFinding({ id: UUID_B, teamId: 'solo', reportId: 'second' }, navigation))
+      assert.deepEqual(calls, [['solo', 'third']])
+      // Its team without the finding, the named report opens where it is held.
+      calls.length = 0
+      assert.ok(await locateLinkedFinding({ id: UUID_A, teamId: 'solo', reportId: 'first' }, navigation))
+      assert.deepEqual(calls, [['team', 'first']])
+    } finally { delete content.third }
+  })
+
+  it('keeps the view shown when it holds the finding and the route names nothing accessible', async () => {
+    await navigation.openManagedReport(team, 'first')
+    calls.length = 0
+    assert.ok(await locateLinkedFinding({ id: UUID_A, teamId: null, reportId: null }, navigation))
+    assert.deepEqual(calls, [])
   })
 
   it('resolves E2E report hints using server filenames and accessible report contents', async () => {
@@ -832,15 +875,12 @@ describe('finding deep links — managed resolution', () => {
     }
   })
 
-  it('rejects inaccessible explicit routes without using another copy or local storage', async () => {
-    await navigation.openManagedReport(team, 'first')
-    calls.length = 0
-    for (const ref of [{ id: UUID_A, teamId: 'hidden' }, { id: UUID_A, teamId: 'team', reportId: 'hidden' }]) {
+  it('finds no copy of a finding outside the accessible team reports, local storage included', async () => {
+    await saveFile(uniqueName('local-only'), JSON.stringify({ findings: [makeFinding(UUID_C)] }))
+    for (const ref of [{ id: UUID_C }, { id: UUID_C, teamId: null, reportId: null, teamOnly: true }, { id: UUID_C, teamId: 'team', reportId: 'first' }]) {
       assert.equal(await locateLinkedFinding(ref, navigation), null)
     }
-    await saveFile(uniqueName('local-only'), JSON.stringify({ findings: [makeFinding(UUID_C)] }))
-    assert.equal(await locateLinkedFinding({ id: UUID_C }, navigation), null)
-    assert.deepEqual(calls, [])
+    assert.deepEqual(calls, [['team', 'first']], 'only the copy an explicit route names is opened to look')
   })
 
   it('ignores failed reads and stops on navigation, session, or mode changes', async () => {

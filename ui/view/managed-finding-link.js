@@ -4,8 +4,10 @@ import { fetchTeamReports } from './client-managed.js'
 import { findLoadedFinding } from './finding-link.js'
 
 // Resolve only within the signed-in user's team catalogue and permission-
-// filtered report endpoint. E2E hints remain useful after importing a report;
-// an unmatched workspace or renamed report falls back to its finding identity.
+// filtered report endpoint. Only the finding has to match: a managed URL's
+// team and report, like E2E hints, which remain useful after importing a
+// report, say which copy to prefer, and an unmatched one falls back to the
+// finding's identity.
 export async function locateManagedFinding(ref, { openManagedReport, readTeam = fetchTeamReports, isCurrent = () => true }) {
   const session = state.managedSession
   const current = () => isCurrent() && isManagedUiMode()
@@ -21,16 +23,10 @@ export async function locateManagedFinding(ref, { openManagedReport, readTeam = 
     return findLoadedFinding(ref.id)
   }
 
-  // An explicit managed URL names the copy to open, even if another report
-  // already contains that id. Missing/inaccessible routes cannot pick a copy.
-  if (ref.teamId) {
-    const team = teams.find(item => item.id === ref.teamId)
-    if (!team || ref.reportId && !team.reports.some(report => report.id === ref.reportId)) return null
-    return open(team, ref.reportId ?? null)
-  }
-
   const candidates = teams.flatMap(team => team.reports.map(report => ({ team, report })))
   const checked = new Set(), loadedTeams = new Map()
+  // The first of `entries` whose report holds the finding, opened: that
+  // report, or, for a link to a team's own findings (`teamOnly`), its team.
   async function search(entries) {
     for (const { team, report } of entries) {
       if (!current()) return null
@@ -44,9 +40,34 @@ export async function locateManagedFinding(ref, { openManagedReport, readTeam = 
       // backfills IDs on its own copy, leaving the shared report cache intact.
       const parsed = await loadManagedFindings(JSON.stringify(content.data), report.filename)
       if (!current()) return null
-      if (parsed?.findings.some(finding => finding.id === ref.id)) return open(team, report.id)
+      if (parsed?.findings.some(finding => finding.id === ref.id)) return open(team, ref.teamOnly ? null : report.id)
     }
     return null
+  }
+
+  // A managed URL names the copy to open, a report's in a team or the team's
+  // own (common/managed/routes.js resolveManagedRoute), and that copy opens
+  // even if another report holds the id too. Where it is gone, not this
+  // user's to open, or without the finding, the nearest copy does: another
+  // report of its team; then its report in another team, read as the link's
+  // own is, by the loader, which reads a hidden report too; then any, as a
+  // link naming neither finds one below.
+  if (ref.teamId || ref.reportId) {
+    const named = teams.find(team => team.id === ref.teamId)
+    const holders = teams.filter(team => ref.reportId && team.reports.some(report => report.id === ref.reportId))
+    const load = async team => {
+      const hit = await open(team, ref.reportId ?? null)
+      checked.add(`${team.id}:${ref.reportId}`)
+      return hit
+    }
+    for (const step of [
+      () => named && (ref.teamOnly || holders.includes(named)) ? load(named) : null,
+      () => named && !ref.teamOnly ? search(candidates.filter(({ team }) => team === named)) : null,
+      ...holders.filter(team => team !== named).map(team => () => load(team)),
+    ]) {
+      const hit = await step()
+      if (hit || !current()) return hit
+    }
   }
 
   if (ref.report) {

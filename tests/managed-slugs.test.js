@@ -170,12 +170,12 @@ test('managed routes use exact server slugs and resolve back to internal UUIDs',
   assert.equal(managedRouteForIds({ view: 'findings', teamId: first, reportId: second }, teams), null)
 })
 
-test('unknown and ambiguous slugs go home, including finding links; duplicate report membership is not ambiguous', async () => {
+test('unknown and ambiguous slugs go home; duplicate report membership is not ambiguous', async () => {
   const duplicateTeam = [...teams, { id: 'other', slug: short, reports: [] }]
   const duplicateReport = [...teams, { id: 'other', slug: 'other', reports: [{ id: 'other-report', slug: short }] }]
   for (const [catalogue, path] of [
-    [teams, '/team/missing'], [teams, `/team/${short}/report/missing`],
-    [duplicateTeam, `/team/${short}`], [duplicateReport, `/team/${short}/report/${short}/finding/issue`],
+    [teams, '/team/missing'], [teams, `/team/${short}/report/missing`], [teams, `/team/${short}/report/${second}`], [teams, `/team/missing/report/${short}/files`],
+    [duplicateTeam, `/team/${short}`], [duplicateReport, `/team/${short}/report/${short}`],
   ]) {
     const { browser } = browserAt(path)
     let shown
@@ -191,6 +191,32 @@ test('unknown and ambiguous slugs go home, including finding links; duplicate re
   assert.equal(managedRouteForIds({ view: 'findings', teamId: first }, duplicateTeam), null)
   assert.equal(managedRouteForIds({ view: 'findings', teamId: first, reportId: first }, duplicateReport), null)
   assert.equal(resolveManagedRoute({ view: 'findings', teamSlug: short, reportSlug: short }, teams).reportId, first)
+})
+
+test('a finding link resolves the team and report it can, for its finding to be looked up by', () => {
+  const duplicateTeam = [...teams, { id: 'other', slug: short, reports: [] }]
+  const duplicateReport = [...teams, { id: 'other', slug: 'other', reports: [{ id: 'other-report', slug: short }] }]
+  const finding = { id: 'issue' }
+  const resolved = (path, catalogue = teams) => resolveManagedRoute(parseManagedRoute(new URL(path, 'https://triage.test')), catalogue)
+  for (const [path, teamId, reportId, catalogue] of [
+    [`/team/${short}/report/${short}/finding/issue`, first, first],
+    [`/team/${short}/report/${second}/finding/issue`, first, second, teams, 'a report of another team'],
+    [`/team/${short}/report/missing/finding/issue`, first, null],
+    [`/team/missing/report/${second}/finding/issue`, null, second],
+    [`/team/missing/report/missing/finding/issue`, null, null],
+    [`/team/${first}/report/${first}/finding/issue`, null, null, teams, 'UUIDs are not slug aliases'],
+    [`/team/${short}/report/${short}/finding/issue`, null, first, duplicateTeam],
+    [`/team/${short}/report/${short}/finding/issue`, first, null, duplicateReport],
+  ]) {
+    assert.deepEqual(resolved(path, catalogue), { view: 'findings', finding, teamId, reportId, teamOnly: false }, path)
+  }
+  assert.deepEqual(resolved(`/team/${short}/finding/issue`), { view: 'findings', finding, teamId: first, reportId: null, teamOnly: true })
+  assert.deepEqual(resolved('/team/missing/finding/issue'), { view: 'findings', finding, teamId: null, reportId: null, teamOnly: true })
+  // Its own links still name the team and report alone.
+  assert.equal(managedRoutePath(managedRouteForIds({ view: 'findings', teamId: second, reportId: first, finding }, teams)), `/team/${second}/report/${short}/finding/issue`)
+  assert.equal(managedRouteForIds({ view: 'findings', teamId: first, reportId: second, finding }, teams), null)
+  assert.equal(managedRouteForIds({ view: 'findings', teamId: first, finding }, duplicateTeam), null)
+  assert.equal(managedRouteForIds({ view: 'findings', teamId: first, reportId: first, finding }, duplicateReport), null)
 })
 
 test('slug history resolves UUIDs on clicks, Back/Forward and reload', async () => {
