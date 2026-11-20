@@ -413,23 +413,23 @@
     "@noble/ciphers": "^2.4.0",
     "@preventive/terminal": "2.0.0-beta.3",
     "@rray/frontend": "^1.0.0",
-    "@stylistic/stylelint-plugin": "^6.0.0",
+    "@stylistic/stylelint-plugin": "^6.0.1",
     "@types/node": "^26.6.6",
     "@types/ws": "^8.18.2",
-    "@vercel/functions": "^3.10.6",
+    "@vercel/functions": "^3.11.0",
     "brotli": "^1.3.3",
     "esbuild": "^0.28.2",
     "lit": "^3.3.3",
     "minify-html-literals": "^1.3.5",
-    "oxlint": "^1.91.0",
+    "oxlint": "^1.92.0",
     "prismjs": "^1.30.0",
     "stylelint": "^18.0.0",
     "stylelint-config-recommended": "^19.0.0",
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@exodus/stasis": "1.0.0-rc.4",
-    "@exodus/stasis-core": "1.0.0-rc.4",
+    "@exodus/stasis": "1.0.0-rc.6",
+    "@exodus/stasis-core": "1.0.0-rc.6",
     "@preventive/archive": "^1.4.1",
     "@preventive/compare": "^1.2.13",
     "@preventive/diff": "^1.1.1",
@@ -441,7 +441,7 @@
     "css-tree": "^3.2.1",
     "oxc-minify": "^0.157.0",
     "oxc-parser": "^0.152.0",
-    "oxfmt": "^0.76.0",
+    "oxfmt": "^0.77.0",
     "semver": "^7.8.6",
     "ws": "^8.22.1"
   },
@@ -461,5 +461,5 @@
       "optional": true
     }
   },
-  "packageManager": "pnpm@12.17.0+sha512.b8d223ebec04b580a89ed206daa71d1bccb6a1ee1d52efa95cc3b0db75271561df8f0d8e2c43add39c5ec08018af7a8a95108e7090f95a29f88727b7a40fd53d"
+  "packageManager": "pnpm@12.18.0+sha512.9d7882d5dc82147ecfc4e062aa34834e0ad0296710a1837a1115ae012127d36b7109e321ac1598a1dd0a65597681b1e99917e12ed0d749eae91187943363beb3"
 }

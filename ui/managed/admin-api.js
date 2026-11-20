@@ -156,7 +156,7 @@ export async function createBundle(input, csrfToken, signal) {
       'config-mixed': 'Entry points listed in a stasis.config.json are built with its options, alone. Select only those it lists, or only other files.',
       'config-conditions': 'These entry points are listed in stasis.config.json, which sets their options, so they take no conditions. Reload the directory and try again.',
       'config-runs-code': 'stasis.config.json sets an option for these entry points that runs the repository’s code, such as babel. Bundles built here never run it.',
-      'config-policy': 'The bundle holds a path or package that stasis.config.json’s allowedPaths, disallowedPaths, allowedModules or disallowedModules refuses.',
+      'config-policy': 'The bundle holds a path or package that stasis.config.json’s allowedPaths, disallowedPaths, allowedModules or disallowedModules refuses, or that its excludeModules excludes.',
       'stasis-lock': 'The build doesn’t agree with the repository’s stasis.lock.json, or stasis.config.json’s lock = frozen needs one that isn’t there. Update it at this revision.',
       'commit-not-own': 'Stasis can’t find this commit in the history of the repository’s branches or tags: it may be a fork’s, which GitHub serves through the repository too. Pick a commit of its default branch, a branch or a tag.',
       'build-lockfile': 'Stasis needs a supported lockfile: pnpm-lock.yaml, yarn.lock (Yarn 1), package-lock.json, or soldeer.lock.',

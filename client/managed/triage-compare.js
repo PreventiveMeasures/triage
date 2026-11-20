@@ -79,7 +79,7 @@ export async function prepareLocalTriageComparison({ source, readTriage, api, si
   }
   const triage = await readTriage() ?? {}
   signal.throwIfAborted()
-  if (typeof triage !== 'object' || Array.isArray(triage)) throw new Error('Invalid local triage.')
+  if (typeof triage !== 'object' || Array.isArray(triage)) throw new TypeError('Invalid local triage.')
   const findings = [], matched = new Set()
   if (lookup.size === 0) return { matched: 0, localFindings: 0, findings, skipped }
   let cursor

@@ -10,7 +10,7 @@ async function fetchLinks(signal) {
   const response = await managedFetch('/api/admin/links', { signal, credentials: 'same-origin' })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const body = await response.json()
-  if (!Array.isArray(body?.shares)) throw new Error('No public links returned')
+  if (!Array.isArray(body?.shares)) throw new TypeError('No public links returned')
   return body
 }
 

@@ -116,7 +116,7 @@ const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : 
 // and the comment the server's host formats of the reader's own reviews of
 // its versions, to copy (`formatted`), where it formats one.
 export function checked(answer) {
-  if (!Array.isArray(answer?.lockfiles)) throw new Error('The server answered with no lockfiles.')
+  if (!Array.isArray(answer?.lockfiles)) throw new TypeError('The server answered with no lockfiles.')
   const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? dir
     : { ...dir, added: dir.added.flatMap(checkedVersion), more: count(dir.more) ?? 0, unreviewed: versionsOf(dir.unreviewed),
       moreUnreviewed: count(dir.moreUnreviewed) ?? 0, unsupported: versionsOf(dir.unsupported), moreUnsupported: count(dir.moreUnsupported) ?? 0,

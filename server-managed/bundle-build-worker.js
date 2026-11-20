@@ -144,8 +144,10 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   const { packageManager, ...options } = input.options
   const named = packageManager !== undefined && !namesLockfiles(await configText(project) ?? '{}')
   note('project', { project, configured: configured !== null, ...(named && { packageManager }) })
+  // The branch the commit was picked by, where it was, Stasis asks first of
+  // whether the commit is the repo's own (bundle-build.ts).
   const { bundle } = await buildGitHubBundle({
-    github, sha: input.commit, directory: project || undefined,
+    github, sha: input.commit, ...(input.branch !== undefined && { branch: input.branch }), directory: project || undefined,
     entries: input.entries.map(entry => posix.relative(project || '.', entry)),
     ...options, ...(named && { packageManager }), client: buildClient, ...(cacheDir === null && { cache: false }),
   })
@@ -159,6 +161,8 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   // module too large for V8 to hold as one is too large too.
   let serialized
   try { serialized = bundle.serializedBytes() } catch (error) {
+    // A failure's code, as buildErrorCode reads it, not a value of the wrong type.
+    // oxlint-disable-next-line unicorn/prefer-type-error
     if (error instanceof RangeError) throw new Error('too-large', { cause: error })
     throw error
   }
@@ -176,7 +180,9 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
 // stasis.config.json entry setting an option that runs a program, whatever
 // is given (nothing of the repo runs); a bundle holding a path or package its
 // allowedPaths, disallowedPaths, allowedModules or disallowedModules refuses,
-// the config's or an entry's, is the policy's; one it can't read, build with
+// or its excludeModules excludes (an entry in such a package among them), the
+// config's or an entry's, is the policy's, as is one broken at load by
+// imports excludeModules excludes alone; one it can't read, build with
 // its options, or lay out the lockfiles it names of, is the config's. A build
 // the repository's stasis.lock.json disagrees with, or that its lock mode
 // holds to one that isn't there, is the stasis.lock.json's. A commit Stasis
@@ -188,11 +194,21 @@ export function buildErrorCode(error, message) {
   if (error instanceof HttpError) return error.status === 429 ? 'github-rate-limited' : 'github-build-failed'
   if (/, which runs .+, and nothing of the project runs here$/u.test(message)) return 'config-runs-code'
   if (message.endsWith(': bundle either the entries it names or others, not both')) return 'config-mixed'
-  if (/\bstasis\.config\.json(?:: entries .*?)?: (?:allowed|disallowed)(?:Paths|Modules) (?:refuses|does not allow|allows none of) /u.test(message)) return 'config-policy'
+  if (/\bstasis\.config\.json(?:: entries .*?)?: (?:(?:allowed|disallowed)(?:Paths|Modules) (?:refuses|does not allow|allows none of)|excludeModules excludes) /u.test(message)) return 'config-policy'
+  if (brokenByExclusion(message)) return 'config-policy'
   if (/\bstasis\.config\.json(?: is not valid JSON|: |'s lockfiles )/u.test(message)) return 'config-invalid'
   if (/\bstasis\.lock\.json(?::| isn't there,| \(lock = )/u.test(message)) return 'stasis-lock'
   if (/ is in the history of no branch or tag of | is at no tag or branch head of .+ nor in its default branch's history/u.test(message)) return 'commit-not-own'
   return /no packageManager given|lockfile installs|no (?:pnpm-lock\.yaml|yarn\.lock|package-lock\.json|soldeer\.lock) found in /u.test(message) ? 'build-lockfile' : 'build-failed'
+}
+
+// Whether Stasis finds a JS bundle broken at load by what excludeModules
+// leaves out alone: each of what it lists (ten at most, none cut short past
+// them) an import unresolved for that reason, which it gives first.
+function brokenByExclusion(message) {
+  const [head, ...lines] = message.split('\n')
+  return /JS bundle would be broken at load time(?: \(.*\))?:$/u.test(head) && lines.length > 0
+    && lines.every(line => /^ {2}unresolved .* \(excluded by excludeModules[;)]/u.test(line))
 }
 
 // The status a failed build answers with, by its code: 422 for any other.

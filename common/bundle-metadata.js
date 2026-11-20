@@ -210,7 +210,7 @@ export function parseBundleMetadata(data, integrity) {
 }
 
 function parseSourcemapEdges(rows, files) {
-  if (!Array.isArray(rows)) throw new Error('Invalid sourcemap edges')
+  if (!Array.isArray(rows)) throw new TypeError('Invalid sourcemap edges')
   return rows.map((row) => {
     if (!Array.isArray(row) || ![2, 3].includes(row.length) || row[0] === row[1] || (row.length === 3 && typeof row[2] !== 'string')
         || row.slice(0, 2).some((i) => !Number.isSafeInteger(i) || i < 0 || i >= files.length)) throw new Error('Invalid sourcemap edges')

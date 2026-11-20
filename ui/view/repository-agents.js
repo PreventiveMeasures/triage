@@ -50,7 +50,7 @@ watchActivitySubtabs(tab => { if (tab === 'agents') repaint() })
 // the agents it knows by their GitHub Apps or accounts (its first page's),
 // each by id, name and avatar; an artifact's those of them it names.
 function checked(answer) {
-  if (!Array.isArray(answer?.pulls) || !Array.isArray(answer.commits)) throw new Error('The server answered with no pull requests or commits.')
+  if (!Array.isArray(answer?.pulls) || !Array.isArray(answer.commits)) throw new TypeError('The server answered with no pull requests or commits.')
   const agents = (Array.isArray(answer.agents) ? answer.agents : []).filter(agent => typeof agent?.id === 'string' && APP_AGENT.test(agent.id)
     && !['claude', 'codex', 'all'].includes(agent.id) && typeof agent.name === 'string' && agent.name.trim()
     && (agent.avatar === undefined || (typeof agent.avatar === 'string' && AGENT_AVATAR.test(agent.avatar))))

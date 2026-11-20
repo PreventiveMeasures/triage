@@ -6,6 +6,7 @@ import { Bundle } from '@exodus/stasis-core/bundle'
 import { buildGitHubBundle } from '@exodus/stasis/vfs-bundle'
 import { buildErrorCode, buildStasisBundle } from '../server-managed/bundle-build-worker.js'
 import { buildRepositoryBundle, githubBundleFilename, parseBundleBuild } from '../server-managed/bundle-build.ts'
+import { HttpError } from '@preventive/upstream/github.js'
 import { packageOf, registry } from './_managed-npm.js'
 
 const commit = 'a'.repeat(40)
@@ -35,6 +36,15 @@ test('build requests pin commits, reject unsafe inputs, and apply presets', () =
   assert.deepEqual(input(['a.js'], { conditions: { preset: 'metro', conditions: ['react-native'], platforms: ['android', 'android'] } }).conditions,
     { preset: 'metro', conditions: ['react-native'], platforms: ['android'] })
   assert.equal(input(['Token.sol']).conditions, null)
+})
+
+test('a build request names the branch its commit was picked by, where it was, as git names a branch', () => {
+  for (const branch of ['main', 'feature/x', 'release-1.2', 'user@host', 'a'.repeat(255)]) assert.equal(input(['a.js'], { branch }).branch, branch)
+  for (const branch of [undefined, null]) assert.equal(Object.hasOwn(input(['a.js'], { branch }), 'branch'), false)
+  for (const branch of ['', 'a b', 'a:b', 'a..b', 'a~1', 'a^', 'a?', 'a*', 'a[b', 'a\\b', 'a\n', '-a', '/a', 'a/', 'a//b', 'a.', '@', 'a@{1}', '.a', 'a/.b',
+    'a.lock', 'a.lock/b', 'a'.repeat(256), 1, ['main'], { name: 'main' }]) {
+    assert.throws(() => input(['a.js'], { branch }), { status: 400, code: 'bad-request' }, JSON.stringify(branch))
+  }
 })
 
 test('JSX and TSX entry points use the same build options as other scripts for every preset', () => {
@@ -290,6 +300,12 @@ test('missing, ambiguous and named-but-missing lockfiles are reported as the loc
     ['buildVfsBundle: stasis.config.json: entries "a.ts", "b.ts": allowedModules allows none of 2 packages: x@1.0.0, y@1.0.0', 'config-policy'],
     ['buildVfsBundle: stasis.config.json: entries "index.ts": allowedPaths does not allow secret.ts', 'config-policy'],
     ['buildVfsBundle: stasis.config.json: entries "index.ts": disallowedPaths must be an array of non-empty strings', 'config-invalid'],
+    ['buildVfsBundle: stasis.config.json: excludeModules excludes tool@1.0.0 at node_modules/tool ("tool")', 'config-policy'],
+    ['entry not found: /node_modules/tool/cli.js (stasis.config.json: entries "cli.js": excludeModules excludes node_modules/tool ("tool"))', 'config-policy'],
+    ['JS bundle would be broken at load time:\n  unresolved import tool from index.js (excluded by excludeModules)\n  unresolved require tool/x from a.js (excluded by excludeModules; resolves to x.ts under --typescript)', 'config-policy'],
+    ['JS bundle would be broken at load time (ios):\n  unresolved import tool from index.js (excluded by excludeModules)', 'config-policy'],
+    ['JS bundle would be broken at load time:\n  unresolved import tool from index.js (excluded by excludeModules)\n  unresolved import other from index.js (not found)', 'build-failed'],
+    [`JS bundle would be broken at load time:\n${'  unresolved import tool from index.js (excluded by excludeModules)\n'.repeat(10)}  ... and 2 more`, 'build-failed'],
     ['app/stasis.lock.json: content mismatch for \'value.ts\'', 'stasis-lock'],
     ['stasis.lock.json isn\'t there, and lock = frozen holds the build to it', 'stasis-lock'],
     ['stasis.lock.json (lock = frozen) doesn\'t attest extra.ts', 'stasis-lock'],
@@ -436,6 +452,24 @@ test('real Stasis builds the entries stasis.config.json lists in a package the l
   assert.ok(bundle.sources.has('node_modules/tool/lib/run.js'), 'what it imports, from the tree laid out')
 })
 
+test('real Stasis leaves out the packages stasis.config.json’s excludeModules names: a build needing one is the policy’s', async t => {
+  const tool = packageOf('tool', '1.0.0', { 'package.json': JSON.stringify({ name: 'tool', version: '1.0.0', type: 'module', bin: { tool: 'cli.js' } }),
+    'cli.js': 'import { run } from "./lib/run.js"\nrun()\n', 'lib/run.js': 'export const run = () => {}\n' })
+  registry(t, [tool])
+  const app = { name: 'app', version: '1.0.0', type: 'module', dependencies: { tool: '1.0.0' } }
+  const project = (index, config) => ({ 'package.json': JSON.stringify(app), 'index.js': index,
+    'package-lock.json': lockOf({ name: app.name, version: app.version, dependencies: app.dependencies },
+      { 'node_modules/tool': { version: '1.0.0', resolved: tool.doc.dist.tarball, integrity: tool.doc.dist.integrity, bin: { tool: 'cli.js' } } }),
+    'stasis.config.json': JSON.stringify(config) })
+  const plain = 'export const app = 1\n'
+  assert.deepEqual(await entriesOf(configured(project(plain, { entries: { 'index.js': {} }, excludeModules: ['tool'] }), ['index.js'])), ['index.js'], 'one nothing needs')
+  assert.equal(await codeOf(configured(project('import "tool/lib/run.js"\nexport const app = 1\n', { entries: { 'index.js': {} }, excludeModules: ['tool'] }), ['index.js'])),
+    'config-policy', 'one an import needs')
+  assert.equal(await codeOf(configured(project(plain, { entries: { 'index.js': {}, 'node_modules/tool/cli.js': {} }, excludeModules: ['tool'] }), ['index.js', 'node_modules/tool/cli.js'])),
+    'config-policy', 'one an entry is in')
+  assert.equal(await codeOf(configured(project(plain, { entries: { 'index.js': {} }, excludeModules: 'tool' }), ['index.js'])), 'config-invalid', 'one Stasis can’t read')
+})
+
 test('real Stasis lays a pnpm tree out for no Node: engineStrict takes an engines.node the server’s Node isn’t', async () => {
   const project = {
     'package.json': JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', engines: { node: '1.0.0' }, packageManager: 'pnpm@10.33.4' }),
@@ -480,4 +514,27 @@ test('real Stasis holds the commit to the repo’s own history: a fork’s, whic
   const behind = { ...forked, compareCommits: ({ base, head }) => Promise.resolve(base === commit && head === 'main' ? { status: 'ahead', aheadBy: 1, behindBy: 0, mergeBase: commit } : { status: 'diverged' }) }
   const built = await buildStasisBundle({ input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, behind)
   assert.ok(built.bytes.length > 0, 'one in its default branch’s history builds')
+})
+
+test('real Stasis asks the branch a commit was picked by first: one in its history builds with no ref listed, a fork’s is refused all the same', async () => {
+  const [main, feature] = ['b'.repeat(40), 'c'.repeat(40)]
+  const asked = []
+  const notListed = what => () => Promise.reject(new Error(`${what} listed`))
+  const repo = holds => ({ ...projectClient(files),
+    getRepoHead: ({ branch }) => {
+      asked.push(branch ?? '(default)')
+      if (branch === undefined) return Promise.resolve({ oid: main, branch: 'main' })
+      if (branch === 'feature') return Promise.resolve({ oid: feature, branch: 'feature' })
+      return Promise.reject(new HttpError(404, `GitHub has no branch ${branch}`))
+    },
+    compareCommits: ({ base, head }) => Promise.resolve(base === commit && holds.includes(head) ? { status: 'ahead', aheadBy: 1, behindBy: 0, mergeBase: commit } : { status: 'diverged' }),
+    listRepoTags: notListed('tags'), listRepoBranches: notListed('branches') })
+  const build = (client, branch) => buildStasisBundle({ input: input(['index.ts'], { branch }), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }, client)
+  assert.ok((await build(repo(['feature']), 'feature')).bytes.length > 0, 'its branch has it')
+  assert.deepEqual(asked, ['feature'], 'asked of that branch alone')
+  const listed = { ...repo([]), listRepoTags: () => Promise.resolve([]), listRepoBranches: () => Promise.resolve([{ branch: 'main', oid: main }, { branch: 'feature', oid: feature }]) }
+  for (const branch of ['feature', 'gone']) {
+    const error = await build(listed, branch).then(() => null, failure => failure)
+    assert.equal(error && buildErrorCode(error, error.message), 'commit-not-own', `a branch ${branch === 'gone' ? 'GitHub hasn’t' : 'without it'} tells nothing`)
+  }
 })

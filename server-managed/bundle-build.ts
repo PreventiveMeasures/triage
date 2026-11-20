@@ -23,6 +23,19 @@ interface BundleBuildInput {
   // conditions, and for entries given none, which stasis.config.json must
   // then list (the build checks: bundle-build-worker.js).
   conditions: BundleBuildConditions | null
+  // The branch the commit was picked by, where it was: Stasis asks it first
+  // when it holds the commit to the repo's own history, which GitHub's compare
+  // tells of it, so nothing is taken on trust (one the commit isn't of is
+  // looked past). Without it, Stasis lists the repo's tags and branches and
+  // compares up to 100 of those.
+  branch?: string
+}
+
+// A name git takes for a branch (git check-ref-format --branch), at most
+// GitHub's length for one.
+function branchName(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 255
+    && !/[\p{Cc}\s~^:?*[\\]|\.\.|@\{|\/\/|^-|^\/|\/$|\.$|^@$|(?:^|\/)\.|\.lock(?:\/|$)/u.test(value)
 }
 
 function path(value: unknown): value is string {
@@ -40,10 +53,11 @@ export function buildableEntry(value: unknown): value is string {
 export function parseBundleBuild(value: unknown): BundleBuildInput {
   const fail = (code = 'bad-request'): never => { throw new BundleBuildError(400, code) }
   if (value == null || typeof value !== 'object' || Array.isArray(value)) return fail()
-  const { repoId, commit, entries, conditions } = value as Record<string, unknown>
+  const { repoId, commit, entries, conditions, branch } = value as Record<string, unknown>
   if (typeof repoId !== 'number' || !Number.isSafeInteger(repoId) || repoId <= 0
     || typeof commit !== 'string' || !/^[a-f\d]{40}$/u.test(commit)
-    || !Array.isArray(entries) || entries.length === 0 || entries.length > 100 || !entries.every(path)) return fail()
+    || !Array.isArray(entries) || entries.length === 0 || entries.length > 100 || !entries.every(path)
+    || (branch != null && !branchName(branch))) return fail()
   const selected = [...new Set(entries as string[])]
   const scripts = selected.every(isScript)
   if (!scripts && !selected.every(entry => entry.endsWith('.sol'))) return fail('unsupported-entries')
@@ -76,7 +90,7 @@ export function parseBundleBuild(value: unknown): BundleBuildInput {
     recorded = { preset: preset as BundleBuildConditions['preset'], conditions: [...new Set(names as string[])],
       platforms: options.platforms ?? [] }
   }
-  return { repoId, commit, entries: selected, directory: parts.join('/'), options, conditions: recorded }
+  return { repoId, commit, entries: selected, directory: parts.join('/'), options, conditions: recorded, ...(branchName(branch) && { branch }) }
 }
 
 // A package name as a filename base: `@scope/name` as `scope-name`, or as

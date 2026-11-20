@@ -722,7 +722,25 @@ test('entries stasis.config.json lists are selected alone, take no conditions, a
   assert.equal(calls.length, 0)
   page.toggleFile('other/index.js')
   await page.buildBundle()
-  assert.deepEqual(calls, [{ repoId: 1, commit, entries: ['src/main.ts', 'bin/cli.js'] }], 'no conditions for them')
+  assert.deepEqual(calls, [{ repoId: 1, commit, branch: 'main', entries: ['src/main.ts', 'bin/cli.js'] }], 'no conditions for them')
+})
+
+test('a commit picked by its branch names the branch to the build; one picked by a tag or a sha names none', async t => {
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(Response.json({ commit, entries: [{ name: 'entry.ts', type: 'file' }] })))
+  const page = new ManagedCreateBundle()
+  const calls = []
+  page.createBundle = input => { calls.push(input); return Promise.resolve({ id: 'stored' }) }
+  page.dispatchEvent = () => true
+  page._repoId = 1
+  for (const [kind, name] of [['branch', ' feature/x '], ['tag', 'v1.0.0'], ['commit', commit]]) {
+    page.changeRevision(kind, name)
+    await page.loadDirectory('')
+    page.toggleFile('entry.ts')
+    page._opening = false
+    await page.buildBundle()
+  }
+  assert.deepEqual(calls.map(call => [call.commit, Object.hasOwn(call, 'branch') ? call.branch : null]), [[commit, 'feature/x'], [commit, null], [commit, null]],
+    'the branch as typed, trimmed; none named for a tag or a sha')
 })
 
 test('an entry is the nearest listing stasis.config.json’s, and two files’ entries mix', async t => {

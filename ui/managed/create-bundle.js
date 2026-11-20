@@ -123,7 +123,10 @@ export class ManagedCreateBundle extends RepositoryBrowser {
     this._buildError = ''
     try {
       // Entries stasis.config.json lists take its options, and no conditions.
-      const bundle = await this.createBundle({ repoId: this._repoId, commit: this._commit,
+      // A commit picked by its branch names it, which Stasis asks first of
+      // whether the commit is the repository's own.
+      const branch = this._refKind === 'branch' ? this._refName.trim() : ''
+      const bundle = await this.createBundle({ repoId: this._repoId, commit: this._commit, ...(branch && { branch }),
         entries: [...this._selected], ...(config === null && { conditions: this._bundleConditions }) }, request.signal)
       if (!request.signal.aborted) {
         // Navigation replaces this form with the bundle as it opens it.
