@@ -17,7 +17,7 @@ import { ACTOR, type GraphAccount, actorOf } from './github-accounts.ts'
 import { GithubApiError } from './github-errors.ts'
 import { type GraphqlError, githubGraphql } from './github-graphql.ts'
 import { SHA, count, nameOf, timeOf } from './github-values.ts'
-import { touchesLockfile } from './pull-dependencies.ts'
+import { pullRefs, touchesLockfile } from './pull-dependencies.ts'
 import { ITEM_THREADS, type ReviewNode, TILE_THREADS, pullReviews, reviewFields, reviewsRefused } from './pull-reviews.ts'
 import type { Connection } from './repository-history.ts'
 
@@ -57,14 +57,14 @@ const pageQuery = (kind: IssuesKind, state: IssuesState) => `query($owner: Strin
     closed: ${connection[kind]}(states: ${states[kind].closed}) { totalCount }
     page: ${connection[kind]}(states: ${states[kind][state]}, first: ${ISSUES_PAGE}, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
-      nodes { ${fields[kind]}${kind === 'pulls' && state === 'open' ? ` baseRefOid headRefOid ${files} ${reviewFields(TILE_THREADS, false)}` : ''} }
+      nodes { ${fields[kind]}${kind === 'pulls' && state === 'open' ? ` baseRefOid headRefOid isCrossRepository ${files} ${reviewFields(TILE_THREADS, false)}` : ''} }
     }
   }
 }`
 
 type Node = ReviewNode & { number?: unknown; title?: unknown; createdAt?: unknown; updatedAt?: unknown; closedAt?: unknown; mergedAt?: unknown; author?: GraphAccount
   comments?: { totalCount?: unknown }; labels?: { totalCount?: unknown; nodes?: { name?: unknown; color?: unknown }[] }; state?: unknown; stateReason?: unknown
-  isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown; baseRefOid?: unknown
+  isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown; baseRefOid?: unknown; isCrossRepository?: unknown
   commits?: { nodes?: { commit?: { statusCheckRollup?: { state?: unknown } | null } | null }[] }
   files?: { totalCount?: unknown; nodes?: ({ path?: unknown } | null)[] } | null }
 type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }; page?: Connection<Node> } | null }
@@ -178,9 +178,12 @@ export async function repositoryItem(fullName: string, token: string, number: nu
 
 // An open pull request's base's and head's commits, by its number, as GitHub
 // has them now: those its REST API names `base.sha` and `head.sha`
-// (pull-dependencies.ts pullCommits). None where either isn't a commit's id.
-const commitsOf = (number: number, { baseRefOid: base, headRefOid: head }: Node) =>
-  typeof base === 'string' && SHA.test(base) && typeof head === 'string' && SHA.test(head) ? [{ number, base, head }] : []
+// (pull-dependencies.ts pullCommits), with the branches they are of
+// (pullRefs), its head's where it is no fork's. None where either isn't a
+// commit's id.
+const commitsOf = (number: number, { baseRefOid: base, headRefOid: head, baseRefName, headRefName, isCrossRepository }: Node) =>
+  typeof base === 'string' && SHA.test(base) && typeof head === 'string' && SHA.test(head)
+    ? [{ number, base, head, ...pullRefs(baseRefName, isCrossRepository === false ? headRefName : undefined) }] : []
 
 // The label the pull requests changing a repository's dependencies carry,
 // as Dependabot's do: where it has one, a team's Dependencies reads its open
@@ -229,15 +232,15 @@ export async function repositoryIssues(fullName: string, token: string, kind: Is
 // what its card there and its popup's heading tell (its number, title and
 // author, when it was opened and last updated, whether it is a draft), the
 // files by which whether it changes a lockfile is told, and its base's and
-// head's commits, by which what its lockfiles add is read. Nothing else a
-// tile shows (its labels, comments, size, branches, checks, reviews, threads
-// and comments), which GitHub is slow enough to gather for fifty of a large
-// repository's to fail the page.
+// head's commits, by which what its lockfiles add is read, with the branches
+// they are of (commitsOf). Nothing else a tile shows (its labels, comments,
+// size, checks, reviews, threads and comments), which GitHub is slow enough
+// to gather for fifty of a large repository's to fail the page.
 const openPullsQuery = (labelled: boolean) => `query($owner: String!, $name: String!, $first: Int!, $after: String${labelled ? ', $labels: [String!]' : ''}) {
   repository(owner: $owner, name: $name) {
     page: pullRequests(states: [OPEN], first: $first, after: $after, ${labelled ? 'labels: $labels, ' : ''}orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
-      nodes { number title createdAt updatedAt author { ${ACTOR} } state isDraft baseRefOid headRefOid ${files} }
+      nodes { number title createdAt updatedAt author { ${ACTOR} } state isDraft baseRefOid headRefOid baseRefName headRefName isCrossRepository ${files} }
     }
   }
 }`

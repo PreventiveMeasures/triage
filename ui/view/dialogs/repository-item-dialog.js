@@ -17,7 +17,7 @@ import { fetchRepositoryItem } from '../client-managed.js'
 import { flowText } from '../format.js'
 import { renderHighlighted } from '../render-finding.js'
 import { CHECKS, COMMENT_ICON, PACKAGE_ICON, REVIEWS, STATE_ICONS, agentIcon, agentName, branchOnGithub, issueState, sessionOnGithub, sessionRan } from '../repository-tiles.js'
-import { pullDependencies, readsDependencies, reviewFailures, reviewOf, subscribePullDependencies, unreviewedVersions } from '../pull-dependencies.js'
+import { UNSUPPORTED_WHY, isPending, pullDependencies, readsDependencies, reviewFailures, reviewOf, subscribePullDependencies, unreviewedVersions } from '../pull-dependencies.js'
 import '../npm-delta.js'
 import '../dependency-review-copy.js'
 import { managedRoutePath } from '../../../common/managed/routes.js'
@@ -38,8 +38,6 @@ const external = (href, label, primary = false) => href
 // Where a package version new to a lockfile is from, but npm's registry, and
 // why a directory's lockfiles couldn't tell what they add.
 const SOURCES = { mirror: 'mirror', git: 'git', tarball: 'tarball', file: 'file' }
-const UNSUPPORTED = { git: 'From git, which isn’t reviewed', tarball: 'A tarball not npm’s registry’s of its version, which isn’t reviewed',
-  integrity: 'Locked with no integrity, which its reviews are held to' }
 const LOCKFILE_ERRORS = { 'lockfile-unreadable': 'A lockfile here couldn’t be read', 'lockfile-unsupported': 'Bun’s lockfile here isn’t read', 'github-not-found': 'GitHub has none of a lockfile here at a commit compared' }
 
 // Each issue or pull request a popup read, by the session, the repository
@@ -192,7 +190,9 @@ class RepositoryItemDialog extends AppDialog {
   // Each directory's lockfiles and the package versions new to them, those of
   // packages new to them first, or why they couldn't tell; that none is,
   // where none is; and where lockfiles were left unread, it changing more
-  // files or directories than are read. Where its review is in effect, its
+  // files or directories than are read. A stasis.config.json its review
+  // holds to is one too, of what its entries reach, or that Stasis still
+  // works it out. Where its review is in effect, its
   // terms first, then what fails it, where anything does, and the other
   // versions its lockfiles lock wanting reviews last, apart, where any does.
   renderAdded(entry) {
@@ -203,7 +203,9 @@ class RepositoryItemDialog extends AppDialog {
       ${told.length === 0 && lockfiles.length > 0 ? html`<p class="repo-item-quiet">None: every version its lockfiles lock, they locked before.</p>` : nothing}
       ${told.map(dir => html`<div class="repo-item-lockfiles">
         <p>${dir.paths.map((path, at) => html`${at > 0 ? ', ' : ''}<code>${path}</code>`)}</p>
-        ${dir.error ? html`<p class="repo-item-quiet" role="alert">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
+        ${isPending(dir) ? html`<p class="repo-item-quiet" role="status">Stasis is still working out what its entries reach, which can take a few minutes. It is asked again as it does.</p>`
+          : dir.error === 'stasis-failed' ? html`<p class="repo-item-quiet" role="alert">Stasis couldn’t work out what its entries reach (${dir.detail ?? 'build-failed'}).</p>`
+          : dir.error ? html`<p class="repo-item-quiet" role="alert">${LOCKFILE_ERRORS[dir.error] ?? 'These lockfiles couldn’t be read'}${dir.detail ? `: ${dir.detail}` : '.'}</p>`
           : html`<ul>${dir.added.toSorted((a, b) => Number(Boolean(a.was)) - Number(Boolean(b.was))).map(pkg => html`<li>${this.renderPackage(pkg, review, false, entry.head)}</li>`)}</ul>
             ${dir.more > 0 ? html`<p class="repo-item-quiet">and ${dir.more.toLocaleString('en-US')} more</p>` : nothing}`}
       </div>`)}
@@ -296,7 +298,7 @@ class RepositoryItemDialog extends AppDialog {
   // dependencies; passed, with how many reviews; or wanting them.
   renderReview(pkg, review) {
     const state = reviewOf(pkg, review)
-    if (state === 'unsupported') return html`<span class="repo-item-review is-failed" data-tooltip=${UNSUPPORTED[pkg.unsupported]}>can’t review</span>`
+    if (state === 'unsupported') return html`<span class="repo-item-review is-failed" data-tooltip=${UNSUPPORTED_WHY[pkg.unsupported]}>can’t review</span>`
     if (pkg.reviewed && state === 'passed') {
       return html`<span class="repo-item-review is-passed" data-tooltip="The server’s reviewed dependencies pass it">${CHECKS.success[1]}reviewed</span>`
     }

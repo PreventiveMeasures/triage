@@ -72,17 +72,19 @@ export async function selectRepository(repoId, selected, csrfToken) {
 export async function setRepositoryDependencyReview(repoId, { enabled, required, since, lockfiles }, csrfToken) {
   const res = await postJson('/api/admin/repositories/dependency-review', csrfToken, { repoId, enabled, required, since, ...lockfiles ? { lockfiles } : {} })
   if (!res.ok) {
-    throw new Error(res.status === 400 ? 'Enter 1 to 10 required reviews, the commit as its full 40-character id, and at most 100 lockfiles by their paths in the repository.'
+    throw new Error(res.status === 400 ? 'Enter 1 to 10 required reviews, the commit as its full 40-character id, and at most 100 lockfiles by their paths in the repository; a stasis.config.json only among those reviewed alone.'
       : `HTTP ${res.status}`)
   }
   return (await res.json()).dependencyReview
 }
 
 // The lockfiles of a repository's default branch its dependency review
-// reads, by their paths, for its settings to name.
+// reads (`paths`), and its stasis.config.json files, which it may hold to in
+// their place (`configs`), by their paths, for its settings to name.
 export async function fetchRepositoryLockfiles(repoId, signal) {
   const body = await readJson(`/api/admin/repositories/lockfiles?repoId=${encodeURIComponent(repoId)}`, signal)
-  return Array.isArray(body?.lockfiles) ? body.lockfiles.flatMap(one => typeof one?.path === 'string' ? [one.path] : []) : []
+  return { paths: Array.isArray(body?.lockfiles) ? body.lockfiles.flatMap(one => typeof one?.path === 'string' ? [one.path] : []) : [],
+    configs: Array.isArray(body?.configs) ? body.configs.filter(path => typeof path === 'string') : [] }
 }
 
 export async function addPublicRepository(repository, csrfToken) {

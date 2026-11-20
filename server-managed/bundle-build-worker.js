@@ -2,8 +2,10 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { Buffer } from 'node:buffer'
 import { posix } from 'node:path'
 import { brotliCompressSync } from 'node:zlib'
+import { isEvidenceFile } from '@exodus/stasis/audit-corrections'
 import { buildGitHubBundle, setCacheDir } from '@exodus/stasis/vfs-bundle'
 import { brotliOptions } from '@exodus/stasis-core/brotli'
+import { LOCK_FILE, dependencyEcosystem, integrityHex } from '@exodus/stasis-core/util'
 import { HttpError, createClient } from '@preventive/upstream/github.js'
 import { githubBundleFilename } from './bundle-build.ts'
 import { bundleBuildDiagnostic } from './bundle-build-diagnostics.js'
@@ -104,11 +106,10 @@ async function packageName(input, github, project, bundle, client) {
   return typeof name === 'string' ? name : null
 }
 
-// `note` is told what the build log keeps of a build beside its stages: the
-// directory Stasis builds from (`project`), and each tree it downloads of the
-// repo (`download`), the whole repo's or a directory's, and its bytes.
-export async function buildStasisBundle({ input, github, token, maxBytes, scopes, cacheDir = null }, client = createClient({ token }), progress = () => {}, note = () => {}) {
-  const allowed = path => scopes.some(scope => !scope || path === scope || path.startsWith(scope + '/'))
+// `client` as a build reads the repo with it: each directory's listing read
+// once, and each tree it downloads of the repo noted (`download`), the whole
+// repo's or a directory's, and its bytes.
+function buildClientOf(client, note) {
   // Reuse these immutable listings when Stasis discovers the lockfile root.
   const listings = new Map()
   const downloaded = (tree, read) => async options => {
@@ -116,12 +117,20 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
     note('download', { tree, bytes: bytes.length })
     return bytes
   }
-  const buildClient = { ...client, listRepoDir(options) {
+  return { ...client, listRepoDir(options) {
     const key = JSON.stringify([options.repo, options.sha, options.directory ?? ''])
     if (!listings.has(key)) listings.set(key, client.listRepoDir(options))
     return listings.get(key)
   }, getRepoTarball: downloaded('repo', options => client.getRepoTarball(options)),
   getRepoTreeTarball: downloaded('directory', options => client.getRepoTreeTarball(options)) }
+}
+
+// `note` is told what the build log keeps of a build beside its stages: the
+// directory Stasis builds from (`project`), and each tree it downloads of the
+// repo (`download`, buildClientOf).
+export async function buildStasisBundle({ input, github, token, maxBytes, scopes, cacheDir = null }, client = createClient({ token }), progress = () => {}, note = () => {}) {
+  const allowed = path => scopes.some(scope => !scope || path === scope || path.startsWith(scope + '/'))
+  const buildClient = buildClientOf(client, note)
   // Upstream's disk cache keeps the npm tarballs and version documents, and
   // the repo's tree, in `cacheDir`; without one (Vercel), nothing is kept on
   // disk. This fresh worker inherits no application credentials but NPM_TOKEN.
@@ -172,6 +181,45 @@ export async function buildStasisBundle({ input, github, token, maxBytes, scopes
   if (bytes.length > maxBytes) throw new Error('too-large')
   const name = await packageName(input, github, project, bundle, buildClient)
   return { bytes, directory, filename: githubBundleFilename(github, project, input.commit, name) }
+}
+
+// The npm package versions a Stasis lockfile holds code of (an evidence
+// file, by Stasis's audit rule), each once as it was installed: with its
+// tarball's integrity and, patched, pnpm's hash of its patch (a sha256 in
+// hex, as pnpm's lockfile names it), where the lockfile attests them.
+export function lockfileDependencies(lockfile) {
+  const found = new Map()
+  for (const [dir, info] of lockfile.modules) {
+    const { name, version } = info
+    if (dir === '.' || dependencyEcosystem(dir, info.ecosystem) !== 'npm' || typeof name !== 'string' || !name || typeof version !== 'string' || !version) continue
+    if (!Object.keys(info.files).some(file => isEvidenceFile(name, version, file, 'npm'))) continue
+    const patch = typeof info.patch?.integrity === 'string' ? integrityHex(info.patch.integrity) : undefined
+    const one = { name, version, ...(typeof info.integrity === 'string' && { integrity: info.integrity }), ...(patch && { patch }) }
+    found.set(`${name}\0${version}\0${one.integrity ?? ''}\0${patch ?? ''}`, one)
+  }
+  return [...found].toSorted(([a], [b]) => a < b ? -1 : 1).map(([, one]) => one)
+}
+
+// What the stasis.config.json at `input.config` has Stasis reach at
+// `input.commit`, for the repository's dependency review
+// (stasis-dependencies.ts): the npm versions of the lockfile it builds in
+// its directory, as `stasis github-bundle --lockfile-only` does, no bundle
+// serialized; none of a commit with no file there.
+export async function buildStasisLockfile({ input, github, token, cacheDir = null }, client = createClient({ token }), progress = () => {}, note = () => {}) {
+  const buildClient = buildClientOf(client, note)
+  setCacheDir(cacheDir ?? false)
+  progress('build')
+  const directory = parentOf(input.config)
+  const configText = configReader(input, github, buildClient)
+  if (await configText(directory) === null) return []
+  // One Stasis can't tell the entries of is config-invalid before anything is fetched.
+  await directoryConfig(configText, directory)
+  note('project', { project: directory, configured: true })
+  const { lockfile } = await buildGitHubBundle({ github, sha: input.commit, ...(input.branch !== undefined && { branch: input.branch }), directory: directory || undefined, lockfile: LOCK_FILE, client: buildClient,
+    ...(cacheDir === null && { cache: false }) })
+  progress('lockfile')
+  if (!lockfile) throw new Error('Stasis built no lockfile of these entries')
+  return lockfileDependencies(lockfile)
 }
 
 // The code a failed build answers with. Never upstream bodies or paths outside
@@ -237,13 +285,18 @@ if (parentPort && workerData?.type === 'managed-bundle-build') {
   }
   const reporting = setInterval(() => send({ type: 'memory', memory: memoryOf() }), MEMORY_EVERY_MS)
   reporting.unref()
+  const progress = stage => send({ type: 'progress', stage, memory: memoryOf() })
+  const note = (event, details) => send({ type: 'note', event, details })
   try {
-    const built = await buildStasisBundle(workerData, undefined, stage => send({ type: 'progress', stage, memory: memoryOf() }),
-      (event, details) => send({ type: 'note', event, details }))
-    // The bytes handed over rather than copied, where they alone fill their
-    // buffer (a small one may share Node's pool, which can't be moved).
-    const { bytes } = built
-    send(built, bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? [bytes.buffer] : [])
+    // A lockfile's dependencies in place of a bundle, where they are asked for (`lockfileOnly`).
+    if (workerData.lockfileOnly) send({ dependencies: await buildStasisLockfile(workerData, undefined, progress, note) })
+    else {
+      const built = await buildStasisBundle(workerData, undefined, progress, note)
+      // The bytes handed over rather than copied, where they alone fill their
+      // buffer (a small one may share Node's pool, which can't be moved).
+      const { bytes } = built
+      send(built, bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? [bytes.buffer] : [])
+    }
   } catch (error) {
     const diagnostic = bundleBuildDiagnostic(error, workerData.token)
     const code = buildErrorCode(error, diagnostic.message)

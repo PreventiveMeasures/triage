@@ -2055,6 +2055,12 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 .team-deps-also { flex: none; color: var(--muted); font-size: .7rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* A version pnpm patches, reviewed as patched. */
 .team-deps-patched { flex: none; color: var(--muted); font-size: .66rem; line-height: 1.5; white-space: nowrap; }
+/* One its package manager alone asks for, the stasis.config.json beside its
+   lockfile reaching it not: an exclamation mark, in a disc. */
+.team-deps-unreached {
+  flex: none; width: .95rem; height: .95rem; border-radius: 50%; background: color-mix(in srgb, var(--yellow) 22%, transparent);
+  color: var(--yellow); font-size: .66rem; font-weight: 700; line-height: .95rem; text-align: center;
+}
 /* A version's details, its row's tooltip: its name and version whole, the
    pull request it is listed under marked among those adding it. */
 .team-deps-tip-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
@@ -4086,6 +4092,7 @@ body:is(.theme-light, .theme-pink, .theme-w95, .theme-paper) :is(repository-issu
   .issue-deps-names + & { margin-left: auto; }
   &.is-failed { color: var(--critical); }
   &.is-wanted { color: var(--medium); }
+  &.is-pending { color: var(--muted); }
   &.is-passed { display: inline-flex; color: var(--green); }
   & svg { color: inherit; }
 }

@@ -6,6 +6,11 @@
 // request's lockfiles (pull-dependencies.ts) is reviewed where one of its
 // lockfiles is held to; one none of whose are, not at all (`excluded`), nor
 // failing the review where it couldn't be read.
+// Among those it names alone (`include`), a stasis.config.json too: it
+// holds its review to the versions its entries reach (stasis-dependencies.ts).
+import { isStasisConfig } from '../common/managed/stasis-config.ts'
+
+export { isStasisConfig }
 export interface LockfileScope { mode: 'exclude' | 'include'; paths: string[] }
 export const EVERY_LOCKFILE: LockfileScope = { mode: 'exclude', paths: [] }
 const MAX_SCOPED_LOCKFILES = 100
@@ -22,10 +27,11 @@ function namedPath(path: unknown): path is string {
 }
 
 // A scope as a request sends it, each path once, in order; null for one
-// that isn't one.
+// that isn't one, as one leaving a stasis.config.json out isn't.
 export function scopeOf(value: unknown): LockfileScope | null {
   const { mode, paths } = (value ?? {}) as { mode?: unknown; paths?: unknown }
   if ((mode !== 'exclude' && mode !== 'include') || !Array.isArray(paths) || paths.length > MAX_SCOPED_LOCKFILES || !paths.every(namedPath)) return null
+  if (mode === 'exclude' && (paths as string[]).some(isStasisConfig)) return null
   return { mode, paths: [...new Set(paths as string[])].toSorted() }
 }
 
@@ -47,3 +53,6 @@ export function heldTo(scope: LockfileScope, path: string) {
 // Whether a directory of lockfiles at `paths` is reviewed: where one is
 // held to, or it names none.
 export const reviewedIn = (scope: LockfileScope, paths: string[]) => paths.length === 0 || paths.some(path => heldTo(scope, path))
+// The stasis.config.json files `scope` holds to, by their paths: those it
+// names alone.
+export const stasisConfigs = (scope: LockfileScope) => scope.mode === 'include' ? scope.paths.filter(isStasisConfig) : []

@@ -237,3 +237,8 @@ export const patchStore = (db: UpstreamCacheStore, debug = false): KeptStore<Kep
 // what its reader could check and the rules they were made by: kept a month
 // after they were made, as what they check never changes.
 export const bundleValidationStore = <T>(db: UpstreamCacheStore, debug = false): KeptStore<T> => keptStore<T>(db, 'bundles/validations', HISTORY_PAGE_KEPT_MS, debug)
+// What a repository's stasis.config.json has Stasis reach at a commit
+// (stasis-dependencies.ts): the versions, never the lockfile, by the
+// repository, the commit and the file's path, kept as its history's pages are.
+export const stasisDependencyStore = (db: UpstreamCacheStore, debug = false): KeptStore<unknown> =>
+  keptStore<unknown>(db, 'repository/stasis-dependencies', HISTORY_PAGE_KEPT_MS, debug)

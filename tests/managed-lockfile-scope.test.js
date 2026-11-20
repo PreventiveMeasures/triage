@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
-import { EVERY_LOCKFILE, heldTo, reviewedIn, scopeOf, scopeText, storedScope } from '../server-managed/lockfile-scope.ts'
+import { EVERY_LOCKFILE, heldTo, isStasisConfig, reviewedIn, scopeOf, scopeText, stasisConfigs, storedScope } from '../server-managed/lockfile-scope.ts'
 import { heldDependencies, reviewedDependencies } from '../server-managed/pull-dependency-reviews.ts'
 import { checked, reviewFailures } from '../ui/view/pull-dependencies.js'
 
@@ -28,6 +28,23 @@ test('a scope names lockfiles by their paths, or a directory\'s ending in /, eac
   assert.deepEqual([heldTo(only, 'web/package-lock.json'), heldTo(only, 'package-lock.json')], [true, false])
   assert.deepEqual([reviewedIn(only, ['package-lock.json', 'web/pnpm-lock.yaml']), reviewedIn(only, ['package-lock.json']), reviewedIn(only, [])], [true, false, true],
     'a directory with one it holds to is reviewed whole')
+})
+
+test('a scope names a stasis.config.json among those it holds to alone, by its path: no lockfile, so one left out is none', () => {
+  const only = { mode: 'include', paths: ['apps/wallet/stasis.config.json', 'package-lock.json', 'stasis.config.json', 'web/'] }
+  assert.deepEqual(scopeOf({ mode: 'include', paths: only.paths.toReversed() }), only)
+  assert.deepEqual(stasisConfigs(only), ['apps/wallet/stasis.config.json', 'stasis.config.json'])
+  assert.deepEqual(storedScope(scopeText(only)), only)
+  assert.equal(scopeOf({ mode: 'exclude', paths: ['docs/', 'apps/wallet/stasis.config.json'] }), null, 'one left out would leave nothing out')
+  assert.deepEqual(storedScope('{"mode":"exclude","paths":["stasis.config.json"]}'), EVERY_LOCKFILE, 'nor is one stored so read')
+  assert.deepEqual(stasisConfigs({ mode: 'exclude', paths: ['docs/'] }), [])
+  assert.deepEqual(stasisConfigs(EVERY_LOCKFILE), [])
+  assert.deepEqual(['stasis.config.json', 'a/b/stasis.config.json', 'a/stasis.config.json/', 'a/my-stasis.config.json', 'a/stasis.config.json.bak', 'node_modules/x/stasis.config.json',
+    'a/node_modules/x/stasis.config.json'].map(isStasisConfig), [true, true, false, false, false, false, false], 'a file of that name, none of a package installed')
+  // It holds to no lockfile: a directory of them is reviewed by those named beside it alone.
+  assert.deepEqual([heldTo(only, 'apps/wallet/pnpm-lock.yaml'), heldTo(only, 'package-lock.json'), heldTo(only, 'web/yarn.lock')], [false, true, true])
+  assert.equal(reviewedIn({ mode: 'include', paths: ['stasis.config.json'] }, ['package-lock.json']), false)
+  assert.equal(reviewedIn(only, ['apps/wallet/stasis.config.json']), true, 'its own directory of dependencies, told by its path, is')
 })
 
 const sri = text => `sha512-${createHash('sha512').update(text).digest('base64')}`

@@ -159,7 +159,8 @@ test('a repository\'s dependency review holds to every lockfile, all but those s
   t.mock.method(globalThis, 'fetch', (url, init) => {
     asked.push([url, init?.body ? JSON.parse(init.body) : null])
     if (String(url).startsWith('/api/admin/repositories/lockfiles')) {
-      return Promise.resolve(Response.json({ head: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'examples/app/yarn.lock', format: 'yarn' }] }))
+      return Promise.resolve(Response.json({ head: 'a'.repeat(40), lockfiles: [{ path: 'package-lock.json', format: 'npm' }, { path: 'examples/app/yarn.lock', format: 'yarn' }],
+        configs: ['apps/wallet/stasis.config.json'] }))
     }
     const { enabled, required, since, lockfiles } = JSON.parse(init.body)
     return Promise.resolve(Response.json({ ok: true, dependencyReview: { enabled, required, since, lockfiles } }))
@@ -181,10 +182,28 @@ test('a repository\'s dependency review holds to every lockfile, all but those s
   assert.deepEqual(listed, [['docs/', 'true', 'every lockfile under it'], ['examples/app/yarn.lock', 'false', null], ['package-lock.json', 'false', null]])
   assert.doesNotMatch(text, /listed, but not reviewed/u)
   assert.match(text, /<button type="submit" class="btn" \?disabled=false>Save<\/button>/u, 'changed, to save')
+  assert.doesNotMatch(text, /stasis\.config\.json/u, 'a stasis.config.json is no lockfile to leave out: none offered there')
 
-  await page._saveDependencyReview(on, page._reviewSetting(true, 1, null, { mode: 'include', paths: ['package-lock.json'] }))
-  assert.deepEqual(asked.at(-1), ['/api/admin/repositories/dependency-review', { repoId: 7, enabled: true, required: 1, since: null, lockfiles: { mode: 'include', paths: ['package-lock.json'] } }])
-  assert.deepEqual(page._detail.dependencyReview.lockfiles, { mode: 'include', paths: ['package-lock.json'] })
+  // Among those reviewed alone, its stasis.config.json files too, each by what its entries reach.
+  const rows = () => [...templateText(page._dependencyReviewSection(on)).matchAll(/<input type="checkbox" \.checked=(true|false)[^]*?<code>([^<]+)<\/code>(?:<span>([^<]+)<\/span>)?/gu)]
+    .map(m => [m[2], m[1], m[3] ?? null])
+  page._reviewDraft = { scope: { mode: 'include', paths: ['old/stasis.config.json'] } }
+  assert.deepEqual(rows(), [['apps/wallet/stasis.config.json', 'false', null], ['examples/app/yarn.lock', 'false', null],
+    ['old/stasis.config.json', 'true', 'not on the default branch'], ['package-lock.json', 'false', null]])
+  text = templateText(page._dependencyReviewSection(on))
+  assert.match(text, /A <code>stasis\.config\.json<\/code> holds the review to the versions its entries reach[^]*can take minutes/u, 'told once one is selected')
+  assert.match(text, /Another lockfile, a directory ending in \/, or a stasis\.config\.json/u)
+  // Left out instead: those named among them dropped, none sent.
+  const select = templateText(page._dependencyReviewSection(on))
+  assert.match(select, /aria-label="Lockfiles reviewed" \.value=include /u)
+  page._lockfileScope(on, { ...page._reviewDraft, adding: '', scope: { mode: 'include', paths: ['old/stasis.config.json', 'package-lock.json'] } }, false)
+    .values.find(value => typeof value === 'function')({ target: { value: 'exclude' } })
+  assert.deepEqual(page._reviewDraft.scope, { mode: 'exclude', paths: ['package-lock.json'] })
+
+  await page._saveDependencyReview(on, page._reviewSetting(true, 1, null, { mode: 'include', paths: ['apps/wallet/stasis.config.json', 'package-lock.json'] }))
+  assert.deepEqual(asked.at(-1), ['/api/admin/repositories/dependency-review', { repoId: 7, enabled: true, required: 1, since: null,
+    lockfiles: { mode: 'include', paths: ['apps/wallet/stasis.config.json', 'package-lock.json'] } }])
+  assert.deepEqual(page._detail.dependencyReview.lockfiles, { mode: 'include', paths: ['apps/wallet/stasis.config.json', 'package-lock.json'] })
   text = templateText(page._dependencyReviewSection(page._detail))
   assert.match(text, /aria-label="Lockfiles reviewed" \.value=include /u, 'as saved')
 })

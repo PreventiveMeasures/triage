@@ -44,6 +44,11 @@ export interface LockedPackage {
   // pnpm's lockfiles. Yarn 1's says nothing of it, which only the
   // package.json files do, and none of its are.
   dev?: true
+  // A version a Stasis build holds that no lockfile read locks, which can't
+  // be reviewed (`unlocked`); and a lockfile's that the stasis.config.json
+  // beside it reaches not (`unreached`, stasis-dependencies.ts withReach).
+  unlocked?: true
+  unreached?: true
 }
 
 // A package as each reader resolves one, its name the one it is published

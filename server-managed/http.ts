@@ -55,7 +55,7 @@
 //        { pulls }, one GitHub fails told { number, error } | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/branch-dependencies?repoId= → the versions the default branch's lockfiles lock that want review, where
 //        its review is in effect for the reader, GitHub not asked where it reviews none | 400/401/403/404/409/429/502
-//   GET /api/admin/repositories/lockfiles?repoId= → the lockfiles of the default branch its dependency review reads, by their
+//   GET /api/admin/repositories/lockfiles?repoId= → the lockfiles of the default branch its dependency review reads, and its stasis.config.json files, by their
 //        paths, for its settings to name | 400/401/403/404/409/429/502
 //   GET /api/admin/repositories/pulse?repoId=&weeks=1|4|13|52 → the default branch's commits and lines a week and a day over
 //        the last year, its contributors and when in the period they commit, counted from its commits as Commits keeps them (how many are
@@ -149,7 +149,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { type KeptStore, REPOSITORY_READ_KEPT_MS, authoredCommitStore, branchTipStore, bundleValidationStore, codeHeadStore, codeTreeStore, commitPullStore, githubTagStore, historyChangeStore, historyPageStore, historySquashStore, historyTreeStore,
   issueListStore, lockfileReadStore,
   npmDeltaStore, npmPublishTimeStore, npmVersionStore, ownKeptPrunes, patchStore, pullDependencyStore, pullListStore, repositoryReadStore, reviewBaselineStore, riskLineStore,
-  scanReadStore } from './npm-kept.ts'
+  scanReadStore, stasisDependencyStore } from './npm-kept.ts'
 import { plainObject } from './npm-manifest.ts'
 import { type NpmDelta, deltaKey, keptNpmDeltas, npmDelta } from './npm-delta.ts'
 import { ADVISORIES_TIMEOUT_MS, fetchBundleAdvisories } from './bundle-advisories.ts'
@@ -226,12 +226,12 @@ import { teamAppKey, teamAppStates, withWorkspaceSummary } from './team-app.ts'
 import { hashToken, randomToken, safeEqual } from './crypto.ts'
 import { canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
 import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
-import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
+import { BundleBuildError, buildRepositoryBundle, buildRepositoryLockfile, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, VERSION_KEPT_MS, canReadPrivateNpm, npmFileRows, npmPublishTime, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
 import { type ReadPatch, type RequestedPatch, patchedFiles, readPatch, requestedPatch, withPatchFiles } from './npm-patch.ts'
 import { type RepositoryCodeKept, loadRepositoryCodeBody, repositoryCodeFits, repositoryCodeKept } from './repository-code.ts'
-import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
+import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges, repositoryTree } from './repository-changes.ts'
 import { COAUTHORS_READ, coauthorsOf } from './commit-coauthors.ts'
 import { type AllHeads, type HistoryCommit, type HistoryPages, MAX_HISTORY_PAGE, historyFrom, historyStarts, openPullHeads,
   repositoryAllHeads, repositoryAllHistory, repositoryHistory, repositoryRefTips } from './repository-history.ts'
@@ -239,11 +239,12 @@ import { type KnownMerges, type SquashedPull, type Squashes, squashedPulls } fro
 import { AGENTS_READ_VERSION, type AuthoredCommit, type BranchTip, type BranchTips, COMMITS_CURSOR, type CommitPulls, repositoryAgents } from './repository-agents.ts'
 import { DEPENDENCIES_LABEL, ISSUES_CURSOR, ISSUES_READ_VERSION, OPEN_PULLS_READ, OPEN_PULLS_SIZES, repositoryIssues, repositoryItem, repositoryLabel, repositoryOpenPulls } from './repository-issues.ts'
 import { type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits, type PullDependencies,
-  type PullDependencyStore, lockfileFormat, pullDependenciesAt } from './pull-dependencies.ts'
+  type PullDependencyStore, type PullRefs, lockfileFormat, pullDependenciesAt, pullRefs } from './pull-dependencies.ts'
 import { eachOf } from './queue.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, type PublishedReview, type RepoDependencyReview } from './repository-dependency-reviews.ts'
-import { EVERY_LOCKFILE, heldTo, reviewedIn, scopeOf } from './lockfile-scope.ts'
+import { EVERY_LOCKFILE, type LockfileScope, heldTo, isStasisConfig, reviewedIn, scopeOf, stasisConfigs } from './lockfile-scope.ts'
+import { type StasisDependencyReader, stasisDependencyReader, stasisDirectory, withReach } from './stasis-dependencies.ts'
 import { type BundledVersion, bundleDependencies, installsBundle } from './bundle-dependency-reviews.ts'
 import { type CommentReviews, type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import { formattedPull, withFormatted } from './dependency-review-comments.ts'
@@ -2007,15 +2008,20 @@ async function handleRepositoryChanges(res: ServerResponse, deps: ManagedHttpDep
 async function handleRepositoryTree(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const commit = query.get('commit') ?? ''
   if (!SHA.test(commit)) { sendJson(res, 400, { error: 'bad-request' }); return }
-  const store = historyTreeStore<CommitTree>(deps.db, deps.config.debug)
   await readForReplay(res, deps, cookie, query, async (fullName, token, repoId, path) => {
-    const kept = { read: async (sha: string) => {
-      const value = (await store.read(`${repoId}\0${TREES_READ}\0${sha}`))?.value
-      return value && Array.isArray(value.files) && Array.isArray(value.sizes) && value.sizes.length === value.files.length ? value : null
-    }, write: (sha: string, tree: CommitTree) => store.write(`${repoId}\0${TREES_READ}\0${sha}`, tree, Date.now()) }
-    const tree = await directoryFiles(fullName, token, commit, path, kept)
+    const tree = await directoryFiles(fullName, token, commit, path, commitTreeKept(deps, repoId))
     return { commit, path, ...tree ?? { files: null, sizes: null, cut: false } }
   })
+}
+
+// The files repository `repoId`'s commits hold, each kept whole by the commit
+// and the rules it is read by (historyTreeStore, TREES_READ).
+function commitTreeKept(deps: ManagedHttpDeps, repoId: number) {
+  const store = historyTreeStore<CommitTree>(deps.db, deps.config.debug)
+  return { read: async (sha: string) => {
+    const value = (await store.read(`${repoId}\0${TREES_READ}\0${sha}`))?.value
+    return value && Array.isArray(value.files) && Array.isArray(value.sizes) && value.sizes.length === value.files.length ? value : null
+  }, write: (sha: string, tree: CommitTree) => store.write(`${repoId}\0${TREES_READ}\0${sha}`, tree, Date.now()) }
 }
 
 // What Replay reads of repository `repoId` within `path` (`read`, with its
@@ -2575,11 +2581,12 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   commits?: PullCommits) {
   const kept = pullDependencyKept(deps, repoId)
   const reading: { told?: PullDependencies } = {}
-  const answered = commits ? { value: { commits: `${commits.base}...${commits.head}` }, kept: true }
+  // With the branches they are of, where told, kept with them.
+  const answered = commits ? { value: { baseRef: commits.baseRef, headRef: commits.headRef, commits: `${commits.base}...${commits.head}` }, kept: true }
     : await keptAnswer(deps, `${repoId}\0pull-commits\0${PULL_DEPENDENCIES_READ}\0${number}`, async () => {
-      const read = await pullDependenciesAt(fullName, token, number, kept)
-      reading.told = read.told
-      return { commits: read.commits }
+      const { told, ...read } = await pullDependenciesAt(fullName, token, number, kept)
+      reading.told = told
+      return read
     }, undefined, false, stampOf(deps, repoId, fullName, token))
   // What its commits tell, as read, else as kept by them, else, no longer
   // kept, read again: by those given, without asking GitHub for them.
@@ -2588,7 +2595,13 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   // Where its review is on, those of lockfiles it leaves out told to none,
   // whoever asks.
   const setting = await deps.db.repoDependencyReview(repoId)
-  const scoped = setting?.enabled ? heldDependencies(pulled, setting.lockfiles) : pulled
+  // With what the stasis.config.json files it holds to reach, each a
+  // directory of its own, none waited for; a lockfile's versions those reach
+  // not marked as its package manager's alone (withReach).
+  const asked: GithubAsked = { github: false }
+  const scoped = setting?.enabled ? withReach(heldDependencies({ ...pulled, lockfiles: [...pulled.lockfiles,
+    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, pulled.base, pulled.head, asked, pullRefs(answered.value.baseRef, answered.value.headRef))] },
+  setting.lockfiles)) : pulled
   const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(scoped)) : null
   // Its review by the lockfiles they were told by, though they have changed
   // since; turned off meanwhile, all of them, as where it is off.
@@ -2609,14 +2622,44 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
     return read
   })
   // Each patch its lockfiles name by its hash alone with its file (npm-patch.ts), where its review is in effect.
-  const asked: GithubAsked = { github: false }
   const patched = state ? await withPatchFiles(told, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked) : told
   const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting })
   // The comment the host formats of the reader's reviews of its versions, for
   // its copy button, but those its comments make of theirs already.
   const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented)
   return { value: { number: told.number, ...dependencies, ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null && !asked.github }
+}
 
+// What the stasis.config.json files repository `repoId`'s review holds to
+// (`scope`) have Stasis reach, each a directory of dependencies by its own
+// path (stasis-dependencies.ts stasisDirectory): at `head`, against `base`
+// where one is given. None is waited for: one not built yet is built behind
+// the answer (stasisReader), told the branch its commit is of where `refs`
+// names it, a pull request's head's, or its base's, which holds `base`.
+function stasisDirectories(deps: ManagedHttpDeps, fullName: string, token: string, repoId: number, scope: LockfileScope, base: string | null, head: string,
+  asked: GithubAsked, refs: PullRefs = {}) {
+  const reader = stasisReader(deps), reads = lockfileKept(deps, repoId)
+  return Promise.all(stasisConfigs(scope).map(config => stasisDirectory(config, base, head,
+    commit => reader.read({ repoId, fullName }, token, commit, config, commit === head ? refs.headRef : refs.baseRef),
+    (commit, held) => lockedAt(fullName, token, commit, reads, held, asked))))
+}
+
+// What reads repositories' Stasis dependencies, one a database: kept by it,
+// each built in the build worker under the deployment's lease
+// (buildRepositoryLockfile), behind the answer asking for it (trackBehind).
+const stasisReaders = new WeakMap<ManagedDb, StasisDependencyReader>()
+function stasisReader(deps: ManagedHttpDeps): StasisDependencyReader {
+  let reader = stasisReaders.get(deps.db)
+  if (!reader) {
+    reader = stasisDependencyReader({
+      store: stasisDependencyStore(deps.db, deps.config.debug),
+      build: (input, github, token, signal) => buildRepositoryLockfile(deps.db, { input, github, token, cacheDir: deps.config.upstreamCacheDir ?? null }, signal),
+      behind: work => { trackBehind(deps, work) },
+      stopping: () => deps.isShuttingDown(),
+    })
+    stasisReaders.set(deps.db, reader)
+  }
+  return reader
 }
 
 // GET /api/admin/repositories/branch-dependencies: what the lockfiles of the
@@ -2651,8 +2694,11 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   const reads = lockfileKept(deps, repoId)
   const read = await lockedAt(fullName, token, head, reads, path => heldTo(setting.lockfiles, path), asked)
   const { packages, paths } = lockedIn(read)
-  const locked = { base: head, head, cut: false, lockfiles: [{ paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
-    ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' }))] }
+  // And what the stasis.config.json files it holds to reach there (stasisDirectories, withReach).
+  const locked = withReach({ base: head, head, cut: false, lockfiles: [
+    { paths, added: [], more: 0, locked: packages.slice(0, MAX_LOCKED), moreLocked: Math.max(0, packages.length - MAX_LOCKED) },
+    ...read.unread.map(path => ({ paths: [path], error: lockfileFormat(path) === 'bun' ? 'lockfile-unsupported' : 'lockfile-unreadable' })),
+    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, null, head, asked)] }, read.lockfiles)
   const now = await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(locked))
   if (!now) return { value: { head, review: null }, kept: !asked.github }
   const told = await withPatchFiles(locked, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked)
@@ -2668,13 +2714,16 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
 // GET /api/admin/repositories/lockfiles: the lockfiles of the repository's
 // default branch its dependency review reads (commit-lockfiles.ts), by their
 // paths, with their formats, at its head, as its pulse reads it, for its
-// settings to name those it holds to (lockfile-scope.ts).
+// settings to name those it holds to (lockfile-scope.ts); and the
+// stasis.config.json files there (`configs`), which it may hold to as well.
 async function handleRepositoryLockfiles(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, query: URLSearchParams): Promise<void> {
   const repoId = askedRepoId(query)
   if (repoId === null) { sendJson(res, 400, { error: 'bad-request' }); return }
   await answerWholeRepository(res, deps, cookie, repoId, async (fullName, token) => {
     const head = (await defaultTip(deps, repoId, fullName, token)).sha
-    return { value: { head, lockfiles: head ? (await lockfilesAt(fullName, token, head, lockfileKept(deps, repoId))).map(({ path, format }) => ({ path, format })) : [] }, kept: false }
+    if (!head) return { value: { head, lockfiles: [], configs: [] }, kept: false }
+    const [lockfiles, tree] = await Promise.all([lockfilesAt(fullName, token, head, lockfileKept(deps, repoId)), repositoryTree(fullName, token, head, commitTreeKept(deps, repoId))])
+    return { value: { head, lockfiles: lockfiles.map(({ path, format }) => ({ path, format })), configs: (tree?.files ?? []).filter(isStasisConfig) }, kept: false }
   })
 }
 
@@ -2845,10 +2894,10 @@ type OpenPullsPage = { items?: unknown; more?: unknown; after?: unknown; commits
 // Each open pull request's base's and head's commits a page of them names,
 // into `commits` by its number.
 function pageCommits(page: OpenPullsPage, commits: Map<number, PullCommits>) {
-  for (const pull of Array.isArray(page.commits) ? page.commits as { number?: unknown; base?: unknown; head?: unknown }[] : []) {
-    const { number, base, head } = pull ?? {}
+  for (const pull of Array.isArray(page.commits) ? page.commits as { number?: unknown; base?: unknown; head?: unknown; baseRef?: unknown; headRef?: unknown }[] : []) {
+    const { number, base, head, baseRef, headRef } = pull ?? {}
     if (Number.isSafeInteger(number) && typeof base === 'string' && SHA.test(base) && typeof head === 'string' && SHA.test(head)) {
-      commits.set(number as number, { base, head })
+      commits.set(number as number, { base, head, ...pullRefs(baseRef, headRef) })
     }
   }
 }

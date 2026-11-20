@@ -7,4 +7,4 @@ export interface BundleBuildDiagnostic {
   cause?: BundleBuildDiagnostic
 }
 export function bundleBuildDiagnostic(error: unknown, token: string | null): BundleBuildDiagnostic
-export type BundleBuildStage = 'worker-start' | 'build' | 'scope' | 'serialize' | 'compress'
+export type BundleBuildStage = 'worker-start' | 'build' | 'scope' | 'serialize' | 'compress' | 'lockfile'

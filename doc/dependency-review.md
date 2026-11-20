@@ -78,7 +78,7 @@ An admin turns on a connected repository's review in its page under Repositories
 | --- | --- |
 | Required reviews | How many counting reviews each version needs, one to ten |
 | Since commit | Optional: the full id of the baseline commit (below) |
-| Lockfiles | Every lockfile (the default), every lockfile but those named, or only those named |
+| Lockfiles | Every lockfile (the default), every lockfile but those named, or only those named, a `stasis.config.json` among them (see [Stasis entries](#stasis-entries)) |
 
 The page warns where no team that would count the reviews has the repository.
 
@@ -95,6 +95,33 @@ While only some lockfiles are held to:
 - a directory with any held lockfile is reviewed whole;
 - a pull request with too many changed directories fails only where a held lockfile is among those left unread;
 - the default branch reads only the held lockfiles, and the baseline commit passes what any of its lockfiles locked but reports as unread only held ones.
+
+### Stasis entries
+
+Under **Only those selected**, the settings also list the `stasis.config.json` files of the default branch (none under `node_modules`), and take another by its path.
+A selected one holds the review to the npm versions its entries reach: what ships, without the devDependencies and unused packages a lockfile also locks.
+It can't be named under **All but those selected** (`400`).
+
+What it reaches is what Stasis builds in its directory, as `stasis github-bundle --lockfile-only` does; nothing of the repository runs, and only the versions are kept, each with the integrity it was installed by and the hash of the patch pnpm applied to it.
+Each version is then reviewed as the lockfiles in that directory or above it lock it at the commit, the nearest that locks it as it was installed first, so a [patched version](#patched-versions) is reviewed as patched.
+A version none of them locks can't be reviewed (**can't review**).
+
+It shows as a directory of its own, named by its path: on the default branch, what its entries reach at the head; in a pull request, what they reach at its head that they didn't at its merge base.
+A pull request is read where it changes a lockfile or a `stasis.config.json`, as before.
+
+A build can take minutes, so no answer waits for one:
+
+- it is started the first time it is asked for at a commit, behind the answer, which says Stasis is still building (**Stasis building…**) and fails nothing yet; the page asks again every 30 seconds;
+- builds are made one at a time, in the worker bundle creation uses, and give way to a bundle being created; one that finds the worker busy is started when next asked for;
+- what is built is kept in the database for a month by the repository, the commit and the file's path, so each commit is built once;
+- a pull request's builds tell Stasis the branch each commit is of (its `branch` option), its base branch for the merge base and its head branch where that is the repository's own, so it needn't list tags and branches to hold the commit to the repository's history.
+
+A build that fails fails the review, and its directory names the failure's code. It is tried again when asked for an hour later, or a minute later where GitHub failed it.
+A fork's head is never built (`commit-not-own`); a merge base that can't be built, or has no such file, reaches nothing, so every version at the head is new.
+
+Where a `stasis.config.json` and a lockfile in its directory are both selected, the lockfile is reviewed whole as before and its versions are listed at once.
+Once Stasis has built the file, a team's [Dependencies tab](#a-teams-dependencies-tab) marks (**!**) each version the lockfile locks that none of its entries reaches: one only the package manager asks a review of.
+Every other row is regular: one Stasis reaches, alone or with the lockfile, one a lockfile with no such file beside it locks, and any row while Stasis is still building or couldn't build.
 
 ## Who reviews and publishes
 
@@ -153,6 +180,7 @@ Where several pull requests add a version, its reviews in each are compared: who
 
 A patched version stands by its patch, as each patch of it is reviewed apart.
 A version with a review of those it needs shows how many (`1/2`), and its tooltip names the reviewers; one with none shows no count.
+Each list shows the versions with a review already (`1/2`, or rejected) first, and those marked **!** (see [Stasis entries](#stasis-entries)) last; on a card, the dimmed ones stay below both.
 
 The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
 A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.
@@ -265,6 +293,7 @@ It is given only the asker's own published, unrevoked reviews, however it is ask
 | A pull request changes over 3,000 files, or lockfiles in over 20 directories | It is cut, and its review fails |
 | A directory locks over 20,000 versions | The review fails |
 | Over 100 lockfiles at the baseline commit, or held on the default branch | The rest are unread: the baseline's need reviews, and the default branch's fail its review |
+| A Stasis build of a `stasis.config.json` runs over 3 minutes, or past the worker's memory | It fails, and so does the review, for an hour (see [Stasis entries](#stasis-entries)) |
 | Over 1,000 open pull requests in a repository | The Dependencies tab reads the 1,000 updated latest, and says so |
 | The Dependencies tab's request runs over 4 minutes | The repositories left are read again, up to 3 times; any still left show as failed until the tab is drawn again 30 seconds or more later |
 | A note over 20,000 characters | Refused |
@@ -278,6 +307,8 @@ It is given only the asker's own published, unrevoked reviews, however it is ask
 - Dependencies, of a pull request or the default branch, are read and checked as the pull request itself is (see [code-viewer.md](./code-viewer.md)), and access is checked again after GitHub answers, unless the whole answer came from kept data.
 - A repository that reviews no dependencies answers so without asking GitHub, but only once the reader's access in the app is checked.
 - The team Dependencies tab leaves out any repository the reader may read only part of.
+- What a `stasis.config.json` reaches is built with the GitHub access of a reader who may read all of its repository, kept for every reader, and shown only once the asker's own access is checked, as kept lockfiles are.
+  The build worker gets that GitHub credential and `NPM_TOKEN` alone, as a bundle's does.
 - A bundle's **Dependency review** line needs read access to the bundle and to all of its repository, and the bundle's access is checked again before it is answered.
 - While the tab's request runs, the reader's session is checked before each repository's answer.
 - Before each answer showing a repository's dependencies, the request also checks that the team is still the reader's and still holds the repository, and that the reader may still read all of it; where not, the answer stops there.

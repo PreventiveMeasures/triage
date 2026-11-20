@@ -4,8 +4,8 @@ import { brotliDecompressSync, gzipSync } from 'node:zlib'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { buildGitHubBundle } from '@exodus/stasis/vfs-bundle'
-import { buildErrorCode, buildStasisBundle } from '../server-managed/bundle-build-worker.js'
-import { buildRepositoryBundle, githubBundleFilename, parseBundleBuild } from '../server-managed/bundle-build.ts'
+import { buildErrorCode, buildStasisBundle, buildStasisLockfile, lockfileDependencies } from '../server-managed/bundle-build-worker.js'
+import { buildRepositoryBundle, buildRepositoryLockfile, githubBundleFilename, parseBundleBuild, withBundleBuildLease } from '../server-managed/bundle-build.ts'
 import { HttpError } from '@preventive/upstream/github.js'
 import { packageOf, registry } from './_managed-npm.js'
 
@@ -468,6 +468,123 @@ test('real Stasis leaves out the packages stasis.config.json’s excludeModules 
   assert.equal(await codeOf(configured(project(plain, { entries: { 'index.js': {}, 'node_modules/tool/cli.js': {} }, excludeModules: ['tool'] }), ['index.js', 'node_modules/tool/cli.js'])),
     'config-policy', 'one an entry is in')
   assert.equal(await codeOf(configured(project(plain, { entries: { 'index.js': {} }, excludeModules: 'tool' }), ['index.js'])), 'config-invalid', 'one Stasis can’t read')
+})
+
+// A package as npm's registry serves it, of one module.
+const moduleOf = (name, version) => packageOf(name, version, { 'package.json': JSON.stringify({ name, version, type: 'module', main: 'index.js' }), 'index.js': `export const ${name} = () => {}\n` })
+const lockfileOf = (project, config = 'stasis.config.json', ...more) => buildStasisLockfile({ input: { repoId: 1, commit, config }, github: 'org/repo', token: null },
+  projectClient(project), ...more)
+
+test('real Stasis builds a lockfile in place of a bundle, as `stasis github-bundle --lockfile-only` does: the versions the entries stasis.config.json lists reach, never the lockfile', async t => {
+  const [tool, unused] = [moduleOf('tool', '1.0.0'), moduleOf('unused', '2.0.0')]
+  registry(t, [tool, unused])
+  const app = { name: 'app', version: '1.0.0', type: 'module', dependencies: { tool: '1.0.0', unused: '2.0.0' } }
+  const locked = pkg => ({ version: pkg.doc.version, resolved: pkg.doc.dist.tarball, integrity: pkg.doc.dist.integrity })
+  const project = { 'package.json': JSON.stringify(app), 'index.js': 'import { tool } from "tool"\ntool()\n',
+    'package-lock.json': lockOf({ name: app.name, version: app.version, dependencies: app.dependencies }, { 'node_modules/tool': locked(tool), 'node_modules/unused': locked(unused) }),
+    'stasis.config.json': JSON.stringify({ entries: { 'index.js': {} } }) }
+  const notes = [], stages = []
+  const built = await lockfileOf(project, 'stasis.config.json', stage => stages.push(stage), (event, details) => notes.push([event, details.project ?? details.tree]))
+  assert.deepEqual(built, [{ name: 'tool', version: '1.0.0', integrity: tool.doc.dist.integrity }],
+    'the one its entry imports, with the integrity it was installed by; one the lockfile locks that nothing reaches, not')
+  assert.deepEqual(stages, ['build', 'lockfile'], 'nothing serialized or compressed')
+  assert.deepEqual(notes, [['project', ''], ['download', 'repo']])
+  assert.deepEqual(await lockfileOf(under('app', project), 'app/stasis.config.json'), built, 'in a directory of its own')
+  assert.deepEqual(await lockfileOf(project, 'nowhere/stasis.config.json'), [], 'a commit with no such file reaches nothing')
+  assert.equal(await codeOf(lockfileOf({ ...project, 'stasis.config.json': '{' })), 'config-invalid')
+  assert.equal(await codeOf(lockfileOf({ ...project, 'stasis.config.json': JSON.stringify({ entries: { 'index.js': { babel: true, metro: true, platforms: ['ios'] } } }) })), 'config-runs-code')
+  assert.equal(await codeOf(lockfileOf({ ...soldeer, 'stasis.config.json': JSON.stringify({ entries: { 'src/Token.sol': {} } }) })), 'build-failed', 'a lockfile is a JS build’s alone')
+})
+
+test('real Stasis’s lockfile tells a version pnpm patches with its patch’s hash, as pnpm’s lockfile names it', async t => {
+  const tool = moduleOf('tool', '1.0.0')
+  registry(t, [tool])
+  const patch = 'diff --git a/index.js b/index.js\nindex 1111111..2222222 100644\n--- a/index.js\n+++ b/index.js\n@@ -1 +1 @@\n-export const tool = () => {}\n+export const tool = () => 1\n'
+  const hash = createHash('sha256').update(patch).digest('hex')
+  const app = { name: 'app', version: '1.0.0', type: 'module', dependencies: { tool: '1.0.0' }, packageManager: 'pnpm@10.33.4' }
+  const lock = `lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\npatchedDependencies:\n  tool@1.0.0:\n    hash: ${hash}\n    path: patches/tool@1.0.0.patch
+\nimporters:\n\n  .:\n    dependencies:\n      tool:\n        specifier: 1.0.0\n        version: 1.0.0(patch_hash=${hash})\n\npackages:\n\n  tool@1.0.0:\n    resolution: {integrity: ${tool.doc.dist.integrity}}
+\nsnapshots:\n\n  tool@1.0.0(patch_hash=${hash}): {}\n`
+  const project = under('app', { 'package.json': JSON.stringify(app), 'index.js': 'import { tool } from "tool"\ntool()\n', 'pnpm-lock.yaml': lock,
+    'pnpm-workspace.yaml': 'patchedDependencies:\n  tool@1.0.0: patches/tool@1.0.0.patch\n', 'patches/tool@1.0.0.patch': patch,
+    'stasis.config.json': JSON.stringify({ entries: { 'index.js': {} } }) })
+  assert.deepEqual(await lockfileOf(project, 'app/stasis.config.json'), [{ name: 'tool', version: '1.0.0', integrity: tool.doc.dist.integrity, patch: hash }])
+})
+
+test('a Stasis lockfile’s dependencies are its npm versions with an evidence file, each once as installed', () => {
+  const integrity = `sha512-${'A'.repeat(86)}==`
+  const patch = `sha256-${Buffer.from('ab'.repeat(32), 'hex').toString('base64')}`
+  const modules = new Map([
+    ['.', { name: 'app', version: '1.0.0', files: { 'index.js': 'x' } }],
+    ['packages/lib', { name: 'lib', version: '1.0.0', files: { 'index.js': 'x' } }],
+    ['node_modules/b', { name: 'b', version: '2.0.0', integrity, patch: { integrity: patch, file: 'patches/b.patch' }, files: { 'index.js': 'x' } }],
+    ['node_modules/a', { name: 'a', version: '1.0.0', integrity, files: { 'lib/index.js': 'x', 'package.json': 'x' } }],
+    ['node_modules/c/node_modules/a', { name: 'a', version: '1.0.0', integrity, files: { 'lib/other.js': 'x' } }],
+    ['node_modules/manifest-only', { name: 'manifest-only', version: '1.0.0', integrity, files: { 'package.json': 'x' } }],
+    ['node_modules/git', { name: 'git', version: '1.0.0', repo: { github: 'org/git', commit: 'c'.repeat(40) }, files: { 'index.js': 'x' } }],
+    ['node_modules/nameless', { files: { 'index.js': 'x' } }],
+    ['vendor/crate', { ecosystem: 'cargo', name: 'crate', version: '1.0.0', files: { 'src/lib.rs': 'x' } }],
+  ])
+  assert.deepEqual(lockfileDependencies({ modules }), [{ name: 'a', version: '1.0.0', integrity }, { name: 'b', version: '2.0.0', integrity, patch: 'ab'.repeat(32) },
+    { name: 'git', version: '1.0.0' }], 'the project’s own, a package of its manifest alone and another ecosystem’s left out; one from git with no integrity')
+})
+
+test('a lockfile’s build, behind no request, gives its slot up to a build asked for, and is refused while one holds it', async () => {
+  const request = { input: input(), github: 'org/repo', token: null, maxBytes: 1_000_000, scopes: [null] }
+  const lockfile = { input: { repoId: 1, commit, config: 'stasis.config.json' }, github: 'org/repo', token: null, cacheDir: null }
+  // The deployment's lease, claimed as its one builder of them, and released.
+  const leases = { claimed: [], claimBundleBuildLease(user) { this.claimed.push(user); return Promise.resolve(true) }, releaseBundleBuildLease: () => Promise.resolve() }
+  const behind = buildRepositoryLockfile(leases, lockfile, new AbortController().signal)
+  const settled = behind.then(() => null, error => error.code)
+  // Once it holds the slot, its lease claimed.
+  await new Promise(resolve => { setImmediate(resolve) })
+  const asked = new AbortController()
+  const building = buildRepositoryBundle('test-user', request, asked.signal)
+  assert.equal(await settled, 'build-yielded', 'told to yield, for its asker to build again later')
+  await assert.rejects(buildRepositoryLockfile(leases, lockfile, new AbortController().signal), { code: 'build-busy' }, 'the slot the build asked for took')
+  assert.deepEqual(leases.claimed, ['dependency-review'], 'refused its slot, the lease not asked for')
+  asked.abort()
+  await assert.rejects(building, { code: 'build-cancelled' })
+  const stopping = new AbortController()
+  const again = buildRepositoryLockfile(leases, lockfile, stopping.signal)
+  await new Promise(resolve => { setImmediate(resolve) })
+  stopping.abort()
+  await assert.rejects(again, { code: 'build-cancelled' }, 'the slot free again')
+})
+
+test('a build asked for takes this instance’s lockfile build’s lease too: that one yields, its lease released, before the one asked for claims its own', async () => {
+  const lockfile = { input: { repoId: 1, commit, config: 'stasis.config.json' }, github: 'org/repo', token: null, cacheDir: null }
+  // The deployment's two leases, one a user's at a time, the first held by another instance.
+  const store = () => {
+    const held = new Map([['another', 'another-user']]), log = []
+    return { held, log, claimBundleBuildLease(user, owner) {
+      const free = held.size < 2 && ![...held.values()].includes(user)
+      if (free) held.set(owner, user)
+      log.push(['claim', user, free])
+      return Promise.resolve(free)
+    }, releaseBundleBuildLease(owner) {
+      log.push(['release', held.get(owner)])
+      held.delete(owner)
+      return Promise.resolve()
+    } }
+  }
+  const yieldedTo = [['claim', 'dependency-review', true], ['release', 'dependency-review'], ['claim', 'test-user', true], ['release', 'test-user']]
+  // While it builds, and while it still asks for its lease.
+  for (const building of [true, false]) {
+    const leases = store()
+    const behind = buildRepositoryLockfile(leases, lockfile, new AbortController().signal).then(() => null, error => error.code)
+    if (building) {
+      await new Promise(resolve => { setImmediate(resolve) })
+      assert.deepEqual([...leases.held.values()], ['another-user', 'dependency-review'], 'every lease held, one by the build behind no request')
+    }
+    assert.equal(await withBundleBuildLease(leases, 'test-user', new AbortController().signal, () => Promise.resolve('built')), 'built', 'not refused as busy')
+    assert.equal(await behind, 'build-yielded')
+    assert.deepEqual(leases.log, yieldedTo, `its lease released before the one asked for is claimed${building ? '' : ', as it was still asking for it'}`)
+  }
+  // The other instance's is none of this one's to take: busy, as before.
+  const full = store()
+  full.held.set('third', 'third-user')
+  await assert.rejects(withBundleBuildLease(full, 'test-user', new AbortController().signal, () => Promise.resolve('built')), { code: 'build-busy' })
 })
 
 test('real Stasis lays a pnpm tree out for no Node: engineStrict takes an engines.node the server’s Node isn’t', async () => {

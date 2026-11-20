@@ -17,12 +17,17 @@
 // with their review, where the repository reviews dependencies
 // (server-managed/pull-dependency-reviews.ts): each version's, the other
 // versions its lockfiles lock that want reviews, and what fails it.
+// A stasis.config.json its review holds to is a directory of its own, by its
+// path, of what its entries reach: while Stasis still builds it
+// (`stasis-pending`), its answer is held a short while (PENDING_MS), then
+// asked again by those showing it, its lockfiles' versions told meanwhile.
 import { state } from '#client/index.js'
 import { fetchPullDependencies, fetchPullDependenciesOf } from './client-managed.js'
 import { isPatchPath } from '../../common/managed/npm-packages.js'
 
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
+const PENDING_MS = 30_000
 const READ_AT_ONCE = 2
 const SHOWN_TOGETHER = 5
 const READ_TOGETHER = 20
@@ -74,7 +79,13 @@ function sessionHeld() {
 export const readsDependencies = item => item?.touchesLockfile === true || item?.touchesLockfile === null
 
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
-const UNSUPPORTED = new Set(['git', 'tarball', 'integrity'])
+// Why a version can't be reviewed, as its row says it.
+export const UNSUPPORTED_WHY = { git: 'From git, which isn’t reviewed', tarball: 'A tarball not npm’s registry’s of its version, which isn’t reviewed',
+  integrity: 'Locked with no integrity, which its reviews are held to',
+  unlocked: 'Locked by none of the lockfiles read for it at its commit, so nothing holds its reviews to an integrity' }
+const UNSUPPORTED = new Set(Object.keys(UNSUPPORTED_WHY))
+// A directory telling a stasis.config.json Stasis is still building, which fails nothing yet.
+export const isPending = dir => dir.error === 'stasis-pending'
 
 // A version as one is told once, by its name and version, and its patch's
 // hash where it is patched, as each patch of it is reviewed apart.
@@ -87,13 +98,15 @@ export const versionKey = pkg => `${pkg.name}@${pkg.version ?? ''}\0${pkg.patch?
 // server's reviewed dependencies (`reviewed`), or how many pass it
 // (`reviews`), whether a reviewer rejects it (`rejected`), how many
 // review it in its pull request's comments alone, which count for it alone
-// (`commented`), and its reviewers (`reviewers`, checkedReviewers).
+// (`commented`), and its reviewers (`reviewers`, checkedReviewers). And
+// whether its package manager alone asks for it (`unreached`).
 function checkedVersion(pkg) {
   if (typeof pkg?.name !== 'string') return []
-  const { was, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patch, ...version } = pkg
+  const { was, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patch, unreached, ...version } = pkg
   const by = checkedReviewers(reviewers)
   return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {},
     ...typeof patch?.hash === 'string' ? { patch: { hash: patch.hash, ...isPatchPath(patch.path) ? { path: patch.path } : {} } } : {},
+    ...unreached === true ? { unreached } : {},
     ...UNSUPPORTED.has(unsupported) ? { unsupported } : baseline === true ? { baseline } : reviewed === true ? { reviewed }
       : count(reviews) === null ? {} : { reviews, ...rejected === true ? { rejected } : {}, ...count(commented) > 0 ? { commented } : {}, ...by.length > 0 ? { reviewers: by } : {} } }]
 }
@@ -114,7 +127,8 @@ const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : 
 // reviewers its comments review them, or that they couldn't be read; the
 // lockfiles it holds to, where not every one, those of the rest told to none;
 // and the comment the server's host formats of the reader's own reviews of
-// its versions, to copy (`formatted`), where it formats one.
+// its versions, to copy (`formatted`), where it formats one. Whether a
+// stasis.config.json of its is still being built (`pending`).
 export function checked(answer) {
   if (!Array.isArray(answer?.lockfiles)) throw new TypeError('The server answered with no lockfiles.')
   const lockfiles = answer.lockfiles.filter(dir => Array.isArray(dir?.paths) && (Array.isArray(dir.added) || typeof dir.error === 'string')).map(dir => dir.error ? dir
@@ -122,7 +136,7 @@ export function checked(answer) {
       moreUnreviewed: count(dir.moreUnreviewed) ?? 0, unsupported: versionsOf(dir.unsupported), moreUnsupported: count(dir.moreUnsupported) ?? 0,
       moreLocked: count(dir.moreLocked) ?? 0 })
   const review = answer.review
-  return { lockfiles, cut: answer.cut === true, ...typeof answer.head === 'string' && /^[\da-f]{40}$/u.test(answer.head) ? { head: answer.head } : {},
+  return { lockfiles, cut: answer.cut === true, pending: lockfiles.some(isPending), ...typeof answer.head === 'string' && /^[\da-f]{40}$/u.test(answer.head) ? { head: answer.head } : {},
     ...typeof answer.formatted === 'string' && answer.formatted.trim() !== '' ? { formatted: answer.formatted } : {},
     ...count(review?.required) > 0 ? { review: { required: review.required,
     since: typeof review.since === 'string' ? review.since : null, canReview: review.canReview === true,
@@ -200,6 +214,7 @@ export function pullDependencies(repoId, number, review = false, { background = 
     const next = answered(told, entry)
     if (next) data.set(key, next)
     else data.delete(key)
+    if (next?.pending) toldAgain({ repoId, number })
   }
   const job = { key, background, review, listed, pull: { repoId, number }, settle }
   queued.set(key, job)
@@ -208,12 +223,18 @@ export function pullDependencies(repoId, number, review = false, { background = 
   return loading
 }
 
-// What `told` is held as: an answer ready, else why it failed; none where
-// it was aborted, or as `entry` was, read before.
+// Those showing `pull` told again once what it awaits may be built, for them to ask of it again.
+const toldAgain = pull => { setTimeout(() => changed(pull), PENDING_MS).unref?.() }
+
+// What `told` is held as: an answer ready, one awaiting a build for less,
+// else why it failed; none where it was aborted, or as `entry` was, read before.
 function answered(told, entry) {
   let failure = told instanceof Error ? told : null
   if (!failure) {
-    try { return { status: 'ready', until: Date.now() + KEEP_MS, ...checked(told) } } catch (err) { failure = err }
+    try {
+      const answer = checked(told)
+      return { status: 'ready', until: Date.now() + (answer.pending ? PENDING_MS : KEEP_MS), ...answer }
+    } catch (err) { failure = err }
   }
   if (failure?.name === 'AbortError') return entry?.status === 'ready' ? entry : null
   return { status: 'error', until: Date.now() + RETRY_MS, error: failure?.message || 'Its lockfiles could not be read.' }
@@ -235,6 +256,7 @@ export function seedPullDependencies(repoId, answers, review = false) {
     }
     const next = answered(told, null)
     if (next) data.set(key, next)
+    if (next?.pending) toldAgain({ repoId, number })
     changed({ repoId, number })
   }
 }
@@ -337,7 +359,7 @@ function unreviewed({ lockfiles, review }) {
 // its lockfiles lock that can't be reviewed, each once across its
 // directories, and how many it counts in all (`count`, as its review tells,
 // else as its directories do); the directories
-// whose lockfiles couldn't be read (`unread`); how many versions they lock past those checked
+// whose lockfiles couldn't be read (`unread`), a stasis.config.json Stasis couldn't build among them; how many versions they lock past those checked
 // (`unchecked`); and whether it changes lockfiles left unread (`cut`). Null
 // where nothing does.
 export function reviewFailures(answer) {
@@ -351,6 +373,6 @@ function failures({ lockfiles, cut, review }) {
     if (!all.has(key)) all.set(key, pkg)
   }
   const sum = field => lockfiles.reduce((total, dir) => total + (dir[field] ?? 0), 0)
-  const failed = { versions: [...all.values()], count: review.unsupported ?? all.size + sum('moreUnsupported'), unread: lockfiles.filter(dir => dir.error), unchecked: sum('moreLocked'), cut }
+  const failed = { versions: [...all.values()], count: review.unsupported ?? all.size + sum('moreUnsupported'), unread: lockfiles.filter(dir => dir.error && !isPending(dir)), unchecked: sum('moreLocked'), cut }
   return failed.count > 0 || failed.unread.length > 0 || failed.unchecked > 0 || cut ? failed : null
 }
