@@ -229,7 +229,7 @@ import { ManagedMutationError, reportReferenceSnapshot } from './management.ts'
 import { BundleBuildError, buildRepositoryBundle, parseBundleBuild, withBundleBuildLease } from './bundle-build.ts'
 import { NpmPackageError, type NpmReader, type NpmVersionDocument, type NpmVersionStore, VERSION_KEPT_MS, canReadPrivateNpm, npmFileRows, npmPublishTime, npmScopesCount, npmTarballFilename, readNpmVersion, readNpmVersions, readTogether } from './npm-packages.ts'
 import { loadNpmFiles, loadNpmPackageBody, loadNpmTarball } from './npm-loads.ts'
-import { type PatchSource, type PatchedFile, type RequestedPatch, patchedFiles, readPatch, requestedPatch, withPatchFiles } from './npm-patch.ts'
+import { type ReadPatch, type RequestedPatch, patchedFiles, readPatch, requestedPatch, withPatchFiles } from './npm-patch.ts'
 import { type RepositoryCodeKept, loadRepositoryCodeBody, repositoryCodeFits, repositoryCodeKept } from './repository-code.ts'
 import { type ChangesStore, type CommitChanges, type CommitTree, TREES_READ, changesAsked, changesWithin, directoryFiles, repositoryChanges } from './repository-changes.ts'
 import { COAUTHORS_READ, coauthorsOf } from './commit-coauthors.ts'
@@ -2398,9 +2398,8 @@ async function wholeRepositoryAccess(deps: ManagedHttpDeps, cookie: string | und
   if (s == null) return refusal(401, 'unauthenticated')
   if (!roleAtLeast(s.user.role, 'view')) return refusal(403, 'forbidden')
   const grants = await repositoryGrants(deps, s.user)
-  if (typeof repo === 'number') return wholeAccessIn(grants, s.user, repo)
-  const named = grants.repos.filter(item => item.fullName.toLowerCase() === repo.toLowerCase())
-  return named.length === 1 ? wholeAccessIn(grants, s.user, named[0]!.repoId) : refusal(404, 'no-repository')
+  const ids = typeof repo === 'number' ? [repo] : grants.repos.filter(item => item.fullName.toLowerCase() === repo.toLowerCase()).map(item => item.repoId)
+  return ids.length === 1 ? wholeAccessIn(grants, s.user, ids[0]!) : refusal(404, 'no-repository')
 }
 function wholeAccessIn(grants: Awaited<ReturnType<typeof repositoryGrants>>, user: StoredUser, repoId: number): WholeAccess | Refusal {
   const access = repositoryAccessIn(grants, repoId, '')
@@ -2435,14 +2434,13 @@ async function readWholeRepositoryOf<T>(deps: ManagedHttpDeps, access: WholeAcce
 // with its reader's own GitHub access, and held to its hash: as kept, for
 // good (patchStore), else with that access checked again after; else why it
 // was refused. Its failing to read or to apply throws.
-async function npmPatchOf(deps: ManagedHttpDeps, cookie: string | undefined, patch: RequestedPatch): Promise<{ source: PatchSource; files: PatchedFile[] } | Refusal> {
+async function npmPatchOf(deps: ManagedHttpDeps, cookie: string | undefined, patch: RequestedPatch): Promise<ReadPatch | Refusal> {
   const access = await wholeRepositoryAccess(deps, cookie, patch.repoId)
   if ('error' in access) return access
   const { repoId } = access.repo
   const read = await readWholeRepositoryOf(deps, access, async (fullName, token) => {
     const asked: GithubAsked = { github: false }
-    const { commit, path, files } = await readPatch(fullName, token, { ...patch, repoId }, patchStore(deps.db, deps.config.debug), asked)
-    return { value: { source: { repoId, commit, path }, files }, kept: !asked.github }
+    return { value: await readPatch(fullName, token, { ...patch, repoId }, patchStore(deps.db, deps.config.debug), asked), kept: !asked.github }
   }, () => wholeRepositoryAccess(deps, cookie, repoId))
   return 'error' in read ? read : read.value
 }
@@ -4889,10 +4887,10 @@ function reviewChange(res: ServerResponse, body: Record<string, unknown>): Revie
 // each change but a revocation loads both versions' files, of tarballs held
 // to their integrity and to their shasum where npm tells one (npm-loads.ts),
 // and the review keeps those shasums. A patched version's (`patchHash`) are
-// its files as its patch changes them, the patch read where the request says
-// (`patchRepoId`, `patchCommit`, `patchPath`), of the whole of a repository
-// its reader reads (npmPatchOf), which the review keeps. Access to both
-// versions is rechecked before returning or saving annotations.
+// its files as its patch changes them, the patch read as kept, else where the
+// request says (`patchRepoId`, `patchCommit`, `patchPath`), of the whole of a
+// repository its reader reads (npmPatchOf), the review keeping where it was
+// read. Access to both versions is rechecked before returning or saving annotations.
 async function handleNpmReviews(req: IncomingMessage, res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, params: URLSearchParams): Promise<void> {
   const method = req.method ?? 'GET'
   if (!['GET', 'POST'].includes(method)) { send405(res, 'GET, POST'); return }

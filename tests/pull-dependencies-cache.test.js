@@ -135,7 +135,7 @@ test('those of a repository asked in the background are read together once a tur
   await setImmediate()
 })
 
-test('a version two directories lock patched alike is told with the patch of one whose lockfile names its file, as only that can be reviewed', () => {
+test('a version two directories lock patched alike is told with the patch of one told its file, as only that can be reviewed', () => {
   const hash = 'a'.repeat(64), named = { hash, path: 'patches/pat@1.0.0.patch' }
   const pat = (patch, more = {}) => ({ name: 'pat', version: '1.0.0', source: 'registry', reviews: 0, patch, ...more })
   const ready = { cut: false, review: { required: 1 }, lockfiles: [{ paths: ['a/pnpm-lock.yaml'], added: [pat({ hash })], unreviewed: [pat({ hash }, { name: 'old' })] },

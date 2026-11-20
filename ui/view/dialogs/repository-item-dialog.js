@@ -261,8 +261,8 @@ class RepositoryItemDialog extends AppDialog {
   // where its review is in effect and the reader reviews, reviewed against
   // it, one that can be, a patched one as patched, against the version it
   // patches where that was one, its patch alone, its patch read at `head`,
-  // the commit its lockfiles were read at, where its lockfile names the
-  // patch's file; its review; whether only devDependencies need it, whether
+  // the commit its lockfiles were read at, where it is told its patch's
+  // file; its review; whether only devDependencies need it, whether
   // it is patched; and where one not of npm's registry is from; and, one of
   // npm's registry wanting reviews, unpatched, the lines it changes against
   // the version it was, or whole (npm-delta.js). Another its lockfiles lock
@@ -285,7 +285,7 @@ class RepositoryItemDialog extends AppDialog {
       ${source === 'registry' && version && !pkg.patch && reviewOf(pkg, review) === 'wanted' ? html`<npm-delta .name=${name} .version=${version} .base=${before ?? '(empty)'}></npm-delta>` : nothing}
       ${dev ? html`<span class="repo-item-tag" data-tooltip="Only devDependencies need it">dev</span>` : nothing}
       ${pkg.patch ? html`<span class="repo-item-tag" data-tooltip=${pkg.patch.path ? `pnpm patches it as it installs it, by ${pkg.patch.path}, which its reviews are of`
-        : 'pnpm patches it as it installs it, by a patch its lockfile names no file of, which reviews here can’t read'}>patched</span>` : nothing}
+        : 'pnpm patches it as it installs it, by a patch whose file isn’t known, which reviews here can’t read'}>patched</span>` : nothing}
       ${SOURCES[source] ? html`<span class="repo-item-tag" data-tooltip=${from ?? nothing}>${SOURCES[source]}</span>` : nothing}`
     return href ? html`<a class="repo-item-row" href=${href} target="_blank" rel="noopener noreferrer">${label}</a>` : html`<span class="repo-item-row">${label}</span>`
   }
