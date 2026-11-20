@@ -240,7 +240,7 @@ import { AGENTS_READ_VERSION, type AuthoredCommit, type BranchTip, type BranchTi
 import { DEPENDENCIES_LABEL, ISSUES_CURSOR, ISSUES_READ_VERSION, OPEN_PULLS_READ, OPEN_PULLS_SIZES, repositoryIssues, repositoryItem, repositoryLabel, repositoryOpenPulls } from './repository-issues.ts'
 import { type DirectoryDependencies, type GithubAsked, type ListedLockfile, type LockfileRead, type LockfileStore, MAX_LOCKED, PULL_DEPENDENCIES_READ, type PullCommits,
   type PullDependencies,
-  type PullDependencyStore, type PullRefs, lockfileFormat, pullDependenciesAt, pullRefs } from './pull-dependencies.ts'
+  type PullDependencyStore, type PullRefs, lockfileFormat, pullDependenciesAt, pullKey, pullRefs } from './pull-dependencies.ts'
 import { eachOf } from './queue.ts'
 import { lockedAt, lockedIn, lockfilesAt } from './commit-lockfiles.ts'
 import { MAX_REQUIRED_REVIEWS, type PublishedReview, type RepoDependencyReview } from './repository-dependency-reviews.ts'
@@ -249,7 +249,7 @@ import { type StasisDependencyReader, stasisDependencyReader, stasisDirectory, w
 import { type BundledVersion, bundleDependencies, installsBundle } from './bundle-dependency-reviews.ts'
 import { type CommentReviews, type ReviewBaselineStore, baselineFor, heldDependencies, reviewedDependencies, reviewedPackages } from './pull-dependency-reviews.ts'
 import { formattedPull, withFormatted } from './dependency-review-comments.ts'
-import type { ReviewedDependencies } from './reviewed-dependencies.ts'
+import type { ReviewedBase, ReviewedDependencies } from './reviewed-dependencies.ts'
 import { commentReviews } from './pull-comment-reviews.ts'
 import { PULSE_WEEKS, PULSE_YEAR_VERSION, type PulseNarrowing, type PulseStats, StatsPending, commitStats, defaultHead, periodStats, pulseSince,
   repositoryActivity, repositoryLines,
@@ -2606,26 +2606,33 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   commits?: PullCommits) {
   const kept = pullDependencyKept(deps, repoId)
   const reading: { told?: PullDependencies } = {}
+  // Where its review is on, those of lockfiles it leaves out told to none,
+  // whoever asks.
+  const setting = await deps.db.repoDependencyReview(repoId)
+  // Where the host names bases and its review is asked for and on, one into
+  // the default branch is read without its merge base (`baseless`,
+  // pull-dependencies.ts): the branch's own state is told apart.
+  const repo = review && deps.reviewedDependencies?.base && setting?.enabled ? (await deps.db.listSelectedRepos()).find(row => row.repoId === repoId) : undefined
+  const into = repo ? repo.cachedDefaultBranch ?? repo.defaultBranch : null
   // With the branches they are of, where told, kept with them.
   const answered = commits ? { value: { baseRef: commits.baseRef, headRef: commits.headRef, fork: commits.fork, commits: `${commits.base}...${commits.head}` }, kept: true }
     : await keptAnswer(deps, `${repoId}\0pull-commits\0${PULL_DEPENDENCIES_READ}\0${number}`, async () => {
-      const { told, ...read } = await pullDependenciesAt(fullName, token, number, kept)
+      const { told, ...read } = await pullDependenciesAt(fullName, token, number, kept, undefined, undefined, into)
       reading.told = told
       return read
     }, undefined, false, stampOf(deps, repoId, fullName, token))
   // What its commits tell, as read, else as kept by them, else, no longer
   // kept, read again: by those given, without asking GitHub for them.
-  const held = reading.told ?? (typeof answered.value.commits === 'string' ? await kept.read(answered.value.commits) : null)
-  const pulled = { number, ...held ?? (await pullDependenciesAt(fullName, token, number, kept, undefined, commits)).told }
-  // Where its review is on, those of lockfiles it leaves out told to none,
-  // whoever asks.
-  const setting = await deps.db.repoDependencyReview(repoId)
+  const baseless = into !== null && answered.value.baseRef === into
+  const held = reading.told ?? (typeof answered.value.commits === 'string' ? await kept.read(pullKey(answered.value.commits, baseless)) : null)
+  const pulled = { number, ...held ?? (await pullDependenciesAt(fullName, token, number, kept, undefined, commits, into)).told }
   // With what the stasis.config.json files it holds to reach, each a
   // directory of its own, none waited for; a lockfile's versions those reach
   // not marked as its package manager's alone (withReach).
   const asked: GithubAsked = { github: false }
   const scoped = setting?.enabled ? withReach(heldDependencies({ ...pulled, lockfiles: [...pulled.lockfiles,
-    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, pulled.base, pulled.head, asked, pullRefs(answered.value.baseRef, answered.value.headRef, answered.value.fork))] },
+    ...await stasisDirectories(deps, fullName, token, repoId, setting.lockfiles, pulled.base, pulled.head, asked, pullRefs(answered.value.baseRef, answered.value.headRef, answered.value.fork),
+      pulled.baseless === true)] },
   setting.lockfiles)) : pulled
   const now = review ? await deps.db.repoDependencyReviewState(repoId, user.id, reviewedPackages(scoped)) : null
   // Its review by the lockfiles they were told by, though they have changed
@@ -2648,28 +2655,29 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   })
   // Each patch its lockfiles name by its hash alone with its file (npm-patch.ts), where its review is in effect.
   const patched = state ? await withPatchFiles(told, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked) : told
-  const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting })
+  const bases = new Map<string, ReviewedBase>()
+  const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting, namedBases: bases })
   // The comment the host formats of the reader's reviews of its versions, for
   // its copy button, but those its comments make of theirs already.
-  const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented)
+  const formatted = await formattedPull(reviewed, deps.db, user.id, told, state, { repository: fullName, number }, commented, bases)
   return { value: { number: told.number, ...dependencies, ...formatted ? { formatted } : {} }, kept: answered.kept && held !== null && !asked.github }
 }
 
 // What the stasis.config.json files repository `repoId`'s review holds to
 // (`scope`) have Stasis reach, each a directory of dependencies by its own
 // path (stasis-dependencies.ts stasisDirectory): at `head`, against `base`
-// where one is given. None is waited for: one not built yet is built behind
+// where one is given and it isn't read without it (`baseless`). None is waited for: one not built yet is built behind
 // the answer (stasisReader), told the branch its commit is of where `refs`
 // names it, a pull request's head's, or its base's, which holds `base`. An
 // open pull request's head that is a fork's (`refs.fork`) is no commit of
 // the repository's own, which Stasis refuses: nothing is built for it.
 function stasisDirectories(deps: ManagedHttpDeps, fullName: string, token: string, repoId: number, scope: LockfileScope, base: string | null, head: string,
-  asked: GithubAsked, refs: PullRefs = {}): Promise<DirectoryDependencies[]> {
+  asked: GithubAsked, refs: PullRefs = {}, baseless = false): Promise<DirectoryDependencies[]> {
   if (refs.fork) return Promise.resolve(stasisConfigs(scope).map(config => ({ paths: [config], error: 'stasis-failed', detail: 'commit-not-own' })))
   const reader = stasisReader(deps), reads = lockfileKept(deps, repoId)
   return Promise.all(stasisConfigs(scope).map(config => stasisDirectory(config, base, head,
     commit => reader.read({ repoId, fullName }, token, commit, config, commit === head ? refs.headRef : refs.baseRef),
-    (commit, held) => lockedAt(fullName, token, commit, reads, held, asked))))
+    (commit, held) => lockedAt(fullName, token, commit, reads, held, asked), baseless)))
 }
 
 // What reads repositories' Stasis dependencies, one a database: kept by it,
@@ -2952,21 +2960,24 @@ async function keptPullCommits(deps: ManagedHttpDeps, repoId: number, numbers: n
 }
 
 // The lines the versions wanting reviews of `answers` change, as their rows
-// show them (npm-delta.js deltaBase), a patched one's none, where they are
+// show them (npm-delta.js reviewBase), a patched one's none, where they are
 // counted already: of public versions alone, those npm answered for in a day
 // (npmVersionStore), their integrities those npmDelta keys them by. `[name,
 // version, base, delta]` each, none counted here.
 async function teamDeltas(deps: ManagedHttpDeps, answers: object[]) {
   const asked = new Map<string, [string, string, string]>()
-  for (const answer of answers as { lockfiles?: { added?: unknown; unreviewed?: unknown }[]; review?: { required?: number } }[]) {
+  for (const answer of answers as { lockfiles?: { added?: unknown; unreviewed?: unknown }[]; review?: { required?: number; reviewedBases?: true } }[]) {
     const required = answer.review?.required
     if (!Number.isSafeInteger(required)) continue
     for (const pkg of (answer.lockfiles ?? []).flatMap(dir => [...Array.isArray(dir.added) ? dir.added : [], ...Array.isArray(dir.unreviewed) ? dir.unreviewed : []]) as
-      { name?: unknown; version?: unknown; source?: unknown; was?: unknown; reviews?: unknown; rejected?: unknown; baseline?: unknown; reviewed?: unknown; unsupported?: unknown
-        patch?: unknown }[]) {
+      { name?: unknown; version?: unknown; source?: unknown; was?: unknown; base?: { name?: unknown; version?: unknown }; reviews?: unknown; rejected?: unknown; baseline?: unknown
+        reviewed?: unknown; unsupported?: unknown; patch?: unknown }[]) {
       if (pkg.source !== 'registry' || pkg.patch || typeof pkg.name !== 'string' || typeof pkg.version !== 'string' || !isExactVersion(pkg.version)) continue
       if (pkg.unsupported || pkg.baseline || pkg.reviewed || typeof pkg.reviews !== 'number' || (pkg.reviews >= required! && !pkg.rejected)) continue
-      const was = Array.isArray(pkg.was) ? pkg.was.find(prior => typeof prior === 'string' && prior !== pkg.version) as string | undefined : undefined
+      // Against the base the host names, where it names them; one of another package's not counted.
+      if (answer.review?.reviewedBases && pkg.base && pkg.base.name !== pkg.name) continue
+      const was = answer.review?.reviewedBases ? pkg.base?.version as string | undefined
+        : Array.isArray(pkg.was) ? pkg.was.find(prior => typeof prior === 'string' && prior !== pkg.version) as string | undefined : undefined
       asked.set(`${pkg.name}\0${pkg.version}\0${was ?? '(empty)'}`, [pkg.name, pkg.version, was ?? '(empty)'])
     }
   }

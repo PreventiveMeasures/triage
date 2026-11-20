@@ -1,7 +1,9 @@
 // The reviewed dependencies a host keeps beyond the app, as it registers
 // them before the server is assembled (server.ts registerReviewedDependencies):
 // an async method telling whether a dependency, as a lockfile locks it, is
-// reviewed there (`lookup`), and, optionally, one reading the reviews of
+// reviewed there (`lookup`), and, optionally, one naming the version to
+// review one a pull request adds against (`base`, pull-dependency-reviews.ts),
+// one reading the reviews of
 // dependencies an open pull request's comments make (`parseComments`,
 // pull-comment-reviews.ts), and one formatting one's own dependency reviews
 // as a comment, for a copy button to give (`formatDependencyReviews`,
@@ -14,9 +16,11 @@
 // comments' reviews count for the pull request alone, as it is open: the
 // host's to keep, as it is merged, among those `lookup` tells of.
 //
-// Each version is asked of `lookup` once a request, as many at once as
+// Each version is asked of `lookup` (and `base`) once a request, as many at once as
 // ASK_AT_ONCE, its answer kept in this instance KEPT_MS; one it fails to
-// answer is unreviewed, and counted so (`unasked`).
+// answer is unreviewed, and counted so (`unasked`), or has no base.
+import { isExactVersion } from '@preventive/upstream/semver.js'
+import { isNpmPackageName } from '../common/managed/npm-packages.js'
 import { type Lru, lru } from './lru.ts'
 
 export type ReviewedLockfile = 'npm' | 'pnpm' | 'yarn1'
@@ -87,8 +91,12 @@ export interface DependencyReviewEntry {
 // What `formatDependencyReviews` formats: one's own reviews, never another's,
 // and the pull request whose versions they are of, where its copy asks.
 export interface FormatDependencyReviewsInput { reviews: DependencyReviewEntry[]; pullRequest?: { repository: string; number: number } }
+// A version to review a dependency against: of its package or another.
+export interface ReviewedBase { name: string; version: string }
 export interface ReviewedDependencies {
   lookup(dependency: ReviewedDependency): Promise<boolean>
+  // The reviewed version to review it against; none for its whole package.
+  base?(dependency: ReviewedDependency): Promise<ReviewedBase | null | undefined>
   parseComments?(input: ParseCommentsInput): Promise<CommentReview[]>
   // The comment to copy, none where it is empty, null or undefined.
   formatDependencyReviews?(input: FormatDependencyReviewsInput): Promise<string | null | undefined>
@@ -99,19 +107,20 @@ const KEPT_MS = 60_000
 
 let registered: ReviewedDependencies | null = null
 let assembled = false
-// Each lookup's answers, apart.
-const answers = new WeakMap<ReviewedDependencies['lookup'], Lru<{ at: number; reviewed: boolean }>>()
+// Each method's answers, apart.
+const answers = new WeakMap<object, Lru<{ at: number; value: unknown }>>()
 
 // Registers the host's reviewed dependencies, once, before the server is
 // assembled (init()): a server already assembled keeps what it was given.
 export function registerReviewedDependencies(reviewed: ReviewedDependencies): void {
   const optional = (method: unknown) => method === undefined || typeof method === 'function'
-  if (typeof reviewed?.lookup !== 'function' || !optional(reviewed.parseComments) || !optional(reviewed.formatDependencyReviews)) {
-    throw new TypeError('registerReviewedDependencies: expected { lookup, parseComments?, formatDependencyReviews? }, async methods')
+  if (typeof reviewed?.lookup !== 'function' || !optional(reviewed.base) || !optional(reviewed.parseComments) || !optional(reviewed.formatDependencyReviews)) {
+    throw new TypeError('registerReviewedDependencies: expected { lookup, base?, parseComments?, formatDependencyReviews? }, async methods')
   }
   if (assembled) throw new Error('registerReviewedDependencies: call it before init(), as the server takes them as it is assembled')
   if (registered) throw new Error('registerReviewedDependencies: reviewed dependencies are registered already')
-  registered = { lookup: reviewed.lookup.bind(reviewed), ...reviewed.parseComments ? { parseComments: reviewed.parseComments.bind(reviewed) } : {},
+  registered = { lookup: reviewed.lookup.bind(reviewed), ...reviewed.base ? { base: reviewed.base.bind(reviewed) } : {},
+    ...reviewed.parseComments ? { parseComments: reviewed.parseComments.bind(reviewed) } : {},
     ...reviewed.formatDependencyReviews ? { formatDependencyReviews: reviewed.formatDependencyReviews.bind(reviewed) } : {} }
 }
 
@@ -122,28 +131,39 @@ export function assembledReviewedDependencies(): ReviewedDependencies | null {
   return registered
 }
 
-// Which of `dependencies`, by their keys, `lookup` passes, and how many it
-// failed to answer.
-export async function askReviewed(lookup: ReviewedDependencies['lookup'], dependencies: Map<string, ReviewedDependency>): Promise<{ passed: Set<string>; unasked: number }> {
-  const passed = new Set<string>()
-  let unasked = 0
+// What `method` answers for each of `dependencies`, by their keys; one it
+// fails to answer for left out, and logged, as failing to `what`.
+async function askEach<T>(method: (dependency: ReviewedDependency) => Promise<T>, dependencies: Map<string, ReviewedDependency>, what: string): Promise<Map<string, T>> {
+  const told = new Map<string, T>()
   const pending = [...dependencies]
-  const kept = answers.get(lookup) ?? answers.set(lookup, lru(100_000)).get(lookup)!
+  const kept = answers.get(method) ?? answers.set(method, lru(100_000)).get(method)!
   await Promise.all(Array.from({ length: Math.min(ASK_AT_ONCE, pending.length) }, async () => {
     for (let next = pending.pop(); next; next = pending.pop()) {
       const [key, dependency] = next
       const known = kept.get(key)
-      let answer = known && Date.now() - known.at < KEPT_MS ? known.reviewed : null
-      if (answer === null) {
-        try { answer = await lookup({ ...dependency }) === true } catch (error) {
-          unasked++
-          console.warn('reviewed dependencies: failed to answer', `${dependency.name}@${dependency.version}`, error instanceof Error ? error.message : error)
-          continue
-        }
-        kept.set(key, { at: Date.now(), reviewed: answer })
+      if (known && Date.now() - known.at < KEPT_MS) { told.set(key, known.value as T); continue }
+      try {
+        const value = await method({ ...dependency })
+        kept.set(key, { at: Date.now(), value })
+        told.set(key, value)
+      } catch (error) {
+        console.warn(`reviewed dependencies: failed to ${what}`, `${dependency.name}@${dependency.version}`, error instanceof Error ? error.message : error)
       }
-      if (answer) passed.add(key)
     }
   }))
-  return { passed, unasked }
+  return told
+}
+
+// Which of `dependencies`, by their keys, `lookup` passes, and how many it
+// failed to answer.
+export async function askReviewed(lookup: ReviewedDependencies['lookup'], dependencies: Map<string, ReviewedDependency>): Promise<{ passed: Set<string>; unasked: number }> {
+  const told = await askEach(lookup, dependencies, 'answer')
+  return { passed: new Set([...told].flatMap(([key, reviewed]) => reviewed === true ? [key] : [])), unasked: dependencies.size - told.size }
+}
+
+// The version `base` names to review each of `dependencies` against, by
+// their keys: none where it names no exact version of an npm package.
+export async function askBases(base: NonNullable<ReviewedDependencies['base']>, dependencies: Map<string, ReviewedDependency>): Promise<Map<string, ReviewedBase>> {
+  return new Map([...await askEach(base, dependencies, 'name a base')].flatMap(([key, one]) => isNpmPackageName(one?.name) && typeof one?.version === 'string'
+    && isExactVersion(one.version) ? [[key, { name: one.name, version: one.version }] as const] : []))
 }

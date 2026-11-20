@@ -142,8 +142,15 @@ function readOf(asked) {
   })
 }
 
-// The version a row's delta is against: one it was, else none.
-export const deltaBase = pkg => pkg.was?.find(prior => prior !== pkg.version) ?? '(empty)'
+// The version a pull request's row is reviewed against, `{ name, version }`,
+// none for its whole package: the one the host names (`base`) where it names
+// them (`review.reviewedBases`), else one it was, a patched one's the
+// version it patches where it was that.
+export function reviewBase(pkg, review) {
+  if (review?.reviewedBases) return pkg.base ?? null
+  const was = pkg.patch && pkg.was?.includes(pkg.version) ? pkg.version : pkg.was?.find(prior => prior !== pkg.version)
+  return was ? { name: pkg.name, version: was } : null
+}
 
 const counted = (additions, deletions) => html`<span class="is-added">+${additions.toLocaleString('en-US')}</span> <span class="is-deleted">−${deletions.toLocaleString('en-US')}</span>`
 

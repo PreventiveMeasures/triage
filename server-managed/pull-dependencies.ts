@@ -87,8 +87,8 @@ export function touchesLockfile(paths: string[], changed: number): boolean | nul
 // A package version new to a directory, as its lockfile locks it, with its
 // integrity, which its reviews are held to; of a package its lockfiles locked
 // before, the versions of it they did (`was`, the highest first), none of one
-// new to it.
-export type AddedPackage = LockedPackage & { was?: string[] }
+// new to it; and the version the host names to review it against (`base`).
+export type AddedPackage = LockedPackage & { was?: string[]; base?: { name: string; version: string } }
 // A directory's lockfiles the pull request changes (`paths`, those it adds,
 // modifies, removes or renames, by either name): the package versions they
 // lock new to it, by name and version (as many as MAX_LOCKED, told as many
@@ -105,11 +105,14 @@ export type DirectoryDependencies = { paths: string[] } & ({ added: AddedPackage
 // in; and `cut` where it changes more files than GitHub lists, or lockfiles
 // in more directories than are read, with, where only those cut it and they
 // are few enough, the paths of those directories' lockfiles (`omitted`), for
-// a review holding to none of them to fail in nothing.
-export interface PullDependencies { base: string; head: string; lockfiles: DirectoryDependencies[]; cut: boolean; omitted?: string[] }
+// a review holding to none of them to fail in nothing; and whether it was
+// read without its merge base (`baseless`), every version new to it.
+export interface PullDependencies { base: string; head: string; lockfiles: DirectoryDependencies[]; cut: boolean; omitted?: string[]; baseless?: true }
 const MAX_OMITTED = 1000
 
-// What is told of a pull request, by the commits it is of, `${base}...${head}`.
+// What is told of a pull request, by the commits it is of, `${base}...${head}`,
+// read without its merge base apart (pullKey).
+export const pullKey = (commits: string, baseless: boolean) => baseless ? `${commits}\0baseless` : commits
 export interface PullDependencyStore {
   read(key: string): Promise<PullDependencies | null>
   write(key: string, value: PullDependencies): Promise<void>
@@ -329,33 +332,36 @@ export async function pullDependencies(fullName: string, token: string, number: 
   return (await pullDependenciesAt(fullName, token, number, kept, fetchImpl)).told
 }
 // The same, with the commits it is kept by (`commits`), its base's and
-// head's, by which `kept` reads it: those `given`, as a page of its
+// head's, by which `kept` reads it (pullKey): those `given`, as a page of its
 // repository's open pull requests read them (repository-issues.ts), else as
 // GitHub has them now; and the branches they are of, where told (PullRefs).
 // Commits given that its own list of its files is no longer of are read as
-// GitHub has them now.
+// GitHub has them now. One into branch `baselessInto` is read without its
+// merge base's lockfiles (`baseless`).
 export async function pullDependenciesAt(fullName: string, token: string, number: number, kept: PullDependencyStore,
-  fetchImpl: typeof fetch = globalThis.fetch, given?: PullCommits): Promise<PullRefs & { commits: string; told: PullDependencies }> {
+  fetchImpl: typeof fetch = globalThis.fetch, given?: PullCommits, baselessInto: string | null = null): Promise<PullRefs & { commits: string; told: PullDependencies }> {
   const { base, head, ...refs } = given ?? await pullCommits(fullName, token, number, fetchImpl)
-  const key = `${base}...${head}`
+  const baseless = baselessInto !== null && refs.baseRef === baselessInto, commits = `${base}...${head}`, key = pullKey(commits, baseless)
   const held = await kept.read(key)
-  if (held) return { ...refs, commits: key, told: held }
+  if (held) return { ...refs, commits, told: held }
   const current = async () => {
     const now = given && await pullCommits(fullName, token, number, fetchImpl)
     return !now || (now.base === base && now.head === head)
   }
   const pulled = await pullFiles(fullName, token, number, base, head, fetchImpl, current)
-  if (!pulled) return pullDependenciesAt(fullName, token, number, kept, fetchImpl)
+  if (!pulled) return pullDependenciesAt(fullName, token, number, kept, fetchImpl, undefined, baselessInto)
   const { mergeBase, files, cut: filesCut } = pulled
   const { directories, cut, omitted } = lockfilesChanged(files)
-  const reads = directories.flatMap(({ before, after }) => [...before.map(lockfile => [mergeBase, lockfile] as const), ...after.map(lockfile => [head, lockfile] as const)])
+  const reads = directories.flatMap(({ before, after }) => [...baseless ? [] : before.map(lockfile => [mergeBase, lockfile] as const),
+    ...after.map(lockfile => [head, lockfile] as const)])
   const read = await eachOf(reads, READ_PARALLEL, ([ref, lockfile]) => readLockfile(fullName, token, ref, lockfile))
   let at = 0
   const lockfiles = directories.map(({ before, after, paths }) => {
-    const readBefore = read.slice(at, at += before.length)
+    const readBefore = baseless ? [] : read.slice(at, at += before.length)
     return addedIn([...paths].toSorted(), readBefore, read.slice(at, at += after.length))
   })
-  const told = { base: mergeBase, head, lockfiles, cut: filesCut || cut, ...cut && !filesCut && omitted.length <= MAX_OMITTED ? { omitted } : {} }
+  const told = { base: mergeBase, head, lockfiles, cut: filesCut || cut, ...cut && !filesCut && omitted.length <= MAX_OMITTED ? { omitted } : {},
+    ...baseless ? { baseless: true as const } : {} }
   await kept.write(key, told)
-  return { ...refs, commits: key, told }
+  return { ...refs, commits, told }
 }

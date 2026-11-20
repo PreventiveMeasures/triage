@@ -18,7 +18,7 @@
 // project's isn't. Its reviews are those of it, of an integrity it is locked
 // with, either whole, compared with any version of another package, or
 // compared with a version of its own: for a version the pull request adds,
-// one it was; for another, any. A patched
+// one it was, or the one the host names (`base`, withBases); for another, any. A patched
 // one's (`patch`) are of it as patched, by its patch's hash, its patch read
 // of the repository at its file, which its lockfile names, or which is found
 // where it names it by its hash alone (npm-patch.ts withPatchFiles):
@@ -34,9 +34,9 @@ import { GithubApiError } from './github-errors.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import { EVERY_LOCKFILE, type LockfileScope, heldTo, isEvery, reviewedIn } from './lockfile-scope.ts'
 import { type Lru, lru } from './lru.ts'
-import { type DirectoryDependencies, type GithubAsked, type LockfileStore, MAX_ADDED, type PullDependencies, lockedAs, lockedWith } from './pull-dependencies.ts'
+import { type AddedPackage, type DirectoryDependencies, type GithubAsked, type LockfileStore, MAX_ADDED, type PullDependencies, lockedAs, lockedWith } from './pull-dependencies.ts'
 import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
-import { type ReviewedDependencies, type ReviewedDependency, askReviewed } from './reviewed-dependencies.ts'
+import { type ReviewedBase, type ReviewedDependencies, type ReviewedDependency, askBases, askReviewed } from './reviewed-dependencies.ts'
 
 // The other versions told unreviewed, and those told unsupported, of each
 // directory, those past them counted.
@@ -181,24 +181,31 @@ function judge(pkg: LockedPackage, bases: string[] | 'any', { state, reviews, ba
 // of them, and those of all that want one (`toReview`); the others its lockfiles lock that want reviews, and every one
 // that can't be reviewed (as many of each as MAX_UNREVIEWED, how many more,
 // once `capped`); and how many it locks past those read (`moreLocked`), which
-// aren't checked; without `review`, what it adds alone.
-function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null) {
+// aren't checked; without `review`, what it adds alone. Read without its
+// base (`baseless`), it tells only those it adds that pass none.
+function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null, baseless = false) {
   if ('error' in dir) return dir
   const { locked, moreLocked, added, ...told } = dir
-  if (!review) return { ...told, added: added.slice(0, MAX_ADDED).map(shown) }
+  if (!review) return { ...told, added: baseless ? [] : added.slice(0, MAX_ADDED).map(shown), ...baseless ? { more: 0 } : {} }
   const adds = new Map(added.map(pkg => [lockedAs(pkg), { pkg, variants: [pkg] }]))
   for (const pkg of locked) {
     const of = adds.get(lockedAs(pkg))
     if (of && lockedWith(pkg) !== lockedWith(of.pkg)) of.variants.push(pkg)
   }
   const own = [...adds.values()].map(({ pkg, variants }) => {
-    const judged = variants.map(variant => ({ variant, ...review(variant, pkg.was ?? []) }))
+    const judged = variants.map(variant => ({ variant, ...review(variant, basesOf(pkg, (variant as AddedPackage).base ?? null)) }))
     const least = judged.find(one => 'unsupported' in one.review) ?? judged.find(one => one.wants) ?? judged[0]!
     return { pkg, judged: least, wanting: judged.filter(one => one.wants).map(({ variant }) => variant) }
   })
   const others = locked.filter(pkg => !adds.has(lockedAs(pkg))).map(pkg => ({ pkg, judged: review(pkg, 'any') }))
   const unsupported = locked.flatMap(pkg => { const as = reviewedAs(pkg); return as === 'version' || as === 'skip' ? [] : [{ ...shown(pkg), unsupported: as }] })
-  return { ...told, added: own.slice(0, MAX_ADDED).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review })),
+  const listed = baseless ? own.filter(({ judged }) => judged.wants || 'unsupported' in judged.review) : own
+  // Each row against the base of the way it is locked that it is told by.
+  const row = ({ pkg, judged }: (typeof own)[number]) => {
+    const { base: _base, ...rest } = shown(pkg as AddedPackage), { base } = judged.variant as AddedPackage
+    return { ...rest, ...base ? { base } : {}, ...judged.review }
+  }
+  return { ...told, ...baseless ? { more: Math.max(0, listed.length - MAX_ADDED) } : {}, added: listed.slice(0, MAX_ADDED).map(row),
     toReview: own.flatMap(({ wanting }) => wanting.map(shown)),
     unreviewed: others.filter(({ judged }) => judged.wants).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review })), unsupported, moreLocked }
 }
@@ -214,6 +221,20 @@ type Shown = Pick<LockedPackage, 'name' | 'version' | 'source' | 'from'> & { pat
 const distinct = (lists: Shown[][], key: (pkg: Shown) => string) => new Set(lists.flat().map(key)).size
 const versionKey = (pkg: Shown) => `${pkg.name}@${pkg.version ?? ''}\0${pkg.patch?.hash ?? ''}`
 const sourceKey = (pkg: Shown) => `${pkg.source}\0${pkg.name}@${pkg.version ?? ''}\0${pkg.from ?? ''}`
+
+// The versions of its package an added version's reviews may be compared
+// with: those it was, and the base the host names it (null for none).
+export const basesOf = (pkg: AddedPackage, base: ReviewedBase | null | undefined = pkg.base) => [...pkg.was ?? [], ...base?.name === pkg.name ? [base.version] : []]
+// `dirs`, each version of `asking` as it is locked with the version `base`
+// names to review it against (`base`, of its package or another), its row's
+// link and line count then against that one, and its reviews against it
+// passing it; each named onto `named` too, by what it is asked.
+async function withBases(dirs: DirectoryDependencies[], base: NonNullable<ReviewedDependencies['base']>, asking: Map<string, ReviewedDependency>,
+  named: Map<string, ReviewedBase>): Promise<DirectoryDependencies[]> {
+  for (const [key, one] of asking.size > 0 ? await askBases(base, asking) : []) named.set(key, one)
+  const based = <P extends LockedPackage>(pkg: P) => { const one = named.get(askedOf(pkg)[0]); return one ? { ...pkg, base: one } : pkg }
+  return dirs.map(dir => 'error' in dir ? dir : { ...dir, added: dir.added.map(based), locked: dir.locked.map(based) })
+}
 
 // The reviews an open pull request's comments make of `wanting`, the
 // versions still wanting one (pull-comment-reviews.ts): those that count,
@@ -232,12 +253,14 @@ export function heldDependencies<T extends PullDependencies>(told: T, scope: Loc
 // A pull request's dependencies as the client is told them: without the
 // versions its directories lock; with `state`, a repository's review in
 // effect, each version's review (reviewedDirectory), those wanting one asked
-// of the registered reviewed dependencies (`reviewed`), and those still
+// of the registered reviewed dependencies (`reviewed`), those they don't pass
+// of their `base` (onto `namedBases`), and those still
 // wanting one of the reviews its comments make (`commentReviews`, where the
 // host reads them), and the review's terms (`review`), with how many
 // reviewers' its comments count (`commentReviews`), or that they couldn't be
 // read (`commentsFailed`), and that reviews count by comments alone, those
-// published here not (`byComments`, where the host reads them), and how many versions across its directories want
+// published here not (`byComments`, where the host reads them), and that
+// they name bases (`reviewedBases`), and how many versions across its directories want
 // reviews, of those it adds (`toReview`) and the rest (`unreviewed`), and
 // can't be reviewed (`unsupported`), each once; how many the reviewed dependencies failed to
 // answer (`unasked`), and whether they are registered (`reviewedDependencies`,
@@ -250,12 +273,14 @@ export function heldDependencies<T extends PullDependencies>(told: T, scope: Loc
 // lockfiles the review holds to (`lockfiles`, lockfile-scope.ts, told in its
 // terms where not every one) are left out (heldDependencies).
 export async function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null,
-  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null }: { baseline?: Set<string> | null; baselineUnread?: string[]
-    baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null } = {}) {
+  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null, namedBases = new Map() }: { baseline?: Set<string> | null
+    baselineUnread?: string[]; baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null; namedBases?: Map<string, ReviewedBase> } = {}) {
   const scope = state?.lockfiles ?? EVERY_LOCKFILE
   const answered = heldDependencies(told, scope)
-  if (!state) return { ...answered, lockfiles: answered.lockfiles.map(dir => reviewedDirectory(dir, null)) }
-  const { cut, lockfiles: held } = answered
+  const baseless = told.baseless === true
+  if (!state) return { ...answered, lockfiles: answered.lockfiles.map(dir => reviewedDirectory(dir, null, baseless)) }
+  const { cut } = answered
+  let held = answered.lockfiles
   // Reviews published here count but where the host reads those pull
   // requests' comments make (`parseComments`): what is reviewed is then the
   // host's to tell, by those and its `lookup`, and one published here counts
@@ -283,18 +308,20 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   }
   const asked = wanting()
   await ask(asked)
+  const parsing = new Map([...asked].filter(([key]) => !passed.has(key)))
+  // Those `lookup` doesn't pass against the bases the host names them.
+  if (reviewed?.base) held = await withBases(held, reviewed.base, parsing, namedBases)
   // Of those still wanting one, and every other one the lockfiles it holds
   // to add that its teams' reviews pass, telling other pull requests those
   // it reviews (`commented`), but those `lookup` passes, reviewed, the
   // reviews its comments make, an open one's alone (pull-comment-reviews.ts),
   // which count as its teams' do; those their rejects hold asked of `lookup`
   // too.
-  const parsing = new Map([...asked].filter(([key]) => !passed.has(key)))
   if (commentReviews) {
     const others = new Map<string, ReviewedDependency>()
     for (const pkg of held.flatMap(dir => 'added' in dir ? dir.added : [])) {
       const [key, dependency] = askedOf(pkg)
-      if (!asked.has(key) && 'reviews' in judge(pkg, pkg.was ?? [], context).review) others.set(key, dependency)
+      if (!asked.has(key) && 'reviews' in judge(pkg, basesOf(pkg), context).review) others.set(key, dependency)
     }
     const vouched = others.size > 0 && reviewed ? (await askReviewed(reviewed.lookup, others)).passed : new Set<string>()
     for (const [key, dependency] of others) if (!vouched.has(key)) parsing.set(key, dependency)
@@ -307,11 +334,12 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
   const dirs = held.map(dir => reviewedDirectory(dir, (pkg, bases) => {
     const judged = judge(pkg, bases, context)
     return judged.wants && passed.has(askedOf(pkg)[0]) ? { review: { reviewed: true }, wants: false } : judged
-  }))
+  }, baseless))
   const unread = baselineUnread.filter(path => heldTo(scope, path))
   const listed = dirs.filter(dir => 'unreviewed' in dir)
   return { ...answered, cut, lockfiles: dirs.map(dir => 'unreviewed' in dir ? capped(dir) : dir), review: { required: state.required,
-    since: reviewed ? null : state.since, canReview: state.canReview, ...reviewed ? { reviewedDependencies: true } : {}, ...reviewed?.parseComments ? { byComments: true } : {},
+    since: reviewed ? null : state.since, canReview: state.canReview, ...reviewed ? { reviewedDependencies: true } : {}, ...reviewed?.base ? { reviewedBases: true } : {},
+    ...reviewed?.parseComments ? { byComments: true } : {},
     toReview: distinct(listed.map(dir => dir.toReview), versionKey), unreviewed: distinct(listed.map(dir => dir.unreviewed), versionKey),
     unsupported: distinct(listed.map(dir => dir.unsupported), sourceKey),
     ...unasked > 0 ? { unasked } : {}, ...baselineError && !reviewed ? { baselineError } : {},

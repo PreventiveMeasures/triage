@@ -11,10 +11,10 @@
 import type { DependencyReview, DependencyReviewStore } from './dependency-reviews.ts'
 import type { LockedPackage } from './locked-packages.ts'
 import type { PullDependencies } from './pull-dependencies.ts'
-import { askedOf, comparedWith, reviewsByVersion, reviewsOf } from './pull-dependency-reviews.ts'
+import { askedOf, basesOf, comparedWith, reviewsByVersion, reviewsOf } from './pull-dependency-reviews.ts'
 import { eachOf } from './queue.ts'
 import type { PublishedReview, RepoReviewState } from './repository-dependency-reviews.ts'
-import { type DependencyReviewEntry, type ReviewedDependencies, askReviewed } from './reviewed-dependencies.ts'
+import { type DependencyReviewEntry, type ReviewedBase, type ReviewedDependencies, askReviewed } from './reviewed-dependencies.ts'
 
 const FORMAT_AT_ONCE = 8
 // The longest comment told, past which none is.
@@ -70,17 +70,18 @@ export function withFormatted<T extends DependencyReview>(reviewed: ReviewedDepe
 // ids, each with the versions it is of, as its lockfiles lock each: of its
 // version, of an integrity it is locked with and of its patch, whole,
 // compared with another package's version, or compared with a version it was
-// (pull-dependency-reviews.ts reviewsOf, comparedWith), or, `any`, with any
-// version of its package.
+// or the base the host names it (`bases`; pull-dependency-reviews.ts reviewsOf,
+// comparedWith, basesOf), or, `any`, with any version of its package.
 interface Own { review: PublishedReview; pkgs: LockedPackage[] }
-function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string, any: boolean): Map<string, Own> {
+function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: string, any: boolean, bases: Map<string, ReviewedBase>): Map<string, Own> {
   // Theirs by the version they are of, each version probed once.
   const theirs = reviewsByVersion(reviews.filter(review => review.id !== undefined && review.reviewer === user))
   const mine = new Map<string, Own>()
   if (theirs.size === 0) return mine
   for (const pkg of told.lockfiles.flatMap(dir => 'added' in dir ? dir.added : [])) {
+    const against = any ? 'any' : basesOf(pkg, bases.get(askedOf(pkg)[0]) ?? null)
     for (const review of reviewsOf(pkg, theirs)) {
-      if (comparedWith(review, pkg, any ? 'any' : pkg.was ?? [])) (mine.get(review.id!) ?? mine.set(review.id!, { review, pkgs: [] }).get(review.id!)!).pkgs.push(pkg)
+      if (comparedWith(review, pkg, against)) (mine.get(review.id!) ?? mine.set(review.id!, { review, pkgs: [] }).get(review.id!)!).pkgs.push(pkg)
     }
   }
   return mine
@@ -99,9 +100,10 @@ function ownOfPull(told: PullDependencies, reviews: PublishedReview[], user: str
 // reviews of comments (`parseComments`), what a review was compared with is
 // its to weigh, so one compared with any version is given.
 export async function formattedPull(reviewed: ReviewedDependencies | null, db: Pick<DependencyReviewStore, 'listOwnDependencyReviewsById'>, user: string,
-  told: PullDependencies, state: RepoReviewState | null, pullRequest: { repository: string; number: number }, commented: PublishedReview[] = []): Promise<string | null> {
+  told: PullDependencies, state: RepoReviewState | null, pullRequest: { repository: string; number: number }, commented: PublishedReview[] = [],
+  bases: Map<string, ReviewedBase> = new Map()): Promise<string | null> {
   if (!reviewed?.formatDependencyReviews || !state) return null
-  const mine = ownOfPull(told, state.reviews, user, reviewed.parseComments !== undefined)
+  const mine = ownOfPull(told, state.reviews, user, reviewed.parseComments !== undefined, bases)
   if (mine.size === 0) return null
   const { passed } = await askReviewed(reviewed.lookup, new Map([...mine.values()].flatMap(({ pkgs }) => pkgs.map(askedOf))))
   const there = reviewsByVersion(commented.filter(review => review.reviewer === user))

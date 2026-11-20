@@ -17,11 +17,12 @@ Lockfiles under `node_modules` or in test fixtures are ignored, as no install us
 
 An open pull request's tile ([code-viewer.md](./code-viewer.md)) names its added versions, and the popup of any pull request lists them by directory under **New dependency versions**, marking new packages, the versions an update replaced, sources other than npm's registry, versions only devDependencies need, and [patched](#patched-versions) ones.
 Each npm version opens in the npm viewer, an update compared with the highest version it replaced.
+Where the host [names bases](#base), a version is reviewed against the one it names instead.
 
 ## When a pull request passes
 
 Review is in effect for a repository once it is [turned on](#repository-settings) and a visible team that reviews dependencies has the repository.
-Each version the pull request adds then needs the required number of counting reviews, of it whole, compared with a version it replaced, or compared with any version of another package.
+Each version the pull request adds then needs the required number of counting reviews, of it whole, compared with a version it replaced, compared with the version the host names as its [base](#base), or compared with any version of another package.
 Every other version its lockfiles lock needs them too, of it whole or compared with any version of its package or another, unless the [baseline commit](#repository-settings) or the [host](#host-reviewed-dependencies) passes it.
 A version is reviewed as npm's registry has it, by name, version and integrity, so a version locked with several integrities needs reviews of each.
 A patched version is reviewed as its patch changes it, by its patch too (see [Patched versions](#patched-versions)).
@@ -239,6 +240,8 @@ Registering after `init()`, or a second time, throws.
 import { init, registerReviewedDependencies } from '@preventive/triage/server'
 registerReviewedDependencies({
   async lookup({ ecosystem, lockfile, name, version, integrity, shasum, patchHash }) { return isReviewed(...) },
+  // Optional: the reviewed version to review a pull request's version against, of its package or another.
+  async base({ ecosystem, lockfile, name, version, integrity, shasum, patchHash }) { return reviewedBaseOf(...) ?? null },
   // Optional: the reviews an open pull request's comments make.
   async parseComments({ repository, number, comments, dependencies }) { return reviewsIn(comments) },
   // Optional: one's own dependency reviews as a comment, to copy.
@@ -259,6 +262,16 @@ It also receives `shasum`, the hex sha1 Yarn 1 writes after a tarball's `#`, and
 A version it answers `true` for passes, and shows as **reviewed**.
 A version it fails to answer for wants its reviews and is counted as unasked in the popup, and the error is logged.
 Each version is asked once per request, up to sixteen at once, and an answer may be reused for a minute.
+
+### `base`
+
+`base`, optional, names the reviewed version to review a pull request's version against, in place of the versions its lockfiles locked before.
+It receives the version as `lookup` does, is asked about each one `lookup` doesn't pass, as `lookup` is, and returns `{ name, version }`, an exact version of its own package or another's (a fork's original, say), or null for none.
+Once it is registered:
+
+- each version's row links its review against the version named, whole where none is, and counts its lines against it where it is of its own package;
+- a review against the version named counts, as one against a version it replaced does;
+- a pull request into the default branch, where its review is on, is read without its merge base (no lockfile read there, no Stasis build), every unreviewed version its head locks its own; the branch's own state shows on the Dependencies tab's **Default branch**.
 
 ### `parseComments`
 
