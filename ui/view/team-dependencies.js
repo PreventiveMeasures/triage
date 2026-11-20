@@ -628,7 +628,8 @@ class TeamDependencies extends StateElement {
   // formats them (dependency-review-copy.js). Those adding only versions
   // others list come after the rest, each its head alone till opened, all
   // hidden once asked. One wanting none is not listed, its copy in its
-  // popup. Every card a column wide, however many versions it lists.
+  // popup. Every card a column wide, however many versions it lists; how
+  // many it wants reviewed told where more than one, muted.
   renderPulls(cards, adding, reading, unchecked, { elsewhere, named, among, standing }) {
     if (cards.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''} wants its dependencies reviewed.</p>`
@@ -648,8 +649,9 @@ class TeamDependencies extends StateElement {
           @click=${() => this.toggle(`${key}:covered`)}>${CHEVRON}</button>` : nothing}<a class="team-deps-pull-head" href=${href} target="_blank" rel="noopener noreferrer" @click=${event => this.open(event, pull)}>
           <span class="team-deps-pull-name">${named(pull)}</span><span class="team-deps-pull-title">${pull.item.title || '(no title)'}</span>
           ${covered ? html`<span class="team-deps-under">${few([...new Set(same.map(pkg => standing(pkg, pull).under))])}</span>`
-            : html`<span class=${`team-deps-count${pull.failed ? ' is-failed' : ''}`}>${pull.failed ? 'review fails' : pull.size > 0 ? `${pull.toReview.toLocaleString('en-US')} to review`
-              : `${plural(pull.others, 'other version')} unreviewed`}</span>`}
+            : pull.failed ? html`<span class="team-deps-count is-failed">review fails</span>`
+            : pull.size === 0 ? html`<span class="team-deps-count is-wanted">${plural(pull.others, 'other version')} unreviewed</span>`
+            : pull.toReview > 1 ? html`<span class="team-deps-count">${pull.toReview.toLocaleString('en-US')} deps</span>` : nothing}
         </a>${pull.entry.formatted ? html`<dependency-review-copy .text=${pull.entry.formatted} .label=${'Copy your dependency reviews of its versions'}></dependency-review-copy>`
           : nothing}</div>
         ${opened ? html`${this.rows(`${key}:own`, listed, row(pull))}

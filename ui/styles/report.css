@@ -1988,10 +1988,12 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   min-width: 0; padding: .4375rem .75rem .3125rem;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 10px); background: var(--surface);
 }
-/* Its head, the reader's reviews of its versions to copy at its end. */
+/* Its head, the reader's reviews of its versions to copy at its end: no
+   taller than its line, its icon's edge on that of the rows under it. */
 .team-deps-pull-top {
   display: flex; align-items: center; gap: .5rem; min-width: 0;
   & > dependency-review-copy { display: inline-flex; flex: none; }
+  & > dependency-review-copy .bundle-code-copy-path { width: 1.25rem; height: 1.25rem; margin-right: -.15rem; }
 }
 .team-deps-pull-head {
   display: flex; flex: 1 1 auto; align-items: baseline; gap: .625rem; min-width: 0; color: var(--text); text-decoration: none;
@@ -2004,8 +2006,9 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   transition: color .12s;
 }
 .team-deps-count {
-  flex: none; color: var(--medium); font-size: .75rem; font-variant-numeric: tabular-nums;
+  flex: none; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums;
   &.is-failed { color: var(--critical); }
+  &.is-wanted { color: var(--medium); }
 }
 .team-deps-versions {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr)); column-gap: 1.5rem;
@@ -2074,15 +2077,17 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   & > .team-deps-more { margin-top: 0; }
   & > .team-deps-pulls { align-self: stretch; }
 }
-.team-deps-pulls.is-covered { gap: .25rem .625rem; }
+.team-deps-pulls.is-covered {
+  gap: .25rem .625rem;
+  /* Where any has reviews to copy, room for it on the rest, so their tags line up. */
+  &:has(dependency-review-copy) .team-deps-pull-top:not(:has(dependency-review-copy))::after { content: ''; flex: none; width: 1.1rem; }
+}
 .team-deps-pull.is-covered {
   padding: .125rem .625rem .125rem .375rem; border-color: transparent; background: none;
   &:hover, &:focus-within { border-color: var(--border); }
   & .team-deps-pull-title { color: var(--muted); font-size: .8rem; font-weight: 400; }
   & .team-deps-pull-top { gap: .25rem; min-height: 1.5rem; }
   & .team-deps-under { align-self: center; }
-  /* Its copy no taller than its line. */
-  & dependency-review-copy .bundle-code-copy-path { width: 1.5rem; height: 1.5rem; }
   & > .team-deps-versions, & > .team-deps-disclosed { margin-left: 1.5rem; }
   & > .team-deps-versions { margin-top: 0; }
 }
