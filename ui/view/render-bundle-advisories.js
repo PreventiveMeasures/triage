@@ -51,18 +51,21 @@ export function grantAdvisoriesProxyConsent() {
   try { localStorage.setItem(CONSENT_KEY, '1') } catch {}
 }
 
-// Whether a parsed Stasis bundle has a module under node_modules with a
-// name and a version (v0 bundles' are null; sourcemaps have no modules).
-// `bundlePackageVersions`'s filter, kept here as a first-match test so a
-// large bundle isn't walked whole: change both together.
-function bundleHasAdvisoryCandidates(details) {
+// Whether a parsed Stasis bundle (sourcemaps have no modules) has a module
+// `test(dir, info)` takes: a first-match test, so a large bundle isn't
+// walked whole.
+function someModule(details, test) {
   if (!details || details.kind !== 'stasis' || !details.bundle) return false
   for (const [dir, info] of details.bundle.modules) {
-    if (!dir.includes('node_modules')) continue
-    if (info?.name && typeof info.version === 'string' && info.version) return true
+    if (test(dir, info)) return true
   }
   return false
 }
+
+// A module under node_modules with a name and a version (v0 bundles' are
+// null): `bundlePackageVersions`'s filter, change both together.
+const bundleHasAdvisoryCandidates = details => someModule(details, (dir, info) =>
+  dir.includes('node_modules') && info?.name && typeof info.version === 'string' && info.version)
 
 // A dependency package as the managed audit inventories one
 // (server-managed/bundle-advisory-inventory.ts), short of its evidence-file
@@ -70,15 +73,9 @@ function bundleHasAdvisoryCandidates(details) {
 // ecosystem (recorded, or npm under node_modules), a name and a version; but
 // one installed from a directory, the repository's own code, its record as
 // Stasis records one (a malformed one is listed as not audited).
-function bundleHasDependencyPackages(details) {
-  if (!details || details.kind !== 'stasis' || !details.bundle) return false
-  for (const [dir, info] of details.bundle.modules) {
-    if (dir === '.' || typeof info?.name !== 'string' || !info.name || typeof info.version !== 'string' || !info.version) continue
-    if (isDirectoryEcosystem(info.ecosystem) && !malformedDirectoryPackage(info)) continue
-    if (info.ecosystem || /(?:^|\/)node_modules\//u.test(dir)) return true
-  }
-  return false
-}
+const bundleHasDependencyPackages = details => someModule(details, (dir, info) =>
+  dir !== '.' && typeof info?.name === 'string' && info.name && typeof info.version === 'string' && info.version
+    && !(isDirectoryEcosystem(info.ecosystem) && !malformedDirectoryPackage(info)) && (info.ecosystem || /(?:^|\/)node_modules\//u.test(dir)))
 
 // A managed bundle offers no recheck or scan without dependency packages: by
 // its modules, or once its unscoped audit answers, by the server's inventory.

@@ -66,11 +66,11 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
   if (!entry.managedId && isManagedUiMode()) return Promise.reject(new DOMException('Local bundle closed', 'AbortError'))
   const loads = sources ? sourceLoads : metadataLoads
   const kind = kindOf(entry)
+  // The active view's details, or a swap's, where they are of this kind and bundle.
+  const fits = details => details.kind === kind && details.managedId === entry.managedId && (!sources || !details.metadataOnly)
   const active = state.bundleDetails
-  if (active?.integrity === integrity && active.kind === kind && active.managedId === entry.managedId && !active.error
-      && (!sources || !active.metadataOnly)) return Promise.resolve(active)
-  const handed = takeHandedOffBundle(integrity, details => details.kind === kind && details.managedId === entry.managedId
-    && (!sources || !details.metadataOnly))
+  if (active?.integrity === integrity && fits(active) && !active.error) return Promise.resolve(active)
+  const handed = takeHandedOffBundle(integrity, fits)
   if (handed) return Promise.resolve(handed)
   const key = `${entry.managedId ?? 'local'}:${integrity}:${kind}`
   const signal = entry.managedId && sources ? currentViewSignal() : undefined
@@ -91,8 +91,7 @@ export function buildBundleDetails(integrity, entry, { sources = true } = {}) {
     }
     if (!sources) {
       const cached = await cachedMetadata(integrity)
-      if (cached?.kind === kind && !cached.stale) return cached
-      return buildBundleDetails(integrity, entry)
+      return cached?.kind === kind && !cached.stale ? cached : buildBundleDetails(integrity, entry)
     }
     const [details, cached] = await Promise.all([readBundleDetails(integrity, entry), cachedMetadata(integrity)])
     if (!details.error) {

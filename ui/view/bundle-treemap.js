@@ -405,13 +405,12 @@ class BundleTreemap extends LitElement {
       }
       if (!node) continue
       const base = parts.at(-1)
-      let leaf = node.children.get(base)
-      if (leaf && !leaf.isFile) continue
-      if (!leaf) {
-        leaf = { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg: pkgs[i], group: groups.get(stripped[i]) ?? null,
-          resource: kinds.get(origPaths[i]) === 'resource' || this.details.listedOnly === true }
-        node.children.set(base, leaf)
+      if (!node.children.has(base)) {
+        node.children.set(base, { name: base, isFile: true, value: 0, origPath: origPaths[i], pkg: pkgs[i], group: groups.get(stripped[i]) ?? null,
+          resource: isResource(origPaths[i]) || this.details.listedOnly === true })
       }
+      const leaf = node.children.get(base)
+      if (!leaf.isFile) continue
       leaf.value += size
       total += size
     }
@@ -537,29 +536,21 @@ class BundleTreemap extends LitElement {
   // a capped directory's block, or a file. A directory's tooltip path ends
   // in a slash.
   _cell(c) {
-    const meta = nodeMeta(c.node, this._meta.total)
+    const { node, kind } = c
+    const dir = kind === 'dir'
+    const block = kind !== 'file'
     const pos = { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` }
-    if (c.kind === 'dir') {
-      return html`<div
-        class="bundle-treemap-node bundle-treemap-dir"
-        style=${styleMap(pos)}
-        data-treemap-into=${c.node.path}
-        data-tt-path=${`${c.node.path}/`}
-        data-tt-meta=${meta}
-      ><span class="bundle-treemap-dirname">${c.node.name}</span></div>`
-    }
-    const { color, label } = this._paint(c.node)
-    const agg = c.kind === 'agg'
+    const { color, label } = dir ? {} : this._paint(node)
     return html`<div
-      class=${`bundle-treemap-node bundle-treemap-leaf bundle-treemap-${c.kind}`}
-      style=${styleMap({ ...pos, background: color, color: readableTextOn(color) })}
-      data-treemap-into=${agg ? c.node.path : nothing}
-      data-bundle-view-source=${agg || c.node.resource ? nothing : c.node.origPath}
-      data-tt-path=${agg ? `${c.node.path}/` : c.node.path}
+      class=${`bundle-treemap-node bundle-treemap-${dir ? 'dir' : `leaf bundle-treemap-${kind}`}`}
+      style=${styleMap(dir ? pos : { ...pos, background: color, color: readableTextOn(color) })}
+      data-treemap-into=${block ? node.path : nothing}
+      data-bundle-view-source=${block || node.resource ? nothing : node.origPath}
+      data-tt-path=${block ? `${node.path}/` : node.path}
       data-tt-pkg=${label ?? nothing}
-      data-tt-color=${color}
-      data-tt-meta=${meta}
-    ><span class="bundle-treemap-label">${agg ? `${c.node.name}/` : c.node.name}</span></div>`
+      data-tt-color=${dir ? nothing : color}
+      data-tt-meta=${nodeMeta(node, this._meta.total)}
+    ><span class=${dir ? 'bundle-treemap-dirname' : 'bundle-treemap-label'}>${kind === 'agg' ? `${node.name}/` : node.name}</span></div>`
   }
 
   // A sunburst arc, the radial `_cell`. Every arc paints its hue, as rings

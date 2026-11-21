@@ -125,8 +125,7 @@ export function countBundleTriageBuckets(details, sourcePaths = null) {
   for (const [file, hash] of details?.fileHashes ?? []) {
     if ((sourcePaths && !sourcePaths.has(file)) || seen.has(hash)) continue
     seen.add(hash)
-    for (const f of findingsForFileHash(hash)) {
-      const t = triageOf(f)
+    for (const t of findingsForFileHash(hash).map(triageOf)) {
       if (t && counts[t] !== undefined) counts[t]++
     }
   }
@@ -223,8 +222,7 @@ export function buildBundleGraphData(details) {
   // altitude would put a "not in view" card over the canvas.
   let files = allFiles
   if (graph2.focusedPkg) {
-    if (!scope.focused.has(graph2.focusedPkg)) scope.focused.set(graph2.focusedPkg, allFiles.filter((f) => pkgOf(f) === graph2.focusedPkg))
-    const focusFiles = scope.focused.get(graph2.focusedPkg)
+    const focusFiles = keep(scope.focused, graph2.focusedPkg, () => allFiles.filter((f) => pkgOf(f) === graph2.focusedPkg))
     if (focusFiles.length > 0) files = focusFiles
     else graph2.focusedPkg = null
   }
@@ -277,7 +275,7 @@ export function setCurrentBundleGraphPrep(prep) {
 // The Overview's Packages column: a stacked bar of each package's share of
 // the bytes, then a row for each, in `pkgColor`'s hues, so a package reads
 // the same here as on the graph's canvas. `dist` the packages' sizes
-// (bundleSizeDistribution), sorted here by `sort` once for each.
+// (overviewFiles), sorted here by `sort` once for each.
 function renderBundleSizeDistribution(dist, sort, details) {
   const { totalByPkg, whyQueries, total } = dist
   if (total === 0) return nothing
@@ -325,43 +323,32 @@ function openBundleWhy(details, query) {
 }
 
 // What the Overview makes of its files: their shared prefix and their paths
-// without it, their packages (by original paths and recorded module
-// boundaries), their orders by name and by size, and each package's size
-// (bundleSizeDistribution). Made once, not on every render (an npm answer
-// arriving renders the Overview again): kept by the files' array, which its
-// details keep, with the sizes, package directories and details made of.
+// without it, their packages (by original paths and recorded Stasis package
+// directories, so workspace packages bucket apart from their parent), their
+// orders by name and by size, and `dist`: each package's size where known
+// (0 or null is not), the query naming it for the why dialog (bundleWhyQuery),
+// and its orders as asked for (renderBundleSizeDistribution). Made once, not
+// on every render (an npm answer arriving renders the Overview again): kept
+// by the files' array, which its details keep, with the sizes, package
+// directories and details made of.
 const _overviewFiles = new WeakMap()
 function overviewFiles(sources, sizes, packageDirs, details) {
   const kept = _overviewFiles.get(sources)
   if (kept && kept.packageDirs === packageDirs && kept.details === details && kept.sizes.length === sizes.length && kept.sizes.every((size, i) => size === sizes[i])) return kept
   const { prefix, stripped } = stripCommonPathPrefix(sources)
-  const pkgDirOf = (i) => packageDirs?.get(sources[i])
-  const packages = new Set(sources.map((path, i) => bundlePkgOf(path, { packageDir: pkgDirOf(i) })))
+  const pkgs = sources.map((path) => bundlePkgOf(path, { packageDir: packageDirs?.get(path) }))
   const byName = stripped.map((_, i) => i).toSorted((a, b) => stripped[a].localeCompare(stripped[b]))
   const bySize = stripped.map((_, i) => i).toSorted((a, b) => (sizes[b] ?? -1) - (sizes[a] ?? -1) || stripped[a].localeCompare(stripped[b]))
-  const dist = bundleSizeDistribution(sources.map((p, i) => ({ path: p, size: sizes[i], pkgDir: pkgDirOf(i) })), details)
-  const facts = { sizes: [...sizes], packageDirs, details, prefix, stripped, packages, byName, bySize, dist }
+  const dist = { totalByPkg: new Map(), whyQueries: new Map(), total: 0, sorted: new Map() }
+  sources.forEach((path, i) => {
+    if (typeof sizes[i] !== 'number' || sizes[i] <= 0) return
+    dist.totalByPkg.set(pkgs[i], (dist.totalByPkg.get(pkgs[i]) ?? 0) + sizes[i])
+    if (!dist.whyQueries.has(pkgs[i])) dist.whyQueries.set(pkgs[i], bundleWhyQuery(details, packageDirs?.get(path)))
+    dist.total += sizes[i]
+  })
+  const facts = { sizes: [...sizes], packageDirs, details, prefix, stripped, packages: new Set(pkgs), byName, bySize, dist }
   _overviewFiles.set(sources, facts)
   return facts
-}
-
-// Each package's size, and the query naming it for the why dialog
-// (bundleWhyQuery), its orders kept as asked for (renderBundleSizeDistribution).
-// `items` are `{ path, size, pkgDir }`, `size` 0 or null where unknown,
-// `pkgDir` the path's Stasis package directory, so workspace packages bucket
-// apart from their parent directory.
-function bundleSizeDistribution(items, details) {
-  const totalByPkg = new Map()
-  const whyQueries = new Map()
-  let total = 0
-  for (const { path, size, pkgDir } of items) {
-    if (typeof size !== 'number' || size <= 0) continue
-    const pkg = bundlePkgOf(path, { packageDir: pkgDir })
-    totalByPkg.set(pkg, (totalByPkg.get(pkg) ?? 0) + size)
-    if (!whyQueries.has(pkg)) whyQueries.set(pkg, bundleWhyQuery(details, pkgDir))
-    total += size
-  }
-  return { totalByPkg, whyQueries, total, sorted: new Map() }
 }
 
 // A report's chip, opening it (`data-bundle-issue-report`, events.js), with
@@ -511,12 +498,14 @@ function renderPrettyToggle(copy, json) {
     aria-label="Pretty-print" data-tooltip=${prettyTooltip(copy, json)}>${PRETTY_ICON}</button>`
 }
 
-// The open file as a source viewer shows it: a pretty-printed copy, once it
+// The open file as a source viewer shows it, with its findings
+// (bundleViewerFindings, `byFile` passed on): a pretty-printed copy, once it
 // has come, in the file's place, with none of the file's findings, marks or
 // line links, which are on the file's lines; `toggle` the pretty-print button
 // where the file can be formatted. `entry` the managed bundle or npm version
 // the file is of.
-function viewedSource(details, entry, path, content, fileFindings, lineFindings) {
+function viewedSource(details, entry, path, content, byFile = null) {
+  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content, byFile)
   const printable = prettyPrintable(details, entry, path, content)
   const copy = printable ? prettyCopy(details, entry, path, content, () => { if (state.bundleSourceFile === path) render() }) : null
   const pretty = copy?.status === 'ready'
@@ -594,7 +583,7 @@ function plainSource(content) {
 // the lines a clicked result opened (state.bundleSourceTargetLine) get a band
 // (`.is-target`), except in a `pretty` copy (pretty-source.js), whose lines
 // are its own.
-function renderBundleSourceLines(content, path, details, lineFindings, matchLines = null, lineLinks = false, pretty = false) {
+function renderBundleSourceLines(content, path, details, lineFindings, matchLines, lineLinks, pretty) {
   const lineCount = bundleSourceLines(content)
   const target = state.bundleSourceTargetLine
   const targetLine = !pretty && target && target.path === path && target.bundle === (details?.integrity ?? null) ? target.line : null
@@ -724,8 +713,9 @@ function renderBundleSourceBar(path, history = null, prettyToggle = nothing) {
     </header>`
 }
 
-// Every source viewer's body: its lines, and the finding panel.
-function renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, matchLines = null, lineLinks = false, pretty = false) {
+// Every source viewer's body: its lines, and the finding panel; `viewed` the
+// file as viewedSource shows it.
+function renderBundleSourceCodeWrap(path, details, { content, fileFindings, lineFindings, pretty }, matchLines = null, lineLinks = false) {
   return html`<div class="bundle-source-code-wrap">
         ${typeof content === 'string'
           ? renderBundleSourceLines(content, path, details, lineFindings, matchLines, lineLinks, pretty)
@@ -745,18 +735,16 @@ export function renderBundleSourceModal() {
   // A cold open has no details yet; a metadata-only open is still fetching
   // the bodies. Neither tells us whether this file's content was bundled.
   const loading = !error && (!details || details.metadataOnly === true)
-  const sources = bundleSourcesAsMap(details)
-  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, sources.get(path))
   // The bundle it is of, among those listed, or the npm version open.
   const entry = state.bundles?.find(bundle => bundle.integrity === details?.integrity) ?? (details?.npm ? { npm: details.npm } : null)
-  const viewed = loading || error ? null : viewedSource(details, entry, path, sources.get(path), fileFindings, lineFindings)
+  const viewed = loading || error ? null : viewedSource(details, entry, path, bundleSourcesAsMap(details).get(path))
   return html`<div class="bundle-source-overlay">
     <div class=${classMap({ 'bundle-source-modal': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       ${renderBundleSourceBar(path, bundleFileHistory(state.bundleCodeHistory, details?.integrity ?? null, path), viewed?.toggle)}
       <div class="bundle-source-body" aria-busy=${String(loading)}>
         ${error ? html`<div class="bundles-slide-placeholder is-error" role="status">Failed to load source: ${error}</div>`
           : loading ? html`<div class="bundles-slide-placeholder" role="status">Loading source…</div>`
-          : renderBundleSourceCodeWrap(path, viewed.content, details, viewed.fileFindings, viewed.lineFindings, null, false, viewed.pretty)}
+          : renderBundleSourceCodeWrap(path, details, viewed)}
       </div>
     </div>
   </div>`
@@ -821,15 +809,18 @@ function renderBundleCodeTerminal() {
   </section>`
 }
 
-// The findings under a directory and their worst severity, for its row's
-// chip, so issues show while it is collapsed. `issueIndex` is keyed by the
-// original paths the tree's files hold.
-function dirIssueStats(node, issueIndex) {
+// What a directory's row tells of the files under it: their findings and
+// the worst severity, for its chip, so issues show while it is collapsed
+// (`issueIndex` is keyed by the original paths the tree's files hold), and
+// whether the file open (`currentPath`) is one of them.
+function dirStats(node, issueIndex, currentPath) {
   let count = 0
   let worst = null
+  let current = false
   const walk = (n) => {
     for (const full of n.files.values()) {
-      const findings = issueIndex.get(full)
+      if (full === currentPath) current = true
+      const findings = issueIndex?.get(full)
       if (!findings?.length) continue
       count += findings.length
       const sev = _topSeverityOf(findings)
@@ -837,8 +828,8 @@ function dirIssueStats(node, issueIndex) {
     }
     for (const d of n.dirs.values()) walk(d)
   }
-  if (issueIndex?.size > 0) walk(node)
-  return { count, worst }
+  walk(node)
+  return { count, worst, current }
 }
 
 // A tree row's chip: its findings' count, in the worst one's color.
@@ -852,12 +843,6 @@ const countChip = (count, sev, tooltip) => html`<span class=${`bundle-code-tree-
 function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null, expandAll = false, formats = null, sources = null, opened = null) {
   const dirs = [...node.dirs.entries()].toSorted(compareDirectoryOrder)
   const files = [...node.files.entries()].toSorted(([a], [b]) => a.localeCompare(b))
-  const containsCurrent = (n) => {
-    if (!currentPath) return false
-    for (const p of n.files.values()) if (p === currentPath) return true
-    for (const d of n.dirs.values()) if (containsCurrent(d)) return true
-    return false
-  }
   return html`<ul class=${classMap({ 'bundle-code-tree': true, root: depth === 0 })}
     aria-label=${depth === 0 ? 'Source files' : nothing}
     @keydown=${depth === 0 ? navigateBundleSourceTree : nothing}
@@ -879,10 +864,10 @@ function renderBundleSourceTree(node, currentPath, depth = 0, issueIndex = null,
         const { bytes, loc } = bundlePackageSourceStats(sources, child.sourcePath)
         Object.assign(el.dataset, { tooltipLoc: String(loc), tooltipSize: formatBytes(bytes) })
       } : undefined
-      const stats = dirIssueStats(child, issueIndex)
+      const stats = dirStats(child, issueIndex, currentPath)
       // live(.open) reconciles a native toggle on the next render.
       const open = expandAll || (_bundleTreeUserOpen.has(childPath) ? _bundleTreeUserOpen.get(childPath)
-        : Boolean(opened?.has(childPath)) || containsCurrent(child))
+        : Boolean(opened?.has(childPath)) || stats.current)
       // Click precedes the browser's native toggle, including Enter/Space.
       // Listening to toggle would also record programmatic search expansion.
       return html`<li class="bundle-code-tree-dir">
@@ -1012,31 +997,27 @@ function bundleCodeRailHits(details, sources, query) {
   const found = runBundleSearch(details.integrity ?? '', sources, query, false, false, bundleSearchOrder(details, sources))
   const complete = found.fileResults.length > MAX_RAIL_FILES || !found.truncated || found.totalHits < SEARCH_MAX_TOTAL_HITS
     || (found.fileResults.length === MAX_RAIL_FILES && found.fileResults.at(-1).hits.length >= MAX_RAIL_HITS_PER_FILE)
+  const counted = results => ({ results, totalHits: results.reduce((sum, { hits }) => sum + hits.length, 0) })
   if (complete) {
-    const results = found.fileResults.slice(0, MAX_RAIL_FILES).map(({ path, lines, hits }) => ({ path,
-      hits: hits.slice(0, MAX_RAIL_HITS_PER_FILE).map(({ ln, ranges }) => ({ ln, text: lines[ln - 1], ranges })) }))
-    return { results, totalHits: results.reduce((sum, { hits }) => sum + hits.length, 0) }
+    return counted(found.fileResults.slice(0, MAX_RAIL_FILES).map(({ path, lines, hits }) => ({ path,
+      hits: hits.slice(0, MAX_RAIL_HITS_PER_FILE).map(({ ln, ranges }) => ({ ln, text: lines[ln - 1], ranges })) })))
   }
   if (_railHits.sources === sources && _railHits.query === query) return _railHits.hits
   const matcher = buildSearchMatcher(query, false, false)
   const results = []
-  let totalHits = 0
   for (const path of bundleSearchOrder(details, sources)) {
     const content = sources.get(path)
     if (typeof content !== 'string') continue
     const hits = []
     const lines = content.split('\n')
-    for (let i = 0; i < lines.length; i++) {
+    for (let i = 0; i < lines.length && hits.length < MAX_RAIL_HITS_PER_FILE; i++) {
       const ranges = matcher.ranges(lines[i])
-      if (ranges.length === 0) continue
-      hits.push({ ln: i + 1, text: lines[i], ranges })
-      totalHits++
-      if (hits.length >= MAX_RAIL_HITS_PER_FILE) break
+      if (ranges.length > 0) hits.push({ ln: i + 1, text: lines[i], ranges })
     }
     if (hits.length > 0) results.push({ path, hits })
     if (results.length >= MAX_RAIL_FILES) break
   }
-  _railHits = { sources, query, hits: { results, totalHits } }
+  _railHits = { sources, query, hits: counted(results) }
   return _railHits.hits
 }
 
@@ -1226,8 +1207,6 @@ function renderBundleCodeView(details, entry = null) {
     : entry?.npm ? location => npmPackageRoute(entry, 'code', location)
     : entry?.repository ? location => repositoryCodeRoute(entry, 'code', location) : null
   if (path && codeRoute && isManagedUiMode()) managedHistory?.replaceCodeRoute(codeRoute(managedCodeLocation(state)))
-  const content = path ? sources.get(path) : null
-  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content, issueIndex)
   // Files, Code, Issues and Largest share the query field, Issues offered
   // only where findings match; a mode not offered falls back to Files.
   const searchModes = ['files', 'code', ...issueIndex.size > 0 ? ['issues'] : [], 'largest']
@@ -1272,7 +1251,7 @@ function renderBundleCodeView(details, entry = null) {
     ></bundle-code-splitter>
     <div class=${classMap({ 'bundle-code-main': true, 'with-panel': state.bundleSourceFindingIdx != null })}>
       ${path
-        ? renderBundleCodeMain(details, path, content, fileFindings, lineFindings, entry)
+        ? renderBundleCodeMain(details, path, sources.get(path), entry, issueIndex)
         : html`<div class="bundle-code-placeholder">Pick a file from the tree to view its source.</div>`}
       ${state.bundleCodeTerminal ? renderBundleCodeTerminal() : nothing}
     </div>
@@ -1318,13 +1297,14 @@ function textStats(text) {
 // (View lockfile) shows in the lockfile viewer in place of its text, with
 // the file's stats and none of the text's toggles and stepper. `single`: the
 // file open alone (renderDroppedLockfile), with no history and a close.
-function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, sourceLineFindings, entry = null, { single = false } = {}) {
+function renderBundleCodeMain(details, path, sourceContent, entry = null, byFile = null, { single = false } = {}) {
   const lockfile = typeof sourceContent === 'string' && lockfileFormat(path) !== null
   const read = lockfile ? viewedLockfile(details, path, sourceContent, bundleSourcesAsMap(details), () => { if (shownSource(path)) render() }) : null
   const graphed = read?.status === 'ready'
-  const { pretty, toggle, content, fileFindings, lineFindings } = graphed
+  const viewed = graphed
     ? { pretty: false, toggle: nothing, content: sourceContent, fileFindings: [], lineFindings: new Map() }
-    : viewedSource(details, entry, path, sourceContent, sourceFileFindings, sourceLineFindings)
+    : viewedSource(details, entry, path, sourceContent, byFile)
+  const { toggle, content, fileFindings } = viewed
   const issueOrder = fileFindings
     .map((f, idx) => ({ idx, line: parseInt(f.line, 10) || 0 }))
     .toSorted((a, b) => a.line - b.line || a.idx - b.idx)
@@ -1370,8 +1350,8 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
     </header>
     <div class="bundle-code-main-body">
       ${graphed ? html`<lockfile-graph .lockfile=${read.lockfile}></lockfile-graph>`
-        : renderBundleSourceCodeWrap(path, content, details, fileFindings, lineFindings, null,
-          !pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare(), pretty)}
+        : renderBundleSourceCodeWrap(path, details, viewed, null,
+          !viewed.pretty && Boolean(entry?.managedId || entry?.npm) && isManagedUiMode() && !getPublicShare())}
     </div>`
 }
 
@@ -1381,7 +1361,7 @@ function renderBundleCodeMain(details, path, sourceContent, sourceFileFindings, 
 export function renderDroppedLockfile({ name, details }) {
   const content = bundleSourcesAsMap(details).get(name)
   return html`<div class="bundle-code-view is-single-file">
-    <div class="bundle-code-main">${renderBundleCodeMain(details, name, content, [], new Map(), null, { single: true })}</div>
+    <div class="bundle-code-main">${renderBundleCodeMain(details, name, content, null, null, { single: true })}</div>
   </div>`
 }
 
@@ -1538,16 +1518,9 @@ function searchMatchLines(details, sources, path, query, useRegex, caseSensitive
   if (kept.content === content && kept.path === path && kept.query === query && kept.useRegex === useRegex && kept.caseSensitive === caseSensitive) return kept.lines
   const result = runBundleSearch(details.integrity ?? '', sources, query, useRegex, caseSensitive, bundleSearchOrder(details, sources))
   if (result.error) return null
-  let out
-  if (result.truncated) {
-    const matcher = buildSearchMatcher(query, useRegex, caseSensitive)
-    out = new Set()
-    content.split('\n').forEach((line, i) => {
-      if (matcher.ranges(line).length > 0) out.add(i + 1)
-    })
-  } else {
-    out = new Set(result.fileResults.find(file => file.path === path)?.hits.map(({ ln }) => ln))
-  }
+  const matcher = result.truncated ? buildSearchMatcher(query, useRegex, caseSensitive) : null
+  const out = new Set(matcher ? content.split('\n').flatMap((line, i) => matcher.ranges(line).length > 0 ? [i + 1] : [])
+    : result.fileResults.find(file => file.path === path)?.hits.map(({ ln }) => ln))
   _searchMatchLines = { content, path, query, useRegex, caseSensitive, lines: out }
   return out
 }
@@ -1557,14 +1530,12 @@ function searchMatchLines(details, sources, path, query, useRegex, caseSensitive
 function renderBundleSearchSide(details, sources, matchLines, entry) {
   const path = state.bundleSourceFile
   if (!path) return nothing
-  const content = sources.get(path)
-  const { fileFindings, lineFindings } = bundleViewerFindings(details, path, content)
   // A pretty-printed copy's lines aren't the file's, nor its matches.
-  const viewed = viewedSource(details, entry, path, content, fileFindings, lineFindings)
+  const viewed = viewedSource(details, entry, path, sources.get(path))
   return html`<aside class="bundle-search-side">
     ${renderBundleSourceBar(path, null, viewed.toggle)}
     <div class="bundle-source-body">
-      ${renderBundleSourceCodeWrap(path, viewed.content, details, viewed.fileFindings, viewed.lineFindings, viewed.pretty ? null : matchLines, false, viewed.pretty)}
+      ${renderBundleSourceCodeWrap(path, details, viewed, viewed.pretty ? null : matchLines)}
     </div>
   </aside>`
 }
@@ -1586,15 +1557,10 @@ function renderBundleSearchView(details, entry = null) {
   // valid query matching nothing in it, not on an empty one or a regex not
   // compiling yet (`merge(`), which keep it open, unmarked, rather than lose
   // the user's place on a passing keystroke.
-  let openMatchLines = null
-  if (state.bundleSourceFile) {
-    const lines = searchMatchLines(details, sources, state.bundleSourceFile, query, useRegex, caseSensitive)
-    if (lines && lines.size === 0) {
-      state.bundleSourceFile = null
-      state.bundleSourceFindingIdx = null
-    } else {
-      openMatchLines = lines
-    }
+  const openMatchLines = state.bundleSourceFile ? searchMatchLines(details, sources, state.bundleSourceFile, query, useRegex, caseSensitive) : null
+  if (openMatchLines?.size === 0) {
+    state.bundleSourceFile = null
+    state.bundleSourceFindingIdx = null
   }
   const showContext = state.bundleSearchContext
   return html`<div class="bundle-search-view">
@@ -1813,10 +1779,8 @@ export function renderBundlesList(bundles) {
 // its index's `_keyReports` (client/bundle-finding-index.js).
 function bundleIssueReportsTemplate(finding, { kind, bucketKey }) {
   let reports = finding.fileHash ? reportsForFinding(finding.fileHash, finding) : []
-  if (reports.length === 0 && bucketKey) {
-    if (kind === 'package') reports = reportsForFindingByPackage(bucketKey, finding)
-    else if (kind === 'repository') reports = reportsForFindingByRepo(bucketKey, finding)
-  }
+  const byBucket = kind === 'package' ? reportsForFindingByPackage : kind === 'repository' ? reportsForFindingByRepo : null
+  if (reports.length === 0 && bucketKey && byBucket) reports = byBucket(bucketKey, finding)
   if (reports.length === 0) return nothing
   const extra = reports.length - 2
   return html`<div class="bundle-issue-reports">
