@@ -183,6 +183,7 @@ Its sub-tabs are:
   A selector orders them newest first (the default), most recently updated first, or fewest versions to review first.
   Pull requests that add only versions listed under others come after the rest, one line each, and can be hidden; one whose lockfiles lock other versions that want reviews says how many on its line.
 - **Versions**: every added version that wants reviews, once, with the pull requests that add it; those lacking a review made in another are red.
+  Where the host reads reviews of comments, a version its pull request's comments pass but `lookup` doesn't yet stays listed, green (`2/2`), on both sub-tabs.
 - **Default branch**, where anything there wants reviews: what each repository's default branch locks that wants reviews or fails them, and its lockfiles left unread.
 - **Reviews**: the reviews published to the team, revoked ones too, latest first, one line each: the version, the verdict, how much was checked (`Partial · 22/24`), the author, any other teams it is published to, and when.
   Clicking how much was checked opens the review's notes and file verdicts under its line.

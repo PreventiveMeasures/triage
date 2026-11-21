@@ -719,3 +719,14 @@ test('a pull request into a branch other than the default is left out where it a
   } finally { dependencies['7#9'] = was }
 })
 
+
+test('a version its pull request\'s comments alone pass, where the host reads them, is still listed, as its reviews aren\'t yet the host\'s, its pull request with it', async () => {
+  const was = dependencies['7#11']
+  try {
+    state.managedSession = { id: 'by-comments', role: 'triage' }
+    dependencies['7#11'] = { ...was, review: { ...terms, byComments: true, reviewedDependencies: true }, lockfiles: [dir({ added: [wants('talked', { reviews: 2, commented: 2 })] })] }
+    const card = cardsOf(await read(shown([repo(7, 'org/a')]))).find(one => nameOf(one) === 'a#11')
+    assert.match(card ?? '', /talked@[^]*<span class="team-deps-review is-commented">2\/2<\/span>/u)
+    assert.match(card, /2 reviews of 2 required, in its comments, not yet in the reviewed dependencies/u)
+  } finally { dependencies['7#11'] = was }
+})

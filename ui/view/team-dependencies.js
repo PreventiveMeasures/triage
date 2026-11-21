@@ -32,7 +32,7 @@ import { html, nothing, svg } from 'lit'
 import { StateElement } from '@rray/frontend/state-element'
 import { state } from '#client/index.js'
 import { fetchTeamDependencies } from './client-managed.js'
-import { UNSUPPORTED_WHY, addedVersions, checked, heldPullDependencies, pullDependencies, readsDependencies, reviewFailures, reviewOf, seedPullDependencies,
+import { UNSUPPORTED_WHY, addedVersions, checked, heldPullDependencies, passedByComments, pullDependencies, readsDependencies, reviewFailures, reviewOf, seedPullDependencies,
   subscribePullDependencies, unreviewedVersions, versionKey } from './pull-dependencies.js'
 import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { icon } from './repository-tiles.js'
@@ -259,6 +259,9 @@ function reviewState(pkg, review) {
   if (shown === 'wanted') {
     return { label: `${pkg.reviews}/${review.required}`, tint: 'is-wanted',
       said: `${plural(pkg.reviews, 'review')} of ${review.required} required${pkg.commented ? `; ${plural(pkg.commented, 'reviewer')} in its comments` : ''}` }
+  }
+  if (passedByComments(pkg, review)) {
+    return { label: `${pkg.reviews}/${review.required}`, tint: 'is-commented', said: `${plural(pkg.reviews, 'review')} of ${review.required} required, in its comments, not yet in the reviewed dependencies` }
   }
   return null
 }
@@ -549,7 +552,7 @@ class TeamDependencies extends StateElement {
     // those adding fewest first, as Versions takes them, then as picked.
     const wanting = pulls.filter(({ entry }) => entry.status === 'ready' && entry.review).map(pull => {
       const { review } = pull.entry
-      const wanted = addedVersions(pull.entry).versions.filter(pkg => ['wanted', 'unsupported'].includes(reviewOf(pkg, review)))
+      const wanted = addedVersions(pull.entry).versions.filter(pkg => ['wanted', 'unsupported'].includes(reviewOf(pkg, review)) || passedByComments(pkg, review))
       const told = wanted.filter(pkg => reviewOf(pkg, review) === 'wanted')
       const toReview = Math.max(review.toReview ?? told.length, told.length)
       const past = toReview - told.length

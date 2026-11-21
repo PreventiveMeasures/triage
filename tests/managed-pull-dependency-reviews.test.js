@@ -288,6 +288,16 @@ test('the client reads the host\'s bases as told, a version two directories add 
     [['dual', { name: 'dual', version: '1.5.0' }, 0], ['lone', null, 0], ['odd', null, 0]], 'the one still wanting reviews, against its own base; one named oddly, none')
 })
 
+test('read without its base, a version its comments alone pass is still told, as the host takes them in only once it is merged', async () => {
+  const [commented, wanting] = [at('commented', '1.0.0'), at('wanting', '1.0.0')]
+  const told = { base: mergeBase, head, cut: false, baseless: true, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added: [commented, wanting],
+    locked: [commented, wanting] }] }
+  const reviewed = { lookup: () => Promise.resolve(false), parseComments: () => Promise.resolve([]) }
+  const answer = await reviewedDependencies(told, { required: 1, since: null, canReview: true, reviews: [] },
+    { reviewed, commentReviews: () => Promise.resolve({ reviews: [passing(commented, 'u1')], failed: false }) })
+  assert.deepEqual([answer.lockfiles[0].added.map(pkg => [pkg.name, pkg.reviews, pkg.commented ?? 0]), answer.review.toReview], [[['commented', 1, 1], ['wanting', 0, 0]], 1])
+})
+
 test('a version added past those told is judged as one added, against the versions it was, and counted as wanting a review', async () => {
   const added = Array.from({ length: MAX_ADDED }, (_, n) => at(`new-${String(n).padStart(3, '0')}`, '1.0.0'))
   const tail = at('zz-tail', '2.0.0', { was: ['1.0.0'] })

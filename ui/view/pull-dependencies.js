@@ -349,6 +349,11 @@ export function reviewOf(pkg, review) {
   return pkg.reviews >= review.required && !pkg.rejected ? 'passed' : 'wanted'
 }
 
+// Whether `pkg` passes by its pull request's comments alone, where the host
+// reads them (`byComments`), whose reviewed dependencies don't take them in
+// till it is merged: still shown as wanting them taken in.
+export const passedByComments = (pkg, review) => Boolean(review?.byComments) && pkg.commented > 0 && !pkg.reviewed && reviewOf(pkg, review) === 'passed'
+
 // The other versions an answer's lockfiles lock that want reviews, each once
 // across its directories (versionKey), and how many it counts in all
 // (`count`), those it didn't send among them: as its review tells, each

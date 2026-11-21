@@ -2034,6 +2034,8 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   font-size: .66rem; line-height: 1.4; font-variant-numeric: tabular-nums;
   &.is-failed { color: var(--critical); }
   &.is-wanted { padding: 0; border: 0; color: var(--accent); font-size: .7rem; }
+  /* Passed by its pull request's comments alone, not yet taken in by the host. */
+  &.is-commented { padding: 0; border: 0; color: var(--green); font-size: .7rem; }
 }
 /* Reviewed in another pull request's comments, which count there alone,
    blue; the pull request a version is listed under, muted; and the pull
