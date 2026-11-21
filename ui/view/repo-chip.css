@@ -1,8 +1,7 @@
 :host {
   display: inline-flex;
   vertical-align: middle;
-  /* Stacking context so the absolute edit input sits over the ghost
-     chip without affecting flow. */
+  /* For the edit input over the ghost chip. */
   position: relative;
 }
 
@@ -11,10 +10,7 @@
   cursor: default; user-select: none;
   /* Anchor for the copied overlay. */
   position: relative;
-  /* Pin to 24px so readonly mode (no pencil) matches editable mode
-     (which hits 24px naturally: 18px button + .125rem padding + 1px
-     border × 2). Sibling .file-chip / .files-toggle-btn use the same
-     24px so the title-row pills line up. */
+  /* Readonly (no pencil) as tall as editable, as the title row's other pills. */
   min-height: 24px; box-sizing: border-box;
   padding: .125rem .375rem .125rem .5rem;
   background: var(--surface);
@@ -26,20 +22,13 @@
   font-weight: 500;
 }
 .chip svg { color: var(--muted); flex-shrink: 0; }
-/* Empty chip is one big click target (see repo-chip.js). Hover lift
-   signals the affordance without a pointer cursor on what's still a
-   chip — matches the rest of the page-head chrome, which also doesn't
-   change cursor on click targets. */
+/* An empty chip is one click target (repo-chip.js). */
 .chip.empty:hover { border-color: var(--accent); }
 .chip.empty .label { color: var(--muted); font-style: italic; }
 .chip.readonly { padding-right: .5rem; }
 
-/* Copyable slug (read-only + editable-with-URL): no pointer cursor,
-   matching `.chip.empty` and the rest of the page-head chrome. On copy,
-   a frosted "Copied" overlay covers the chip for ~1s — absolutely
-   positioned (out of flow + pointer-events: none) so the chip never
-   changes size and the click still lands. The glass blur frosts the
-   slug behind it so it doesn't read through. */
+/* On copy, a frosted "Copied" overlay for ~1s, out of flow so the chip
+   keeps its size. */
 .chip.copied::after {
   content: 'Copied';
   position: absolute;
@@ -65,11 +54,8 @@
 }
 .edit-btn:hover { color: var(--text); background: rgb(from var(--text) r g b / .06); }
 
-/* WCO PWA mode — the page head this chip sits in is part of the
-   window's drag handle (styles/theme.css hands the page background to
-   the OS), and the document's no-drag list cannot reach a control
-   inside this shadow root. Without this the pencil — and the URL field
-   it opens — start a window drag instead of taking the click. */
+/* WCO: the page head is a drag handle and the document's no-drag list
+   can't reach this shadow root. */
 /* stylelint-disable-next-line media-feature-name-value-no-unknown */
 @media (display-mode: window-controls-overlay) {
   .edit-btn,
@@ -79,18 +65,11 @@
   }
 }
 
-/* Ghost chip — kept in the DOM during edit mode so the host's layout
-   footprint matches display mode (h1 flex row stays put).
-   `visibility: hidden` keeps the box but suppresses paint, so the old
-   chip text doesn't bleed through the input's semi-transparent
-   --surface. `inert` blocks interaction; aria-hidden (in the
-   template) hides it from AT. */
+/* While editing, the chip stays as an invisible ghost holding the
+   footprint (unpainted, so it can't show through the input's surface). */
 .chip[inert] { visibility: hidden; min-width: 19rem; }
 
-/* Edit input — absolute over the ghost chip (out of flow), sized to
-   the ghost's footprint via `inset: 0` so it never spills past the
-   chip anchor into adjacent h1 items. Long URLs scroll horizontally
-   inside it, like any constrained text field. */
+/* The edit input, exactly over the ghost. */
 input {
   position: absolute;
   inset: 0;
@@ -106,19 +85,15 @@ input {
   outline: none;
 }
 
-/* Print: force chip text + icon black regardless of theme, drop the
-   pencil. The page-head print rules in `ui/styles/print.css` strip
-   the host (background/border/padding) but stop at the shadow
-   boundary — `var(--text)` inherits across it, so a dark-theme user
-   would otherwise print the chip light-on-white. The svg uses
-   `var(--muted)` for the same reason. */
+/* Print: black whatever the theme (print.css stops at the shadow
+   boundary, and `--text` would print light-on-white), no pencil. */
 @media print {
   .chip {
     color: #000 !important;
     border: 0 !important;
   }
   .chip svg { color: #000 !important; }
-  .edit-btn { display: none !important; }
+  .edit-btn,
   input { display: none !important; }
 }
 

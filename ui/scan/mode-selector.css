@@ -179,9 +179,7 @@ input {
   }
 }
 @container mode-selector (max-width: 30rem) {
-  .mode-icon {
-    display: none;
-  }
+  .mode-icon,
   header > span {
     display: none;
   }

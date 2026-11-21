@@ -1,8 +1,4 @@
-/* `<theme-toggle>` shadow-DOM styles. Imported as text by theme.js
-   and wrapped with unsafeCSS() so the bytes ship inside the
-   component's shadow root. `:host` is the element itself, acting as
-   the clickable button surface — the last of the fixed corner
-   controls, now that the export button lives in the toolbar. */
+/* `<theme-toggle>` (theme.js): the host is the button. */
 
 :host {
   position: absolute; top: .5rem; right: .5rem;
@@ -25,13 +21,8 @@
 :host(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media print { :host { display: none !important; } }
 
-/* WCO PWA mode — the page background is the window's drag handle
-   (styles/theme.css), so every control has to opt out of it or a click
-   moves the window instead. The document's exclusion list does reach
-   this host through `[role='button']`, but only once `ensureHostAria`
-   has stamped that attribute on: the rule is here as well so the
-   opt-out is true from the component's first paint, whatever order the
-   attributes land in. */
+/* WCO: the document's no-drag list reaches this host via `[role='button']`
+   only once `ensureHostAria` stamps it; this holds from the first paint. */
 /* stylelint-disable-next-line media-feature-name-value-no-unknown */
 @media (display-mode: window-controls-overlay) {
   :host {
