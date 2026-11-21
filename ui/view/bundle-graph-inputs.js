@@ -1,5 +1,5 @@
 import { bundleImportsAsMap } from '../../common/bundle-imports.js'
-import { bundlePkgOf, isOwnSourcePath } from './bundle-pkg-of.js'
+import { bundlePkgOf, isOwnSourcePath } from '../../common/bundle-pkg-of.js'
 
 export { bundleImportsAsMap }
 export { bundleReasons as bundleGraphReasons } from '../../common/bundle-reasons.js'

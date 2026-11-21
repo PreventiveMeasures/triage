@@ -136,9 +136,9 @@ const listingCheck = { refusal: null, asked: 0 }
 const prettySourcemap = await import('../common/pretty-sourcemap.js')
 mock.module('../common/pretty-sourcemap.js', { namedExports: { ...prettySourcemap,
   sourcemapDiffRebuilds: (...args) => { listingCheck.asked++; return listingCheck.refusal ?? prettySourcemap.sourcemapDiffRebuilds(...args) } } })
-const { bundleFileMeta, computeBundleDiff, computeResolutionDiff } = await import('../ui/view/bundle-compare-diff.js')
-const { bundleCompareResolutions } = await import('../ui/view/bundle-compare-inputs.js')
-const { bundleFilesAsMap } = await import('../ui/view/bundle-sources.js')
+const { bundleFileMeta, computeBundleDiff, computeResolutionDiff } = await import('../common/bundle-compare-diff.js')
+const { bundleCompareResolutions } = await import('../common/bundle-compare-inputs.js')
+const { bundleFilesAsMap } = await import('../common/bundle-sources.js')
 const { resolutionRows } = await import('../ui/view/bundle-compare-files.js')
 const { npmDependencyFlagTags } = await import('../ui/view/npm-dependency-checks.js')
 await import('../ui/view/bundle-compare-code.js')

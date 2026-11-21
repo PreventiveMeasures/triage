@@ -25,7 +25,7 @@ export function playedCommits(commits, count) {
 // each after the one before by their times apart, a day DAY_SECONDS, but no
 // sooner than MIN_GAP, nor later than MAX_GAP, quiet spells skipped as
 // Gource's --auto-skip-seconds skips them.
-export const DAY_SECONDS = 1
+const DAY_SECONDS = 1
 export const MIN_GAP = 0.08
 export const MAX_GAP = 0.6
 export function playTimes(commits) {
@@ -226,7 +226,7 @@ export const clusterRadius = count => count === 0 ? 0 : FILE_STEP * 0.62 * Math.
 // Where the `index`th of a directory's files sits from it: on a sunflower's
 // spiral, the first at its middle, each after a turn of the golden angle
 // further out.
-export function fileOffset(index) {
+function fileOffset(index) {
   const radius = FILE_STEP * 0.62 * Math.sqrt(index + 0.5)
   return [radius * Math.cos(index * GOLDEN_ANGLE), radius * Math.sin(index * GOLDEN_ANGLE)]
 }

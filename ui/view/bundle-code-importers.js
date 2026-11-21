@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit'
 import { bundleSourcemapEdges } from '../../common/bundle-sourcemap.js'
-import { bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleSourcesAsMap } from '../../common/bundle-sources.js'
 import { fileIconFormat, sourceFileIcon } from './source-file-icon.js'
 
 // The Code tab's Imported by button, beside the open file's Copy and GitHub

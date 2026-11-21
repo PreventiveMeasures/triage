@@ -19,7 +19,7 @@
 // disconnect / reconnect. The cache is keyed by bundle integrity,
 // so opening a different bundle discards the previous terminal.
 
-import { bundleFilesAsMap } from './bundle-sources.js'
+import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { stripCommonPathPrefix } from './format.js'
 
 let loadPromise = null

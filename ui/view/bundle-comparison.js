@@ -3,7 +3,7 @@
 // another or none, as the server pairs their files
 // (server-managed/comparison.ts), the viewer pairing none of them; two
 // bundles opened here, which no server holds, as this viewer pairs them, in a
-// chunk loaded only for those (bundle-comparison-local.js). Kept for the last
+// chunk loaded only for those (common/bundle-comparison.js). Kept for the last
 // few comparisons, for the session; a failure that may pass is asked again a
 // while after, its view painted again then.
 import { fetchBundleComparison, fetchNpmComparison } from './client-managed.js'
@@ -59,7 +59,7 @@ function pair(base, other, scope) {
     return fetchNpmComparison(name, version, base.npm?.version ?? '(empty)', { otherName: base.npm?.name ?? name, ...patch ? { patch } : {},
       ...base.npmPatch ? { otherPatch: base.npmPatch.patch } : {} })
   }
-  return import('./bundle-comparison-local.js').then(module => {
+  return import('../../common/bundle-comparison.js').then(module => {
     local = module
     return module.prepareComparison(base, other, scope)
   })

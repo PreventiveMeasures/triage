@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { beforeEach, it, mock } from 'node:test'
-import { createBundleMetadata } from '../ui/view/bundle-metadata.js'
-import { bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
+import { createBundleMetadata } from '../common/bundle-metadata.js'
+import { bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { bundleFileHistory, stepBundleFile, visitBundleFile } from '../ui/view/bundle-code-history.js'
 import { beginViewNavigation } from '../ui/view/view-navigation.js'
 

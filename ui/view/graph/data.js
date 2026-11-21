@@ -1,5 +1,5 @@
 import { packageOf } from './utils.js'
-import { pkgLabel } from '../bundle-pkg-of.js'
+import { pkgLabel } from '../../../common/bundle-pkg-of.js'
 import { totalFindings } from '../file-counts.js'
 import { SEVERITIES } from '../format.js'
 

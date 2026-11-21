@@ -1,4 +1,4 @@
-// `ui/view/bundle-sources.js` — the shared bundle-shape extractors the
+// `common/bundle-sources.js` — the shared bundle-shape extractors the
 // Code tab, finding tree, graph data, treemap, and in-shell FS all read
 // through. Pure (no Lit / DOM / `state`), so the test imports it straight
 // and feeds it hand-built `details` shapes.
@@ -14,7 +14,7 @@ import { describe, it } from 'node:test'
 
 const { Bundle } = await import('@exodus/stasis-core/bundle')
 const { createTerminal } = await import('@preventive/terminal')
-const { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions, bundleSourceSizes, bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
+const { bundleFileKinds, bundleFileSizes, bundleFilesAsMap, bundlePackageDirs, bundlePackageVersions, bundleSourceSizes, bundleSourcesAsMap } = await import('../common/bundle-sources.js')
 
 // A real Bundle, because the point of these cases is what the package
 // actually stores: `Bundle.sources` is the raw content of every entry,

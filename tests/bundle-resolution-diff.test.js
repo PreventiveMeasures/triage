@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { bundleCompareFiles, bundleCompareResolutions } from '../ui/view/bundle-compare-inputs.js'
-import { computeBundleDiff, computeResolutionDiff } from '../ui/view/bundle-compare-diff.js'
+import { bundleCompareFiles, bundleCompareResolutions } from '../common/bundle-compare-inputs.js'
+import { computeBundleDiff, computeResolutionDiff } from '../common/bundle-compare-diff.js'
 import { prepareComparison } from '../common/bundle-comparison.js'
 
 function details(imports, { files = { 'app.js': 'import "dep"', 'a.js': 'a', 'b.js': 'b' }, reason = {} } = {}) {

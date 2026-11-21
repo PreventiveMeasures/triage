@@ -1,6 +1,6 @@
-import { bundleFileSizes, bundlePackageDirs } from '../view/bundle-sources.js'
-import { bundleLineCounts } from '../view/bundle-metadata.js'
-import { bundlePkgOf } from '../view/bundle-pkg-of.js'
+import { bundleFileSizes, bundlePackageDirs } from '../../common/bundle-sources.js'
+import { bundleLineCounts } from '../../common/bundle-metadata.js'
+import { bundlePkgOf } from '../../common/bundle-pkg-of.js'
 import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
 import { formatBytes } from './metrics.js'
 

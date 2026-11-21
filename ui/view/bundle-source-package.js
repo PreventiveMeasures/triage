@@ -2,7 +2,7 @@ import { parseToml } from '@preventive/lockfile/toml.js'
 import { reportRepoGithub } from '@preventive/report'
 import { bundleCommitHash } from '../../common/bundle-commit.js'
 import { utf8ByteLength } from '../../common/utf8.js'
-import { bundleSourceLineCount } from './bundle-metadata.js'
+import { bundleSourceLineCount } from '../../common/bundle-metadata.js'
 import { packageRepo } from './package-repo.js'
 
 function readManifest(files, name) {

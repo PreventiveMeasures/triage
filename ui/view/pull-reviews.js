@@ -49,7 +49,7 @@ function codexStanding(codex) {
 // Each reviewer as their mark shows them: who, how their review stands,
 // the commit it was on, and whether that is the latest; Codex first, by its
 // summary's code review.
-export function reviewStandings(reviews) {
+function reviewStandings(reviews) {
   const codex = codexStanding(reviews.codex)
   const commit = reviews.codex?.code?.commit ?? null
   return [

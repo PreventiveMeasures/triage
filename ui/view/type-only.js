@@ -9,7 +9,7 @@
 // Kept for the last few comparisons, for the session.
 import { computeFileHash } from '@preventive/report'
 import { prettyExtension } from '../../common/pretty-print.js'
-import { bundleFilesAsMap } from './bundle-sources.js'
+import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { fetchBundleTypeOnly, fetchNpmTypeOnly } from './client-managed.js'
 import { renameDiffable } from './rename-diff.js'
 

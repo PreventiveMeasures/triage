@@ -1852,5 +1852,3 @@ class ManagedAdminTeams extends ManagedPage {
   }
 }
 customElements.define('managed-admin-teams', ManagedAdminTeams)
-
-export { ManagedAdminBundles, ManagedAdminReports, ManagedAdminRepos, ManagedAdminScans, ManagedAdminTeams, ManagedAdminUsers }

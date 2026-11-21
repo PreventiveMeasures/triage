@@ -12,7 +12,7 @@
 // together, for either whitespace setting, the last few comparisons' for the
 // session: turning a setting on or off asks for none again.
 import { computeFileHash } from '@preventive/report'
-import { bundleFilesAsMap } from './bundle-sources.js'
+import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { fetchBundleRenameDiff, fetchBundleRenameDiffs, fetchNpmRenameDiff, fetchNpmRenameDiffs } from './client-managed.js'
 
 // Comparisons whose diffs are kept, the one read last last, each holding

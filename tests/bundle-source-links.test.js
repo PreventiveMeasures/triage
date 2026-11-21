@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { Bundle } from '@exodus/stasis-core/bundle'
 import { bundleSourceImports, bundleSourceLinkImports, sourceLinkResolver } from '../common/bundle-source-links.js'
 import { bundleFilesAsMap, bundlePackageDirs, bundleSourcesAsMap } from '../common/bundle-sources.js'
-import { bundleSourceLinkResolver } from '../ui/view/bundle-source-links.js'
+import { bundleSourceLinkResolver } from '../common/bundle-source-links.js'
 import { highlight } from '../ui/prism.js'
 import { splitHighlightedLines } from '../ui/view/prism-highlight.js'
 

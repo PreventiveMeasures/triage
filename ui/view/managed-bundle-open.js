@@ -1,7 +1,7 @@
 import { isManagedUiMode, state } from '#client/index.js'
 import { compareModeOf } from '../../common/managed/routes.js'
 import { fetchBundleMetadata } from './client-managed.js'
-import { parseBundleMetadata } from './bundle-metadata.js'
+import { parseBundleMetadata } from '../../common/bundle-metadata.js'
 import { selectBundle, takeHandedOffBundle } from './bundle-load.js'
 import { bundleComparisonCandidates } from './bundle-comparison-candidates.js'
 import { cleanupGraph2 } from './graph/state.js'

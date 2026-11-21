@@ -16,7 +16,7 @@ import { brotliDecompress } from './brotli-decompress.js'
 import { graph2 } from './graph/state.js'
 import { render } from './render.js'
 import { beginViewNavigation, currentViewSignal } from './view-navigation.js'
-import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleContents, parseBundleMetadata } from './bundle-metadata.js'
+import { bundleNeedsSources, computeBundleFileHashes, createBundleMetadata, parseBundleContents, parseBundleMetadata } from '../../common/bundle-metadata.js'
 
 const sourceLoads = new Map()
 const metadataLoads = new Map()

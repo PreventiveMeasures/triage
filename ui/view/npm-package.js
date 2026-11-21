@@ -11,7 +11,7 @@ import { isNpmPackageName, isNpmPackageSpec } from '../../common/managed/npm-pac
 import { NPM_TABS, compareModeField, compareModeOf } from '../../common/managed/routes.js'
 import { fetchNpmPackage, fetchNpmTags, fetchNpmVersions } from './client-managed.js'
 import { selectBundle } from './bundle-load.js'
-import { fileRowDetails } from './bundle-sources.js'
+import { fileRowDetails } from '../../common/bundle-sources.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { COMMIT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG, TAG_ICON_SVG } from './icons.js'
 import { managedTabLocation } from './managed-bundle-navigation.js'

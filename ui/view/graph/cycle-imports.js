@@ -1,5 +1,5 @@
 import { getWeakEdge } from '@preventive/upstream/weak-edges.js'
-import { bundlePkgOf } from '../bundle-pkg-of.js'
+import { bundlePkgOf } from '../../../common/bundle-pkg-of.js'
 
 // Convert original paths, never graph display labels, to upstream coordinates.
 // The innermost installation owns nested dependencies, including pnpm copies.

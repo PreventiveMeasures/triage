@@ -141,7 +141,7 @@ const regardless = row => differs(row) || hasMalware(row)
 // Whether a package row is of `kind` (PACKAGE_KINDS): development's where
 // only devDependencies need it, production's where more do, or its lockfiles
 // don't say; one told regardless of both.
-export const ofKind = (row, kind) => kind === 'all' || regardless(row) || Boolean(row.dev) === (kind === 'development')
+const ofKind = (row, kind) => kind === 'all' || regardless(row) || Boolean(row.dev) === (kind === 'development')
 const severityLabel = severity => `${severity[0].toUpperCase()}${severity.slice(1)}`
 
 // Which package rows are shown, by the filter's value: its label, and which

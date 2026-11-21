@@ -5,7 +5,7 @@ import { bundleCommitHash } from '../../common/bundle-commit.js'
 import { bundleCommitTooltip } from './bundle-origin-links.js'
 import { bundleSourcePackageInfo } from './bundle-source-package.js'
 import { moduleEcosystem } from './bundle-source-tree.js'
-import { isOwnSourcePath } from './bundle-pkg-of.js'
+import { isOwnSourcePath } from '../../common/bundle-pkg-of.js'
 import { GITHUB_ICON_SVG } from './icons.js'
 import { sourcePackageIcon } from './source-file-icon.js'
 

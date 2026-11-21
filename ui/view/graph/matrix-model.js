@@ -1,7 +1,7 @@
 // Sparse dependency matrix: O(files + imports) storage, never an N × N array.
 // Rows import columns. Expanded packages retain their external connections.
 import { orderCyclicGroup } from './matrix-order.js'
-import { pkgLabel } from '../bundle-pkg-of.js'
+import { pkgLabel } from '../../../common/bundle-pkg-of.js'
 import { fileLabelOf } from './file-label.js'
 import { countsTowardsCycles } from './cycle-imports.js'
 

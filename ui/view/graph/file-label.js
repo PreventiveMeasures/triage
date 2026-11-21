@@ -1,7 +1,7 @@
 // How the graph names a file: by where it sits in its package. A DOM-free
 // leaf, so the matrix model (which the Why dialog loads outside the graph)
 // can name its rows without the rest of data.js.
-import { pkgLabel } from '../bundle-pkg-of.js'
+import { pkgLabel } from '../../../common/bundle-pkg-of.js'
 import { depsDirName } from '../format.js'
 
 // Strip a file path's package anchor so callers can show

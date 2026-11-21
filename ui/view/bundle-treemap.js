@@ -61,11 +61,11 @@
 import { LitElement, html, render as litRender, nothing, svg } from 'lit'
 import { styleMap } from './style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
-import { bundleFileKinds, bundleFileSizes, bundlePackageDirs } from './bundle-sources.js'
+import { bundleFileKinds, bundleFileSizes, bundlePackageDirs } from '../../common/bundle-sources.js'
 import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { mixedColor, paletteColor, pkgColor } from './graph/utils.js'
-import { bundlePkgOf, pkgLabel } from './bundle-pkg-of.js'
+import { bundlePkgOf, pkgLabel } from '../../common/bundle-pkg-of.js'
 import { treemapGroups } from './treemap-groups.js'
 import './bundle-scope-selector.js'
 

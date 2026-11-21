@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { bundleEdges } from '@preventive/sourcemap/edges.js'
-import { createBundleMetadata, parseBundleContents, parseBundleMetadata } from '../ui/view/bundle-metadata.js'
-import { bundleFileSizes, bundleSourcesAsMap } from '../ui/view/bundle-sources.js'
+import { createBundleMetadata, parseBundleContents, parseBundleMetadata } from '../common/bundle-metadata.js'
+import { bundleFileSizes, bundleSourcesAsMap } from '../common/bundle-sources.js'
 import { bundleImportsAsMap } from '../ui/view/bundle-graph-inputs.js'
-import { bundleSourceLinkResolver } from '../ui/view/bundle-source-links.js'
+import { bundleSourceLinkResolver } from '../common/bundle-source-links.js'
 import { sourcemapEdges } from '../common/bundle-sourcemap.js'
 
 const identity = { integrity: 'sha512-map', kind: 'sourcemap', size: 100 }

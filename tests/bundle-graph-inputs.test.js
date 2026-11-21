@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { bundleEntryPackages, bundleFlowEntries, bundleGraphReasons, bundleImportsAsMap, bundleLayerRoots, bundleOwnSourcePackages, filterBundleGraphReason } from '../ui/view/bundle-graph-inputs.js'
-import { bundlePkgOf } from '../ui/view/bundle-pkg-of.js'
+import { bundlePkgOf } from '../common/bundle-pkg-of.js'
 import { Bundle } from '@exodus/stasis-core/bundle'
-import { bundlePackageDirs } from '../ui/view/bundle-sources.js'
+import { bundlePackageDirs } from '../common/bundle-sources.js'
 
 it('size flow keeps entry files and virtual imports without reviving reason-filtered entries', () => {
   const paths = new Map([['project/app.js', 'app.js'], ['project/dep.js', 'dep.js']])

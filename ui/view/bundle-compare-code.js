@@ -28,7 +28,7 @@ import { comparisonEntries, fileContents, resolutionChange } from './bundle-comp
 export { fileEntries, fileContents } from './bundle-compare-files.js'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
-import { bundleFileByteLength, bundleFilesAsMap } from './bundle-sources.js'
+import { bundleFileByteLength, bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { buildBundleSourceTree, bundleSourceTreePrefix, compactSourceDirectory, compareDirectoryOrder, defaultOpenDirectories, filterBundleSourceTree, navigateBundleSourceTree, orderedComparisonFiles } from './bundle-source-tree.js'
 import { fileIconFormat, isNotTextFormat, sourceFileIcon, sourcePackageIcon } from './source-file-icon.js'
 import { highlight, langForPath, splitHighlightedLines } from './prism-highlight.js'

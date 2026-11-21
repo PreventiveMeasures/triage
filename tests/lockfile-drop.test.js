@@ -8,7 +8,7 @@ import './_polyfills.js'
 const { droppedLockfile, openDroppedLockfile, readDroppedLockfile } = await import('../ui/view/lockfile-drop.js')
 const { beginViewNavigation } = await import('../ui/view/view-navigation.js')
 const { viewedLockfile } = await import('../ui/view/lockfile-view.js')
-const { bundleSourcesAsMap } = await import('../ui/view/bundle-sources.js')
+const { bundleSourcesAsMap } = await import('../common/bundle-sources.js')
 const { state } = await import('../client/state.ts')
 
 const nameOf = file => file.name.replace(/ \(\d+\)(?=\.[^.]*$)/u, '')

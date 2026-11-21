@@ -30,7 +30,7 @@ import { closeLinksPreview, getLinksPreview, openLinksPreview } from './links-pr
 import { FOCUS_SPLIT_STEP, nudgeFocusSplit, resetFocusSplit, startFocusSplitDrag } from './focus-splitter.js'
 import { downloadReportsAsMarkdown, reportsToMarkdown } from './markdown-export.js'
 import { bundleToCycloneDx, bundleToSpdx, sbomBaseName } from './sbom.js'
-import { bundleSourceLines, bundleSourcesAsMap } from './bundle-sources.js'
+import { bundleSourceLines, bundleSourcesAsMap } from '../../common/bundle-sources.js'
 
 function navigateManagedReportView(view) {
   if (!isManagedUiMode() || !managedHistory.active || !state.currentManagedTeam) return null

@@ -328,7 +328,7 @@ test('a swap that lands on another bundle is dropped, not resumed later', () => 
 })
 
 test('packages list Removed | Added | Changed, each package once with its versions and sizes', async () => {
-  const { comparePackages } = await import('../ui/view/bundle-compare-diff.js')
+  const { comparePackages } = await import('../common/bundle-compare-diff.js')
   const view = compare()
   const rows = comparePackages(
     { onlyBase: [{ pkg: 'left-pad', bytes: 40 }], onlyOther: [{ pkg: 'zod', bytes: 90 }],

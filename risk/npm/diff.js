@@ -1,5 +1,5 @@
 // How two versions' files differ, as Compare's diff has them
-// (ui/view/bundle-compare-diff.js computeBundleDiff), for risk's findings
+// (common/bundle-compare-diff.js computeBundleDiff), for risk's findings
 // (compare.js): the files the open version adds, and those it changes, a
 // build's content-hashed file paired with the one it replaces by its name
 // (hashedKey), and a file moved to another path with its old one by content,

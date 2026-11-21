@@ -1,4 +1,4 @@
-import { pkgLabel } from '../bundle-pkg-of.js'
+import { pkgLabel } from '../../../common/bundle-pkg-of.js'
 import { countsTowardsCycles } from './cycle-imports.js'
 import { stronglyConnected } from './matrix-model.js'
 import { removalSizes } from './size-flow-removal.js'

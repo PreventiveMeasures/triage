@@ -14,7 +14,7 @@ import styles from './styles/repository-browser.css'
 
 const MAX_CACHED_DIRECTORIES = 100
 
-export async function browseRepository(route, params, signal) {
+async function browseRepository(route, params, signal) {
   const response = await managedFetch(`/api/admin/repositories/${route}?${new URLSearchParams(params)}`, {
     credentials: 'same-origin', headers: { accept: 'application/json' }, signal,
   })
