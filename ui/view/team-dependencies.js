@@ -601,25 +601,27 @@ class TeamDependencies extends StateElement {
     clearInterval(this._reviewsTimer)
   }
 
-  // Asks whether reviews counting for its team's repositories were
-  // published or revoked since it last asked, the server's time each answer
-  // tells (fetchTeamReviewChanges), its first answer's time less
-  // REVIEWS_BEFORE_MS, while its page is seen; and makes the pull requests
-  // shown that list a version of theirs stale, or all where too many
-  // changed, for each to be asked again alone (pullEntry).
+  // Asks which of the versions its pull requests list had reviews counting
+  // for its team's repositories published or revoked since it last asked,
+  // the server's time each answer tells (fetchTeamReviewChanges), its first
+  // answer's time less REVIEWS_BEFORE_MS, while its page is seen; and makes
+  // those pull requests stale, for each to be asked again alone (pullEntry).
   async _askReviews() {
-    const team = this.team
-    if (!team || this._askingReviews || globalThis.document?.hidden) return
+    const csrfToken = state.managedSession?.csrfToken, team = this.team
+    if (!team || !csrfToken || this._askingReviews || globalThis.document?.hidden) return
     const since = this._reviewsSince?.team === team ? this._reviewsSince.at : null
+    // Each shown pull request's versions, those it adds and those its lockfiles lock otherwise.
+    const listed = (this._listed ?? []).filter(({ entry }) => entry.status === 'ready')
+      .map(pull => ({ pull, versions: [...addedVersions(pull.entry).versions, ...unreviewedVersions(pull.entry).versions].filter(pkg => pkg.version) }))
+    const asked = since === null ? [] : [...new Map(listed.flatMap(({ versions }) => versions.map(pkg => [`${pkg.name}@${pkg.version}`, pkg]))).values()]
     this._askingReviews = true
     try {
-      const told = await fetchTeamReviewChanges(team, since)
+      const told = await fetchTeamReviewChanges(team, since, asked, csrfToken)
       if (team !== this.team || told.now === null) return
-      if (since !== null) {
-        const changes = told.all ? null : new Set(told.versions.map(({ name, version }) => `${name}@${version}`))
-        const lists = ({ entry }) => entry.status === 'ready' && (changes === null
-          || [...addedVersions(entry).versions, ...unreviewedVersions(entry).versions].some(pkg => changes.has(`${pkg.name}@${pkg.version}`)))
-        if (changes === null || changes.size > 0) staleReviews((this._listed ?? []).filter(lists).map(({ repo, item }) => ({ repoId: repo.repoId, number: item.number })))
+      const changes = new Set(told.versions.map(({ name, version }) => `${name}@${version}`))
+      if (changes.size > 0) {
+        staleReviews(listed.filter(({ versions }) => versions.some(pkg => changes.has(`${pkg.name}@${pkg.version}`)))
+          .map(({ pull: { repo, item } }) => ({ repoId: repo.repoId, number: item.number })))
       }
       this._reviewsSince = { team, at: since === null ? told.now - REVIEWS_BEFORE_MS : told.now }
     } catch {

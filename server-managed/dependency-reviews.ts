@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS managed_dependency_review (
   time INTEGER NOT NULL, revision INTEGER NOT NULL, published_at INTEGER, revoked_at INTEGER, files TEXT,
   status TEXT CHECK (status IN ('accept', 'accept-with-nits', 'request-changes', 'reject')), comment TEXT NOT NULL DEFAULT '',
   shasum TEXT NOT NULL DEFAULT '', base_shasum TEXT NOT NULL DEFAULT '', patch_hash TEXT NOT NULL DEFAULT '', patch_source TEXT,
-  base_patch_hash TEXT NOT NULL DEFAULT ''
+  base_patch_hash TEXT NOT NULL DEFAULT '', shared_at INTEGER
 ) STRICT;
 CREATE INDEX IF NOT EXISTS managed_dependency_review_context_idx
   ON managed_dependency_review(ecosystem, package, version, integrity, base_package, base_version, base_integrity, time);
@@ -88,8 +88,11 @@ CREATE TABLE IF NOT EXISTS managed_dependency_review_team (
 CREATE INDEX IF NOT EXISTS managed_dependency_review_team_idx ON managed_dependency_review_team(team_id, review_id);
 `
 // The columns added since the table was, for a database that has it already.
+// `shared_at`: when it was last published to a team, its first or one more,
+// as a team's Dependencies tab asks what changed since (repository-dependency-reviews.ts
+// changedReviewVersions); none of one published before it was kept.
 export const DEPENDENCY_REVIEW_COLUMNS = [['shasum', "TEXT NOT NULL DEFAULT ''"], ['base_shasum', "TEXT NOT NULL DEFAULT ''"],
-  ['patch_hash', "TEXT NOT NULL DEFAULT ''"], ['patch_source', 'TEXT'], ['base_patch_hash', "TEXT NOT NULL DEFAULT ''"]] as const
+  ['patch_hash', "TEXT NOT NULL DEFAULT ''"], ['patch_source', 'TEXT'], ['base_patch_hash', "TEXT NOT NULL DEFAULT ''"], ['shared_at', 'INTEGER']] as const
 // Each author's one draft of a comparison, its patches' too, made once those
 // columns are: those held to it before patches, then its base's, were reviewed gone.
 export const DEPENDENCY_REVIEW_INDEXES = `
@@ -202,12 +205,12 @@ async function publish(db: ManagedSql, current: DependencyReview | undefined, us
     if (!summarizeReview(entries, change.files, change.nonTextFiles).checkedFiles) throw new ManagedMutationError(400, 'no-reviewed-files')
     if (!change.final || !allowedReviewVerdicts(entries.filter(entry => !change.nonTextFiles.includes(entry.file))).includes(change.final.status)) throw new ManagedMutationError(400, 'bad-final-verdict')
     if (needsPackageJsonReview(entries, change.files, change.nonTextFiles)) throw new ManagedMutationError(400, 'package-json-not-reviewed')
-    await db.prepare(`UPDATE managed_dependency_review SET published_at = ?, files = ?, status = ?, comment = ?, shasum = ?, base_shasum = ?, patch_source = ?, revision = revision + 1
-      WHERE id = ?`).run(now, JSON.stringify({ paths: [...new Set(change.files)].toSorted(), nonTextFiles: [...new Set(change.nonTextFiles)].toSorted() }),
+    await db.prepare(`UPDATE managed_dependency_review SET published_at = ?, shared_at = ?, files = ?, status = ?, comment = ?, shasum = ?, base_shasum = ?, patch_source = ?,
+      revision = revision + 1 WHERE id = ?`).run(now, now, JSON.stringify({ paths: [...new Set(change.files)].toSorted(), nonTextFiles: [...new Set(change.nonTextFiles)].toSorted() }),
       change.final.status, change.final.comment, ...shasums(tarballs), current.id)
   } else {
     if (change.final) return conflict()
-    await db.prepare('UPDATE managed_dependency_review SET revision = revision + 1 WHERE id = ?').run(current.id)
+    await db.prepare('UPDATE managed_dependency_review SET shared_at = ?, revision = revision + 1 WHERE id = ?').run(now, current.id)
   }
   for (const team of selected) await db.prepare('INSERT INTO managed_dependency_review_team (review_id, team_id) VALUES (?, ?) ON CONFLICT DO NOTHING').run(current.id, team)
 }

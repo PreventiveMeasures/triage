@@ -90,18 +90,29 @@ export async function checkRepositoryDependencyReviews(db) {
   for (const [who, canReview] of [['admin', true], ['bob', true], ['carol', false], ['manager', false]]) {
     assert.equal((await db.repoDependencyReviewState(1, users[who].userId, [])).canReview, canReview, `${who} ${canReview ? 'publishes' : 'publishes none'} to a team that counts`)
   }
-  // The versions whose reviews counting for a repository were published or revoked since a time.
-  const changed = async (...args) => (await db.changedReviewVersions(...args))?.map(({ name, version }) => `${name}@${version}`).toSorted() ?? null
-  assert.deepEqual(await changed([1, 999], start, 500), ['elsewhere@1.0.0', 'other@2.0.0', 'pkg@1.0.0', 'pkg@2.0.0'],
+  // Of the versions asked, those whose reviews counting for a repository were published, or revoked, since a time.
+  const asked = ['pkg@1.0.0', 'pkg@2.0.0', 'other@2.0.0', 'elsewhere@1.0.0', 'unasked@9.0.0', 'pkg@0.8.0'].map(key => ({ name: key.split('@')[0], version: key.split('@')[1] }))
+  const changed = async (repoIds, at, of = asked) => (await db.changedReviewVersions(repoIds, at, of)).map(({ name, version }) => `${name}@${version}`).toSorted()
+  assert.deepEqual(await changed([1, 999], start), ['elsewhere@1.0.0', 'other@2.0.0', 'pkg@1.0.0', 'pkg@2.0.0'],
     'each once, of those published to a team counting for it: neither one to a team without it nor a draft')
-  assert.deepEqual([await changed([1], Date.now() + 60_000, 500), await changed([999], start, 500), await changed([], start, 500)], [[], [], []], 'none since, nor of another repository')
-  assert.equal(await changed([1], start, 3), null, 'more than asked for')
+  assert.deepEqual(await changed([1], start, asked.slice(1, 2)), ['pkg@2.0.0'], 'of those asked alone')
+  assert.deepEqual([await changed([1], Date.now() + 60_000), await changed([999], start), await changed([], start), await changed([1], start, [])], [[], [], [], []],
+    'none since, nor of another repository, nor where none is asked')
   const later = Date.now() + 120_000
   await db.changeDependencyReview(context('other', '2.0.0'), users.alice.sid, { action: 'revoke', reviewId: other.id, revision: other.revision }, later)
-  assert.deepEqual(await changed([1], later, 500), ['other@2.0.0'], 'one revoked since, published before')
+  assert.deepEqual(await changed([1], later), ['other@2.0.0'], 'one revoked since, published before')
+  // One published before to a team without the repository, published since to one with it too.
+  const shared = await publish(db, users.manager, context('pkg', '0.8.0'), ['two'])
+  assert.deepEqual(await changed([1], start), ['elsewhere@1.0.0', 'other@2.0.0', 'pkg@1.0.0', 'pkg@2.0.0'], 'not yet, of a team without it')
+  await db.setTeamMember('one', users.manager.userId, { dependencies: true, security: false })
+  const sharedLater = later + 60_000
+  await db.changeDependencyReview(context('pkg', '0.8.0'), users.manager.sid, { action: 'publish', reviewId: shared.id, revision: shared.revision, teamIds: ['one'],
+    files: ['index.js', 'package.json'], nonTextFiles: [] }, sharedLater)
+  assert.deepEqual(await changed([1], sharedLater), ['pkg@0.8.0'], 'published since to one more team, one counting for it')
+  await db.removeTeamMember('one', users.manager.userId)
 
   await db.setTeamDependencyReview(users.admin.sid, 'one', false)
-  assert.deepEqual(await changed([1], start, 500), [], 'none where no team counting for it reviews dependencies')
+  assert.deepEqual(await changed([1], start), [], 'none where no team counting for it reviews dependencies')
   assert.equal(await db.repoDependencyReviewState(1, users.alice.userId, [pkg]), null, 'no team reviewing dependencies has it but a hidden one')
   assert.equal((await db.listRepoReviewTeams()).get(1), undefined)
 }

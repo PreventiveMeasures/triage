@@ -1035,24 +1035,31 @@ test('the default branch\'s dependencies, read on a cold instance of what anothe
   assert.equal(globalThis.fetch.mock.callCount() - before, 1, 'its access asked before, not again after')
 })
 
-test('a team\'s Dependencies tab is told the versions whose reviews counting for its repositories were published or revoked since the time it was last told', async t => {
+test('a team\'s Dependencies tab is told which of the versions it shows had reviews counting for its repositories published or revoked since it was last told', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const users = await people(db)
   const send = api(db, users)
-  const changed = (asOf, who = 'alice') => send(`/api/teams/one/dependency-reviews/changed${asOf === null ? '' : `?since=${asOf}`}`, { who })
-  const first = await changed(null)
+  const path = '/api/teams/one/dependency-reviews/changed'
+  const changed = (body, who = 'alice') => send(path, { who, body })
+  const first = await changed({ since: null, versions: [] })
   assert.equal(first.status, 200)
-  assert.deepEqual(Object.keys(first.body), ['now'], 'none asked: the server\'s time alone, to ask since')
+  assert.deepEqual(Object.keys(first.body), ['now'], 'none asked since: the server\'s time alone, to ask since')
   assert.ok(Number.isSafeInteger(first.body.now))
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
+  await publish(db, users.alice, context('unshown', '1.0.0'), ['one'])
   await publish(db, users.manager, context('elsewhere', '1.0.0'), ['two'])
-  const told = (await changed(first.body.now)).body
-  assert.deepEqual(told.versions, [['ms', '2.1.3']], 'one published to a team counting for its repository, not one to a team without it')
+  const shown = [['ms', '2.1.3'], ['elsewhere', '1.0.0'], ['left-pad', '1.3.0']]
+  const told = (await changed({ since: first.body.now, versions: shown })).body
+  assert.deepEqual(told.versions, [['ms', '2.1.3']], 'of those it shows alone, one published to a team counting for its repository; not one to a team without it')
   assert.ok(told.now >= first.body.now)
-  assert.deepEqual((await changed(told.now + 60_000)).body.versions, [], 'none since')
-  for (const asOf of ['x', '-1', '1.5', '']) assert.equal((await changed(asOf)).status, 400, asOf)
-  assert.equal((await changed(first.body.now, 'carol')).status, 404, 'a team not hers')
+  assert.deepEqual((await changed({ since: told.now + 60_000, versions: shown })).body.versions, [], 'none since')
+  for (const body of [{ since: 'x' }, { since: -1 }, { since: 1.5 }, { since: 0, versions: [['Not A Name', '1.0.0']] }, { since: 0, versions: [['ms']] },
+    { since: 0, versions: Array.from({ length: 5001 }, () => ['ms', '2.1.3']) }]) {
+    assert.equal((await changed(body)).status, 400, JSON.stringify(body).slice(0, 80))
+  }
+  assert.equal((await changed({ since: 0, versions: shown }, 'carol')).status, 404, 'a team not hers')
+  assert.equal((await send(path)).status, 405, 'asked by POST alone')
 })
 
 // A team's Dependencies in one request (GET /api/teams/:id/dependencies):

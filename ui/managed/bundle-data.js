@@ -397,17 +397,17 @@ export function fetchTeamDependencies(teamId, onLine, { repoIds = null, signal }
   }, signal)
 }
 
-// The npm versions whose reviews counting for team `teamId`'s repositories
-// were published or revoked since `since`, the server's `now` an earlier
-// answer told (GET /api/teams/:id/dependency-reviews/changed): `{ now,
-// versions: [{ name, version }] }`, `all` where too many to tell, or, with
-// no `since`, `{ now }` alone.
-export function fetchTeamReviewChanges(teamId, since = null, { signal } = {}) {
-  const query = since === null ? '' : `?${new URLSearchParams({ since: String(since) })}`
-  return request(`/api/teams/${encodeURIComponent(teamId)}/dependency-reviews/changed${query}`, TEAM_DEPENDENCIES_ERRORS, response => response.json().then(told => ({
-    now: Number.isSafeInteger(told?.now) ? told.now : null, all: told?.all === true,
+// Those of `versions` (`{ name, version }` each), the npm versions team
+// `teamId`'s Dependencies tab shows, whose reviews counting for its
+// repositories were published or revoked since `since`, the server's `now`
+// an earlier answer told (POST /api/teams/:id/dependency-reviews/changed):
+// `{ now, versions }`, or, with no `since`, `{ now }` alone.
+export function fetchTeamReviewChanges(teamId, since, versions, csrfToken, { signal } = {}) {
+  const body = JSON.stringify({ since, versions: versions.map(({ name, version }) => [name, version]) })
+  return request(`/api/teams/${encodeURIComponent(teamId)}/dependency-reviews/changed`, TEAM_DEPENDENCIES_ERRORS, response => response.json().then(told => ({
+    now: Number.isSafeInteger(told?.now) ? told.now : null,
     versions: Array.isArray(told?.versions) ? told.versions.flatMap(one => Array.isArray(one) && typeof one[0] === 'string' && typeof one[1] === 'string' ? [{ name: one[0], version: one[1] }] : []) : [],
-  })), signal)
+  })), signal, { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken }, body })
 }
 
 const REPOSITORY_PULSE_ERRORS = {
