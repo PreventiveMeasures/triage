@@ -54,11 +54,14 @@ const RETRY_MS = 30_000
 // repositories it left asked for again; and the versions shown of a list,
 // under a pull request or a default branch, the rest shown once asked for.
 const RESUMES = 3
-const SHOWN_VERSIONS = 12
-const SHOWN_LISTED = 48
-// How many of a card's versions listed under other pull requests show, the
-// rest once asked for, lest they crowd its own.
-const SHOWN_SAME = 3
+// Each `[up to, folded to]`: a list of as many as the first shown whole, a
+// longer one cut to the second, which leaves more than a row or two behind
+// its "and N more".
+const SHOWN_VERSIONS = [15, 10]
+const SHOWN_LISTED = [48, 48]
+// Of a card's versions listed under other pull requests, lest they crowd its own.
+const SHOWN_SAME = [6, 3]
+const SHOWN_ALL = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY]
 // Its sub-tabs, each at an address of its own, the one last picked
 // opened again by the team's Dependencies tab (ingest.js
 // switchToWorkspaceContent).
@@ -541,12 +544,13 @@ class TeamDependencies extends StateElement {
     openRepositoryItemDialog({ repository: { repoId: repo.repoId, repo: repo.name }, target: { number: item.number, preview: { ...item, kind: 'pulls' } } })
   }
 
-  // Rows of `items`, as many as `shown` till the rest are asked for, under
-  // `key`, as one list, filling as many columns as fit; those listed under
-  // other pull requests (`same`) dimmed.
-  rows(key, items, row, shown = SHOWN_VERSIONS, same = false) {
+  // Rows of `items`, all of them where they are as many as `upTo`, else as
+  // many as `folded` till the rest are asked for, under `key`, as one list,
+  // filling as many columns as fit; those listed under other pull requests
+  // (`same`) dimmed.
+  rows(key, items, row, [upTo, folded] = SHOWN_VERSIONS, same = false) {
     if (items.length === 0) return nothing
-    const open = this._open.has(key)
+    const open = this._open.has(key), shown = items.length > upTo ? folded : items.length
     return html`<ul class="team-deps-versions${same ? ' is-same' : ''}">${(open ? items : items.slice(0, shown)).map(row)}</ul>
       ${items.length > shown ? html`<button type="button" class="team-deps-more is-list" aria-expanded=${String(open)} @click=${() => this.toggle(key)}>${CHEVRON}${open
         ? 'Show fewer' : `and ${(items.length - shown).toLocaleString('en-US')} more`}</button>` : nothing}`
@@ -773,7 +777,7 @@ class TeamDependencies extends StateElement {
     return html`<section class="team-deps-section" aria-label="Versions to review">
       ${this.rows('versions', prioritized(versions, one => one.pkg), ({ pulls, stands, at, patched, pkg }) => versionRow(pkg, pulls[at].entry.review, { others: pulls.map(named), adders: true,
         elsewhere: elsewhere(pkg), lacking: pulls.filter((_, other) => stands[other].lacks.length > 0).map(named), involved: among(pkg),
-        ...readAt(patched?.pull ?? pulls[at]) }), Number.POSITIVE_INFINITY)}
+        ...readAt(patched?.pull ?? pulls[at]) }), SHOWN_ALL)}
     </section>`
   }
 
