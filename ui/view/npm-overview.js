@@ -30,10 +30,7 @@ import { HOST_TAGS, npmHostSeverity, npmHostTags } from '../../risk/files/hosts.
 import { npmHostFinding } from '../../risk/npm/held.js'
 import { npmReviewVerdictLimit, npmTakenDown } from '../../common/dependency-reviews.js'
 
-export { npmTakenDown } from '../../common/dependency-reviews.js'
-
-// Advisories' severities, most severe first, and an advisory's (`unknown`
-// where it gives none of them).
+// Advisories' severities, most severe first, and an advisory's (`unknown` where it gives none).
 const SEVERITY_ORDER = ['critical', 'high', 'moderate', 'low', 'unknown']
 const severityOf = advisory => SEVERITY_ORDER.includes(advisory.severity) ? advisory.severity : 'unknown'
 // Groups of the Advisories column, in order, each headed by what it holds.
@@ -43,22 +40,19 @@ const ADVISORY_GROUPS = [
   ['fixed', version => `Fixed in ${version}`],
 ]
 
-// A package's figures for this session: `downloads` and `github`, each null
-// where the server could not have them.
+// A package's `downloads` and `github` figures, each null where the server has none.
 function npmPackageStats(name) {
   return npmPackageData('stats', name, () => fetchNpmStats(name), data => ({ downloads: data.downloads ?? null, github: data.github ?? null }))
 }
 
-// A package's advisories for this session, across its published versions,
-// which each one's `affected` indexes; `keptAt`, where its repository's are
-// as GitHub last listed them, when that was.
+// A package's advisories across its versions, which each one's `affected`
+// indexes; `keptAt`, where its repository's are as GitHub last listed them, when.
 function npmPackageAdvisories(name) {
   return npmPackageData('advisories', name, () => fetchNpmAdvisories(name),
     data => ({ versions: data.versions ?? [], advisories: data.advisories ?? [], repository: data.repository !== false, keptAt: data.keptAt ?? null }))
 }
 
-// The version's pages elsewhere: npm's, and Socket's report on it where the
-// package is public.
+// The version's pages elsewhere: npm's, and Socket's where the package is public.
 export function npmPackageLinks(entry) {
   const { name, version } = entry.npm
   const link = (href, text) => html`<a class="npm-package-link" href=${href} target="_blank" rel="noopener noreferrer">${text}${EXTERNAL_LINK_ICON}</a>`
@@ -70,8 +64,7 @@ export function npmPackageLinks(entry) {
 
 const npmSocketHref = entry => `https://socket.dev/npm/package/${entry.npm.name}/overview/${encodeURIComponent(entry.npm.version)}`
 
-// Socket's report on the version, for a public package (npm-insights.ts
-// npmSocketReport): null until it arrives, and where Socket has none.
+// Socket's report on a public version (npm-insights.ts): null until it arrives, and where Socket has none.
 function npmSocketReport(entry) {
   const { name, version } = entry.npm
   if (entry.npm.private) return null
@@ -79,30 +72,25 @@ function npmSocketReport(entry) {
   return data.status === 'ready' ? data.socket : null
 }
 
-// Its five, as Socket's page shows them: its overall score is only the
-// lowest of them, each with the score from which it is green (socketLevel)
-// and the bar under which Compare flags the open version's, out of 100: supply chain under
-// 85, and vulnerability under 85 where it tells of worse than the
-// advisories found (vulnerabilityBeyond), both green from 85; quality under
-// 70 (a sabotaged release such as faker's 6.6.6 scores 38, most widely used
-// packages 70 and up), maintenance under 70 (a deprecated or abandoned
-// package's 50, a finished one's 75 and up), and license under 80 (a
-// copyleft or unusual license's 70, as AGPL's or WTFPL's; most are 100).
+// Socket's five scores (its overall one is only the lowest), each `[key,
+// label, bar, good]`: Compare flags the open version's under `bar`, and it is
+// green from `good`, out of 100. Quality's 70: a sabotaged release (faker
+// 6.6.6) scores 38, most widely used packages 70 and up; maintenance's 70: a
+// deprecated or abandoned package's 50, a finished one's 75 and up; license's
+// 80: a copyleft or unusual license's 70, most 100.
 const SOCKET_SCORES = [['supplyChain', 'Supply chain', 85, 85], ['vulnerability', 'Vulnerability', 85, 85], ['quality', 'Quality', 70, 80],
   ['maintenance', 'Maintenance', 70, 80], ['license', 'License', 80, 80]]
-// Socket's maintenance score for a deprecated version, for that alone: one no
-// lower says no more than Compare's Deprecated chip does.
+// Socket's maintenance score for a deprecated version for that alone: one no
+// lower says no more than the Deprecated chip.
 const DEPRECATED_MAINTENANCE = 50
 
-// A score's tint: green from `good`, then 50 and over, and under 50, that
-// one in red; a full score's number green.
+// A score's tint: green from `good`, fair from 50, else red; a full score's number green.
 const socketLevel = (score, good) => score === 100 ? 'is-good is-max' : score >= good ? 'is-good' : score >= 50 ? 'is-fair' : 'is-poor'
 // A ring filled to a score.
 const socketGauge = score => html`<svg class="npm-socket-gauge" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" pathLength="100"></circle>
   <circle class="npm-socket-gauge-fill" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray=${`${score} 100`}></circle></svg>`
 
-// Its Socket scores, out of 100, each a chip as wide as its text, after a
-// ring filled to it, tinted by how it stands (socketLevel).
+// Its Socket scores, a chip each with a ring filled to it, tinted (socketLevel).
 function npmSocketRow(entry) {
   const scores = npmSocketReport(entry)?.scores
   if (!scores) return nothing
@@ -118,9 +106,8 @@ const SOCKET_SEVERITIES = new Map([['critical', 'critical'], ['high', 'high'], [
 // `installScripts` → `Install scripts`.
 const socketAlertName = type => type.replaceAll(/(?<=[a-z])(?=[A-Z])/gu, ' ').toLowerCase().replace(/^./u, first => first.toUpperCase())
 
-// Socket's alerts on a version's files (`npm`, an entry's or its details'),
-// by the path each names: none for a private package, or until its report
-// arrives. One map a report, so a view drawing them redraws when it comes.
+// Socket's alerts on a version's files by path: none for a private package
+// or till its report arrives; one map a report, so a view redraws when it comes.
 const NO_ALERTS = new Map()
 const alertsByReport = new WeakMap()
 export function npmSocketFileAlerts(npm) {
@@ -130,8 +117,7 @@ export function npmSocketFileAlerts(npm) {
   return alertsByReport.get(report)
 }
 
-// A file's Socket alerts, each named in its severity's color, its note in
-// its tooltip.
+// A file's Socket alerts, each in its severity's color, its note in its tooltip.
 export const npmSocketFileTags = (alerts = []) => alerts.map(alert => {
   const severity = SOCKET_SEVERITIES.get(alert.severity) ?? 'low'
   return html`<span class=${`npm-socket-file-alert sev-${severity}`}
@@ -142,13 +128,10 @@ export function npmReviewLimit(entry, base) {
   return npmReviewVerdictLimit(entry.npm, npmPackageAdvisories(entry.npm.name), npmSocketReport(entry), npmRisk(entry.npm, base ? base.npm?.version ?? '(empty)' : null))
 }
 
-// Over the summary: where npm took the package down, saying so, its readme
-// (npm's word on it) opening where the package has it (`files`); and where
-// Socket raises alerts on the version, as on malware, each with its severity,
-// the file it names, opening it as well, and Socket's note on it. Socket's
-// say nothing more of npm's placeholder, holding no files but the ones every
-// package has, so they are left out there; a version that only looks like
-// one keeps them.
+// Over the summary: that npm took the package down, its readme (npm's word)
+// opening; and Socket's alerts on the version, each with its severity, file
+// and note. Socket's say nothing more of npm's placeholder (no files but
+// every package's), so they are left out there.
 export function npmAlerts(entry, files) {
   const takenDown = npmTakenDown(entry)
   const placeholder = takenDown && files !== null && [...files].every(isNpmPackageFile)
@@ -178,10 +161,8 @@ function npmSocketAlerts(entry, alerts, files) {
   </div>`
 }
 
-// The package's downloads in the summary, in a card (npm-downloads-chart.js),
-// its tier yellow at most where the version's risk says it is known
-// (knownNote), with its pages elsewhere and `actions` (the tarball's
-// download) under it.
+// The package's downloads card (npm-downloads-chart.js), its tier yellow at
+// most where risk says it is known (knownNote), its links and `actions` under it.
 export function npmStatsRow(entry, actions, badges = nothing) {
   const stats = npmPackageStats(entry.npm.name)
   const known = knownNote(npmRisk(entry.npm)?.findings.find(({ id }) => id === 'popularity'))
@@ -197,10 +178,8 @@ const ISSUE_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="no
 const PULL_ICON = appMarkup(PULL_ICON_SVG)
 const FORK_ICON = html`<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true"><circle cx="4.5" cy="3.25" r="1.5"/><circle cx="11.5" cy="3.25" r="1.5"/><circle cx="8" cy="12.75" r="1.5"/><path d="M4.5 4.75v.75a2 2 0 0 0 2 2h3a2 2 0 0 0 2-2v-.75M8 7.5v3.75"/></svg>`
 
-// Its repository's stars, forks, open issues and pull requests, beside the
-// repository in the facts (npm-package.js npmOverviewMeta), each linking to
-// GitHub's list of them; nothing until they arrive, or where GitHub has none
-// to give.
+// Its repository's stars, forks, open issues and pull requests beside it in
+// the facts, each linking to GitHub's list; nothing until they arrive.
 export function npmGithubFigures(entry) {
   if (!entry.npm.manifest.github?.github) return nothing
   const stats = npmPackageStats(entry.npm.name)
@@ -219,24 +198,19 @@ export function npmGithubFigures(entry) {
     ${github.archived ? html`<span class="npm-github-archived">Archived</span>` : nothing}`
 }
 
-// What built a version, as its provenance names its builder: GitHub Actions,
-// on a runner GitHub hosts or one of the publisher's own, or GitLab CI.
-// npm's provenance for a public version npm lists it for, as the session
-// has it; null for any other.
+// npm's provenance for a public version npm lists it for; null for any other.
 const provenanceOf = ({ name, version, private: hidden, manifest }) => hidden || !manifest.provenance ? null
   : npmPackageData('provenance', `${name}@${version}`, () => fetchNpmProvenance(name, version), answer => ({ provenance: answer.provenance ?? null }))
 
-// Whether the version's provenance names what built it, or may yet, being
-// asked for: where it does, no other fact need name the CI that published
-// it (npm-package.js npmOverviewMeta).
+// Whether the version's provenance names what built it, or may yet: then no
+// other fact need name the CI that published it (npm-package.js npmOverviewMeta).
 export function npmProvenanceNamesBuilder(npm) {
   const data = provenanceOf(npm)
   return data !== null && (data.status === 'loading' || Boolean(data.provenance?.builder))
 }
 
-// What built a version, by its builder's id and its runner's (npm-provenance.ts
-// `runner`): GitHub's names its own runners or the publisher's; GitLab's
-// names the runner in its project (`<project>/-/runners/<id>`), whoever's.
+// What built a version, by its builder's id and runner (npm-provenance.ts):
+// GitHub Actions, hosted or self-hosted, or GitLab CI (`<project>/-/runners/<id>`).
 function builderName(builder, runner) {
   if (!builder) return null
   if (/^https:\/\/github\.com\/actions\/runner(?:\/github-hosted)?$/u.test(builder)) return 'GitHub Actions'
@@ -244,18 +218,14 @@ function builderName(builder, runner) {
   if (builder.startsWith('https://gitlab.com/') || builder.includes('/-/runners/')) return runner === 'self-hosted' ? 'GitLab CI, self-hosted runner' : 'GitLab CI'
   return new URL(builder).host
 }
-// Built on its provider's own runners, as its certificate says, or, where
-// it doesn't, as GitHub's builder id does.
+// Built on its provider's own runners, as its certificate says, else as GitHub's builder id does.
 const isHosted = (built, runner) => runner ? runner === 'github-hosted' || runner === 'gitlab-hosted' : built === 'GitHub Actions'
 
-// npm's provenance for the version, in the Overview's facts, for a public
-// package (npm-provenance.ts): what built it, from which repository at
-// which commit, by which workflow, in which run, and its transparency log
-// entry, flagged where it was built from another repository than the one
-// the package names. A version npm keeps none for says so; one npm lists
-// it for but whose statement the server doesn't read (as when it names
-// another tarball) is flagged, as nothing vouches for it; nothing for a
-// private package, which can't have any.
+// npm's provenance for a public version, in the Overview's facts: what built
+// it, from which repository and commit, by which workflow and run, and its
+// transparency log entry, flagged where built from another repository than
+// the package names, or listed with no statement the server reads (nothing
+// vouches for it then); nothing for a private package.
 export function npmProvenanceFact(entry) {
   if (entry.npm.private) return nothing
   const data = provenanceOf(entry.npm)
@@ -272,15 +242,12 @@ export function npmProvenanceFact(entry) {
   const built = builderName(builder, runner)
   const gitlab = built?.startsWith('GitLab CI')
   const shown = github ?? repository.replace(/^https:\/\//u, '')
-  // The repository the package names, GitHub's or GitLab's, as its source
-  // reads.
+  // The repository the package names, GitHub's or GitLab's.
   const named = manifest.github?.github ?? (manifest.gitlab ? `gitlab.com/${manifest.gitlab}` : null)
   const elsewhere = named && named.toLowerCase() !== shown.toLowerCase()
-  // What built it and from where, then how, beside it where that fits, else
-  // on a line of its own: its workflow, by its file's name (its whole path
-  // in its tooltip, where that says more), its run and its log entry. Built
-  // on GitHub's or GitLab's own runners from the repository it names, it is
-  // green.
+  // What built it and from where (green on its provider's runners from the
+  // repository it names), then how: its workflow by its file's name, its run
+  // and its log entry.
   const file = workflow?.split('/').at(-1)
   const how = [workflow ? (github && commit ? link(`${repository}/blob/${commit}/${workflow.split('/').map(encodeURIComponent).join('/')}`, file, workflow === file ? nothing : workflow)
     : html`<span class="mono" data-tooltip=${workflow === file ? nothing : workflow}>${file}</span>`) : nothing,
@@ -298,34 +265,29 @@ export function npmProvenanceFact(entry) {
   </span>`
 }
 
-// How an advisory stands for the version shown: it `affects` it; it is
-// `fixed` in it, covering only older versions; or it covers `later` ones,
-// whether or not older ones too (its ranges can leave the version shown
-// between them).
+// How an advisory stands for the version shown: it `affects` it, is `fixed`
+// in it (covering only older ones), or covers `later` ones (perhaps older too).
 export function npmAdvisoryStatus(advisory, versions, version) {
   const affected = advisory.affected.map(i => versions[i]).filter(Boolean)
   if (affected.includes(version)) return 'affects'
   return affected.length > 0 && affected.every(other => compareSemver(other, version) < 0) ? 'fixed' : 'later'
 }
 
-// Whether the session the advisories are read in is still the current one:
-// what shows them is discarded once it isn't.
+// Whether the session the advisories are read in is still current.
 function sessionCheck() {
   const session = state.managedSession?.id
   return () => state.managedSession?.id === session
 }
 
-// An advisory's row, as the Advisories tab draws a bundle's, its text, where
-// it has one, opening in the dialog the tab opens, until the session changes.
+// An advisory's row as the Advisories tab draws a bundle's, its text opening in a dialog.
 function npmAdvisoryRow(advisory, isCurrent) {
   return advisoryRow({ ...advisory, title: advisory.title ?? advisory.id, severity: severityOf(advisory),
     cvss: { score: advisory.cvss }, vulnerable_versions: advisory.range },
   ({ title, severity, details: markdown }) => openAdvisoryDetailsDialog({ heading: title, severity, markdown, isCurrent }))
 }
 
-// The package's advisories across every version, npm's and its repository's
-// on GitHub, grouped by how they stand for the version shown: those affecting
-// it first and marked, those it fixes last and struck through.
+// The package's advisories across every version, npm's and its GitHub
+// repository's, grouped by how they stand for the version shown.
 export function npmAdvisoriesColumn(entry) {
   const { name, version } = entry.npm
   const data = npmPackageAdvisories(name)
@@ -337,8 +299,7 @@ export function npmAdvisoriesColumn(entry) {
     status, heading: heading(version), advisories: advisories.filter((_, i) => statuses[i] === status),
   })).filter(group => group.advisories.length > 0)
   const active = statuses.filter(status => status === 'affects').length
-  // Where the repository's advisories are as GitHub last listed them, how
-  // long ago; where they couldn't be had, that npm's are alone.
+  // Where the repository's advisories are as GitHub last listed them, how long ago, or missing.
   const unchecked = ready && data.keptAt
     ? html`<p class="npm-advisories-note">GitHub's repository advisories are as of ${npmSpan(Date.now() - Date.parse(data.keptAt))} ago: they couldn't be checked now.</p>`
     : ready && !data.repository ? html`<p class="npm-advisories-note">GitHub's repository advisories couldn't be checked; npm's are shown.</p>` : nothing
@@ -358,11 +319,9 @@ export function npmAdvisoriesColumn(entry) {
 const UNREADABLE = [...READABILITY].filter(([, { mark }]) => mark !== null).map(([category]) => category)
 const READABLE = [...READABILITY].filter(([, { mark }]) => mark === null).map(([category]) => category)
 
-// How many of `readabilities` each category has, a file under each label it
-// has (npmReadabilityLabels), each category marked as the most it is on one of
-// them (npmLabelMark: long lines a warning where some are unexpected), and
-// how many files can be hard to review by reading them, each once
-// (`unreadable`).
+// How many of `readabilities` each label has (npmReadabilityLabels), each
+// marked as the most it is on one of them (npmLabelMark), and how many files
+// can be hard to review by reading (`unreadable`).
 const MARKS = [null, 'notice', 'warn']
 function readabilityCounts(readabilities) {
   const counts = new Map(), marks = new Map()
@@ -379,14 +338,11 @@ function readabilityCounts(readabilities) {
   return { counts, marks, unreadable }
 }
 
-// What the Overview reads of a version's files, once a version and once its
-// risk arrives (file-risk.js npmFilesRisk): their `paths`, each one's readability
-// (npmFileReadabilityOf) where it is known, extension and size by path, how
-// many files each category has and how many can be hard to review by reading
-// them (readabilityCounts), the `binaries`, those with no text, sorted, its
-// file types (npmFileTypes), and its `content`: its text files, their lines
-// of code and all its files' bytes (`unpacked`), the package's own files
-// (isNpmPackageFile) left out, as every package has them.
+// What the Overview reads of a version's files, again once its risk arrives
+// (npmFilesRisk): paths, readability, extension and size by path, counts by
+// category (readabilityCounts), the sorted `binaries`, its file types, and
+// its `content` (text files, lines of code and bytes, the package's own
+// files left out, as every package has them).
 const readabilities = new WeakMap()
 export function npmFilesRead(details) {
   const of = details.npm ? npmFilesRisk(details) : details
@@ -413,8 +369,7 @@ export function npmFilesRead(details) {
   return known
 }
 
-// What the Files list is narrowed to, for the version shown: the chip last
-// pressed, `{ id, label, keeps }`, or null for every file.
+// The chip last pressed narrowing the Files list for the version shown, `{ id, label, keeps }`.
 let filesShown = { key: null, chip: null }
 const shownKey = entry => `${entry.npm.name}@${entry.npm.version}`
 const shownChip = entry => filesShown.key === shownKey(entry) ? filesShown.chip : null
@@ -425,9 +380,7 @@ export function npmFilesFilter(entry) {
   return chip && { label: chip.label, keeps: chip.keeps, clear: () => { filesShown = { key: null, chip: null }; render() } }
 }
 
-// A chip narrowing the Files list to the files `chip.keeps`, or back to
-// every file where it already does: `content` its label, `classes` its marks
-// beyond a chip's, `tooltip` what its label doesn't say.
+// A chip narrowing the Files list to the files `chip.keeps`, or back to every file.
 function filterChip(entry, chip, content, count, { classes = '', tooltip = nothing } = {}) {
   const pressed = shownChip(entry)?.id === chip.id
   return html`<li><button type="button" class=${`npm-extension npm-category${classes}`} aria-pressed=${String(pressed)} data-tooltip=${tooltip}
@@ -443,9 +396,7 @@ function categoryChip(entry, details, category) {
     html`<span>${name}</span>`, counts.get(category), { classes: mark ? ` is-${mark}` : '' })
 }
 
-// Where any of `total` files (`files` naming them) can be hard to review by
-// reading it, as readabilityCounts has them: how many, each category's
-// `chip` showing which.
+// Where any of `total` files can be hard to review by reading, how many, a `chip` per category.
 function readabilityWarning({ counts, marks, unreadable }, total, files, chip) {
   const present = UNREADABLE.filter(category => counts.has(category))
   if (present.length === 0) return nothing
@@ -462,12 +413,10 @@ export function npmReadabilityWarning(entry, details) {
   return readabilityWarning(npmFilesRead(details), details.json.sources.length, 'files', category => categoryChip(entry, details, category))
 }
 
-// A file's tags in the Files list and Compare's: what it can run beyond itself
-// (npmRunsCode), the services it names under the hosts' tags
-// (npmExfiltration), its flags (npmFileFlagTags), then how it reads; with
-// `opens`, for the Files list, whose rows open a file's code, the first two on
-// one line opening it there; with `base`, Compare's, the file as the version
-// compared with has it (`{ details, path }`, null for one it adds), a tag
+// A file's tags in the Files list and Compare's: what it runs beyond itself,
+// the services it names, its flags, then how it reads; with `opens` (the
+// Files list) the first two opening its code there; with `base` (Compare's,
+// the file as the version compared with has it, null for one it adds) a tag
 // naming a service new to it a level higher.
 export function npmFileTags(details, path, opens = false, base = undefined) {
   const { byPath, sizes } = npmFilesRead(details)
@@ -475,17 +424,14 @@ export function npmFileTags(details, path, opens = false, base = undefined) {
   return html`${npmRunsCodeTags(npmFileRunsCode(details, path), undefined, at)}${npmExfiltrationTag(npmFileExfiltration(details, path), hostsWas(base), at)}${npmFileFlagTags(details, path, sizes.get(path))}${npmListedReadabilityTag(byPath.get(path))}`
 }
 
-// The services a file named as the version compared with has it (`base`,
-// `{ details, path }`): null for one it adds (`base` null), and undefined
-// where nothing is compared, or that version's risk hasn't arrived.
+// The services a file named as the version compared with has it: null for
+// one it adds, undefined where nothing is compared or its risk hasn't arrived.
 const hostsWas = base => base === undefined || (base?.details.npm && !npmFilesRisk(base.details)) ? undefined
   : base && npmFileExfiltration(base.details, base.path)
 
 // A file's flags as its tags show them (file-flags.js): Socket's `alerts` on
-// it, by their severity, where the list draws them (the Files list's, not
-// Compare's), then its stamps, as risk read it (file-risk.js fileRiskOf), with
-// `base` as npmFileTags has it, a hosts' tag's a level higher where it names
-// a service new to the file.
+// it, then risk's stamps (fileRiskOf), a hosts' tag's a level higher where it
+// names a service new to the file (`base` as npmFileTags has it).
 export function npmFileFlags(details, path, alerts = [], base = undefined) {
   const { stamps, exfiltration } = fileRiskOf(details, path), was = hostsWas(base)
   const hosts = was === undefined ? null : new Map(npmHostTags(exfiltration).map(([tag, services]) => [tag, npmHostSeverity(tag, services, was)]))
@@ -493,11 +439,10 @@ export function npmFileFlags(details, path, alerts = [], base = undefined) {
     ...stamps.map(stamp => hosts?.has(stamp.name) ? { ...stamp, severity: hosts.get(stamp.name) } : stamp)]
 }
 
-// The hosts each file of the open version (`other`, its details) names that
-// the one compared with's (`base`) named in none of its files, as the pair's
-// risk finds them (`new-hosts`, hostsBadge), by path, `[{ host, line, was }]`
-// each, `was` the version compared with: null until it arrives. Kept by the
-// risk read, so Compare's files are handed the same until another arrives.
+// The hosts each file of the open version names that none of the compared
+// one's named (the pair's `new-hosts` finding), by path, `[{ host, line, was
+// }]` each: null until it arrives. Kept by risk read, so Compare's files are
+// handed the same map until another arrives.
 const newHostsRead = new WeakMap()
 function npmNewHosts(base, other) {
   const risk = base && other?.npm ? npmRisk(other.npm, base.npm?.version ?? '(empty)') : null
@@ -512,11 +457,8 @@ function npmNewHosts(base, other) {
   return newHostsRead.get(risk)
 }
 
-// A file's tag in Compare's tree and its head where it names hosts the one
-// compared with named in none of its files (`hosts`, npmNewHosts), in orange
-// as the New host chip, its tooltip a list as that chip's and the file's
-// other tags' are: a row for each host, its line, and in a line under them,
-// the version none of whose files named them.
+// A file's New host tag in Compare's tree and head (npmNewHosts), its
+// tooltip a row per host and line, the version none of whose files named them under.
 function npmNewHostTag(hosts) {
   if (!hosts?.length) return nothing
   const label = hosts.length === 1 ? 'New host' : 'New hosts'
@@ -530,23 +472,18 @@ function npmNewHostTag(hosts) {
     </div>`}>${label}</span>`
 }
 
-// Compare's files (bundle-compare.js `source.files`) as the Overview's: each
-// one's type icon and Socket's alerts on it, the tags of one the open version
-// adds or changes, the hosts it names anew, and over them, where any of those
-// can be hard to review by reading it, the Overview's warning, counting those
-// alone.
+// Compare's files (bundle-compare.js `source.files`) as the Overview's: type
+// icons, Socket's alerts, the tags and flags of those the open version adds
+// or changes, the hosts they name anew, and over them the Overview's
+// readability warning, counting those alone.
 export const npmCompareFiles = {
-  // A file either side holds as not text, under that side's path, is no
-  // license, whatever its name.
+  // A file either side holds as not text is no license, whatever its name.
   icon: (path, sides) => sourceFileIcon(path, sides.map(([details, at]) => fileIconFormat(details, at)).find(isNotTextFormat)),
-  // Socket's alerts on a side's files, and their tags (npmSocketFileAlerts).
   alerts: details => npmSocketFileAlerts(details?.npm),
   alertTags: npmSocketFileTags,
-  // The hosts each file names anew, and their tag (npmNewHosts).
   newHosts: npmNewHosts,
   newHostTag: npmNewHostTag,
-  // Its tags, and its flags as they show them, for its lists' Flags order,
-  // `base` the file as the version compared with has it (npmFileTags).
+  // Its tags, and its flags for its lists' Flags order.
   tag: (details, path, base) => npmFileTags(details, path, false, base),
   flags: (details, path, base) => npmFileFlags(details, path, [], base),
   warning(details, paths) {
@@ -560,8 +497,7 @@ export const npmCompareFiles = {
   },
 }
 
-// Each finding by its chip's label, as the risk score's tooltip lists what
-// raised it.
+// Each finding by its chip's label, as the risk score's tooltip lists what raised it.
 const FINDING_LABELS = new Map([['malware', 'Malware'], ['deprecated', 'Deprecated'], ['publisher', 'Publisher'], ['provenance-lost', 'Provenance lost'],
   ['held-install-scripts', 'Install scripts'], ['held-non-registry-deps', 'Non-registry deps'], ['held-unused-deps', 'Unused deps'], ['held-runs-code', 'Runs code'],
   ['held-credentials', 'Credentials'], ['held-exfiltration', 'Exfiltration'], ['held-remote', 'Remote'], ['held-ip-lookup', 'IP lookup'], ['held-obfuscated', 'Obfuscated'], ['large-code', 'Large new code'],
@@ -570,10 +506,8 @@ const SCORE_TINTS = { critical: 'is-critical', high: 'is-warn', moderate: 'is-mo
 // How long a version has been out, roughly: `7 years`, `3 months`, `20 days`.
 const outFor = days => days >= 730 ? `${Math.floor(days / 365)} years` : days >= 60 ? `${Math.floor(days / 30)} months` : `${days} days`
 
-// The open version's risk score, out of 100 (risk/npm/score.js), first among
-// its chips: a ring filled to it, tinted by its level; its tooltip what
-// raised it, each finding by its severity, and what lowered that, how long
-// the version has been out among how many who download it.
+// The open version's risk score of 100 (risk/npm/score.js), first among its
+// chips, its tooltip each finding that raised it and what lowered it.
 function scoreBadge(risk) {
   const score = risk?.score
   if (!score) return nothing
@@ -589,27 +523,19 @@ function scoreBadge(risk) {
     </div>`}>${socketGauge(value)}<span>Risk</span><span class="npm-extension-count">${value}</span></span></li>`
 }
 
-// What calls for a look at a version, as the server's risk tells it
-// (npm-risk.js npmRisk; risk/npm/held.js, compare.js, combined.js), chips
-// alike in the Overview and Compare, `sides` its versions, the one compared
-// with first where there is one, `found` its findings by id: malware it is
-// told of, its deprecation, a publisher that changed, provenance lost; what
-// it holds, always, as no change hides any of it, each raised by what
-// changed, never lowered, and what is new of it marked (installScriptsBadge,
-// dependencyBadges, fileBadges); the hosts its code names anew, and its age
-// under the minimum release age.
+// What calls for a look at a version as the server's risk tells it, chips
+// alike in the Overview and Compare: `sides` its versions (the one compared
+// with first), `found` its findings by id. What it holds is always told, as
+// no change hides any of it, what is new of it marked.
 const riskChips = (sides, found) => [malwareBadge(found.get('malware')), deprecatedBadge(found.get('deprecated')), publisherBadge(sides, found.get('publisher')),
   provenanceBadge(sides, found.get('provenance-lost')), installScriptsBadge(sides, found.get('held-install-scripts')), ...dependencyBadges(sides, found),
   ...fileBadges(sides, found), hostsBadge(found.get('new-hosts')), recentBadge(found.get('too-new'))]
 const findingsOf = risk => new Map((risk?.findings ?? []).map(finding => [finding.id, finding]))
 
-// What calls for a look at Compare's two versions (bundle-compare.js
-// `source.badges`), from the one compared with (`base`) to the open one
-// (`other`), each side's details: the open one's risk score against it
-// (scoreBadge), what the server's risk finds of the pair (riskChips), then the advisories that affect either, Socket's scores
-// either has under its bar (SOCKET_SCORES; maintenance, for a deprecated open
-// version, only under DEPRECATED_MAINTENANCE), and the package's tier by
-// downloads where it is orange or red. Each once it arrives.
+// What calls for a look at Compare's two versions (`source.badges`), from
+// `base` to `other`: the risk score and chips of the pair, the advisories
+// affecting either, Socket's scores under their bars, and the package's tier
+// by downloads where orange or red. Each once it arrives.
 export function npmCompareBadges(base, other) {
   if (!base || !other?.npm) return nothing
   // A review may start from no package. Its display-only baseline has no
@@ -623,14 +549,10 @@ export function npmCompareBadges(base, other) {
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-compare-badges" aria-label="Versions at a glance">${chips}</ul>`
 }
 
-// What calls for a look at a version on its own (`entry`, read as
-// `details`), in the Overview, its risk score and the chips Compare's are
-// (scoreBadge, riskChips), against
-// the version the server's risk picks to compare it with, the one most
-// likely free of what an attack injects (risk/npm/old-version.js), where it
-// picks one: then the advisories affecting it and Socket's scores under their
-// bars; not its tier by downloads, which its downloads' card shows. Each once
-// it arrives.
+// What calls for a look at a version on its own, in the Overview: Compare's
+// chips against the version risk picks to compare it with (the one most
+// likely free of an attack, risk/npm/old-version.js), its advisories and
+// Socket's scores; its tier is its downloads card's.
 export function npmOverviewBadges(entry) {
   const { npm } = entry
   const affecting = advisoriesAffecting([npm])
@@ -641,21 +563,19 @@ export function npmOverviewBadges(entry) {
   return chips.length === 0 ? nothing : html`<ul class="npm-extensions npm-overview-badges" aria-label="Version at a glance">${chips}</ul>`
 }
 
-// The files become unreadable (`now-unreadable`), as a file chip: red, or
-// orange where risk says less of them, each with its longest line before and
-// now, and its source map rebuilt with it where it was, or the release major.
+// The files become unreadable, red, or orange where risk says less of them,
+// each with its longest line before and now.
 function unreadableBadge(finding) {
   const rows = finding?.files ?? []
   const said = row => [`${row.was.toLocaleString('en')} → ${row.now.toLocaleString('en')} characters`,
     ...row.rebuilt ? ['its source map rebuilt with it'] : [], ...finding.major ? ['in a major release'] : []]
-  return finding?.severity === 'critical' || !finding ? fileBadge('npm-compare-unreadable', 'Now unreadable', rows, said)
-    : listBadge(`${SEVERITY_CHIPS[finding.severity]} npm-held-file npm-compare-unreadable`, 'Now unreadable', rows, said)
+  const tint = finding?.severity === 'critical' || !finding ? 'npm-compare-file' : `${SEVERITY_CHIPS[finding.severity]} npm-held-file`
+  return listBadge(`${tint} npm-compare-unreadable`, 'Now unreadable', rows, said)
 }
 
-// A chip for each hosts' tag the open version's files name services under
-// (risk/npm/held.js, combined.js: Exfiltration, Remote, IP lookup), in its
-// severity's color, red, orange or yellow, raised where a file names one
-// anew: the services named, each file's, those new to it so said.
+// A chip for each hosts' tag (Exfiltration, Remote, IP lookup) the open
+// version's files name services under, in its severity's color, the services
+// new to a file said so.
 const SEVERITY_CHIPS = { critical: 'is-critical', high: 'is-warn', moderate: 'is-moderate' }
 const hostBadges = found => [...HOST_TAGS.keys()].map(tag => {
   const finding = found.get(`held-${npmHostFinding(tag)}`), rows = finding?.files ?? []
@@ -664,8 +584,7 @@ const hostBadges = found => [...HOST_TAGS.keys()].map(tag => {
     npmExfiltrationNames(rows.map(row => row.found)))
 })
 
-// The advisories affecting each side's version, as the Advisories column
-// has them: none where they couldn't be had, and null until they arrive.
+// The advisories affecting each side's version: none where they couldn't be had, null until they arrive.
 function advisoriesAffecting(sides) {
   const data = npmPackageAdvisories(sides.at(-1).name)
   if (data.status === 'loading') return null
@@ -681,36 +600,25 @@ const fromTo = (was, now) => was === now ? `${now ?? '–'}` : `${was ?? '–'} 
 // The most severe of `advisories`, undefined for none.
 const worstOf = advisories => SEVERITY_ORDER.find(severity => advisories.some(advisory => severityOf(advisory) === severity))
 
-// The open version, where the server's risk tells of malware in it
-// (risk/npm/malware.js): its package taken down by npm, whatever version is
-// asked, and the advisories of malware naming it, each a line of its
-// tooltip; first, in solid red, in place of Socket's scores (socketBadges).
+// Malware in the open version (risk/npm/malware.js): taken down by npm, and
+// the malware advisories naming it, in solid red, in place of Socket's scores.
 function malwareBadge(finding) {
   if (!finding) return nothing
   const said = [...finding.takenDown ? ['Taken down by npm'] : [], ...(finding.advisories ?? []).map(({ id, title }) => title ? `${id}: ${title}` : id)]
   return html`<li><span class="npm-extension npm-malware" data-tooltip=${said.join('\n')}>Malware</span></li>`
 }
 
-// The open version, where npm says it is deprecated: its message in the
-// tooltip, as the Overview lists it (npmDeprecation).
+// The open version, where npm says it is deprecated, its message in the tooltip.
 function deprecatedBadge(finding) {
   if (!finding) return nothing
   return html`<li><span class="npm-extension npm-compare-deprecated" data-tooltip=${npmDeprecation(finding.message)}>Deprecated</span></li>`
 }
 
-// The npm account that published each version, where npm says for both and
-// they differ, as when a package changes hands, or is taken over: linking
-// to the open version's publisher's profile. Each account by its standing on
-// the package, as risk tells it (risk/npm/release.js npmAccountStanding):
-// green where it is known to publish one of npm's most downloaded packages
-// (npm-packages.ts npmManifest's `knownAccounts`), yellow where it is one of
-// the package's maintainers (on it three months, or first to publish it),
-// else orange, an unknown publisher, new to it where risk says so. The chip
-// in its severity's tint (risk/npm/compare.js): grey to a known account or
-// one of the package's maintainers, orange to another, and red where a known
-// one gave way to one that isn't, a level lower in a major release. Its
-// tooltip's note a line each: that the account changed, what the open
-// version's is, what the one before's was, and a major release.
+// The npm accounts that published each version, where they differ (a
+// package changing hands, or taken over), linking the open one's profile.
+// Each account by its standing (risk/npm/release.js npmAccountStanding):
+// green known, yellow a maintainer, else orange; the chip in its severity's
+// tint (risk/npm/compare.js): red where a known account gave way to one that isn't.
 const PUBLISHER_TINTS = { critical: 'is-from-known', high: 'is-to-unknown' }
 const ACCOUNT_TINTS = { known: 'is-known', maintainer: 'is-maintainer' }
 const ACCOUNT_NOTES = { known: 'one that publishes one of npm\'s most downloaded packages', maintainer: 'one of the package\'s maintainers',
@@ -729,9 +637,8 @@ function publisherBadge([from, to], finding) {
     <span>Publisher</span><span class="npm-extension-count">${account(was, wasStanding)} → ${account(now, nowStanding)}</span></a></li>`
 }
 
-// Provenance the one compared with has and the open version hasn't (npm's
-// manifests say; npm-packages.ts npmManifest), as a version published by
-// hand, with a token taken from its maintainers, wouldn't.
+// Provenance the one compared with has and the open version hasn't, as a
+// version published by hand with a stolen token wouldn't.
 function provenanceBadge([from, to], finding) {
   if (!finding) return nothing
   return html`<li><span class="npm-extension npm-compare-provenance"
@@ -740,12 +647,9 @@ function provenanceBadge([from, to], finding) {
       'The open version was published without the provenance the one compared with has')}>Provenance lost</span></li>`
 }
 
-// The scripts npm runs installing the open version (risk/npm/held.js;
-// install-scripts.js npmInstallScripts, node-gyp's for a binding.gyp among
-// them), named, those it adds or runs another command for than the one
-// compared with said so (combined.js `flagged`), one dropped not. Its
-// commands in its tooltip, and the one compared with's where any changed,
-// those added or changed in bold.
+// The scripts npm runs installing the open version, those added or changed
+// since the one compared with said so (combined.js `flagged`), their commands
+// in its tooltip, the compared one's too where any changed.
 function installScriptsBadge(sides, finding) {
   if (!finding) return nothing
   const { scripts, flagged = [], was } = finding
@@ -763,17 +667,11 @@ function installScriptsBadge(sides, finding) {
 // Files a chip's styled tooltip lists before counting the rest.
 const TIP_FILES = 8
 
-// What the open version's files hold that calls for a look, as risk finds it
-// (risk/npm/held.js, combined.js), each in its severity's color, orange as a
-// file's tags are, or red where it changed (SEVERITY_CHIPS): what any of them
-// runs beyond itself, the kinds alone named, as its files' tags are, red
-// where a file runs one anew; the credentials any reaches for, red where a
-// file reaches for one anew; the services under a hosts' tag (hostBadges);
-// a large code file it adds; a file become unreadable, its longest line
-// before and now (unreadableBadge); an obfuscator's fingerprint, red
-// where it is new to a file; and a code file it adds or changes that isn't
-// text, which no one can read here. Each lists its
-// files in its tooltip, what each holds, what is new to it so said.
+// What the open version's files hold that calls for a look (risk/npm/held.js,
+// combined.js), each in its severity's color, red where it changed: code run
+// beyond itself, credentials reached for, services named, large new code,
+// files become unreadable, obfuscation, and code files that aren't text. Each
+// lists its files in its tooltip, what is new to one said so.
 function fileBadges(sides, found) {
   const rows = id => found.get(id)?.files ?? []
   const tinted = (id, kind) => `${SEVERITY_CHIPS[found.get(id)?.severity]} npm-held-file ${kind}`
@@ -782,20 +680,18 @@ function fileBadges(sides, found) {
       npmRunsCodeKinds(rows('held-runs-code').map(row => row.found)), null, false),
     listBadge(tinted('held-credentials', 'npm-files-credentials'), 'Credentials', rows('held-credentials'), row => npmCredentialsSaid(row.found, row.added)),
     ...hostBadges(found),
-    fileBadge('npm-compare-large', 'Large new code', rows('large-code'), row => formatBytes(row.bytes)),
+    listBadge('npm-compare-file npm-compare-large', 'Large new code', rows('large-code'), row => formatBytes(row.bytes)),
     unreadableBadge(found.get('now-unreadable')),
     listBadge(tinted('held-obfuscated', 'npm-files-obfuscated'), 'Obfuscated', rows('held-obfuscated'),
       row => `${npmObfuscationFound(row.found)}${row.added ? `, new since ${sides[0].version}` : ''}`),
-    fileBadge('npm-compare-binary', 'Binary code', rows('binary-code'), row => `${formatBytes(row.bytes)}, not UTF-8 or holding a NUL`),
+    listBadge('npm-compare-file npm-compare-binary', 'Binary code', rows('binary-code'), row => `${formatBytes(row.bytes)}, not UTF-8 or holding a NUL`),
   ]
 }
 
-// The hosts the open version's code names in its URLs that the one compared
-// with's named in none of its (risk/npm/compare.js npmNewHosts), as a chip in
-// orange, as install scripts are: the host, or how many; each in its tooltip
-// with every file that names it (TIP_FILES at most) and the line it is first
-// named on there. One host named in one place alone, the chip opens it there,
-// at its line, in Compare's Code (`compare-open-line`).
+// The hosts the open version's code names that none of the compared one's
+// named (risk/npm/compare.js npmNewHosts), each with its files and first line
+// in the tooltip; one host in one place alone opens it there in Compare's
+// Code (`compare-open-line`).
 function hostsBadge(finding) {
   const hosts = finding?.hosts ?? []
   const rows = hosts.map(({ host, places }) => {
@@ -808,16 +704,10 @@ function hostsBadge(finding) {
     place && (event => event.currentTarget.dispatchEvent(new CustomEvent('compare-open-line', { detail: place, bubbles: true, composed: true }))))
 }
 
-// A chip on `rows`, files the open version adds or changes, in red.
-function fileBadge(kind, ...rest) {
-  return listBadge(`npm-compare-file ${kind}`, ...rest)
-}
 
-// A chip on `rows`, each with a `path`, counting them where there are
-// several, or saying `value` of them all, the rows in its tooltip alone, each
-// with what `said` of it (a line, or a list of them), and nothing more; a
-// button, where it is to `open` what it says. Not `labelled`, its `value`
-// alone shows, its label read out and heading its tooltip.
+// A chip on `rows`, each with a `path`, counting them (or saying `value`),
+// the rows in its tooltip each with what `said` of it (a line or a list); a
+// button where it can `open` what it says. Not `labelled`, its `value` alone shows.
 function listBadge(classes, label, rows, said, value = null, open = null, labelled = true) {
   if (rows.length === 0) return nothing
   const shown = rows.slice(0, TIP_FILES)
@@ -841,16 +731,10 @@ function listBadge(classes, label, rows, said, value = null, open = null, labell
       .tooltipContent=${content}>${inner}</span></li>`
 }
 
-// What the server's risk tells of the package of a dependency nothing
-// imports, as it grades it (risk/npm/new-dependency.js
-// npmUnusedDependencySeverity): first published since the version compared
-// with (`sides`' first), how old it was when the open one was, else its tier
-// by downloads, or none npm has for anyone; and the version its spec installs where that has install
-// scripts, its package's latest where it isn't that, published since too
-// where it was; its spec before where that version named it by another;
-// that risk doesn't count it, a notice (risk/npm/dependencies.js
-// npmUnusedDependencyCounted); null where it tells none, as of one kept from
-// that version.
+// What risk tells of an unimported dependency's package
+// (risk/npm/new-dependency.js): new since the version compared with and how
+// old, else its tier; the version it installs where that runs install
+// scripts; its spec before; that risk doesn't count it; null where it tells none.
 const unusedSaid = (sides, { created, gap, level, tier, installs, missing, was, severity }) => [
   severity === 'notice' ? 'no risk counted' : null,
   was === undefined ? null : `was ${was}`,
@@ -859,13 +743,10 @@ const unusedSaid = (sides, { created, gap, level, tier, installs, missing, was, 
     + `${installs.new ? `, published since ${sides[0].version}` : ''}, running its install scripts` : null,
 ].filter(Boolean).join('; ') || null
 
-// As `Non-registry deps`, the dependencies the open version takes from
-// elsewhere than npm's registry; and, as `Unused deps`, those nothing of it
-// imports, which npm installs all the same, their install scripts and all,
-// as a dependency added to run them would be (risk/npm/combined.js
-// npmHeldDependencyFindings), each counted. Their names and specs in their
-// tooltips, those new since the one compared with (`added`) in bold, with
-// what spec it had for one from elsewhere.
+// `Non-registry deps`, those the open version takes from elsewhere than npm's
+// registry, and `Unused deps`, those nothing of it imports, which npm installs
+// all the same, install scripts and all (risk/npm/combined.js); their names
+// and specs in their tooltips, those new since the one compared with in bold.
 function dependencyBadges(sides, found) {
   const { version } = sides.at(-1)
   const fetched = found.get('held-non-registry-deps')?.dependencies ?? [], unused = found.get('held-unused-deps')
@@ -892,18 +773,15 @@ function dependencyBadges(sides, found) {
   return chips
 }
 
-// The open version, where it is too new to trust yet (risk/npm/release.js
-// npmTooNew): how long ago it was published, the day in its tooltip.
+// The open version, too new to trust yet (risk/npm/release.js npmTooNew): how long ago it was published.
 function recentBadge(finding) {
   if (!finding) return nothing
   return html`<li><span class="npm-extension is-warn npm-compare-published" data-tooltip=${npmPublishedOn(finding.published)}>${npmAge(finding.published)}</span></li>`
 }
 
 // The advisories affecting each version, tinted by the worst still affecting
-// the open one, or green where none does; each version's, by severity, and
-// how many the open one brings and fixes, in its tooltip; a click lists them
-// (npm-compare-advisories-dialog.js). For one version alone, those affecting
-// it, the Overview's Advisories column listing them.
+// the open one (green for none), each's by severity and how many it brings
+// and fixes in the tooltip; of two, a click lists them.
 function advisoriesBadge(sides, affecting) {
   if (!affecting) return nothing
   const now = affecting.at(-1), was = sides.length > 1 ? affecting[0] : now
@@ -922,22 +800,18 @@ function advisoriesBadge(sides, affecting) {
     : html`<li><span class=${`npm-extension npm-compare-advisories ${tint}`} data-tooltip=${text} .tooltipContent=${tooltip}>${content}</span></li>`
 }
 
-// A tooltip's lines, `[name, value, flagged]` each, `name: value` one to a
-// line, its value as code, bold where flagged; `name: none`, muted, where it
-// has no value.
+// A tooltip's `[name, value, flagged]` lines, `name: value`, bold where flagged, muted where none.
 const tipLines = lines => html`<span class="compare-tip-lines">${lines.map(([name, value, flagged]) => value == null
   ? html`<span class="compare-tip-none">${name}: none</span>` : html`<span class=${flagged ? 'is-flagged' : nothing}>${name}: <code>${value}</code></span>`)}</span>`
 
-// A badge's styled tooltip: its `head`, a row for each side's version and
-// what is said of it, and a `note` under them.
+// A badge's styled tooltip: its `head`, a row per side's version, and a `note`.
 const compareTip = (head, sides, said, note = null) => html`<div class="compare-tip">
   <div class="compare-tip-head">${head}</div>
   <div class="compare-tip-rows">${sides.map(({ version }, i) => html`<span class="compare-tip-version">${version}</span><span class="compare-tip-said">${said[i]}</span>`)}</div>
   ${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
 </div>`
 
-// The advisories between the two versions, in a dialog: those the open one
-// brings, those it still has, and those it fixes.
+// The advisories between the two versions in a dialog: those brought, kept and fixed.
 function openCompareAdvisories([from, to], [was, now]) {
   const isCurrent = sessionCheck()
   const groups = [
@@ -948,24 +822,18 @@ function openCompareAdvisories([from, to], [was, now]) {
   void openNpmCompareAdvisoriesDialog({ heading: `Advisories · ${from.name} ${from.version} → ${to.version}`, groups, isCurrent })
 }
 
-// Whether Socket's vulnerability score on a version under `bar` tells of
-// worse than the advisories found affecting it (`ours`): a score is Socket's
-// count of much the same advisories, under 85 for a high one (84 for one
-// alone), and 25, its floor, for a critical one or many high, as on lodash
-// 4.17.11 or axios 1.7.3.
+// Whether Socket's vulnerability score under `bar` tells of worse than the
+// advisories found (`ours`): it scores under 85 for a high one, and 25, its
+// floor, for a critical one or many high (lodash 4.17.11, axios 1.7.3).
 function vulnerabilityBeyond(score, ours, bar) {
   if (score === null || score >= bar) return false
   const worst = worstOf(ours)
   return worst === undefined || SEVERITY_ORDER.indexOf(score <= 25 ? 'critical' : 'high') < SEVERITY_ORDER.indexOf(worst)
 }
 
-// Socket's scores the open version has under its bar, each from the one
-// compared with to the open one (or the one version's alone), its ring, tint
-// and link the open one's; none for a private package. Vulnerability only
-// where it tells of worse than the advisories found affecting it
-// (vulnerabilityBeyond), once they arrive, as the Advisories badge has the
-// rest. None where the open version is told of `malware` (malwareBadge),
-// which says more of it than any score.
+// Socket's scores the open version has under their bars, from the one
+// compared with; vulnerability only where worse than the advisories found
+// (vulnerabilityBeyond). None for a private package, nor where `malware` says more.
 function socketBadges(sides, affecting, malware = null) {
   const to = sides.at(-1)
   const reports = sides.map(npm => npmSocketReport({ npm })?.scores ?? null)
@@ -985,15 +853,11 @@ function socketBadges(sides, affecting, malware = null) {
   })
 }
 
-// A popularity chip's tint, by its finding's severity: its tier's tag's, as
-// beside its downloads (npm-downloads-chart.js), red, orange or yellow.
+// A popularity chip's tint by its finding's severity, as its tier's tag's beside its downloads.
 const POPULARITY_LEVELS = { critical: 'is-unpopular', high: 'is-low', moderate: 'is-mid' }
 
-// Why a version's popularity is yellow at most, as its `popularity` finding
-// tells it (risk/npm/held.js): a known account published the version
-// (`known`), or else, published with provenance, the package is in a known
-// scope (`scope`, a known account's own where it names the `account`); null
-// where it isn't.
+// Why a version's popularity is yellow at most (its `popularity` finding): a
+// known account published it, or, with provenance, it is in a known scope; null where neither.
 function knownNote({ known, scope, account } = {}) {
   if (!known) return null
   return account ? `Published with provenance in ${scope}, the scope of ~${account}, an account that publishes one of npm's most downloaded packages`
@@ -1001,13 +865,9 @@ function knownNote({ known, scope, account } = {}) {
     : 'Published by an account that publishes one of npm\'s most downloaded packages'
 }
 
-// A package's tier among npm's by its downloads, as risk tells it (`{ tier,
-// level }`, its rank, Infinity past the last, and its tint), its `last`
-// complete month's downloads in its tooltip where known, over the month's
-// name (npm-downloads-chart.js npmLastMonth); a `chip` shaped as the chips
-// beside it are, tinted as its tier's tag beside its downloads is, by its
-// finding's severity, red, orange or yellow, yellow at most where it is
-// known (knownNote), as its tooltip says.
+// A package's tier among npm's by downloads (`{ tier, level }`), its `last`
+// complete month's downloads in its tooltip; as a `chip`, tinted by its
+// finding's severity, yellow at most where known (knownNote).
 function tierTag(finding, last = null, chip = false) {
   const { tier, level, severity } = finding
   const total = last?.total.toLocaleString('en')
@@ -1019,28 +879,20 @@ function tierTag(finding, last = null, chip = false) {
       note ? html`<div class="compare-tip-note">${note}</div>` : nothing}` : null}>${npmTierName(tier ?? Infinity)}</span>`
 }
 
-// The package's tier where it is orange or red, as the server's risk finds
-// it (`popularity`), a chip as its neighbours are (tierTag), its last
-// complete month's downloads, as its figures have them, in its tooltip:
-// those asked for alongside, so they come with it.
+// The package's tier where orange or red, its last month's downloads in its tooltip.
 function popularityBadge(name, finding) {
   const stats = npmPackageStats(name)
   if (!finding) return nothing
   return html`<li>${tierTag(finding, stats.status === 'ready' && stats.downloads ? npmLastMonth(stats.downloads) : null, true)}</li>`
 }
 
-// A new dependency's tier where npm counts none of its package's downloads:
-// none of its days counted yet, as npm counts a package's from the day after
-// it was first published (axios 1.14.1, 21 minutes past midnight, named
-// plain-crypto-js, first published the morning before). As unpopular as
-// one can be, as its tier by its downloads would be once counted: a package
-// that new had none before its latest two weeks. Not a private one, whose
-// downloads npm's API tells no one, however many it has.
+// A new dependency's tier where npm counts none of its downloads yet, as it
+// counts from the day after first publish (axios 1.14.1 named plain-crypto-js,
+// published the morning before): as unpopular as can be.
 const UNCOUNTED_TAG = html`<span class="npm-downloads-tier is-unpopular"
   data-tooltip="No downloads counted by npm, which counts a package's from the day after it was first published">unpopular</span>`
 
-// How long `ms` is, as npmAge counts: in minutes, then hours, then days,
-// months past two months, years past two years (`18 hours`).
+// How long `ms` is: minutes, hours, days, then months past two, years past two (`18 hours`).
 const spanIn = unit => new Intl.NumberFormat('en', { style: 'unit', unit, unitDisplay: 'long' })
 const SPANS = { minute: spanIn('minute'), hour: spanIn('hour'), day: spanIn('day'), month: spanIn('month'), year: spanIn('year') }
 function npmSpan(ms) {
@@ -1050,12 +902,9 @@ function npmSpan(ms) {
     : days < 60 ? SPANS.day.format(days) : days < 730 ? SPANS.month.format(Math.floor(days / 30.44)) : SPANS.year.format(Math.floor(days / 365.25))
 }
 
-// A new dependency whose package didn't exist when the version compared
-// with was published, as the server's risk tells it (its `created` and
-// `gap`, risk/npm/new-dependency.js npmAddedDependency): how old it was
-// when the open one was, or that it came after that, as a name someone took
-// once a release named it would; in its tooltip, a line each, the day, how
-// long before or after the open version, and what npm had.
+// A new dependency whose package didn't exist when the version compared with
+// was published (risk/npm/new-dependency.js): how old it was when the open
+// one was, or that it came after, as a name taken once a release named it would.
 function newPackageTag({ compared }, { created, gap }) {
   if (!created) return nothing
   const [base, open] = compared, span = npmSpan(Math.abs(gap))
@@ -1066,18 +915,10 @@ function newPackageTag({ compared }, { created, gap }) {
     >${gap >= 0 ? `${span} old` : 'published later'}</span>`
 }
 
-// What tags a dependency Compare lists (bundle-compare.js source's
-// `dependencyTags`): what calls for a look at it (its `flags`,
-// npm-dependency-checks.js), and for a new one what the server's risk tells
-// of its package (npm-package.js npmFlaggedDependencyChanges, as
-// risk/npm/new-dependency.js npmAddedDependency tells it): its tier by its
-// downloads, whatever it is, unpopular where npm counts none of a public
-// one's (UNCOUNTED_TAG), and how old it was where it is new since the
-// version compared with (newPackageTag). No tier for one changed or removed,
-// which the version compared with already had, nor one risk tells none of,
-// as one that opens no package (npm-package.js npmDependencies), which npm
-// doesn't install from the registry, whose package of its name has
-// downloads that aren't its own.
+// What tags a dependency Compare lists (`source.dependencyTags`): its flags,
+// and for a new one its package's tier and age as risk tells them. No tier
+// for one changed or removed, nor one risk tells none of (not from the
+// registry, its name's package's downloads not its own).
 export function npmDependencyTags(row, kind) {
   const flags = npmDependencyFlagTags(row.flags)
   if (kind !== 'added' || !row.level) return [flags, nothing]
@@ -1093,10 +934,8 @@ function npmReadableRow(entry, details) {
   return html`<ul class="npm-extensions" aria-label="Readable files">${present.map(category => categoryChip(entry, details, category))}</ul>`
 }
 
-// A file's extension, as the Overview lists them: what follows the last dot
-// of its name, a declaration file's `.d.ts` (or `.d.mts`, `.d.cts`) whole,
-// and '' for a name with no dot past its first character, such as `LICENSE`
-// or `.npmignore`.
+// A file's extension: what follows its name's last dot, `.d.ts` (`.d.mts`,
+// `.d.cts`) whole, '' for none past its first character (`LICENSE`, `.npmignore`).
 export function npmFileExtension(path) {
   const name = path.slice(path.lastIndexOf('/') + 1)
   const declaration = /\.d\.[cm]?ts$/iu.exec(name)
@@ -1106,8 +945,7 @@ export function npmFileExtension(path) {
 }
 
 // The package's extensions, most files first, then by name: `{ extension,
-// files, bytes, lines }`, sizes as `sizes` has them and lines of code as
-// `lines` has them, by path, `lines` null where none of its files is text.
+// files, bytes, lines }`, `lines` null where none of its files is text.
 export function npmFileExtensions(paths, sizes, lines = new Map()) {
   const byExtension = new Map()
   for (const path of paths) {
@@ -1121,15 +959,12 @@ export function npmFileExtensions(paths, sizes, lines = new Map()) {
   return [...byExtension.values()].toSorted((a, b) => b.files - a.files || a.extension.localeCompare(b.extension))
 }
 
-// The files every package has, at its root: its manifest, readme and license
-// files (npm-entries.js NPM_LICENSE_FILE).
+// The files every package has at its root: its manifest, readme and license files.
 const PACKAGE_FILE = /^(?:package\.json|readme(?:\.md)?)$/iu
 const isNpmPackageFile = path => PACKAGE_FILE.test(path) || NPM_LICENSE_FILE.test(path)
 
-// The package's file types: its own files (isNpmPackageFile) as `package`,
-// where it has any, then its extensions, each as npmFileExtensions has them.
-// An extension only its own files have is left out; one other files have too
-// counts its own files as well.
+// The package's file types: its own files as `package`, then its extensions,
+// one only its own files have left out.
 export function npmFileTypes(paths, sizes, lines = new Map()) {
   const own = paths.filter(isNpmPackageFile)
   const others = new Set(paths.filter(path => !isNpmPackageFile(path)).map(npmFileExtension))
@@ -1145,8 +980,7 @@ export function npmFileTypes(paths, sizes, lines = new Map()) {
 // A file type's size, and its lines of code where its files are text.
 const typeNote = ({ bytes, lines }) => lines === null ? formatBytes(bytes) : `${formatBytes(bytes)} · ${lines.toLocaleString('en')} LoC`
 
-// The package's file types, as chips under its summary, each narrowing the
-// Files list to its files as a category's does, its files' size in its tooltip.
+// The package's file types as chips, each narrowing the Files list, its files' size in its tooltip.
 function npmFileTypesRow(entry, details) {
   const { types, extensions } = npmFilesRead(details)
   if (!types.package && types.extensions.length === 0) return nothing
@@ -1158,9 +992,8 @@ function npmFileTypesRow(entry, details) {
   </ul>`
 }
 
-// What the package holds, under its facts and labelled as they are: its
-// languages by lines (`languages`, the bar the bundle Overview draws), its
-// readable files and their types; then Socket's scores for it.
+// What the package holds, under its facts: its languages, readable files and
+// file types, then Socket's scores.
 export function npmContents(entry, languages, details) {
   const rows = [['languages', 'Languages', languages], ['readable', 'Readable', npmReadableRow(entry, details)], ['types', 'File types', npmFileTypesRow(entry, details)],
     ['socket', 'Socket', npmSocketRow(entry)]]
@@ -1169,9 +1002,7 @@ export function npmContents(entry, languages, details) {
   return html`<dl class="npm-contents" aria-label="Contents">${rows.map(([key, label, body]) => html`<div class=${`npm-contents-${key}`}><dt>${label}</dt><dd>${body}</dd></div>`)}</dl>`
 }
 
-// The binary files (`paths`, sorted), which the server tells from text by
-// their bytes: not UTF-8, or holding a NUL. Listed apart from the Files
-// column's text, and only where the package has any.
+// The binary files (`paths`, sorted: not UTF-8, or holding a NUL), in a column of their own.
 export function npmBinaryColumn(paths, sizes) {
   if (paths.size === 0) return nothing
   return overviewColumn({ title: 'Binary files', count: paths.size, list: true, body: html`<ul class="bundles-sources-list">${[...paths].map(path => html`<li>

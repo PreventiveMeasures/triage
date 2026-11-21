@@ -1,11 +1,9 @@
 // Where an npm package's manifest points into its files, and its license
-// files: the npm viewer's entry points and license (npm-package.js), and
+// files: the Overview's entry points and license (npm-package.js), and
 // Compare's labels on them (bundle-compare-code.js).
 
-// The file of `files` an entry point names, as require would find it:
-// `./lib/a` as `lib/a`, `lib/a.js`, `.cjs` or `.mjs`, or `lib/a/index.js`;
-// undefined where none is there. The Overview's entry points and the file
-// Code opens on both resolve this way.
+// The file of `files` an entry point names, as require would find it
+// (`./lib/a` as `lib/a`, `.js`, `.cjs`, `.mjs` or `/index.js`); undefined where none is.
 export function npmEntryFile(field, files) {
   const base = npmEntryPath(field)
   return [base, `${base}.js`, `${base}.cjs`, `${base}.mjs`, `${base}/index.js`].find(path => path && files?.has(path))
@@ -13,14 +11,12 @@ export function npmEntryFile(field, files) {
 
 export const npmEntryPath = field => field.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '')
 
-// Its license files at its root: `LICENSE`, or one a license, such as
-// `LICENSE-MIT`, `LICENCE-APACHE.md`.
+// Its license files at its root: `LICENSE`, or one a license's, as `LICENSE-MIT`, `LICENCE-APACHE.md`.
 export const NPM_LICENSE_FILE = /^licen[cs]e(?:-[\w.]+)?(?:\.(?:md|txt))?$/iu
 
-// A license expression's parts, `{ text, file }`, each license in it with
-// the file of `paths` it opens: the one named after it (`LICENSE-APACHE` for
-// `Apache-2.0`), else the package's only license file; null for none, and
-// for the operators and parentheses between them.
+// A license expression's parts, `{ text, file }`, each license with the file
+// of `paths` it opens: the one named after it (`LICENSE-APACHE` for
+// `Apache-2.0`), else the only license file; null for none and for operators.
 export function npmLicenseParts(license, paths) {
   const licenseFiles = paths.filter(path => NPM_LICENSE_FILE.test(path))
   const fileFor = id => {
