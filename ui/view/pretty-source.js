@@ -8,13 +8,17 @@
 // off. The viewer keeps the last few bundle copies it read, and the last few
 // versions' and comparisons', for the session; a copy's line numbers are its
 // own, so the file's line links and marks stay with the file as published.
-// JSON is formatted here instead, in any bundle (prettyJsonCopy).
+// JSON is formatted here instead, in any bundle (prettyJsonCopy), and a
+// source map listed (prettySourcemapCopy), a comparison's two listings drawn
+// only where their diff reads back to the new map (comparedListingRefusal).
 import { html } from 'lit'
 import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { jsonPrinted, prettyJsonText } from '../../common/pretty-json.js'
 import { needsPrettyPrint, prettyExtension, printableSize } from '../../common/pretty-print.js'
+import { listSourcemap, sourcemapDiffRebuilds, sourcemapPrinted } from '../../common/pretty-sourcemap.js'
+import { isSourceMap } from '../../risk/files/source-map-link.js'
 import { fetchPrettyBundleChanges, fetchPrettyBundleFile, fetchPrettyNpmChanges, fetchPrettyNpmFile, fetchPrettyNpmFiles } from './client-managed.js'
 import { npmFileReadabilityRead } from './file-readability.js'
 import { renameDiffable } from './rename-diff.js'
@@ -141,15 +145,45 @@ function prettyJsonCopy(details, path, content) {
   return file.copy
 }
 
+// Source maps by details and path: the text each was listed from, whether it
+// can be (a source map, not too large), and its listing once asked for, glossed
+// with the file beside it of the same details that names it (pretty-sourcemap.js).
+const sourcemapFiles = new WeakMap()
+
+function sourcemapFile(details, path, content) {
+  let files = sourcemapFiles.get(details)
+  if (!files) sourcemapFiles.set(details, files = new Map())
+  let file = files.get(path)
+  if (file?.content !== content) files.set(path, file = { content, printable: typeof content === 'string' && printableSize(content) && isSourceMap(content), copy: null })
+  return file
+}
+
+// A source map's listing, made here the first time it is asked for: ready, or
+// an error saying why it can't be listed, which is shown as published; null
+// where it isn't a source map.
+function prettySourcemapCopy(details, path, content) {
+  const file = sourcemapFile(details, path, content)
+  if (!file.printable) return null
+  if (!file.copy) {
+    try {
+      file.copy = { status: 'ready', text: listSourcemap(content, path, bundleFilesAsMap(details)).text }
+    } catch (err) {
+      file.copy = { status: 'error', message: err?.message ?? String(err), retry: false }
+    }
+  }
+  return file.copy
+}
+
 // Whether each file of a bundle or npm version can be formatted, by its
 // details (needsPrettyPrint, as the server tells an npm version's).
 const formattable = new WeakMap()
 
-// Whether the open file can be pretty-printed: JSON, in any bundle, or a
-// formattable file of a managed bundle or an npm version.
+// Whether the open file can be pretty-printed: JSON or a source map, in any
+// bundle, or a formattable file of a managed bundle or an npm version.
 export function prettyPrintable(details, entry, path, content) {
   if (typeof content !== 'string') return false
   if (jsonPrinted(path)) return jsonFile(details, path, content).printable
+  if (sourcemapPrinted(path)) return sourcemapFile(details, path, content).printable
   if (!(entry?.managedId || entry?.npm)) return false
   let files = formattable.get(details)
   if (!files) formattable.set(details, files = new Map())
@@ -303,6 +337,7 @@ function versionCopy(details, entry, path, content, notify) {
 export function prettyCopy(details, entry, path, content, notify) {
   if (!state.bundleSourcePretty) return null
   if (jsonPrinted(path)) return prettyJsonCopy(details, path, content)
+  if (sourcemapPrinted(path)) return prettySourcemapCopy(details, path, content)
   if (entry.npm) return versionCopy(details, entry, path, content, notify)
   return fileCopy(details, path, content, notify, entry)
 }
@@ -380,10 +415,11 @@ async function loadComparison(key, comparison, base, other) {
 }
 
 // Whether one side's file of a comparison can be pretty-printed (comparedCopy):
-// JSON in any comparison, other code the server formats between two managed
-// bundles or two versions of a package.
+// JSON and source maps in any comparison, other code the server formats
+// between two managed bundles or two versions of a package.
 export function comparedPrintable(base, other, side, path, content) {
   return jsonPrinted(path) ? jsonFile(side === 'base' ? base : other, path, content).printable
+    : sourcemapPrinted(path) ? sourcemapFile(side === 'base' ? base : other, path, content).printable
     : renameDiffable(base, other) && prettyExtension(path) !== null && printableSize(content)
 }
 
@@ -392,10 +428,16 @@ export function comparedPrintable(base, other, side, path, content) {
 // `other`, `notify` called once it comes; the comparison's files asked for
 // the first time one is, whether or not the toggle is on, and one it brought
 // none of asked for alone once it ended. A text other than the side's file
-// has none. JSON, of any comparison, is formatted here, once the toggle is on.
+// has none. JSON, of any comparison, is formatted here, once the toggle is on,
+// and a source map listed.
 export function comparedCopy(base, other, side, path, content, notify) {
   const details = side === 'base' ? base : other
   if (jsonPrinted(path)) return state.bundleSourcePretty ? prettyJsonCopy(details, path, content) : { status: 'off' }
+  if (sourcemapPrinted(path)) {
+    if (!state.bundleSourcePretty) return { status: 'off' }
+    if (content !== bundleFilesAsMap(details).get(path)) return { status: 'error', message: MISMATCH, retry: false }
+    return prettySourcemapCopy(details, path, content) ?? { status: 'error', message: "It isn't a source map.", retry: false }
+  }
   const key = `${base.integrity}\0${other.integrity}`
   let comparison = comparisons.get(key)
   comparisons.delete(key)
@@ -408,6 +450,22 @@ export function comparedCopy(base, other, side, path, content, notify) {
   if (content !== bundleFilesAsMap(details).get(path)) return { status: 'error', message: MISMATCH, retry: false }
   comparison.notify = notify
   return comparison.copies.get(`${side}\0${path}`) ?? comparison.rest ?? (comparison.ended ? fileCopy(details, path, content, notify) : { status: 'loading' })
+}
+
+// Why a diff drawn of a comparison's source map, as the two sides' listings,
+// doesn't show every change between them (pretty-sourcemap.js
+// sourcemapDiffRebuilds), or null where it does: `basePath` and `path` the
+// map's on each side, `before` and `after` their texts ('' for a side with
+// none), `drawn` the diff's lines (`a`, `b`) and `blocks`. Kept by its blocks,
+// as a view asks of the diff it draws each time it draws it.
+const rebuilds = new WeakMap()
+export function comparedListingRefusal(base, other, basePath, path, { before, after }, drawn) {
+  const kept = rebuilds.get(drawn.blocks)
+  if (kept && kept.a === drawn.a && kept.b === drawn.b && kept.before === before && kept.after === after) return kept.refusal
+  const side = (details, file, text) => ({ text, path: file, files: bundleFilesAsMap(details) })
+  const refusal = sourcemapDiffRebuilds(drawn, side(base, basePath, before), side(other, path, after))
+  if (Array.isArray(drawn.blocks)) rebuilds.set(drawn.blocks, { a: drawn.a, b: drawn.b, before, after, refusal })
+  return refusal
 }
 
 // The toggle pressed: on, then off, or on a JSON file's (`json`) on indented,

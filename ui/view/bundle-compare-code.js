@@ -39,8 +39,9 @@ import { changeBlocks } from '../../common/line-diff.js'
 import { buildSearchMatcher } from './bundle-search-scan.js'
 import { SEARCH_MAX_FILES, searchCompareFiles } from './bundle-compare-search.js'
 import { railHitText } from './search-marks.js'
-import { PRETTY_ICON, comparedCopy, comparedPrintable, prettyFolded, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
+import { PRETTY_ICON, comparedCopy, comparedListingRefusal, comparedPrintable, prettyFolded, prettySettled, prettyTooltip, togglePrettySource } from './pretty-source.js'
 import { jsonPrinted } from '../../common/pretty-json.js'
+import { sourcemapPrinted } from '../../common/pretty-sourcemap.js'
 import { READABILITY, npmEncodingTag, npmFileFlagTags, npmFileReadabilityOf, npmFileReadabilityRead, npmReadabilityFlags, npmTaggedCategory, npmTextKindTag } from './file-readability.js'
 import { npmFileRunsCode, npmRunsCodeTags } from './file-runs-code.js'
 import { npmExfiltrationTag, npmFileExfiltration } from './file-hosts.js'
@@ -401,6 +402,10 @@ export class BundleCompareCode extends LitElement {
     this._spaced = new Map()
     // Whether a file's printed copies diff in fewer lines than it (_smaller).
     this._shorter = new Map()
+    // Source maps whose listings' diff, as drawn, didn't read back to the new
+    // map, by both sides' integrity and paths: the copy failed that each is
+    // drawn with since, as published (_fileState, _printing).
+    this._unrebuilt = new Map()
     // Whether the texts a file shows are too large to diff unasked (_large).
     this._larges = new Map()
     // A model's key (modelKey) → fold run → lines revealed, and the rows
@@ -1176,6 +1181,18 @@ export class BundleCompareCode extends LitElement {
     const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && (found.model.mixed ??= hidesMixedWhitespace(found.shown, after, found.model.blocks))
     if (mixed) found = diffed(false)
     const { key, changes, warned, renamed, hiding, shown, model } = found
+    // A source map's listings are drawn only where the diff drawn of them, the
+    // old side's lines and the changes it shows, reads back to the new map
+    // (pretty-source.js comparedListingRefusal), as counted too: else it is
+    // drawn as published, the toggle saying why.
+    if (printing?.map && pretty?.status === 'ready' && model) {
+      const drawn = { a: model.a ?? textLines(shown), b: model.b ?? textLines(after), blocks: model.blocks }
+      const refusal = comparedListingRefusal(this.base, this.other, basePath, path, contents, drawn)
+      if (refusal !== null) {
+        this._unrebuilt.set(this._rebuildKey(path, entry), { status: 'error', message: `Its listings' diff wouldn't show every change: ${refusal}`, retry: false })
+        return this._fileState(path, entry, counting)
+      }
+    }
     if (counting) return { pretty, hiding, model, spacesHidden: found.ignoreWhitespace, typesFolded: folded }
     if (pretty?.status === 'ready' && model) this._noteRowless(path, model.blocks.length === 0)
     // The texts as published diffed as the search diffs them (_searchResults):
@@ -1240,19 +1257,28 @@ export class BundleCompareCode extends LitElement {
   // line; an added file has nothing to compare). Its copies (`copies`): the
   // first failure of either, else one still coming, else one not made while
   // the toggle is off (JSON's), else their texts and hashes. Null for a file
-  // whose sides can't both be printed.
+  // whose sides can't both be printed. A source map's (`map`) are its
+  // listings, which the toggle always applies to, as JSON's, but which fail
+  // where their diff, as drawn, didn't read back to the new map (_fileState).
   _printing(path, entry, contents) {
     const { kind, basePath = path, modified } = entry, { before, after } = contents
     if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after) return null
     const sides = [['base', this.base, basePath, before], ['other', this.other, path, after]]
     if (!sides.every(([side, , file, text]) => text === '' || comparedPrintable(this.base, this.other, side, file, text))) return null
     const json = sides.every(([, , file, text]) => text === '' || jsonPrinted(file))
-    const unreadable = !json && sides.some(([, details, file, text]) => text !== '' && minified(details, file, text))
+    const map = !json && sides.every(([, , file, text]) => text === '' || sourcemapPrinted(file))
+    const unreadable = !json && !map && sides.some(([, details, file, text]) => text !== '' && minified(details, file, text))
     const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
-    const copies = both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading') ?? both.find(copy => copy.status === 'off')
+    const copies = (map ? this._unrebuilt.get(this._rebuildKey(path, entry)) : undefined)
+      ?? both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading') ?? both.find(copy => copy.status === 'off')
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }
-    const smaller = !json && !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
-    return { copies, json, minified: unreadable, smaller, applies: json || unreadable || smaller }
+    const smaller = !json && !map && !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
+    return { copies, json, map, minified: unreadable, smaller, applies: json || map || unreadable || smaller }
+  }
+
+  // What a source map's listings that didn't read back are kept by (_unrebuilt).
+  _rebuildKey(path, { basePath = path }) {
+    return `${this.base?.integrity}\0${this.other?.integrity}\0${basePath}\0${path}`
   }
 
   // Whether the texts a file shows are too large to diff unasked

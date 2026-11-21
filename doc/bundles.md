@@ -224,6 +224,10 @@ The server checks that the output differs from the source only in layout.
 When 16 files are already waiting, it answers `429 pretty-busy`.
 Formatted copies are encrypted like the bundle where storage is encrypted (see [STORAGE-ENCRYPTION.md](../server-managed/STORAGE-ENCRYPTION.md)) and removed with it.
 JSON files of up to 4 MiB are pretty-printed in the viewer instead, in any bundle, once the toggle is on, held to the same: a file with a key given twice, keys out of the order JavaScript keeps them in, or an escape or number written otherwise than `JSON.stringify` writes it, is refused, as is one with lone surrogates or whose copy would run past 16M characters.
+Source maps of up to 4 MiB are listed in the viewer instead, in any bundle, once the toggle is on: each of the map's keys in order, its lists an item to a line, each source's text line by line, and its mappings decoded, each run of segments beside the source line it maps from, glossed with the file beside the map whose `sourceMappingURL` names it.
+A character that shows as another or as none (a bidi control, a zero-width one, a line separator) is written escaped.
+A listing reads back to the map's very text, so a map not written as `JSON.stringify` writes it, an index map, or one whose listing would run past 16M characters is shown as published.
+Compare draws two maps' listings only where what it draws reads back to the new map: the old side must be the old map's listing, and the changes shown, made to it, must read back by `JSON.stringify` to the new map's bytes; otherwise it draws both as published, and the toggle says why.
 Compare's **Hide renamed names** and **Hide type-only changes** are worked out on the server; reviewed code is only parsed, never compiled or run.
 These requests check access before they work and again before they answer.
 
