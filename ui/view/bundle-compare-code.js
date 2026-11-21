@@ -1,22 +1,13 @@
-// `<bundle-compare-code>` — the Compare slide's Code view. The files that
-// differ between the two bundles sit in the Code tab's tree (same builder,
-// package rows and styles), each marked added, removed or modified; the
-// selected file's changes read as a review diff beside it — unified or
-// split, unchanged runs folded to their context and expandable, syntax
-// colored, and the words that changed inside a line marked.
-//
-// `base` / `other` are the two parsed bundles (base is the open one, the
-// "before"), `files` the comparison's file lists from computeBundleDiff,
-// `resolutions` its import resolutions that differ (resolutionRows):
-// repointed, or one side's alone in a file the two hold alike — their
-// importers are listed too, with each import's old and new target — and
-// `path` the selected file, which the slide owns so the Overview's
-// file rows can open one here. A pick dispatches `compare-code-select`.
-// The rail's search filters the tree by path, or, as the Code tab's does in
-// its Code mode, searches the code the diffs show (bundle-compare-search.js),
-// a hit opening its file at its line.
-// Light DOM, like the slide, so the tree takes the Code tab's styles and
-// the copy button reaches the document-level [data-copy-path] delegate.
+// `<bundle-compare-code>` — Compare's Code view: the files that differ in the
+// Code tab's tree, the selected one's changes as a review diff beside it.
+// `base` is the "before" bundle, `files` computeBundleDiff's file lists,
+// `resolutions` the import resolutions that differ (resolutionRows), whose
+// importers are listed too; `path` the selected file, owned by the slide so
+// the Overview can open one. A pick dispatches `compare-code-select`. The
+// rail's search filters by path or searches the diffs' code
+// (bundle-compare-search.js). Light DOM, so the tree takes the Code tab's
+// styles and the copy button reaches the document-level [data-copy-path]
+// delegate.
 import { LitElement, html, nothing } from 'lit'
 import { classMap } from 'lit/directives/class-map.js'
 import { live } from 'lit/directives/live.js'
@@ -25,7 +16,6 @@ import { styleMap } from './style-map.js'
 import { appMarkup } from './markup.js'
 import { hidesMixedWhitespace, layoutDir, renameParts, rootLabel, wordRanges } from '@preventive/compare/view.js'
 import { comparisonEntries, fileContents, resolutionChange } from './bundle-compare-files.js'
-export { fileEntries, fileContents } from './bundle-compare-files.js'
 import { state } from '#client/index.js'
 import { formatBytes, stripCommonPathPrefix } from './format.js'
 import { bundleFileByteLength, bundleFilesAsMap } from '../../common/bundle-sources.js'
@@ -50,7 +40,7 @@ import { NPM_LICENSE_FILE, npmEntryFile, npmLicenseParts } from './npm-entries.j
 import { renameDiff, renameDiffable, retryRenameDiffs } from './rename-diff.js'
 import './mode-switch.js'
 import { typeProof } from './type-only.js'
-import { renameTemplate, rootTemplate } from './bundle-compare-rename.js'
+import { renameTemplate, rootTemplate, withoutPrefix } from './bundle-compare-rename.js'
 import { fileMetaTags, metaSentences } from './bundle-compare-meta.js'
 import { bundleFileGithub, githubFileLink } from './bundle-file-github.js'
 import './bundle-code-splitter.js'
@@ -58,15 +48,14 @@ import { CODE_MODE_ICON, COLLAPSE_DIRS_ICON, COPY_ICON, FILES_MODE_ICON, NEXT_IC
 
 const KINDS = [
   { kind: 'changed', label: 'Modified', letter: 'M' },
-  // Moved or re-extensioned (computeBundleDiff's renames); one whose contents changed
-  // too shows under Modified as well.
+  // Moved or re-extensioned; one whose contents changed too shows under Modified as well.
   { kind: 'renamed', label: 'Renamed', letter: '→' },
   { kind: 'added', label: 'Added', letter: 'A' },
   { kind: 'removed', label: 'Removed', letter: 'D' },
   // Same contents, but some of its imports resolve elsewhere, or on one side alone.
   { kind: 'repointed', label: 'Repointed', letter: 'R' },
 ]
-export const KIND = Object.fromEntries(KINDS.map(entry => [entry.kind, entry]))
+const KIND = Object.fromEntries(KINDS.map(entry => [entry.kind, entry]))
 
 // Rows a diff renders before asking to show more; each ask adds as many.
 const ROW_LIMIT = 2000
@@ -78,32 +67,23 @@ const LARGE_CHARS = 16 * 1024 * 1024
 const MODEL_CACHE = 24
 // Importing lines a repointed import lists before summing up the rest.
 const MAX_IMPORT_LINES = 3
-// Directories all start open (a review reads every change) unless the
-// tree is too long to scan that way, when they open as Code's do
-// (defaultOpenDirectories).
+// Directories all start open (a review reads every change) unless the tree
+// is too long to scan that way (defaultOpenDirectories then).
 const OPEN_ALL_MAX = 300
-// Time a render of the tree spends counting its files' lines (_lineCounts),
-// or a search diffing the files it found (_searchResults), before leaving
-// the rest to the next.
+// Time a render spends counting the tree's lines or diffing search hits
+// before leaving the rest to the next render.
 const COUNT_BUDGET_MS = 30
-// The rail search's modes, as the Code tab's rail names them
-// (bundle-code-search.js): filter the tree by path, or search code.
 const SEARCH_MODES = [
   { mode: 'files', label: 'Filter files', placeholder: 'Filter changed files', icon: FILES_MODE_ICON },
   { mode: 'code', label: 'Search code', placeholder: 'Search changed code', icon: CODE_MODE_ICON },
 ]
 // Lines a hit opens its fold by past itself, so it isn't at the fold's edge.
 const SEEK_MARGIN = EXPAND_STEP / 2
-// Characters of a minified line a hit's match is looked for in at a time,
-// in a pretty-printed copy's text as published (_soughtLine).
+// Characters of a minified line searched at a time (_soughtLine).
 const SEEK_CHUNK = 65_536
-// The lines asked for from without (`seek`) already sought, by any Code drawn.
+// The `seek`s already taken, by any Code drawn.
 const seeksTaken = new WeakSet()
-// Why a file's hits aren't as its diff shows them (_searchResults): a changed
-// file's unsigned, the lines it removed not searched, its diff too large to
-// show unasked or of its pretty-printed copies, whose lines and changes
-// differ from the file's; another's numbered as published, where it shows
-// pretty-printed.
+// Why a file's hits aren't signed as its diff shows them (_searchResults).
 const UNSIGNED = {
   large: 'A large diff, not shown yet: the lines it removed aren\'t searched.',
   printed: 'Shown pretty-printed: its lines as published, unsigned, the lines it removed not searched.',
@@ -112,46 +92,46 @@ const UNSIGNED = {
 // A search hit's sign as its row is classed and read.
 const SIGNS = { '+': { name: 'add', label: 'Added' }, '−': { name: 'del', label: 'Removed' }, ' ': { name: 'ctx', label: 'Unchanged' } }
 
-// View preferences shared by every comparison, and by the Diff view
+// View preferences shared by every comparison and the Diff view
 // (bundle-compare-all.js), reset on page reload like the rail's width.
 export const prefs = { layout: 'unified', ignoreWhitespace: false, ignoreRenames: false, ignoreTypes: false }
 // The settings whether a diff of printed copies has rows depends on (_noteRowless).
 const rowlessSettings = () => `${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}`
-// Hiding whitespace changes is diff -b, only in code whose whitespace means
-// nothing (JavaScript, CSS, JSON and the like): a line re-indented, or with
-// blanks added to a run of them or at its end, reads as unchanged; blanks put
-// between other characters or taken from between them still show. The toggle
-// says it in a few words, and a note why a file whose changes it would hide
-// shows them all as their blanks mix kinds (_fileState).
+// Hiding whitespace is diff -b, and only in code whose whitespace means nothing
+// (whitespaceInsensitive): re-indents and trailing blanks read as unchanged.
 const HIDE_RENAMES = 'Hide renamed names', HIDE_TYPES = 'Hide type-only changes', HIDE_WHITESPACE = 'Hide whitespace changes'
-// The settings a file's diff is drawn under, as the tree keeps its counts by
-// them, JSON's layout a JSON file's alone; and what of a file's changes those
-// set aside, as its state drawn or counted says (_fileState): printed, its
-// whitespace, renamed names or changes in types alone hidden.
+// The settings a file's diff is drawn under, which the tree keys its counts
+// by (JSON's pretty layout a JSON file's alone); and what those set aside.
 const countSettings = path => `${jsonPrinted(path) ? state.bundleSourcePretty : !!state.bundleSourcePretty}\0${prefs.ignoreWhitespace}\0${prefs.ignoreRenames}\0${prefs.ignoreTypes}`
 const setAside = ({ pretty, spacesHidden, hiding, typesHidden, typesFolded }) => [pretty?.status === 'ready' && 'Pretty-print', spacesHidden && HIDE_WHITESPACE, hiding && HIDE_RENAMES,
   (typesHidden || typesFolded) && HIDE_TYPES].filter(Boolean)
-const WHITESPACE_KEPT = {
-  mixed: 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.',
-}
-// The format a stasis bundle records for one of its files, its own spelling
-// of the file's language; undefined for another kind of bundle, or a file it
-// records none for.
+// A model's lines added and removed, and what the settings set aside of them.
+const drawnCounts = (model, drawn) => ({ additions: model.additions, deletions: model.deletions, renamed: model.renamed, aside: setAside(drawn) })
+const MIXED_KEPT = 'Whitespace changes are shown: hiding them would hide blanks of more than one kind changing.'
+// The format a stasis bundle records for a file (its own spelling of the
+// file's language); undefined for another bundle, or a file it records none for.
 const stasisFormat = (details, path) => (details?.kind === 'stasis' ? details.bundle?.formats?.get(path) : undefined)
 // Renamed names are hidden in JavaScript alone, what a minifier renames: in
 // another language a short word (a CSS selector, a tag, prose) is no binding.
 const renamable = path => /\.[cm]?js$/iu.test(path)
 const hidesRenames = (path, { ignoreRenames } = prefs) => ignoreRenames && renamable(path)
-// Whether a text was minified, as read here (file-readability.js
-// npmFileReadabilityRead), its short names then a minifier's, not its
-// author's.
+// Minified text's short names are a minifier's, not its author's.
 const minified = (details, path, text) => npmFileReadabilityRead(details, path, text).category === 'minified'
+// `make()`'s value, kept in `cache` by `key` while `inputs` are the same
+// (compared by identity); with `cap`, the least recently used dropped past it.
+function remembered(cache, key, inputs, make, cap = 0) {
+  let held = cache.get(key)
+  if (cap) cache.delete(key)
+  if (!(held && held.inputs.length === inputs.length && held.inputs.every((input, i) => input === inputs[i]))) held = { inputs, value: make() }
+  cache.set(key, held)
+  if (cap && cache.size > cap) cache.delete(cache.keys().next().value)
+  return held.value
+}
 
-// The files a bundle or package version starts from, by path, each with what
-// names it: a Stasis bundle's entries, an npm version's main, module, types
-// and bins, found as its Overview finds them (npm-entries.js); and its
-// license files, named as its Overview's do (an npm version's at its root,
-// with the licenses its manifest names them for; a bundle's packages').
+// The files a bundle or version starts from, by path, each with what names
+// it: a Stasis bundle's entries, an npm version's main, module, types and
+// bins (npm-entries.js); and its license files, an npm version's with the
+// licenses its manifest names them for.
 const LICENSE_NOTE = 'A license file'
 const entryNames = new WeakMap()
 function entryPoints(details) {
@@ -178,8 +158,8 @@ function entryPoints(details) {
   return found
 }
 
-// A package.json's install scripts (install-scripts.js), by bundle and path:
-// `node-gyp rebuild` among them where a binding.gyp is beside it.
+// A package.json's install scripts, `node-gyp rebuild` among them where a
+// binding.gyp is beside it.
 const PACKAGE_JSON = /(?:^|\/)package\.json$/u
 const scriptTexts = new WeakMap()
 function packageScripts(details, path, text) {
@@ -197,34 +177,26 @@ const RENAME_REASONS = {
   'block-function': 'the file declares a function in a block outside strict code',
   unverified: "the old side with the new names couldn't be checked to read as before",
 }
-// What a file reads names through (renamedDiff's `reads`: a function's name,
-// told where one is renamed, its source, a stack), where its renamed names are hidden.
+// What a file reads names through (renamedDiff's `reads`), which a rename may change.
 const readsSaid = reads => `Renamed names are hidden, though the file reads ${reads.map(read => `.${read}`).join(', ')}, which a rename may change.`
 
-// A file's line model by what it was diffed with: the settings, and whether
-// its sides were pretty-printed (see _pretty).
+// A file's line model by the settings it was diffed with, and whether its
+// sides were pretty-printed.
 export const modelKey = (path, pretty, settings = prefs) => `${path}\0${settings.ignoreWhitespace}\0${hidesRenames(path, settings)}\0${!!settings.markRenames}\0${pretty}`
 
 // `${integrity}\0${path}` → the text colored and its highlighted lines, or
 // null when Prism has no grammar for it or it is too large to color.
 const highlightCache = new Map()
 const highlightPending = new Set()
-// Each line's code as _code draws it, by its side's lines (a line model's `a`
-// or `b`) and line, while its markup, marked words and end stay the same: a
-// diff drawn again marks no line again, as a long one takes a while to.
+// Each line's drawn code, by its side's lines array and line, so a redraw
+// marks no long line again.
 const drawnCode = new WeakMap()
-// A file's types set aside, its lines that run diffed alone (typeFolds), by
-// the server's proof of what runs in it (type-only.js typeProof), kept with
-// the texts they were set aside from: null where that hides no change.
+// A file's types set aside (typeFolds), by the server's proof of what runs in
+// it (typeProof): null where that hides no change.
 const foldsKept = new WeakMap()
-function foldsOf(runs, { before, after }) {
-  let kept = foldsKept.get(runs)
-  if (!(kept?.before === before && kept.after === after)) foldsKept.set(runs, kept = { before, after, folds: typeFolds(before, after, runs) })
-  return kept.folds
-}
+const foldsOf = (runs, { before, after }) => remembered(foldsKept, runs, [before, after], () => typeFolds(before, after, runs))
 
-// A line's number in its file, as a diff draws it: of the file's lines it
-// shows, where its types are set aside (typeFolds).
+// A line's number in its file, where its types are set aside too.
 const lineNumber = (model, side, line) => (model.typeFolds?.lineOf[side][line] ?? line) + 1
 
 function countLines(text) {
@@ -233,32 +205,35 @@ function countLines(text) {
   return count
 }
 
-// The pretty-print toggle a file shown has (_fileState): where printing
-// changes its diff, its copies' state while they are drawn, else off, and
-// whether it is JSON's (`json`); none where printing would change nothing.
+// A file's pretty-print toggle (_fileState): its copies' state, else off, and
+// whether it is JSON's; none where printing would change nothing.
 export const prettyToggle = file => (file.printing?.applies ? { ...file.pretty ?? { status: 'off' }, json: file.printing.json } : null)
 
-// The files a toggle drawing many applies to, on lines after its own: listed,
-// as many as AFFECTS_LISTED, else counted.
+// The files a toggle drawing many applies to: listed, or past AFFECTS_LISTED counted.
 const AFFECTS_LISTED = 5
 const affectedFiles = paths => (paths ? (paths.length > AFFECTS_LISTED ? `\nAffects files: ${paths.length.toLocaleString()}` : `\nAffects files:\n${paths.join('\n')}`) : '')
+
+const action = (label, run) => html`<button type="button" class="bundle-compare-code-action" @click=${run}>${label}</button>`
+// What a file shows in place of a diff, and what it offers.
+const message = (text, ...more) => html`<div class="bundle-compare-code-message"><p>${text}</p>${more}</div>`
+const size = value => formatBytes(value ?? 0)
+// A file's size, or its two sides', by its kind of change.
+const sizes = (kind, before, after) => kind === 'added' ? size(after) : kind === 'removed' ? size(before) : `${size(before)} → ${size(after)}`
+// The text a file's repointed imports are found in: its new side's, else its old.
+export const importerText = ({ after, before }) => [after, before].find(text => typeof text === 'string' && text !== '') ?? null
 
 // Lines added and removed, as a diff's head counts them.
 export const diffCounts = (additions, deletions) => html`<span class="bundle-compare-code-counts" aria-label=${`${additions} added, ${deletions} removed lines`}>
   <span class="add">+${additions.toLocaleString()}</span><span class="del">−${deletions.toLocaleString()}</span>
 </span>`
 
-// Whether hiding whitespace changes hides one in a file drawn with them
-// hidden (hidesWhitespace), its model's lines and blocks those of the two
-// texts: kept on the model, as whether they mix kinds of blank is (_fileState).
+// Whether hiding whitespace hides a change in a file drawn with it hidden, kept on the model.
 const hidesAnyWhitespace = (model, before, after) => (model.hideable ??= hidesWhitespace(before, after, model.blocks))
 
 // A diff too large to compute before it is asked for.
 export const isLargeDiff = (before, after) => before.length + after.length > LARGE_CHARS || countLines(before) + countLines(after) > LARGE_LINES
 
-// A file's import resolutions that differ, as its R and their list over its
-// diff name them: so many repointed imports, or where one side records some
-// alone, the resolutions of each kind.
+// A file's import resolutions that differ, as its R and their list name them.
 function importsNote(rows) {
   const kinds = Map.groupBy(rows, resolutionChange)
   if (kinds.size === 1 && kinds.has('repointed')) return { title: `Repointed ${rows.length === 1 ? 'import' : 'imports'}`, note: `${rows.length} repointed ${rows.length === 1 ? 'import' : 'imports'}` }
@@ -266,9 +241,8 @@ function importsNote(rows) {
   return { title: 'Import resolutions', note: `Import resolutions: ${counts.join(', ')}` }
 }
 
-// Whether a file reads as its source in place of a diff, a file at a time:
-// its only change a repointed import, moved there by a rename or not, its
-// record the same (see _renderFile).
+// Whether a file reads as its source in place of a diff: its only change a
+// repointed import, renamed there or not, its record the same.
 const readsAsSource = entry => entry.kind === 'repointed' || (entry.kind === 'renamed' && !entry.modified && !!entry.repointed && !entry.meta)
 
 // Whether a Lit value draws anything: not `nothing`, null, false or '', nor
@@ -277,10 +251,8 @@ const draws = value => Array.isArray(value) ? value.some(draws)
   : value?.strings ? value.strings.some(text => text.trim() !== '') || value.values.some(draws)
   : value != null && value !== nothing && value !== false && value !== ''
 
-// Every directory holding a file of the bundle, so a directory of the tree
-// can tell whether it is new (none on the base side) or gone.
+// Every directory above `paths`, kept for `key`: whether a tree directory is new or gone.
 const dirSets = new WeakMap()
-// Every directory above `paths`, kept for `key`.
 function dirsOf(key, paths) {
   if (dirSets.has(key)) return dirSets.get(key)
   const dirs = new Set()
@@ -307,36 +279,26 @@ export class BundleCompareCode extends LitElement {
     base: { attribute: false },
     other: { attribute: false },
     files: { attribute: false },
-    // The reason scope the files are compared within (bundle-comparison.js),
-    // the server's pairs of them found within it too.
+    // The reason scope the files are compared within (bundle-comparison.js).
     scope: { attribute: false },
     resolutions: { attribute: false },
-    // Alerts on each side's files, by path, and their tags: Socket's, on an
-    // npm version's (npm-overview.js npmSocketFileAlerts).
+    // A source's file signals (bundle-compare-view.js): alerts on each side's
+    // files by path and their tags, the hosts each file names anew and their
+    // tag, its dependency changes, what opens one and what tags one.
     baseAlerts: { attribute: false },
     otherAlerts: { attribute: false },
     alertTags: { attribute: false },
-    // The hosts each file of the open side names that the other's named in
-    // none of its files, by path, `[{ host, line }]` each, and their tag: an
-    // npm version's, as the pair's risk finds them (npm-overview.js
-    // npmNewHosts).
     newHosts: { attribute: false },
     newHostTag: { attribute: false },
-    // A source's dependency changes, `{ removed, added, changed }`
-    // (npm-package.js npmDependencyChanges, with npm-dependency-checks.js's
-    // `flags`), what opens one, and what tags one (npm-overview.js
-    // npmDependencyTags).
     dependencies: { attribute: false },
     openDependency: { attribute: false },
     dependencyTags: { attribute: false },
-    // Optional review UI: row decorations, filters, progress, and file actions.
-    // File display, tree navigation and source features remain shared.
+    // Review's decorations of the shared tree and viewer (npm-review-view.js reviewExtensions).
     extensions: { attribute: false },
     baseName: {},
     otherName: {},
     path: {},
-    // A line to open at, `{ path, line, query }` (line from 0, the open
-    // version's; bundle-compare.js _openLine): sought as a search hit is, once.
+    // A line to open at once, `{ path, line, query }` (line from 0), as a search hit is.
     seek: { attribute: false },
     _query: { state: true },
     _kinds: { state: true },
@@ -359,57 +321,45 @@ export class BundleCompareCode extends LitElement {
     this.newHosts = null
     this.newHostTag = null
     this.extensions = null
-    this._treeLimit = 300
-    this._treeRemaining = Infinity
     this.path = null
     this._query = ''
     this._kinds = new Set(KINDS.map(entry => entry.kind))
     this._mode = 'files'
-    // A changed file's change blocks, as the search found them, by whitespace
-    // setting and path; and its last results (_searchResults).
+    // The search's change blocks, by whitespace setting and path, and its last results.
     this._blocks = new Map()
     this._found = null
-    // Path → the settings a diff of its printed copies was last drawn under
-    // without rows, which the search can't diff itself (_noteRowless); and
-    // a count of its changes, for the results to be found again.
+    // Path → the settings its printed copies' diff last drew no rows under
+    // (_noteRowless), and a count of changes to that, keying the results.
     this._rowless = new Map()
     this._rowlessCount = 0
-    // A changed file's blocks, as the search kept them → what their split
-    // rows are kept on (alignedBlock): the diff drawn of them, or else the
-    // search's own `{ a, b, blocks }`, so no block is aligned twice.
+    // The search's blocks → what their split rows are kept on (alignedBlock),
+    // so no block is aligned twice.
     this._aligned = new WeakMap()
     // A search hit picked, `{ path, side, line, at, query, key }`, until its
-    // file's diff draws (`key` the model last sought in), and while what it
-    // draws is still coming (`_soughtSettling`); then that row, `{ path,
-    // index }`, until it is scrolled to.
+    // file's diff draws (`key` the model last sought in) and settles
+    // (`_soughtSettling`); then its row, `{ path, index }`, until scrolled to.
     this._sought = null
     this._soughtRow = null
     // Directory path → open, for the disclosures the user toggled.
     this._open = new Map()
     this._models = new Map()
     this._modelCap = MODEL_CACHE
-    // Path → the tree's line counts for it (_lineCounts), for these entries;
-    // a model's key → its blocks as the tree counts them (_counts); path →
-    // its counts as its diff draws them, with what they were found under
-    // (_shownCounts); and path → its counts as its diff last drew them, with
-    // the settings it drew under (_noteDrawn), for a file too large for the
-    // tree to count itself (_largeCounts).
+    // The tree's counts: as published by path (_lineCounts), blocks by model
+    // key (_counts), as drawn by path (_shownCounts), and as a file too large
+    // to count last drew (_noteDrawn, _largeCounts).
     this._counted = new Map()
     this._countModels = new Map()
     this._drawnCounts = new Map()
     this._drawnTotals = new Map()
-    // What diff -b would hide in the texts a file shows (_whitespaceHidden).
+    // Kept by the texts they were found for: _whitespaceHidden, _smaller, _large.
     this._spaced = new Map()
-    // Whether a file's printed copies diff in fewer lines than it (_smaller).
     this._shorter = new Map()
-    // Source maps whose listings' diff, as drawn, didn't read back to the new
-    // map, by both sides' paths: the copy failed that each is drawn with
-    // since, as published (_fileState, _printing).
-    this._unrebuilt = new Map()
-    // Whether the texts a file shows are too large to diff unasked (_large).
     this._larges = new Map()
-    // A model's key (modelKey) → fold run → lines revealed, and the rows
-    // shown before "Show more"; large files the user asked to diff anyway.
+    // Source maps whose listings' diff didn't read back to the new map, by
+    // both sides' paths: drawn as published since (_fileState, _printing).
+    this._unrebuilt = new Map()
+    // Model key → fold run → lines revealed, and rows shown before "Show
+    // more"; large files the user asked to diff anyway.
     this._expansions = new Map()
     this._limits = new Map()
     this._forced = new Set()
@@ -417,21 +367,12 @@ export class BundleCompareCode extends LitElement {
   }
 
   willUpdate(changed) {
-    // What is kept by a file's path is of the texts the path named, which
-    // the files listed name anew too: another scope pairs a renamed file
-    // with another old file, or lists a changed one as added where its old
-    // side is out of the scope, the bundles the same.
+    // What is kept by path is of the texts the path named, which new file
+    // lists may pair otherwise (another scope), the bundles the same.
     const pair = `${this.base?.integrity}|${this.other?.integrity}`
     if (pair !== this._pair || changed.has('files')) {
       this._pair = pair
-      this._models.clear()
-      this._spaced.clear()
-      this._shorter.clear()
-      this._unrebuilt.clear()
-      this._larges.clear()
-      this._expansions.clear()
-      this._limits.clear()
-      this._forced.clear()
+      for (const kept of [this._models, this._spaced, this._shorter, this._unrebuilt, this._larges, this._expansions, this._limits, this._forced]) kept.clear()
     }
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
       this._entries = comparisonEntries(this.base, this.other, this.files, this.resolutions ?? [])
@@ -440,17 +381,12 @@ export class BundleCompareCode extends LitElement {
       this._drawnCounts = new Map()
       this._drawnTotals = new Map()
       this._treeLimit = this.extensions?.treePageSize ?? Infinity
-      // A path may name another pair of files now (another scope pairs a
-      // renamed file anew), so what the search kept of it is found again,
-      // and a hit still sought in the files as they were is let go.
       this._blocks.clear()
       this._rowless.clear()
       this._sought = this._soughtRow = null
       this._soughtSettling = false
     }
-    // Sought as a hit picked in the rail is (_seek), at its query's first
-    // match on the line, but by the file Compare opens (`path`); and once,
-    // not again where Code is drawn anew with it.
+    // Sought as a rail hit is (_seek), at the query's first match on the line; once.
     if (changed.has('seek') && this.seek && !seeksTaken.has(this.seek)) {
       seeksTaken.add(this.seek)
       const { path, line, query } = this.seek
@@ -474,10 +410,8 @@ export class BundleCompareCode extends LitElement {
     this._scrollSought()
   }
 
-  // The row of a search hit picked (see _seek), once drawn, scrolled into
-  // view and flashed; a hit whose file drew no diff, dropped, but while that
-  // diff is still to be drawn (_soughtSettling): the diff drawn then seeks it
-  // again.
+  // A hit's row, once drawn, scrolled into view and flashed; a hit whose file
+  // drew no diff dropped, unless that diff is still settling (_soughtSettling).
   _scrollSought() {
     if (this._sought?.path === this._current && !this._soughtSettling) this._sought = null
     if (!this._soughtRow) return
@@ -495,16 +429,13 @@ export class BundleCompareCode extends LitElement {
     row.addEventListener('animationend', () => row.classList.remove('is-sought'), { once: true })
   }
 
-  // A file shows while any of its kinds of change does: a modified file with
-  // repointed imports stays under either filter, a renamed one modified too
-  // under Renamed or Modified.
+  // A file shows while any of its kinds of change does.
   _shown(entry) {
     return this._kinds.has(entry.kind) || (!!entry.modified && this._kinds.has('changed'))
       || (!!entry.repointed && this._kinds.has('repointed'))
   }
 
-  // Both bundles' modules by directory, the base's moved with the root where
-  // the two differ by theirs, as the tree lays out its files.
+  // Both bundles' modules by directory, the base's moved with the root where theirs differ.
   _modules() {
     const base = this.base?.kind === 'stasis' ? this.base.bundle?.modules : null
     const other = this.other?.kind === 'stasis' ? this.other.bundle?.modules : null
@@ -512,17 +443,14 @@ export class BundleCompareCode extends LitElement {
     return base || other ? new Map([...[...base ?? []].map(([dir, info]) => [layoutDir(layout, dir, Object.keys(info.files ?? {})), info]), ...(other ?? [])]) : null
   }
 
-  // The base bundle's directories as the tree lays them out: the other
-  // bundle's way, where the two differ by their root.
+  // The base bundle's directories as the tree lays them out.
   _baseDirs() {
     const paths = this.files?.root ? this.files.basePaths : null
     return paths ? dirsOf(paths, paths.values()) : bundleDirs(this.base)
   }
 
-  // The format a file's icon reads (fileIconFormat): one either side marks as
-  // not text, Stasis's or npm's, each side read under its own path, as the
-  // Overview's file list reads it (npm-overview.js `npmCompareFiles`); else
-  // the shown side's.
+  // The format a file's icon reads: one either side marks as not text, each
+  // side under its own path (as npm-overview.js npmCompareFiles), else the shown side's.
   _format(path) {
     const entry = this._entries.get(path)
     const base = fileIconFormat(this.base, entry?.basePath ?? path), other = fileIconFormat(this.other, path)
@@ -539,8 +467,7 @@ export class BundleCompareCode extends LitElement {
     const root = rootLabel(this.files?.root, this.extensions?.fullPaths ? '' : bundleSourceTreePrefix(stripCommonPathPrefix(all).prefix, modules, all))
     const { prefix } = root
     const shown = all.filter(path => this._shown(this._entries.get(path)))
-    const strip = path => prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
-    const tree = buildBundleSourceTree(shown.map(strip), shown, modules)
+    const tree = buildBundleSourceTree(shown.map(path => withoutPrefix(path, prefix)), shown, modules)
     this._treeKey = key
     this._treeMemo = { prefix, root, tree, shown: shown.length, allOrder: orderedComparisonFiles(tree) }
     return this._treeMemo
@@ -551,34 +478,30 @@ export class BundleCompareCode extends LitElement {
     this.dispatchEvent(new CustomEvent('compare-code-select', { detail: { path }, bubbles: true, composed: true }))
   }
 
-  // Open every directory above a file picked elsewhere (the Overview, or
-  // stepping to a file in a collapsed directory).
+  // Open every directory above a file picked elsewhere.
   _reveal(path, prefix) {
-    const parts = (prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path).split('/')
+    const parts = withoutPrefix(path, prefix).split('/')
     for (let i = 1; i < parts.length; i++) this._open.set(parts.slice(0, i).join('/'), true)
   }
 
-  // The query Files mode filters the tree's paths by: as typed, without the
-  // spaces a copy can bring at either end. Code mode searches it as typed.
+  // Files mode's query, without the spaces a copy can bring; Code mode searches it as typed.
   _pathQuery() {
     return this._query.trim()
   }
 
-  // The rail's tree as its path and kind filters leave it, and its files in
-  // the order it lists them.
+  // The rail's tree as its filters leave it, and its files in its order.
   _railState() {
     const { prefix, root, tree, shown, allOrder } = this._tree()
     const filtered = filterBundleSourceTree(tree, this._mode === 'files' ? this._pathQuery() : '', prefix, this.extensions?.fileFilter)
     return { prefix, root, tree, shown, filtered, order: filtered === tree ? allOrder : filtered ? orderedComparisonFiles(filtered) : [], allOrder }
   }
 
-  // The rail: the files that differ as a tree, filtered by path and kind,
-  // `current` marked, and the splitter beside it. Picking a file is _select.
+  // The rail: the files that differ as a tree, `current` marked, and the splitter beside it.
   _renderRail({ prefix, root, tree, shown, filtered, order }, current) {
     this._countUntil = null
     this._treeRemaining = this.extensions?.treePageSize ? this._treeLimit : Infinity
     this._treeTruncated = false
-    const openAll = !!this._pathQuery() || shown <= (this.extensions?.openAllMax ?? OPEN_ALL_MAX)
+    const openAll = !!this._pathQuery() || shown <= OPEN_ALL_MAX
     const treeContent = this._mode === 'code' ? nothing : filtered ? this._renderTree(filtered, current, 0, openAll, openAll ? null : defaultOpenDirectories(filtered)) : html`<div class="bundle-code-search-empty">No changed files match.</div>`
     const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
     for (const entry of this._entries.values()) {
@@ -587,6 +510,7 @@ export class BundleCompareCode extends LitElement {
       if (entry.repointed) counts.repointed++
     }
     const search = SEARCH_MODES.find(({ mode }) => mode === this._mode)
+    const named = this._mode === 'files' ? this.extensions : null
     return html`<aside class="bundle-code-rail">
         <div class="bundle-code-rail-head">
           <span class="bundle-code-rail-label">${this.extensions?.railLabel ?? 'Changes'}</span>
@@ -603,7 +527,7 @@ export class BundleCompareCode extends LitElement {
         <div class="bundle-compare-code-filter">
           <label class="bundle-compare-code-search">
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/></svg>
-            <input type="search" placeholder=${this._mode === 'files' ? this.extensions?.searchPlaceholder ?? search.placeholder : search.placeholder} aria-label=${this._mode === 'files' ? this.extensions?.searchLabel ?? search.placeholder : search.placeholder} spellcheck="false" autocomplete="off"
+            <input type="search" placeholder=${named?.searchPlaceholder ?? search.placeholder} aria-label=${named?.searchLabel ?? search.placeholder} spellcheck="false" autocomplete="off"
               .value=${live(this._query)} @input=${e => { this._query = e.target.value; this._treeLimit = this.extensions?.treePageSize ?? Infinity }}>
             <span class="bundle-code-search-modes" role="tablist">
               ${SEARCH_MODES.map(({ mode, label, icon }) => html`<button type="button" class=${classMap({ 'bundle-code-search-mode': true, active: mode === this._mode })}
@@ -617,21 +541,19 @@ export class BundleCompareCode extends LitElement {
           </div>`}
         </div>
         <div class="bundle-code-rail-body bundle-compare-code-tree">${this._mode === 'code' ? this._renderSearch(order, current, prefix) : treeContent}
-          ${this._mode === 'files' && this._treeTruncated ? html`<button type="button" class="bundle-compare-code-action" @click=${() => { this._treeLimit += this.extensions.treePageSize; this.requestUpdate() }}>Show more files</button>` : nothing}
+          ${this._mode === 'files' && this._treeTruncated ? action('Show more files', () => { this._treeLimit += this.extensions.treePageSize; this.requestUpdate() }) : nothing}
         </div>
-        ${this.extensions?.footer?.(path => { this._query = ''; this._select(path) }) ?? nothing}
       </aside>
       <bundle-code-splitter role="separator" tabindex="0" aria-orientation="vertical"
         aria-label="Resize file tree" data-tooltip="Drag to resize · double-click to reset"></bundle-code-splitter>`
   }
 
-  // Painted again as a diff it asked for comes, fails or is dropped, while it is
-  // shown: a view gone, painted, would ask for its diffs again (rename-diff.js).
-  // What came for the view (printed copies, the server's diffs), counted, so
-  // the tree counts its files again (_shownCounts).
+  // Painted again as what it asked for comes (printed copies, the server's
+  // diffs), only while shown: a view gone would ask again. Counted in
+  // `_arrived`, so the tree counts its files again (_shownCounts).
   _arrived = 0
-  // Whether the file drawn asks for its diff with renamed names hidden alone,
-  // while its comparison's come (rename-diff.js): the one this view shows.
+  // Whether the file drawn asks for its renamed-names diff alone, ahead of
+  // its comparison's (rename-diff.js).
   _renamesAlone = true
   _repaint = () => {
     this._arrived++
@@ -653,11 +575,13 @@ export class BundleCompareCode extends LitElement {
     this._order = this.extensions?.filterContent === false ? rail.allOrder : rail.order
     // The file before the rail, so its search knows how its diff drew (_noteRowless).
     const main = current ? html`${this._renderFile(current, this.extensions?.fullPaths ? '' : rail.prefix)}${this.extensions?.fileActions?.(current, false) ?? nothing}` : html`<div class="bundle-code-placeholder">No files differ in this comparison.</div>`
+    return this._layout(rail, current, main)
+  }
+
+  _layout(rail, current, main) {
     return html`<div class="bundle-code-view bundle-compare-code">
       ${this._renderRail(rail, current)}
-      <div class="bundle-code-main">
-        ${main}
-      </div>
+      <div class="bundle-code-main">${main}</div>
     </div>`
   }
 
@@ -680,19 +604,17 @@ export class BundleCompareCode extends LitElement {
 
   // ── Code search ──────────────────────────────────────────────────
 
-  // Code mode's results: each file with lines that match, under its name,
-  // each line with its number and sign as its diff shows them (a line removed
-  // numbered in the old text); a pick opens the file there (_seek).
+  // Code mode's results: each file's matching lines, numbered and signed as
+  // its diff shows them; a pick opens the file there (_seek).
   _renderSearch(order, current, prefix) {
     if (!this._query) return html`<div class="bundle-code-search-hint">Type to search the code of the changed files.</div>`
     const { files, hits, truncated, unsigned } = this._searchResults(order)
     if (files.length === 0) return html`<div class="bundle-code-search-empty">No matches.</div>`
-    const strip = path => prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
     return html`<div class="bundle-code-search-results bundle-compare-search">
       <div class="bundle-code-search-summary">${hits.toLocaleString()} ${hits === 1 ? 'hit' : 'hits'} in ${files.length.toLocaleString()} ${files.length === 1 ? 'file' : 'files'}${truncated ? `, the first ${SEARCH_MAX_FILES}` : ''}</div>
       ${repeat(files, file => file.path, ({ path, hits: lines }) => html`<div class=${classMap({ 'bundle-code-search-file': true, current: path === current })}>
         <button type="button" class=${`bundle-code-search-file-name bundle-compare-code-name ${this._entries.get(path).kind}`}
-          data-tooltip-truncated data-tooltip=${path} @click=${() => this._select(path)}>${strip(path)}</button>
+          data-tooltip-truncated data-tooltip=${path} @click=${() => this._select(path)}>${withoutPrefix(path, prefix)}</button>
         ${unsigned.has(path) ? html`<p class="bundle-compare-search-note">${UNSIGNED[unsigned.get(path)]}</p>` : nothing}
         <ul class="bundle-code-search-hits">
           ${lines.map(hit => html`<li class="bundle-code-search-hit">
@@ -708,23 +630,13 @@ export class BundleCompareCode extends LitElement {
     </div>`
   }
 
-  // The search's results over the files the rail lists (`order`) whose text
-  // this view shows (_searchable), as searchCompareFiles finds them there.
-  // Kept while the query, the files and the kinds shown are, the large diffs
-  // asked for, the layout, the whitespace and pretty-print settings, and the
-  // printed copies come or failed. A changed file is diffed as this view
-  // diffs it, its whitespace changes hidden where the
-  // view hides them; but one whose diff here is of its pretty-printed copies
-  // (_prettyShown), or too large to show unasked (isLargeDiff) until asked
-  // for, lists its new text's lines alone, unsigned, so the rail claims no
-  // sign nor removed line its diff doesn't show, and none at all where that
-  // diff, drawn under the settings it is searched under, has no rows
-  // (_noteRowless); and an added or removed file shown pretty-printed lists
-  // its lines numbered as published. The
-  // reason is in `unsigned` by path (UNSIGNED). Diffs are found a little at a time, as the
-  // tree's line counts are, a render's budget counted from its first: a file
-  // past it lists its new text's lines unsigned, and another render signs
-  // them.
+  // The search's results over the rail's files (`order`) whose text this view
+  // shows, kept while what they depend on is. A changed file is diffed as
+  // this view diffs it; one shown pretty-printed, or too large to diff
+  // unasked, lists its new text's lines unsigned, so the rail claims no sign
+  // its diff doesn't show (none where that diff has no rows, _noteRowless),
+  // the reason by path in `unsigned` (UNSIGNED). Diffs are found within a
+  // render's budget, the rest unsigned till a later render.
   _searchResults(order) {
     const drawn = rowlessSettings()
     const key = `${this._query}\0${this._forced.size}\0${drawn}\0${prefs.layout}\0${state.bundleSourcePretty}\0${prettySettled()}\0${this._rowlessCount}\0${order.join('\0')}`
@@ -778,29 +690,39 @@ export class BundleCompareCode extends LitElement {
     }
     const result = { ...searchCompareFiles(files, buildSearchMatcher(this._query, false, false), blocksOf, { split: prefs.layout === 'split', align }), unsigned }
     if (complete) this._found = { key, entries: this._entries, result }
-    else this._searchLater ??= setTimeout(() => { this._searchLater = null; this.requestUpdate() })
+    else this._later('_searchLater')
     return result
   }
 
-  // Whether a file's text shows here, to be searched: its diff, where its
-  // bytes changed, or its source, where it reads as one (readsAsSource).
+  // A render asked for soon, once, to go on with what a budget left.
+  _later(timer) {
+    this[timer] ??= setTimeout(() => { this[timer] = null; this.requestUpdate() })
+  }
+
+  // Whether this render's counting budget, from its first count, is spent: the rest left to a later render.
+  _spent() {
+    const now = performance.now()
+    this._countUntil ??= now + COUNT_BUDGET_MS
+    if (now <= this._countUntil) return false
+    this._later('_countLater')
+    return true
+  }
+
+  // Whether a file's text shows here, to be searched: its diff, or its source.
   _searchable(entry) {
     return entry.modified !== false || readsAsSource(entry)
   }
 
-  // Whether a file's diff here is of its pretty-printed copies (_printing),
-  // the toggle on: not where a copy of either side failed, when the diff is
-  // of the file as published.
+  // Whether a file's diff here is of its pretty-printed copies: not where a
+  // copy failed, the file then drawn as published.
   _prettyShown(path, entry, contents) {
     if (!state.bundleSourcePretty) return false
     const printing = this._printing(path, entry, contents)
     return !!printing?.applies && printing.copies.status !== 'error'
   }
 
-  // A diff of a file's printed copies drawn (_fileState), noted where it has
-  // no rows (`rowless`), the copies the same or their changes all hidden (as
-  // whitespace or renamed names), with the settings it was drawn under, for
-  // the search to leave the file out while they hold (_searchResults).
+  // A printed copies' diff drawn, noted with its settings where it has no
+  // rows, for the search to leave the file out while they hold.
   _noteRowless(path, rowless) {
     const drawn = rowless ? rowlessSettings() : undefined
     if (this._rowless.get(path) === drawn) return
@@ -809,9 +731,8 @@ export class BundleCompareCode extends LitElement {
     this._rowlessCount++
   }
 
-  // A search hit picked: its file opened, its line brought into view where
-  // the file's diff draws (see _seekRows), asked for there where it is too
-  // large to show unasked (_fileState).
+  // A search hit picked: its file opened at its line (_seekRows), its diff
+  // asked for where too large to show unasked (_fileState).
   _seek(path, hit) {
     this._sought = { path, side: hit.side, line: hit.line, at: hit.ranges[0]?.[0] ?? 0, query: this._query }
     if (path === this._current) this.requestUpdate()
@@ -819,12 +740,9 @@ export class BundleCompareCode extends LitElement {
   }
 
   // The line a hit names in the text a file's diff shows, `{ side, line }`:
-  // in a pretty-printed copy, the line holding the same match, counted in
-  // order on its side with whitespace taken out of the query and both texts,
-  // which pretty-printing respaces (`a+b` as `a + b`, a string's `"a+b"` as
-  // it was); where the printer changed the match itself, the line its first
-  // character falls on, counted the same way, in the characters it moves but
-  // keeps; null past the copy's end.
+  // in a pretty-printed copy, the line holding the same match, counted with
+  // whitespace taken out of query and texts, as the printer respaces (else
+  // the line its first character falls on); null past the copy's end.
   _soughtLine(path, entry, pretty, model) {
     const { side, line, at, query } = this._sought
     if (pretty?.status !== 'ready') return { side, line }
@@ -832,12 +750,10 @@ export class BundleCompareCode extends LitElement {
     const raw = textLines(fileContents(this.base, this.other, path, entry)[side === 'a' ? 'before' : 'after'] ?? '')
     const offset = raw.slice(0, line).reduce((sum, text) => sum + solid(text).length, 0) + solid(raw[line]?.slice(0, at) ?? '').length
     const needle = solid(query).toLowerCase()
-    // The first match in a text's characters other than whitespace, case
-    // folded as the search matches, that `found(index, start)` takes, its
-    // `{ index, start }`: read a piece at a time (a line, or SEEK_CHUNK of a
-    // minified one), so neither read nor folded further, however common the
-    // query or large the text. Kept of what was read: what a match may
-    // still start in (`text`, from `past`).
+    // The first match, whitespace out and case folded, that `found(index,
+    // start)` takes: read a piece at a time (a line, or SEEK_CHUNK of a
+    // minified one), keeping only what a match may still start in, so
+    // nothing is read or folded past it.
     const first = (lines, found) => {
       if (!needle) return null
       let from = 0, index = 0, past = 0, text = ''
@@ -865,12 +781,10 @@ export class BundleCompareCode extends LitElement {
     return null
   }
 
-  // A sought line's row among a diff's `rows`, a fold it is in opened past
-  // it, and the rows shown taken to it: `{ rows, index }`, `index` -1 where
-  // it isn't among them. `key` names the diff's model, as its expansions and
-  // limit are kept. In a file whose types are set aside (typeFolds) the line
-  // is its file's: its row where it is one of the lines shown, else the row
-  // that stands for the types it is among, which says how to show them.
+  // A sought line's row among a diff's rows, a fold it is in opened past it
+  // and the rows shown taken to it: `{ rows, index }`, -1 where it isn't
+  // among them. With its types set aside, a line of types alone is sought
+  // at the row standing for them.
   _seekRows(key, model, { side, line: sought }, split) {
     const folds = model.typeFolds
     const line = folds ? folds.lineOf[side].indexOf(sought) : sought
@@ -894,9 +808,15 @@ export class BundleCompareCode extends LitElement {
         index = rows.findIndex(shows)
       }
     }
-    const limit = this._limits.get(key) ?? ROW_LIMIT
-    if (index >= limit) this._limits.set(key, Math.ceil((index + 1) / ROW_LIMIT) * ROW_LIMIT)
+    this._reach(key, index)
     return { rows, index }
+  }
+
+  // The rows `key`'s diff shows taken past `index`; whether that took more.
+  _reach(key, index) {
+    if (index < (this._limits.get(key) ?? ROW_LIMIT)) return false
+    this._limits.set(key, Math.ceil((index + 1) / ROW_LIMIT) * ROW_LIMIT)
+    return true
   }
 
   _takeTreeRow(required = false) {
@@ -943,7 +863,7 @@ export class BundleCompareCode extends LitElement {
     })
     const leaves = files.flatMap(([name, full]) => {
       if (!this._takeTreeRow(full === current)) return []
-      const { kind, repointed, renamedFrom, modified } = this._entries.get(full)
+      const entry = this._entries.get(full), { kind, repointed, renamedFrom, modified } = entry
       const imports = repointed ? importsNote(repointed).note : ''
       const content = html`<li class="bundle-code-tree-file">
         <button type="button" class=${classMap({ 'bundle-code-tree-link': true, current: full === current })}
@@ -951,8 +871,8 @@ export class BundleCompareCode extends LitElement {
           ${this.extensions?.filePrefix?.(full) ?? nothing}${sourceFileIcon(full, this._format(full))}<span class=${`bundle-code-tree-name bundle-compare-code-name ${kind}`} data-tooltip-truncated data-tooltip=${full}>${name}</span>
           ${this.extensions?.fileSuffix?.(full) ?? nothing}
           ${renamedFrom ? html`<span class="bundle-compare-code-oldname" data-tooltip-truncated data-tooltip=${`Renamed from ${renamedFrom}`}>← ${renameParts(renamedFrom, full, { extension: false }).from}</span>` : nothing}
-          ${this._fileTags(full, this._entries.get(full), true)}
-          ${this._treeCounts(full, this._entries.get(full))}
+          ${this._fileTags(full, entry, true)}
+          ${this._treeCounts(full, entry)}
           ${repointed && kind !== 'repointed' ? html`<span class="bundle-compare-code-letter repointed" data-tooltip=${imports}>R</span>` : nothing}
           <span class=${classMap({ 'bundle-compare-code-letter': true, [kind]: true, pure: kind === 'renamed' && !modified })}
             data-tooltip=${kind === 'repointed' ? imports : renamedFrom ? `Renamed${modified ? ' and modified' : ''} from ${renamedFrom}` : KIND[kind].label}>${KIND[kind].letter}</span>
@@ -967,13 +887,9 @@ export class BundleCompareCode extends LitElement {
     </ul>`
   }
 
-  // A file's lines added and removed as its diff draws them (_shownCounts),
-  // else as published: `=` for one renamed, or recorded otherwise, as it was,
-  // and `≈` for one whose changes the settings drawing it set aside, all of
-  // them, or marked as differing in renamed names alone; the counts as
-  // published told where they differ, and the lines marked. One too large to
-  // count here as its diff drew it (_largeCounts), its counts as published
-  // told where it drew them so.
+  // A file's lines added and removed as its diff draws them, else as
+  // published: `=` for one unchanged in its lines, `≈` for one whose changes
+  // the settings set aside; the published counts told where they differ.
   _treeCounts(path, entry) {
     if (entry.kind === 'repointed') return nothing
     let published = this._lineCounts(path, entry), shown
@@ -1006,64 +922,43 @@ export class BundleCompareCode extends LitElement {
   }
 
   // A file's lines added and removed as its diff draws them where a setting
-  // draws it otherwise than as published (_fileState counting): printed where
-  // the toggle prints it, its whitespace or renamed names hidden, with those
-  // settings (`aside`), and lines differing in renamed names alone marked,
-  // counted apart (`renamed`), as its head counts them (_fileFigures). Null
-  // where none does, or till its copies come, or where it is too large to
-  // diff unasked: counted as published then. Kept for the settings and what
-  // came for the view since (`_arrived`); undefined where the tree's budget
-  // is spent (_lineCounts), to be counted on a later render.
+  // sets some of it aside (`aside`), lines differing in renamed names alone
+  // counted apart (`renamed`); null where none does, or till its copies come,
+  // or where too large to diff unasked. Undefined where the render's budget
+  // is spent (_spent).
   _shownCounts(path, entry) {
     if (!(state.bundleSourcePretty || prefs.ignoreWhitespace || prefs.ignoreRenames || prefs.ignoreTypes)) return null
     const settings = `${countSettings(path)}\0${this._arrived}\0${this._forced.size}`
     const kept = this._drawnCounts.get(path)
     if (kept?.settings === settings) return kept.counts
-    const now = performance.now()
-    this._countUntil ??= now + COUNT_BUDGET_MS
-    if (now > this._countUntil) {
-      this._countLater ??= setTimeout(() => { this._countLater = null; this.requestUpdate() })
-      return undefined
-    }
-    const counted = this._countingState(path, entry), { model } = counted
-    const aside = setAside(counted)
-    const counts = model && aside.length > 0 ? { additions: model.additions, deletions: model.deletions, renamed: model.renamed, aside } : null
+    if (this._spent()) return undefined
+    const counted = this._countingState(path, entry)
+    const counts = counted.model && setAside(counted).length > 0 ? drawnCounts(counted.model, counted) : null
     this._drawnCounts.set(path, { settings, counts })
     return counts
   }
 
-  // A file's lines added and removed between its sides as they are
-  // (fileLineCounts), kept for these entries. A long tree is counted a little
-  // at a time: a render counts from its first file until its budget is spent
-  // and asks for another to count the rest, so the tree paints at once and
-  // fills in.
+  // A file's lines added and removed as published (fileLineCounts), counted
+  // within each render's budget, so a long tree paints at once and fills in.
   _lineCounts(path, entry) {
     if (this._counted.has(path)) return this._counted.get(path)
-    const now = performance.now()
-    this._countUntil ??= now + COUNT_BUDGET_MS
-    if (now > this._countUntil) {
-      this._countLater ??= setTimeout(() => { this._countLater = null; this.requestUpdate() })
-      return null
-    }
+    if (this._spent()) return null
     const { before, after } = fileContents(this.base, this.other, path, entry)
     const counts = fileLineCounts(before, after)
     this._counted.set(path, counts)
     return counts
   }
 
-  // A file's lines as its diff drew them (_fileState), kept with the settings
-  // it drew under for the tree, where it is too large to count (_largeCounts).
+  // A file's lines as its diff drew them, with the settings, for a file too
+  // large for the tree to count (_largeCounts).
   _noteDrawn(path, drawn) {
-    const { model } = drawn
-    if (model) this._drawnTotals.set(path, { settings: countSettings(path), counts: { additions: model.additions, deletions: model.deletions, renamed: model.renamed, aside: setAside(drawn) } })
+    if (drawn.model) this._drawnTotals.set(path, { settings: countSettings(path), counts: drawnCounts(drawn.model, drawn) })
     return drawn
   }
 
-  // A file too large for the tree to count (fileLineCounts) counted as its
-  // diff last drew it under these settings (_noteDrawn): as published where
-  // they set nothing of it aside, else as shown; none changed, shown, where
-  // its changes in types alone are hidden (type-only.js), drawn or not; else
-  // none, no diff of it found here.
+  // A file too large for the tree to count, counted as its diff last drew it
+  // under these settings; none changed where its type-only changes are
+  // hidden, drawn or not; else none.
   _largeCounts(path, entry) {
     const drawn = this._drawnTotals.get(path)
     if (drawn?.settings === countSettings(path)) return drawn.counts.aside.length === 0 ? { published: drawn.counts, shown: null } : { published: null, shown: drawn.counts }
@@ -1074,49 +969,31 @@ export class BundleCompareCode extends LitElement {
 
   // ── The selected file ────────────────────────────────────────────
 
-  // `options` as lineDiff takes them: the server's blocks, with renamed names
-  // hidden, or those it marks (rename-diff.js); found with whitespace changes
-  // hidden or not as `ignoreWhitespace` is. Kept by `key` with the texts and
-  // the blocks or marks it was found from, and found again where any differ
-  // (a copy printed again, another diff of it): never drawn for other lines
-  // than its own.
+  // A file's line model, `options` as lineDiff takes them (the server's
+  // blocks or marks, rename-diff.js), kept by `key` with the texts and those
+  // blocks or marks, so never drawn for other lines than its own.
   _model(key, before, after, options = {}, ignoreWhitespace = prefs.ignoreWhitespace) {
-    const given = options.changes?.blocks ?? options.marks ?? null
-    // Re-inserted on every use, so the cache drops the least recent.
-    let kept = this._models.get(key)
-    this._models.delete(key)
-    if (!(kept?.before === before && kept.after === after && kept.given === given)) {
-      kept = { model: lineDiff(before, after, { ...options, ignoreWhitespace }), before, after, given }
-    }
-    this._models.set(key, kept)
-    if (this._models.size > this._modelCap) this._models.delete(this._models.keys().next().value)
-    return kept.model
+    return remembered(this._models, key, [before, after, options.changes?.blocks ?? options.marks ?? null],
+      () => lineDiff(before, after, { ...options, ignoreWhitespace }), this._modelCap)
   }
 
   // A file's change blocks as _model would find them, for the tree's counts:
-  // kept apart from the models drawn, one for each of a comparison's files
-  // and settings, so counting the tree evicts none of those.
+  // kept apart, so counting the tree evicts none of the models drawn.
   _counts(key, before, after, options, ignoreWhitespace) {
-    const given = options.changes?.blocks ?? options.marks ?? null
-    const kept = this._countModels.get(key)
-    if (kept?.before === before && kept.after === after && kept.given === given) return kept.model
-    const blocks = options.changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace)
-    const model = { blocks, ...markedCounts(blocks, options.marks) }
-    this._countModels.set(key, { model, before, after, given })
-    return model
+    return remembered(this._countModels, key, [before, after, options.changes?.blocks ?? options.marks ?? null], () => {
+      const blocks = options.changes?.blocks ?? changeBlocks(before, after, ignoreWhitespace)
+      return { blocks, ...markedCounts(blocks, options.marks) }
+    })
   }
 
   // A file's two sides, pretty-printed where the toggle has them so, and its
-  // line model where it has one to draw: none for a file that is not text,
-  // nor for one too large to diff unasked. `counting`, for the tree's counts
-  // (_shownCounts), finds its change blocks alone, and those marked, kept
-  // apart from the models drawn (_counts), and leaves alone what a file drawn
-  // sets: a hit sought, the search's blocks, whether hiding whitespace would
-  // hide any. A file drawn first asks for its renamed names alone while its
-  // comparison's come (_renamesAlone). One that changed in types alone, as
-  // the server proved (`types`, type-only.js), draws nothing where those
-  // changes are hidden (`typesHidden`); one that changed in types alone but
-  // for what runs, its lines that run alone (`typesFolded`, foldsOf).
+  // line model where it has one to draw: none for a file not text, nor one too
+  // large to diff unasked. `counting` (the tree's counts) finds its blocks
+  // alone (_counts) and leaves alone what a drawn file sets: a hit sought, the
+  // search's blocks, the whitespace toggle. One the server proved changed in
+  // types alone (typeProof) draws nothing while those are hidden
+  // (`typesHidden`); one changed in types but for what runs draws those lines
+  // alone (`typesFolded`).
   _fileState(path, entry, counting = false) {
     const contents = fileContents(this.base, this.other, path, entry)
     const textual = typeof contents.before === 'string' && typeof contents.after === 'string'
@@ -1130,20 +1007,16 @@ export class BundleCompareCode extends LitElement {
     }
     const folds = proof && proof !== true ? foldsOf(proof, contents) : null
     const folded = !!folds && prefs.ignoreTypes
-    // Its printed copies drawn where the toggle is on and printing changes
-    // its diff (_printing); counted, not asked for where it is off.
+    // Its printed copies drawn where the toggle is on and printing changes its diff.
     const printing = textual && !folded && (!counting || state.bundleSourcePretty) ? this._printing(path, entry, contents) : null
     const pretty = state.bundleSourcePretty && printing?.applies ? printing.copies : null
     const { before, after } = folded ? folds : pretty?.status === 'ready' ? pretty : contents
-    // Renamed names are found by the server, in the copies it pretty-printed
-    // (rename-diff.js), once those came: the lines that differ in them alone
-    // marked, the diff of the files as they are drawn till then, or hidden
-    // where the viewer asks. A file whose copies failed has none found.
+    // Renamed names are found by the server in its printed copies, once those
+    // came (rename-diff.js): the lines differing in them alone marked, or hidden.
     const generated = textual && renamable(path) && renamable(entry.basePath ?? path) && ['ready', 'loading', 'error'].includes(pretty?.status)
       && this._generated(path, entry, contents)
     const renames = generated && pretty.status === 'ready'
-    // A hit sought here asks for a diff too large to show unasked, as "Show
-    // diff" does: large as the texts it shows are, printed or as published.
+    // A hit sought here asks for a diff too large to show unasked, as "Show diff" does.
     if (!counting && textual && this._sought?.path === path && !this._forced.has(path) && this._large(path, before, after)) this._forced.add(path)
     const large = textual && !this._forced.has(path) && this._large(path, before, after)
     const { basePath = path } = entry
@@ -1154,15 +1027,11 @@ export class BundleCompareCode extends LitElement {
       const ready = changes?.status === 'ready'
       const hiding = ready && prefs.ignoreRenames
       const marked = ready && !hiding
-      // Where either side reads names (`f.name`, `f.toString()`), a rename may
-      // change what the code does, which hiding renamed names could hide: it is
-      // said (`warned`), the renamed lines offered marked.
+      // Where either side reads names (`f.name`), a rename may change what the
+      // code does, which hiding them would hide: said (`warned`).
       const warned = hiding && changes.reason === null ? changes.reads : []
-      // Hide renamed names is offered where it hides any: lines that differ in
-      // renamed names alone, marked otherwise, or, while it is on, names it
-      // gave in lines that differ besides; and while it is on, in any file it
-      // is for that it hides none in yet, to be turned off: its copies or the
-      // server's diff coming or failed, or no names given, as it said why.
+      // Hide renamed names is offered where it hides any, and while it is on
+      // in any file it is for, to be turned off.
       const renamed = ready && changes.reason === null ? changes.marks.length > 0 || (prefs.ignoreRenames && changes.before !== before) : prefs.ignoreRenames && generated
       const key = `${modelKey(path, pretty?.status === 'ready', { ...prefs, ignoreWhitespace, ignoreRenames: hiding, markRenames: marked })}${folded ? '\0types' : ''}`
       // The old side as the server diffed it, given the new side's names, where they are hidden.
@@ -1173,19 +1042,15 @@ export class BundleCompareCode extends LitElement {
       if (folded && model) model.typeFolds = folds
       return { key, changes, warned, renamed, hiding, shown, model, ignoreWhitespace }
     }
-    // Whitespace changes are hidden as diff -b hides them, only in a file whose
-    // whitespace means nothing, on both sides (whitespaceInsensitive), and not
-    // where that would hide blanks of more than one kind changing
-    // (hidesMixedWhitespace): others are diffed with them shown.
+    // Whitespace changes hidden as diff -b, only where it means nothing on both
+    // sides, and not where blanks of more than one kind change (hidesMixedWhitespace).
     const unlisted = this._unlisted(path, entry, contents)
     let found = diffed(prefs.ignoreWhitespace && !unlisted)
     const mixed = prefs.ignoreWhitespace && !unlisted && !!found.model && (found.model.mixed ??= hidesMixedWhitespace(found.shown, after, found.model.blocks))
     if (mixed) found = diffed(false)
     const { key, changes, warned, renamed, hiding, shown, model } = found
-    // A source map's listings are drawn only where the diff drawn of them, the
-    // old side's lines and the changes it shows, reads back to the new map
-    // (pretty-source.js comparedListingRefusal), as counted too, the answer
-    // kept on the model: else it is drawn as published, the toggle saying why.
+    // A source map's listings are drawn only where their diff reads back to
+    // the new map (comparedListingRefusal, kept on the model): else as published.
     if (printing?.map && pretty?.status === 'ready' && model) {
       if (!Object.hasOwn(model, 'listingRefusal')) {
         model.listingRefusal = comparedListingRefusal(this.base, this.other, basePath, path, contents, { a: model.a ?? textLines(shown), b: model.b ?? textLines(after), blocks: model.blocks })
@@ -1197,71 +1062,49 @@ export class BundleCompareCode extends LitElement {
     }
     if (counting) return { pretty, hiding, model, spacesHidden: found.ignoreWhitespace, typesFolded: folded }
     if (pretty?.status === 'ready' && model) this._noteRowless(path, model.blocks.length === 0)
-    // The texts as published diffed as the search diffs them (_searchResults):
-    // their blocks kept for it, not found again, however large.
+    // The texts as published diffed as the search diffs them: their blocks kept for it.
     else if (model && !folded) {
       this._blocks.set(`${prefs.ignoreWhitespace}\0${path}`, model.blocks)
       this._aligned.set(model.blocks, model)
     }
-    // What hiding them does here: hides one (`hideable`), where the diff shown
-    // does or diff -b would while they show (_whitespaceHidden); or would, but
-    // may not as blanks of more than one kind change (`mixed`), said while they
-    // are to be hidden. Where it would hide none, or none it may (a file whose
-    // whitespace may mean something, plain to see), it is not offered.
+    // Whether hiding whitespace hides a change here (`hideable`), or would but
+    // may not as blanks of more than one kind change (`mixed`); else not offered.
     const off = model && !unlisted && !prefs.ignoreWhitespace ? this._whitespaceHidden(`${path}\0${pretty?.status === 'ready'}\0${hiding}`, shown, after) : null
     const whitespace = model === null || unlisted ? null
       : mixed ? 'mixed'
       : prefs.ignoreWhitespace ? (hidesAnyWhitespace(model, shown, after) ? 'hideable' : null)
       : off.hides && !off.mixed ? 'hideable' : null
-    // A hit sought here waits while its diff isn't drawn yet: its printed
-    // copies still coming, or its renamed names, to be hidden, coming or
-    // failed to hide, until they are shown (see _scrollSought); marked, they
-    // leave its rows as they are.
+    // A hit sought here waits while its printed copies, or the renamed names
+    // to hide, are coming or failed (_scrollSought).
     if (this._sought?.path === path) this._soughtSettling = pretty?.status === 'loading' || (prefs.ignoreRenames && (changes?.status === 'loading' || changes?.status === 'error'))
     return this._noteDrawn(path, { ...folded ? contents : { before: shown, after }, textual, large, printing, pretty, key, generated, renamed, warned, hiding, changes, model,
       whitespace, spacesHidden: found.ignoreWhitespace, types: types || !!folds, typesFolded: folded })
   }
 
-  // Whether a file's whitespace may mean something on either side, so its
-  // whitespace changes show whatever the setting (see _fileState).
+  // Whether a file's whitespace may mean something on either side, its changes shown whatever the setting.
   _unlisted(path, { basePath = path }, { before, after }) {
     return !whitespaceInsensitive(path, after, stasisFormat(this.other, path))
       || !whitespaceInsensitive(basePath, before, stasisFormat(this.base, basePath))
   }
 
-  // What diff -b would hide between the texts a file shows (whitespaceHidden),
-  // `key` naming them, kept as their models are: with the texts, and found
-  // again for others (_model).
+  // What diff -b would hide between the texts a file shows, kept as models are.
   _whitespaceHidden(key, before, after) {
-    let kept = this._spaced.get(key)
-    if (!(kept?.before === before && kept.after === after)) kept = { before, after, hidden: whitespaceHidden(before, after) }
-    this._spaced.delete(key)
-    this._spaced.set(key, kept)
-    if (this._spaced.size > this._modelCap) this._spaced.delete(this._spaced.keys().next().value)
-    return kept.hidden
+    return remembered(this._spaced, key, [before, after], () => whitespaceHidden(before, after), this._modelCap)
   }
 
-  // Whether a file's names are a minifier's on both sides, each minified, and
-  // the server can diff it: renamed names are hidden there alone, an
-  // author's renamed to a minifier's (or to another author's) a change.
+  // Whether both sides are minified and the server can diff them: renamed
+  // names are hidden there alone, as an author's renamed is a change.
   _generated(path, { kind, basePath = path }, { before, after }) {
     return kind !== 'repointed' && renameDiffable(this.base, this.other) && minified(this.base, basePath, before) && minified(this.other, path, after)
   }
 
-  // A file's two sides pretty-printed, as the server prints every pair that
-  // changed between two managed bundles or two versions of a package, and the
-  // viewer JSON in any comparison (pretty-source.js comparedCopy), the toggle
-  // on or not, and whether the toggle applies to it (`applies`): to JSON
-  // always, as the Code tab offers it; else where either side is minified, as
-  // the Code tab prints a file (`minified`), or, where both sides have text
-  // and once both copies came, where their diff has fewer changed lines than
-  // the files' (`smaller`: formatting changed, as a semicolon added to every
-  // line; an added file has nothing to compare). Its copies (`copies`): the
-  // first failure of either, else one still coming, else one not made while
-  // the toggle is off (JSON's), else their texts and hashes. Null for a file
-  // whose sides can't both be printed. A source map's (`map`) are its
-  // listings, which the toggle always applies to, as JSON's, but which fail
-  // where their diff, as drawn, didn't read back to the new map (_fileState).
+  // A file's two sides pretty-printed (pretty-source.js comparedCopy), and
+  // whether the toggle applies (`applies`): to JSON and source maps (whose
+  // copies are their listings) always; else where either side is minified,
+  // or where the copies' diff is smaller than the files' (`smaller`, as
+  // formatting changed). `copies`: the first failure, else one coming, else
+  // one not made while off, else both texts and hashes. Null for a file
+  // whose sides can't both be printed.
   _printing(path, entry, contents) {
     const { kind, basePath = path, modified } = entry, { before, after } = contents
     if (kind === 'repointed' || modified === false || typeof before !== 'string' || typeof after !== 'string' || before === after) return null
@@ -1278,133 +1121,104 @@ export class BundleCompareCode extends LitElement {
     return { copies, json, map, minified: unreadable, smaller, applies: json || map || unreadable || smaller }
   }
 
-  // Whether the texts a file shows are too large to diff unasked
-  // (isLargeDiff), kept with the texts it was found for, as _smaller keeps
-  // its answer: every render asks it of every file it lists, and counting a
-  // large file's lines takes a while.
+  // Whether the texts a file shows are too large to diff unasked, kept: every
+  // render asks it of every file, and counting a large file's lines takes a while.
   _large(path, before, after) {
-    const kept = this._larges.get(path)
-    if (kept?.before === before && kept.after === after) return kept.large
-    const large = isLargeDiff(before, after)
-    this._larges.set(path, { before, after, large })
-    return large
+    return remembered(this._larges, path, [before, after], () => isLargeDiff(before, after))
   }
 
   // Whether a file's printed copies' diff has fewer changed lines than its
-  // texts' as published, whitespace changes shown: false where either is too
-  // large to diff unasked. Kept with the texts it was found for, as models
-  // are (_model).
+  // texts', false where either is too large to diff unasked.
   _smaller(path, { before, after }, printed) {
-    const kept = this._shorter.get(path)
-    if (kept?.before === before && kept.after === after && kept.printed === printed.before && kept.printedAfter === printed.after) return kept.smaller
     const changed = (a, b) => changeBlocks(a, b).reduce((sum, { a0, a1, b0, b1 }) => sum + a1 - a0 + b1 - b0, 0)
-    const smaller = !isLargeDiff(before, after) && !isLargeDiff(printed.before, printed.after) && changed(printed.before, printed.after) < changed(before, after)
-    // One for each changed file, as the tree finds them all (_shownCounts).
-    this._shorter.set(path, { before, after, printed: printed.before, printedAfter: printed.after, smaller })
-    return smaller
+    return remembered(this._shorter, path, [before, after, printed.before, printed.after],
+      () => !isLargeDiff(before, after) && !isLargeDiff(printed.before, printed.after) && changed(printed.before, printed.after) < changed(before, after))
   }
 
   // What a file shows in place of a diff: why there is none, or how to have
   // one; null where there is a diff to show.
   _fileMessage(path, { kind, modified, meta }, { before, after, textual, large, model, pretty, hiding, warned = [], changes, whitespace, typesHidden = false, typesFolded = false }) {
-    const size = value => formatBytes(value ?? 0)
     const recorded = metaSentences(meta)
-    const same = `${kind === 'renamed' ? (recorded ? 'Renamed, its contents the same.' : 'Renamed without changes.') : 'The contents are the same.'}${recorded ? ` ${recorded}` : ''}`
+    const withRecorded = text => `${text}${recorded ? ` ${recorded}` : ''}`
+    const same = withRecorded(kind === 'renamed' ? (recorded ? 'Renamed, its contents the same.' : 'Renamed without changes.') : 'The contents are the same.')
     // Its bytes the same (bundle-compare-diff.js): no diff to compute, however large.
-    if (textual && modified === false) return html`<div class="bundle-compare-code-message"><p>${same}</p></div>`
+    if (textual && modified === false) return message(same)
     if (!textual) {
       if (kind === 'changed' && modified === false) {
         return html`<div class="bundle-compare-code-message">Binary file, its bytes the same · ${size(bundleFileByteLength(after))}. ${recorded}</div>`
       }
-      const bytes = kind === 'added' ? size(bundleFileByteLength(after)) : kind === 'removed' ? size(bundleFileByteLength(before))
-        : `${size(bundleFileByteLength(before))} → ${size(bundleFileByteLength(after))}`
-      return html`<div class="bundle-compare-code-message">Binary file ${kind} · ${bytes}. A text diff is not available.${recorded ? ` ${recorded}` : ''}</div>`
+      return html`<div class="bundle-compare-code-message">Binary file ${kind} · ${sizes(kind, bundleFileByteLength(before), bundleFileByteLength(after))}. A text diff is not available.${
+        recorded ? ` ${recorded}` : ''}</div>`
     }
     if (large) {
-      return html`<div class="bundle-compare-code-message">
-        <p>This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.</p>
-        <button type="button" class="bundle-compare-code-action" @click=${() => { this._forced.add(path); this.requestUpdate() }}>Show diff</button>
-      </div>`
+      return message(`This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.`,
+        action('Show diff', () => { this._forced.add(path); this.requestUpdate() }))
     }
+    const showRenames = action('Show renamed names', () => this._setRenames(false)), showTypes = action('Show type-only changes', () => this._setTypes(false))
     // Proven by the server to change types alone, what runs left as it was (type-only.js).
-    if (typesHidden) {
-      return html`<div class="bundle-compare-code-message">
-        <p>Only types changed in this file.${recorded ? ` ${recorded}` : ''}</p>
-        <button type="button" class="bundle-compare-code-action" @click=${() => this._setTypes(false)}>Show type-only changes</button>
-      </div>`
-    }
+    if (typesHidden) return message(withRecorded('Only types changed in this file.'), showTypes)
     if (changes?.status === 'loading' && prefs.ignoreRenames) return html`<div class="bundle-compare-code-message" aria-busy="true">Hiding renamed names…</div>`
-    if (changes?.status === 'error' && prefs.ignoreRenames) {
-      return html`<div class="bundle-compare-code-message">
-        <p>Couldn't hide renamed names: ${changes.message}</p>
-        <button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>
-      </div>`
-    }
+    if (changes?.status === 'error' && prefs.ignoreRenames) return message(`Couldn't hide renamed names: ${changes.message}`, showRenames)
     if (model.blocks.length > 0) return null
     // Its printed copies the same, its texts not: its layout changed alone, the
     // copies each checked by the server to read as its text does.
     const reformatted = pretty?.status === 'ready' && pretty.before === pretty.after
     const spaced = !reformatted && prefs.ignoreWhitespace && whitespace === 'hideable'
     const renamed = !reformatted && hiding
-    // Its lines that run changed in whitespace alone, those changes hidden, its types set aside.
     const hidden = [typesFolded && 'types', spaced && 'whitespace', renamed && 'renamed names'].filter(Boolean)
     const told = reformatted ? 'No actual code changes in this file.' : hidden.length > 0 ? `Only ${hidden.join(' and ')} changed in this file.` : null
-    return html`<div class="bundle-compare-code-message">
-      <p>${told ? `${told}${recorded ? ` ${recorded}` : ''}` : same}</p>
-      ${warned.length > 0 ? html`<p>${readsSaid(warned)}</p>` : nothing}
-      ${reformatted ? html`<button type="button" class="bundle-compare-code-action" @click=${() => { state.bundleSourcePretty = false; this.requestUpdate() }}>Show as published</button>` : nothing}
-      ${typesFolded ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setTypes(false)}>Show type-only changes</button>` : nothing}
-      ${spaced ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setWhitespace(false)}>Show whitespace changes</button>` : nothing}
-      ${renamed ? html`<button type="button" class="bundle-compare-code-action" @click=${() => this._setRenames(false)}>Show renamed names</button>` : nothing}
-    </div>`
+    return message(told ? withRecorded(told) : same,
+      warned.length > 0 ? html`<p>${readsSaid(warned)}</p>` : nothing,
+      reformatted ? action('Show as published', () => { state.bundleSourcePretty = false; this.requestUpdate() }) : nothing,
+      typesFolded ? showTypes : nothing,
+      spaced ? action('Show whitespace changes', () => this._setWhitespace(false)) : nothing,
+      renamed ? showRenames : nothing)
   }
 
   // A file's kind, icon and path, `prefix` left off, then as in Code `copy`
   // and its GitHub link, and how it reads.
   _fileName(path, entry, prefix, copy = nothing) {
-    const strip = file => prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
+    const strip = file => withoutPrefix(file, prefix)
     return html`<span class=${classMap({ 'bundle-compare-code-pill': true, [entry.kind]: true, pure: entry.kind === 'renamed' && !entry.modified })}>${KIND[entry.kind].label}</span>
       ${sourceFileIcon(path, this._format(path))}
       <span class="bundle-code-main-path mono" data-tooltip-truncated data-tooltip=${entry.renamedFrom ? `${entry.renamedFrom} → ${path}` : path}>${entry.renamedFrom ? renameTemplate(strip(entry.renamedFrom), strip(path)) : strip(path)}</span>
       ${copy}${this._githubLink(path, entry)}${this._fileTags(path, entry)}`
   }
 
-  // All comparison file chips, shared by Compare and Review in headers and trees.
-  // The tree uses the same signals, with shorter labels where needed, and tags
-  // a file Large only where it has no other tag, as Large says least of one.
+  // The side a file is read from: the open one, or for one removed the one
+  // compared with, `at` its path there.
+  _side(path, { kind, basePath = path }) {
+    return kind === 'removed' ? { details: this.base, at: basePath, alerts: this.baseAlerts } : { details: this.other, at: path, alerts: this.otherAlerts }
+  }
+
+  // All comparison file chips, shared by Compare and Review in headers and
+  // trees; the tree's shorter, tagging a file Large only where it has no other tag.
   _fileTags(path, entry, compact = false) {
     if (!compact) return html`${this._entryTags(path, entry)}${this._alertTags(path, entry)}${this._runsTags(path, entry)}${this._newHostTags(path, entry)}${this._flagTags(path, entry)}${this._readability(path, entry)}${this._installTags(path, entry)}${fileMetaTags(entry.meta)}`
     const tags = [this._alertTags(path, entry), this._runsTags(path, entry), this._newHostTags(path, entry), this._flagTags(path, entry, false), this._treeTag(path, entry), this._installTags(path, entry, true), fileMetaTags(entry.meta, true)]
     return draws(tags) ? tags : this._flagTags(path, entry)
   }
 
-  // The file on GitHub, at the revision of the side it's read from (the one
-  // compared with for a removed file), where that side records where its
-  // files come from and at what commit (bundle-file-github.js).
-  _githubLink(path, { kind, basePath = path }) {
-    const github = kind === 'removed' ? bundleFileGithub(this.base, basePath) : bundleFileGithub(this.other, path)
+  // The file on GitHub, at its side's revision, where that side records it (bundle-file-github.js).
+  _githubLink(path, entry) {
+    const { details, at } = this._side(path, entry), github = bundleFileGithub(details, at)
     return github ? githubFileLink(github) : nothing
   }
 
-  // The alerts on a file (`otherAlerts`; `baseAlerts` for one removed), in
-  // its head and in the tree.
-  _alertTags(path, { kind, basePath = path }) {
-    const alerts = kind === 'removed' ? this.baseAlerts?.get(basePath) : this.otherAlerts?.get(path)
-    return alerts?.length > 0 && this.alertTags ? this.alertTags(alerts) : nothing
+  _alertTags(path, entry) {
+    const { alerts, at } = this._side(path, entry), found = alerts?.get(at)
+    return found?.length > 0 && this.alertTags ? this.alertTags(found) : nothing
   }
 
-  // The hosts a file names that the one compared with named in none of its
-  // files (`newHosts`), in its head and in the tree; none for one removed.
+  // The hosts a file names that the one compared with named in none of its files; none for one removed.
   _newHostTags(path, { kind }) {
     const hosts = kind === 'removed' ? null : this.newHosts?.get(path)
     return hosts && this.newHostTag ? this.newHostTag(hosts) : nothing
   }
 
-  // What a file's code can run beyond itself (file-runs-code.js: eval,
-  // Function, child_process) and an exfiltration host it names
-  // (file-hosts.js), in its head and in the tree: as it is now (as it was,
-  // for one removed), each the one compared with didn't hold saying so, all
-  // of an added file's.
+  // What a file's code can run beyond itself (file-runs-code.js) and an
+  // exfiltration host it names (file-hosts.js), as it is now (was, for one
+  // removed), what the one compared with didn't hold said so.
   _runsTags(path, entry) {
     return [[npmFileRunsCode, npmRunsCodeTags], [npmFileExfiltration, npmExfiltrationTag]].map(([read, tags]) => {
       const { was, now } = this._reads(path, entry, read)
@@ -1412,20 +1226,17 @@ export class BundleCompareCode extends LitElement {
     })
   }
 
-  // A file the open bundle or version starts from (for one removed, the one
-  // compared with), labelled with what names it: main, module, types, bin,
-  // or a bundle's entry; and a license file, as license.
-  _entryTags(path, { kind, basePath = path }) {
-    const names = entryPoints(kind === 'removed' ? this.base : this.other).get(kind === 'removed' ? basePath : path) ?? []
-    const labels = Map.groupBy(names, ({ label }) => label)
+  // A file its side starts from, labelled with what names it (entryPoints).
+  _entryTags(path, entry) {
+    const { details, at } = this._side(path, entry)
+    const labels = Map.groupBy(entryPoints(details).get(at) ?? [], ({ label }) => label)
     return [...labels].map(([label, rows]) => html`<span class=${`bundle-compare-code-entry${label === 'license' ? ' is-license' : ''}`}
       data-tooltip=${rows.map(({ note }) => note).join(' · ')}>${label}</span>`)
   }
 
-  // A package.json's install scripts, as warnings, each with its command:
-  // those it names now (named, for one removed), one new or changed since
-  // saying so, and in its head, one dropped since struck through; the tree
-  // (`compact`) tags those it names now alone.
+  // A package.json's install scripts, each with its command: those it names
+  // now (named, for one removed), new or changed ones said so, and in its
+  // head, dropped ones struck through.
   _installTags(path, entry, compact = false) {
     if (!PACKAGE_JSON.test(path)) return nothing
     const { kind, basePath = path } = entry
@@ -1445,9 +1256,8 @@ export class BundleCompareCode extends LitElement {
     return tags
   }
 
-  // How a file reads (file-readability.js), or what it runs (`of`), on the
-  // sides it has: `was`, as the bundle compared with has it, and `now`; null
-  // for a side without it, `was` undefined where its contents are unknown.
+  // How a file reads (file-readability.js), or what `of` reads of it, as it
+  // `was` and is `now`: null for a side without it, undefined where unknown.
   _reads(path, entry, of = npmFileReadabilityOf) {
     const { kind, basePath = path } = entry
     const { before, after } = fileContents(this.base, this.other, path, entry)
@@ -1457,12 +1267,9 @@ export class BundleCompareCode extends LitElement {
     }
   }
 
-  // A file's head tags how it reads, as the npm Overview tags a file (ASCII,
-  // UTF-8, Minified, Controls, ...), and how its text is encoded beside a tag
-  // that says something else (Minified ASCII, file-readability.js
-  // npmTextKindTag): as it reads now, after how it read where that differs;
-  // every other label it has as it reads now (its controls and long lines,
-  // minified or not) beside that, as Obfuscated is (npmReadabilityFlags).
+  // How a file reads, as the npm Overview tags it (ASCII, Minified, ...): as
+  // it reads now, after how it read where that differs, its other labels
+  // (npmReadabilityFlags) beside.
   _readability(path, entry) {
     const { was, now } = this._reads(path, entry)
     const reads = read => html`${npmEncodingTag(read)}${npmTextKindTag(read)}`
@@ -1471,18 +1278,14 @@ export class BundleCompareCode extends LitElement {
     return html`${npmReadabilityFlags(now ?? was)}${tag}`
   }
 
-  // What a file is beyond how it reads, as the npm Files list tags it
-  // (file-readability.js npmFileFlagTags), in its head and the tree: as it is
-  // now, or was, for one removed. `large` false leaves Large out.
+  // What a file is beyond how it reads, as the npm Files list tags it; `large` false leaves Large out.
   _flagTags(path, entry, large = true) {
-    return entry.kind === 'removed' ? npmFileFlagTags(this.base, entry.basePath ?? path, entry.baseBytes, large) : npmFileFlagTags(this.other, path, entry.otherBytes, large)
+    const { details, at } = this._side(path, entry)
+    return npmFileFlagTags(details, at, entry.kind === 'removed' ? entry.baseBytes : entry.otherBytes, large)
   }
 
-  // The tree tags a file as its head does where it can be hard to review by
-  // reading it as it reads now (as it read, for one removed), more briefly:
-  // its controls and unexpected long lines, those it warns of, and its tag,
-  // ASCII and UTF-8 going untagged there, as does Map, which a source map's
-  // name says already; Minified as Min.
+  // The tree's briefer readability tags: those it warns of, and its tag where
+  // it marks one (not a source map's, which its name says).
   _treeTag(path, entry) {
     const { was, now } = this._reads(path, entry)
     const shown = now ?? was
@@ -1493,19 +1296,15 @@ export class BundleCompareCode extends LitElement {
 
   // A file's lines added and removed, and its sizes.
   _fileFigures({ kind, baseBytes, otherBytes }, model) {
-    const size = value => formatBytes(value ?? 0)
     return html`${model?.blocks.length > (model?.marked?.size ?? 0) ? diffCounts(model.additions, model.deletions) : nothing}
       ${model?.renamed > 0 ? html`<span class="bundle-compare-code-renamed" aria-label=${`${model.renamed} lines differing in renamed names alone`}
         data-tooltip="Lines differing in renamed names alone, marked">≈${model.renamed}</span>` : nothing}
-      <span class="bundle-code-main-stats">${kind === 'added' ? size(otherBytes) : kind === 'removed' ? size(baseBytes) : `${size(baseBytes)} → ${size(otherBytes)}`}</span>`
+      <span class="bundle-code-main-stats">${sizes(kind, baseBytes, otherBytes)}</span>`
   }
 
-  // Highlighted lines of one side, or null until (or unless) Prism colors
-  // it; the first ask starts the work and re-renders once it lands.
-  // `copy` names a text other than the file's own: `pretty`, or the old side
-  // given another file's names (`renamed` and that file). Taken only for the
-  // text it colored: another under the same name (a copy printed again,
-  // another diff's old side) is colored anew, never drawn as the one before.
+  // Highlighted lines of one side, or null until Prism colors it, which
+  // repaints. `copy` names a text other than the file's own (`pretty`, or the
+  // old side given another file's names); kept only for the text it colored.
   _highlighted(details, path, text, copy = '') {
     if (!text) return null
     const lang = langForPath(path, stasisFormat(details, path), text)
@@ -1528,17 +1327,14 @@ export class BundleCompareCode extends LitElement {
 
   _renderFile(path, prefix) {
     const entry = this._entries.get(path)
-    const { kind } = entry
     const file = this._fileState(path, entry)
     const { after, before, textual, model } = file
-    // A file whose only change is a repointed import — moved there by a
-    // rename or not — reads as its source, whatever the whitespace setting:
-    // its two sides are one text. One whose record changed too says how.
+    // A file whose only change is a repointed import reads as its source,
+    // whatever the whitespace setting: its two sides are one text.
     const asSource = readsAsSource(entry)
     const diffable = textual && (!asSource || model?.blocks.length > 0)
     const index = this._order.indexOf(path)
-    const display = prefix && path.startsWith(prefix) ? path.slice(prefix.length) : path
-    const body = kind === 'repointed' && before === undefined
+    const body = entry.kind === 'repointed' && before === undefined
       ? html`<div class="bundle-compare-code-message">Neither bundle carries this importer's source.</div>`
       : asSource && model?.blocks.length === 0 ? this._renderSource(path, after, entry.repointed, file)
       : this._fileMessage(path, entry, file) ?? this._renderDiff(path, entry, file)
@@ -1558,17 +1354,15 @@ export class BundleCompareCode extends LitElement {
         ${this._fileFigures(entry, model)}
         ${this._toggles(diffable, prettyToggle(file), file.renamed, file.whitespace === 'hideable', file.types)}
       </header>
-      <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${display}`}>
+      <div class="bundle-compare-diff" tabindex="0" aria-label=${`Changes in ${withoutPrefix(path, prefix)}`}>
         ${this._dependencyChanges(path)}
-        ${entry.repointed ? this._renderRepointed(path, entry.repointed, [after, before].find(text => typeof text === 'string' && text !== '') ?? null, textual && !diffable) : nothing}
+        ${entry.repointed ? this._renderRepointed(path, entry.repointed, importerText(file), textual && !diffable) : nothing}
         ${body}
       </div>`
   }
 
-  // The diff's hiding, pretty-print and layout controls, as the file shown, or
-  // any of those listed, has use for them: what it hides (_hides), then
-  // pretty-printing a minified file (`pretty` from _pretty), as pressing it
-  // can show or hide them, and a diff its layout, last. Lines always wrap.
+  // The diff's controls, as the file shown, or any listed, has use for them:
+  // what it hides (_hides), pretty-printing, and the layout.
   _toggles(diffable, pretty = null, renamed = false, whitespace = false, types = false) {
     return html`${diffable ? this._hides(renamed, whitespace, types) : nothing}
         ${pretty ? html`<button type="button" class=${classMap({ 'bundle-compare-code-toggle': true, 'is-loading': pretty.status === 'loading', 'is-error': pretty.status === 'error',
@@ -1594,26 +1388,21 @@ export class BundleCompareCode extends LitElement {
     return found
   }
 
-  // The bundle an unchanged importer's text comes from: the newer one, or
-  // the base when only it carries the file. Highlights are cached by it.
+  // The bundle an unchanged importer's text comes from (highlights cached by it).
   _textSide(path) {
     return bundleFilesAsMap(this.other).has(path) ? this.other : this.base
   }
 
-  // Over the package's own package.json, where a source lists what its
-  // dependencies changed (`dependencies`): plain, peer and optional ones (dev
-  // ones aren't listed), under one head counting them, each a chip with its
-  // range beside its name, those the open version adds, those whose range
-  // it changes and those it drops, struck through, each opening as the
-  // Overview's Dependencies rows do, and tagged as the source tags it
-  // (`dependencyTags`), the head counting its `flags`, what calls for a look
-  // at it (npm-dependency-checks.js), too.
+  // Over the package's package.json, a source's dependency changes: a chip
+  // each, with its range, added, changed or removed (struck through), opening
+  // as the Overview's Dependencies rows do, tagged as the source tags it; the
+  // head counting them and their flags.
   _dependencyChanges(path) {
     if (path !== 'package.json' || !this.dependencies) return nothing
-    const { added, changed, removed } = this.dependencies
-    const chips = [...added.map(row => ['added', row]), ...changed.map(row => ['changed', row]), ...removed.map(row => ['removed', row])]
+    const kinds = { added: ['new', 'New'], changed: ['updated', 'Updated'], removed: ['removed', 'Removed'] }
+    const chips = Object.keys(kinds).flatMap(kind => this.dependencies[kind].map(row => [kind, row]))
     if (chips.length === 0) return nothing
-    const counts = [[added, 'new'], [changed, 'updated'], [removed, 'removed']].filter(([rows]) => rows.length > 0).map(([rows, noun]) => `${rows.length} ${noun}`)
+    const counts = Object.entries(kinds).filter(([kind]) => this.dependencies[kind].length > 0).map(([kind, [noun]]) => `${this.dependencies[kind].length} ${noun}`)
     const flagged = Map.groupBy(chips.flatMap(([, row]) => row.flags ?? []), ({ label }) => label)
     const open = this.openDependency
     return html`<section class="bundle-compare-code-deps" aria-label="Dependency changes">
@@ -1623,7 +1412,7 @@ export class BundleCompareCode extends LitElement {
           ? html`<span class="bundle-compare-code-dep-range">${row.from} → <b>${row.to}</b></span>`
           : html`<span class="bundle-compare-code-dep-range">${row.range}</span>`
         const content = html`<span class="bundle-compare-code-dep-name">${row.name}</span>${row.kind ? html`<span class="npm-dependency-kind">${row.kind}</span>` : nothing}${range}${this.dependencyTags?.(row, kind) ?? nothing}`
-        const label = `${{ added: 'New', changed: 'Updated', removed: 'Removed' }[kind]}: ${row.name}`
+        const label = `${kinds[kind][1]}: ${row.name}`
         return html`<li>${open && row.opens
           ? html`<button type="button" class=${`bundle-compare-code-dep is-${kind}`} aria-label=${label} @click=${() => open(row)}>${content}</button>`
           : html`<span class=${`bundle-compare-code-dep is-${kind}`} aria-label=${label}>${content}</span>`}</li>`
@@ -1631,10 +1420,9 @@ export class BundleCompareCode extends LitElement {
     </section>`
   }
 
-  // The file's import resolutions that differ (importsNote): the specifier
-  // and its conditions, the target it resolved to before and after, (none)
-  // on a side that records none, and the lines importing it — links to them
-  // when the source shows below.
+  // The file's import resolutions that differ: each specifier and its
+  // conditions, its target before and after, and the lines importing it,
+  // links to them when the source shows below.
   _renderRepointed(path, rows, text, linked) {
     const lines = text ? text.split('\n') : []
     const markup = text ? this._highlighted(this._textSide(path), path, text) : null
@@ -1676,12 +1464,8 @@ export class BundleCompareCode extends LitElement {
   }
 
   _goToLine(line) {
-    const key = `${this._current}\0source`
     // A line past the rows shown brings them in first.
-    if (line > (this._limits.get(key) ?? ROW_LIMIT)) {
-      this._limits.set(key, Math.ceil(line / ROW_LIMIT) * ROW_LIMIT)
-      this.requestUpdate()
-    }
+    if (this._reach(`${this._current}\0source`, line - 1)) this.requestUpdate()
     void this.updateComplete.then(() => this.querySelector(`.bundle-compare-diff [data-line="${line}"]`)?.scrollIntoView({ block: 'center' }))
   }
 
@@ -1692,12 +1476,11 @@ export class BundleCompareCode extends LitElement {
     const lit = { model, b: this._highlighted(this._textSide(path), path, text, pretty?.status === 'ready' ? 'pretty' : '') }
     const marked = new Set([...this._importLines(repointed, model.b).values()].flat())
     const key = `${path}\0source`
-    // A search hit picked in this file: its line, shown, to scroll to, once
-    // for each model it is drawn from.
+    // A search hit picked in this file: its line to scroll to, once for each model it is drawn from.
     const sought = this._sought?.path === path && this._sought.key !== modelKeyed ? this._soughtLine(path, this._entries.get(path), pretty, model) : null
     if (this._sought?.path === path) this._sought.key = modelKeyed
     if (sought && sought.line < model.b.length) {
-      if (sought.line >= (this._limits.get(key) ?? ROW_LIMIT)) this._limits.set(key, Math.ceil((sought.line + 1) / ROW_LIMIT) * ROW_LIMIT)
+      this._reach(key, sought.line)
       this._soughtRow = { path, index: sought.line }
     }
     const limit = this._limits.get(key) ?? ROW_LIMIT
@@ -1708,20 +1491,22 @@ export class BundleCompareCode extends LitElement {
           <span class="diff-num">${i + 1}</span>${this._codeCell(lit, 'b', i, null)}
         </div>`)}
       </div>
-      ${model.b.length > lines.length ? html`<div class="bundle-compare-code-more">
-        <button type="button" class="bundle-compare-code-action" @click=${() => { this._limits.set(key, limit + ROW_LIMIT); this.requestUpdate() }}>Show ${Math.min(ROW_LIMIT, model.b.length - lines.length).toLocaleString()} more lines</button>
-        <span>${(model.b.length - lines.length).toLocaleString()} not shown</span>
-      </div>` : nothing}`
+      ${this._moreRows(key, limit, lines.length, model.b.length, 'lines')}`
   }
 
-  // What the diff hides, in one frame, Hide: each a named switch (mode-switch,
-  // as the treemap's Sunburst), there where it has use: renamed
-  // names where hiding them hides any (`renamed`, see _fileState), which gives
-  // the old side the new side's names wherever a minifier renamed a variable
-  // alike throughout, an old one no new one stands for named apart (r_old),
-  // rather than marking the lines that differ in them alone; whitespace where
-  // hiding it, as diff -b, hides a change (`whitespace`); changes in types
-  // alone where the server proved any (`types`).
+  // "Show more" under a diff whose `total` rows are more than those `shown`.
+  _moreRows(key, limit, shown, total, noun) {
+    return total > shown ? html`<div class="bundle-compare-code-more">
+        ${action(`Show ${Math.min(ROW_LIMIT, total - shown).toLocaleString()} more ${noun}`, () => { this._limits.set(key, limit + ROW_LIMIT); this.requestUpdate() })}
+        <span>${(total - shown).toLocaleString()} not shown</span>
+      </div>` : nothing
+  }
+
+  // What the diff hides, a named switch each where it has use: renamed names
+  // where hiding them hides any (the old side given the new side's names
+  // where a minifier renamed alike throughout, rather than marking the lines
+  // differing in them alone), whitespace where diff -b hides a change, and
+  // type-only changes where the server proved any.
   _hides(renamed, whitespace, types) {
     const switches = [
       renamed && ['Renames', HIDE_RENAMES, prefs.ignoreRenames, () => this._setRenames(!prefs.ignoreRenames)],
@@ -1748,13 +1533,11 @@ export class BundleCompareCode extends LitElement {
     this.requestUpdate()
   }
 
-
   _renderDiff(path, entry, { after, before, key, model, pretty, changes, hiding, warned = [], whitespace = null }) {
     const { kind, basePath = path } = entry
     const split = prefs.layout === 'split'
     // A search hit picked in this file: its row, opened and shown, to scroll
-    // to, once for each model it is drawn from; in a file whose types are set
-    // aside (typeFolds), its line's or that of the types it is among.
+    // to, once for each model it is drawn from.
     const sought = this._sought?.path === path && this._sought.key !== key ? this._soughtLine(path, entry, pretty, model) : null
     if (this._sought?.path === path) this._sought.key = key
     const folds = model.typeFolds
@@ -1764,8 +1547,7 @@ export class BundleCompareCode extends LitElement {
     const rows = seek?.rows ?? diffRows(model, expansion, { split })
     const limit = this._limits.get(key) ?? ROW_LIMIT
     const shown = rows.length > limit ? rows.slice(0, limit) : rows
-    // A file's lines colored as its text is, those of one whose types are set
-    // aside taken for the lines it shows.
+    // Its lines colored, those of one whose types are set aside taken for the lines it shows.
     const shownLines = (lines, side) => (lines && folds ? folds.lineOf[side].map(line => lines[line]) : lines)
     const lit = {
       model,
@@ -1782,7 +1564,7 @@ export class BundleCompareCode extends LitElement {
     const lines = folds?.lines ?? { a: model.a.length, b: model.b.length }
     const digits = String(Math.max(lines.a, lines.b, 1)).length
     return html`${prefs.ignoreRenames && changes?.reason ? html`<p class="bundle-compare-code-note">Renamed names are shown: ${RENAME_REASONS[changes.reason] ?? changes.reason}.</p>` : nothing}
-      ${WHITESPACE_KEPT[whitespace] ? html`<p class="bundle-compare-code-note">${WHITESPACE_KEPT[whitespace]}</p>` : nothing}
+      ${whitespace === 'mixed' ? html`<p class="bundle-compare-code-note">${MIXED_KEPT}</p>` : nothing}
       ${warned.length > 0 ? html`<p class="bundle-compare-code-note">${readsSaid(warned)} <button type="button" @click=${() => this._setRenames(false)}>Show them marked</button></p>` : nothing}
       <div class=${classMap({ 'bundle-compare-diff-table': true, split, unified: !split })} data-path=${path}
         style=${styleMap({ '--diff-num-width': `${digits + 1}ch` })} role="table" aria-label="Diff">
@@ -1792,10 +1574,7 @@ export class BundleCompareCode extends LitElement {
         </div>` : nothing}
         ${repeat(shown, row => this._rowKey(row), row => split ? this._splitRow(row, lit) : this._unifiedRow(row, lit))}
       </div>
-      ${rows.length > shown.length ? html`<div class="bundle-compare-code-more">
-        <button type="button" class="bundle-compare-code-action" @click=${() => { this._limits.set(key, limit + ROW_LIMIT); this.requestUpdate() }}>Show ${Math.min(ROW_LIMIT, rows.length - shown.length).toLocaleString()} more rows</button>
-        <span>${(rows.length - shown.length).toLocaleString()} not shown</span>
-      </div>` : nothing}`
+      ${this._moreRows(key, limit, shown.length, rows.length, 'rows')}`
   }
 
   _rowKey(row) {
@@ -1835,14 +1614,13 @@ export class BundleCompareCode extends LitElement {
     return html`<span class="diff-num">${lineNumber(lit.model, side, line)}</span><span class="diff-sign">${sign}</span>${this._codeCell(lit, side, line, ranges)}`
   }
 
-  // Lines of types alone between a file's lines that run, set aside
-  // (diffRows), said as a file changed in types alone is (_fileMessage): by
-  // their lines on the new side, else on the old.
+  // Lines of types alone set aside between those that run, by their lines on
+  // the new side, else on the old.
   _types({ a, b }) {
     const { from, to } = b ?? a
     return html`<div class="diff-row diff-types" role="row">
       <span>Only types here · ${to - from === 1 ? `line ${from + 1}` : `lines ${from + 1}–${to}`}${b ? '' : ' before'}</span>
-      <button type="button" class="bundle-compare-code-action" @click=${() => this._setTypes(false)}>Show type-only changes</button>
+      ${action('Show type-only changes', () => this._setTypes(false))}
     </div>`
   }
 
@@ -1851,18 +1629,14 @@ export class BundleCompareCode extends LitElement {
   }
 
   _fold(row, lit) {
-    const all = row.count <= EXPAND_STEP
+    const more = `Show ${EXPAND_STEP} more lines`, some = row.count > EXPAND_STEP
+    const buttons = [some && row.down && ['top', `${more} below`, more, 'M8 3v9m-4-4 4 4 4-4'], some && row.up && ['bottom', `${more} above`, more, 'M8 13V4M4 8l4-4 4 4'],
+      ['all', `Show all ${row.count} unchanged lines`, 'Show all', 'm4 6 4-4 4 4M4 10l4 4 4-4']].filter(Boolean)
     return html`<div class="diff-row diff-fold" role="row">
       <span class="diff-fold-actions">
-        ${!all && row.down ? html`<button type="button" aria-label=${`Show ${EXPAND_STEP} more lines below`} data-tooltip=${`Show ${EXPAND_STEP} more lines`} @click=${() => lit.expand(row.run, 'top')}>
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v9m-4-4 4 4 4-4"/></svg>
-        </button>` : nothing}
-        ${!all && row.up ? html`<button type="button" aria-label=${`Show ${EXPAND_STEP} more lines above`} data-tooltip=${`Show ${EXPAND_STEP} more lines`} @click=${() => lit.expand(row.run, 'bottom')}>
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V4M4 8l4-4 4 4"/></svg>
-        </button>` : nothing}
-        <button type="button" aria-label=${`Show all ${row.count} unchanged lines`} data-tooltip="Show all" @click=${() => lit.expand(row.run, 'all')}>
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4-4 4 4M4 10l4 4 4-4"/></svg>
-        </button>
+        ${buttons.map(([change, label, tooltip, path]) => html`<button type="button" aria-label=${label} data-tooltip=${tooltip} @click=${() => lit.expand(row.run, change)}>
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${path}></path></svg>
+        </button>`)}
       </span>
       <span class="diff-fold-label">${row.count.toLocaleString()} unchanged ${row.count === 1 ? 'line' : 'lines'} · ${row.b + 1}–${row.b + row.count}</span>
     </div>`
@@ -1875,14 +1649,12 @@ export class BundleCompareCode extends LitElement {
     if (row.kind === 'ctx') {
       return html`<div class="diff-row ctx" role="row"><span class="diff-num">${lineNumber(model, 'a', row.a)}</span>${this._cell(lit, 'b', row.b, ' ', null)}</div>`
     }
-    const del = row.kind === 'del'
+    const del = row.kind === 'del', [side, line] = del ? ['a', row.a] : ['b', row.b], number = lineNumber(model, side, line)
     const words = del ? this._words(model, row.a, row.pair)?.a : this._words(model, row.pair, row.b)?.b
     const renamed = model.marked?.has(row.change)
     return html`<div class=${`diff-row ${row.kind}${renamed ? ' renamed' : ''}`} role="row"
       data-tooltip=${renamed ? 'Renamed names alone' : nothing}>
-      ${del
-        ? html`<span class="diff-num">${lineNumber(model, 'a', row.a)}</span><span class="diff-num"></span><span class="diff-sign">−</span>${this._codeCell(lit, 'a', row.a, words)}`
-        : html`<span class="diff-num"></span><span class="diff-num">${lineNumber(model, 'b', row.b)}</span><span class="diff-sign">+</span>${this._codeCell(lit, 'b', row.b, words)}`}
+      <span class="diff-num">${del ? number : nothing}</span><span class="diff-num">${del ? nothing : number}</span><span class="diff-sign">${del ? '−' : '+'}</span>${this._codeCell(lit, side, line, words)}
     </div>`
   }
 
