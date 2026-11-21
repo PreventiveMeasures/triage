@@ -1,152 +1,51 @@
-// `<sync-download-dialog>` — unified download prompt for the
-// workspace's remote inventory, so the page-header badge can offer a
-// single "N cloud" chunk covering peer-uploaded reports + bundles.
-// Each item carries its kind so the dialog dispatches per-item to
-// the right session method
-// (`downloadFileFromRemote` for reports, which validates, saves,
-// attaches, and records the sync baseline;
-// `fetchBundleFromRemote` for bundles, which already saves + fires
-// the bundle auto-download listener so the UI refreshes).
+// The sync badge's "N cloud" prompt: downloads peer-uploaded reports and
+// bundles from the workspace's remote inventory, each by its own session method.
 //
-// Public API:
 //   openSyncDownloadDialog({ workspaceId, items })
 //     items: Array<{ kind: 'report', identifier: filename }
 //                 | { kind: 'bundle', identifier: integrity }>
 //   → Promise<{ downloaded, failed }>
-
-import { html, nothing, unsafeCSS } from 'lit'
+import { html } from 'lit'
 import { addBundleToWorkspace, state } from '#client/index.js'
 import { downloadFileFromRemote, fetchBundleFromRemote } from '../client-sync.js'
 import { switchToWorkspace } from '../ingest.js'
-import { AppDialog, openAppDialog } from './app-dialog.js'
-import listCSS from './dialog-list.css'
-import { itemDisplayLabel, transferErrorsList, transferItemsList, transferSummary } from './shared.js'
+import { TransferDialog, openTransferDialog } from './sync-transfer.js'
 
-class SyncDownloadDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
-
-  static properties = {
-    workspaceId: { type: String },
-    items: { type: Array },
-    _running: { state: true },
-    _errors: { state: true },
-    _done: { state: true },
-    _settled: { state: true },
+class SyncDownloadDialog extends TransferDialog {
+  static copy = {
+    verb: 'Download',
+    heading: 'Download from remote',
+    key: 'downloaded',
+    one: (label) => html`Download <strong>"${label}"</strong> from the workspace's remote inventory?`,
+    many: (count, kinds) => html`Download <strong>${count}</strong> remote ${kinds} into this workspace?`,
   }
 
-  constructor() {
-    super()
-    this.workspaceId = ''
-    this.items = []
-    this._running = false
-    this._errors = []
-    this._done = false
-    this._settled = false
-  }
-
-  // Focus the Download action. The base `_finish` (close + resolve)
-  // is inherited unchanged; `_onClose` / `_onCancel` resolve the
-  // empty-result shape callers expect.
-  focusInitial() {
-    this.renderRoot.querySelector('button[data-role="download"]')?.focus()
-  }
-
-  _onClose = () => this._finish({ downloaded: [], failed: [] })
-  _onCancel = () => this._finish({ downloaded: [], failed: [] })
-
-  // Record one failure on both the resolve payload and the rendered
-  // error list. `kind` is explicit: the per-branch sites label by the
-  // branch taken, the catch-all by `item.kind`.
-  _fail(failed, item, kind, reason) {
-    failed.push({ kind, identifier: item.identifier, reason })
-    this._errors = [...this._errors, { label: itemDisplayLabel(item), reason }]
-  }
-
-  _onDownload = async () => {
-    if (this._running) return
-    this._running = true
-    this._errors = []
-    const downloaded = []
-    const failed = []
-    for (const item of this.items) {
-      try {
-        if (item.kind === 'bundle') {
-          const r = await fetchBundleFromRemote(this.workspaceId, item.identifier)
-          if (!r.ok) {
-            this._fail(failed, item, 'bundle', r.reason ?? 'unknown')
-            continue
-          }
-          // fetchBundleFromRemote already saved + fired auto-download
-          // listener (which the UI bridge subscribes to for refresh).
-          // Attach to this workspace's bundles list.
-          await addBundleToWorkspace(item.identifier, this.workspaceId)
-          downloaded.push({ kind: 'bundle', identifier: item.identifier })
-          continue
-        }
-        // Report path. Goes through presence (not a bare fetch + save)
-        // so the downloaded copy gets a sync baseline — without one, a
-        // Replace that lands while this client is offline is never
-        // picked up and the copy silently stays on the old report.
-        const r = await downloadFileFromRemote(this.workspaceId, item.identifier)
-        if (!r || !r.ok) {
-          this._fail(failed, item, 'report', r?.reason ?? 'sync is not available')
-          continue
-        }
-        downloaded.push({ kind: 'report', identifier: item.identifier })
-      } catch (err) {
-        this._fail(failed, item, item.kind, err?.message ?? String(err))
-      }
+  async transfer({ kind, identifier }) {
+    if (kind === 'bundle') {
+      // Saves it and tells the bundle listener (the UI refreshes); this
+      // attaches it to the workspace.
+      const r = await fetchBundleFromRemote(this.workspaceId, identifier)
+      if (!r.ok) return r.reason ?? 'unknown'
+      await addBundleToWorkspace(identifier, this.workspaceId)
+      return undefined
     }
-    this._running = false
-    this._done = true
-    // Reload the active workspace view so freshly-saved reports
-    // show up in merged findings. Only when the user is still looking
-    // at the workspace we downloaded into (guard r3242639406).
-    if (downloaded.some((d) => d.kind === 'report')) {
-      try {
-        if (state.currentWorkspace === this.workspaceId) {
-          await switchToWorkspace(this.workspaceId)
-        }
-      } catch {}
-    }
-    if (failed.length === 0) this._finish({ downloaded, failed })
+    // Through presence rather than a bare fetch + save, so the copy gets a sync
+    // baseline: without one, a Replace landing while offline is never picked up.
+    const r = await downloadFileFromRemote(this.workspaceId, identifier)
+    return r?.ok ? undefined : r?.reason ?? 'sync is not available'
   }
 
-  render() {
-    const { count, singular, kindLabel } = transferSummary(this.items)
-    const intro = singular
-      ? html`Download <strong>"${itemDisplayLabel(this.items[0])}"</strong> from the workspace's remote inventory?`
-      : html`Download <strong>${count}</strong> remote ${kindLabel} into this workspace?`
-    const list = singular ? nothing : transferItemsList(this.items)
-    const dlLabel = this._running
-      ? (singular ? 'Downloading…' : `Downloading ${count} ${kindLabel}…`)
-      : (singular ? 'Download' : `Download ${count}`)
-    return html`<dialog @close=${this._onClose}>
-      <header><h3>Download from remote</h3></header>
-      <p class="lwd-body">${intro}</p>
-      ${list}
-      ${transferErrorsList(this._errors)}
-      <footer class="nwd-actions">
-        <span class="nwd-spacer"></span>
-        <button type="button" data-role="cancel" @click=${this._onCancel} ?disabled=${this._running}>
-          ${this._done && this._errors.length > 0 ? 'Close' : 'Cancel'}
-        </button>
-        ${this._done && this._errors.length > 0 ? nothing : html`<button
-          type="button"
-          data-role="download"
-          @click=${this._onDownload}
-          ?disabled=${this._running || count === 0}
-        >${dlLabel}</button>`}
-      </footer>
-    </dialog>`
+  // Reload the workspace still on screen, so new reports join its findings.
+  async transferred(moved) {
+    if (!moved.some((d) => d.kind === 'report')) return
+    try {
+      if (state.currentWorkspace === this.workspaceId) await switchToWorkspace(this.workspaceId)
+    } catch {}
   }
 }
 
 customElements.define('sync-download-dialog', SyncDownloadDialog)
 
-export function openSyncDownloadDialog({ workspaceId, items } = {}) {
-  return openAppDialog('sync-download-dialog', {
-    workspaceId: workspaceId ?? '',
-    items: Array.isArray(items) ? [...items] : [],
-  })
+export function openSyncDownloadDialog(options) {
+  return openTransferDialog('sync-download-dialog', options)
 }

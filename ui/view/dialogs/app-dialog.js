@@ -1,38 +1,20 @@
-// `AppDialog` — base class for the app's modal dialogs. Owns the
-// shared shadow-DOM chrome (the `dialog` frame + `.nwd-*` inner
-// classes, via dialog-base.css) and the common open/close
-// plumbing, so each concrete dialog is just its body template +
-// behavior.
+// `AppDialog` — base class for the app's modal dialogs: the shared `<dialog>`
+// chrome (dialog-base.css, `.nwd-*`) and the open / focus / resolve plumbing.
 //
-// Why a base class rather than a `<app-dialog>` slot wrapper: the
-// dialog bodies hang their shared `.nwd-*` / `.wsl-*` / `.lwd-*`
-// classes on DEEP elements, and a wrapper could only style
-// top-level slotted nodes (`::slotted` doesn't reach descendants).
-// Subclassing puts each body in its OWN shadow root where the
-// inherited `static styles` reach every element. The base CSSResult
-// is one shared object, so the browser dedupes the underlying
-// adoptedStyleSheet across all dialog instances.
+// A base class rather than an `<app-dialog>` slot wrapper: the bodies style
+// DEEP elements with the shared classes, which `::slotted` can't reach. Each
+// subclass renders into its own shadow root where the inherited styles do; the
+// CSSResult is one object, so the browser shares the adopted sheet.
 //
-// Contract for subclasses:
-//   - `render()` returns `html\`<dialog @close=${this._onClose}>…\``
-//     (the bare `dialog`; the base styles target it).
-//   - call `this._finish(result)` to close + resolve.
-//   - the public `open*()` helper appends the element to <body> and
-//     resolves on the `resolve` event (see openAppDialog below).
-//   - override `focusInitial()` / `_onClose` when the defaults
-//     (focus first field, Esc → resolve null) don't fit.
+// Subclasses render `html\`<dialog @close=${this._onClose}>…\`` and call
+// `this._finish(result)` to close and resolve; `_onClose` (Esc, Cancel)
+// resolves null unless overridden, and `focusInitial()` picks the first field.
 //
-// Stacking. `showModal()` does NOT refuse while another modal is open —
-// it stacks the new one on top — so by default a dialog opened over
-// another stacks. That is what nested and in-flow dialogs need: the
-// re-check dialog opening the download dialog, the relay password
-// prompt raised mid-upload, a passkey prompt. A dialog opened with
-// `exclusive = true` refuses instead: if any modal is open it never
-// shows and dispatches `modal-conflict` (see firstUpdated). Only open
-// helpers that settle on `modal-conflict` may set it (a plain
-// `openAppDialog` only hears `resolve`, so it would hang). Set by the
-// dialogs that open unprompted and retry later (persistence-degraded,
-// proxy-auth, the sync suggestion) and by `openAppDialogOrReject`.
+// Stacking: `showModal()` stacks over an open modal rather than refusing, which
+// nested and in-flow dialogs need (the re-check dialog opening the download
+// one, a password prompt raised mid-upload). A dialog opened `exclusive`
+// refuses instead and dispatches `modal-conflict` (see firstUpdated); the
+// dialogs that open unprompted and retry later are opened so.
 import { LitElement, unsafeCSS } from 'lit'
 import { makeStackedModalError } from '../dom.js'
 import { hasOpenModal } from '../open-modal.js'
@@ -40,19 +22,18 @@ import { installShadowTooltipListener } from '../tooltip.js'
 import dialogBaseCSS from './dialog-base.css'
 
 export class AppDialog extends LitElement {
-  // Array so subclasses extend it: `static styles = [...AppDialog.styles,
-  // unsafeCSS(extraCSS)]`.
+  // Subclasses extend it: `static styles = [...AppDialog.styles, unsafeCSS(css)]`.
   static styles = [unsafeCSS(dialogBaseCSS)]
 
-  // Refuse to stack over an open modal (see the header). Set by the open
-  // helper before the element is attached.
+  // Fields holding a secret (a password, a key, bytes to decrypt), with the
+  // empty value each is reset to on every way out, shown or not.
+  static secrets = {}
+
+  // Set by the open helper before the element is attached.
   exclusive = false
 
   firstUpdated() {
-    // Dialog chrome carries `data-tooltip` (the fix-link "Open in a
-    // new tab" link, the export dialog's copy button). Every dialog
-    // is its own shadow root, so each needs the listener; installing
-    // it on the base class covers the subclasses in one place.
+    // Every dialog is its own shadow root, so each needs the tooltip listener.
     installShadowTooltipListener(this.renderRoot)
     this.beforeOpen()
     const dialog = this.renderRoot.querySelector('dialog')
@@ -64,33 +45,25 @@ export class AppDialog extends LitElement {
     try {
       dialog.showModal()
     } catch (err) {
-      // `showModal()` itself refused — the element isn't connected (the
-      // helper detached it first) or the dialog is already open — not
-      // another modal being up (that stacks; see the header).
+      // Not another modal (that stacks): the element was detached first, or
+      // the dialog is already open.
       this._conflict(err)
       return
     }
     this.focusInitial()
   }
 
-  // Never shown. Mark settled so a stray `close` event can't drive
-  // `_finish`, then dispatch `modal-conflict`: open() helpers that listen
-  // for it settle their promise (reject, cancel, or report `shown: false`
-  // to retry) and wipe any wrapper-set secret; a helper that doesn't
-  // listen never settles, which is why only listening helpers may set
-  // `exclusive`.
+  // Never shown. Settled, so a stray `close` can't drive `_finish`, wiped,
+  // and `modal-conflict` for the open helper's `conflict` to settle on.
   _conflict(cause) {
     this._settled = true
+    Object.assign(this, this.constructor.secrets)
     this.dispatchEvent(new CustomEvent('modal-conflict', { detail: { cause } }))
   }
 
-  // Override hook: seed reactive state from properties before the
-  // dialog opens. The open() helper assigns props after
-  // createElement, so they're set by firstUpdated time. Default no-op.
+  // Seed state from the props the open helper assigned, before showModal.
   beforeOpen() {}
 
-  // Initial focus target. Default: first text field, else the
-  // primary action button, else the first button.
   focusInitial() {
     const el = this.renderRoot.querySelector('input, textarea')
       ?? this.renderRoot.querySelector('button.primary')
@@ -98,22 +71,21 @@ export class AppDialog extends LitElement {
     el?.focus()
   }
 
-  // Close the native dialog + emit the single `resolve` event the
-  // `open*()` helper awaits. Guarded so a double-finish (e.g. Enter
-  // then the `close` event) resolves once.
+  // Close and emit the one `resolve` the open helper awaits. Guarded, so
+  // Enter followed by the `close` event resolves once.
   _finish(result) {
     if (this._settled) return
     this._settled = true
+    Object.assign(this, this.constructor.secrets)
     this.renderRoot.querySelector('dialog')?.close()
     this.dispatchEvent(new CustomEvent('resolve', { detail: result }))
   }
 
-  // Native <dialog> close (Esc / programmatic) → cancel. Subclasses
-  // that need a non-null cancel value override this.
   _onClose = () => this._finish(null)
+  _onCancel = () => this._onClose()
 
-  // Opt in with @click=${this._onBackdrop}. Native backdrop clicks target
-  // the dialog itself, as do clicks on its padding; only close from outside.
+  // Opt in with @click=${this._onBackdrop}. Backdrop clicks target the dialog
+  // itself, as do clicks on its padding; only close from outside.
   _onBackdrop = (event) => {
     if (event.target !== event.currentTarget) return
     const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect()
@@ -121,45 +93,22 @@ export class AppDialog extends LitElement {
   }
 }
 
-// Shared open-helper: create the element, append to <body>, resolve
-// with the dialog's `resolve` detail (and remove the element). Each
-// dialog's public `open*()` wrapper delegates here so the
-// create / listen / cleanup dance lives in one place.
-export function openAppDialog(tagName, props = {}) {
-  return new Promise((resolve) => {
-    const el = document.createElement(tagName)
-    Object.assign(el, props)
-    el.addEventListener('resolve', (e) => {
+// Append `tagName` with `props` to <body>; resolve with its result and remove
+// it. A dialog that never showed dispatches `modal-conflict` instead, which
+// `conflict(cause)` settles: with its return value, or by throwing. Without one
+// the promise would never settle, so every `exclusive` dialog passes one.
+export function openAppDialog(tagName, props = {}, { exclusive = false, conflict } = {}) {
+  return new Promise((resolve, reject) => {
+    const el = Object.assign(document.createElement(tagName), props, { exclusive })
+    const settle = (value) => {
       el.remove()
-      resolve(e.detail)
-    })
+      try { resolve(value()) } catch (err) { reject(err) }
+    }
+    el.addEventListener('resolve', (e) => settle(() => e.detail))
+    if (conflict) el.addEventListener('modal-conflict', (e) => settle(() => conflict(e.detail?.cause)))
     document.body.append(el)
   })
 }
 
-// Variant of `openAppDialog` for the dialogs that hold a secret the
-// wrapper set (workspace private key, share-link ciphertext, a
-// file-bytes closure) and must REJECT when another modal is already
-// open so the caller can surface a contextual error — hence `exclusive`
-// (they'd otherwise stack; e.g. a second share link arriving while the
-// unlock dialog is up, which view.js relies on being refused).
-// `modal-conflict` runs `wipeOnConflict(el)` (the dialog never opened,
-// so its own `_finish` wipe didn't run), detaches the element, and
-// rejects with the shared stacked-modal error.
-export function openAppDialogOrReject(tagName, props, wipeOnConflict) {
-  return new Promise((resolve, reject) => {
-    const el = document.createElement(tagName)
-    Object.assign(el, props)
-    el.exclusive = true
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    el.addEventListener('modal-conflict', (e) => {
-      wipeOnConflict(el)
-      el.remove()
-      reject(makeStackedModalError(e.detail?.cause))
-    })
-    document.body.append(el)
-  })
-}
+// `conflict` for callers that surface why the dialog didn't open.
+export const rejectStacked = (cause) => { throw makeStackedModalError(cause) }

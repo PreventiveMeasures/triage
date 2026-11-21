@@ -1,45 +1,23 @@
-// `<export-confirm-dialog>` — what the toolbar's export button opens.
-// The two exports are its two TABS: Markdown writes the file, Print
-// sends the page to paper. Both emit only the findings visible
-// under the active filters (see export-summary.js), so the dialog
-// restates that selection — the included / excluded counts and the
-// active filters in words — under either tab, and the reader picks
-// which one leaves.
+// What the toolbar's export button opens, its two TABS the two exports:
+// Markdown writes the file, Print sends the page to paper. Both emit only the
+// findings the active filters show (export-summary.js), so it restates that
+// selection: the counts, and the filters in words, each droppable from this
+// export with its ×. Dropping works on a CLONE of the filter state
+// (filters.js cloneFilterFields), so the toolbar is left as it was either way.
 //
-// Sibling of `<delete-report-dialog>` etc.: extends `AppDialog` for
-// the shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel).
-// Public `openExportConfirmDialog(mode)` snapshots the current
-// selection and resolves with `{ confirmed, view, fields, mode, oneSamplePerGroup }`; Cancel /
-// Esc / native close all resolve to both flags false. Download also
-// offers View, which resolves `{ view: true }` and leaves it to the
-// caller to show the Markdown — this dialog's job is the selection,
-// not the file.
-//
-// Each listed filter can be dropped from the export with its × — the
-// counts move as it goes, and `fields` comes back carrying the relaxed
-// selection for the caller to export under. What it never touches is
-// the toolbar: the dialog works on a CLONE of the filter state (see
-// filters.js cloneFilterFields), so dropping Severity here narrows
-// nothing on screen and the app is exactly as the user left it whether
-// they export or cancel.
-//
-// Native Ctrl+P / browser-menu printing bypasses this dialog — those
-// can't be intercepted with an async confirm — so it only guards the
-// in-app button (the `download-requested` event).
+// Native Ctrl+P / menu printing can't wait on an async confirm, so only the
+// in-app button (`download-requested`) comes through here.
 import { html, nothing, unsafeCSS } from 'lit'
-import { AppDialog } from './app-dialog.js'
-import { dialogTabs } from './shared.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
+import { dialogTabs } from '../header-tabs.js'
 import { MARKDOWN_ICON, PRINT_ICON } from '../export-icons.js'
 import { exportSelectionSummary } from '../export-summary.js'
 import exportConfirmCSS from './dialog-export-confirm.css'
 import tabsCSS from './dialog-tabs.css'
 
-// Markdown leads: it is the export that always has something to give
-// (print is the one the page can be in the wrong shape for), and the
-// tab the button opens on. The tabs are named for what comes OUT —
-// a markdown file, a printed page — while the button that commits
-// still says what happens (Download / Print). Ids stay the export
-// modes the caller runs on.
+// Named for what comes out; the committing button says what happens
+// (Download / Print). Ids are the caller's export modes. Markdown leads: it
+// always has something to give, where the page may be the wrong shape to print.
 const TABS = [
   { id: 'download', label: 'Markdown', icon: MARKDOWN_ICON },
   { id: 'print', label: 'Print', icon: PRINT_ICON },
@@ -49,26 +27,20 @@ class ExportConfirmDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(exportConfirmCSS), unsafeCSS(tabsCSS)]
 
   static properties = {
-    // 'download' | 'print' — the open tab. Drives the intro wording,
-    // the confirm button, and which export the caller runs on
-    // confirm. Reactive state, not just an input: the tabs flip it.
+    // 'download' | 'print', the open tab.
     mode: { type: String },
     included: { type: Number },
     excluded: { type: Number },
     total: { type: Number },
-    // [{ key, label, value, clear }] — active filters, already
-    // humanized, each with the patch that drops it.
+    // [{ key, label, value, clear }]: the active filters, humanized, each with
+    // the patch that drops it.
     filters: { attribute: false },
-    // The filter selection the counts above were computed under: a
-    // clone of the toolbar's, minus whatever has been dropped here.
+    // The selection the counts are of: the toolbar's, less what was dropped.
     fields: { attribute: false },
-    // Non-null only when viewing a trash bucket (e.g. 'Deleted').
+    // Set only while viewing a trash bucket (e.g. 'Deleted').
     bucketLabel: { type: String },
-    // Whether PRINT would emit only the single focused finding rather
-    // than the whole filtered set (focus view-mode — see
-    // export-summary.js). Read only under the Print tab, so the flag
-    // is asked for once at open time and survives tab flips; the
-    // counts themselves are the same for both exports.
+    // Whether Print would emit only the focused finding (focus view-mode),
+    // taken once at open: the counts are the same for both exports.
     focusedOnly: { type: Boolean },
     oneSamplePerGroup: { type: Boolean },
   }
@@ -76,71 +48,45 @@ class ExportConfirmDialog extends AppDialog {
   constructor() {
     super()
     this.mode = 'download'
-    this.included = 0
-    this.excluded = 0
-    this.total = 0
     this.filters = []
     this.fields = null
-    // Set once a filter has been dropped, so an untouched dialog hands
-    // back no override at all rather than a clone of what is already
-    // in force. Not reactive — nothing renders from it.
+    // A filter was dropped. Until then no override goes back, rather than a
+    // clone of what's already in force.
     this._relaxed = false
     this.bucketLabel = null
     this.focusedOnly = false
     this.oneSamplePerGroup = false
   }
 
-  // What the open tab makes of the focus flag: the whole-set copy is
-  // unaffected by focus view-mode, so this is print's alone.
   get _focusedOnly() { return this.mode === 'print' && this.focusedOnly }
 
-  // Flip the tab. Nothing to recount — both exports run over the same
-  // selection (only the wording and the flag above differ) — so the
-  // dropped filters and the relaxed clone carry across untouched.
-  _selectTab(mode) {
-    if (this.mode === mode) return
-    this.mode = mode
-  }
-
-  // Focus the primary action — this is a non-destructive confirm, so
-  // Enter should commit the export rather than land on Cancel. With an
-  // empty selection the primary is disabled, so focus Cancel instead.
+  // Enter commits: this is no destructive confirm. Cancel while there's
+  // nothing to export.
   focusInitial() {
-    const sel = this.included === 0 ? 'button[data-role="cancel"]' : 'button.primary'
-    this.renderRoot.querySelector(sel)?.focus()
+    this.renderRoot.querySelector(this.included === 0 ? 'button[data-role="cancel"]' : 'button.primary')?.focus()
   }
 
-  // One of 'cancel' | 'view' | 'confirm'. Spelled out rather than a
-  // boolean because there are now three ways out and two of them are
-  // not a cancel.
-  //
-  // `fields` rides along only once a filter has actually been dropped.
-  // Null means "export under the toolbar's own selection", which lets
-  // the caller skip installing an override that would change nothing —
-  // and for print, skip the re-render that would come with it.
+  // `action`: 'cancel' | 'view' | 'confirm'. `fields` is null for the
+  // toolbar's own selection, which spares the caller an override (and print a
+  // re-render); `mode` is the tab confirmed under, which decides the export.
   _finish(action) {
     if (this._settled) return
     super._finish({
       confirmed: action === 'confirm',
       view: action === 'view',
       fields: this._relaxed ? this.fields : null,
-      // Which tab it was confirmed under — the caller prints or writes
-      // the file on the strength of this, not on what it opened with.
       mode: this.mode,
       oneSamplePerGroup: this.oneSamplePerGroup,
     })
   }
 
   _onClose = () => this._finish('cancel')
-  _onCancel = () => this._finish('cancel')
   _onView = () => this._finish('view')
   _onConfirm = () => this._finish('confirm')
 
-  // Drop one filter from this export. Recounts against the relaxed
-  // clone — `included` climbs, `excluded` falls — and re-describes it,
-  // which is what removes the row: `activeFilterDescriptions` lists a
-  // filter iff it still narrows something, so a cleared field simply
-  // stops being described.
+  // Recounts under the relaxed clone. A filter is described while it still
+  // narrows something, so a cleared one's row goes; focus moves to the row
+  // that took its place, or the last, for dropping several by keyboard.
   async _onDropFilter(key) {
     const at = this.filters.findIndex((f) => f.key === key)
     if (at === -1) return
@@ -151,10 +97,6 @@ class ExportConfirmDialog extends AppDialog {
     this.included = summary.included
     this.excluded = summary.excluded
     this.total = summary.total
-    // The button that was just pressed is gone. Hand focus to the row
-    // that took its place — or to the last one, when the bottom row
-    // went — so a keyboard user can drop several without tabbing back
-    // in each time, and doesn't get dumped at the top of the document.
     await this.updateComplete
     const buttons = [...this.renderRoot.querySelectorAll('button[data-drop]')]
     const next = buttons[Math.min(at, buttons.length - 1)]
@@ -164,31 +106,24 @@ class ExportConfirmDialog extends AppDialog {
   }
 
   _countSection() {
-    if (this.total === 0) {
-      return html`<p class="ecd-count">No findings to ${this.mode === 'print' ? 'print' : 'download'}.</p>`
-    }
-    // Focus view-mode: print emits only the focused finding. Lead with
-    // that, and point the user to list / grouped to print the whole
-    // filtered set (the focus queue, sized `included`). Only when the
-    // queue is non-empty — with everything filtered out there's nothing
-    // focused, so fall through to the normal "0 of N" (disabled) copy.
+    const print = this.mode === 'print'
+    if (this.total === 0) return html`<p class="ecd-count">No findings to ${print ? 'print' : 'download'}.</p>`
+    // With everything filtered out nothing is focused: the plain "0 of N".
     if (this._focusedOnly && this.included > 0) {
       return html`
         <p class="ecd-count">Only the <strong>focused</strong> finding will be printed.</p>
         <p class="ecd-excluded">Focus mode prints just the finding you're viewing. Switch to the list or grouped view to print all ${this.included} matching ${this.included === 1 ? 'finding' : 'findings'}.</p>
       `
     }
-    // "All N" only when nothing is filtered at all; with active filters
-    // that happen to exclude nothing, "N of N" makes the filtering
-    // visible rather than implying an unfiltered export.
-    const allIn = this.excluded === 0 && this.filters.length === 0
-    const headline = allIn
+    // "All N" only when nothing is filtered: filters that happen to exclude
+    // nothing still read "N of N".
+    const headline = this.excluded === 0 && this.filters.length === 0
       ? html`All <strong>${this.included}</strong> ${this.included === 1 ? 'finding' : 'findings'} included.`
       : html`<strong>${this.included}</strong> of ${this.total} ${this.total === 1 ? 'finding' : 'findings'} included.`
     return html`
       <p class="ecd-count">${headline}</p>
       ${this.excluded > 0
-        ? html`<p class="ecd-excluded">${this.excluded} filtered out and ${this.mode === 'print' ? "won't be printed" : "won't be downloaded"}.</p>`
+        ? html`<p class="ecd-excluded">${this.excluded} filtered out and ${print ? "won't be printed" : "won't be downloaded"}.</p>`
         : nothing}
     `
   }
@@ -224,16 +159,11 @@ class ExportConfirmDialog extends AppDialog {
       : isPrint
         ? 'Prints only the findings matching your current filters — the same set shown on screen. Use the toolbar to change the selection first.'
         : 'Downloads a Markdown file of the findings matching your current filters — the same set shown on screen. Use the toolbar to change the selection first.'
-    // The tab strip is the header — the two labels say what the old
-    // title said, and say which one is about to happen. Same strip the
-    // workspace export wears (dialogs/shared.js + dialog-tabs.css).
+    // The tab strip is the header. Flipping tabs recounts nothing: both
+    // exports run over the same selection. View (Download only) shows the
+    // Markdown it would write; for Print the page is the preview.
     return html`<dialog @close=${this._onClose}>
-      <header>${dialogTabs({
-        tabs: TABS,
-        current: this.mode,
-        prefix: 'ecd',
-        select: (id) => this._selectTab(id),
-      })}</header>
+      <header>${dialogTabs({ tabs: TABS, current: this.mode, prefix: 'ecd', select: (id) => { this.mode = id } })}</header>
       <div
         role="tabpanel"
         id=${`ecd-panel-${this.mode}`}
@@ -254,10 +184,6 @@ class ExportConfirmDialog extends AppDialog {
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
         <button type="button" data-role="cancel" @click=${this._onCancel}>Cancel</button>
-        <!-- Download only: View shows the Markdown this selection would
-             write. Print has no such artefact to show — the page IS the
-             preview. Disabled alongside the primary on an empty
-             selection, where there would be nothing to look at. -->
         ${isPrint ? nothing : html`<button type="button" data-role="view" ?disabled=${this.included === 0} @click=${this._onView}>View</button>`}
         <button type="button" class="primary" ?disabled=${this.included === 0} @click=${this._onConfirm}>${isPrint ? 'Print' : 'Download'}</button>
       </footer>
@@ -267,46 +193,22 @@ class ExportConfirmDialog extends AppDialog {
 
 customElements.define('export-confirm-dialog', ExportConfirmDialog)
 
-// Public entry point. Snapshots the current export selection (counts +
-// active filters) and opens the dialog on the `mode` tab. Resolves
-// with `{ confirmed, view, fields, mode, oneSamplePerGroup }` — `mode` being the tab it
-// was confirmed under, which is what decides the export that runs.
-//
-// Custom open helper rather than the shared `openAppDialog`: if
-// `AppDialog.firstUpdated`'s `showModal()` fails outright (the element
-// got detached first), it dispatches `modal-conflict` instead of
-// `resolve`, and the shared helper only listens for `resolve` — it would
-// hang the `await` in events.js forever and leak the element. Settle to
-// `{ confirmed: false }` on BOTH paths — a conflict collapses to a
-// no-op cancel. (Another modal being up is not a conflict: this dialog
-// isn't `exclusive`, so it stacks — see app-dialog.js.)
+// Snapshots the selection and opens on the `mode` tab. Resolves
+// `{ confirmed, view, fields, mode, oneSamplePerGroup }`; one that can't show
+// is a cancel.
 export function openExportConfirmDialog(mode = 'download') {
   const summary = exportSelectionSummary(mode)
-  // `focusedOnly` is the one thing the two bases disagree on, and the
-  // reader can flip to Print after the snapshot — so take it on the
-  // print basis now rather than recounting on every tab click.
+  // The one thing the two bases disagree on, and the reader may flip to Print
+  // later: take it on the print basis now rather than recount per tab click.
   const focusedOnly = mode === 'print' ? summary.focusedOnly : exportSelectionSummary('print').focusedOnly
-  return new Promise((resolve) => {
-    const el = document.createElement('export-confirm-dialog')
-    Object.assign(el, {
-      mode,
-      included: summary.included,
-      excluded: summary.excluded,
-      total: summary.total,
-      filters: summary.filters,
-      fields: summary.fields,
-      bucketLabel: summary.bucketLabel,
-      focusedOnly,
-    })
-    const settle = (detail) => { el.remove(); resolve(detail) }
-    el.addEventListener('resolve', (e) => settle({
-      confirmed: Boolean(e.detail?.confirmed),
-      view: Boolean(e.detail?.view),
-      fields: e.detail?.fields ?? null,
-      mode: e.detail?.mode ?? mode,
-      oneSamplePerGroup: Boolean(e.detail?.oneSamplePerGroup),
-    }))
-    el.addEventListener('modal-conflict', () => settle({ confirmed: false, view: false, fields: null, mode }))
-    document.body.append(el)
-  })
+  return openAppDialog('export-confirm-dialog', {
+    mode,
+    included: summary.included,
+    excluded: summary.excluded,
+    total: summary.total,
+    filters: summary.filters,
+    fields: summary.fields,
+    bucketLabel: summary.bucketLabel,
+    focusedOnly,
+  }, { conflict: () => ({ confirmed: false, view: false, fields: null, mode }) })
 }

@@ -1,51 +1,24 @@
-// `<workspace-unlock-bundle-dialog>` — receiver-side password prompt
-// for an encrypted bundle drop. Sibling of `<workspace-unlock-link-dialog>`.
-// Owns the wrong-password retry loop: each typed password calls
-// `tryPassword`, and a throw keeps the dialog open.
+// The password of an encrypted bundle dropped in. Each attempt calls
+// `tryPassword`; a throw keeps the dialog open.
 import { html, nothing, unsafeCSS } from 'lit'
-import { AppDialog, openAppDialogOrReject } from './app-dialog.js'
+import { AppDialog, openAppDialog, rejectStacked } from './app-dialog.js'
+import { field, onEnter, secretInput } from './shared.js'
 import shareCSS from './dialog-share.css'
 
 class WorkspaceUnlockBundleDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
 
-  static properties = {
-    _password: { state: true },
-    _busy: { state: true },
-    _error: { state: true },
-    _settled: { state: true },
-  }
+  static properties = { _password: { state: true }, _busy: { state: true }, _error: { state: true } }
+
+  // `_tryPassword` holds the file bytes, set by the open helper.
+  static secrets = { _password: '', _tryPassword: null }
 
   constructor() {
     super()
     this._password = ''
     this._busy = false
     this._error = ''
-    this._settled = false
-    // Always set by `openWorkspaceUnlockBundleDialog` before mount.
-    this._tryPassword = null
   }
-
-  // The base `focusInitial()` default focuses the first input (the
-  // password field). On modal-conflict the base `firstUpdated`
-  // dispatches `modal-conflict`, and the open() wrapper wipes the
-  // wrapper-set `_tryPassword` closure in that listener.
-
-  _finish(result) {
-    if (this._settled) return
-    // Drop sensitive state on every exit path. `_password` carries the
-    // typed secret; `_tryPassword` is the wrapper-set closure capturing
-    // the file bytes that would invoke decryptBundle. Lit's reactive
-    // setter retains the old value until the next microtask, but
-    // `el.remove()` runs sync in the resolve listener, so the
-    // post-remove element is GC-eligible.
-    this._password = ''
-    this._tryPassword = null
-    super._finish(result)
-  }
-
-  _onClose = () => this._finish(null)
-  _onCancel = () => this._finish(null)
 
   _onPasswordInput = (e) => { this._password = e.target.value; this._error = '' }
 
@@ -55,25 +28,17 @@ class WorkspaceUnlockBundleDialog extends AppDialog {
     this._error = ''
     try {
       const result = await this._tryPassword(this._password)
-      // PBKDF2 takes hundreds of ms; user may have cancelled meanwhile.
-      // Skip the resolve so the decrypted `result` (workspace.privateKey
-      // + reports + triage) isn't passed to a settled-detached dialog.
-      if (this._settled) return
-      this._finish(result)
+      // PBKDF2 takes a while: once cancelled, the decrypted workspace (its
+      // private key, reports, triage) goes nowhere.
+      if (!this._settled) this._finish(result)
     } catch (err) {
-      if (this._settled) return
-      this._error = err?.message ?? String(err)
+      if (!this._settled) this._error = err?.message ?? String(err)
     } finally {
       this._busy = false
     }
   }
 
-  _onKeydown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      this._onUnlock()
-    }
-  }
+  _onKeydown = onEnter(this._onUnlock)
 
   render() {
     return html`<dialog @close=${this._onClose}>
@@ -84,23 +49,7 @@ class WorkspaceUnlockBundleDialog extends AppDialog {
         This workspace bundle is password-protected. Enter the password
         the sender shared with you separately to decrypt and import it.
       </p>
-      <label class="wsl-field">
-        <span>Password</span>
-        <input
-          type="password"
-          class="nwd-input"
-          autocomplete="off"
-          data-1p-ignore="true"
-          data-lpignore="true"
-          data-bwignore="true"
-          data-form-type="other"
-          name="dv-bundle-unlock"
-          maxlength="1024"
-          .value=${this._password}
-          @input=${this._onPasswordInput}
-          @keydown=${this._onKeydown}
-        >
-      </label>
+      ${field('Password', secretInput({ name: 'dv-bundle-unlock', value: this._password, input: this._onPasswordInput, keydown: this._onKeydown }))}
       ${this._error ? html`<p class="wsl-error" role="alert">${this._error}</p>` : nothing}
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
@@ -118,17 +67,12 @@ class WorkspaceUnlockBundleDialog extends AppDialog {
 
 customElements.define('workspace-unlock-bundle-dialog', WorkspaceUnlockBundleDialog)
 
-// `tryPassword(password)` is invoked per attempt; throw to keep the
-// dialog open. Resolves with the `tryPassword` return value on success
-// or `null` on cancel. Rejects when another modal is already open so
-// the caller (typically `addFiles`) can surface a per-file error
-// message with filename context. The plaintext password never crosses
-// this boundary.
+// Resolves what `tryPassword(password)` returned, or null on cancel; the
+// password never leaves. Rejects when another modal is open, so `addFiles` can
+// say which file it was.
 export function openWorkspaceUnlockBundleDialog({ tryPassword } = {}) {
   if (typeof tryPassword !== 'function') {
     throw new TypeError('openWorkspaceUnlockBundleDialog: tryPassword required')
   }
-  // Wipe the wrapper-set `_tryPassword` closure (capturing file
-  // bytes) on modal-conflict before detaching.
-  return openAppDialogOrReject('workspace-unlock-bundle-dialog', { _tryPassword: tryPassword }, (el) => { el._tryPassword = null })
+  return openAppDialog('workspace-unlock-bundle-dialog', { _tryPassword: tryPassword }, { exclusive: true, conflict: rejectStacked })
 }

@@ -1,32 +1,13 @@
-// `<proxy-auth-dialog>` — cancellable popup shown when the sync layer
-// detects that reconnects are being redirected to an authentication
-// proxy (see `client/sync/proxy-auth-detect.ts`, surfaced via
-// `triageSync.proxyAuthRequired`). The canonical case is an expired
-// Cloudflare Access session: the relay can't be reached until the user
-// re-runs the proxy login, which a full page reload does. Triage is
-// saved locally, so reloading loses nothing — hence the dialog only
-// *offers* a reload and is freely dismissable ("Not now").
-//
-// Single-choice dialog: extends `AppDialog` for the shared shadow-DOM
-// <dialog> chrome (focus-trap + Esc-to-close). The reload itself is the
-// caller's job — the dialog just resolves which action was picked, so
-// it stays pure/testable and the `location.reload()` decision lives at
-// the app layer (sidebar wiring). The open helper resolves
-// `{ shown, reload }` so the caller can retry if a `modal-conflict`
-// kept it from displaying.
+// Shown when reconnects are redirected to an authentication proxy
+// (client/sync/proxy-auth-detect.ts, `triageSync.proxyAuthRequired`), as an
+// expired Cloudflare Access session does: only a reload re-runs its login.
+// Triage is saved locally, so it only offers one; the reload is the caller's.
 import { html } from 'lit'
-import { AppDialog } from './app-dialog.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
 
 class ProxyAuthDialog extends AppDialog {
-  // Focus the (non-destructive) reload button so Enter reloads; Esc
-  // still cancels via the native <dialog> close.
-  focusInitial() {
-    this.renderRoot.querySelector('button.primary')?.focus()
-  }
-
-  // The only bespoke action. "Not now", Esc, and backdrop all fall
-  // through to AppDialog's inherited `_onClose` (resolves null = cancel).
-  _onReload = () => this._finish('reload')
+  _onClose = () => this._finish({ shown: true, reload: false })
+  _onReload = () => this._finish({ shown: true, reload: true })
 
   render() {
     return html`<dialog @close=${this._onClose}>
@@ -53,21 +34,8 @@ class ProxyAuthDialog extends AppDialog {
 
 customElements.define('proxy-auth-dialog', ProxyAuthDialog)
 
-// Own open helper (not the shared `openAppDialog`) so we settle on
-// `modal-conflict` too. It opens unprompted, so it's `exclusive`: if
-// another modal is already open when the proxy redirect is detected,
-// `AppDialog.firstUpdated` refuses to stack it on top and dispatches
-// `modal-conflict` instead of `resolve`. Resolve `{ shown, reload }` and
-// remove on BOTH paths so the promise always settles and cleans up;
-// `shown: false` (conflict, never displayed) tells the caller to retry
-// while still blocked. Mirrors `openPersistenceDegradedDialog`.
+// Opens unprompted, so never over another modal: `{ shown: false }` then, for
+// the caller to retry while still blocked.
 export function openProxyAuthDialog() {
-  return new Promise((resolve) => {
-    const el = document.createElement('proxy-auth-dialog')
-    el.exclusive = true
-    const settle = (shown, reload) => { el.remove(); resolve({ shown, reload }) }
-    el.addEventListener('resolve', (e) => settle(true, e.detail === 'reload'))
-    el.addEventListener('modal-conflict', () => settle(false, false))
-    document.body.append(el)
-  })
+  return openAppDialog('proxy-auth-dialog', {}, { exclusive: true, conflict: () => ({ shown: false, reload: false }) })
 }

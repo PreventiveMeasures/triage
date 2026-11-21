@@ -1,90 +1,46 @@
-// `<triage-conflict-dialog>` — modal dialog for per-property
-// triage conflicts. Shared by `ui/view/workspace-import.js`
-// (workspace import path) and `ui/view/hydration-conflict.js`
-// (report-attach hydration path).
+// Per-property triage conflicts, for workspace import (view/workspace-import.js)
+// and report-attach hydration (view/hydration-conflict.js). One card per
+// finding, with its context once and a choice per conflicting property.
 //
-// Conflicts are grouped by finding id so each card shows the
-// finding's context (severity badge, file:line, first line of
-// description) once and lists the per-property choices (color,
-// comment, fix, triage) inside it. The host calls
-// `resolveTriageConflicts(conflicts, lookup, labels)` and gets a
-// Promise resolving to a map keyed by `${id}:${property}`
-// → `'local'` / `'imported'`.
-//
-// The dialog is unavoidable and has no default: each property's two
-// radios are `required` and Apply is the form's submit, so the user
-// must pick a side for every conflict (bulk buttons set them all). No
-// Cancel, Esc blocked — no silent "keep all local" exit. The host sees
-// `null` only on the degraded "couldn't open" path (another modal up),
-// which the callers turn into keep-local.
-//
-// Extends `AppDialog` for the shared shadow-DOM <dialog> chrome
-// (focus-trap; base Esc-to-cancel overridden — see `_blockEscClose`),
-// plus severity-badge + conflict layers.
+// Unavoidable, with no default: each choice's radios are `required` and Apply
+// is the form's submit (the bulk buttons set them all), Esc is blocked, and
+// there's no Cancel, so no silent "keep all local" exit. Only a dialog that
+// couldn't open rejects, which the callers turn into keep-local.
 import { html, nothing, unsafeCSS } from 'lit'
 import { isHttpUrl } from '../format.js'
-import { makeStackedModalError } from '../dom.js'
-import { AppDialog } from './app-dialog.js'
+import { AppDialog, openAppDialog, rejectStacked } from './app-dialog.js'
 import severityCSS from './dialog-severity.css'
 import conflictCSS from './dialog-conflict.css'
-import { severityBadge } from './shared.js'
+import { findingLocation, severityBadge } from './shared.js'
 
-// Swatch hue comes from the global `--marker-*` custom properties
-// (theme.css); `.color-dot` rules in dialog-conflict.css map a
-// `marker-{red,blue,green,gray}` class to the right `var(--marker-…)`.
-// Single source for the four marker colors — change theme.css and both
-// the in-app picker and these swatches follow.
-function colorSwatchTemplate(color) {
-  // Empty string = "unset": the three-way compare in triage-sync.ts
-  // uses '' for the absent side of an unset-vs-set disagreement (we
-  // cleared color locally, peer set one, or vice versa). Render it as a
-  // `<em>none</em>` chip so both sides show side-by-side without an
-  // empty/undefined-named swatch.
-  if (!color) return html`<em>none</em>`
-  return html`<span class="color">
+const none = html`<em>none</em>`
+const emptyText = html`<span class="comment-text"><em>empty</em></span>`
+
+// The properties in a card's order (the finding card's action row), each with
+// its label, its summary noun and how a value shows. '' is the unset side of
+// an unset-vs-set disagreement (triage-sync.ts); flags come as 'flagged' /
+// 'not flagged' (triage-changeset normFlagged).
+const PROPERTIES = {
+  // Swatch hues are the global `--marker-*` properties, as the in-app picker's.
+  color: ['Color', 'color', 'colors', (color) => color ? html`<span class="color">
     <span class=${`color-dot marker-${color}`}></span>
     <span class="color-name">${color}</span>
-  </span>`
+  </span>` : none],
+  comment: ['Comment', 'comment', 'comments', (text) => text ? html`<span class="comment-text">${text}</span>` : emptyText],
+  // Only http(s) links; a plain reference ("internal ticket #42") stays text.
+  fix: ['Fix', 'fix', 'fixes', (text) => text
+    ? html`<span class="fix-text">${isHttpUrl(text) ? html`<a href=${text} target="_blank" rel="noopener noreferrer">${text}</a>` : text}</span>`
+    : emptyText],
+  triage: ['Triage state', 'triage state', 'triage states', (value) => value ? html`<span class=${`triage triage-${value}`}>${value}</span>` : none],
+  flagged: ['Flag', 'flag', 'flags', (value) => value ? html`<span class=${`flag-badge${value === 'flagged' ? ' on' : ''}`}>${value}</span>` : none],
 }
+const ORDER = Object.keys(PROPERTIES)
+const rank = (property) => (property in PROPERTIES ? ORDER.indexOf(property) : 99)
 
-function commentBlockTemplate(text) {
-  return html`<span class="comment-text">${text || html`<em>empty</em>`}</span>`
-}
-
-function fixBlockTemplate(text) {
-  if (!text) return html`<span class="comment-text"><em>empty</em></span>`
-  // Only http(s) values get a clickable link; plain-text fix
-  // references ("internal ticket #42") render as text in the same
-  // `.fix-text` span so the layout stays put.
-  if (!isHttpUrl(text)) return html`<span class="fix-text">${text}</span>`
-  return html`<span class="fix-text"><a href=${text} target="_blank" rel="noopener noreferrer">${text}</a></span>`
-}
-
-function triageBadgeTemplate(value) {
-  if (!value) return html`<em>none</em>`
-  return html`<span class=${`triage triage-${value}`}>${value}</span>`
-}
-
-// Flag conflict values arrive as the 'flagged' / 'not flagged' tokens
-// (see triage-changeset normFlagged); `''` is the unset side.
-function flaggedBadgeTemplate(value) {
-  if (!value) return html`<em>none</em>`
-  return html`<span class=${`flag-badge${value === 'flagged' ? ' on' : ''}`}>${value}</span>`
-}
-
-function valueTemplate(property, value) {
-  if (property === 'color') return colorSwatchTemplate(value)
-  if (property === 'comment') return commentBlockTemplate(value)
-  if (property === 'fix') return fixBlockTemplate(value)
-  if (property === 'triage') return triageBadgeTemplate(value)
-  if (property === 'flagged') return flaggedBadgeTemplate(value)
-  return html`${String(value)}`
-}
+const valueTemplate = (property, value) => PROPERTIES[property]?.[3](value) ?? html`${String(value)}`
 
 function findingHeaderTemplate(meta, id) {
-  const loc = meta?.file
-    ? (meta.line ? `${meta.file}:${meta.line}` : meta.file)
-    : ''
+  const loc = findingLocation(meta)
   return html`
     <div class="card-head">
       ${severityBadge(meta?.severity)}
@@ -105,49 +61,22 @@ const DEFAULT_LABELS = {
   importedSideLabel: 'Apply imported',
 }
 
-const PROP_ORDER = { color: 0, comment: 1, fix: 2, triage: 3, flagged: 4 }
-const PROP_LABEL = { color: 'Color', comment: 'Comment', fix: 'Fix', triage: 'Triage state', flagged: 'Flag' }
-
 class TriageConflictDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(severityCSS), unsafeCSS(conflictCSS)]
 
-  static properties = {
-    conflicts: { attribute: false },
-    findingLookup: { attribute: false },
-    labels: { attribute: false },
-    _settled: { state: true },
-  }
-
-  constructor() {
-    super()
-    this.conflicts = []
-    this.findingLookup = new Map()
-    this.labels = { ...DEFAULT_LABELS }
-    this._settled = false
-  }
-
-  // No explicit initial focus — showModal()'s native autofocus lands
-  // on the first bulk button (the base default would grab the first
-  // radio). Modal-conflict is handled by base `firstUpdated`; the
-  // wrapper rejects so the caller can alert that the peer's triage
-  // decisions were skipped.
+  // No initial focus of ours: showModal's lands on the first bulk button (the
+  // base's would take the first radio).
   focusInitial() {}
-
-  // Esc must not dismiss: prevent the modal's cancelable `cancel` event
-  // so Apply stays the only exit (the base `_onClose` would resolve null).
-  _blockEscClose = (e) => e.preventDefault()
 
   _onClick = (e) => {
     const bulk = e.target.closest('[data-bulk]')
     if (!bulk) return
-    const value = bulk.dataset.bulk
-    for (const r of this.renderRoot.querySelectorAll(`input[type="radio"][value="${value}"]`)) r.checked = true
+    for (const r of this.renderRoot.querySelectorAll(`input[type="radio"][value="${bulk.dataset.bulk}"]`)) r.checked = true
   }
 
-  // Apply = form submit, so `required` validation runs first: reached
-  // only once every conflict has a pick (no manual gate, no default).
+  // Reached only once `required` validation passed: every conflict has a pick.
   _onSubmit = (e) => {
-    e.preventDefault()  // resolve via _finish, don't navigate
+    e.preventDefault()
     const decisions = {}
     for (const c of this.conflicts) {
       const key = `${c.id}:${c.property}`
@@ -159,36 +88,19 @@ class TriageConflictDialog extends AppDialog {
 
   render() {
     const lbl = this.labels
-    // Group by finding id so a finding with both a color AND a comment
-    // conflict shows as one card with two decisions, not two rows.
-    const byId = new Map()
-    for (const c of this.conflicts) {
-      if (!byId.has(c.id)) byId.set(c.id, [])
-      byId.get(c.id).push(c)
-    }
-    // Stable property order within a card (color, comment, fix,
-    // triage) — matches the action-row ordering in the finding card.
-    for (const list of byId.values()) {
-      list.sort((a, b) => (PROP_ORDER[a.property] ?? 99) - (PROP_ORDER[b.property] ?? 99))
-    }
-
-    const colorN = this.conflicts.filter((c) => c.property === 'color').length
-    const commentN = this.conflicts.filter((c) => c.property === 'comment').length
-    const fixN = this.conflicts.filter((c) => c.property === 'fix').length
-    const triageN = this.conflicts.filter((c) => c.property === 'triage').length
-    const flaggedN = this.conflicts.filter((c) => c.property === 'flagged').length
-    const summary = [
-      colorN ? `${colorN} color${colorN === 1 ? '' : 's'}` : '',
-      commentN ? `${commentN} comment${commentN === 1 ? '' : 's'}` : '',
-      fixN ? `${fixN} fix${fixN === 1 ? '' : 'es'}` : '',
-      triageN ? `${triageN} triage state${triageN === 1 ? '' : 's'}` : '',
-      flaggedN ? `${flaggedN} flag${flaggedN === 1 ? '' : 's'}` : '',
-    ].filter(Boolean).join(', ')
+    const byId = Map.groupBy(this.conflicts, (c) => c.id)
+    for (const list of byId.values()) list.sort((a, b) => rank(a.property) - rank(b.property))
+    const summary = ORDER.map((property) => {
+      const n = this.conflicts.filter((c) => c.property === property).length
+      const [, one, many] = PROPERTIES[property]
+      return n ? `${n} ${n === 1 ? one : many}` : ''
+    }).filter(Boolean).join(', ')
     const findingsLabel = `${byId.size} finding${byId.size === 1 ? '' : 's'}`
 
+    // `cancel` is Esc: prevented, so Apply stays the only way out.
     return html`<dialog
       @click=${this._onClick}
-      @cancel=${this._blockEscClose}
+      @cancel=${(e) => e.preventDefault()}
       @close=${this._onClose}
     >
       <header>
@@ -209,7 +121,7 @@ class TriageConflictDialog extends AppDialog {
                   const key = `${c.id}:${c.property}`
                   const radioName = `conflict-${key}`
                   return html`<div class="row" data-key=${key}>
-                    <span class="row-label">${PROP_LABEL[c.property] ?? c.property}</span>
+                    <span class="row-label">${PROPERTIES[c.property]?.[0] ?? c.property}</span>
                     <label class="choice">
                       <input type="radio" name=${radioName} value="local" required>
                       <span class="choice-label">Keep current</span>
@@ -236,30 +148,13 @@ class TriageConflictDialog extends AppDialog {
 
 customElements.define('triage-conflict-dialog', TriageConflictDialog)
 
-// Public API. Caller awaits the Promise; resolves with a
-// `${id}:${property}` → 'local' / 'imported' map once every conflict
-// is resolved (the dialog is unavoidable — see header). Rejects when
-// another modal is already open so the caller can surface that conflict
-// resolution was skipped (the merge layer then keeps local).
-//
-// `findingLookup` is `Map<id, { severity, file, line, description }>`.
-// `labels` overrides the default copy { title, intro, trailingNote,
-// applyButton, importedSideLabel } to specialise the generic wording
-// for "import bundle" vs "report attach".
+// Resolves a `${id}:${property}` → 'local' | 'imported' map once every
+// conflict is decided. Rejects when it can't open, so the caller can say the
+// decisions were skipped (the merge then keeps local). `findingLookup`:
+// Map<id, { severity, file, line, description }>; `labels` overrides
+// DEFAULT_LABELS, for "import bundle" or "report attach".
 export function resolveTriageConflicts(conflicts, findingLookup, labels = {}) {
-  return new Promise((resolve, reject) => {
-    const el = document.createElement('triage-conflict-dialog')
-    el.conflicts = conflicts
-    el.findingLookup = findingLookup
-    el.labels = { ...DEFAULT_LABELS, ...labels }
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    el.addEventListener('modal-conflict', (e) => {
-      el.remove()
-      reject(makeStackedModalError(e.detail?.cause))
-    })
-    document.body.append(el)
-  })
+  return openAppDialog('triage-conflict-dialog', {
+    conflicts, findingLookup, labels: { ...DEFAULT_LABELS, ...labels },
+  }, { conflict: rejectStacked })
 }

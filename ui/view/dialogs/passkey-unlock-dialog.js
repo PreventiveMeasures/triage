@@ -1,15 +1,7 @@
-// `<passkey-unlock-dialog>` — boot-time prompt shown when the
-// passkey vault is enabled (i.e. `deepview.passkey.v1` metadata is
-// present in localStorage) but this tab hasn't unlocked it yet. The
-// user clicks "Unlock with passkey", the browser prompts for the
-// stored credential, the assertion's PRF output is derived to a
-// session key, and triage / OPFS reads start succeeding.
-//
-// Layout mirrors the setup + share-link dialogs (extends `AppDialog`
-// for the shared shadow-DOM <dialog> chrome). The user can dismiss;
-// the app stays usable but encrypted-at-rest data won't load (banner
-// stays up via the vault-state listener wired in view.js).
-
+// Boot-time prompt while the passkey vault is enabled (`deepview.passkey.v1`
+// metadata present) but locked in this tab. The passkey's PRF output derives
+// the session key, and triage and OPFS reads start succeeding. Dismissable:
+// the app stays usable, and view.js keeps the locked banner up.
 import { html, nothing, unsafeCSS } from 'lit'
 import { unlockEncryption } from '#client/index.js'
 import { AppDialog, openAppDialog } from './app-dialog.js'
@@ -18,10 +10,7 @@ import shareCSS from './dialog-share.css'
 class PasskeyUnlockDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(shareCSS)]
 
-  static properties = {
-    _busy: { state: true },
-    _error: { state: true },
-  }
+  static properties = { _busy: { state: true }, _error: { state: true } }
 
   constructor() {
     super()
@@ -30,20 +19,13 @@ class PasskeyUnlockDialog extends AppDialog {
     this._abortController = null
   }
 
-  // No input field; the base `focusInitial()` default falls through
-  // to `button.primary`, so Enter unlocks without a custom override.
-
+  // Resolves whether it unlocked. Aborts a ceremony in flight, or the OS prompt
+  // would stay up after a cancel.
   _finish(success) {
     if (this._settled) return
-    // Abort any in-flight WebAuthn ceremony so the OS prompt
-    // disappears on cancel (it otherwise stays up and confuses them).
-    if (this._abortController) {
-      try { this._abortController.abort() } catch {}
-    }
-    super._finish(!!success)
+    try { this._abortController?.abort() } catch {}
+    super._finish(Boolean(success))
   }
-
-  _onCancel = () => this._finish(false)
 
   _onUnlock = async () => {
     if (this._busy) return
@@ -51,15 +33,8 @@ class PasskeyUnlockDialog extends AppDialog {
     this._error = ''
     this._abortController = new AbortController()
     try {
-      const ok = await unlockEncryption({ signal: this._abortController.signal })
-      if (ok) {
-        this._finish(true)
-        return
-      }
-      // unlockEncryption returns false ONLY for a user-cancel
-      // (NotAllowedError / AbortError). Don't surface anything in
-      // that case — the dialog stays up so the user can retry.
-      this._error = ''
+      // False only for a user cancel, which stays quiet so they can retry.
+      if (await unlockEncryption({ signal: this._abortController.signal })) this._finish(true)
     } catch (err) {
       this._error = err?.message ?? String(err)
     } finally {

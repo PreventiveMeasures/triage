@@ -1,121 +1,58 @@
-// `<import-conflict-dialog>` — surfaces when a dropped report name
-// matches an existing local report whose content differs. Avoids a
-// silent overwrite, which would leave workspace-attached reports out
-// of sync with the cloud (saveFile bumps local bytes but doesn't
-// touch remote).
-//
-// The dialog offers three outcomes:
-//   - Replace: overwrite the local file. Callers re-upload the new
-//     bytes to every workspace that lists this name so the
-//     workspace's cloud copy stays in lockstep.
-//   - Rename: save under a different filename. Live-validated
-//     against the caller-supplied `existingNames` so the user can't
-//     pick a name that would just re-collide.
-//   - Cancel: skip this file entirely.
-//
-// Sibling of `<delete-report-dialog>`: extends `AppDialog` for the
-// shared shadow-DOM <dialog> chrome (focus-trap + Esc-to-cancel),
-// with the `.lwd-*` list-dialog layer added on top.
-import { html, nothing, unsafeCSS } from 'lit'
-import { AppDialog } from './app-dialog.js'
-import listCSS from './dialog-list.css'
+// Shown when a dropped report's name matches a local report with different
+// content, instead of a silent overwrite that would leave workspace copies out
+// of step with the cloud (saveFile doesn't touch remote). Replace overwrites
+// (callers re-upload to every workspace listing the name), Rename saves under a
+// new name checked against `existingNames`, Cancel skips the file.
+import { html, nothing } from 'lit'
+import { openAppDialog } from './app-dialog.js'
+import { onEnter } from './shared.js'
+import { ConfirmationDialog, optionHint, radioOption } from './confirmation-dialog.js'
 
-class ImportConflictDialog extends AppDialog {
-  static styles = [...AppDialog.styles, unsafeCSS(listCSS)]
-
-  static properties = {
-    reportName: { type: String },
-    // Workspace display names that already list `reportName`. Empty
-    // when the conflict is on an unfiled report. Drives the
-    // upload-warning copy under the Replace option.
-    workspaceNames: { type: Array },
-    // Set of names already on disk in this drop, including the
-    // colliding name. Used by the live-validation under Rename so
-    // the user can't pick a name that would just collide again.
-    existingNames: { type: Object },
-    _choice: { state: true },
-    _newName: { state: true },
-  }
+class ImportConflictDialog extends ConfirmationDialog {
+  static properties = { _choice: { state: true }, _newName: { state: true } }
 
   constructor() {
     super()
-    this.reportName = ''
-    this.workspaceNames = []
-    this.existingNames = new Set()
-    // Default radio to Replace — most common intent for a re-drop of
-    // the same filename. Pre-selection only, NOT what a stray Enter
-    // triggers: `focusInitial()` focuses Cancel (matches
-    // delete-report-dialog), so Enter dismisses without writing; the
-    // user must focus/click Confirm to actually Replace.
+    // Replace is pre-selected, the likeliest intent of a re-drop; Cancel still
+    // has focus, so a stray Enter writes nothing.
     this._choice = 'replace'
-    // Caller-seeded via the `openImportConflictDialog` wrapper so the
-    // input shows the non-colliding suggestion on the FIRST paint
-    // (computing it in `beforeOpen` would leave it empty for one frame
-    // between initial render and the post-firstUpdated re-render).
+    // Seeded by the open helper, so the suggestion is in the first paint.
     this._newName = ''
   }
 
-  // Focus Cancel so a stray Enter doesn't commit the overwrite.
-  // Matches the delete-report-dialog destructive-default convention.
-  focusInitial() {
-    this.renderRoot.querySelector('button[data-role="cancel"]')?.focus()
-  }
+  get _trimmed() { return (this._newName ?? '').trim() }
 
-  _onClose = () => this._finish({ action: 'cancel' })
-  _onCancel = () => this._finish({ action: 'cancel' })
-  _onChoiceChange = (e) => { this._choice = e.target.value }
-  _onNewNameInput = (e) => { this._newName = e.target.value }
-
-  // Enter commits the current choice when valid. Mirrors the
-  // new-workspace dialog's handler — single-line input, no Ctrl/Cmd gate.
-  _onNewNameKeydown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      this._onConfirm()
-    }
+  confirmationResult(confirmed) {
+    if (!confirmed) return { action: 'cancel' }
+    return this._choice === 'rename' ? { action: 'rename', newName: this._trimmed } : { action: 'replace' }
   }
 
   _onConfirm = () => {
-    if (this._choice === 'rename') {
-      const trimmed = (this._newName ?? '').trim()
-      if (this._renameError(trimmed) !== null) return
-      this._finish({ action: 'rename', newName: trimmed })
-      return
-    }
-    this._finish({ action: 'replace' })
+    if (this._choice !== 'rename' || this._renameError(this._trimmed) === null) this._finish(true)
   }
+  _onChoiceChange = (e) => { this._choice = e.target.value }
+  _onNameInput = (e) => { this._newName = e.target.value }
+  _onNameKeydown = onEnter(() => this._onConfirm())
 
   _replaceHint() {
     const n = this.workspaceNames.length
-    if (n === 0) {
-      return html`<span class="lwd-option-hint">The local file will be overwritten.</span>`
-    }
+    if (n === 0) return 'The local file will be overwritten.'
     const label = n === 1
       ? html`workspace <strong>"${this.workspaceNames[0]}"</strong>`
       : html`<strong>${n}</strong> workspaces (${this.workspaceNames.join(', ')})`
-    // "When sync is online" rather than a flat "will be re-uploaded":
-    // `uploadReportToWorkspaces` rides the lazy sync wrapper, which
-    // no-ops when sync is disabled or the sync chunk isn't loaded yet.
-    // The local overwrite is unconditional; the upload isn't, so the
-    // conditional phrasing avoids promising a cloud update we can't
-    // always deliver.
-    return html`<span class="lwd-option-hint">
+    // "When sync is online": `uploadReportToWorkspaces` no-ops while sync is
+    // off or its chunk isn't loaded, though the local overwrite always runs.
+    return html`
       The local file will be overwritten. When sync is online, the new bytes are also uploaded to ${label} so the cloud copy matches.
-    </span>`
+    `
   }
 
-  // The rename rules, as the message to show when `trimmed` breaks one
-  // (null when it's acceptable). One source for both the inline error
-  // under the field and the Confirm button's disabled state, and for
-  // `_onConfirm`'s short-circuit of a stray Enter on an invalid candidate.
+  // The message for the rule `trimmed` breaks, or null. NUL separates
+  // `state.ignoredIds` keys and slashes break OPFS keys, both of which saveFile
+  // would reject behind a generic alert.
   _renameError(trimmed) {
     if (!trimmed) return 'Enter a new name.'
     if (trimmed === this.reportName) return 'Pick a name different from the original.'
-    // `saveFile` rejects NUL outright (the `\0` byte separates
-    // `state.ignoredIds` keys and would split entries at the wrong
-    // byte); slashes break OPFS keys. Surface these inline so the user
-    // doesn't pick an invalid name, hit Confirm, and get the generic
-    // `Failed to load: ...` alert from the addFiles fallback.
     if (trimmed.includes('\0')) return 'The new name cannot contain a NUL byte.'
     if (trimmed.includes('/') || trimmed.includes('\\')) return 'The new name cannot contain "/" or "\\".'
     if (this.existingNames.has(trimmed)) return `A file named "${trimmed}" already exists — pick something else.`
@@ -123,139 +60,63 @@ class ImportConflictDialog extends AppDialog {
   }
 
   render() {
-    const renameSelected = this._choice === 'rename'
-    const trimmed = (this._newName ?? '').trim()
-    const renameError = renameSelected ? this._renameError(trimmed) : null
-    const confirmDisabled = renameError !== null
-    const confirmLabel = renameSelected ? 'Rename' : 'Replace'
-    const confirmClass = renameSelected ? 'primary' : 'danger'
-    // Renaming saves under a fresh filename, which has no workspace
-    // attachment even if the colliding original was listed in one.
-    // Spell that out so the user isn't surprised when the renamed copy
-    // doesn't show up under the workspace's reports.
+    const renaming = this._choice === 'rename'
+    const renameError = renaming ? this._renameError(this._trimmed) : null
+    const option = { name: 'icd-choice', current: this._choice, change: this._onChoiceChange }
+    // A fresh filename has no workspace attachment.
     const renameHint = this.workspaceNames.length > 0
-      ? html`<span class="lwd-option-hint">Saved as an unfiled report — the renamed copy isn't added to any workspace.</span>`
+      ? optionHint('Saved as an unfiled report — the renamed copy isn\'t added to any workspace.')
       : nothing
-    return html`<dialog @close=${this._onClose}>
-      <header>
-        <h3>Import conflict</h3>
-      </header>
-      <p class="lwd-body">
-        <strong>"${this.reportName}"</strong> already exists with different content.
-      </p>
-      <fieldset class="lwd-choice">
+    return this.prompt({
+      title: 'Import conflict',
+      body: html`<strong>"${this.reportName}"</strong> already exists with different content.`,
+      notes: html`<fieldset class="lwd-choice">
         <legend>What should happen?</legend>
-        <label class="lwd-option">
-          <input
-            type="radio"
-            name="icd-choice"
-            value="replace"
-            ?checked=${this._choice === 'replace'}
-            @change=${this._onChoiceChange}
+        ${radioOption({ ...option, value: 'replace', title: 'Replace' }, optionHint(this._replaceHint()))}
+        ${radioOption({ ...option, value: 'rename', title: 'Rename to' }, html`<input
+            type="text"
+            class="nwd-input lwd-rename-input"
+            maxlength="200"
+            .value=${this._newName}
+            ?disabled=${!renaming}
+            @input=${this._onNameInput}
+            @keydown=${this._onNameKeydown}
+            @focus=${() => { this._choice = 'rename' }}
           >
-          <span class="lwd-option-text">
-            <span class="lwd-option-title">Replace</span>
-            ${this._replaceHint()}
-          </span>
-        </label>
-        <label class="lwd-option">
-          <input
-            type="radio"
-            name="icd-choice"
-            value="rename"
-            ?checked=${this._choice === 'rename'}
-            @change=${this._onChoiceChange}
-          >
-          <span class="lwd-option-text">
-            <span class="lwd-option-title">Rename to</span>
-            <input
-              type="text"
-              class="nwd-input lwd-rename-input"
-              maxlength="200"
-              .value=${this._newName}
-              ?disabled=${!renameSelected}
-              @input=${this._onNewNameInput}
-              @keydown=${this._onNewNameKeydown}
-              @focus=${() => { this._choice = 'rename' }}
-            >
-            ${renameHint}
-            ${renameError === null ? nothing : html`<p class="lwd-rename-error">${renameError}</p>`}
-          </span>
-        </label>
-      </fieldset>
-      <footer class="nwd-actions">
-        <span class="nwd-spacer"></span>
-        <button type="button" data-role="cancel" @click=${this._onCancel}>Cancel</button>
-        <button
-          type="button"
-          class=${confirmClass}
-          ?disabled=${confirmDisabled}
-          @click=${this._onConfirm}
-        >${confirmLabel}</button>
-      </footer>
-    </dialog>`
+          ${renameHint}
+          ${renameError === null ? nothing : html`<p class="lwd-rename-error">${renameError}</p>`}`)}
+      </fieldset>`,
+      action: renaming ? 'Rename' : 'Replace',
+      kind: renaming ? 'primary' : 'danger',
+      disabled: renameError !== null,
+    })
   }
 }
 
 customElements.define('import-conflict-dialog', ImportConflictDialog)
 
-// Public entry point. Resolves with:
-//   { action: 'replace' }
-//   { action: 'rename', newName }
-//   { action: 'cancel' }
-// Cancel / Esc / native close all resolve to `{ action: 'cancel' }`.
-//
-// The rename suggestion is computed up front so it seeds `_newName`
-// BEFORE the first render (see constructor: avoids a one-frame empty
-// input).
-//
-// Custom open helper rather than the shared `openAppDialog`: this
-// dialog can be invoked from `addFiles` while another modal is already
-// showing (e.g. the first-import passkey prompt, or a workspace-import
-// unlock dialog left up by an earlier drag). It isn't `exclusive`, so it
-// stacks on top and the user answers it there (see app-dialog.js). If
-// `showModal()` fails outright, though, `AppDialog.firstUpdated`
-// dispatches `modal-conflict`, and the shared helper only listens for
-// `resolve` — the element would stay parked on `<body>` with the promise
-// unresolved and the import flow would hang forever. Listening for
-// `modal-conflict` and collapsing to a cancel result keeps the flow
-// non-blocking; the user can re-drop.
+// Resolves `{ action: 'replace' | 'cancel' }` or `{ action: 'rename', newName }`.
+// Opened from `addFiles`, perhaps over another modal (it stacks); one that
+// can't show cancels, so the import flow doesn't hang and the user can re-drop.
 export function openImportConflictDialog({ name, workspaceNames, existingNames } = {}) {
   const existing = existingNames instanceof Set ? existingNames : new Set(existingNames ?? [])
-  return new Promise((resolve) => {
-    const el = document.createElement('import-conflict-dialog')
-    Object.assign(el, {
-      reportName: name ?? '',
-      workspaceNames: Array.isArray(workspaceNames) ? workspaceNames : [],
-      existingNames: existing,
-      _newName: suggestUniqueName(name ?? '', existing),
-    })
-    el.addEventListener('resolve', (e) => {
-      el.remove()
-      resolve(e.detail)
-    })
-    el.addEventListener('modal-conflict', () => {
-      el.remove()
-      resolve({ action: 'cancel' })
-    })
-    document.body.append(el)
-  })
+  return openAppDialog('import-conflict-dialog', {
+    reportName: name ?? '',
+    workspaceNames: Array.isArray(workspaceNames) ? workspaceNames : [],
+    existingNames: existing,
+    _newName: suggestUniqueName(name ?? '', existing),
+  }, { conflict: () => ({ action: 'cancel' }) })
 }
 
-// Derive a non-colliding name from `original` by inserting `-N`
-// before the final extension and bumping N until it's not in `taken`.
-// `-N` not " (N)": the latter clashes with browser download-duplicate
-// markers (see `stripDownloadDup` in ingest.js), so a renamed import
-// would look like a redownload to the drop router.
+// `original` with `-N` before its extension, N the first not in `taken`. Not
+// " (N)", which the drop router reads as a browser's download-duplicate marker
+// (`stripDownloadDup` in ingest.js). An existing `-N` is replaced, not stacked.
 function suggestUniqueName(original, taken) {
   if (typeof original !== 'string' || original.length === 0) return ''
   const dot = original.lastIndexOf('.')
-  // No extension (or a leading dot like ".hidden") — append the
-  // counter at the end so we don't change the "extension" segment.
+  // No extension, or a leading dot (".hidden"): the counter goes at the end.
   const stem = dot > 0 ? original.slice(0, dot) : original
   const ext = dot > 0 ? original.slice(dot) : ''
-  // Strip an existing `-N` suffix so re-renaming `foo-2.json` lands
-  // at `foo-3.json` (and so on) rather than `foo-2-2.json`.
   const baseStem = stem.replace(/-\d+$/u, '')
   for (let i = 2; i < 1000; i++) {
     const candidate = `${baseStem}-${i}${ext}`

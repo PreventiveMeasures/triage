@@ -1,24 +1,12 @@
-// `<persistence-degraded-dialog>` — informational popup shown when the
-// sync layer flips `persistenceDegraded` on (see
-// `client/sync/triage-session-store.ts`). Triage still works in-memory
-// this session but can't be written back to this browser, so it won't
-// survive a reload. The producer only `console.warn`s, so surface it
-// explicitly. Pairs with the amber ring on the sidebar's
-// `#sync-status` badge.
-//
-// Single-acknowledge dialog: extends `AppDialog` for the shared
-// shadow-DOM <dialog> chrome (focus-trap + Esc-to-close). The open
-// helper resolves `{ shown }` so the caller can retry if a
-// `modal-conflict` kept it from displaying.
+// Shown when sync turns `persistenceDegraded` on (client/sync/
+// triage-session-store.ts): triage works in memory but can't be written to
+// this browser, so it won't survive a reload, and the producer only warns in
+// the console. Pairs with the amber ring on the sidebar's `#sync-status`.
 import { html } from 'lit'
-import { AppDialog } from './app-dialog.js'
+import { AppDialog, openAppDialog } from './app-dialog.js'
 
 class PersistenceDegradedDialog extends AppDialog {
-  // No input field; the base `focusInitial()` default falls through
-  // to `button.primary` (the acknowledge button), so Enter/Esc both
-  // just dismiss.
-
-  _onConfirm = () => this._finish(true)
+  _onClose = () => this._finish({ shown: true })
 
   render() {
     return html`<dialog @close=${this._onClose}>
@@ -42,7 +30,7 @@ class PersistenceDegradedDialog extends AppDialog {
       </p>
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
-        <button type="button" class="primary" @click=${this._onConfirm}>Got it</button>
+        <button type="button" class="primary" @click=${this._onClose}>Got it</button>
       </footer>
     </dialog>`
   }
@@ -50,23 +38,8 @@ class PersistenceDegradedDialog extends AppDialog {
 
 customElements.define('persistence-degraded-dialog', PersistenceDegradedDialog)
 
-// Own open helper rather than the shared `openAppDialog`, so we settle
-// on `modal-conflict` too. The notice opens unprompted, so it's
-// `exclusive`: if another modal is already open when persistence
-// degrades, `AppDialog.firstUpdated` refuses to stack it on top and
-// dispatches `modal-conflict` instead of `resolve` — the shared helper
-// only listens for `resolve`, so it would hang forever and leak the
-// element. Resolve `{ shown }` and remove on BOTH paths so the promise
-// always settles and cleans up; `shown: false` (conflict, never
-// displayed) tells the caller to retry while still degraded so the
-// one-shot notice isn't skipped for the whole episode.
+// Opens unprompted, so never over another modal: `{ shown: false }` then, for
+// the caller to retry while still degraded.
 export function openPersistenceDegradedDialog() {
-  return new Promise((resolve) => {
-    const el = document.createElement('persistence-degraded-dialog')
-    el.exclusive = true
-    const settle = (shown) => { el.remove(); resolve({ shown }) }
-    el.addEventListener('resolve', () => settle(true))
-    el.addEventListener('modal-conflict', () => settle(false))
-    document.body.append(el)
-  })
+  return openAppDialog('persistence-degraded-dialog', {}, { exclusive: true, conflict: () => ({ shown: false }) })
 }

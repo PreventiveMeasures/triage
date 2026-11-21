@@ -1,25 +1,16 @@
-// `<workspace-export-dialog>` — pre-download prompt for the per-workspace
-// "Export workspace" affordance. Two tabs:
-//
-//   Export workspace   — the full portable workspace (reports + triage +
-//     repo URLs + bundle pointers + the private key). Password + confirm
-//     by default; opt-out is an explicit checkbox that disables the
-//     password fields, surfaces a warning, and relabels the primary
-//     button.
-//   Raw reports export — the report documents (each with the
-//     repository the user named for it, where they named one),
-//     gzipped, always unencrypted. The panel warns about everything
-//     the file leaves behind before the download fires. Dropped back
-//     in, it imports as those reports — the documents, without the
-//     triage it never carried (client/raw-reports-import.js).
-//
-// Extends `AppDialog` for the same shared shadow-DOM chrome the share-link
-// dialogs use.
+// Before a workspace's "Export workspace" download, in two tabs:
+//   Export workspace   — the portable workspace (reports, triage, repo URLs,
+//     bundle pointers, the private key), password-encrypted unless explicitly
+//     opted out, which warns and relabels the action.
+//   Raw reports export — the report documents (with the repository named for
+//     each), gzipped and never encrypted, warning what the file leaves behind.
+//     Dropped back in, it imports as those reports (client/raw-reports-import.js).
 import { html, nothing, unsafeCSS } from 'lit'
 import { buildRawReportsExportGzip, buildWorkspaceExportBundle } from '#client/index.js'
 import { downloadBlob } from '../dom.js'
-import { AppDialog, openAppDialogOrReject } from './app-dialog.js'
-import { dialogTabs } from './shared.js'
+import { dialogTabs } from '../header-tabs.js'
+import { AppDialog, openAppDialog, rejectStacked } from './app-dialog.js'
+import { field, onEnter, secretInput } from './shared.js'
 import shareCSS from './dialog-share.css'
 import tabsCSS from './dialog-tabs.css'
 
@@ -28,11 +19,12 @@ const TABS = [
   { id: 'raw', label: 'Raw reports export' },
 ]
 
+const count = (list) => (Array.isArray(list) ? list.length : 0)
+
 class WorkspaceExportDialog extends AppDialog {
   static styles = [...AppDialog.styles, unsafeCSS(shareCSS), unsafeCSS(tabsCSS)]
 
   static properties = {
-    workspace: { attribute: false },
     _tab: { state: true },
     _password: { state: true },
     _confirm: { state: true },
@@ -40,12 +32,13 @@ class WorkspaceExportDialog extends AppDialog {
     _includeBundleBytes: { state: true },
     _busy: { state: true },
     _error: { state: true },
-    _settled: { state: true },
   }
+
+  // The typed password, and the workspace (its private key) the open helper set.
+  static secrets = { _password: '', _confirm: '', workspace: null }
 
   constructor() {
     super()
-    this.workspace = null
     this._tab = 'workspace'
     this._password = ''
     this._confirm = ''
@@ -53,57 +46,20 @@ class WorkspaceExportDialog extends AppDialog {
     this._includeBundleBytes = false
     this._busy = false
     this._error = ''
-    this._settled = false
   }
 
-  // The base `focusInitial()` default focuses the first input — the
-  // password field on the (default) workspace tab — so no override is
-  // needed. Modal-conflict (another modal already open) is handled by
-  // the base `firstUpdated`, which dispatches `modal-conflict`; the
-  // open() wrapper wipes the wrapper-set `workspace` reference in that
-  // listener.
-
-  _finish(result) {
-    if (this._settled) return
-    // Drop sensitive state on every exit path, not just success.
-    // `_password` / `_confirm` carry the typed secret; `workspace`
-    // is the wrapper-set reference whose `.privateKey` flows into
-    // the encrypted bundle. Lit's reactive setter briefly retains
-    // the old value in its `_$changedProperties` Map until the next
-    // microtask, so the wipe doesn't fully erase until `el.remove()`
-    // detaches the host — but the property slot itself is empty
-    // immediately.
+  // Unmounting the password fields drops what was typed in them.
+  _forgetPassword() {
     this._password = ''
     this._confirm = ''
-    this.workspace = null
-    super._finish(result)
   }
 
-  _onClose = () => this._finish(null)
-  _onCancel = () => this._finish(null)
-
-  _reportCount() {
-    return Array.isArray(this.workspace?.reports) ? this.workspace.reports.length : 0
-  }
-
-  _bundleCount() {
-    return Array.isArray(this.workspace?.bundles) ? this.workspace.bundles.length : 0
-  }
-
-  // Tab switch. Blocked while an export is in flight so the primary
-  // button can't relabel (or `_onExport` re-enter) under the running
-  // build.
+  // Not while exporting, which would relabel the running action.
   _selectTab(tab) {
     if (this._busy || this._tab === tab) return
     this._tab = tab
     this._error = ''
-    // Same hygiene as the opt-out flip: leaving the workspace tab
-    // unmounts the password fields, so drop the typed-then-abandoned
-    // secret rather than keeping it live in a hidden state slot.
-    if (tab !== 'workspace') {
-      this._password = ''
-      this._confirm = ''
-    }
+    if (tab !== 'workspace') this._forgetPassword()
   }
 
   _onPasswordInput = (e) => { this._password = e.target.value; this._error = '' }
@@ -111,11 +67,7 @@ class WorkspaceExportDialog extends AppDialog {
   _onNoPasswordToggle = (e) => {
     this._noPassword = e.target.checked
     this._error = ''
-    // Wipe typed-then-abandoned password on opt-out flip.
-    if (this._noPassword) {
-      this._password = ''
-      this._confirm = ''
-    }
+    if (this._noPassword) this._forgetPassword()
   }
   _onIncludeBundleBytesToggle = (e) => {
     this._includeBundleBytes = e.target.checked
@@ -124,11 +76,8 @@ class WorkspaceExportDialog extends AppDialog {
 
   _canExport() {
     if (this._busy) return false
-    // Raw tab: nothing to collect, but an empty workspace has nothing
-    // to hand over either.
-    if (this._tab === 'raw') return this._reportCount() > 0
-    if (this._noPassword) return true
-    return (this._password ?? '').length > 0 && this._password === this._confirm
+    if (this._tab === 'raw') return count(this.workspace?.reports) > 0
+    return this._noPassword || (this._password.length > 0 && this._password === this._confirm)
   }
 
   _onExport = async () => {
@@ -147,44 +96,23 @@ class WorkspaceExportDialog extends AppDialog {
           password: this._noPassword ? undefined : this._password,
           includeBundleBytes: this._includeBundleBytes,
         })
-      // PBKDF2 takes hundreds of ms; the user may have hit Cancel in the
-      // meantime. Skip the download (and the success-resolve) if so.
+      // PBKDF2 takes a while: once cancelled, nothing downloads.
       if (this._settled) return
       downloadBlob(blob, filename)
       this._finish({ ok: true, tab })
     } catch (err) {
-      if (this._settled) return
-      this._error = err?.message ?? String(err)
+      if (!this._settled) this._error = err?.message ?? String(err)
     } finally {
       this._busy = false
     }
   }
 
-  _onKeydown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      this._onExport()
-    }
-  }
-
-  // The strip itself is shared with `<export-confirm-dialog>` — the
-  // markup, the roving tabindex and the arrow keys all live in
-  // dialogs/shared.js; this dialog supplies the labels and what a
-  // click means. The `wsl` prefix keeps the ids its panel is already
-  // labelled with.
-  _tabsTemplate() {
-    return dialogTabs({
-      tabs: TABS,
-      current: this._tab,
-      prefix: 'wsl',
-      disabled: this._busy,
-      select: (id) => this._selectTab(id),
-    })
-  }
+  _onKeydown = onEnter(this._onExport)
 
   _workspacePanel() {
-    const passwordsMatch = !this._password || !this._confirm || this._password === this._confirm
-    const bundleCount = this._bundleCount()
+    const mismatch = this._password && this._confirm && this._password !== this._confirm
+    const bundleCount = count(this.workspace?.bundles)
+    const password = (label, name, value, input) => field(label, secretInput({ name, value, input, keydown: this._onKeydown, disabled: this._noPassword }))
     return html`
       <p class="nwd-note ui-hint">
         The export file carries this workspace's reports, triage state,
@@ -193,42 +121,8 @@ class WorkspaceExportDialog extends AppDialog {
         password ensures only those with the password can attach the
         workspace after download.
       </p>
-      <label class="wsl-field">
-        <span>Password</span>
-        <input
-          type="password"
-          class="nwd-input"
-          autocomplete="off"
-          data-1p-ignore="true"
-          data-lpignore="true"
-          data-bwignore="true"
-          data-form-type="other"
-          name="dv-export-pw"
-          maxlength="1024"
-          ?disabled=${this._noPassword}
-          .value=${this._password}
-          @input=${this._onPasswordInput}
-          @keydown=${this._onKeydown}
-        >
-      </label>
-      <label class="wsl-field">
-        <span>Confirm password</span>
-        <input
-          type="password"
-          class="nwd-input"
-          autocomplete="off"
-          data-1p-ignore="true"
-          data-lpignore="true"
-          data-bwignore="true"
-          data-form-type="other"
-          name="dv-export-pw-confirm"
-          maxlength="1024"
-          ?disabled=${this._noPassword}
-          .value=${this._confirm}
-          @input=${this._onConfirmInput}
-          @keydown=${this._onKeydown}
-        >
-      </label>
+      ${password('Password', 'dv-export-pw', this._password, this._onPasswordInput)}
+      ${password('Confirm password', 'dv-export-pw-confirm', this._confirm, this._onConfirmInput)}
       <label class="wsl-optout">
         <input
           type="checkbox"
@@ -254,18 +148,16 @@ class WorkspaceExportDialog extends AppDialog {
           Only opt out when you control where the file goes.
         </p>
       ` : nothing}
-      ${!this._noPassword && !passwordsMatch
+      ${!this._noPassword && mismatch
         ? html`<p class="wsl-error" role="alert">Passwords don't match.</p>`
         : nothing}
     `
   }
 
-  // The bundle clause only appears when this workspace actually has
-  // bundles attached — naming blobs that don't exist would read as a
-  // warning about someone else's workspace.
+  // The bundle clause only where there are bundles: naming blobs that don't
+  // exist would read as a warning about someone else's workspace.
   _rawPanel() {
-    const reportCount = this._reportCount()
-    const bundleCount = this._bundleCount()
+    const bundleCount = count(this.workspace?.bundles)
     return html`
       <div class="wsl-error wsl-warning">
         <p>This is the raw form of the reports.</p>
@@ -281,63 +173,43 @@ class WorkspaceExportDialog extends AppDialog {
           read every report in it.
         </p>
       </div>
-      ${reportCount === 0
+      ${count(this.workspace?.reports) === 0
         ? html`<p class="wsl-error" role="alert">This workspace has no reports to export.</p>`
         : nothing}
     `
   }
 
-  _primaryLabel() {
-    if (this._busy) return 'Exporting…'
-    if (this._tab === 'raw') return 'Download reports'
-    return this._noPassword ? 'Export without password' : 'Export'
-  }
-
-  // The two paths that write an unencrypted file wear the critical
-  // colour: the raw export (never encrypted) and the workspace export
-  // with the password opted out.
-  _primaryDanger() {
-    return this._tab === 'raw' || this._noPassword
-  }
-
-  _body() {
-    return html`
+  render() {
+    const raw = this._tab === 'raw'
+    const label = this._busy ? 'Exporting…' : raw ? 'Download reports' : this._noPassword ? 'Export without password' : 'Export'
+    // The tab strip is the header; a title would repeat the first tab. The
+    // two actions writing an unencrypted file wear the critical colour.
+    return html`<dialog @close=${this._onClose}>
+      <header>${dialogTabs({ tabs: TABS, current: this._tab, prefix: 'wsl', disabled: this._busy, select: (id) => this._selectTab(id) })}</header>
       <div
         role="tabpanel"
         id=${`wsl-panel-${this._tab}`}
         aria-labelledby=${`wsl-tab-${this._tab}`}
-      >${this._tab === 'raw' ? this._rawPanel() : this._workspacePanel()}</div>
+      >${raw ? this._rawPanel() : this._workspacePanel()}</div>
       ${this._error ? html`<p class="wsl-error" role="alert">${this._error}</p>` : nothing}
       <footer class="nwd-actions">
         <span class="nwd-spacer"></span>
         <button type="button" @click=${this._onCancel}>Cancel</button>
         <button
           type="button"
-          class=${this._primaryDanger() ? 'primary danger' : 'primary'}
+          class=${raw || this._noPassword ? 'primary danger' : 'primary'}
           ?disabled=${!this._canExport()}
           @click=${this._onExport}
-        >${this._primaryLabel()}</button>
+        >${label}</button>
       </footer>
-    `
-  }
-
-  render() {
-    // The tab strip IS the header — a title above it would only repeat
-    // the first tab's label.
-    return html`<dialog @close=${this._onClose}>
-      <header>${this._tabsTemplate()}</header>
-      ${this._body()}
     </dialog>`
   }
 }
 
 customElements.define('workspace-export-dialog', WorkspaceExportDialog)
 
-// Resolves to `{ ok: true, tab }` after the download fires, or `null`
-// on cancel. Rejects when another modal is already open so the caller
-// can surface a contextual error.
+// Resolves `{ ok: true, tab }` once the download fires, or null on cancel.
+// Rejects when another modal is open, so the caller can say so.
 export function openWorkspaceExportDialog({ workspace } = {}) {
-  // Wipe the wrapper-set `workspace` (carrying `.privateKey`) on
-  // modal-conflict before detaching.
-  return openAppDialogOrReject('workspace-export-dialog', { workspace: workspace ?? null }, (el) => { el.workspace = null })
+  return openAppDialog('workspace-export-dialog', { workspace: workspace ?? null }, { exclusive: true, conflict: rejectStacked })
 }
