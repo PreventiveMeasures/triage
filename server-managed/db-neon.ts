@@ -140,8 +140,9 @@ async function migrateFrom12(db: PgConnection): Promise<void> {
   // before; each author's one draft of a comparison held to it too.
   await migration(db, 36, `ALTER TABLE managed_dependency_review ${addColumns(DEPENDENCY_REVIEW_COLUMNS)}`, DEPENDENCY_REVIEW_INDEXES)
   // When a dependency review was last published to a team, none of those
-  // published before.
-  await migration(db, 37, `ALTER TABLE managed_dependency_review ${addColumns(DEPENDENCY_REVIEW_COLUMNS)}`)
+  // published before: a time in milliseconds, so BIGINT, as postgresSchema
+  // makes SQLite's INTEGER.
+  await migration(db, 37, postgresSchema(`ALTER TABLE managed_dependency_review ${addColumns(DEPENDENCY_REVIEW_COLUMNS)}`))
 }
 
 async function initialize(db: PgConnection): Promise<void> {
