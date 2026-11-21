@@ -104,7 +104,7 @@ function told(answer) {
     : wanted > 0 ? html`<span class="bundle-review-state is-wanted">${wanted.toLocaleString('en-US')} to review</span>`
     : html`<span class="bundle-review-state is-passed">${CHECKS.success[1]}Passes</span>`
   const said = failing.length > 0 ? `${failing.join(', ')}${wanted > 0 ? `; ${wanted.toLocaleString('en-US')} to review` : ''}, ${of}`
-    : wanted > 0 ? of : `${plural(answer.versions, 'npm version')}, each reviewed or needing none`
+    : wanted > 0 ? of : plural(answer.versions, 'npm version')
   const listed = [...failed?.versions ?? [], ...answer.unlocked, ...wanting]
   const more = Math.max(0, (failed?.count ?? 0) - (failed?.versions.length ?? 0)) + answer.moreUnlocked + Math.max(0, wanted - wanting.length)
   return { chip, said, listed, more, unread }

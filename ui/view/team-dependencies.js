@@ -359,7 +359,7 @@ const prioritized = (items, of = item => item) => items.toSorted((a, b) => rank(
 const few = (names, more = names.length - 1) => `${names[0]}${more > 0 ? ` +${more}` : ''}`
 
 // What a version its package manager alone asks for says of that.
-const UNREACHED_SAID = 'by its lockfile alone: the stasis.config.json beside it reaches it by no entry'
+const UNREACHED_SAID = 'by the lockfile only, not stasis.config.json'
 
 // The reader's own review of a version, as its row's tooltip and mark say
 // it: its verdict, and whether it is partial.
