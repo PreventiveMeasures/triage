@@ -160,7 +160,10 @@ export function askedOf(pkg: LockedPackage): [string, ReviewedDependency] {
 // nor needing none, as only one that can be reviewed may.
 type Review = { unsupported: Unsupported } | { baseline: true } | { reviewed: true } | { reviews: number; rejected?: true; commented?: number; reviewers?: Reviewer[] }
   | Record<string, never>
-interface Judged { review: Review; wants: boolean }
+// The reader's own latest published review of a version, whether or not it
+// counts (`yours`): its verdict, and whether it is partial.
+type Yours = { status: PublishedReview['status']; partial?: true }
+interface Judged { review: Review; wants: boolean; yours?: Yours }
 type Judge = (pkg: LockedPackage, bases: string[] | 'any') => Judged
 // One of npm's registry locked with no integrity passes where the host's
 // `lookup` passed it as it is (`vouched`, by what it was asked).
@@ -210,11 +213,12 @@ function reviewedDirectory(dir: DirectoryDependencies, review: Judge | null, bas
   // Each row against the base of the way it is locked that it is told by.
   const row = ({ pkg, judged }: (typeof own)[number]) => {
     const { base: _base, ...rest } = shown(pkg as AddedPackage), { base } = judged.variant as AddedPackage
-    return { ...rest, ...base ? { base } : {}, ...judged.review }
+    return { ...rest, ...base ? { base } : {}, ...judged.review, ...judged.yours ? { yours: judged.yours } : {} }
   }
   return { ...told, ...baseless ? { more: Math.max(0, listed.length - MAX_ADDED) } : {}, added: listed.slice(0, MAX_ADDED).map(row),
     toReview: own.flatMap(({ wanting }) => wanting.map(shown)),
-    unreviewed: others.filter(({ judged }) => judged.wants).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review })), unsupported, moreLocked }
+    unreviewed: others.filter(({ judged }) => judged.wants).map(({ pkg, judged }) => ({ ...shown(pkg), ...judged.review, ...judged.yours ? { yours: judged.yours } : {} })),
+    unsupported, moreLocked }
 }
 function capped<T extends { toReview: unknown[]; unreviewed: unknown[]; unsupported: unknown[] }>({ toReview: _toReview, ...dir }: T) {
   return { ...dir, unreviewed: dir.unreviewed.slice(0, MAX_UNREVIEWED), moreUnreviewed: Math.max(0, dir.unreviewed.length - MAX_UNREVIEWED),
@@ -259,7 +263,8 @@ export function heldDependencies<T extends PullDependencies>(told: T, scope: Loc
 
 // A pull request's dependencies as the client is told them: without the
 // versions its directories lock; with `state`, a repository's review in
-// effect, each version's review (reviewedDirectory), those wanting one asked
+// effect, each version's review (reviewedDirectory), with `user`'s own
+// latest published review of it, whether it counts or not (`yours`), those wanting one asked
 // of the registered reviewed dependencies (`reviewed`), those they don't pass
 // of their `base` (onto `namedBases`), and those still
 // wanting one of the reviews its comments make (`commentReviews`, where the
@@ -281,9 +286,9 @@ export function heldDependencies<T extends PullDependencies>(told: T, scope: Loc
 // lockfiles the review holds to (`lockfiles`, lockfile-scope.ts, told in its
 // terms where not every one) are left out (heldDependencies).
 export async function reviewedDependencies(told: PullDependencies, state: RepoReviewState | null,
-  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null, namedBases = new Map(), wantedIn = new Map() }: { baseline?: Set<string> | null
-    baselineUnread?: string[]; baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null; namedBases?: Map<string, ReviewedBase>
-    wantedIn?: Map<string[], number> } = {}) {
+  { baseline = null, baselineUnread = [], baselineError = null, reviewed = null, commentReviews = null, namedBases = new Map(), wantedIn = new Map(), user = null }: {
+    baseline?: Set<string> | null; baselineUnread?: string[]; baselineError?: string | null; reviewed?: ReviewedDependencies | null; commentReviews?: CommentReviews | null
+    namedBases?: Map<string, ReviewedBase>; wantedIn?: Map<string[], number>; user?: string | null } = {}) {
   const scope = state?.lockfiles ?? EVERY_LOCKFILE
   const answered = heldDependencies(told, scope)
   const baseless = told.baseless === true
@@ -344,9 +349,18 @@ export async function reviewedDependencies(told: PullDependencies, state: RepoRe
     context = { ...context, reviews: reviewsByVersion([...published, ...comments.reviews.map(review => ({ ...review, comment: true as const }))]) }
     await ask(new Map([...wanting()].filter(([key]) => !asked.has(key))))
   }
+  // `user`'s own published reviews, each version told its latest of them
+  // whatever it was compared with, and whether or not it counts: one they
+  // reviewed that wants reviews still, others' or the host's, is labelled
+  // theirs.
+  const mine = reviewsByVersion(user ? state.reviews.filter(review => review.id !== undefined && review.reviewer === user) : [])
+  const yours = (pkg: LockedPackage) => {
+    const latest = reviewsOf(pkg, mine).reduce<PublishedReview | null>((one, other) => one && one.time >= other.time ? one : other, null)
+    return latest ? { yours: { status: latest.status, ...latest.full ? {} : { partial: true as const } } } : {}
+  }
   const dirs = held.map(dir => reviewedDirectory(dir, (pkg, bases) => {
     const judged = judge(pkg, bases, context)
-    return judged.wants && passed.has(askedOf(pkg)[0]) ? { review: { reviewed: true }, wants: false } : judged
+    return { ...judged.wants && passed.has(askedOf(pkg)[0]) ? { review: { reviewed: true as const }, wants: false } : judged, ...yours(pkg) }
   }, baseless, vouching.passed))
   const unread = baselineUnread.filter(path => heldTo(scope, path))
   const listed = dirs.filter(dir => 'unreviewed' in dir)

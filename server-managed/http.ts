@@ -2662,7 +2662,7 @@ async function pullDependencyAnswer(deps: ManagedHttpDeps, fullName: string, tok
   // Each patch its lockfiles name by its hash alone with its file (npm-patch.ts), where its review is in effect.
   const patched = state ? await withPatchFiles(told, repoId, fullName, token, patchStore(deps.db, deps.config.debug), asked) : told
   const bases = new Map<string, ReviewedBase>(), wantedIn = new Map<string[], number>()
-  const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting, namedBases: bases,
+  const dependencies = await reviewedDependencies(patched, state, { baseline, baselineUnread: unread, baselineError: error, reviewed, commentReviews: noting, namedBases: bases, user: user.id,
     wantedIn })
   askBuilds(deps, wanted, wantedIn, wants)
   // The comment the host formats of the reader's reviews of its versions, for
@@ -2775,7 +2775,7 @@ async function branchDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   const reviewed = deps.reviewedDependencies ?? null
   const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null }
     : await baselineFor(fullName, token, repoId, state, baselineKept(deps), reads, asked)
-  return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed }), kept: !asked.github }
+  return { value: await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed, user: user.id }), kept: !asked.github }
 }
 
 // GET /api/admin/repositories/lockfiles: the lockfiles of the repository's
@@ -3752,7 +3752,7 @@ async function bundleDependencyAnswer(deps: ManagedHttpDeps, fullName: string, t
   const reviewed = deps.reviewedDependencies ?? null
   const { baseline, unread: baselineUnread, error } = reviewed ? { baseline: null, unread: [], error: null }
     : await baselineFor(fullName, token, repoId, state, baselineKept(deps), reads, asked)
-  const { base: _base, ...answer } = await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed })
+  const { base: _base, ...answer } = await reviewedDependencies(told, state, { baseline, baselineUnread, baselineError: error, reviewed, user: user.id })
   return { value: { ...answer, ...bundle }, kept: !asked.github }
 }
 

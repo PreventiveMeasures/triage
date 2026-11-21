@@ -38,6 +38,7 @@ import { openRepositoryItemDialog } from './lazy-dialogs.js'
 import { icon } from './repository-tiles.js'
 import { sourcePackageIcon } from './source-file-icon.js'
 import { dialogTabs } from './header-tabs.js'
+import { verdictIcon, verdictLabels } from './npm-review-presentation.js'
 import { withCompare } from './compare-load.js'
 import { reviewBase, seedNpmDeltas } from './npm-delta.js'
 import { githubUser, githubUserName, knowGithubUsers } from './github-users.js'
@@ -357,6 +358,10 @@ const few = (names, more = names.length - 1) => `${names[0]}${more > 0 ? ` +${mo
 // What a version its package manager alone asks for says of that.
 const UNREACHED_SAID = 'by its lockfile alone: the stasis.config.json beside it reaches it by no entry'
 
+// The reader's own review of a version, as its row's tooltip and mark say
+// it: its verdict, and whether it is partial.
+const yoursSaid = ({ status, partial }) => `${verdictLabels[status]}${partial ? ', partial' : ''}`
+
 // A version's details, its row's tooltip, formatted: its ecosystem's icon,
 // its name and version whole, as its row may cut them short, tagged where
 // it is patched, as Review's version selector tags it; where it is from, other
@@ -376,7 +381,7 @@ function versionTip(pkg, review, { under, lacks, involved, here }) {
     pkg.patch ? ['Patch', html`<code class="team-deps-tip-hash">${pkg.patch.hash}</code>`] : null,
     pkg.patch ? ['Patch file', pkg.patch.path ?? 'not known, so reviews here can’t read it'] : null,
     pkg.unreached ? ['Asked for', UNREACHED_SAID] : null,
-    stance ? ['Review', stance.said ?? stance.label] : null, under ? ['Listed', `under ${under}`] : null,
+    stance ? ['Review', stance.said ?? stance.label] : null, pkg.yours ? ['Your review', yoursSaid(pkg.yours)] : null, under ? ['Listed', `under ${under}`] : null,
     lacks.length > 0 ? ['Lacks', lacks.map(one => `${isReader(one) ? 'your' : `${githubUserName(one.login)}’s`} review in ${one.where.join(', ')}`).join('; ')] : null]
     .filter(Boolean)
   const reviewers = new Map()
@@ -441,7 +446,8 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
     ${under ? html`<span class="team-deps-under">${under}</span>` : nothing}
     ${lacking.length > 0 ? html`<span class="team-deps-lacks">${few(lacking)}</span>` : nothing}
     ${inReview.length > 0 ? html`<span class="team-deps-elsewhere">${few(inReview)}</span>` : nothing}
-    ${unnamed.length > 0 ? html`<span class="team-deps-also">${adders ? few(unnamed) : `+${others.length}`}</span>` : nothing}`
+    ${unnamed.length > 0 ? html`<span class="team-deps-also">${adders ? few(unnamed) : `+${others.length}`}</span>` : nothing}
+    ${pkg.yours ? html`<span class="team-deps-yours" role="img" aria-label=${`Your review: ${yoursSaid(pkg.yours)}`}>${verdictIcon(pkg.yours.status)}</span>` : nothing}`
   const behind = lacks.length > 0 ? ' is-behind' : ''
   return html`<li>${href ? html`<a class="team-deps-row${behind}" href=${href} target="_blank" rel="noopener noreferrer" data-tooltip=${named} .tooltipContent=${tip}>${label}</a>`
     : html`<span class="team-deps-row${behind}" data-tooltip=${named} .tooltipContent=${tip}>${label}</span>`}</li>`
@@ -732,7 +738,7 @@ class TeamDependencies extends StateElement {
             : pull.failed ? html`<span class="team-deps-count is-failed">review fails</span>`
             : pull.size === 0 ? html`<span class="team-deps-count is-wanted">${plural(pull.others, 'other version')} unreviewed</span>`
             : pull.toReview > 1 ? html`<span class="team-deps-count">${pull.toReview.toLocaleString('en-US')} deps</span>` : nothing}
-        </a>${pull.entry.formatted ? html`<dependency-review-copy .text=${pull.entry.formatted} .label=${'Copy your dependency reviews of its versions'}></dependency-review-copy>`
+        </a>${pull.entry.formatted ? html`<dependency-review-copy .text=${pull.entry.formatted} .label=${'Copy your dependency reviews'}></dependency-review-copy>`
           : nothing}</div>
         ${opened ? html`${this.rows(`${key}:own`, listed, row(pull))}
         ${pull.untold > 0 ? html`<p class="team-deps-quiet">and ${plural(pull.untold, 'more version')} past those listed</p>` : nothing}

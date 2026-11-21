@@ -1368,7 +1368,7 @@ test('a bundle\'s npm versions, where its repository\'s review is in effect, are
     + ' stray by a sibling\'s alone')
   await publish(db, users.alice, context('ms', '2.1.3'), ['one'], { status: 'reject' })
   assert.deepEqual((await ask()).body.lockfiles[0].unreviewed, [{ name: 'ms', version: '2.1.3', source: 'registry', reviews: 0, rejected: true,
-    reviewers: [{ login: 'alice', status: 'reject' }] }], 'its reviewer\'s latest rejecting it')
+    reviewers: [{ login: 'alice', status: 'reject' }], yours: { status: 'reject' } }], 'its reviewer\'s latest rejecting it, the asker\'s own told as theirs')
   const before = globalThis.fetch.mock.callCount()
   await ask()
   assert.equal(globalThis.fetch.mock.callCount() - before, 1, 'its lockfiles and baseline kept: its access asked once, not again')
@@ -1437,4 +1437,39 @@ test('where the host reads reviews of pull requests\' comments, those published 
     assert.deepEqual(await told(pull, { reviewed, commentReviews: () => Promise.resolve({ reviews: [comment], failed: false }) }), [1, ['bob in comments'], true])
   }
   assert.deepEqual(state.reviews, [published], 'kept as read, for its author to copy')
+})
+
+test('each version is told the asker\'s own latest published review of it, whether or not it counts, partial ones so; none of another\'s', async () => {
+  const pkg = (name, more) => ({ name, version: '1.1.0', source: 'registry', integrity: sri(`${name}@1.1.0`), lockfile: 'npm', ...more })
+  const review = (name, more) => ({ id: `${name}-${more.reviewer}-${more.time}`, package: name, version: '1.1.0', integrity: sri(`${name}@1.1.0`), basePackage: null, baseVersion: null,
+    login: more.reviewer, status: 'accept', full: true, ...more })
+  const state = { required: 2, since: null, canReview: true, lockfiles: { mode: 'exclude', paths: [] }, reviews: [
+    // Mine twice, the later rejecting it; another's of it too.
+    review('twice', { reviewer: 'me', time: 1 }), review('twice', { reviewer: 'me', time: 5, status: 'reject' }), review('twice', { reviewer: 'them', time: 9 }),
+    // Mine compared with a version the pull request doesn't replace, which counts for nothing there.
+    review('against', { reviewer: 'me', time: 1, basePackage: 'against', baseVersion: '0.1.0' }),
+    // Mine partial, which counts for nothing yet.
+    review('partial', { reviewer: 'me', time: 1, full: false, status: 'accept-with-nits' }),
+    // Another's alone.
+    review('theirs', { reviewer: 'them', time: 1 }),
+    // Mine of another integrity than it is locked with.
+    { ...review('other', { reviewer: 'me', time: 1 }), integrity: sri('elsewhere') },
+    // Mine of one it but locks, already there.
+    review('locked', { reviewer: 'me', time: 1 }),
+  ] }
+  const added = ['twice', 'against', 'partial', 'theirs', 'other'].map(name => pkg(name))
+  const told = { cut: false, lockfiles: [{ paths: ['package-lock.json'], more: 0, moreLocked: 0, added, locked: [...added, pkg('locked')] }] }
+  const yours = answer => Object.fromEntries([...answer.lockfiles[0].added, ...answer.lockfiles[0].unreviewed].map(one => [one.name, one.yours ?? null]))
+  const expected = { twice: { status: 'reject' }, against: { status: 'accept' }, partial: { status: 'accept-with-nits', partial: true }, theirs: null, other: null, locked: { status: 'accept' } }
+  assert.deepEqual(yours(await reviewedDependencies(told, state, { user: 'me' })), expected)
+  const counted = await reviewedDependencies(told, state, { user: 'me' })
+  assert.deepEqual(counted.lockfiles[0].added.map(one => [one.name, one.reviews]), [['twice', 1], ['against', 0], ['partial', 0], ['theirs', 1], ['other', 0]], 'counting as it did')
+  // A host reading comments, under which none published here counts: told all the same.
+  const reviewed = { lookup: () => Promise.resolve(false), parseComments: () => Promise.resolve([]) }
+  const byComments = await reviewedDependencies(told, state, { user: 'me', reviewed })
+  assert.deepEqual(yours(byComments), expected)
+  assert.ok(byComments.lockfiles[0].added.every(one => one.reviews === 0), 'though none of them counts')
+  // No asker, or another: none told as theirs.
+  assert.ok(Object.values(yours(await reviewedDependencies(told, state))).every(one => one === null))
+  assert.deepEqual(yours(await reviewedDependencies(told, state, { user: 'them' })).twice, { status: 'accept' })
 })

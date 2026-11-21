@@ -173,7 +173,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
     String.raw`<span>kay</span>\s*<span>accepts, in a#1’s comments</span></div>\s*</div>>`, 'u'),
   'its details its tooltip, formatted: its name and version whole, those present before, its review, the one listing it; the pull requests adding it, each with its review there, ' +
   'the one it is listed under marked; and who reviews it, where')
-  assert.match(cards[0], /<\/a><dependency-review-copy \.text=Reviewed rej \.label=Copy your dependency reviews of its versions><\/dependency-review-copy><\/div>/u,
+  assert.match(cards[0], /<\/a><dependency-review-copy \.text=Reviewed rej \.label=Copy your dependency reviews><\/dependency-review-copy><\/div>/u,
     'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
   assert.doesNotMatch(cards.slice(1).join(''), /dependency-review-copy/u, 'none where it formats none')
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
@@ -759,4 +759,30 @@ test('a row\'s tooltip names its ecosystem before it, and the pull requests addi
   assert.match(text, /<div class="team-deps-tip-name"><svg class="bundle-code-tree-npm"[^]*?<\/svg><span>ms@2\.1\.3<\/span><\/div>/u)
   const rows = [...text.matchAll(/\[object Object\]([^<]+)<\/span>\s*<span>([^<]*)<\/span>/gu)].map(([, name, said]) => `${name} ${said}`)
   assert.deepEqual(rows, ['a#1 adds it, 0/2', 'b#9 on the base branch', 'b#10 on the base branch', 'c#3 on the base branch, 1/2'])
+})
+
+test('a version the reader reviewed, still wanting reviews, others\' or the host\'s, is marked with their review\'s verdict at its row\'s end and in its tooltip; one they reviewed not, not', async () => {
+  TEAM.push(16)
+  branches[16] = { cut: false, review: { ...terms, unreviewed: 1 }, lockfiles: [dir({ unreviewed: [wants('kept', { yours: { status: 'request-changes' } })] })] }
+  pulls[16] = { items: [pull(1)], more: false }
+  dependencies['16#1'] = { cut: false, review: terms, lockfiles: [dir({ added: [wants('mine', { reviews: 1, yours: { status: 'accept' } }), wants('nits', { yours: { status: 'accept-with-nits', partial: true } }),
+    wants('plain'), wants('odd', { yours: { status: 'maybe' } })] })] }
+  Object.assign(state, { managedSession: { id: 'yours', role: 'triage' }, teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
+  try {
+    const view = shown([repo(16, 'org/own')])
+    const text = await read(view)
+    const row = name => text.split('<li>').find(one => one.includes(`data-tooltip=${name}@`))
+    assert.match(row('mine'), /1\/2<\/span>\s*<span class="team-deps-yours" role="img" aria-label=Your review: Accept><span class=npm-review-verdict-icon accept aria-hidden="true">✓<\/span><\/span><\/a>/u,
+      'its verdict\'s icon after everything else on its row, named')
+    assert.match(row('mine'), /<span class="compare-tip-label">Your review<\/span><span>Accept<\/span>/u, 'and said in its tooltip')
+    assert.match(row('nits'), /aria-label=Your review: Accept with nits, partial><span class=npm-review-verdict-icon accept-with-nits /u, 'a partial one told so')
+    assert.doesNotMatch(row('plain') + row('odd'), /team-deps-yours|>Your review</u, 'none where they reviewed it not, nor of a verdict not one')
+    view.pick('branch')
+    assert.match(templateText(view.render()).split('<li>').find(one => one.includes('data-tooltip=kept@')), /aria-label=Your review: Request changes>/u, 'its default branch\'s too')
+    view.pick('versions')
+    assert.match(templateText(view.render()).split('<li>').find(one => one.includes('data-tooltip=mine@')), /class="team-deps-yours"/u, 'and Versions\'')
+  } finally {
+    Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
+    routes.length = 0
+  }
 })
