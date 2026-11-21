@@ -994,8 +994,9 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   max-width: 1100px;
 }
 
-/* Code panel: path bar over a scrolling source, in its own glass card. */
-.focus-pane-code { display: flex; flex-direction: column; }
+/* Code panel: path bar over a scrolling source, in its own glass card. Its
+   overflow: hidden is restated after .focus-pane's overflow-y: auto, to win. */
+.focus-pane-code { display: flex; flex-direction: column; overflow: hidden; }
 .focus-code-bar {
   flex-shrink: 0;
   padding: .35rem .55rem;

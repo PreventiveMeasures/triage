@@ -214,7 +214,8 @@ const affectedFiles = paths => (paths ? (paths.length > AFFECTS_LISTED ? `\nAffe
 
 const action = (label, run) => html`<button type="button" class="bundle-compare-code-action" @click=${run}>${label}</button>`
 // What a file shows in place of a diff, and what it offers.
-const message = (text, ...more) => html`<div class="bundle-compare-code-message"><p>${text}</p>${more}</div>`
+// A space between the parts after the first, as the built templates had.
+const message = (text, ...more) => html`<div class="bundle-compare-code-message"><p>${text}</p>${more.map((part, i) => i ? [' ', part] : part)}</div>`
 const size = value => formatBytes(value ?? 0)
 // A file's size, or its two sides', by its kind of change.
 const sizes = (kind, before, after) => kind === 'added' ? size(after) : kind === 'removed' ? size(before) : `${size(before)} → ${size(after)}`
@@ -1606,13 +1607,13 @@ export class BundleCompareCode extends LitElement {
 
   _fold(row, lit) {
     const more = `Show ${EXPAND_STEP} more lines`, some = row.count > EXPAND_STEP
-    const buttons = [some && row.down && ['top', `${more} below`, more, 'M8 3v9m-4-4 4 4 4-4'], some && row.up && ['bottom', `${more} above`, more, 'M8 13V4M4 8l4-4 4 4'],
-      ['all', `Show all ${row.count} unchanged lines`, 'Show all', 'm4 6 4-4 4 4M4 10l4 4 4-4']].filter(Boolean)
+    const button = (change, label, tooltip, path) => html`<button type="button" aria-label=${label} data-tooltip=${tooltip} @click=${() => lit.expand(row.run, change)}>
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${path}></path></svg>
+        </button>`
     return html`<div class="diff-row diff-fold" role="row">
       <span class="diff-fold-actions">
-        ${buttons.map(([change, label, tooltip, path]) => html`<button type="button" aria-label=${label} data-tooltip=${tooltip} @click=${() => lit.expand(row.run, change)}>
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d=${path}></path></svg>
-        </button>`)}
+        ${some && row.down ? button('top', `${more} below`, more, 'M8 3v9m-4-4 4 4 4-4') : nothing} ${some && row.up ? button('bottom', `${more} above`, more, 'M8 13V4M4 8l4-4 4 4') : nothing} ${
+          button('all', `Show all ${row.count} unchanged lines`, 'Show all', 'm4 6 4-4 4 4M4 10l4 4 4-4')}
       </span>
       <span class="diff-fold-label">${row.count.toLocaleString()} unchanged ${row.count === 1 ? 'line' : 'lines'} · ${row.b + 1}–${row.b + row.count}</span>
     </div>`

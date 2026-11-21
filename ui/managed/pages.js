@@ -1283,7 +1283,13 @@ class ManagedAdminBundles extends ManagedUploadsPage {
         return
       }
       if (!globalThis.confirm?.(bundleDeletion(b, usage))) return
-      await this._attempt('Delete failed', () => this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources']))
+      // Not _attempt: the error was cleared before the usage read, and one
+      // shown since (a visibility change, an upload) stays through the delete.
+      try {
+        await this.appState.mutate(() => deleteBundle(b.id, this._csrf), ['bundles', 'bundle-metadata', 'reports', 'repo-impact', 'history', 'scan-sources'])
+      } catch (err) {
+        this._error = `Delete failed: ${String(err?.message ?? err)}`
+      }
       await this._load({ preserveError: true })
     } finally { this._deleting = null }
   }
