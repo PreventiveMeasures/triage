@@ -182,28 +182,26 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.match(cards[1], />b#6<[^]*class="team-deps-count">3 deps<[^]*and 3 more versions past those listed</u, 'one whose versions wanting reviews aren\'t listed kept')
   assert.doesNotMatch(cards[1], /<li>/u)
   assert.match(cards[2], />a#1<[^]*class="team-deps-count is-failed">review fails</u)
-  assert.equal(cards[2].split('<li>').length - 1, 12, 'as many as SHOWN_VERSIONS of its own')
+  assert.equal(cards[2].split('<li>').length - 1, 15, 'all of its own, as many as a list shows whole')
   assert.doesNotMatch(cards[2], /fine@/u, 'nor one passed')
-  assert.match(cards[2], /<a class="team-deps-row" href=\/npm\/shared@1\.0\.0\/review [^]*<span class="team-deps-review is-wanted">1\/2<\/span>\s*<span class="team-deps-also">\+1<\/span>[^]*aria-expanded=false [^]*<\/svg>and 3 more<\/button>/u,
+  assert.match(cards[2], /<a class="team-deps-row" href=\/npm\/shared@1\.0\.0\/review [^]*<span class="team-deps-review is-wanted">1\/2<\/span>\s*<span class="team-deps-also">\+1<\/span>/u,
     'the one holding every review made of it lists it, as it was, whoever is shown first: how many reviews it has, whose in its tooltip')
-  assert.equal(cards[2].split('aria-expanded').length - 1, 1)
+  assert.equal(cards[2].split('aria-expanded').length - 1, 0, 'none of them behind more')
   assert.match(cards[2], /data-tooltip=shared@1\.0\.0 \.tooltipContent=[^]*<span class="compare-tip-label">Review<\/span><span>1 review of 2 required; 1 reviewer in its comments<\/span><\/div>[^]*<span class=team-deps-tip-pull team-deps-tip-here>\[object Object\]a#1<\/span>[^]*<span>kay<\/span>\s*<span>accepts, in a#1’s comments<\/span>/u,
     'its tooltip telling neither a review it lacks nor another listing it')
 
-  // Each list past those shown opened, and closed again.
-  for (const key of ['org/a#1:own', 'org/a#9:others']) view.toggle(key)
+  // A list apart opened, and closed again.
+  view.toggle('org/a#9:others')
   assert.deepEqual(widths(templateText(view.render())), ['column', 'column', 'column', 'column'], 'one whose list is opened a column wide still')
   const expanded = cardsOf(templateText(view.render()))
-  assert.equal(expanded[2].split('<li>').length - 1, 15, 'all its own')
-  assert.match(expanded[2], /gitdep[^]*<\/svg>Show fewer<\/button>/u)
   assert.match(expanded[3], /aria-expanded=true [^]*href=\/npm\/old@1\.0\.0\/review [^]*and 2 more, not listed</u, 'those its lockfiles locked before, as many as it tells')
   assert.doesNotMatch(expanded.join(''), /team-deps-review[^>]*data-tooltip|>0\/2<\/span>\s*<span class="team-deps-(?:also|lacks)/u, 'no badge with a tooltip of its own, its row\'s telling it; none of no reviews')
   assert.match(expanded[3], /data-tooltip=pat@1\.0\.0 \(patched\) \.tooltipContent=[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u, 'a patched one\'s reviewers in its own comments')
   assert.match(expanded[3], new RegExp(`href=/npm/pat@1\\.0\\.0/review\\?patch=${patch.hash}&repo=7&commit=${'e'.repeat(40)}&path=patches/pat%401\\.0\\.0\\.patch `, 'u'),
     'a patched one reviewed as patched, its patch read of its repository at the commit its lockfiles were read at')
   assert.doesNotMatch(expanded[2] + expanded[3], /team-deps-elsewhere/u, 'nor told reviewed elsewhere')
-  view.toggle('org/a#1:own')
-  assert.equal(cardsOf(templateText(view.render()))[2].split('<li>').length - 1, 12)
+  view.toggle('org/a#9:others')
+  assert.doesNotMatch(cardsOf(templateText(view.render()))[3], /<li>/u)
   assert.doesNotMatch(text, /<h2>a<\/h2>|dependency-review-list/u, 'the other sub-tabs\' apart')
 
   view.pick('versions')
@@ -781,6 +779,48 @@ test('a version the reader reviewed, still wanting reviews, others\' or the host
     assert.match(templateText(view.render()).split('<li>').find(one => one.includes('data-tooltip=kept@')), /aria-label=Your review: Request changes>/u, 'its default branch\'s too')
     view.pick('versions')
     assert.match(templateText(view.render()).split('<li>').find(one => one.includes('data-tooltip=mine@')), /class="team-deps-yours"/u, 'and Versions\'')
+  } finally {
+    Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
+    routes.length = 0
+  }
+})
+
+test('a card\'s own versions shown whole up to fifteen, more folded to ten; those another lists up to six, more folded to three; the rest behind "and N more"', async () => {
+  TEAM.push(17)
+  branches[17] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
+  pulls[17] = { items: [1, 2, 3, 4, 5].map(number => pull(number)), more: false }
+  const named = (prefix, count) => Array.from({ length: count }, (_, at) => wants(`${prefix}${at}`))
+  Object.assign(dependencies, {
+    // Seven alike in two, one of which adds another besides: seven dimmed there.
+    '17#1': { cut: false, review: terms, lockfiles: [dir({ added: named('seven-', 7) })] },
+    '17#2': { cut: false, review: terms, lockfiles: [dir({ added: [...named('seven-', 7), wants('extra')] })] },
+    // Sixteen of its own.
+    '17#3': { cut: false, review: terms, lockfiles: [dir({ added: named('own-', 16) })] },
+    // Six alike in two, one of which adds another besides: six dimmed there.
+    '17#4': { cut: false, review: terms, lockfiles: [dir({ added: named('six-', 6) })] },
+    '17#5': { cut: false, review: terms, lockfiles: [dir({ added: [...named('six-', 6), wants('other')] })] },
+  })
+  Object.assign(state, { managedSession: { id: 'folded', role: 'triage' }, teamDependenciesTab: 'pulls', teamDependenciesSort: 'newest' })
+  try {
+    const view = shown([repo(17, 'org/f')])
+    const card = (text, number) => cardsOf(text).find(one => nameOf(one) === `f#${number}`)
+    const listed = one => one.split('<li>').length - 1
+    let text = await read(view)
+    assert.equal(listed(card(text, 3)), 10, 'sixteen of its own folded to ten')
+    assert.match(card(text, 3), /aria-expanded=false [^]*<\/svg>and 6 more<\/button>/u)
+    assert.match(card(text, 2), /<ul class="team-deps-versions is-same">(?:<li>[^]*?){3}<\/ul>\s*<button type="button" class="team-deps-more is-list" aria-expanded=false [^]*<\/svg>and 4 more<\/button>/u,
+      'seven another lists folded to three')
+    assert.equal(listed(card(text, 2)), 4, 'its own besides')
+    assert.equal(listed(card(text, 5)), 7, 'six another lists shown whole, its own besides')
+    assert.doesNotMatch(card(text, 5), /aria-expanded/u)
+    view.toggle('org/f#3:own')
+    view.toggle('org/f#2:same')
+    text = templateText(view.render())
+    assert.equal(listed(card(text, 3)), 16, 'all of them once asked for')
+    assert.match(card(text, 3), /<\/svg>Show fewer<\/button>/u)
+    assert.equal(listed(card(text, 2)), 8)
+    view.toggle('org/f#3:own')
+    assert.equal(listed(card(templateText(view.render()), 3)), 10, 'and folded again')
   } finally {
     Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
     routes.length = 0
