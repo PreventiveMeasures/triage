@@ -3,17 +3,7 @@ import { pkgLabel } from '../../../common/bundle-pkg-of.js'
 import { totalFindings } from '../file-counts.js'
 import { SEVERITIES } from '../format.js'
 
-// Top-severity tier for a per-file count map. Walks SEVERITIES
-// (highest-to-lowest order in format.js) and returns the first
-// tier with a non-zero count, or null when clean. Reports the FULL
-// 7-tier set the findings tab uses (critical, high, medium, low,
-// high_bug, bug, informational) rather than collapsing bug/info
-// into the nearest vuln tier, so the canvas matches the topbar
-// pill row.
-// adjacency map: node id → edge indices. Used by selection rendering
-// (find neighbors) and hover-edge dimming on the canvas. Map
-// instead of plain object so file paths with dots don't trip up
-// property semantics.
+// Node id → indices of its edges, for neighbor lookups.
 function buildAdj(edges) {
   const adj = new Map()
   for (let i = 0; i < edges.length; i++) {
@@ -26,49 +16,24 @@ function buildAdj(edges) {
   return adj
 }
 
-function topIssueOf(counts) {
-  if (!counts) return null
-  for (const sev of SEVERITIES) {
-    if ((counts[sev] ?? 0) > 0) return sev
-  }
-  return null
-}
+// The highest severity tier with findings, of all seven the findings tab
+// shows, or null when clean.
+const topIssueOf = (counts) => counts ? SEVERITIES.find((sev) => (counts[sev] ?? 0) > 0) ?? null : null
 
-// Build the full v2 graph data structure from a treeData blob and
-// per-file own-counts map, filtered to files with a tree entry.
-// Returns: files (string[]), packages (string[] sorted by node
-// count desc), pkgCount / byPkg (per-package file count + member nodes),
-// nodes (one per file, hubs flagged via isHub) + nodeByFile, edges
-// (intra/cross), adj (file → edge index list), importsOf / importedBy.
-// Side-effect free; positions are written
-// into nodes by the caller's layout pass.
-// `severitySets` / `colorSets` (both Map<file, Set<string>>): the
-// distinct severities and triage-marker colors that appear on each
-// file's own findings. Used by the canvas dim-logic + topbar chip
-// counts so the graph mirrors the findings-tab filter semantics
-// (any finding's severity / color counts, not just the file's
-// top-severity tier). Either may be missing for a clean file.
+// The graph of `files` (each with a `treeData` entry): nodes (one per file,
+// positioned later by the canvas layouts) and `nodeByFile`, deduplicated
+// edges, `adj`, `importsOf` / `importedBy`, and `packages` (by file count,
+// descending) with `pkgCount` / `byPkg`.
 //
-// `fileFindings` (Map<file, Array<{severity, color}>>): per-finding
-// {severity, color} pairs stamped on each node so callers (the
-// Packages → Issues distribution) can count findings filtered by
-// BOTH filters at once — set-based counts can't intersect across
-// axes since a file with high+blue and low+red findings has BOTH
-// severities in its set and BOTH colors in its set, but only some
-// findings match a "high AND blue" filter.
+// `ownCounts` / `transitiveCounts` hold per-severity counts for the chips;
+// `severitySets` / `colorSets` the severities and mark colors among a
+// file's findings, for the filters' any-finding-matches dimming;
+// `fileFindings` the {severity, color} pairs, so a count can apply both
+// filters to one finding. Any may lack a clean file.
 //
-// `opts.pkgOf(file)`: optional override for the per-file package
-// classifier. Default is `packageOf` from ../graph/utils.js, which
-// reads the global `depsDir` configured at the top of render() —
-// that's correct for the findings-tab graph but wrong for the
-// bundle graph in bundle-only sessions where state.reports doesn't
-// carry node_modules paths and depsDir falls back to
-// 'dependencies'. The bundle path passes its own `bundlePkgOf`
-// (recognizes both `node_modules/` and `dependencies/`) so its
-// `node_modules/foo/...` files bucket under `foo` instead of all
-// piling under the literal `node_modules` top-level dir.
-// `opts.packageInfoOf(file)` preserves a bundle's recorded directory and
-// version so package details can distinguish separately installed copies.
+// `opts.pkgOf(file)` overrides the package classifier: `packageOf` reads the
+// report's deps dir, which a bundle-only session lacks. `opts.packageInfoOf`
+// keeps a bundle's recorded install directory and version per file.
 export function buildGraph(treeData, files, ownCounts, transitiveCounts, severitySets, colorSets, fileFindings, opts = {}) {
   const pkgOf = opts.pkgOf ?? packageOf
   const fileSet = new Set(files)
@@ -83,35 +48,20 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
     }
   }
 
-  // Node objects: position seeded to 0,0 (the canvas layout pass —
-  // layoutSpiral / layoutFilesVogel / forceLayout — overwrites).
-  // own / subtree carry the FULL per-severity count
-  // maps so the selection card and tooltip can render v1-style
-  // chips ("4 MEDIUM" / "5 LOW") without re-deriving them; `issue`
-  // and `totalIssues` are still derived for the canvas's severity
-  // ring + visibility predicate, so all three views (canvas
-  // ring, side-panel chips, tooltip chips) read from the same
-  // ownCounts source.
   const nodes = files.map((file) => {
     const own = ownCounts.get(file)
-    const subtree = transitiveCounts?.get(file) ?? null
-    const totalIssues = totalFindings(own)
-    const pkg = pkgOf(file) ?? '__own__'
-    const issue = topIssueOf(own)
     return {
       id: file,
       file,
-      pkg,
+      pkg: pkgOf(file) ?? '__own__',
       packageInfo: opts.packageInfoOf?.(file),
       x: 0, y: 0,
       deg: 0,
-      issue,
-      totalIssues,
+      issue: topIssueOf(own),
+      totalIssues: totalFindings(own),
       own,
-      subtree,
-      // Source-byte size from the analyzer's tree blob; null when
-      // the dump didn't carry a `size` (older exports). Surfaces in
-      // the selection card, tooltip, and Files tab via formatBytes.
+      subtree: transitiveCounts?.get(file) ?? null,
+      // Null when the analyzer recorded no size.
       size: typeof treeData[file]?.size === 'number' ? treeData[file].size : null,
       severitySet: severitySets?.get(file) ?? null,
       colorSet: colorSets?.get(file) ?? null,
@@ -122,14 +72,9 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
   })
   const nodeByFile = new Map(nodes.map((n) => [n.file, n]))
 
-  // Edges: build once over the imports relation. `cross` is true
-  // when the two endpoints belong to different packages — that's the
-  // axis the topbar's edge segmented control uses to filter the
-  // canvas. Edge direction (lo → hi) is normalized so the same pair
-  // doesn't appear twice when both sides import each other; bidi
-  // links collapse to a single record (the canvas doesn't draw
-  // arrows in v2 so direction doesn't matter for rendering, only the
-  // cross/intra classification).
+  // One edge per pair (a < b), whichever ends import: fromLo / fromHi say
+  // which (both for a bidirectional pair), for arrowheads and hubs. `cross`
+  // joins two packages.
   const edgeMap = new Map()
   for (const f of files) {
     for (const imp of importsOf.get(f) ?? []) {
@@ -143,109 +88,49 @@ export function buildGraph(treeData, files, ownCounts, transitiveCounts, severit
         edgeMap.set(k, edge)
         a.deg++; b.deg++
       }
-      // Track which endpoint(s) actually originate the import.
-      // Both flags true = bidirectional (rare across packages, more
-      // common within one). The Package-graph view uses these to
-      // draw arrowheads; the spiral view ignores them.
       if (f === lo) edge.fromLo = true
       else edge.fromHi = true
     }
   }
   const edges = [...edgeMap.values()]
-  const adj = buildAdj(edges)
 
-  // Packages sorted by file count descending. The palette grid and
-  // distribution bar both walk this list so they read in matching
-  // order (most populous first); the legend chip in selection card
-  // looks up by name so order there is irrelevant.
-  const pkgCount = new Map()
-  for (const n of nodes) pkgCount.set(n.pkg, (pkgCount.get(n.pkg) ?? 0) + 1)
+  const byPkg = Map.groupBy(nodes, (n) => n.pkg)
+  const pkgCount = new Map([...byPkg].map(([pkg, members]) => [pkg, members.length]))
   const packages = [...pkgCount.entries()].toSorted((a, b) => b[1] - a[1]).map(([p]) => p)
 
-  // Packages-by-name lookup for the hub pass below.
-  const byPkg = new Map()
-  for (const n of nodes) {
-    if (!byPkg.has(n.pkg)) byPkg.set(n.pkg, [])
-    byPkg.get(n.pkg).push(n)
-  }
-
   const graph = {
-    files, nodes, nodeByFile, edges, adj,
+    files, nodes, nodeByFile, edges, adj: buildAdj(edges),
     importsOf, importedBy, packages, pkgCount, byPkg,
   }
   assignHubs(graph)
   return graph
 }
 
-// Hub assignment — a file is a hub iff it sits at a package
-// boundary. That means either:
-//   - it has at least one incoming cross-package edge (some
-//     other package imports it; it's part of this package's
-//     public surface), OR
-//   - it isn't imported by anything at all (= not imported
-//     from within its own package, since the cross case above
-//     is already covered). Catches package entry points like
-//     CLI mains and top-level scripts that no internal file
-//     pulls in.
+// A file is a hub when it sits at a package boundary: another package
+// imports it (its package's public surface), or nothing imports it at all
+// (an entry point, like a CLI main).
 export function assignHubs(graph) {
   for (const n of graph.nodes) n.isHub = false
-  // First pass: any file with an incoming cross-package edge.
-  // The edge stores direction via fromLo / fromHi: if fromLo is
-  // true the lo file imports hi (hi is the target), and vice
-  // versa.
   for (const e of graph.edges) {
     if (!e.cross) continue
+    // fromLo: the lo file `a` imports `b`.
     if (e.fromLo) graph.nodeByFile.get(e.b).isHub = true
     if (e.fromHi) graph.nodeByFile.get(e.a).isHub = true
   }
-  // Second pass: roots — files not imported by anyone. The
-  // importedBy map is keyed only for files that have at least
-  // one importer (built in buildGraph above), so a missing or
-  // empty list means the file is a root.
   for (const n of graph.nodes) {
     const importers = graph.importedBy.get(n.file)
     if (!importers || importers.length === 0) n.isHub = true
   }
 }
 
-// Package-level view of a buildGraph result — one node per package,
-// edges aggregated from the file graph's cross-package edges. Used
-// by the canvas when the bundle Graph tab's "Packages" toggle is on.
-// Pure derivation: positions are seeded 0,0 for the canvas layout
-// pass to overwrite, same contract as buildGraph's nodes.
-//
-// Shaped like a buildGraph result on purpose. The packages view
-// mirrors the package-focus split — rich v1-style chrome up to 50
-// packages, the default dot renderer past that — and the default
-// path reads file-node fields, so package nodes carry them too:
-//   file             — the package name doubles as the node id
-//                      (hover / selection keys, position cache)
-//   pkg / label      — group key (colors) and display name
-//                      ('own source' for the synthetic __own__)
-//   issue / own / totalIssues — aggregated finding counts, same
-//                      fields a file node has so the severity ring,
-//                      renderSevChips, and the tooltip reuse
-//   severitySet / colorSet — unions across the package's files, so
-//                      the topbar highlight filters dim packages
-//                      with the same any-finding-matches semantics
-//   pathText         — every member file path, lowercased, so the
-//                      path filter matches the aggregate
-//   isHub            — true: at package altitude every node sits on
-//                      a package boundary by assignHubs' definition,
-//                      so they get the hub chrome (ring, halo,
-//                      mid-zoom labels)
-//   fileCount / size — node weight + byte sum for the tooltip
-//
-// Edge shape mirrors a file edge ({a, b, cross, fromLo, fromHi} with
-// a < b; always cross — intra edges collapse away) plus `count`, the
-// number of file-level import pairs collapsed in, which the rich
-// renderer maps to stroke width. Direction flags aggregate per side:
-// fromLo = some file in `a` imports into `b`.
-//
-// `nodeByFile` / `byPkg` are the same Map (id IS the package);
-// `adj` mirrors the file graph's node → edge-index lists.
-// `importsOf` (pkg → [imported pkgs]) feeds the force layout, same
-// signature the file-level solver consumes.
+// One node per package, its edges the file graph's cross-package ones merged,
+// shaped like a buildGraph result so the file renderers draw it: a node's
+// `file` is its package name; it carries summed finding counts (`own`,
+// `issue`, `totalIssues`), the union of its files' severity and color sets,
+// their paths lowercased (`pathText`, for the path filter), `fileCount` and
+// summed `size`, and is a hub (every package sits on a boundary). An edge
+// counts the file imports it merges (`count`), its fromLo / fromHi in
+// package order. `importsOf` (package → packages) feeds the force layout.
 export function buildPackageGraph(graph) {
   const nodes = graph.packages.map((pkg) => {
     const files = graph.byPkg.get(pkg) ?? []
@@ -268,7 +153,7 @@ export function buildPackageGraph(graph) {
     return {
       file: pkg,
       pkg,
-      label: pkgLabelOf(pkg),
+      label: pkgLabel(pkg),
       fileCount: files.length,
       size: hasSize ? size : null,
       own,
@@ -300,15 +185,13 @@ export function buildPackageGraph(graph) {
       byPkg.get(hi).deg++
     }
     edge.count++
-    // File-edge direction flags are in lo/hi FILE order; map them
-    // into lo/hi PACKAGE order (the packages may sort opposite to
-    // their files). e.fromLo = file e.a imports e.b = pkg pa → pb.
+    // The file edge's flags are in file order (e.fromLo: file e.a, of package
+    // pa, imports e.b); the packages may sort the other way.
     const paIsLo = pa === lo
     if (e.fromLo) { if (paIsLo) edge.fromLo = true; else edge.fromHi = true }
     if (e.fromHi) { if (paIsLo) edge.fromHi = true; else edge.fromLo = true }
   }
   const edges = [...edgeMap.values()]
-  const adj = buildAdj(edges)
 
   const importsOf = new Map(nodes.map((n) => [n.pkg, []]))
   for (const e of edges) {
@@ -316,13 +199,10 @@ export function buildPackageGraph(graph) {
     if (e.fromHi) importsOf.get(e.b).push(e.a)
   }
 
-  return { nodes, byPkg, nodeByFile: byPkg, edges, adj, importsOf,
+  return { nodes, byPkg, nodeByFile: byPkg, edges, adj: buildAdj(edges), importsOf,
     ownSourcePackages: graph.ownSourcePackages, entryPackages: graph.entryPackages }
 }
 
-// Display name for a package key — the synthetic `__own__` bucket
-// reads as "Own source"; every real package is shown by name, a
-// vendored one without its `vendor/` dir (see `pkgLabel`).
 // The graph without the given packages' files and every edge touching them,
 // for views that lay out only what they draw. Nodes are shared, so positions a
 // layout writes land on the same node objects.
@@ -339,10 +219,6 @@ export function withoutPackages(graph, hidden) {
     importsOf: keptLinks(graph.importsOf), importedBy: keptLinks(graph.importedBy), packages,
     pkgCount: new Map(packages.map((pkg) => [pkg, graph.pkgCount.get(pkg)])), byPkg: new Map(packages.map((pkg) => [pkg, graph.byPkg.get(pkg)])),
   }
-}
-
-export function pkgLabelOf(pkg) {
-  return pkgLabel(pkg)
 }
 
 // What links a graph's nodes: a bundle's files import each other; a
