@@ -716,7 +716,7 @@ class RepositoryReplay extends Shown {
       ? `${number(total)} commit${total === 1 ? '' : 's'} by ${number(people)}, ${day(replay.commits[0].committedAt)} – ${day(replay.commits.at(-1).committedAt)}${
         inPart ? ', drawn in part: more files than are read' : ''}` : ''
     return html`<div class="history-bar">
-        ${activityPicker('replay')}${modeButtons('Commits played', REPLAY_COUNTS.map(count => [count, `Last ${number(count)}`]), replay.count, count => () => this.pickCount(count))}${summary ? html`<span class="history-summary">${summary}</span>` : nothing}
+        ${activityPicker('replay')}${modeButtons('Commits played', REPLAY_COUNTS.map(count => [count, html`Last ${number(count)}`]), replay.count, count => () => this.pickCount(count))}${summary ? html`<span class="history-summary">${summary}</span>` : nothing}
       </div>
       <div class="replay-stage">
         <canvas class="replay-canvas" role="img" aria-label=${last ? `The repository’s files as of ${day(last.committedAt)}, ${number(replay.next)} of ${number(total)} commits played`

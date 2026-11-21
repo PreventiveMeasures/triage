@@ -1135,14 +1135,14 @@ export class BundleCompareCode extends LitElement {
         recorded ? ` ${recorded}` : ''}</div>`
     }
     if (large) {
-      return message('large', `This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.`,
+      return message('large', html`This diff is large (${(countLines(before) + countLines(after)).toLocaleString()} lines across both sides) and may take a few seconds to compute.`,
         action('Show diff', () => { this._forced.add(path); this.requestUpdate() }))
     }
     const showRenames = action('Show renamed names', () => this._setRenames(false)), showTypes = action('Show type-only changes', () => this._setTypes(false))
     // Proven by the server to change types alone, what runs left as it was (type-only.js).
-    if (typesHidden) return message('types', withRecorded('Only types changed in this file.'), showTypes)
+    if (typesHidden) return message('types', html`Only types changed in this file.${recorded ? ` ${recorded}` : ''}`, showTypes)
     if (changes?.status === 'loading' && prefs.ignoreRenames) return html`<div class="bundle-compare-code-message" aria-busy="true">Hiding renamed names…</div>`
-    if (changes?.status === 'error' && prefs.ignoreRenames) return message('renames', `Couldn't hide renamed names: ${changes.message}`, showRenames)
+    if (changes?.status === 'error' && prefs.ignoreRenames) return message('renames', html`Couldn't hide renamed names: ${changes.message}`, showRenames)
     if (model.blocks.length > 0) return null
     // Its printed copies the same, its texts not: its layout changed alone, the
     // copies each checked by the server to read as its text does.
