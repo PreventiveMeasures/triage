@@ -1,33 +1,18 @@
-// A team's dependencies to review, its Dependencies tab, where its reader
-// reviews them in it (workspace-content.js), a sub-tab each (TABS), drawn
-// as a dialog's header tabs are (header-tabs.js), the one open
-// (`state.teamDependenciesTab`) its address's, /team/<slug>/dependencies
-// [/<tab>], and scrolling under them: of each
-// of its repositories whose review is in effect for them, the open pull
-// requests whose versions want reviews, in the order picked (SORTS), each
-// version with its review as its pull request's is (pull-dependencies.js),
-// listed under one of those reviewing it alike, dimmed under the rest, red
-// under those lacking a review made in another (standings), those adding
-// only versions others list set apart; every version they add
-// wanting one, each once, by the pull requests adding it; what each
-// repository's default branch locks that wants one, where any does; and the
-// reviews published to the team
-// (dependency-review-list.js). Its repositories not held read in one request
-// of the team's (GET /api/teams/:id/dependencies), each as its lines come:
-// its default branch and open pull requests, then their dependencies, held
-// as pull-dependencies.js holds those a tile or a popup asks for
-// (seedPullDependencies), and the lines their versions change where they
-// are counted already (npm-delta.js seedNpmDeltas). A repository's are held
-// for the session a while (KEEP_MS), each shown as it was while read again;
-// those the server's time left asked for again; and read anew once a
-// repository's or a team's review is set anew. A pull request is named
-// without its repository's owner where every repository reviewed has the
-// same one. Where its review holds to a stasis.config.json Stasis still
-// builds, a pull request awaiting it is asked again alone, and a repository
-// whose default branch awaits it read again sooner, its lockfiles' versions
-// listed meanwhile; once built, a version a lockfile beside it locks that it
-// reaches not is marked (!). Each list shows those reviewed already first,
-// those marked last (prioritized).
+// A team's Dependencies tab (workspace-content.js), its sub-tabs (TABS) at
+// /team/<slug>/dependencies[/<tab>]: the open pull requests whose versions
+// want reviews, in the order picked (SORTS), each version listed under one
+// of those reviewing it alike, dimmed under the rest, red where it lacks a
+// review made in another (standings); every version they add wanting one;
+// what each default branch locks wanting one; and the reviews published to
+// the team (dependency-review-list.js). Repositories not held are read in
+// one request (GET /api/teams/:id/dependencies), each as its lines come, its
+// pull requests' dependencies seeded into pull-dependencies.js and its line
+// counts into npm-delta.js; held a while (KEEP_MS), shown as they were while
+// read again, and read anew once a review is set anew. Where Stasis still
+// builds a stasis.config.json a review holds to, a pull request awaiting it
+// is asked again alone, a default branch read again sooner; once built, a
+// version only a lockfile locks is marked (!). Each list shows those
+// reviewed already first, those marked last (prioritized).
 import { html, nothing, svg } from 'lit'
 import { styleMap } from './style-map.js'
 import { StateElement } from '@rray/frontend/state-element'
@@ -52,42 +37,32 @@ import { managedRouteForIds, managedRoutePath } from '../../common/managed/route
 
 const KEEP_MS = 2 * 60_000
 const RETRY_MS = 30_000
-// How many times a read the server's time cut short goes on, the
-// repositories it left asked for again; and the versions shown of a list,
-// under a pull request or a default branch, the rest shown once asked for.
+// How many times a read the server's time cut short goes on with the repositories it left.
 const RESUMES = 3
-// Each `[up to, folded to]`: a list of as many as the first shown whole, a
-// longer one cut to the second, which leaves more than a row or two behind
-// its "and N more".
+// A list's rows shown, `[up to, folded to]`: as many as the first whole, a
+// longer one cut to the second, leaving more than a row or two behind "and N more".
 const SHOWN_VERSIONS = [15, 10]
 const SHOWN_LISTED = [48, 48]
 // Of a card's versions listed under other pull requests, lest they crowd its own.
 const SHOWN_SAME = [6, 3]
 const SHOWN_ALL = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY]
-// Its sub-tabs, each at an address of its own, the one last picked
-// opened again by the team's Dependencies tab (ingest.js
-// switchToWorkspaceContent).
+// Its sub-tabs, each at an address of its own, the last picked opened again (ingest.js).
 const TABS = [['pulls', 'Pull requests'], ['versions', 'Versions'], ['branch', 'Default branch'], ['reviews', 'Reviews']]
-// The orders of its Pull requests sub-tab (`state.teamDependenciesSort`),
-// by what each is named in its picker: the newest opened first, the latest
-// updated first, or those adding fewest versions to review first, one held by
-// others alone after those adding some, then by the fewest those are; each
-// one's ties by repository, then the newest by number.
+// The Pull requests sub-tab's orders (`state.teamDependenciesSort`): newest
+// opened, latest updated, or fewest versions to review (one with only others'
+// after those adding some); ties by repository, then the newest by number.
 const tied = (a, b) => a.repo.name < b.repo.name ? -1 : a.repo.name > b.repo.name ? 1 : b.item.number - a.item.number
 const latest = field => (a, b) => (b.item[field] ?? 0) - (a.item[field] ?? 0) || tied(a, b)
 const fewest = (a, b) => Number(a.size === 0) - Number(b.size === 0) || a.size - b.size || a.others - b.others || tied(a, b)
 const SORTS = { newest: ['Newest', latest('createdAt')], updated: ['Updated', latest('updatedAt')], fewest: ['Fewest to review', fewest] }
 // A pull request whose dependencies are still to be told.
 const TELLING = { status: 'loading', until: Number.POSITIVE_INFINITY }
-// Whether a pull request is to merge into its repository's default branch
-// (`defaultBranch`), as its team's read tells the dependencies of those
-// alone (http.ts): one whose branch, or the default, isn't told is.
+// Whether a pull request merges into its repository's default branch (one
+// whose branch isn't told is): the team's read tells only those, not drafts (http.ts).
 const ontoDefault = (item, defaultBranch) => !defaultBranch || typeof item.base !== 'string' || item.base === defaultBranch
-// Whether its team's read tells a pull request's dependencies: one into its
-// repository's default branch, not a draft (http.ts).
 const toldOf = (item, defaultBranch) => ontoDefault(item, defaultBranch) && item.draft !== true
-// A pull request's dependencies as its team's read told them, else still to
-// be told; one awaiting a build of Stasis's asked again alone as it grows old.
+// A pull request's dependencies as the team's read told them, else still to
+// be told; one awaiting a Stasis build asked again alone as it grows old.
 function pullEntry(repoId, number) {
   const held = heldPullDependencies(repoId, number, true)
   return held?.pending ? pullDependencies(repoId, number, true, { background: true }) : held ?? TELLING
@@ -97,9 +72,8 @@ const AGAIN_PAST_MS = 50
 
 const held = new Map()
 const listeners = new Set()
-// The reads in flight, by the team each reads, stopped once what they read
-// is forgotten, or once no tab shows their team: a read runs minutes, and
-// resumes, which a tab left would leave running for none.
+// The reads in flight by team, stopped once forgotten or no tab shows their
+// team: a read runs minutes, and resumes.
 const inFlight = new Map()
 // The team each tab shows, by its element.
 const showing = new Map()
@@ -111,8 +85,7 @@ function forget() {
   for (const read of inFlight.keys()) read.abort()
   inFlight.clear()
 }
-// Reads of teams no tab shows stopped, once those moved meanwhile are back
-// in place, what they held read again once drawn (readTeam).
+// Reads of teams no tab shows stopped, once tabs moved meanwhile are back in place.
 function stopUnshown() {
   if (sweeping) return
   sweeping = true
@@ -136,15 +109,12 @@ function sessionHeld() {
   return held
 }
 
-// Repositories `repoIds` of team `team`, each as held, else asked for, all
-// those not held, or grown old, in one read (readTeam): `{ status }`,
-// 'loading', then 'ready' with its default branch's dependencies (`branch`,
-// none where no review is in effect, nor where its reader may read only
-// some of it) and, where they are, its open pull requests (`pulls`, with
-// why not all of them were read, where they weren't, `error`), those
-// whose dependencies are still to be told by their numbers (`telling`), or
-// 'error' with its `error`; one grown old shown as it was while it is read
-// again (`refreshing`), lest its pull requests leave the tab meanwhile.
+// Team `team`'s repositories `repoIds`, each as held, else asked, all those
+// not held or grown old in one read (readTeam): `{ status }`, 'loading',
+// then 'ready' with its default branch's dependencies (`branch`, null where
+// no review is in effect for the reader), its open `pulls` (with `error`
+// where not all were read) and those still to be told (`telling`), or
+// 'error'; one grown old shown as it was while read again (`refreshing`).
 function teamRepositories(team, repoIds) {
   const data = sessionHeld()
   const asked = []
@@ -161,10 +131,9 @@ function teamRepositories(team, repoIds) {
   return entries
 }
 
-// Repositories `asked` of team `team` read in one request, those
-// `repoIds` names alone where it names some, each held as its lines tell
-// it; those the server's time left asked for again, as many times as
-// `resumes`.
+// Repositories `asked` read in one request (only `repoIds` where given), each
+// held as its lines tell it; those the server's time left asked again,
+// `resumes` times at most.
 function readTeam(team, asked, repoIds, resumes) {
   const data = held
   // Each one's entry as this read last held it, those it told all of left out.
@@ -207,21 +176,23 @@ function readTeam(team, asked, repoIds, resumes) {
   })
 }
 
+// A failed read, held till it is asked again; one telling no review in effect for the reader.
+const failedRead = error => ({ status: 'error', until: Date.now() + RETRY_MS, error })
+const unreviewed = () => ({ status: 'ready', until: Date.now() + KEEP_MS, branch: null })
+
 // What repository line `line` tells of one held as `entry`, given to `hold`:
-// that no review is in effect for its reader, or why it couldn't be read;
-// its default branch's dependencies and its open pull requests; or some of
-// their dependencies, seeded (seedPullDependencies), those to be told
-// fewer. Each with the lines its versions change, seeded first
-// (seedNpmDeltas), lest their rows ask for them.
+// no review in effect, or why it couldn't be read; its default branch's
+// dependencies and open pull requests; or some of their dependencies,
+// seeded (seedPullDependencies). Its line counts seeded first, lest rows ask.
 function toldLine(line, entry, hold) {
   knowGithubUsers(line)
   if (Array.isArray(line.deltas)) seedNpmDeltas(line.deltas)
-  if (typeof line.error === 'string') hold({ status: 'error', until: Date.now() + RETRY_MS, error: line.error })
-  else if (line.branch === null) hold({ status: 'ready', until: Date.now() + KEEP_MS, branch: null })
+  if (typeof line.error === 'string') hold(failedRead(line.error))
+  else if (line.branch === null) hold(unreviewed())
   else if (line.branch) {
     let branch
     try { branch = checked(line.branch) } catch (err) {
-      hold({ status: 'error', until: Date.now() + RETRY_MS, error: err.message })
+      hold(failedRead(err.message))
       return
     }
     const items = (Array.isArray(line.pulls?.items) ? line.pulls.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0)
@@ -235,8 +206,7 @@ function toldLine(line, entry, hold) {
   }
 }
 // One held with the pull requests still to be told, till none are; one not
-// all of whose pull requests were read, or whose default branch awaits a
-// build of Stasis's (`pending`), till it is read again, sooner, the tab told then.
+// all read, or awaiting a Stasis build (`pending`), read again sooner, the tab told then.
 function telling(entry, numbers) {
   if (numbers.size > 0) return { ...entry, until: Number.POSITIVE_INFINITY, telling: numbers }
   const wait = entry.pulls?.error || entry.pending ? RETRY_MS : KEEP_MS
@@ -244,16 +214,15 @@ function telling(entry, numbers) {
   return { ...entry, until: Date.now() + wait, telling: null }
 }
 
-// One a read told no more of, as held: one it told nothing of, as none of
-// its team's, so reviewing none for its reader (`failure` none); else
-// failed, till it is read again, one whose default branch was told kept,
-// its pull requests still to be told failed.
+// One a read told no more of: told nothing (`failure` none), none of the
+// team's, so reviewing none; else failed, one whose default branch was told
+// kept, its pull requests still to be told failed.
 function untold(repoId, entry, failure) {
   if (entry.telling) {
     seedPullDependencies(repoId, new Map([...entry.telling].map(number => [number, new Error(failure ?? 'The server’s answer ended short.')])), true)
     return { ...entry, until: Date.now() + RETRY_MS, telling: null }
   }
-  return failure ? { status: 'error', until: Date.now() + RETRY_MS, error: failure } : { status: 'ready', until: Date.now() + KEEP_MS, branch: null }
+  return failure ? failedRead(failure) : unreviewed()
 }
 
 const plural = (count, noun) => `${count.toLocaleString('en-US')} ${noun}${count === 1 ? '' : 's'}`
@@ -263,9 +232,9 @@ const pullName = ({ repo, item }) => `${repo.name}#${item.number}`
 const reader = () => state.managedSession?.login?.toLowerCase() ?? null
 const isReader = one => one.login.toLowerCase() === reader()
 
-// A version's review: that it can't be reviewed, a reviewer rejects it, or
-// how many reviews pass it of those it needs, a patched one's of it as
-// patched; its label, tint and what it says, none where it wants no review.
+// A version's review: that it can't be reviewed, is rejected, or how many
+// reviews pass it of those it needs; its label, tint and what it says, none
+// where it wants no review.
 function reviewState(pkg, review) {
   const shown = reviewOf(pkg, review)
   if (shown === 'unsupported') return { label: 'can’t review', tint: 'is-failed', said: UNSUPPORTED_WHY[pkg.unsupported] }
@@ -279,40 +248,33 @@ function reviewState(pkg, review) {
   }
   return null
 }
-// A review's badge, its label alone; none for one no review passes yet,
-// which most are. What it says, and whose its reviews are, is its row's
-// tooltip's to tell (versionTip).
+// A review's badge, its label alone, none for one no review passes yet; the
+// row's tooltip tells the rest (versionTip).
 function reviewBadge(pkg, review) {
   const stance = reviewState(pkg, review)
   if (!stance || (stance.tint === 'is-wanted' && pkg.reviews === 0)) return nothing
   return html`<span class="team-deps-review ${stance.tint}">${stance.label}</span>`
 }
 
-// Each verdict as a reviewer's line of a version's tooltip says it, and
-// those of them accepting it.
+// Each verdict as a reviewer's line of a version's tooltip says it, and those accepting it.
 const VERDICT_SAID = { accept: 'accepts', 'accept-with-nits': 'accepts with nits', 'request-changes': 'requests changes', reject: 'rejects' }
 const ACCEPTING = new Set(['accept', 'accept-with-nits'])
 // A version's review in a pull request, as its tooltip names it there.
 const reviewedThere = (pkg, review) => ({ passed: 'passes', baseline: 'needs none' })[reviewOf(pkg, review)] ?? reviewState(pkg, review)?.label ?? null
 
-// The reviews counting of a version in a pull request: whose pass it and
-// whose reject it, by their login, whatever its case.
+// The reviews counting of a version in a pull request: whose pass and reject it, by login.
 const counting = pkg => new Map((pkg.reviewers ?? []).flatMap(one => one.passes ? [[`+${one.login.toLowerCase()}`, one]]
   : one.status === 'reject' ? [[`-${one.login.toLowerCase()}`, one]] : []))
 
-// How each version stands under each pull request wanting it (`wanting`,
-// those taking a tie first), by its key, then the pull request's name;
-// `involved` the pull requests each is among the versions of (render).
-// One holding reviews of it but lacking one made in another's comments,
-// which count there alone and could be made here too: `lacks`, each `{
-// login, status, pulls }`. A review published to the team isn't lacked:
-// where it counts is the server's to tell (of a version a pull request adds,
-// whole or against one it was; of one it locks besides, against any), not
-// where it was made. Of the rest, those reviewed alike have one list it,
-// that with the fewest reviews left (`left`); the others tell it `under`
-// that one. One holding none, but unreviewed, tells it under the one listing
-// it with most reviews, else under that holding most of those lacking some;
-// where none wanting it holds any, one of them lists it.
+// How each version stands under each pull request wanting it, by its key,
+// then the pull request's name (`involved` the pull requests each is among
+// the versions of). One holding reviews of it but lacking one made in
+// another's comments (which count there alone): `lacks`, `{ login, status,
+// pulls }` each; a review published to the team is never lacked, the
+// server telling where it counts. Of the rest, those reviewed alike have one
+// list it, with the fewest reviews left; the others tell it `under` that
+// one. One holding none tells it under the one listing it with most
+// reviews, else under the one holding most of those lacking some.
 function standings(wanting, involved) {
   const wanted = new Map()
   for (const pull of wanting) {
@@ -332,8 +294,7 @@ function standings(wanting, involved) {
       }
     }
     const of = new Map()
-    // The one listing it of those holding the same reviews, by those; and
-    // of those lacking some, the one holding most.
+    // The one listing it of those holding the same reviews; of those lacking some, the one holding most.
     const listing = new Map()
     let most = null
     for (const wanter of wanters) {
@@ -357,10 +318,8 @@ function standings(wanting, involved) {
   return stood
 }
 
-// Versions in the order a list shows them: those a review is made of there
-// already first (`1/2`, or rejected), then the rest, those their package
-// manager alone asks for (`unreached`, marked) last, a reviewed one first
-// among them. `of`: an item's version, where it isn't one itself.
+// Versions in a list's order: those reviewed there already first, those only
+// a lockfile asks for (`unreached`) last. `of`: an item's version, where it isn't one.
 const begun = pkg => (pkg.reviews ?? 0) > 0 || pkg.rejected === true
 const rank = pkg => (pkg.unreached ? 2 : 0) + (begun(pkg) ? 0 : 1)
 const prioritized = (items, of = item => item) => items.toSorted((a, b) => rank(of(a)) - rank(of(b)))
@@ -368,26 +327,18 @@ const prioritized = (items, of = item => item) => items.toSorted((a, b) => rank(
 // The first of `names`, and how many more there are.
 const few = (names, more = names.length - 1) => `${names[0]}${more > 0 ? ` +${more}` : ''}`
 
-// What a version its package manager alone asks for says of that.
+// What a version only its lockfile asks for says of that.
 const UNREACHED_SAID = 'only lockfile, not stasis.config.json'
 
-// The reader's own review of a version, as its row's tooltip and mark say
-// it: its verdict, and whether it is partial.
+// The reader's own review of a version: its verdict, and whether partial.
 const yoursSaid = ({ status, partial }) => `${verdictLabels[status]}${partial ? ', partial' : ''}`
 
-// A version's details, its row's tooltip, formatted: its ecosystem's icon,
-// its name and version whole, as its row may cut them short, tagged where
-// it is patched, as Review's version selector tags it; where it is from, other
-// than npm's registry; its patch's hash and file, where it is patched, or
-// that it is told no file, which reviews here then read none of; its review; the
-// pull request listing it, where another does (`under`); the reviews it
-// lacks (`lacks`, each `{ login, status, where }`); the pull requests adding
-// it, then those holding it on their base branch (`involved`, each `{ name,
-// adds, pkg, review }`), by name, its patch the same, each with its review
-// there, but none of no reviews on a base branch, the one it is listed
-// under (`here`) marked; and who reviews it, each once where its teams'
-// reviews count, and by the pull request in whose comments they review it,
-// which count there alone.
+// A version's row tooltip: its name and version whole, patched tagged; where
+// it is from other than npm's registry; its patch's hash and file; its
+// review; the pull request listing it (`under`); the reviews it lacks; the
+// pull requests adding or holding it (`involved`, `{ name, adds, pkg, review
+// }` each), the one it is listed under (`here`) marked; and who reviews it,
+// by the pull request where only its comments' reviews count.
 function versionTip(pkg, review, { under, lacks, involved, here }) {
   const stance = reviewState(pkg, review)
   const facts = [pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
@@ -421,24 +372,15 @@ function versionTip(pkg, review, { under, lacks, involved, here }) {
   </div>`
 }
 
-// A version as a row, its details its tooltip (versionTip): its ecosystem's
-// icon (npm's, where it names none), its name and version, opening its review where its reader reviews it and it can be,
-// against the version it was where it was one, a patched one's as patched,
-// against the version it patches where that was one, its patch alone, its
-// patch read of repository `repoId` at `head`, the commit its lockfiles were
-// read at, where it is told its file, else its page; a mark (`!`) where
-// its package manager alone asks for it (`unreached`); its review;
-// the lines it changes against the version it is reviewed against, of its
-// package or another the host names, or whole, where it wants reviews, a
-// patched one's as its patch changes them, where its file is told
-// (npm-delta.js); the
-// reviews it lacks that others hold (`lacks`, standings), its row red,
-// its tooltip telling them; the pull requests reviewing it in their comments
-// (`elsewhere`), which count for them alone; the pull request listing it
-// (`under`); and the pull requests adding it besides, or, `adders`, all
-// those adding it, those lacking reviews (`lacking`) red, those reviewing
-// it in their comments named by that alone. A bundle's Overview lists its
-// versions so too (bundle-dependency-review.js).
+// A version as a row, its tooltip versionTip: its icon, name and version,
+// opening its review where the reader can review it (against reviewBase, a
+// patched one as its patch read of `repoId` at `head`), else its page; `!`
+// where only a lockfile asks for it; its review; its line counts where it
+// wants reviews (npm-delta.js); its row red where it `lacks` reviews others
+// hold; the pull requests reviewing it in their comments (`elsewhere`), the
+// one listing it (`under`), and those adding it besides (`adders`: all of
+// them, those `lacking` reviews red). A bundle's Overview lists its versions
+// so too (bundle-dependency-review.js).
 export function versionRow(pkg, review, { others = [], adders = false, elsewhere = [], under = null, lacks = [], lacking = [], involved = [], here = null,
   repoId = null, head = null } = {}) {
   const npm = pkg.source === 'registry' && pkg.version
@@ -467,11 +409,9 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
     : html`<span class="team-deps-row${behind}" data-tooltip=${named} .tooltipContent=${tip}>${label}</span>`}</li>`
 }
 
-// How many versions a pull request wants reviewed, as its card's head tells
-// them, where more than one; and, where its package manager alone asks for
-// some (`unreached`, marked `!`), how many of them Stasis reaches, by its
-// mark, its one too: of those its answer lists, at least as many where it
-// lists only some (`untold`), whose reach it doesn't tell.
+// How many versions a pull request wants reviewed, where more than one; and
+// where only a lockfile asks for some (`!`), how many Stasis reaches, at
+// least, where its answer lists only some (`untold`).
 const STASIS_MARK = html`<img class="team-deps-stasis" src="./stasis.svg" alt="by Stasis">`
 function deps(pull) {
   const alone = pull.wanted.filter(pkg => pkg.unreached && reviewOf(pkg, pull.entry.review) === 'wanted').length
@@ -483,12 +423,10 @@ function deps(pull) {
     : nothing}</span>`
 }
 
-// How far Stasis is with what the stasis.config.json files `answers` hold
-// to reach (`[repoId, answer]` each, a pull request's or a default branch's):
-// each build once, by its repository, file and commit, done where any answer
-// tells it made, as one Stasis kept is at once, though the rest of its
-// directory is still to be made; an answer telling none of its builds, its
-// directory's head's alone. Shown by Stasis's mark, a bar and the count.
+// How far Stasis is with what the stasis.config.json files of `answers`
+// (`[repoId, answer]` each) reach: each build once, by repository, file and
+// commit, done where any answer tells it made; an answer telling none, its
+// head's alone. Shown by Stasis's mark, a bar and the count.
 function stasisProgress(answers) {
   const builds = new Map()
   for (const [repoId, answer] of answers) {
@@ -508,8 +446,7 @@ function stasisProgress(answers) {
     <span class="team-deps-progress-n">${done.toLocaleString('en-US')}/${total.toLocaleString('en-US')}</span></p>`
 }
 
-// Where a pull request's versions' patches are read: its repository, at the
-// commit its lockfiles were read at (versionRow).
+// Where a pull request's versions' patches are read: its repository at the commit its lockfiles were read at.
 const readAt = pull => ({ repoId: pull.repo.repoId, head: pull.entry.head ?? null })
 
 // A list's toggle: its chevron turned while it is open.
@@ -517,9 +454,7 @@ const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
 // GitHub's mark, before each pull request a tooltip names.
 const GITHUB_ICON = appMarkup(GITHUB_ICON_SVG)
 
-// The rows of its masonry grid a card spans: as many as it is tall, with
-// the gap under it, of its list's rows (`grid-auto-rows`); none where it
-// isn't in one.
+// The rows of its masonry grid a card spans, as tall as it is with the gap under it.
 export function masonrySpan(card) {
   const row = card.isConnected ? parseFloat(getComputedStyle(card.parentElement).gridAutoRows) : Number.NaN
   if (!(row > 0)) return
@@ -540,8 +475,7 @@ class TeamDependencies extends StateElement {
     this._notify = () => this.requestUpdate()
   }
 
-  // Sub-tab `tab` shown, at its address, an entry of its own where it is
-  // picked (`push`), else the one shown's replaced.
+  // Sub-tab `tab` shown at its address, a history entry of its own where picked (`push`).
   pick(tab, { push = true } = {}) {
     state.teamDependenciesTab = tab
     const route = managedRouteForIds({ view: 'workspace-dependencies', teamId: this.team, dependencyTab: tab }, state.managedTeams)
@@ -549,16 +483,14 @@ class TeamDependencies extends StateElement {
     else managedHistory?.replaceRoute(route)
   }
 
-  // The sub-tab its address names, the default branch's, which isn't shown
-  // where none wants reviews once all is read, giving way to the first.
+  // The sub-tab its address names, the default branch's giving way to the
+  // first where none wants reviews once all is read.
   updated() {
     if (this._shown && this._shown !== state.teamDependenciesTab) this.pick(this._shown, { push: false })
     this._pack()
   }
 
-  // Its pull requests' cards packed as masonry (team-deps-pulls.is-masonry),
-  // each spanning rows as it is tall, spanned anew as it grows or shrinks;
-  // those it no longer shows let go.
+  // Its pull requests' cards packed as masonry, each spanned anew as it grows or shrinks.
   _pack() {
     if (!globalThis.ResizeObserver) return
     this._masonry ??= new ResizeObserver(entries => { for (const { target } of entries) masonrySpan(target) })
@@ -596,10 +528,8 @@ class TeamDependencies extends StateElement {
     openRepositoryItemDialog({ repository: { repoId: repo.repoId, repo: repo.name }, target: { number: item.number, preview: { ...item, kind: 'pulls' } } })
   }
 
-  // Rows of `items`, all of them where they are as many as `upTo`, else as
-  // many as `folded` till the rest are asked for, under `key`, as one list,
-  // filling as many columns as fit; those listed under other pull requests
-  // (`same`) dimmed.
+  // Rows of `items`, all where as many as `upTo`, else `folded` till the rest
+  // are asked for, under `key`; those listed under other pull requests (`same`) dimmed.
   rows(key, items, row, [upTo, folded] = SHOWN_VERSIONS, same = false) {
     if (items.length === 0) return nothing
     const open = this._open.has(key), shown = items.length > upTo ? folded : items.length
@@ -608,8 +538,7 @@ class TeamDependencies extends StateElement {
         ? 'Show fewer' : `and ${(items.length - shown).toLocaleString('en-US')} more`}</button>` : nothing}`
   }
 
-  // A list told by `label` alone till it is opened, under `key`, and how
-  // many past those it lists (`unlisted`).
+  // A list told by `label` alone till opened, under `key`, and how many past those it lists.
   disclosed(key, label, items, row, unlisted = 0) {
     const open = this._open.has(key)
     return html`<div class="team-deps-disclosed">
@@ -620,8 +549,7 @@ class TeamDependencies extends StateElement {
   }
 
   render() {
-    // Another team shown, the one shown before no longer read for it; one
-    // drawn once its tab is gone shows none.
+    // Another team shown, the one before is no longer read for it.
     if (this.isConnected && showing.get(this) !== this.team) {
       if (showing.has(this)) stopUnshown()
       showing.set(this, this.team)
@@ -630,11 +558,9 @@ class TeamDependencies extends StateElement {
     const entries = teamRepositories(this.team, repos.map(repo => repo.repoId))
     const reads = repos.map((repo, at) => ({ repo, read: entries[at] }))
     const reviewed = reads.filter(({ read }) => read.status === 'ready' && read.branch)
-    // Each pull request's as the team's read told it, or as it was while it
-    // is read again; those to merge into other branches than their
-    // repository's default (`into`) hidden but where all are asked for, and
-    // drafts but where they are, each then read alone (pullDependencies), as
-    // the team's read tells none.
+    // Each pull request's as the team's read told it; those into other
+    // branches (`into`) and drafts hidden but where asked for, then read
+    // alone, as the team's read tells none.
     const every = state.teamDependenciesAllBranches === true
     const drafts = state.teamDependenciesDrafts === true
     const listing = reviewed.flatMap(({ repo, read }) => read.pulls.items.filter(readsDependencies).map(item => ({ repo, item, onto: ontoDefault(item, read.pulls.defaultBranch) })))
@@ -643,14 +569,11 @@ class TeamDependencies extends StateElement {
     const pulls = listing.flatMap(({ repo, item, onto }) => (!onto && !every) || (item.draft === true && !drafts) ? []
       : onto && item.draft !== true ? [{ repo, item, entry: pullEntry(repo.repoId, item.number) }]
       : [{ repo, item, ...onto ? {} : { into: item.base }, entry: pullDependencies(repo.repoId, item.number, true, { background: true }) }])
-    // Each pull request's versions wanting reviews, as many as its answer
-    // tells, and how many in all, those past them too (`toReview`), by which
-    // it is kept; how many reviews they still want between them (`left`),
-    // one rejected at least one, those past them as many as it requires; and
-    // the other versions its lockfiles lock that want them (`others`), the
-    // default branch's mostly, which hold it too, one into another branch
-    // left out where it adds none and its comments review none (`intoOther`);
-    // those adding fewest first, as Versions takes them, then as picked.
+    // Each pull request's versions wanting reviews, how many in all
+    // (`toReview`), how many reviews they still want (`left`), and the other
+    // versions its lockfiles lock wanting them (`others`, mostly its base's),
+    // one into another branch left out where it adds none and its comments
+    // review none; those adding fewest first, as Versions takes them.
     const wanting = pulls.filter(({ entry }) => entry.status === 'ready' && entry.review).map(pull => {
       const { review } = pull.entry
       const wanted = addedVersions(pull.entry).versions.filter(pkg => ['wanted', 'unsupported'].includes(reviewOf(pkg, review)) || passedByComments(pkg, review))
@@ -662,13 +585,11 @@ class TeamDependencies extends StateElement {
     }).filter(pull => pull.size > 0 || ((pull.others > 0 || pull.failed) && !(pull.entry.intoOther && !pull.entry.review.commentReviews))).toSorted(fewest)
     const sort = Object.hasOwn(SORTS, state.teamDependenciesSort) ? state.teamDependenciesSort : 'newest'
     const sorted = sort === 'fewest' ? wanting : wanting.toSorted(SORTS[sort][1])
-    // The repositories whose open pull requests are more than are read, and
-    // those not all of whose were, which their failure tells instead.
+    // The repositories with more open pull requests than read, and those not all read (a failure).
     const unchecked = reviewed.filter(({ read }) => read.pulls.more && !read.pulls.error)
     const unread = reviewed.filter(({ read }) => read.pulls.error)
-    // Each version wanting reviews, as the first adding it tells it, by the
-    // pull requests adding it, each with it as it is there (`told`); and the
-    // first told its patch's file, whence that is read (`patched`).
+    // Each version wanting reviews by the pull requests adding it, as each
+    // tells it (`told`), and the first told its patch's file (`patched`).
     const adding = new Map()
     for (const pull of wanting) {
       for (const pkg of pull.wanted) {
@@ -679,7 +600,7 @@ class TeamDependencies extends StateElement {
       }
     }
     const reading = reads.some(({ read }) => read.status === 'loading') || pulls.some(({ entry }) => entry.status === 'loading')
-    // Whether Stasis still builds what a stasis.config.json of theirs reaches: nothing is known to want none till it has.
+    // Whether Stasis still builds what a stasis.config.json of theirs reaches.
     const building = pulls.some(({ entry }) => entry.pending) || reviewed.some(({ read }) => read.branch.pending)
     const failures = [...reads.filter(({ read }) => read.status === 'error').map(({ repo, read }) => [repo.name, read.error]),
       ...unread.map(({ repo, read }) => [repo.name, read.pulls.error]), ...pulls.filter(({ entry }) => entry.status === 'error').map(pull => [pullName(pull), pull.entry.error])]
@@ -688,9 +609,8 @@ class TeamDependencies extends StateElement {
       const { count } = unreviewedVersions(read.branch), failed = reviewFailures(read.branch)
       return count > 0 || failed || read.branch.pending ? [{ repo, read, count: count + (failed?.count ?? 0) }] : []
     })
-    // The pull requests each version is among the versions of, by its key:
-    // each adding it, else locking it otherwise wanting reviews, with it as
-    // it is there.
+    // The pull requests each version is among, by its key: adding it, else
+    // locking it otherwise wanting reviews, with it as it is there.
     const involved = new Map()
     for (const pull of pulls.filter(({ entry }) => entry.status === 'ready' && entry.review)) {
       for (const [adds, versions] of [[true, addedVersions(pull.entry).versions], [false, unreviewedVersions(pull.entry).versions]]) {
@@ -700,30 +620,26 @@ class TeamDependencies extends StateElement {
         }
       }
     }
-    // Repositories and pull requests named without their owner where every
-    // repository reviewed, or not yet read, has the same one.
+    // Names without their owner where every repository reviewed, or not yet read, has the same one.
     const owners = new Set(reads.filter(({ read }) => read.status !== 'ready' || read.branch).map(({ repo }) => repo.name.split('/')[0]))
     const shorten = owners.size === 1 ? name => name.slice(name.indexOf('/') + 1) : name => name
     const named = pull => shorten(pullName(pull))
-    // The pull requests a version is among the versions of, its patch the
-    // same, as its tooltip names them (versionTip); and those reviewing it in
-    // their comments, which count for them alone, but `pull`.
+    // The pull requests a version is among, as its tooltip names them; and
+    // those but `pull` reviewing it in their comments.
     const among = pkg => [...involved.get(versionKey(pkg))?.values() ?? []]
       .map(({ pull, pkg: theirs, adds }) => ({ name: named(pull), adds, pkg: theirs, review: pull.entry.review }))
     const elsewhere = (pkg, pull = null) => [...involved.get(versionKey(pkg))?.values() ?? []]
       .filter(one => one.pkg.commented > 0 && (!pull || pullName(one.pull) !== pullName(pull))).map(one => named(one.pull))
-    // How each version stands under each pull request wanting it
-    // (standings), whatever order is picked, its pull requests named.
+    // How each version stands under each pull request wanting it, its pull requests named.
     const stood = standings(wanting, involved)
     const standing = (pkg, pull) => {
       const { under = null, lacks = [] } = stood.get(versionKey(pkg))?.get(pullName(pull)) ?? {}
       return { under: under && named(under), lacks: lacks.map(one => ({ login: one.login, status: one.status, where: one.pulls.map(named) })) }
     }
     const naming = { elsewhere, named, shorten, among, standing }
-    // Each pull request's card, in the order picked: the versions it lists,
-    // how many of them lack reviews (`lacking`), and those others list
-    // (`same`), each in its order (prioritized); set apart (`covered`) where
-    // it adds none but those and nothing fails it.
+    // Each pull request's card in the order picked: the versions it lists, how
+    // many lack reviews, and those others list (`same`); set apart
+    // (`covered`) where it adds none but those and nothing fails it.
     const cards = sorted.map(pull => {
       const same = prioritized(pull.wanted.filter(pkg => standing(pkg, pull).under))
       const listed = prioritized(pull.wanted.filter(pkg => !same.includes(pkg)))
@@ -732,17 +648,15 @@ class TeamDependencies extends StateElement {
     })
     const lacking = cards.reduce((sum, card) => sum + card.lacking, 0)
     const failed = failures.map(([name, error]) => `${shorten(name)}: ${error}`)
-    // The default branch's sub-tab where it wants reviews, or, picked, while
-    // its repositories are read.
+    // The default branch's sub-tab where it wants reviews, or while read where picked.
     const picked = state.teamDependenciesTab
     const tabs = TABS.filter(([kind]) => kind !== 'branch' || branches.length > 0 || reading && picked === 'branch')
     const tab = tabs.some(([kind]) => kind === picked) ? picked : 'pulls'
     this._shown = tab
     const counts = { pulls: wanting.length, versions: adding.size, branch: branches.reduce((sum, { count }) => sum + count, 0) }
     // Above each sub-tab's lists but Reviews', one line, there whatever it
-    // says, lest what is under it move: that they are being read and what
-    // couldn't be, at its start, then what its red rows are, where the pull
-    // requests have any, and the pull requests' order at its end.
+    // says lest what is under it move: reading and failures, the red rows'
+    // key, and the order.
     return html`<div class="team-deps">
       ${dialogTabs({ tabs: tabs.map(([id, label]) => ({ id, label: html`${label}${counts[id] == null || reading && counts[id] === 0 ? nothing
         : html`<span class="team-deps-tab-n">${counts[id].toLocaleString('en-US')}</span>`}` })), current: tab, prefix: 'team-deps', select: kind => this.pick(kind) })}
@@ -778,16 +692,11 @@ class TeamDependencies extends StateElement {
     </div>`
   }
 
-  // The pull requests wanting reviews (`cards`, render), in the order
-  // picked. A card lists its own versions, those lacking reviews red, then
-  // those others list, dimmed, a few till the rest are asked for; and the
-  // reader's reviews of its versions to copy, where the server's host
-  // formats them (dependency-review-copy.js). Those adding only versions
-  // others list come after the rest, each its head alone till opened, all
-  // hidden once asked; one whose lockfiles lock other versions wanting
-  // reviews says how many in its head, as none else lists those. One wanting none is not listed, its copy in its
-  // popup. Every card a column wide, however many versions it lists; how
-  // many it wants reviewed told where more than one, muted.
+  // The pull requests wanting reviews (`cards`), in the order picked: each
+  // card its own versions (lacking reviews red), then those others list,
+  // dimmed, and the reader's reviews to copy (dependency-review-copy.js).
+  // Those adding only versions others list come after, each its head alone
+  // till opened.
   renderPulls(cards, adding, reading, unchecked, { elsewhere, named, among, standing }, { others: othersHidden = false, drafts: draftsHidden = false } = {}) {
     if (cards.length === 0) {
       return reading ? nothing : html`<p class="workspace-content-empty">No open pull request${unchecked ? ' checked' : ''}${othersHidden ? ' into a default branch' : ''} wants its dependencies reviewed.${
@@ -833,10 +742,9 @@ class TeamDependencies extends StateElement {
       </section>` : nothing}`
   }
 
-  // Every version the pull requests add wanting reviews, each once, as the
-  // pull request listing it tells it, else the one holding most reviews of
-  // it; those lacking reviews red, the others reviewing it in their comments
-  // blue; one marked where every pull request adding it marks it.
+  // Every version the pull requests add wanting reviews, once, as the pull
+  // request listing it tells it, else the one holding most reviews of it;
+  // marked where every one adding it marks it.
   renderVersions(adding, reading, { elsewhere, named, among, standing }) {
     if (adding.size === 0) return reading ? nothing : html`<p class="workspace-content-empty">No version an open pull request adds wants a review.</p>`
     const versions = [...adding.values()].map(({ pulls, told, patched }) => {
@@ -852,8 +760,7 @@ class TeamDependencies extends StateElement {
     </section>`
   }
 
-  // What a repository's default branch locks that wants reviews, and what
-  // fails it there, its lockfiles left unread too.
+  // What a repository's default branch locks wanting reviews, and what fails it there.
   renderBranch(repo, read, { elsewhere, shorten, among }) {
     const { versions, count } = unreviewedVersions(read.branch)
     const failed = reviewFailures(read.branch)
