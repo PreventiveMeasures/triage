@@ -70,7 +70,8 @@ test('nothing while first read, nor for a sourcemap or a public link; a bundle n
 test('a kept validation is told at once; Validate validates it anew with the session\'s token, the line saying so meanwhile', async () => {
   kept = { kept: VALID }
   const valid = await shown(entry('kept'))
-  assert.match(valid, /is-passed">Valid<\/span>[^]*every one of 11 files · /u)
+  assert.match(valid, /is-passed">Valid<\/span>[^]*>11 files · /u)
+  assert.doesNotMatch(valid, /every one of/u)
   assert.match(valid, />Validate again<\/button>/u)
   const before = asked.length
   await shown(entry('kept'))

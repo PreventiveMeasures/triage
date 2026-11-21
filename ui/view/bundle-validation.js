@@ -94,7 +94,7 @@ const when = time => time === null ? '' : new Date(time).toLocaleString(undefine
 function said({ counts, own }) {
   const told = SAID.filter(([kind]) => counts[kind]).map(([kind, word]) => `${counts[kind].toLocaleString('en-US')} ${word}`)
   const packages = PACKAGES_SAID.filter(([kind]) => counts[kind]).map(([kind, one, more]) => `${plural(counts[kind], 'package')} ${counts[kind] === 1 ? one : more}`)
-  return `${told.length > 0 ? `${told.join(', ')}, of ` : 'every one of '}${plural(counts.files, 'file')}${packages.map(text => `; ${text}`).join('')}${own.checked ? '' : '; own code not checked'}`
+  return `${told.length > 0 ? `${told.join(', ')}, of ` : ''}${plural(counts.files, 'file')}${packages.map(text => `; ${text}`).join('')}${own.checked ? '' : '; own code not checked'}`
 }
 
 // A package as its row tells it: its name and version, its state, and what
