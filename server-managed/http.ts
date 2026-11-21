@@ -2829,10 +2829,17 @@ const TEAM_PULL_READS = TEAM_PULLS / OPEN_PULLS_SIZES.at(-1)!
 const TEAM_PULLS_TOGETHER = 20
 const PARTIAL_ACCESS = new Set(['no-directory', 'no-repository'])
 type TeamDependencyLine = Record<string, unknown> & { repoId?: number }
-type TeamPull = { number: number; touchesLockfile?: boolean | null }
+type TeamPull = { number: number; touchesLockfile?: boolean | null; base?: string }
+// Whether a pull request is to merge into its repository's default branch
+// (`defaultBranch`), as a team's Dependencies reads those alone unless
+// asked for every branch's: one whose branch, or the default, isn't told is.
+const ontoDefault = (item: TeamPull, defaultBranch: string | null) => !defaultBranch || !item.base || item.base === defaultBranch
 async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, s: { session: ManagedSession; user: StoredUser },
   teamId: string, query: URLSearchParams): Promise<void> {
   const deadline = Date.now() + TEAM_DEPENDENCIES_MS
+  // The dependencies of the pull requests to merge into other branches than
+  // their repository's default too, where asked (`branches=all`).
+  const everyBranch = query.get('branches') === 'all'
   const named = query.get('repoIds')
   const only = named === null ? null : new Set(named.split(',').map(Number))
   if (only && (only.size === 0 || only.size > 1000 || [...only].some(id => !Number.isSafeInteger(id) || id <= 0))) { sendJson(res, 400, { error: 'bad-request' }); return }
@@ -2876,7 +2883,7 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
   }
   if (answered.length > 0 && !await send(...answered)) return
   const done = await eachOf(reading, TEAM_REPOSITORIES_AT_ONCE, ({ access, setting }) => stopped || Date.now() > deadline ? Promise.resolve(false)
-    : teamRepositoryDependencies(deps, access, setting, deadline, send, () => wholeRepositoryAccess(deps, cookie, access.repo.repoId)))
+    : teamRepositoryDependencies(deps, access, setting, deadline, send, () => wholeRepositoryAccess(deps, cookie, access.repo.repoId), everyBranch))
   if (stopped) return
   const unread = reading.filter((_, at) => !done[at]).map(({ access }) => access.repo.repoId)
   if (!await send(unread.length === 0 ? { done: true } : { done: false, unread })) return
@@ -2886,20 +2893,21 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
 // A repository's lines of its team's Dependencies, as handleTeamDependencies
 // tells them; whether all were written, none left for its time.
 async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
-  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>): Promise<boolean> {
+  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>, everyBranch = false): Promise<boolean> {
   // The Stasis builds its answers want, asked for a batch of pull requests at a time, its default branch's with the first.
   const wants: StasisWant[] = []
-  try { return await teamRepositoryLines(deps, access, setting, deadline, send, reauthorize, wants) } finally { stasisReader(deps).build(wants) }
+  try { return await teamRepositoryLines(deps, access, setting, deadline, send, reauthorize, wants, everyBranch) } finally { stasisReader(deps).build(wants) }
 }
 async function teamRepositoryLines(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
-  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>, wants: StasisWant[]): Promise<boolean> {
+  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>, wants: StasisWant[], everyBranch: boolean): Promise<boolean> {
   const repoId = access.repo.repoId
-  type Read = { branch: object | null; pulls?: { items: TeamPull[]; more: boolean; error?: string }; commits?: Map<number, PullCommits> }
+  type Read = { branch: object | null; pulls?: { items: TeamPull[]; more: boolean; error?: string; defaultBranch?: string }; commits?: Map<number, PullCommits> }
   const read = await readWholeRepositoryOf<Read>(deps, access, async (fullName, token, user) => {
     const branch = await branchDependencyAnswer(deps, fullName, token, user, repoId, setting, wants)
     if (!(branch.value as { review?: unknown }).review) return { value: { branch: null }, kept: branch.kept }
     const pulls = await teamOpenPulls(deps, repoId, fullName, token, deadline)
-    return { value: { branch: branch.value, pulls: { items: pulls.items, more: pulls.more, ...pulls.failed === null ? {} : { error: pulls.failed } }, commits: pulls.commits },
+    return { value: { branch: branch.value, pulls: { items: pulls.items, more: pulls.more, ...pulls.failed === null ? {} : { error: pulls.failed },
+      ...pulls.defaultBranch ? { defaultBranch: pulls.defaultBranch } : {} }, commits: pulls.commits },
       kept: branch.kept && pulls.kept }
   }, reauthorize)
   if ('error' in read) return send({ repoId, ...PARTIAL_ACCESS.has(read.error) ? { branch: null } : { error: read.error, status: read.status } })
@@ -2907,8 +2915,11 @@ async function teamRepositoryLines(deps: ManagedHttpDeps, access: WholeAccess, s
   if (!branch) return send({ repoId, branch: null })
   if (!await send({ repoId, branch, pulls, ...await withDeltas(deps, [branch]) })) return false
   // Each by the commits its page names, where it names them, GitHub not asked
-  // for them (pullDependencyAnswer); never told.
-  const numbers = pulls!.items.filter(item => item.touchesLockfile === true || item.touchesLockfile === null).map(item => item.number)
+  // for them (pullDependencyAnswer); never told. Those to merge into another
+  // branch than the default but where asked, as the tab hides them unless
+  // asked, and reads them alone once it shows them, their Stasis builds none.
+  const numbers = pulls!.items.filter(item => (item.touchesLockfile === true || item.touchesLockfile === null) && (everyBranch || ontoDefault(item, pulls!.defaultBranch ?? null)))
+    .map(item => item.number)
   for (let at = 0; at < numbers.length; at += TEAM_PULLS_TOGETHER) {
     if (Date.now() > deadline) return false
     const batch = numbers.slice(at, at + TEAM_PULLS_TOGETHER)
@@ -2928,7 +2939,8 @@ const withDeltas = async (deps: ManagedHttpDeps, answers: object[]) => {
 // A repository's open pull requests, the TEAM_PULLS updated latest, a page
 // at a time (repository-issues.ts repositoryOpenPulls), each kept; each's
 // base's and head's commits as its page has them (`commits`, by its number),
-// where it has them; whether it has more, and whether all were kept. Where
+// where it has them; the repository's default branch, by its name
+// (`defaultBranch`), where told; whether it has more, and whether all were kept. Where
 // the repository has a label named DEPENDENCIES_LABEL (kept as a page is),
 // those carrying it alone, by its name as the repository has it: a
 // repository of many open pull requests, few of them its dependencies', read
@@ -2944,8 +2956,9 @@ async function teamOpenPulls(deps: ManagedHttpDeps, repoId: number, fullName: st
   const items: TeamPull[] = []
   const commits = new Map<number, PullCommits>()
   let after: string | null = null, kept = labelled.kept, size = OPEN_PULLS_SIZES[0]!
+  let defaultBranch: string | null = null
   for (let page = 0; page < TEAM_PULL_READS && items.length < TEAM_PULLS; page++) {
-    if (Date.now() > deadline) return { items, commits, more: true, kept: false, failed: 'time-up' }
+    if (Date.now() > deadline) return { items, commits, more: true, kept: false, failed: 'time-up', defaultBranch }
     const asked = size, cursor = after
     let answer
     try {
@@ -2953,19 +2966,20 @@ async function teamOpenPulls(deps: ManagedHttpDeps, repoId: number, fullName: st
     } catch (err) {
       if (!(err instanceof GithubApiError) || refusedRead(err)) throw err
       console.warn('managed: open pull requests read failed:', err)
-      return { items, commits, more: true, kept: false, failed: err.message }
+      return { items, commits, more: true, kept: false, failed: err.message, defaultBranch }
     }
     kept &&= answer.kept
     const value = answer.value as OpenPullsPage
     if (typeof value.size === 'number' && value.size > 0) size = Math.min(size, value.size)
+    if (typeof value.defaultBranch === 'string' && value.defaultBranch) defaultBranch ??= value.defaultBranch
     items.push(...(Array.isArray(value.items) ? value.items : []).filter(item => Number.isSafeInteger(item?.number) && item.number > 0))
     pageCommits(value, commits)
-    if (value.more !== true || typeof value.after !== 'string') return { items, commits, more: false, kept, failed: null }
+    if (value.more !== true || typeof value.after !== 'string') return { items, commits, more: false, kept, failed: null, defaultBranch }
     after = value.after
   }
-  return { items, commits, more: true, kept, failed: null }
+  return { items, commits, more: true, kept, failed: null, defaultBranch }
 }
-type OpenPullsPage = { items?: unknown; more?: unknown; after?: unknown; commits?: unknown; size?: unknown }
+type OpenPullsPage = { items?: unknown; more?: unknown; after?: unknown; commits?: unknown; size?: unknown; defaultBranch?: unknown }
 // Each open pull request's base's and head's commits a page of them names,
 // into `commits` by its number.
 function pageCommits(page: OpenPullsPage, commits: Map<number, PullCommits>) {

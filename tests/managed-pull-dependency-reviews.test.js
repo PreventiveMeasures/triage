@@ -1051,9 +1051,9 @@ async function teamFixture(t, pull = {}, answers = () => null, track = () => {})
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
   const node = { number: 5, title: 'Bump ms', state: 'OPEN', createdAt: null, updatedAt: null, closedAt: null, author: null, comments: { totalCount: 0 },
     labels: { totalCount: 0, nodes: [] }, files: { totalCount: 1, nodes: [{ path: 'package-lock.json' }] }, ...pull }
-  const asked = github(t, { ...PULL, graphql: body => answers(body) ?? (body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } }
-    : body.query.includes('page: pullRequests') ? { repository: { open: { totalCount: 1 }, closed: { totalCount: 0 }, page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node] } } }
-      : {}) })
+  const asked = github(t, { ...PULL, graphql: body => answers(body) ?? (body.query.includes('page: pullRequests') ? { repository: { defaultBranchRef: { name: 'main' }, open: { totalCount: 1 },
+    closed: { totalCount: 0 }, page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node] } } }
+    : body.query.includes('defaultBranchRef') ? { repository: { defaultBranchRef: { target: { oid: head } } } } : {}) })
   const handler = createManagedRequestHandler({ config, db, originGate: { isOriginAllowed: () => true }, isShuttingDown: () => false, track })
   const read = (path = '/api/teams/one/dependencies', who = 'alice') => readLines(t, handler, path, users[who].setCookie.split(';')[0])
   return { db, users, asked, read, send: api(db, users) }
@@ -1073,7 +1073,7 @@ test('a team\'s Dependencies in one request: each repository as its own endpoint
   assert.equal(answer.status, 200)
   assert.equal(answer.headers['content-type'], 'application/x-ndjson')
   assert.deepEqual(answer.lines.map(line => line.users ? without(line) : line), [{ repoId: 2, branch: null }, { repoId: 3, branch: null },
-    { repoId: 1, branch, pulls: { items: pulls.map(slim), more: false } }, { repoId: 1, dependencies }, { done: true }],
+    { repoId: 1, branch, pulls: { items: pulls.map(slim), more: false, defaultBranch: 'main' } }, { repoId: 1, dependencies }, { done: true }],
   'the two read of no GitHub first, then org/repo\'s, each open pull request by what its card tells of its tile, their dependencies after')
   assert.deepEqual(Object.keys(answer.lines[3].users), ['alice'], 'with the app\'s users its reviewers are, as a repository\'s activity is told')
   assert.ok(answer.ended)
@@ -1100,7 +1100,7 @@ test('a team\'s Dependencies read a repository\'s open pull requests in pages of
   const { pages, labels, read, send } = await pagesOf({ name: 'Dependencies' })
   const lines = (await read()).lines
   assert.deepEqual(labels, ['dependencies'], 'asked whether it has one, once')
-  assert.deepEqual(Object.keys(lines.find(line => line.pulls).pulls), ['items', 'more'])
+  assert.deepEqual(Object.keys(lines.find(line => line.pulls).pulls), ['items', 'more', 'defaultBranch'])
   assert.ok(lines.some(line => line.dependencies?.[0]?.number === 5), 'their dependencies read as ever')
   assert.equal(pages.length, 1)
   assert.match(pages[0].query, /\$labels: \[String!\][^]*page: pullRequests\([^)]*labels: \$labels, /u)
@@ -1537,4 +1537,26 @@ test('each version is told the asker\'s own latest published review of it, wheth
   // No asker, or another: none told as theirs.
   assert.ok(Object.values(yours(await reviewedDependencies(told, state))).every(one => one === null))
   assert.deepEqual(yours(await reviewedDependencies(told, state, { user: 'them' })).twice, { status: 'accept' })
+})
+
+test('a team\'s Dependencies read the dependencies of the open pull requests into their repository\'s default branch alone, those into others where asked for every branch\'s; each told its branch', async t => {
+  const node = (number, base) => ({ number, title: `Pull ${number}`, state: 'OPEN', createdAt: null, updatedAt: null, author: null, baseRefOid: tip, headRefOid: head,
+    ...base ? { baseRefName: base, headRefName: `bump-${number}`, isCrossRepository: false } : {}, files: { totalCount: 1, nodes: [{ path: 'package-lock.json' }] } })
+  const page = defaultBranch => body => body.query.includes('page: pullRequests') ? { repository: { ...defaultBranch === undefined ? {} : { defaultBranchRef: defaultBranch && { name: defaultBranch } },
+    page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node(5, 'main'), node(6, 'release/1.x'), node(7, null)] } } } : null
+  const { read } = await teamFixture(t, {}, page('main'))
+  const told = async path => {
+    const { lines } = await read(path)
+    return { pulls: lines.find(line => line.pulls).pulls, read: lines.flatMap(line => line.dependencies ?? []).map(answer => answer.number).toSorted() }
+  }
+  const only = await told()
+  assert.deepEqual(only.pulls.items.map(item => [item.number, item.base ?? null]), [[5, 'main'], [6, 'release/1.x'], [7, null]], 'each told its branch, where told')
+  assert.equal(only.pulls.defaultBranch, 'main')
+  assert.deepEqual(only.read, [5, 7], 'those into the default branch, or into one not told, alone read')
+  assert.deepEqual((await told('/api/teams/one/dependencies?branches=all')).read, [5, 6, 7], 'every one, where asked')
+  // A repository whose default branch isn't told: every one read.
+  const untold = await teamFixture(t, {}, page(null))
+  const { lines } = await untold.read()
+  assert.equal(lines.find(line => line.pulls).pulls.defaultBranch, undefined)
+  assert.deepEqual(lines.flatMap(line => line.dependencies ?? []).map(answer => answer.number).toSorted(), [5, 6, 7])
 })

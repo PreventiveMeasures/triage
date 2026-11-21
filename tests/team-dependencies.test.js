@@ -68,8 +68,9 @@ const dependencies = {
 }
 // A team's lines, as the server tells them (fetchTeamDependencies), of those
 // `repoIds` names, else all: the lines `old` changes, counted already, with
-// 7's default branch; its pull requests' dependencies two a line. Those
-// `timeUp` names left for the read's time, once, their default branch told.
+// 7's default branch; its pull requests' dependencies two a line, but of
+// those into another branch than its default. Those `timeUp` names left for
+// the read's time, once, their default branch told.
 const TEAM = [7, 8, 9, 10, 11, 12, 13]
 let timeUp = new Set()
 function teamLines(repoIds) {
@@ -80,7 +81,8 @@ function teamLines(repoIds) {
     else if (branches[repoId]) {
       lines.push({ repoId, branch: branches[repoId], pulls: pulls[repoId], ...repoId === 7 ? { deltas: [['old', '1.0.0', '(empty)', { additions: 3, deletions: 0, typeless: null }]] } : {} })
       if (timeUp.has(repoId)) { unread.push(repoId); continue }
-      const numbers = pulls[repoId].items.filter(item => item.touchesLockfile !== false).map(item => item.number)
+      const { defaultBranch } = pulls[repoId]
+      const numbers = pulls[repoId].items.filter(item => item.touchesLockfile !== false && (!defaultBranch || !item.base || item.base === defaultBranch)).map(item => item.number)
       for (let at = 0; at < numbers.length; at += 2) {
         lines.push({ repoId, dependencies: new Map(numbers.slice(at, at + 2).map(number => [number, { number, ...dependencies[`${repoId}#${number}`] }])) })
       }
@@ -858,6 +860,49 @@ test('a card\'s count of versions to review tells how many Stasis reaches where 
       'of those listed alone, at least as many where some aren\'t')
   } finally {
     Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest' })
+    routes.length = 0
+  }
+})
+
+test('pull requests into another branch than their repository\'s default hidden, their dependencies not read, till "All branches" is switched on; each then read alone, its branch named', async () => {
+  TEAM.push(19, 20)
+  branches[19] = branches[20] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
+  pulls[19] = { items: [pull(1, { base: 'main' }), pull(2, { base: 'release/1.x' }), pull(3)], more: false, defaultBranch: 'main' }
+  // Into another branch alone.
+  pulls[20] = { items: [pull(1, { base: 'next' })], more: false, defaultBranch: 'main' }
+  Object.assign(dependencies, {
+    '19#1': { cut: false, review: terms, lockfiles: [dir({ added: [wants('onto-main')] })] },
+    '19#3': { cut: false, review: terms, lockfiles: [dir({ added: [wants('untold-base')] })] },
+  })
+  answers.set('19#2', { number: 2, cut: false, review: terms, lockfiles: [dir({ added: [wants('onto-release')] })] })
+  Object.assign(state, { managedSession: { id: 'branches', role: 'triage' }, teamDependenciesTab: 'pulls', teamDependenciesSort: 'newest', teamDependenciesAllBranches: false })
+  asked.dependencies.length = 0
+  try {
+    const view = shown([repo(19, 'org/r')])
+    let text = await read(view)
+    assert.deepEqual(cardsOf(text).map(nameOf), ['r#3', 'r#1'], 'those into its default branch, or into one not told')
+    assert.deepEqual(tabs(text)[0], ['Pull requests', '2', true])
+    assert.deepEqual(asked.dependencies, [], 'none asked alone')
+    assert.match(text, /<mode-switch class="team-deps-branches" label="All branches" \.checked=false\s+data-tooltip=1 pull request into a branch other than the default\s+@click=[^]*?><\/mode-switch>\s*<span class="bundles-overview-sort"/u,
+      'a switch for them, before the order')
+    const toggle = templates(view.render()).find(one => one.strings.join('').includes('<mode-switch')).values.find(value => typeof value === 'function')
+    toggle()
+    assert.equal(state.teamDependenciesAllBranches, true)
+    text = await read(view)
+    assert.deepEqual(asked.dependencies.map(([repoId, number]) => [repoId, number]), [[19, 2]], 'each into another read alone once shown')
+    assert.deepEqual(cardsOf(text).map(nameOf), ['r#3', 'r#2', 'r#1'])
+    assert.match(cardsOf(text).find(one => nameOf(one) === 'r#2'), /class="team-deps-pull-name">r#2<\/span><span class="team-deps-pull-base" data-tooltip=Into release\/1\.x>→ release\/1\.x<\/span>[^]*onto-release/u, 'its branch named')
+    assert.doesNotMatch(cardsOf(text).filter(one => nameOf(one) !== 'r#2').join(''), /team-deps-pull-base/u)
+    assert.match(text, /<mode-switch class="team-deps-branches" label="All branches" \.checked=true/u)
+    state.teamDependenciesAllBranches = false
+    assert.deepEqual(cardsOf(templateText(view.render())).map(nameOf), ['r#3', 'r#1'], 'hidden again')
+
+    const alone = await read(shown([repo(20, 'org/n')]))
+    assert.match(alone, /No open pull request into a default branch wants its dependencies reviewed\./u)
+    assert.match(alone, /<mode-switch class="team-deps-branches"/u)
+  } finally {
+    answers.clear()
+    Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest', teamDependenciesAllBranches: false })
     routes.length = 0
   }
 })

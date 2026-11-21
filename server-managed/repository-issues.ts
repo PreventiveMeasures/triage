@@ -67,7 +67,7 @@ type Node = ReviewNode & { number?: unknown; title?: unknown; createdAt?: unknow
   isDraft?: unknown; reviewDecision?: unknown; additions?: unknown; deletions?: unknown; headRefName?: unknown; baseRefName?: unknown; baseRefOid?: unknown; isCrossRepository?: unknown
   commits?: { nodes?: { commit?: { statusCheckRollup?: { state?: unknown } | null } | null }[] }
   files?: { totalCount?: unknown; nodes?: ({ path?: unknown } | null)[] } | null }
-type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }; page?: Connection<Node> } | null }
+type Page = { repository?: { open?: { totalCount?: unknown }; closed?: { totalCount?: unknown }; page?: Connection<Node>; defaultBranchRef?: { name?: unknown } | null } | null }
 
 const REVIEWS: Record<string, string> = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes', REVIEW_REQUIRED: 'required' }
 const CHECKS: Record<string, string> = { SUCCESS: 'success', FAILURE: 'failure', ERROR: 'failure', PENDING: 'pending', EXPECTED: 'pending' }
@@ -230,14 +230,16 @@ export async function repositoryIssues(fullName: string, token: string, kind: Is
 // A page of the open pull requests a team's Dependencies reads (http.ts
 // teamOpenPulls), those carrying `$labels` alone where it names some: each by
 // what its card there and its popup's heading tell (its number, title and
-// author, when it was opened and last updated, whether it is a draft), the
-// files by which whether it changes a lockfile is told, and its base's and
-// head's commits, by which what its lockfiles add is read, with the branches
-// they are of (commitsOf). Nothing else a tile shows (its labels, comments,
+// author, when it was opened and last updated, whether it is a draft, the
+// branch it is to merge into), the files by which whether it changes a
+// lockfile is told, and its base's and head's commits, by which what its
+// lockfiles add is read, with the branches they are of (commitsOf); and the
+// repository's default branch, by its name. Nothing else a tile shows (its labels, comments,
 // size, checks, reviews, threads and comments), which GitHub is slow enough
 // to gather for fifty of a large repository's to fail the page.
 const openPullsQuery = (labelled: boolean) => `query($owner: String!, $name: String!, $first: Int!, $after: String${labelled ? ', $labels: [String!]' : ''}) {
   repository(owner: $owner, name: $name) {
+    defaultBranchRef { name }
     page: pullRequests(states: [OPEN], first: $first, after: $after, ${labelled ? 'labels: $labels, ' : ''}orderBy: { field: UPDATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
       nodes { number title createdAt updatedAt author { ${ACTOR} } state isDraft baseRefOid headRefOid baseRefName headRefName isCrossRepository ${files} }
@@ -245,7 +247,7 @@ const openPullsQuery = (labelled: boolean) => `query($owner: String!, $name: Str
   }
 }`
 // What a kept page of them was read as: kept ones read before differ.
-export const OPEN_PULLS_READ = 1
+export const OPEN_PULLS_READ = 2
 // How many a page asks for: ISSUES_PAGE, then, where GitHub fails to answer
 // that many in its time, fewer, and fewer again.
 export const OPEN_PULLS_SIZES = [ISSUES_PAGE, 20, 5]
@@ -256,7 +258,8 @@ const tooSlow = (err: unknown) => err instanceof GithubApiError && SLOW.has(err.
 
 // A page of the repository's open pull requests, the latest updated first,
 // after the page `after` ended (null for the first), those carrying `label`
-// alone where it names one: its `items`, their commits (`commits`, commitsOf)
+// alone where it names one: its `items`, their commits (`commits`, commitsOf),
+// the repository's default branch (`defaultBranch`, null where it tells none)
 // and, where more follow, the cursor reading them (`after`). As many as
 // `size` asked for, then, GitHub too slow to answer, as many as each smaller
 // of OPEN_PULLS_SIZES, the last one's failure the read's; how many were
@@ -281,7 +284,10 @@ async function openPullsPage(fullName: string, token: string, after: string | nu
   const next = info?.hasNextPage === true && typeof info.endCursor === 'string' && ISSUES_CURSOR.test(info.endCursor) ? info.endCursor : null
   const pulls = (repository.page?.nodes ?? []).flatMap(node => {
     const named = itemOf(node)
-    return node && named ? [{ node, tile: { ...named, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), ...pullState(node.state, node.isDraft), ...lockfileTouched(node) } }] : []
+    const base = nameOf(node?.baseRefName)
+    return node && named ? [{ node, tile: { ...named, createdAt: timeOf(node.createdAt), updatedAt: timeOf(node.updatedAt), ...pullState(node.state, node.isDraft),
+      ...base ? { base } : {}, ...lockfileTouched(node) } }] : []
   })
-  return { items: pulls.map(({ tile }) => tile), commits: pulls.flatMap(({ node, tile }) => commitsOf(tile.number, node)), more: next !== null, after: next, size: first }
+  return { items: pulls.map(({ tile }) => tile), commits: pulls.flatMap(({ node, tile }) => commitsOf(tile.number, node)), defaultBranch: nameOf(repository.defaultBranchRef?.name),
+    more: next !== null, after: next, size: first }
 }
