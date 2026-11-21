@@ -704,6 +704,10 @@ test('a row\'s tooltip names its reviewers the app knows by their names and avat
   const text = templateText(versionRow(pkg, { required: 2, canReview: true }, { added: true, lacks: [{ login: 'kay', status: 'accept', where: ['a#1'] }] }))
   assert.match(text, /Reviewed by<\/div>[^]*<span class="app-user" data-tooltip=@kay on GitHub><span class="app-user-avatar" aria-hidden="true">K<img src=\/api\/avatar\/u-kay [^]*<span class="app-user-name">Kay Lee<\/span>[^]*<span>stranger<\/span>/u)
   assert.match(text, /Lacks<\/span><span>Kay Lee’s review in a#1<\/span>/u)
+  // An answer telling no users, as one seeded of a team's line, forgets none.
+  const { seedPullDependencies } = await import('../ui/view/pull-dependencies.js')
+  seedPullDependencies(70, new Map([[1, { number: 1, cut: false, review: { required: 2, canReview: true }, lockfiles: [{ paths: ['package-lock.json'], added: [pkg], more: 0 }] }]]), true)
+  assert.match(templateText(versionRow(pkg, { required: 2, canReview: true }, { added: true })), /<span class="app-user-name">Kay Lee<\/span>/u)
 })
 
 test('a pull request into a branch other than the default is left out where it adds none to review and its comments review none', async () => {

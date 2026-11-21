@@ -389,7 +389,7 @@ export function fetchTeamDependencies(teamId, onLine, { repoIds = null, signal }
     for await (const line of responseLines(response)) {
       if (generation !== managedAppState.generation) throw new DOMException('Managed session changed', 'AbortError')
       onLine(typeof line.error === 'string' ? { ...line, error: BRANCH_DEPENDENCIES_ERRORS[line.error] ?? BRANCH_DEPENDENCIES_ERRORS[line.status]
-        ?? `It couldn’t be read (${line.error}).`, code: line.error } : Array.isArray(line.dependencies) ? { ...line, dependencies: pullAnswers(line.dependencies) }
+        ?? `It couldn’t be read (${line.error}).`, code: line.error } : Array.isArray(line.dependencies) ? { ...line, dependencies: pullAnswers(line.dependencies, line.users) }
         : typeof line.pulls?.error === 'string' ? { ...line, pulls: { ...line.pulls, error: unreadPulls(line.pulls.error) } } : line)
     }
   }, signal)

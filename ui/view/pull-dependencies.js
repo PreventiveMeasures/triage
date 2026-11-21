@@ -241,7 +241,8 @@ function answered(told, entry) {
   let failure = told instanceof Error ? told : null
   if (!failure) {
     try {
-      const answer = checked(knowGithubUsers(told))
+      // The app's users it names kept, where it tells them: one telling none forgets none.
+      const answer = checked(told?.users ? knowGithubUsers(told) : told)
       return { status: 'ready', until: Date.now() + (answer.pending ? PENDING_MS : KEEP_MS), ...answer }
     } catch (err) { failure = err }
   }

@@ -145,6 +145,13 @@ test('a team\'s Dependencies tell why a repository couldn\'t be read, and why no
   assert.deepEqual(told, [{ repoId: 1, error: 'Could not connect to GitHub. Try again shortly.', status: 502, code: 'github-unreachable' },
     { repoId: 2, branch: {}, pulls: { items: [{ number: 5 }], more: true, error: 'Not all its open pull requests were read. GitHub failed to answer. Try again shortly.' } },
     { repoId: 3, branch: {}, pulls: { items: [], more: true, error: 'Not all its open pull requests were read. Reading them took too long.' } }, lines[3], lines[4]])
+  // Each pull request's answer with the app's users its line names.
+  const users = { kay: { id: 'u-kay', login: 'kay', name: 'Kay' } }
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response(`${JSON.stringify({ repoId: 2, dependencies: [{ number: 5, lockfiles: [] }], users })}\n`,
+    { headers: { 'content-type': 'application/x-ndjson' } })))
+  told.length = 0
+  await fetchTeamDependencies('team', line => told.push(line))
+  assert.deepEqual(told[0].dependencies.get(5), { number: 5, lockfiles: [], users })
 })
 
 test('bundle catalogue errors distinguish denied access from temporary failures', async t => {
