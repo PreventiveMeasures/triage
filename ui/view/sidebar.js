@@ -536,7 +536,7 @@ async function triageImpactOf(names) {
 // presence cache: a closed or mid-boot workspace's remote tag must go too, or
 // `ensureRemoteNames` resurrects the file on its next open.
 const remoteHolders = (field, id, inRemote) => listWorkspaces()
-  .filter((w) => Array.isArray(w[field]) && w[field].includes(id) && inRemote(w.id, id))
+  .filter((w) => w[field].includes(id) && inRemote(w.id, id))
   .map((w) => w.id)
 
 // The Leave dialog offers detach-vs-delete for attached reports, and
@@ -544,12 +544,11 @@ const remoteHolders = (field, id, inRemote) => listWorkspaces()
 async function leaveWorkspaceRow(el) {
   const ws = workspaceOf(el)
   if (!ws) return
-  const reports = Array.isArray(ws.reports) ? ws.reports : []
-  const triageImpact = await triageImpactOf(reports)
+  const triageImpact = await triageImpactOf(ws.reports)
   if (!triageImpact) return
   const { confirmed, mode, triage } = await openLeaveWorkspaceDialog({
     name: ws.name,
-    reportCount: reports.length,
+    reportCount: ws.reports.length,
     bundleCount: ws.bundles.length,
     triageImpact,
   })
@@ -642,16 +641,13 @@ const SIDEBAR_CLICKS = [
   }],
   // A missing row is inert: opening it would select a bundle openBundle
   // can't find, a phantom selection with no panel.
-  ['.file-item[data-bundle-integrity]', (el) => {
-    if (el.classList.contains('bundle-missing')) return
+  ['.file-item[data-bundle-integrity]:not(.bundle-missing)', (el) => {
     const integrity = el.dataset.bundleIntegrity
     const workspaceId = el.dataset.workspaceId ?? null
     if (!bundleRowIsCurrent(integrity, workspaceId)) void showStoredBundle(integrity, undefined, { workspaceId })
   }],
   ['sidebar-view-button', (el) => {
-    const kind = el.getAttribute('kind')
-    if (kind !== 'packages' && kind !== 'repositories') return
-    state.currentView = kind
+    state.currentView = el.getAttribute('kind')
     render()
     renderSidebar()
   }],
@@ -680,17 +676,14 @@ const SIDEBAR_CLICKS = [
   }],
   ['[data-action="leave-workspace"]', leaveWorkspaceRow],
   // The dblclick rename intercepts before this fires.
-  ['.file-item.workspace-item[data-workspace-id]', (el) => {
-    const id = el.dataset.workspaceId
-    if (id) openWorkspace(id)
-  }],
+  ['.file-item.workspace-item[data-workspace-id]', (el) => openWorkspace(el.dataset.workspaceId)],
   // The same file again re-opens it from another view (Bundles, Files) into
   // its findings; 'links' already shows a links file's row.
   ['.file-item[data-file]', (el) => {
     const name = el.dataset.file
     const showingFile = state.currentView === 'findings' || state.currentView === 'links'
     const workspaceId = el.dataset.workspaceId ?? null
-    if (name && (name !== state.currentFile || workspaceId !== state.currentReportWorkspace || !showingFile)) {
+    if (name !== state.currentFile || workspaceId !== state.currentReportWorkspace || !showingFile) {
       switchToFile(name, undefined, { workspaceId })
     }
   }],
@@ -774,25 +767,24 @@ function syncButtonVisible() {
 function renderAuthStatus() {
   const authBtn = root?.querySelector('#auth-status')
   if (!authBtn) return
-  const manageBtn = root?.querySelector('#manage-status')
-  const menu = root?.querySelector('#user-menu')
+  const manageBtn = root.querySelector('#manage-status')
+  const menu = root.querySelector('#user-menu')
   const session = state.managedSession
-  hostEl?.toggleAttribute('data-authenticated', session != null)
-  hostEl?.toggleAttribute('data-workspace-access', session != null && session.role !== 'none')
+  hostEl.toggleAttribute('data-authenticated', session != null)
+  hostEl.toggleAttribute('data-workspace-access', session != null && session.role !== 'none')
   renderViewAsStatus(session)
   // A public link has no account to open, so it says what it is in plain text.
-  const publicStatus = root?.querySelector('#public-status')
-  if (publicStatus) publicStatus.hidden = !session?.publicShare
+  root.querySelector('#public-status').hidden = !session?.publicShare
   authBtn.hidden = session == null || session.publicShare === true
   if (session == null || session.publicShare) {
-    if (manageBtn) manageBtn.hidden = true
+    manageBtn.hidden = true
     authBtn.removeAttribute('popovertarget')
     if (session == null) {
       authBtn.dataset.authed = '0'
       authBtn.removeAttribute('aria-label')
       litRender(nothing, authBtn)
     }
-    if (menu) litRender(nothing, menu)
+    litRender(nothing, menu)
     return
   }
   // Logged in: the button keeps the avatar on the left and shows the username
@@ -805,9 +797,8 @@ function renderAuthStatus() {
   authBtn.setAttribute('popovertarget', 'user-menu')
   authBtn.setAttribute('aria-label', `Account: ${session.login}`)
   litRender(html`${avatarTemplate(initial, session.id)}<span class="auth-login">${accountLabel}</span>`, authBtn)
-  if (manageBtn) manageBtn.hidden = !(isManagedUiMode() && (session.role === 'admin' || session.role === 'manage'))
-  if (menu) {
-    litRender(html`
+  manageBtn.hidden = !(isManagedUiMode() && (session.role === 'admin' || session.role === 'manage'))
+  litRender(html`
       <div class="user-card">
         ${avatarTemplate(initial, session.id, true)}
         <span class="user-id">
@@ -821,16 +812,14 @@ function renderAuthStatus() {
       <button type="button" class="user-menu-row" data-action="toggle-client-mode">${isCombinedServerMode(state.serverModeConfig) ? 'e2e mode' : 'Local mode'}</button>
       <button type="button" class="user-menu-row logout-row" data-action="managed-logout">${LOGOUT_ICON}<span>Log out</span></button>
     `, menu)
-  }
 }
 
 // An admin viewing as another user sees that user's sidebar, plus this banner
 // for as long as the view lasts: every change is refused by the server.
 function renderViewAsStatus(session) {
-  const banner = root?.querySelector('#view-as-status')
-  if (!banner) return
+  const banner = root.querySelector('#view-as-status')
   banner.hidden = !session?.viewer
-  hostEl?.toggleAttribute('data-view-as', session?.viewer != null)
+  hostEl.toggleAttribute('data-view-as', session?.viewer != null)
   litRender(session?.viewer ? html`<span class="view-as-label"><span>Viewing as <strong>@${session.login}</strong></span>
       <span class="view-as-note">Read only · changes are not saved</span></span>
     <button type="button" class="view-as-stop" data-action="view-as-stop" aria-label=${`Stop viewing as ${session.login}`}>Stop</button>` : nothing, banner)
@@ -854,20 +843,16 @@ document.addEventListener('managed-profile-change', (event) => {
 })
 
 // Avatar disc: the cached avatar (served same-origin from /api/avatar/<id>) over
-// a fallback initial that shows when there's no avatar (the img 404s). The id in
-// the path keys the browser cache per user — a fixed URL would serve the
-// previous user's cached avatar (the browser keeps one a while) after a switch.
+// a fallback initial that shows when there's no avatar (the img 404s, and is
+// hidden as broken). The id in the path keys the browser cache per user — a
+// fixed URL would serve the previous user's cached avatar (the browser keeps
+// one a while) after a switch.
 function avatarTemplate(initial, userId, large = false) {
   const src = `/api/avatar/${encodeURIComponent(userId)}${avatarRevision ? `?v=${avatarRevision}` : ''}`
   return html`<span class=${large ? 'user-avatar user-avatar-lg' : 'user-avatar'}>
     <span class="user-avatar-fallback">${initial}</span>
-    ${getPreviewRole() || state.managedSession?.role === 'none' ? nothing : html`<img alt="" src=${src} @error=${onAvatarError}>`}
+    ${getPreviewRole() || state.managedSession?.role === 'none' ? nothing : html`<img alt="" src=${src} @error=${(e) => e.currentTarget.classList.add('broken')}>`}
   </span>`
-}
-
-function onAvatarError(e) {
-  // No cached avatar → hide the broken img so the initial fallback shows.
-  e.currentTarget.classList.add('broken')
 }
 
 // The brand tag names the live server mode, and is a button where there is
@@ -905,28 +890,15 @@ function renderSyncStatus(status) {
   if (!btn) return
   renderBrandTag()
   applyModeControls()
-  if (state.serverMode === 'managed' && state.localMode) {
+  // Managed sync is session-based, not a toggled socket: the account control
+  // stands in for the button (none in managed's local mode). Standalone (no
+  // backend) is a purely local app, with neither control.
+  if (state.serverMode === 'managed' || state.serverMode === 'standalone') {
     btn.hidden = true
-    triageSync.setForcedOff(true)
-    setHidden('#auth-status', true)
-    setHidden('#public-status', true)
+    if (state.serverMode === 'managed') triageSync.setForcedOff(true)
+    if (isManagedUiMode()) renderAuthStatus()
     return
   }
-  // Managed sync is session-based, not a toggled socket: the account
-  // control stands in for the button.
-  if (isManagedUiMode()) {
-    btn.hidden = true
-    triageSync.setForcedOff(true)
-    renderAuthStatus()
-    return
-  }
-  // Standalone (no backend): a purely local app, with neither control.
-  if (state.serverMode === 'standalone') {
-    btn.hidden = true
-    setHidden('#auth-status', true)
-    return
-  }
-  setHidden('#auth-status', true)
   const visible = syncButtonVisible()
   // Not before the server mode is confirmed (cached): a cold first visit
   // defaults to 'e2e', but a managed or standalone server must never pull
@@ -938,20 +910,15 @@ function renderSyncStatus(status) {
   // in-flight promise, so this is cheap on every render.
   if (visible && modeConfirmed && triageSync.isEnabled()) {
     loadSync().catch((err) => { console.warn('sync: load failed', err) })
-  }
-  // A workspace opts into sync, so the first one primes the default URL —
-  // unless the user turned sync off, or set a URL from the console.
-  if (visible && modeConfirmed && !triageSync.getServerUrl() && DEFAULT_SYNC_URL && triageSync.isEnabled()) {
-    triageSync.setServerUrl(DEFAULT_SYNC_URL)
+    // A workspace opts into sync, so the first one primes the default URL —
+    // unless the user turned sync off, or set a URL from the console.
+    if (!triageSync.getServerUrl() && DEFAULT_SYNC_URL) triageSync.setServerUrl(DEFAULT_SYNC_URL)
   }
   // An invisible button pauses the sync layer (no socket, no reconnects),
   // a runtime flag leaving the saved URL and toggle alone.
   triageSync.setForcedOff(!visible)
-  if (!visible) {
-    btn.hidden = true
-    return
-  }
-  btn.hidden = false
+  btn.hidden = !visible
+  if (!visible) return
   const s = status ?? triageSync.status
   btn.dataset.status = s
   // Orthogonal to the connection: local writes can be paused (a newer
@@ -971,8 +938,7 @@ function renderSyncStatus(status) {
   // No tooltip at all rather than an empty one the hover would schedule.
   if (syncTip) btn.dataset.tooltip = syncTip
   else delete btn.dataset.tooltip
-  const label = btn.querySelector('.sync-label')
-  if (label) label.textContent = SYNC_LABELS[s] ?? ''
+  btn.querySelector('.sync-label').textContent = SYNC_LABELS[s] ?? ''
 }
 // A no-op before mount; mount() paints the first status.
 triageSync.onStatusChange(renderSyncStatus)
@@ -1121,10 +1087,7 @@ function onSidebarDragover(e) {
   if (wsTarget) {
     // The whole workspace lights up, row and children, but the dragged row.
     const wsId = wsTarget.dataset.workspaceId
-    for (const el of root.querySelectorAll(`[data-workspace-id="${CSS.escape(wsId)}"]`)) {
-      if (el.classList.contains('dragging')) continue
-      el.classList.add('drag-over')
-    }
+    for (const el of root.querySelectorAll(`[data-workspace-id="${CSS.escape(wsId)}"]:not(.dragging)`)) el.classList.add('drag-over')
   } else {
     root.querySelector(e.dataTransfer.types.includes(BUNDLE_DT) ? '[data-default-bundles]' : '[data-default-reports]')?.classList.add('drag-over')
   }
@@ -1142,6 +1105,13 @@ function onSidebarDragleave(e) {
 // one stays in the other. Where the source's remote holds it, a dialog
 // confirms dropping that remote copy too, before membership changes, lest
 // the source's next open download it back; cancel aborts the move.
+const MOVES = {
+  [BUNDLE_DT]: { name: bundleName, inRemote: isBundleInRemoteOrCached, confirmDetach: openDetachBundleDialog, deleteRemoteCopy: deleteBundleFromRemote,
+    add: addBundleToWorkspace, remove: removeBundleFromWorkspace },
+  [REPORT_DT]: { name: (filename) => filename, inRemote: isInRemoteOrCached, confirmDetach: openDetachReportDialog, deleteRemoteCopy: deleteRemote,
+    add: addReportToWorkspace, remove: removeReportFromWorkspace },
+}
+
 async function moveDragged(id, sourceWsId, targetId, { name, inRemote, confirmDetach, deleteRemoteCopy, add, remove }) {
   if (sourceWsId && sourceWsId !== targetId && inRemote(sourceWsId, id)) {
     const sourceWs = listWorkspaces().find((w) => w.id === sourceWsId)
@@ -1166,22 +1136,13 @@ async function onSidebarDrop(e) {
   // the drag (a peer's report landing) can replace the `.dragging` row, and
   // the move would silently degrade into an additive add.
   const sourceWsId = e.dataTransfer.getData(SOURCE_WS_DT) || null
-  if (e.dataTransfer.types.includes(BUNDLE_DT)) {
-    const integrity = e.dataTransfer.getData(BUNDLE_DT)
-    if (!integrity) return
-    const moved = await moveDragged(integrity, sourceWsId, targetId, { name: bundleName(integrity), inRemote: isBundleInRemoteOrCached,
-      confirmDetach: openDetachBundleDialog, deleteRemoteCopy: deleteBundleFromRemote, add: addBundleToWorkspace, remove: removeBundleFromWorkspace })
-    if (moved) renderSidebar()
-    return
-  }
-  const filename = e.dataTransfer.getData(REPORT_DT)
-  if (!filename) return
-  const moved = await moveDragged(filename, sourceWsId, targetId, { name: filename, inRemote: isInRemoteOrCached,
-    confirmDetach: openDetachReportDialog, deleteRemoteCopy: deleteRemote, add: addReportToWorkspace, remove: removeReportFromWorkspace })
-  if (!moved) return
+  const type = e.dataTransfer.types.includes(BUNDLE_DT) ? BUNDLE_DT : REPORT_DT
+  const id = e.dataTransfer.getData(type)
+  if (!id) return
+  if (!await moveDragged(id, sourceWsId, targetId, { ...MOVES[type], name: MOVES[type].name(id) })) return
   // A report into or out of the active workspace changes its findings too:
   // reload it in place.
-  if (state.currentWorkspace && (state.currentWorkspace === targetId || state.currentWorkspace === sourceWsId)) await switchToWorkspace(state.currentWorkspace)
+  if (type === REPORT_DT && state.currentWorkspace && (state.currentWorkspace === targetId || state.currentWorkspace === sourceWsId)) await switchToWorkspace(state.currentWorkspace)
   else renderSidebar()
 }
 
@@ -1202,12 +1163,6 @@ let managedSessionTeams = null
 // in place of GET /api/auth/session. Dropped once taken, or when startup opens
 // another protocol, so no later probe takes it stale.
 let startupSession
-
-function takeStartupSession() {
-  const sent = startupSession
-  startupSession = undefined
-  return sent
-}
 
 // The same account, in the same role.
 const sameAccount = (a, b) => a?.id === b?.id && a?.role === b?.role
@@ -1370,7 +1325,8 @@ async function revalidateManagedSession({ keepTeams = false } = {}) {
   try {
     const previous = state.managedSession
     const unanswered = {}
-    const sent = takeStartupSession()
+    const sent = startupSession
+    startupSession = undefined
     // What other tabs told before a probe sent now is older than its answer;
     // the startup session was asked for before this tab could hear.
     const since = sent === undefined ? heardManagedSessions() : undefined
@@ -1854,9 +1810,8 @@ async function detectServerModeIfUnknown() {
 // The account menu is a native popover (top layer); position it just above the
 // auth button on open, since popover="auto" otherwise centers in the viewport.
 function positionUserMenuOnOpen() {
-  const menu = root?.querySelector('#user-menu')
-  const trigger = root?.querySelector('#auth-status')
-  if (!menu || !trigger) return
+  const menu = root.querySelector('#user-menu')
+  const trigger = root.querySelector('#auth-status')
   menu.addEventListener('beforetoggle', (e) => {
     if (e.newState !== 'open') return
     const r = trigger.getBoundingClientRect()
@@ -1882,12 +1837,8 @@ function mount(host) {
       void onSidebarClick(e)
     }
   })
-  root.addEventListener('dblclick', onSidebarDblclick)
-  root.addEventListener('dragstart', onSidebarDragstart)
-  root.addEventListener('dragend', onSidebarDragend)
-  root.addEventListener('dragover', onSidebarDragover)
-  root.addEventListener('dragleave', onSidebarDragleave)
-  root.addEventListener('drop', onSidebarDrop)
+  for (const [type, listener] of Object.entries({ dblclick: onSidebarDblclick, dragstart: onSidebarDragstart, dragend: onSidebarDragend,
+    dragover: onSidebarDragover, dragleave: onSidebarDragleave, drop: onSidebarDrop })) root.addEventListener(type, listener)
   installShadowTooltipListener(root, SIDEBAR_TOOLTIP_OPTIONS)
   root.querySelector('#sidebar-search-input')?.addEventListener('input', onSearchInput)
   positionUserMenuOnOpen()
