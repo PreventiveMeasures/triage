@@ -1,23 +1,10 @@
-// Fruchterman-Reingold force-directed layout for the graph canvas.
-// Only the lazy-loaded canvas.js calls this — no main-bundle code
-// path needs it — so the ~100-line solver lives in a sibling file
-// rather than `view/graph/utils.js` (which is in the main bundle's
-// static chain for tree-view / render-bundle helpers).
-//
-// Width / height are passed in from the actual canvas size at
-// layout time so the initial seeding + spring constants match the
-// real viewport.
-
+// Fruchterman-Reingold force-directed layout for the canvas's small graphs,
+// seeded and sprung for the canvas's actual size.
 import { packageOf } from './utils.js'
 
-// `opts.groupOf(id)`: classifier behind the centroid-pull clusters
-// below. Defaults to packageOf — right when ids are file paths (the
-// package-focus mode). The packages view passes identity: its ids
-// are package NAMES, which packageOf would mis-bucket (every
-// unscoped name → '/', scoped names by scope), pulling unrelated
-// packages toward a common centroid. Identity makes every group a
-// singleton, which the pull loop skips — spring + repulsion forces
-// alone shape that layout.
+// `opts.groupOf(id)` clusters nodes for the centroid pull: by package for
+// file paths (the default). Package ids would mis-bucket under packageOf, so
+// the packages view passes identity: singleton groups, which the pull skips.
 export function forceLayout(files, importsOf, layoutW, layoutH, { groupOf = packageOf } = {}) {
   const N = files.length
   const height = layoutH || 760

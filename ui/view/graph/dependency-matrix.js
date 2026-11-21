@@ -6,6 +6,7 @@ import { buildDependencyMatrix } from './matrix-model.js'
 import { MATRIX_LEFT, MATRIX_TOP, matrixFitCell, matrixHit, matrixZoomCell, paintMatrix } from './matrix-paint.js'
 import { matrixMembers, renderMatrixPanel } from './matrix-panel.js'
 import { graphTerms } from './data.js'
+import { graphTheme } from './colors.js'
 import css from './dependency-matrix.css'
 import sidebarListCSS from './sidebar-list.css'
 import zoomControlsCSS from './zoom-controls.css'
@@ -34,11 +35,12 @@ class DependencyMatrix extends LitElement {
     if (changes.has('graph') || this.query !== graph2.pathFilter || this.dirty) {
       const previousRows = this.model?.rows
       this.query = graph2.pathFilter
-      this.model = buildDependencyMatrix(this.graph, { expanded: this.expanded, order: this.order,
+      const build = () => buildDependencyMatrix(this.graph, { expanded: this.expanded, order: this.order,
         query: this.query, neighborhood: this.neighborhood, cyclesOnly: this.cyclesOnly })
+      this.model = build()
       if (this.neighborhood && !this.model.byId.has(this.neighborhood)) {
         this.neighborhood = null
-        this.model = buildDependencyMatrix(this.graph, { expanded: this.expanded, order: this.order, query: this.query, cyclesOnly: this.cyclesOnly })
+        this.model = build()
       }
       if (this.selection && (!this.model.index.has(this.selection.from)
         || (this.selection.to && (!this.model.index.has(this.selection.to)
@@ -99,6 +101,9 @@ class DependencyMatrix extends LitElement {
     if (graph2.graphState === this.bridge) graph2.graphState = null
   }
 
+  // What the matrix shows changed: rebuild it on the next update.
+  rebuild() { this.dirty = true; this.requestUpdate() }
+
   clamp() {
     this.view.cell = matrixZoomCell(this.view.cell, this.model.rows.length, this.width, this.height)
     const size = this.model.rows.length * this.view.cell
@@ -136,7 +141,7 @@ class DependencyMatrix extends LitElement {
     if (this.expanded.has(pkg)) this.expanded.delete(pkg)
     else this.expanded.add(pkg)
     this.revealPkg = pkg
-    this.selection = null; this.neighborhood = null; this.dirty = true; this.requestUpdate()
+    this.selection = null; this.neighborhood = null; this.rebuild()
   }
 
   pointer(e) {
@@ -184,8 +189,7 @@ class DependencyMatrix extends LitElement {
     const ctx = this.canvas.getContext('2d'), dpr = window.devicePixelRatio || 1
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const styles = getComputedStyle(this), value = (name) => styles.getPropertyValue(name).trim()
-    const paper = document.body.classList.contains('theme-paper')
-    const light = paper || ['theme-light', 'theme-pink', 'theme-w95'].some((name) => document.body.classList.contains(name))
+    const light = graphTheme() !== 'dark', paper = graphTheme() === 'paper'
     const theme = { bg: value('--graph-canvas-bg') || '#0c0c0c', surface: value('--surface'), text: value('--text'), muted: value('--muted'),
       border: value('--border'), grid: light ? '#0000000b' : '#ffffff0b', highlight: paper ? '#fff' : light ? '#0969da18' : '#ffffff12', cycle: paper ? '#000' : light ? '#a21caf' : '#e879c7' }
     this.style.setProperty('--matrix-cycle', theme.cycle)
@@ -206,9 +210,9 @@ class DependencyMatrix extends LitElement {
     const cycles = this.model.cycleCount > 0 || this.cyclesOnly
     if (!cycles && this.expanded.size === 0 && !this.neighborhood) return null
     return html`<div class="g2-matrix-controls">
-        ${cycles ? html`<mode-switch label=${`${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}`} .checked=${this.cyclesOnly} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.dirty = true; this.requestUpdate() }}></mode-switch>` : null}
-        ${this.expanded.size > 0 ? html`<button @click=${() => { this.expanded.clear(); this.selection = null; this.dirty = true; this.requestUpdate() }}>Collapse all</button>` : null}
-        ${this.neighborhood ? html`<button @click=${() => { this.neighborhood = null; this.dirty = true; this.requestUpdate() }}>All dependencies</button>` : null}
+        ${cycles ? html`<mode-switch label=${`${this.model.cycleCount} ${this.model.cycleCount === 1 ? 'cycle' : 'cycles'}`} .checked=${this.cyclesOnly} @click=${() => { this.cyclesOnly = !this.cyclesOnly; this.rebuild() }}></mode-switch>` : null}
+        ${this.expanded.size > 0 ? html`<button @click=${() => { this.expanded.clear(); this.selection = null; this.rebuild() }}>Collapse all</button>` : null}
+        ${this.neighborhood ? html`<button @click=${() => { this.neighborhood = null; this.rebuild() }}>All dependencies</button>` : null}
       </div>`
   }
 
@@ -219,7 +223,7 @@ class DependencyMatrix extends LitElement {
     const packagesOnly = this.graph.packagesOnly, terms = graphTerms(this.graph)
     return html`<div class="matrix-layout">
       <div class="matrix-stage" style=${styleMap({ '--matrix-label-width': `${MATRIX_LEFT}px` })}>
-        <select class="matrix-order" aria-label="Matrix order" @change=${(e) => { this.order = e.target.value; this.dirty = true; this.requestUpdate() }}>
+        <select class="matrix-order" aria-label="Matrix order" @change=${(e) => { this.order = e.target.value; this.rebuild() }}>
           <option value="structure" ?selected=${this.order === 'structure'}>Structure ↓</option><option value="name" ?selected=${this.order === 'name'}>Name ↓</option><option value="importers" ?selected=${this.order === 'importers'}>${terms.mostImported} ↓</option><option value="imports" ?selected=${this.order === 'imports'}>Most ${terms.links} ↓</option>
         </select>
         <canvas tabindex="0" role="img" aria-label=${packagesOnly ? 'Dependency matrix. Rows depend on columns. Arrow keys select cells.' : 'Dependency matrix. Rows import columns. Arrow keys select cells; Enter expands a package.'}
@@ -238,7 +242,7 @@ class DependencyMatrix extends LitElement {
       </div>
       <aside class="matrix-panel" aria-label="Matrix details" aria-live="polite">${renderMatrixPanel(this.model, this.graph, this.selection, {
         select: (from, to) => this.select(from, to), expand: (pkg) => this.expand(pkg), expanded: this.expanded, neighborhood: this.neighborhood,
-        focus: (id) => { this.neighborhood = this.neighborhood === id ? null : id; this.dirty = true; this.requestUpdate() },
+        focus: (id) => { this.neighborhood = this.neighborhood === id ? null : id; this.rebuild() },
         clear: () => { this.selection = null; this.requestUpdate() },
       })}</aside>
     </div>`

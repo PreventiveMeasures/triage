@@ -37,12 +37,7 @@ export function layoutPackageDependencies(ids, importsOf, roots = [], { width = 
     }
   }
   const depth = new Map(ids.map((id) => [id, ranks[componentOf.get(id)]]))
-  const bands = new Map()
-  for (const id of ids) {
-    const level = depth.get(id)
-    if (!bands.has(level)) bands.set(level, [])
-    bands.get(level).push(id)
-  }
+  const bands = Map.groupBy(ids, (id) => depth.get(id))
   const levels = [...bands.keys()].toSorted((a, b) => a - b)
   const positions = new Map()
   const indexBand = (members) => members.forEach((id, i) => positions.set(id, (i + .5) / members.length))

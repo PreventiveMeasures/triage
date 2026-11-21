@@ -4,17 +4,11 @@
 import { pkgLabel } from '../../../common/bundle-pkg-of.js'
 import { depsDirName } from '../format.js'
 
-// Strip a file path's package anchor so callers can show
-// "index.js" instead of "node_modules/foo/index.js" (npm) or
-// "foo/bar.js" instead of "packages/app/foo/bar.js" (workspace package).
-// Mirrors packageOf / bundlePkgOf: packages anchor on either
-// `node_modules/<pkg>/` or `dependencies/<pkg>/` — try both
-// regardless of the report-driven depsDirName, since the bundle
-// graph runs without a report (depsDirName falls back to
-// 'dependencies' even when the bundle paths use node_modules).
-// For own source in the synthetic '__own__' bucket the file is
-// returned as-is — there's no meaningful prefix to strip and
-// consumers should fall back to the full path.
+// A file's path in its package: "index.js" for "node_modules/foo/index.js",
+// "foo/bar.js" for a workspace package's "packages/app/foo/bar.js". Both
+// `node_modules/` and `dependencies/` anchors are tried, whatever the
+// report's depsDirName, since a bundle graph has no report. Own source keeps
+// its path.
 export function pkgRelative(file, pkg) {
   if (!pkg || pkg === '/' || pkg === '__own__') return file
   for (const dep of ['node_modules', 'dependencies', depsDirName()]) {

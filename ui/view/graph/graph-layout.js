@@ -1,34 +1,11 @@
-// `<graph-layout>` — shadow-DOM host for the dependency-graph view.
-// Owns the chrome (left-panel / stage / right-panel three-column
-// layout) plus the chips, toolbar, canvas, and right-panel slots.
-//
-// Public shape (set via Lit property syntax on the host):
-//   .graph    — buildGraph(...) result; nodes/edges/packages
-//   .options  — { hideAllFiles?, triageCounts?, extraTopRow? }
-//
-// Why shadow DOM: scopes the long `.graph2-*` selector set (~900
-// lines in graph2.css) to this component instead of flooding the
-// global cascade. The chip widgets (`<severity-chips>`,
-// `<triage-filter>`) and triage-selector / toolbar-row chrome use
-// classes from `styles/toolbar.css`; the per-severity count chips
-// in the selection sidebar (`renderSevChips` → `.tree-count-chip`)
-// come from `styles/tree-count-chip.css`. Both files are inlined
-// into our shadow styles so those classes pick up the same styling
-// they get elsewhere on the page.
-//
-// Refresh helpers (refreshGraph2Sidebar / refreshGraph2TopPkgs in
-// render.js, the bundle siblings in render-bundle.js, dispatching
-// into refreshSidebar / refreshTopPkgs in ui/graph.js) reach inside
-// this component via
-// `host.shadowRoot.querySelector(...)`. Same for
-// `attachGraph2Interaction(host, ...)` which wires the canvas
-// hover / pan / zoom on top of the rendered shadow DOM.
-//
-// Event handling: clicks on data-g2-* targets inside the shadow
-// tree bubble out as composed events to the document-level
-// delegate in events.js. The delegate walks `e.composedPath()`
-// instead of relying on `e.target` (which gets retargeted to the
-// host element when an event crosses the shadow boundary).
+// `<graph-layout>`: the graph view's shadow-DOM host (`.graph` a buildGraph
+// result, `.options` the topbar's), composing the topbar, the stage or the
+// Matrix / Size flow element, and the right panel. The shadow root scopes
+// graph2.css; the toolbar and tree-count-chip sheets are inlined so their
+// shared classes style alike in here. The refresh helpers (ui/graph.js) and
+// attachGraph2Interaction reach into the shadow root; clicks on data-g2-*
+// targets reach events.js's document delegate, which reads composedPath()
+// since the shadow boundary retargets `e.target`.
 import { LitElement, html, unsafeCSS } from 'lit'
 import graph2CSS from './graph2.css'
 import sidebarListCSS from './sidebar-list.css'
@@ -86,15 +63,18 @@ class GraphLayout extends LitElement {
     installShadowTooltipListener(this.renderRoot)
   }
 
+  // The bundle layout drawn, if this is a bundle graph.
+  get layout() { return this.options.showBundleLayouts ? graph2.bundleLayout : null }
+
   willUpdate(changed) {
-    if (!this.options.showBundleLayouts || graph2.bundleLayout !== 'matrix') this.matrixControls = null
-    if (!this.options.showBundleLayouts || !FLOW_LAYOUTS.has(graph2.bundleLayout)) this.flowControls = null
+    if (this.layout !== 'matrix') this.matrixControls = null
+    if (!FLOW_LAYOUTS.has(this.layout)) this.flowControls = null
     // New first-row contents may make room for the Issues switch again.
     if (changed.has('graph') || changed.has('options') || changed.has('matrixControls') || changed.has('flowControls')) this._issuesWrapWidth = 0
   }
 
   updated() {
-    this.toggleAttribute('matrix', !!this.options.showBundleLayouts && graph2.bundleLayout === 'matrix')
+    this.toggleAttribute('matrix', this.layout === 'matrix')
     const controls = this.renderRoot.querySelector('.g2-topbar-controls')
     if (controls !== this._observedControls && typeof ResizeObserver === 'function') {
       this._topbarObserver ??= new ResizeObserver(() => this._placeIssues())
@@ -130,24 +110,25 @@ class GraphLayout extends LitElement {
 
   render() {
     if (!this.graph) return html``
-    if (this.options.showBundleLayouts && FLOW_LAYOUTS.has(graph2.bundleLayout)) {
+    const topBar = (controls) => renderTopBar(this.graph, this.options, controls, { issuesWrapped: this.issuesWrapped })
+    if (FLOW_LAYOUTS.has(this.layout)) {
       // Package flow is Size flow's chart weighed in packages, always at
       // package altitude.
-      const counts = graph2.bundleLayout === 'package-flow'
+      const counts = this.layout === 'package-flow'
       return html`<div class="graph2-layout">
-        ${renderTopBar(this.graph, this.options, this.flowControls, { issuesWrapped: this.issuesWrapped })}
+        ${topBar(this.flowControls)}
         <size-flow .graph=${this.graph} .packages=${counts || graph2.flowPackagesView} .metric=${counts ? 'count' : 'size'}
           @flow-controls-change=${e => { this.flowControls = e.detail }}></size-flow>
       </div>`
     }
-    if (this.options.showBundleLayouts && graph2.bundleLayout === 'matrix') {
+    if (this.layout === 'matrix') {
       return html`<div class="graph2-layout g2-matrix-layout">
-        ${renderTopBar(this.graph, this.options, this.matrixControls, { issuesWrapped: this.issuesWrapped })}
+        ${topBar(this.matrixControls)}
         <dependency-matrix .graph=${this.graph} @matrix-controls-change=${(e) => { this.matrixControls = e.detail }}></dependency-matrix>
       </div>`
     }
     return html`<div class="graph2-layout">
-      ${renderTopBar(this.graph, this.options, null, { issuesWrapped: this.issuesWrapped })}
+      ${topBar(null)}
       ${renderStage(this.graph)}
       ${renderRightPanel()}
     </div>`

@@ -87,6 +87,8 @@ const G2_THEMES = {
 const currentTheme = () => G2_THEMES[graphTheme()]
 
 const LABEL_FONT = '600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
+// The base opacity of an edge.
+const EDGE_OPACITY = 0.22
 
 // Screen-space AABB overlap test shared by the label collision passes.
 const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
@@ -106,8 +108,8 @@ const alphaHex = (a) => ALPHA_HEX[Math.max(0, Math.min(255, Math.round(a * 255))
 
 // Rich renderers' node radius, constant in screen space: a focused package's
 // files, and packages, whose area tracks their file count (sqrt, capped).
-const focusNodeRadius = (n) => (n.isHub ? 6 : 4) * graph2.nodeSize
-const pkgNodeRadius = (p) => Math.min(26, 5 + Math.sqrt(p.fileCount) * 1.7) * graph2.nodeSize
+const focusNodeRadius = (n) => n.isHub ? 6 : 4
+const pkgNodeRadius = (p) => Math.min(26, 5 + Math.sqrt(p.fileCount) * 1.7)
 
 // Bidirectional pairs get arrows at both ends, others at the import's target
 // (data.js records which ends import: fromLo / fromHi).
@@ -464,7 +466,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   }
 
   // The dot renderer's radius: hubs 1.4× members, growing with zoom up to a point.
-  const nodeRadius = (n) => (n.isHub ? 4.9 : 3.5) * graph2.nodeSize * Math.max(0.6, Math.min(1.6, viewport.k))
+  const nodeRadius = (n) => (n.isHub ? 4.9 : 3.5) * Math.max(0.6, Math.min(1.6, viewport.k))
 
   // ── Resize / DPR handling ─────────────────────────────────────
   function resize() {
@@ -532,7 +534,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       && paintBounds.y1 * viewport.k + viewport.ty < H - margin
     const canReuse = contained && viewport.k <= 1.4 && G.nodes.length > 50 && !layersOn() && !dependenciesOn()
     const next = { tx: viewport.tx, ty: viewport.ty, key: JSON.stringify([
-      viewport.k, currentTheme().bg, graph2.nodeSize, graph2.edgeOpacity,
+      viewport.k, currentTheme().bg,
       hovered, graph2.selected, graph2.solo, graph2.focusedPkg, pkgViewOn(),
       graph2.showAll, graph2.pathFilter, [...graph2.selectedSeverities], [...graph2.selectedColors],
     ]) }
@@ -599,13 +601,13 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   function drawDots(T, G, damage, selected, sel) {
     if (!renderCaches.has(G)) renderCaches.set(G, createRenderCache(G))
     const frame = renderCaches.get(G)
-    const paintKey = JSON.stringify([viewport.k, viewport.tx, viewport.ty, graph2.nodeSize, T.bg,
+    const paintKey = JSON.stringify([viewport.k, viewport.tx, viewport.ty, T.bg,
       graph2.solo, graph2.pathFilter, [...graph2.selectedSeverities], [...graph2.selectedColors]])
     updateRenderCache(frame, { viewport, selected, paintKey, visible: shown, dimmed: nodeIsDimmed, radius: nodeRadius, color: pkgColor })
 
     // ── Edges (back layer): cross-package ones a gradient between the
     // package hues, intra-package ones the theme's neutral gray.
-    const paints = edgePaints(frame, graph2.edgeOpacity, T.edgeIntra, !!selected)
+    const paints = edgePaints(frame, EDGE_OPACITY, T.edgeIntra, !!selected)
     const focus = selected || hovered
     const crossWidth = 0.85 / viewport.k, intraWidth = 0.55 / viewport.k
     let lastAlpha = null, lastStroke = null, lastWidth = null
@@ -691,10 +693,10 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   }
 
   // Dot labels past 140% zoom: hubs only below 240%, every node from there,
-  // thinned by a collision pass. They show when forced (showLabels), at 900%
-  // and up, or with fewer than 50 nodes on screen.
+  // thinned by a collision pass. They show at 900% and up, or with fewer than
+  // 50 nodes on screen.
   function drawDotLabels(T, G, selected) {
-    if (viewport.k < 9 && !graph2.showLabels) {
+    if (viewport.k < 9) {
       let onScreen = 0
       for (const n of G.nodes) {
         const [sx, sy] = worldToScreen(n.x, n.y)
@@ -762,7 +764,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       const isSel = selected && (e.a === selected || e.b === selected)
       const isDim = active && !isHov && !isSel
       const c = curve(a, b, focusNodeRadius(a), focusNodeRadius(b))
-      const alpha = isSel ? 0.9 : isHov ? 0.85 : isDim ? 0.05 : Math.min(0.85, graph2.edgeOpacity * 3)
+      const alpha = isSel ? 0.9 : isHov ? 0.85 : isDim ? 0.05 : Math.min(0.85, EDGE_OPACITY * 3)
       ctx.strokeStyle = color + alphaHex(alpha)
       ctx.lineWidth = isSel || isHov ? 1.5 : 0.85
       strokeCurve(c)
