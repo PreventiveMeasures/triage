@@ -227,7 +227,7 @@
     & :not(input[type='radio'], .bundles-tab), & ::before, & ::after { border-radius: 0 !important; }
     & :is(h1, h2, h3, h4) { font-size: 1em; font-weight: 700; line-height: 1.35; }
     & #report header.page-head .page-title h1 { font-size: 13px; }
-    & :is(.kanban-column-header, .file-group-header, .drop-supported-section h2) { font-size: 11px; }
+    & :is(.kanban-column-header, .drop-supported-section h2) { font-size: 11px; }
     & :focus-visible { outline: 1px dotted #000 !important; outline-offset: -4px !important; }
 
     /* Windows 95 scrollbars: 16px, a raised thumb on the dither, arrow buttons

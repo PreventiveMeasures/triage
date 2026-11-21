@@ -1,12 +1,6 @@
-/* Per-severity count chips — compact pills (e.g. "5 critical", "3
-   high") rendered by `renderSevChips` in the graph selection card AND
-   by render-bundle/packages/repositories.js in their own chrome.
-   Split from `graph-files.css` so the rules are shared between the
-   document cascade (light-DOM callers, via `view.css`'s `@import`)
-   and the `<graph-layout>` shadow root (inlines this via `unsafeCSS`,
-   so its in-shadow `.tree-count-chip` instances get the same palette
-   instead of rendering unstyled). The tree-view chrome stays
-   light-DOM-only in `graph-files.css` — the graph doesn't need it. */
+/* Per-severity count chips ("5 critical"), from renderSevChips and the
+   bundle / package / repository views. Shared by the document (view.css)
+   and the <graph-layout> shadow root (unsafeCSS). */
 .tree-count-chips { display: inline-flex; gap: .25rem; flex-wrap: wrap; }
 
 .tree-count-chip {

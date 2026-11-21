@@ -1,6 +1,5 @@
-/* Files tab — one card per file with imports / imported-by / exports
-   / hashes. In-page anchors link import names to their file's card so
-   the user can navigate the graph by clicking. */
+/* Files tab: a card per file (imports / imported-by / exports / hashes);
+   import names link to their file's card. */
 .tree-view { display: flex; flex-direction: column; gap: .75rem; }
 
 .tree-file {
@@ -18,22 +17,11 @@
   & .name { flex: 1; min-width: 0; }
 }
 
-/* `.tree-count-chip` + `.tree-count-chips` live in
-   `styles/tree-count-chip.css` so they can be reused inside the
-   `<graph-layout>` shadow tree without bundling the rest of the
-   Files-tab chrome. That file is `@import`-ed by `view.css`, so the
-   light-DOM call sites here (and in render-bundle.js /
-   render-packages.js / render-repositories.js) still resolve. */
-
 .tree-hashes { font-size: .65rem; color: var(--muted); margin-bottom: .35rem; word-break: break-all; }
 
-/* Open-in-bundle-source pill, shown in the file header when the
-   file's sha512 matches a parsed bundle's contents. Same pill chrome
-   as `.finding-code-btn`, sized for the header row to line up next to
-   the size chip. Inline-flex centers the label; vertical-align middle
-   aligns the pill with surrounding text in the details-panel header,
-   which is a plain block (not flex), where baseline alignment would
-   otherwise tip the pill below the file name. */
+/* Open-in-bundle-source pill for a file whose sha512 matches a parsed
+   bundle, as `.finding-code-btn`. `vertical-align: middle` for the details
+   header, a plain block where baseline would drop it below the name. */
 .tree-code-btn {
   display: inline-flex; align-items: center;
   vertical-align: middle;
@@ -70,11 +58,8 @@
   vertical-align: top;
 }
 
-/* Toolbar at the top of the Files tab — view-mode buttons + search
-   field. Mirrors the findings toolbar's first-row layout but
-   compressed; the Files tab doesn't carry the rest of the findings
-   filters (severity / colors / confidence) so a dedicated narrow
-   bar reads cleaner than reusing the full `.toolbar`. */
+/* The Files tab's own narrow toolbar: view-mode buttons and search, without
+   the findings filters. */
 .tree-toolbar {
   display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
   margin-bottom: .75rem;
@@ -110,21 +95,15 @@
   }
 }
 
-/* Wrapper caps at the findings-tab widths: 1200px single-panel (list
-   mode and table mode without a selection), 2000px when the details
-   panel is open so the 3fr / 2fr split below matches
-   `.findings-table-layout.open`'s 1200 + 800 footprint. The toolbar
-   stays capped at 1200px in details mode (rule below) so the filter
-   chrome keeps the same width across selection states. */
+/* Caps as the findings tab: 1200px, 2000px with the details panel (the
+   3fr / 2fr split of `.findings-table-layout.open`); the toolbar stays at
+   1200px either way. */
 .tree-view, .tree-view-table { max-width: 1200px; }
 .tree-view-table.with-details { max-width: 2000px; }
 .tree-view-table.with-details > .tree-toolbar { max-width: 1200px; }
 
-/* Table mode — two-column layout (3fr list / 2fr details when a
-   file is selected, single-column otherwise). Mirrors
-   `.findings-table-layout`'s structure so users moving between
-   tabs see consistent affordances. The list itself is a flat
-   stack of compact one-line rows. */
+/* Table mode: compact one-line rows, a details column when a file is
+   selected, as `.findings-table-layout`. */
 .tree-view-table { display: flex; flex-direction: column; gap: .5rem; }
 
 .tree-table-layout {
@@ -153,9 +132,7 @@
   transition: background .12s;
 
   &:hover { background: rgb(from var(--text) r g b / .04); }
-  /* Match the parent `.tree-table-list`'s 6px radius on edge
-     rows so a `.selected` outline traces the rounded clip
-     rather than painting a square inside it. */
+  /* Edge rows take the list's radius so a selected outline follows the curve. */
   &:first-child { border-top-left-radius: var(--ui-radius, 6px); border-top-right-radius: var(--ui-radius, 6px); }
   &:last-child {
     border-bottom: none;
@@ -183,8 +160,7 @@
   &.clean .tree-table-name { color: var(--muted); }
 }
 
-/* Size chip in the list-mode header and the details panel — same
-   muted monospace as the table-row size, sized down a touch. */
+/* Size chip in the list header and the details panel. */
 .tree-file-header .tree-file-size,
 .tree-detail-name .tree-detail-size {
   color: var(--muted);

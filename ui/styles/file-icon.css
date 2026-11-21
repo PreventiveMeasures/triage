@@ -1,11 +1,6 @@
-/* Branded "sticker" file icons — sheet body fills with the brand
-   color, mark on top in a contrasting fg (DeepView eye on dark blue;
-   Claude salmon on white; OpenAI white on black; Vercel black on
-   white; Piolium shield in its own srcery near-black on that theme's
-   amber accent). White/black sheets get a hairline border in the
-   contrasting color so they don't blend into surrounding surfaces
-   across themes. Top-level (not scoped under .file-item) so the page
-   header's file-chip can reuse the classes. */
+/* Branded "sticker" file icons: the sheet in the brand color, the mark in a
+   contrasting fg; white / black sheets get a hairline so they don't blend
+   in. Unscoped so the page header's file chip can reuse them. */
 :is(.file-icon, .report-logo) {
   &.brand-deepview { --brand-bg: #2563eb; --brand-fg: #fff; }
   &.brand-claude { --brand-bg: #d97757; --brand-fg: #fff; }

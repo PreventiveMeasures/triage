@@ -1,19 +1,7 @@
-/* Prism token palette — the colours every surface that paints
-   highlighted code shares.
-
-   Kept scope-free so each consumer can adopt it where its own markup
-   lives: view.css for the light-DOM viewers (bundle source, the focus
-   view's Code panel, description code blocks, the Compare diff),
-   `<finding-card>` into its shadow root beside the card styles, and the
-   dialogs that show code into theirs. `.token` classes only ever come
-   from Prism's own output, so an unscoped rule can't reach anything
-   else.
-
-   The palette itself is NOT here: the `--code-*` properties come from
-   theme.css and inherit across every shadow boundary, so one snippet
-   colours identically wherever it is drawn and the light themes retune
-   all of them at once. Prism stamps `<span class="token X Y">`; X (the
-   kind) is all we key off. */
+/* Prism token palette, unscoped so each consumer adopts it where its markup
+   lives (view.css for the light DOM, finding-card and code dialogs in their
+   shadow roots); `.token` only comes from Prism. The `--code-*` colors are
+   theme.css's and cross shadow boundaries. Keyed off the kind (`token X`). */
 .token.comment,
 .token.prolog,
 .token.cdata { color: var(--code-comment); font-style: italic; }
@@ -41,20 +29,16 @@
 .token.variable,
 .token.property,
 .token.parameter { color: var(--code-variable); }
-/* Java stamps `@Override` and friends as an `annotation` aliased to
-   `punctuation`, which would sink a declaration's decorators into the
-   grey its braces wear. Keyed after that rule so it wins the tie. */
+/* Java's `annotation` is aliased to `punctuation`; after that rule so it
+   wins the tie. */
 .token.annotation { color: var(--code-function); }
 .token.deleted { color: var(--code-deleted); }
 .token.inserted { color: var(--code-inserted); }
 .token.italic { font-style: italic; }
 .token.bold { font-weight: bold; }
-/* A control character the code shows as a box (view/control-chars.js): its
-   label, small, on the text's baseline. It takes no line height, so a line
-   with one keeps the height the viewers' gutters count on: a smaller font's
-   own line box, set on the baseline, still adds a fraction of a pixel where
-   a pixel is two. Not selectable, so a copy leaves the label out. The
-   viewers' own markup, not Prism's: the class is as safe unscoped. */
+/* A control character shown as a box (view/control-chars.js): its label
+   small on the baseline, with no line height of its own so the gutters' line
+   math holds; unselectable so a copy leaves it out. */
 .code-control {
   padding: 0 .3em;
   margin: 0 .1em;

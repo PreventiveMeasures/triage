@@ -1,20 +1,15 @@
-/* The two light-DOM dialogs (reusable modals are shadow-DOM
-   AppDialog, styled in dialog-*.css): boot-time
-   `<origin-migration-dialog>` (origin-check.js) and `#lock-overlay`
-   (lock-overlay.js). */
+/* The two light-DOM dialogs (reusable modals are the shadow-DOM AppDialog,
+   dialog-*.css): `<origin-migration-dialog>` (origin-check.js) and
+   `#lock-overlay` (lock-overlay.js). */
 
-/* Top offset for light-DOM <dialog>s. UA centers showModal() via
-   `margin: auto`; margin-top steals from the bottom auto-margin,
-   shifting the dialog ~5rem below the vertical centerline on tall
-   screens. (Shadow-DOM dialogs set the same offset in
-   dialog-base.css.) */
+/* Light-DOM <dialog>s sit ~5rem above center on tall screens: margin-top
+   takes from the UA's auto margins (dialog-base.css does the same). */
 dialog {
   margin-top: 5rem;
 }
 
-/* `<origin-migration-dialog>` — boot-time prompt on legacy hosts
-   (deepaudit.dev, chalker.github.io/deepview/) that the view moved
-   to triage.space. Light DOM, so these rules apply directly. */
+/* `<origin-migration-dialog>`: the boot-time prompt on legacy hosts that
+   the view moved to triage.space. */
 .origin-migration-dialog {
   border: 1px solid var(--border); border-radius: var(--ui-radius, 10px);
   background: var(--surface); color: var(--text);
@@ -42,9 +37,7 @@ dialog {
     border-radius: var(--ui-radius, 3px);
     word-break: break-all;
   }
-  /* Link to triage.space — same monospace chip framing as <code>,
-     plus accent + underline so it reads as a link. Hover brightness
-     mirrors the primary button. */
+  /* The triage.space link: a <code> chip, accent and underlined. */
   & .om-link {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: .82em;
@@ -76,10 +69,8 @@ dialog {
   }
 }
 
-/* Full-page lock overlay (lock-overlay.js) — shown when the passkey
-   vault is enabled but this tab hasn't unlocked. Sits above
-   EVERYTHING (report, sidebar, dialogs): encrypted state is
-   unreadable, so every widget below would be stale/empty. */
+/* Full-page lock overlay (lock-overlay.js) while the passkey vault is
+   locked: above everything, since all state below is unreadable. */
 #lock-overlay {
   position: fixed; inset: 0;
   z-index: 9999;
@@ -152,7 +143,3 @@ dialog {
     }
   }
 }
-
-/* Instant hover tooltip is appended to `<body>` (escapes the
-   sidebar's overflow:hidden); its styles live in
-   styles/sidebar-chrome.css. */

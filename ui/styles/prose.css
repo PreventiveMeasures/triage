@@ -1,8 +1,7 @@
-/* Inline highlights inside bundle-side finding descriptions
-   (Issues tab rows, source-viewer side panel, code-rail issue
-   results) — light-DOM copy of the .inline-* rules finding-card.css
-   keeps in the card's shadow root, so `` `code` `` / "quoted" spans
-   read the same on both surfaces. */
+/* Light-DOM copies of finding-card.css's prose rules (.inline-*, .para,
+   .md-list, .md-heading, .code-block) for the bundle-side finding
+   descriptions (Issues rows, source panel, code-rail results), so they read
+   as the card does. */
 .inline-quote {
   background: rgb(from var(--accent) r g b / .1);
   padding: 1px; border-radius: 3px;
@@ -12,90 +11,58 @@
   background: var(--surface-active);
   border-radius: 3px;
   border: 1px solid var(--border);
-  /* The padding stands in for the backticks, which render-finding.js
-     strips: without it the text sits flush against the chip's border. */
+  /* Padding in place of the backticks render-finding.js strips. */
   padding: 0 .25em;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .9em;
   color: var(--text);
 }
-/* Paragraph gap — the light-DOM copy of finding-card.css's `.para`
-   rule, so a prose block out here that takes renderHighlighted's
-   paragraphs (the bundle-side descriptions pass `paragraphs: false`
-   and stay one blob) measures its gap the same as the card does. */
+/* Paragraph gap (bundle-side descriptions pass `paragraphs: false`). */
 .para + .para { margin-top: .5lh; }
-/* Light-DOM copy of finding-card.css's `.md-list` rules, for the
-   bundle views' finding descriptions (see the `.para` note above).
-
-   A markdown list, drawn as one (render-finding.js listTemplate). The
-   prose boxes are `pre-wrap`, so a list used to arrive as its own
-   source text: `1.` and `-` sitting in the run, every item flat
-   against the left margin, a wrapped step reading as the next one.
-   The element brings the hanging indent that separates them.
-
-   The indent is set in `em` so it tracks the type rather than the
-   root. Items get a smaller gap than paragraphs do (`.para` above): a
-   list is one thought broken into steps, and the paragraph measure
-   between them would read as separate blocks. */
+/* A markdown list (render-finding.js listTemplate): the prose boxes are
+   `pre-wrap`, so the element brings the hanging indent, in `em` to track
+   the type. Items sit closer than paragraphs: one thought in steps. */
 .md-list {
   margin: 0;
   padding-inline-start: 1.2em;
 }
 .md-list li + li { margin-top: .25lh; }
-/* And the paragraph measure where a list meets the prose around it —
-   the lead-in line above it, the sentence that picks up after it. The
-   markdown had a blank line there; listSegments drops it with the rest
-   of the block's chrome, so the space comes back as a margin. */
+/* The paragraph measure where a list meets prose (listSegments drops the
+   markdown's blank line). */
 .para + .md-list,
 .md-list + .para,
 .md-list + .md-list { margin-top: .5lh; }
-/* The markers are structure, not text: muted, so the eye reads the
-   steps and not their numbering. Off `currentColor` rather than
-   `--text` so they follow whatever colour the block around them
-   carries — under `.recommendation` that is green, and a grey marker
-   beside green text would break the one thing that rule is for. */
+/* Markers muted off `currentColor`, so they follow the block's color (green
+   under `.recommendation`). */
 .md-list li::marker { color: rgb(from currentcolor r g b / .45); }
-/* A task item (render-finding.js listTemplate): its box where the
-   bullet would be, out of the flow so an item going on into a nested
-   list keeps it beside its first line. */
+/* A task item: its box out of flow where the bullet would be, so a nested
+   list keeps it beside the first line. */
 .md-list li.md-task { list-style: none; position: relative; }
 .md-task > input {
   position: absolute; inset-inline-start: -1.2em; top: calc((1lh - .9em) / 2);
   width: .9em; height: .9em; margin: 0; font: inherit;
 }
-/* A description's `##` heading and `---` rule (render-finding.js
-   lineBlockTemplate): the heading bold, the top two levels a step
-   larger, with more room above than below so it sits with what it
-   heads; the rule the hairline every other divider here is. */
+/* `##` heading (bold, the top two levels larger, more room above) and `---`
+   rule (render-finding.js lineBlockTemplate). */
 .md-heading { font-weight: 600; }
 .md-heading:is([aria-level='1'], [aria-level='2']) { font-size: 1.15em; }
 .md-heading:not(:first-child) { margin-top: .75lh; }
 .md-heading + * { margin-top: .25lh; }
 .md-rule { margin: .75lh 0; border: 0; border-top: 1px solid var(--border); }
-/* Same story for the fenced code blocks a description carries — a
-   light-DOM copy of finding-card.css's `.code-block` rules, so a
-   snippet in a bundle-side description reads as the same box the card
-   draws (see render-finding.js codeBlockTemplate). `pre` + horizontal
-   scroll rather than wrapping: a folded line reads as different code.
-   Not Prism's Markdown token of the same name (`.token.code-block`), the
-   fenced block inside a highlighted README: given this box, its lines ran
-   together as one. */
+/* Fenced code (render-finding.js codeBlockTemplate): `pre` with horizontal
+   scroll, as a folded line reads as different code. Not Prism's Markdown
+   `.token.code-block`, whose lines this box ran together. */
 .code-block:not(.token) {
   white-space: normal;
   margin: .4rem 0;
   border: 1px solid var(--border);
   border-radius: var(--ui-radius, 4px);
-  /* A neutral tint of the text colour rather than `--surface-active`
-     (which `.inline-code` wears): that token is the theme's ACTIVE
-     fill — a saturated blue in the light themes — and a whole block
-     of it reads as a selection, not as code. */
+  /* A neutral tint: `--surface-active` is the theme's ACTIVE fill and a block
+     of it reads as a selection. */
   background: rgb(from var(--text) r g b / .05);
   overflow: hidden;
-  /* Sized to the code, not to the column: a two-word snippet in a
-     box ruled to the full width reads as an empty panel someone
-     forgot to fill. `fit-content` takes the widest line (or the
-     language header, when that is wider) and the cap hands anything
-     longer back to the `<pre>`'s own horizontal scroll. */
+  /* Sized to the code (or the language header) up to the column, leaving
+     longer lines to the <pre>'s scroll. */
   width: fit-content;
   max-width: 100%;
 

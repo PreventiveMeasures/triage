@@ -1,13 +1,8 @@
-/* Styles for the <bundle-treemap> light-DOM component (the Treemap
-   slide in the bundles view — see view/bundle-treemap.js). Global
-   (not shadow-scoped) because the component renders into light DOM so
-   its file cells reach the document-level [data-bundle-view-source]
-   click delegate. */
+/* <bundle-treemap> (view/bundle-treemap.js) renders into light DOM so its
+   cells reach the document's [data-bundle-view-source] delegate. */
 
-/* Treemap slide. Layout (node positions) is computed in
-   view/bundle-treemap.js, which measures the plot and positions every
-   node absolutely; these rules are paint only. Leaf/aggregate fill is
-   the package hue with text color set inline for contrast. */
+/* Layout is computed and positioned in bundle-treemap.js; these rules only
+   paint. Fills are package hues, with contrasting text set inline. */
 .bundles-slide-body > repository-treemap {
   display: flex;
   flex-direction: column;
@@ -30,14 +25,9 @@
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-/* Breadcrumb trail (view/bundle-treemap.js `_renderCrumbs`). The
-   home crumb keeps the old `.bundle-treemap-title` look so the header
-   is unchanged at the root; focused segments follow it, mono to read
-   as path parts. The whole trail is chrome, not copy: arrow cursor +
-   unselectable on the nav — theme.css's button rule covers the crumb
-   buttons, but the separators and the current-location span are plain
-   spans whose `-sep` / `-current` suffixes its chrome list doesn't
-   know. Hover color signals clickability. */
+/* Breadcrumbs (`_renderCrumbs`): the home crumb looks like the old title,
+   focused segments in mono. The whole trail is chrome: the separators and
+   the current span have suffixes theme.css's chrome list doesn't know. */
 .bundle-treemap-crumbs {
   display: flex;
   align-items: baseline;
@@ -48,10 +38,8 @@
   user-select: none;
   -webkit-user-select: none;
 }
-/* Home + ancestors. Shrinks and clips (from its trailing edge, so the
-   home crumb survives) before the pinned current crumb gives up any
-   space — a deep drill-in elides the middle while the current location
-   stays visible. */
+/* Home + ancestors clip from their trailing edge before the pinned current
+   crumb gives up space: a deep drill-in elides the middle. */
 .bundle-treemap-crumbs-lead {
   display: flex;
   align-items: baseline;
@@ -94,8 +82,6 @@
 }
 .bundle-treemap-crumb { color: var(--muted); }
 .bundle-treemap-crumb:hover { color: var(--text); }
-/* Pinned: never shrinks, so the current location stays fully visible
-   while the lead group clips. */
 .bundle-treemap-crumb-current { color: var(--text); flex: 0 0 auto; }
 .bundle-treemap-crumb-sep {
   flex-shrink: 0;
@@ -161,13 +147,11 @@
   border-radius: var(--ui-radius, 2px);
   cursor: default;
 }
-/* Directory container — faint fill + border so its children read as
-   nested inside it; the name sits in the reserved top strip. A plain
-   <div> (a click drills in via the plot's [data-treemap-into]
-   delegate): only the header strip + the 2px inset border show, since
-   the children paint over the rest as later-in-DOM siblings. No :hover
-   — repainting these (often large) translucent boxes as the cursor
-   crossed them was the treemap's hover-lag on big trees. */
+/* Directory box: faint fill and border, its name in the reserved top strip;
+   a click drills in ([data-treemap-into]). The children paint over the
+   rest. No :hover anywhere on cells or arcs: repainting these large
+   translucent boxes was the hover lag on big trees (the tooltip carries the
+   detail). */
 .bundle-treemap-dir {
   background: rgb(from var(--text) r g b / .04);
   border: 1px solid rgb(from var(--text) r g b / .14);
@@ -185,8 +169,7 @@
   text-overflow: ellipsis;
   pointer-events: none;
 }
-/* Leaf = a file or a depth-capped directory aggregate, both plain
-   <div>s filled with the package hue and bordered for separation. */
+/* Leaf: a file or a depth-capped aggregate, in the package hue. */
 .bundle-treemap-leaf {
   margin: 0;
   padding: 1px 3px;
@@ -195,10 +178,8 @@
   align-items: flex-start;
   text-align: left;
 }
-/* Aggregate = a depth-capped / too-small directory drawn as one block;
-   a click drills into it. No cell carries a :hover effect — the paint /
-   filter churn as the cursor crossed cells was the hover-lag on large
-   trees, and the tooltip already surfaces each cell's detail. */
+/* Aggregate: a depth-capped or too-small directory as one block; a click
+   drills in. */
 .bundle-treemap-agg { font-style: italic; }
 .bundle-treemap-label {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -209,17 +190,12 @@
   text-overflow: ellipsis;
   pointer-events: none;
 }
-/* Sunburst projection (the header switch's alternate view). Geometry
-   — arc paths, ring radii, center-label truncation — is computed in
-   bundle-treemap.js like the treemap rects, with fills inlined as
-   package hues; paint only here. Bg-colored strokes separate adjacent
-   arcs the way the treemap's cell borders do, and arcs carry no
-   :hover for the same repaint-churn reason as cells. */
+/* Sunburst projection: arcs computed in bundle-treemap.js with inline hues;
+   bg-colored strokes separate them as the cells' borders do. */
 .bundle-treemap-sunburst { display: block; }
 .bundle-treemap-arc { stroke: var(--bg); stroke-width: 1; }
-/* Center disc — the current drill-in root, in the faint dir-box look.
-   When drilled in it carries data-treemap-into of the parent, so a
-   click zooms out one level. */
+/* Center disc: the current root; drilled in, it carries the parent's
+   data-treemap-into, so a click zooms out. */
 .bundle-treemap-center {
   fill: rgb(from var(--text) r g b / .04);
   stroke: rgb(from var(--text) r g b / .14);
@@ -241,9 +217,8 @@
   font-size: .85rem;
   text-align: center;
 }
-/* Hover tooltip — same glass look + cursor-following behavior as the
-   graph's .g2-tooltip; position is owned by bundle-treemap.js (no CSS
-   transform, or the JS-computed left/top would be off). */
+/* Tooltip as the graph's .g2-tooltip; bundle-treemap.js owns its position
+   (no CSS transform, or its left / top would be off). */
 .bundle-treemap-tooltip {
   position: absolute;
   left: 0;
@@ -253,9 +228,8 @@
   max-width: 340px;
   padding: 8px 10px;
   background: var(--surface);
-  /* Smaller than the shared --glass-blur (10px): this tooltip tracks
-     the cursor over the busy treemap DOM, so a tighter backdrop kernel
-     cuts the per-frame re-blur cost. */
+  /* A tighter blur than --glass-blur: it re-blurs every frame as it follows
+     the cursor. */
   backdrop-filter: blur(5px);
   border: 1px solid var(--border);
   border-radius: var(--ui-radius, 7px);
