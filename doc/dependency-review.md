@@ -209,6 +209,7 @@ A patched version stands by its patch, as each patch of it is reviewed apart.
 A version you reviewed yourself, published to a team counting for the repository, ends its row with your latest verdict's icon (a green check for **Accept**), and its tooltip names it, partial ones too, whether or not your review counts there: it marks what you reviewed that still waits on others' reviews or on the host.
 A version with a review of those it needs shows how many (`1/2`), and its tooltip names the reviewers; one with none shows no count.
 Each list shows the versions with a review already (`1/2`, or rejected) first, and those marked **!** (see [Stasis entries](#stasis-entries)) last; on a card, the dimmed ones stay below both.
+Where some of a card's versions to review are marked **!**, its count says how many Stasis reaches, by Stasis's mark: `3 deps (2 ◆)`, or `1 dep (0 ◆)` for a lone one, which otherwise shows no count; where its pull request adds more than are listed, of those listed, at least that many (`205 deps (150+ ◆)`).
 
 The tab reads all its repositories in one request, and shows each one as soon as the server has read it.
 A repository whose review is off, or that the reader may read only part of, is answered at once, without asking GitHub.

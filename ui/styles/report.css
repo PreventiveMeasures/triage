@@ -2014,6 +2014,8 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   &.is-failed { color: var(--critical); }
   &.is-wanted { color: var(--medium); }
 }
+/* Stasis's mark, after how many of a card's versions it reaches. */
+.team-deps-stasis { width: .75rem; height: .75rem; vertical-align: -.125rem; }
 .team-deps-versions {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr)); column-gap: 1.5rem;
   margin: .25rem 0 0; padding: 0; list-style: none;
