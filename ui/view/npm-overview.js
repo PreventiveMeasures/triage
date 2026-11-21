@@ -465,11 +465,7 @@ function npmNewHostTag(hosts) {
   const { was } = hosts[0]
   const note = `${was ? `None of ${was}'s files` : 'No file of the version compared with'} named ${hosts.length === 1 ? 'it' : 'them'}`
   return html`<span class="npm-new-host" data-tooltip=${`${label}: ${hosts.map(({ host, line }) => `${host}, line ${line}`).join('; ')} · ${note}`}
-    .tooltipContent=${html`<div class="compare-tip">
-      <div class="compare-tip-head">${label}</div>
-      <div class="compare-tip-rows is-files">${hosts.map(({ host, line }) => html`<span class="compare-tip-path">${host}</span><span class="compare-tip-said">line ${line}</span>`)}</div>
-      <div class="compare-tip-note">${note}</div>
-    </div>`}>${label}</span>`
+    .tooltipContent=${tipBox(label, tipFiles(hosts.map(({ host, line }) => [host, `line ${line}`])), note)}>${label}</span>`
 }
 
 // Compare's files (bundle-compare.js `source.files`) as the Overview's: type
@@ -515,12 +511,10 @@ function scoreBadge(risk) {
   const said = raised.map(({ id, severity }) => [FINDING_LABELS.get(id) ?? id, severity])
   const note = lowered && said.length > 0 ? `Lowered by ${Math.round(lowered.by * 100)}%: out ${outFor(lowered.days)}${lowered.tier === null ? '' : `, its package npm's ${npmTierName(lowered.tier)} by downloads`}` : null
   const tooltip = [`Risk ${value} of 100`, ...said.length === 0 ? ['Nothing found that calls for a look'] : said.map(([label, severity]) => `${label}, ${severity}`), ...note ? [note] : []].join('\n')
-  return html`<li><span class=${`npm-extension npm-risk-score ${SCORE_TINTS[level]}`} data-tooltip=${tooltip} .tooltipContent=${html`<div class="compare-tip">
-      <div class="compare-tip-head">Risk ${value} of 100</div>
-      ${said.length === 0 ? html`<span class="compare-tip-none">Nothing found that calls for a look</span>`
-        : html`<div class="compare-tip-rows">${said.map(([label, severity]) => html`<span class="npm-risk-finding">${label}</span><span class=${`compare-tip-said npm-risk-severity sev-${severity}`}>${severity}</span>`)}</div>`}
-      ${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
-    </div>`}>${socketGauge(value)}<span>Risk</span><span class="npm-extension-count">${value}</span></span></li>`
+  return html`<li><span class=${`npm-extension npm-risk-score ${SCORE_TINTS[level]}`} data-tooltip=${tooltip} .tooltipContent=${tipBox(`Risk ${value} of 100`,
+    said.length === 0 ? html`<span class="compare-tip-none">Nothing found that calls for a look</span>`
+      : html`<div class="compare-tip-rows">${said.map(([label, severity]) => html`<span class="npm-risk-finding">${label}</span><span class=${`compare-tip-said npm-risk-severity sev-${severity}`}>${severity}</span>`)}</div>`,
+    note)}>${socketGauge(value)}<span>Risk</span><span class="npm-extension-count">${value}</span></span></li>`
 }
 
 // What calls for a look at a version as the server's risk tells it, chips
@@ -714,12 +708,8 @@ function listBadge(classes, label, rows, said, value = null, open = null, labell
   const more = rows.length > shown.length ? `and ${(rows.length - shown.length).toLocaleString('en')} more` : null
   const lines = row => [said(row)].flat()
   const tooltip = `${label}: ${[...shown.map(row => `${row.path} (${lines(row).join('; ')})`), ...more ? [more] : []].join(', ')}`
-  const content = html`<div class="compare-tip">
-      <div class="compare-tip-head">${label}</div>
-      <div class="compare-tip-rows is-files">${shown.map(row => html`<span class="compare-tip-path">${row.path}</span><span class="compare-tip-said">${lines(row).length > 1
-        ? html`<span class="compare-tip-lines">${lines(row).map(line => html`<span>${line}</span>`)}</span>` : said(row)}</span>`)}</div>
-      ${more ? html`<div class="compare-tip-note">${more}</div>` : nothing}
-    </div>`
+  const content = tipBox(label, tipFiles(shown.map(row => [row.path, lines(row).length > 1
+    ? html`<span class="compare-tip-lines">${lines(row).map(line => html`<span>${line}</span>`)}</span>` : said(row)])), more)
   const inner = html`${labelled ? html`<span>${label}</span>` : html`<span class="sr-only">${label}</span>`}${value !== null || rows.length > 1
     ? html`<span class="npm-extension-count">${value ?? rows.length.toLocaleString('en')}</span>` : nothing}`
   return tipChip(open ? `is-open ${classes}` : classes, tooltip, content, inner, open)
@@ -805,12 +795,16 @@ function advisoriesBadge(sides, affecting) {
 const tipLines = lines => html`<span class="compare-tip-lines">${lines.map(([name, value, flagged]) => value == null
   ? html`<span class="compare-tip-none">${name}: none</span>` : html`<span class=${flagged ? 'is-flagged' : nothing}>${name}: <code>${value}</code></span>`)}</span>`
 
-// A badge's styled tooltip: its `head`, a row per side's version, and a `note`.
-const compareTip = (head, sides, said, note = null) => html`<div class="compare-tip">
+// A styled tooltip: its `head`, its `body`, and a `note` under them where it has one.
+const tipBox = (head, body, note = null) => html`<div class="compare-tip">
   <div class="compare-tip-head">${head}</div>
-  <div class="compare-tip-rows">${sides.map(({ version }, i) => html`<span class="compare-tip-version">${version}</span><span class="compare-tip-said">${said[i]}</span>`)}</div>
+  ${body}
   ${note ? html`<div class="compare-tip-note">${note}</div>` : nothing}
 </div>`
+// Its rows of files (or hosts), `[path, said]` each.
+const tipFiles = rows => html`<div class="compare-tip-rows is-files">${rows.map(([path, said]) => html`<span class="compare-tip-path">${path}</span><span class="compare-tip-said">${said}</span>`)}</div>`
+// A badge's: a row per side's version, what is `said` of it beside.
+const compareTip = (head, sides, said, note = null) => tipBox(head, html`<div class="compare-tip-rows">${sides.map(({ version }, i) => html`<span class="compare-tip-version">${version}</span><span class="compare-tip-said">${said[i]}</span>`)}</div>`, note)
 
 // The advisories between the two versions in a dialog: those brought, kept and fixed.
 function openCompareAdvisories([from, to], [was, now]) {
