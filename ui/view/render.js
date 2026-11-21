@@ -1098,16 +1098,27 @@ const analyzerRank = (a) => {
   return i === -1 ? SOURCE_ORDER.length : i
 }
 
+// `compute`'s last answer, kept while it is called with the same keys (by
+// identity): render asks these of every finding on every draw, and what
+// they read never changes for the same keys — a report once ingested,
+// getMergedGroups' array until the set, a lens or the links change.
+function memoized(compute) {
+  let keys = null
+  let value
+  return (...next) => {
+    if (keys?.length !== next.length || next.some((k, i) => k !== keys[i])) {
+      value = compute(...next)
+      keys = next
+    }
+    return value
+  }
+}
+
 // What the toolbar offers off the merged rows alone (none of it triage,
-// which a render follows without the rows changing), kept for the rows it
-// was read from: getMergedGroups hands back the same array until the set,
-// a lens or the links change, and the paths, repos and run meta read here
-// never change once a finding is ingested. Keyed by the deps dir and the
-// layer as well, which decide `isModule` and the rows priority reads.
-let rowFacts = null
-function mergedRowFacts(mergedGroups) {
-  const key = [mergedGroups, depsDirName(), revalidationShown()]
-  if (rowFacts?.key.every((k, i) => k === key[i])) return rowFacts
+// which a render follows without the rows changing), keyed by the deps dir
+// and the layer too, which decide `isModule` and the rows priority reads.
+const mergedRowFacts = (mergedGroups) => rowFacts(mergedGroups, depsDirName(), revalidationShown())
+const rowFacts = memoized((mergedGroups) => {
   const findings = mergedGroups.flat()
   // Analyzers and models off the merged rows, not the triage bucket's, so
   // the lists hold still as the reader changes bucket. A revalidation
@@ -1123,8 +1134,7 @@ function mergedRowFacts(mergedGroups) {
   // The one `repo.github` every non-module finding carrying one shares,
   // for the read-only repo chip; null for a mixed load.
   const perFindingRepos = new Set(findings.filter((f) => !isModule(f.file) && f.repo?.github).map((f) => f.repo.github))
-  rowFacts = {
-    key,
+  return {
     // Only where it can order every row: in App view, App rows need it on
     // an App entry (filters.js priorityApplies).
     hasAnyPriority: priorityApplies(mergedGroups),
@@ -1141,16 +1151,12 @@ function mergedRowFacts(mergedGroups) {
     validationModelOptions: [...validationModelSet].toSorted(nullLastCmp),
     runFiltersShown: runFiltersOffered(mergedGroups, { analyzers: analyzerSet, models: modelSet, validationModels: validationModelSet }),
   }
-  return rowFacts
-}
+})
 
 // What the detail stop of the App switch would hand back (canDetailLayer
-// in renderImpl), read raw off the revalidation layer's rows and kept for
-// them: getRevalidationGroups hands back the same array until the set or
-// the links change, and the stamps it reads are the reports' own.
-let detailFacts = null
-function detailLayerFacts(groups, workspace) {
-  if (detailFacts?.groups === groups && detailFacts.workspace === workspace) return detailFacts
+// in renderImpl), read raw off the revalidation layer's rows
+// (getRevalidationGroups' array, the same until the set or the links change).
+const detailLayerFacts = memoized((groups, workspace) => {
   let hasFoldedRows = false
   let hasPartialRow = false
   let hasRuledOutRow = false
@@ -1172,56 +1178,39 @@ function detailLayerFacts(groups, workspace) {
     }
     if (passRow && ownRow) hasFoldedRows = true
   }
-  detailFacts = { groups, workspace, hasFoldedRows, hasPartialRow, hasRuledOutRow }
-  return detailFacts
-}
-
-// Facts about the loaded set alone, each kept for the reports it was read
-// from, by identity: a report never changes once ingested, and render asks
-// these of every finding on every draw.
-const sameReports = (kept, reports) => kept.length === reports.length && kept.every((r, i) => r === reports[i])
+  return { hasFoldedRows, hasPartialRow, hasRuledOutRow }
+})
 
 // While a team's board is drawn from a copy leaving rows out, what those
 // rows tell the view offers beside its App view (managed-details.js
 // managedDetailsLens), in place of what its rows on hand would.
 const teamLens = () => state.currentWorkspace ? managedDetailsLens() : null
 
-let droppableLayer = { reports: [], value: false }
+const droppableLayer = memoized(() => canDropRevalidation(state.reports))
 function loadedCanDropRevalidation() {
   const lens = teamLens()
-  if (lens) return lens.drop
-  if (!sameReports(droppableLayer.reports, state.reports)) {
-    droppableLayer = { reports: [...state.reports], value: canDropRevalidation(state.reports) }
-  }
-  return droppableLayer.value
+  return lens ? lens.drop : droppableLayer(...state.reports)
 }
 
-// Whether any loaded finding is upstream code, its stamps settled first.
-// Keyed by the deps dir as well, which alone the stamps follow (format.js
+// Whether any loaded finding is upstream code, its stamps settled first —
+// keyed by the deps dir as well, which alone the stamps follow (format.js
 // stampUpstreamFindings): with neither changed, the walk would write nothing.
-let upstreamFacts = { reports: [], depsDir: null, value: false }
+const upstreamFacts = memoized(() => {
+  if (stampUpstreamFindings(state.reports)) clearMergedGroups()
+  return state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream)))
+})
 function loadedUpstream() {
-  const depsDir = depsDirName()
-  if (upstreamFacts.depsDir !== depsDir || !sameReports(upstreamFacts.reports, state.reports)) {
-    if (stampUpstreamFindings(state.reports)) clearMergedGroups()
-    upstreamFacts = { reports: [...state.reports], depsDir, value: state.reports.some((r) => (r.groups ?? []).some((g) => g.some((f) => f.isUpstream))) }
-  }
-  return teamLens()?.upstream ?? upstreamFacts.value
+  const value = upstreamFacts(depsDirName(), ...state.reports)
+  return teamLens()?.upstream ?? value
 }
 
 // The header's run-meta chips. Every field they read is the report's own,
 // copied onto its findings at ingest (@preventive/report inheritReportMeta),
 // a team report's filled in with its findings' detail (managed-details.js).
-let analyzerTags = { reports: [], single: false, details: null, tags: [] }
-function loadedAnalyzerTags(single) {
-  const details = managedDetailsWaiting()
-  if (analyzerTags.single !== single || analyzerTags.details !== details || !sameReports(analyzerTags.reports, state.reports)) {
-    const findings = state.reports.flatMap((r) => r.groups.flat())
-    analyzerTags = { reports: [...state.reports], single, details,
-      tags: buildAnalyzerTags(findings, single ? COMBO_FIELDS.filter(f => f !== 'type') : COMBO_FIELDS) }
-  }
-  return analyzerTags.tags
-}
+const analyzerTags = memoized((single) => buildAnalyzerTags(state.reports.flatMap((r) => r.groups.flat()),
+  single ? COMBO_FIELDS.filter(f => f !== 'type') : COMBO_FIELDS))
+const loadedAnalyzerTags = (single) => analyzerTags(single, managedDetailsWaiting(), ...state.reports)
+
 
 // The revalidation mode a CONFLICT took away, held until the set carrying
 // it is gone: this module's bookkeeping between renders, not view state.

@@ -85,18 +85,19 @@ export function workspaceTitleTemplate(context, view) {
     : html`<button type="button" class="workspace-title-link" data-action="workspace-findings">${context.title}</button>`
 }
 
+// The header's view toggles: a workspace's reports / bundles, a report's Files.
+const toggleButton = (action, active, label) =>
+  html`<button type="button" class=${`files-toggle-btn${active ? ' active' : ''}`} data-action=${action} aria-pressed=${String(active)}>${label}</button>`
+
 export function workspaceContentButton(context, kind, view) {
   if (!context) return nothing
   const count = context[kind].length
   if (kind === 'bundles' && count === 0) return nothing
-  const active = view === `workspace-${kind}`
-  return html`<button type="button" class=${`files-toggle-btn${active ? ' active' : ''}`} data-action=${`workspace-${kind}`} aria-pressed=${String(active)}>${`${count} ${count === 1 ? kind.slice(0, -1) : kind}`}</button>`
+  return toggleButton(`workspace-${kind}`, view === `workspace-${kind}`, `${count} ${count === 1 ? kind.slice(0, -1) : kind}`)
 }
 
 export function filesButtonTemplate(count, view) {
-  if (!(count > 1)) return nothing
-  const active = view === 'files'
-  return html`<button type="button" class=${`files-toggle-btn${active ? ' active' : ''}`} data-action="toggle-files" aria-pressed=${String(active)}>${`${count} files`}</button>`
+  return count > 1 ? toggleButton('toggle-files', view === 'files', `${count} files`) : nothing
 }
 
 // A team's repository, as its Repositories list shows it: by name, the paths
