@@ -154,17 +154,16 @@ const routeRef = route => route.commit ?? route.ref ?? ''
 export const revisionRef = revision => revision?.name
   ? revision.kind === 'commit' ? revision.name.toLowerCase() : `${revision.kind === 'branch' ? 'heads' : 'tags'}/${revision.name}` : ''
 
-// The same directory at another revision, on `tab`: a full commit by its
-// own route, a name or a short commit resolved as it opens.
-function openRevision({ repoId, repo, path }, revision, tab) {
-  const commit = revision.kind === 'commit' && COMMIT.test(revision.name) ? revision.name.toLowerCase() : null
-  navigateToRepositoryCode({ repoId, repo, path, commit, bundleTab: tab, ...commit ? {} : { ref: revisionRef(revision), revision } })
+// Another directory of the repository at the revision shown, on `tab`: at
+// its commit, else at `ref`, the revision's.
+function openDirectory({ repoId, repo, commit, revision }, path, tab, ref = revisionRef(revision)) {
+  navigateToRepositoryCode({ repoId, repo, path, commit, bundleTab: tab, ...commit ? {} : { ref, revision } })
 }
 
-// Another directory of the repository at the revision shown, on `tab`.
-function openDirectory({ repoId, repo, commit, revision }, path, tab) {
-  navigateToRepositoryCode({ repoId, repo, path, commit, bundleTab: tab, ...commit ? {} : { ref: revisionRef(revision), revision } })
-}
+// The same directory at another revision, on `tab`: a full commit by its
+// own route, a name or a short commit resolved as it opens.
+const openRevision = ({ repoId, repo, path }, revision, tab) => openDirectory({ repoId, repo, revision,
+  commit: revision.kind === 'commit' && COMMIT.test(revision.name) ? revision.name.toLowerCase() : null }, path, tab)
 
 // A directory opening, or failing to (`opening`, render-bundle.js
 // renderRepositoryCodeOpening).
@@ -218,9 +217,7 @@ async function sizeAt(opening) {
 
 // Opens the directory a failed opening names on another tab, as its tabs
 // do, those of a directory too large to open its History alone can show.
-export function openRepositoryCodeTab({ repoId, repo, commit, ref, path, revision }, bundleTab) {
-  navigateToRepositoryCode({ repoId, repo, path, commit, bundleTab, ...commit ? {} : { ref: ref ?? '', revision } })
-}
+export const openRepositoryCodeTab = (opening, bundleTab) => openDirectory(opening, opening.path, bundleTab, opening.ref ?? '')
 
 // Open a `repository-code` route: the directory replaces the bundle shown,
 // its header showing (or the one shown kept) while it opens. Answers the
