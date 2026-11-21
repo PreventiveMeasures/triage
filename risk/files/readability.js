@@ -58,8 +58,11 @@ export const npmLargeCode = (path, bytes, script = false) => typeof bytes === 'n
 // no one can read it in review, yet what reads it by its byte order mark can
 // run it, or type with it, as UTF-16 (a browser's classic script, Windows
 // Script Host, TypeScript), and node runs it decoded as UTF-8 whatever it
-// holds past its code (`//` and a byte no UTF-8 has).
-export const npmBinaryCode = (path, readability, script = false) => readability?.category === 'binary' && (script || CODE.test(path))
+// holds past its code (`//` and a byte no UTF-8 has). `npmCodePath`: whether
+// a path names JavaScript or TypeScript by its extension, by which Compare
+// tells such a file that isn't text from a binary one.
+export const npmCodePath = path => CODE.test(path)
+export const npmBinaryCode = (path, readability, script = false) => readability?.category === 'binary' && (script || npmCodePath(path))
 
 // A file with a line over UNREADABLE_LINE characters, by how it reads
 // (`now`, npmFileReadability's), `path` its path: an inline source map's line

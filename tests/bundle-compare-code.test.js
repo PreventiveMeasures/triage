@@ -42,6 +42,9 @@ const misanswered = new Set()
 const tooLong = new Set()
 // Files (`id:path`) the server can't diff as code, whose diffs it refuses.
 const undiffable = new Set()
+// Bundles whose diffs the server answers with blocks that don't take its old side to the new, as a fault
+// in it would: none at all.
+const unheld = new Set()
 // A rename diff as the mock server answers it, of `path` in bundle `id` and
 // `otherPath` in `other`, their files' hashes `hash` and `otherHash`.
 async function renameAnswer(id, other, path, otherPath, hash, otherHash) {
@@ -57,7 +60,8 @@ async function renameAnswer(id, other, path, otherPath, hash, otherHash) {
   const { warnings, diffs: [shown, hidden], ...diff } = await renamedDiffs(before, after, { whitespace: ['none', 'change'] }).finally(() => { flying.now-- })
   assert.deepEqual(warnings, [])
   const [prettyHash, otherPrettyHash] = await Promise.all([otherCopy ? `${before}x` : before, after].map(computeFileHash))
-  return { ...diff, blocks: shown.blocks, marks: shown.marks, ignoringWhitespace: { blocks: hidden.blocks, marks: hidden.marks },
+  const blocks = held => (unheld.has(id) ? [] : held)
+  return { ...diff, blocks: blocks(shown.blocks), marks: shown.marks, ignoringWhitespace: { blocks: blocks(hidden.blocks), marks: hidden.marks },
     hash: otherFile ? `${hash}x` : hash, otherHash, prettyHash, otherPrettyHash }
 }
 mock.module('../ui/view/client-managed.js', { namedExports: {
@@ -331,6 +335,24 @@ test('a changed text file renders its diff and a binary one says so', () => {
   assert.match(diff, /class="add">\+1<\/span><span class="del">−1/u)
   const binary = renderText(view('assets/logo.png').render())
   assert.match(binary, /Binary file changed · 1 B → 1 B\. A text diff is not available\./u)
+})
+
+// An npm version's JavaScript that is no text, as the server reads it from its bytes (not UTF-8, or holding
+// a NUL), is code node runs all the same: told as that, not as a binary file, though no diff of it is shown.
+test('code read from bytes that are no text is told as code node runs, not as a binary file', () => {
+  const side = (integrity, digest) => ({ ...version(integrity, { 'package.json': '{}' }), npmBinaries: new Map([['index.js', { size: 3, digest }], ['logo.png', { size: 1, digest }]]) })
+  const { render } = compareOf(side('a', 'sha256-a'), side('b', 'sha256-b'))
+  assert.match(render('index.js'), /Code that isn't text changed · 3 B → 3 B\. A text diff is not available\. It is not UTF-8, or holds a NUL, so it is shown as no text, yet node runs it all the same, decoded as UTF-8\./u)
+  assert.match(render('logo.png'), /Binary file changed · 1 B → 1 B\. A text diff is not available\.<\/div>/u, 'what has no code extension a binary file still')
+})
+
+// A minified line is past a word view's reach: as published, a token changed in it is marked where it is,
+// between what its two sides share at either end, not left for a reader to find in the whole line.
+test('a minified line changed, drawn as published, has what changed in it marked', () => {
+  const line = token => `var a=1;${'f(a);'.repeat(500)}${token}${'g(a);'.repeat(500)}\n`
+  const markup = renderText(view('dist/app.min.js', [{ 'dist/app.min.js': line('h(1);') }, { 'dist/app.min.js': line('h(2);x();') }]).render())
+  assert.match(markup, /h\(<mark class="diff-word">1<\/mark>\);g\(a\)/u, 'the removed side')
+  assert.match(markup, /h\(<mark class="diff-word">2\);x\(<\/mark>\);g\(a\)/u, 'the added side')
 })
 
 test('minified files diff pretty-printed, and names renamed alike throughout can be hidden', async t => {
@@ -2635,6 +2657,25 @@ test('a view gone is not painted again as a rename diff it asked for comes, so a
   assert.equal(painted, 1, 'painted again where shown')
 })
 
+// The server holds its blocks to taking the old side it gave to the new (rename-diff.ts); the viewer holds
+// them so again before drawing them, so that a diff that doesn't is never drawn, as it would hide a change.
+test('a diff with renamed names hidden whose blocks don\'t take its old side to the new is not drawn, saying so', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); unheld.clear() })
+  const element = view('dist/held.min.js', [{ 'dist/held.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}module.exports=1;\n` }, { 'dist/held.min.js': `var X=function(){};${'q(X);'.repeat(250)}module.exports=2;\n` }])
+  element.base.managedId = 'b41'
+  element.other.managedId = 'b42'
+  unheld.add('b41')
+  pretty.set('b41:dist/held.min.js', 'var Y = function () {};\nq(Y);\nmodule.exports = 1;\n')
+  pretty.set('b42:dist/held.min.js', 'var X = function () {};\nq(X);\nmodule.exports = 2;\n')
+  state.bundleSourcePretty = 'indented'
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const shown = renderText(element.render())
+  assert.match(shown, /Couldn't hide renamed names: The server's diff doesn't take this file's old side to its new one as shown\./u)
+  assert.doesNotMatch(shown, /Only renamed names changed/u, 'no diff it claims drawn')
+})
+
 test('names a file reads leave its renamed names hidden, saying what a rename may change, and offer them marked', async t => {
   t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
   const element = view('dist/named.min.js', [{ 'dist/named.min.js': `var Y=function(){};${'q(Y);'.repeat(250)}f(Y.name);\n` }, { 'dist/named.min.js': `var X=function(){};${'q(X);'.repeat(250)}f(X.name);\n` }])
@@ -2678,6 +2719,31 @@ test('a file whose renamed names alone changed says what they may change where i
   assert.match(shown, /Only renamed names changed in this file\.<\/p>\s*<p>Renamed names are hidden, though the file reads \.toString, which a rename may change\.<\/p>/u)
   assert.match(shown, />Show renamed names<\/button>/u)
   assert.doesNotMatch(shown, />Mark renamed lines<\/button>/u)
+})
+
+// A script whose top level a minifier renamed throughout has its top-level names taken as its own
+// (@preventive/compare's `assumed`), which they are not where it runs as a classic script: there they are
+// globals, and the new side's `$` stands over another script's. Hidden, that is said.
+test('a rename taken as a script\'s own at its top level is said where renamed names are hidden', async t => {
+  t.after(() => { state.bundleSourcePretty = false; element._setRenames(false); misanswered.clear() })
+  const names = 'abcdefghijklmnop'.split('')
+  const declared = (list, laidOut) => list.map((name, i) => (laidOut ? `var ${name} = function (x) {\n  return x + ${i};\n};\n` : `var ${name}=function(x){return x+${i}};`)).join('')
+  const renamed = names.map(name => (name === 'a' ? '$' : name))
+  const element = view('dist/globals.min.js', [{ 'dist/globals.min.js': `${declared(names)}${'a(1);'.repeat(250)}\n` },
+    { 'dist/globals.min.js': `${declared(renamed)}${'$(1);'.repeat(250)}\n` }])
+  element.base.managedId = 'b19'
+  element.other.managedId = 'b20'
+  pretty.set('b19:dist/globals.min.js', `${declared(names, true)}a(1);\n`)
+  pretty.set('b20:dist/globals.min.js', `${declared(renamed, true)}$(1);\n`)
+  state.bundleSourcePretty = 'indented'
+  for (let i = 0; i < 200 && /is-loading/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  element._setRenames(true)
+  for (let i = 0; i < 200 && /Hiding renamed names…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  const shown = renderText(element.render())
+  assert.match(shown, /Only renamed names changed in this file\.<\/p>\s*<p>Renamed names are hidden, though some are names at the top level of a script, taken as its own as a minifier renamed them all: run as a classic script, they are globals, which a rename may change\.<\/p>/u)
+  element._setRenames(false)
+  for (let i = 0; i < 200 && /Marking renamed lines…/u.test(renderText(element.render())); i++) await new Promise(resolve => { setTimeout(resolve, 5) })
+  assert.doesNotMatch(renderText(element.render()), /taken as its own/u, 'no note where they are marked')
 })
 
 test('a file renamed from another type to JavaScript offers no renamed names hidden', async t => {

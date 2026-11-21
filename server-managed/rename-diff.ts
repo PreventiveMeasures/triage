@@ -4,7 +4,7 @@
 // has them (pretty-print.ts), then diffed by @preventive/compare's
 // renamedDiffs in a worker, off the event loop and two at a time per process,
 // with whitespace changes shown and hidden both. Answered as Brotli-encoded
-// JSON, `{ before, blocks, reason, reads, marks, ignoringWhitespace }`
+// JSON, `{ before, blocks, reason, reads, assumed, marks, ignoringWhitespace }`
 // (rename-diff-worker.js), the two files' hashes, `hash` and `otherHash`, and
 // those of the two copies diffed, `prettyHash` and `otherPrettyHash`, which
 // the viewer checks are those it asked about and draws: one file's asked for
@@ -49,7 +49,7 @@ const KEPT_DIFFS = 32
 // `blocks` and `marks` with whitespace changes shown, `ignoringWhitespace`'s
 // hidden as diff -b hides them.
 export interface RenameDiff {
-  before: string; blocks: ChangeBlock[]; reason: string | null; reads: string[]; marks: ChangeBlock[]
+  before: string; blocks: ChangeBlock[]; reason: string | null; reads: string[]; assumed: string[]; marks: ChangeBlock[]
   ignoringWhitespace: { blocks: ChangeBlock[]; marks: ChangeBlock[] }
 }
 
@@ -77,8 +77,9 @@ const pending = new Map<string, Promise<Buffer>>()
 // changes shown and hidden: checked again here, apart from the worker, as an
 // answer that is not would hide a change.
 function answers(diff: unknown, original: string, after: string): diff is RenameDiff {
-  const { before, blocks, reason, reads, marks, ignoringWhitespace } = (diff ?? {}) as Partial<RenameDiff>
-  return typeof before === 'string' && (reason === null || typeof reason === 'string') && Array.isArray(reads) && reads.every(read => typeof read === 'string')
+  const { before, blocks, reason, reads, assumed, marks, ignoringWhitespace } = (diff ?? {}) as Partial<RenameDiff>
+  const strings = (list: unknown) => Array.isArray(list) && list.every(item => typeof item === 'string')
+  return typeof before === 'string' && (reason === null || typeof reason === 'string') && strings(reads) && strings(assumed)
     && blocksHold(before, after, blocks, false) && marksFit(original, after, marks)
     && blocksHold(before, after, ignoringWhitespace?.blocks, true) && marksFit(original, after, ignoringWhitespace?.marks)
 }
