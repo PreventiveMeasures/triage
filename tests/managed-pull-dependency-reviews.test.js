@@ -1560,3 +1560,21 @@ test('a team\'s Dependencies read the dependencies of the open pull requests int
   assert.equal(lines.find(line => line.pulls).pulls.defaultBranch, undefined)
   assert.deepEqual(lines.flatMap(line => line.dependencies ?? []).map(answer => answer.number).toSorted(), [5, 6, 7])
 })
+
+test('a team\'s Dependencies read no draft\'s dependencies but where asked for drafts too, each told a draft; drafts into other branches where asked for both', async t => {
+  const node = (number, base, isDraft) => ({ number, title: `Pull ${number}`, state: 'OPEN', isDraft, createdAt: null, updatedAt: null, author: null, baseRefOid: tip, headRefOid: head,
+    baseRefName: base, headRefName: `bump-${number}`, isCrossRepository: false, files: { totalCount: 1, nodes: [{ path: 'package-lock.json' }] } })
+  const page = body => body.query.includes('page: pullRequests') ? { repository: { defaultBranchRef: { name: 'main' },
+    page: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node(5, 'main', false), node(6, 'main', true), node(7, 'next', true)] } } } : null
+  const { read } = await teamFixture(t, {}, page)
+  const told = async (path = '/api/teams/one/dependencies') => {
+    const { lines } = await read(path)
+    return { drafts: lines.find(line => line.pulls).pulls.items.map(item => [item.number, item.draft]), read: lines.flatMap(line => line.dependencies ?? []).map(answer => answer.number).toSorted() }
+  }
+  const only = await told()
+  assert.deepEqual(only.drafts, [[5, false], [6, true], [7, true]], 'each told whether it is a draft')
+  assert.deepEqual(only.read, [5], 'no draft\'s read')
+  assert.deepEqual((await told('/api/teams/one/dependencies?drafts=all')).read, [5, 6], 'drafts into the default branch, where asked')
+  assert.deepEqual((await told('/api/teams/one/dependencies?branches=all')).read, [5], 'no draft\'s for every branch alone')
+  assert.deepEqual((await told('/api/teams/one/dependencies?branches=all&drafts=all')).read, [5, 6, 7])
+})

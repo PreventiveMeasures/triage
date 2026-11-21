@@ -69,7 +69,7 @@ const dependencies = {
 // A team's lines, as the server tells them (fetchTeamDependencies), of those
 // `repoIds` names, else all: the lines `old` changes, counted already, with
 // 7's default branch; its pull requests' dependencies two a line, but of
-// those into another branch than its default. Those `timeUp` names left for
+// those into another branch than its default, and drafts. Those `timeUp` names left for
 // the read's time, once, their default branch told.
 const TEAM = [7, 8, 9, 10, 11, 12, 13]
 let timeUp = new Set()
@@ -82,7 +82,8 @@ function teamLines(repoIds) {
       lines.push({ repoId, branch: branches[repoId], pulls: pulls[repoId], ...repoId === 7 ? { deltas: [['old', '1.0.0', '(empty)', { additions: 3, deletions: 0, typeless: null }]] } : {} })
       if (timeUp.has(repoId)) { unread.push(repoId); continue }
       const { defaultBranch } = pulls[repoId]
-      const numbers = pulls[repoId].items.filter(item => item.touchesLockfile !== false && (!defaultBranch || !item.base || item.base === defaultBranch)).map(item => item.number)
+      const numbers = pulls[repoId].items.filter(item => item.touchesLockfile !== false && (!defaultBranch || !item.base || item.base === defaultBranch) && !item.draft)
+        .map(item => item.number)
       for (let at = 0; at < numbers.length; at += 2) {
         lines.push({ repoId, dependencies: new Map(numbers.slice(at, at + 2).map(number => [number, { number, ...dependencies[`${repoId}#${number}`] }])) })
       }
@@ -883,7 +884,7 @@ test('pull requests into another branch than their repository\'s default hidden,
     assert.deepEqual(cardsOf(text).map(nameOf), ['r#3', 'r#1'], 'those into its default branch, or into one not told')
     assert.deepEqual(tabs(text)[0], ['Pull requests', '2', true])
     assert.deepEqual(asked.dependencies, [], 'none asked alone')
-    assert.match(text, /<mode-switch class="team-deps-branches" label="All branches" \.checked=false\s+data-tooltip=1 pull request into a branch other than the default\s+@click=[^]*?><\/mode-switch>\s*<span class="bundles-overview-sort"/u,
+    assert.match(text, /<span class="team-deps-switches"><mode-switch class="team-deps-branches" label="All branches" \.checked=false\s+data-tooltip=1 pull request into a branch other than the default\s+@click=[^]*?><\/mode-switch><\/span>\s*<span class="bundles-overview-sort"/u,
       'a switch for them, before the order')
     const toggle = templates(view.render()).find(one => one.strings.join('').includes('<mode-switch')).values.find(value => typeof value === 'function')
     toggle()
@@ -893,6 +894,7 @@ test('pull requests into another branch than their repository\'s default hidden,
     assert.deepEqual(cardsOf(text).map(nameOf), ['r#3', 'r#2', 'r#1'])
     assert.match(cardsOf(text).find(one => nameOf(one) === 'r#2'), /class="team-deps-pull-name">r#2<\/span><span class="team-deps-pull-base" data-tooltip=Into release\/1\.x>→ release\/1\.x<\/span>[^]*onto-release/u, 'its branch named')
     assert.doesNotMatch(cardsOf(text).filter(one => nameOf(one) !== 'r#2').join(''), /team-deps-pull-base/u)
+    assert.doesNotMatch(text, /team-deps-drafts/u, 'no switch for drafts where there are none')
     assert.match(text, /<mode-switch class="team-deps-branches" label="All branches" \.checked=true/u)
     state.teamDependenciesAllBranches = false
     assert.deepEqual(cardsOf(templateText(view.render())).map(nameOf), ['r#3', 'r#1'], 'hidden again')
@@ -903,6 +905,49 @@ test('pull requests into another branch than their repository\'s default hidden,
   } finally {
     answers.clear()
     Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest', teamDependenciesAllBranches: false })
+    routes.length = 0
+  }
+})
+
+test('drafts hidden, their dependencies not read, till "Drafts" is switched on; each then read alone, labelled a draft; one into another branch shown where both are', async () => {
+  TEAM.push(21)
+  branches[21] = { cut: false, review: { ...terms, unreviewed: 0 }, lockfiles: [dir()] }
+  pulls[21] = { items: [pull(1, { base: 'main' }), pull(2, { base: 'main', draft: true }), pull(3, { base: 'next', draft: true })], more: false, defaultBranch: 'main' }
+  dependencies['21#1'] = { cut: false, review: terms, lockfiles: [dir({ added: [wants('ready')] })] }
+  answers.set('21#2', { number: 2, cut: false, review: terms, lockfiles: [dir({ added: [wants('drafted')] })] })
+  answers.set('21#3', { number: 3, cut: false, review: terms, lockfiles: [dir({ added: [wants('drafted-elsewhere')] })] })
+  Object.assign(state, { managedSession: { id: 'drafts', role: 'triage' }, teamDependenciesTab: 'pulls', teamDependenciesSort: 'newest', teamDependenciesAllBranches: false,
+    teamDependenciesDrafts: false })
+  asked.dependencies.length = 0
+  try {
+    const view = shown([repo(21, 'org/d')])
+    let text = await read(view)
+    assert.deepEqual(cardsOf(text).map(nameOf), ['d#1'])
+    assert.deepEqual(asked.dependencies, [], 'none asked alone')
+    assert.match(text, /<span class="team-deps-switches"><mode-switch class="team-deps-branches" [^]*?<\/mode-switch><mode-switch class="team-deps-drafts" label="Drafts" \.checked=false data-tooltip=1 draft pull request\s/u,
+      'its switch after the branches\', counting those of the branches shown')
+    const toggle = cls => templates(view.render()).find(one => one.strings.join('').includes(`class="${cls}"`)).values.find(value => typeof value === 'function')
+    toggle('team-deps-drafts')()
+    assert.equal(state.teamDependenciesDrafts, true)
+    text = await read(view)
+    assert.deepEqual(cardsOf(text).map(nameOf), ['d#2', 'd#1'], 'the draft into the default branch shown, read alone')
+    assert.deepEqual(asked.dependencies.map(([repoId, number]) => [repoId, number]), [[21, 2]])
+    assert.match(cardsOf(text)[0], /class="team-deps-pull-name">d#2<\/span><span class="team-deps-pull-draft">Draft<\/span>[^]*drafted/u, 'labelled a draft')
+    assert.doesNotMatch(cardsOf(text)[1], /team-deps-pull-draft/u)
+    toggle('team-deps-branches')()
+    text = await read(view)
+    assert.deepEqual(cardsOf(text).map(nameOf), ['d#3', 'd#2', 'd#1'], 'one into another branch, a draft, where both are')
+    assert.match(cardsOf(text)[0], /→ next<\/span><span class="team-deps-pull-draft">Draft<\/span>/u)
+    state.teamDependenciesDrafts = false
+    assert.deepEqual(cardsOf(templateText(view.render())).map(nameOf), ['d#1'], 'drafts hidden again, whatever branch')
+
+    // None but drafts: said so.
+    pulls[21] = { items: [pull(2, { base: 'main', draft: true })], more: false, defaultBranch: 'main' }
+    state.managedSession = { id: 'drafts-alone', role: 'triage' }
+    assert.match(await read(shown([repo(21, 'org/d')])), /No open pull request wants its dependencies reviewed\. Drafts are hidden\./u)
+  } finally {
+    answers.clear()
+    Object.assign(state, { teamDependenciesTab: 'pulls', teamDependenciesSort: 'fewest', teamDependenciesAllBranches: false, teamDependenciesDrafts: false })
     routes.length = 0
   }
 })

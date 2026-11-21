@@ -2829,17 +2829,23 @@ const TEAM_PULL_READS = TEAM_PULLS / OPEN_PULLS_SIZES.at(-1)!
 const TEAM_PULLS_TOGETHER = 20
 const PARTIAL_ACCESS = new Set(['no-directory', 'no-repository'])
 type TeamDependencyLine = Record<string, unknown> & { repoId?: number }
-type TeamPull = { number: number; touchesLockfile?: boolean | null; base?: string }
+type TeamPull = { number: number; touchesLockfile?: boolean | null; base?: string; draft?: boolean }
 // Whether a pull request is to merge into its repository's default branch
 // (`defaultBranch`), as a team's Dependencies reads those alone unless
 // asked for every branch's: one whose branch, or the default, isn't told is.
 const ontoDefault = (item: TeamPull, defaultBranch: string | null) => !defaultBranch || !item.base || item.base === defaultBranch
+// Whether a team's read tells the dependencies of every branch's pull
+// requests (`branch`), and of drafts (`draft`), else of its default
+// branch's alone, and not of drafts.
+type TeamEvery = { branch: boolean; draft: boolean }
+const DEFAULT_ONLY: TeamEvery = { branch: false, draft: false }
 async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps, cookie: string | undefined, s: { session: ManagedSession; user: StoredUser },
   teamId: string, query: URLSearchParams): Promise<void> {
   const deadline = Date.now() + TEAM_DEPENDENCIES_MS
   // The dependencies of the pull requests to merge into other branches than
-  // their repository's default too, where asked (`branches=all`).
-  const everyBranch = query.get('branches') === 'all'
+  // their repository's default too, where asked (`branches=all`); and of
+  // drafts too, where asked (`drafts=all`).
+  const every = { branch: query.get('branches') === 'all', draft: query.get('drafts') === 'all' }
   const named = query.get('repoIds')
   const only = named === null ? null : new Set(named.split(',').map(Number))
   if (only && (only.size === 0 || only.size > 1000 || [...only].some(id => !Number.isSafeInteger(id) || id <= 0))) { sendJson(res, 400, { error: 'bad-request' }); return }
@@ -2883,7 +2889,7 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
   }
   if (answered.length > 0 && !await send(...answered)) return
   const done = await eachOf(reading, TEAM_REPOSITORIES_AT_ONCE, ({ access, setting }) => stopped || Date.now() > deadline ? Promise.resolve(false)
-    : teamRepositoryDependencies(deps, access, setting, deadline, send, () => wholeRepositoryAccess(deps, cookie, access.repo.repoId), everyBranch))
+    : teamRepositoryDependencies(deps, access, setting, deadline, send, () => wholeRepositoryAccess(deps, cookie, access.repo.repoId), every))
   if (stopped) return
   const unread = reading.filter((_, at) => !done[at]).map(({ access }) => access.repo.repoId)
   if (!await send(unread.length === 0 ? { done: true } : { done: false, unread })) return
@@ -2893,13 +2899,13 @@ async function handleTeamDependencies(res: ServerResponse, deps: ManagedHttpDeps
 // A repository's lines of its team's Dependencies, as handleTeamDependencies
 // tells them; whether all were written, none left for its time.
 async function teamRepositoryDependencies(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
-  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>, everyBranch = false): Promise<boolean> {
+  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>, every: TeamEvery = DEFAULT_ONLY): Promise<boolean> {
   // The Stasis builds its answers want, asked for a batch of pull requests at a time, its default branch's with the first.
   const wants: StasisWant[] = []
-  try { return await teamRepositoryLines(deps, access, setting, deadline, send, reauthorize, wants, everyBranch) } finally { stasisReader(deps).build(wants) }
+  try { return await teamRepositoryLines(deps, access, setting, deadline, send, reauthorize, wants, every) } finally { stasisReader(deps).build(wants) }
 }
 async function teamRepositoryLines(deps: ManagedHttpDeps, access: WholeAccess, setting: RepoDependencyReview, deadline: number,
-  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>, wants: StasisWant[], everyBranch: boolean): Promise<boolean> {
+  send: (...lines: TeamDependencyLine[]) => Promise<boolean>, reauthorize: () => Promise<WholeAccess | Refusal>, wants: StasisWant[], every: TeamEvery): Promise<boolean> {
   const repoId = access.repo.repoId
   type Read = { branch: object | null; pulls?: { items: TeamPull[]; more: boolean; error?: string; defaultBranch?: string }; commits?: Map<number, PullCommits> }
   const read = await readWholeRepositoryOf<Read>(deps, access, async (fullName, token, user) => {
@@ -2916,10 +2922,11 @@ async function teamRepositoryLines(deps: ManagedHttpDeps, access: WholeAccess, s
   if (!await send({ repoId, branch, pulls, ...await withDeltas(deps, [branch]) })) return false
   // Each by the commits its page names, where it names them, GitHub not asked
   // for them (pullDependencyAnswer); never told. Those to merge into another
-  // branch than the default but where asked, as the tab hides them unless
-  // asked, and reads them alone once it shows them, their Stasis builds none.
-  const numbers = pulls!.items.filter(item => (item.touchesLockfile === true || item.touchesLockfile === null) && (everyBranch || ontoDefault(item, pulls!.defaultBranch ?? null)))
-    .map(item => item.number)
+  // branch than the default, and drafts, but where asked, as the tab hides
+  // them unless asked, and reads them alone once it shows them, their Stasis
+  // builds none.
+  const numbers = pulls!.items.filter(item => (item.touchesLockfile === true || item.touchesLockfile === null)
+    && (every.branch || ontoDefault(item, pulls!.defaultBranch ?? null)) && (every.draft || item.draft !== true)).map(item => item.number)
   for (let at = 0; at < numbers.length; at += TEAM_PULLS_TOGETHER) {
     if (Date.now() > deadline) return false
     const batch = numbers.slice(at, at + TEAM_PULLS_TOGETHER)

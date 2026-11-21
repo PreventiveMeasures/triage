@@ -126,6 +126,7 @@ export interface State {
   teamDependenciesTab: 'pulls' | 'versions' | 'branch' | 'reviews'
   teamDependenciesSort: 'newest' | 'updated' | 'fewest'
   teamDependenciesAllBranches: boolean
+  teamDependenciesDrafts: boolean
   selectedPackage: string | null
   selectedPackageVersion: string | null
   packageDetailsTab: 'overview' | 'issues'
@@ -609,6 +610,8 @@ export const state: State = store<State>({
   // Whether its Pull requests sub-tab shows those to merge into other
   // branches than their repository's default too (team-dependencies.js).
   teamDependenciesAllBranches: false,
+  // Whether it shows drafts too (team-dependencies.js).
+  teamDependenciesDrafts: false,
   // Packages view selection — the package name (string) of the open
   // row, null when no detail panel is up. Mirrors the selectedBundle
   // pattern: clicking a row sets it; the deselect button clears it.

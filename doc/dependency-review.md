@@ -187,6 +187,7 @@ Its sub-tabs are:
   One into a branch other than the default that adds no version to review is left out, unless its comments review its dependencies.
   A selector orders them newest first (the default), most recently updated first, or fewest versions to review first.
   Pull requests into a branch other than their repository's default are hidden, and their dependencies aren't read, until **All branches** is switched on; each is then read on its own, and its card names the branch it targets.
+  Drafts are hidden alike until **Drafts** is switched on, and their cards are labelled **Draft**.
   Pull requests that add only versions listed under others come after the rest, one line each, and can be hidden; one whose base branch holds versions that want reviews says how many on its line (`141 on the base branch`).
 - **Versions**: every added version that wants reviews, once, with the pull requests that add it; those lacking a review made in another are red.
   Where the host reads reviews of comments, a version its pull request's comments pass but `lookup` doesn't yet stays listed, green (`2/2`), on both sub-tabs.
