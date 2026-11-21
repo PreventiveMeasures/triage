@@ -1,63 +1,32 @@
-// `<bundle-treemap>` — a classic squarified treemap of a bundle's
-// files, each sized by its bytes (`bundleFileSizes`: images and fonts
-// included, directory captures left out). Lays out the actual PATH
-// hierarchy as nested rectangles (a directory's box contains its
-// children, a file's area is its share of the bundle), unlike flat
-// per-package strips which aren't real treemaps and degrade badly on
-// big packages.
+// `<bundle-treemap>`: a squarified treemap of a bundle's files by their
+// bytes (`bundleFileSizes`: images and fonts too, directory captures not),
+// laid out as their path hierarchy, a directory's box holding its children.
+// The layout picks row orientation by aspect ratio, so the element measures
+// its plot (ResizeObserver) and lays out again on resize. Light DOM, so
+// report.css applies and file cells' clicks reach events.js's
+// `[data-bundle-view-source]` delegate, opening the source viewer; a
+// resource's, or any of a tree listed alone (`details.listedOnly`, a
+// repository directory too large to open: repository-treemap.js), opens none.
 //
-// Squarified layout (Bruls/Huizing/van Wijk) needs pixel dimensions
-// to choose row orientation by aspect ratio, so the element measures
-// its own plot via ResizeObserver and re-lays-out on resize — the
-// same reason the graph view owns a canvas. Light DOM (no shadow
-// root) so the report.css rules apply and clicks on a file cell reach
-// the existing `[data-bundle-view-source]` delegate in events.js,
-// opening the source viewer just like the Files tab / Code slide.
+// Legible on Stasis bundles vendoring whole dependency trees: single-child
+// directory chains collapse (`a/b` holding `c.txt`), depth is capped
+// (MAX_DEPTH), deeper subtrees and boxes too small for a header and children
+// drawing as one block, and sub-pixel rects are dropped.
 //
-// Three tree transforms keep it legible on real stasis bundles (which
-// vendor whole dependency trees):
-//   * single-child directory chains collapse — `a/b/c.txt` where `b`
-//     is `a`'s only entry shows one box `a/b` containing `c.txt`;
-//   * depth is capped (MAX_DEPTH) — deeper subtrees render as one
-//     aggregate block instead of unreadable confetti;
-//   * sub-pixel rects are dropped, and a box too small to host a
-//     header + children renders as a single block.
+// A directory cell (a box's header strip, or a capped block) drills in: it
+// fills the plot, the depth cap spending a fresh budget on it; breadcrumbs
+// walk back up. A header switch swaps in a sunburst of the same tree, rings
+// outward from the focused directory, angle its share of bytes, with the
+// same cell contract (`data-treemap-into`, `data-bundle-view-source`,
+// `data-tt-*`), its center disc zooming out a level; focus, breadcrumbs and
+// tooltip are shared. A Code | Resources pill, where a bundle holds both,
+// narrows the tree to one kind; pressing either while one is on clears it
+// (both would be everything). The graph never draws resources.
 //
-// Navigation: clicking a directory cell (a `dir` container's header
-// strip or a depth-capped `agg` block) drills into that subtree —
-// it becomes the new layout root filling the whole plot, so the
-// depth cap that aggregated it now spends a fresh budget revealing
-// its contents. A breadcrumb trail in the header walks back up
-// (each ancestor is a button; the home crumb returns to the whole
-// bundle). File cells keep their existing behavior — a click opens
-// the source viewer via the `[data-bundle-view-source]` delegate —
-// save a resource's (image, font), which has no source to open, and
-// every file of a tree listed alone (`details.listedOnly`, a repository
-// directory too large to open: repository-treemap.js), none read.
-//
-// A header switch (top right, mirroring the Search tab's Context
-// pill) swaps the squarified projection for a sunburst over the same
-// tree: depth runs outward in rings from the focused directory at the
-// center, angle is share of bytes. Arcs keep the cell contract —
-// directories drill via `data-treemap-into`, files open the source
-// viewer via `data-bundle-view-source`, tooltips read `data-tt-*` —
-// and the center disc zooms out one level. Focus, breadcrumbs and the
-// tooltip are shared, so switching projections never loses your place.
-//
-// A Code | Resources pill beside it, offered only when the bundle
-// carries both code and resources (images, fonts), narrows the tree to
-// one kind. Neither pressed shows everything; pressing the other side
-// while one is on would mean both, which is everything too, so it
-// clears instead. The graph never draws resources, so this is the
-// treemap's alone.
-//
-// Cells are plain `<div>`s, not buttons, and carry no `:hover` style.
-// A treemap can hold thousands of them; making each a focusable button
-// bloated the accessibility tree, and per-cell hover repaints (the fill
-// of a large directory box especially) janked mouse-over on big trees.
-// Every click still reaches its delegate through a `data-*` attribute,
-// so the viz stays mouse-driven (keyboard users get the Files / Code
-// tabs); only the few header breadcrumbs remain buttons.
+// Cells are plain `<div>`s with no `:hover` style: a treemap can hold
+// thousands, and focusable buttons bloated the accessibility tree while
+// per-cell hover repaints janked big trees. Keyboard users have the Files
+// and Code tabs; only the breadcrumbs are buttons.
 import { LitElement, html, render as litRender, nothing, svg } from 'lit'
 import { styleMap } from './style-map.js'
 import { classMap } from 'lit/directives/class-map.js'
@@ -69,9 +38,8 @@ import { bundlePkgOf, pkgLabel } from '../../common/bundle-pkg-of.js'
 import { treemapGroups } from './treemap-groups.js'
 import './bundle-scope-selector.js'
 
-// After single-child collapse, six nested levels is plenty to drill;
-// beyond it (or once a box is too small) a node aggregates so large
-// bundles stay bounded in cell count and readable.
+// After single-child collapse, six nested levels is plenty to drill; past
+// them (or once a box is too small) a node aggregates.
 const MAX_DEPTH = 6
 const HEADER_H = 14   // px reserved at a directory's top for its name
 const PAD = 2         // px inset between a directory and its children
@@ -79,30 +47,20 @@ const MIN_SUBDIVIDE = 24 // px — a box smaller than this is a leaf block
 const MIN_RENDER = 4  // px — rects below this are dropped (invisible)
 const MIN_ARC = 1.5   // px — sunburst arcs thinner than this along their outer edge are dropped
 
-// Last drill-in location per bundle integrity. The slide body's
-// `choose(tab, …)` tears `<bundle-treemap>` down on every tab
-// switch, so the focus has to outlive the element for a Treemap →
-// Code → Treemap round trip to land back where the user was (same
-// reason the terminal caches its element). Holds the focused dir's
-// path string, not node refs — `_rebuild` re-resolves it against
-// the fresh tree and silently drops paths that no longer exist.
+// The focused directory's path and the scope, by bundle integrity: a tab
+// switch tears the element down, and Treemap → Code → Treemap should land
+// where the user was. `_rebuild` resolves the path against the fresh tree,
+// dropping one that is gone.
 const _focusPathByBundle = new Map()
 const _reasonByBundle = new Map()
 
-// Last chosen projection ('treemap' | 'sunburst'). Outlives instances
-// for the same reason as the focus store above; a single slot rather
-// than per-bundle because the preferred projection is a viewing habit,
-// not a property of the bundle being viewed.
+// The projection ('treemap' | 'sunburst') and the Code | Resources pill
+// ('' for all, 'code' or 'resources'): viewing habits, one slot each for
+// every bundle, outliving the element likewise.
 let _sharedMode = 'treemap'
-
-// Code | Resources pill: '' (all), 'code' or 'resources'. A viewing habit
-// too, so one slot like the projection; bundles without both kinds
-// ignore it.
 let _sharedKind = ''
 
-// Black or white label text for legibility over an arbitrary hex
-// fill — leaf cells paint the package hue edge to edge. Standard sRGB
-// relative-luminance split, no per-theme table to keep in sync.
+// Black or white label text over a hex fill, by sRGB relative luminance.
 function readableTextOn(hex) {
   const m = /^#?([0-9a-f]{6})$/iu.exec(hex)
   if (!m) return '#fff'
@@ -173,12 +131,8 @@ function squarify(nodes, rect) {
   return out
 }
 
-// Collapse single-child directory chains in place: while a node's
-// only child is itself a directory, fold it in and join the names
-// (`a` + `b` -> `a/b`). A lone FILE child is left alone, so the
-// example `a/b/c.txt` becomes a box `a/b` holding `c.txt`. Applied to
-// every node except the virtual root (whose top-level boxes stay
-// separate).
+// Collapse single-child directory chains in place (`a` + `b` -> `a/b`); a
+// lone file child stays, so `a/b/c.txt` is a box `a/b` holding `c.txt`.
 function collapseNode(node) {
   while (node.children && node.children.size === 1) {
     const only = node.children.values().next().value
@@ -189,14 +143,11 @@ function collapseNode(node) {
   if (node.children) for (const c of node.children.values()) collapseNode(c)
 }
 
-// Bottom-up: sum byte sizes + leaf counts onto every directory, and
-// stamp each node's full (prefix-stripped) path for coloring +
-// titles. Also threads a `parent` pointer through every node and
-// registers each directory in `byPath` (path → node) — the drill-in
-// navigation resolves a clicked cell's path to its node, then walks
-// `parent` up to the root to rebuild the breadcrumb chain. Paths are
-// unique (the tree is keyed by path segments and file/dir collisions
-// are rejected at build time), so the map can't alias two nodes.
+// Bottom-up: sum bytes and file counts onto every directory, stamp each
+// node's (prefix-stripped) path and `parent`, and register directories in
+// `byPath`, which a drill-in resolves a clicked cell's path by before
+// walking `parent` up for the breadcrumbs. Paths are unique (file/directory
+// collisions are dropped at build), so it aliases no two nodes.
 function finalize(node, parentPath, parent, byPath) {
   node.path = node.name ? (parentPath ? `${parentPath}/${node.name}` : node.name) : parentPath
   node.parent = parent
@@ -204,14 +155,9 @@ function finalize(node, parentPath, parent, byPath) {
   byPath.set(node.path, node)
   let value = 0
   let count = 0
-  // Roll the package up from children: a directory whose every
-  // descendant shares one package inherits it (so a depth-capped
-  // `agg` block paints that package's hue), while a directory spanning
-  // packages — `vendor/` over several `vendor/<vendor>/<pkg>` workspace
-  // packages — resolves to null ("mixed") and the cell falls back to
-  // its top-level-dir color. `undefined` until the first child is
-  // seen; a single differing child latches it to null.
-  // A directory group (treemap-groups.js) rolls up the same way.
+  // A directory whose every descendant shares one package, or directory
+  // group (treemap-groups.js), inherits it, so a capped block paints its
+  // hue; one spanning several (`vendor/` over workspace packages) is null.
   let group, pkg
   for (const c of node.children.values()) {
     value += finalize(c, node.path, node, byPath)
@@ -240,11 +186,9 @@ function singlePackageGroups(pkgs, stripped, prefix, sizes) {
   return { groups, ranks: new Map([...bytes].toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([group], rank) => [group, rank])) }
 }
 
-// Recursively place a node's rectangle (and its descendants) into the
-// flat cell list. A directory big enough to host a header + children
-// becomes a `dir` container with its sub-rects squarified inside;
-// anything past the depth cap or too small becomes a single `agg`
-// (directory) / `file` block.
+// Place a node's rectangle and its descendants' in the flat cell list: a
+// directory big enough for a header and children a `dir` box, its children
+// squarified inside; one past the depth cap or too small an `agg` block.
 function layout(node, x, y, w, h, depth, out) {
   if (w < MIN_RENDER || h < MIN_RENDER) return
   if (node.isFile) { out.push({ kind: 'file', node, x, y, w, h }); return }
@@ -263,17 +207,22 @@ function layout(node, x, y, w, h, depth, out) {
   }
 }
 
-// Percent-of-bundle label: whole percents from 10%, one decimal from
-// 1%, two below so small files don't all collapse to "0%".
+// Percent of the bundle: whole from 10%, one decimal from 1%, two below, so
+// small files don't all read "0%".
 function pctLabel(value, total) {
   const p = (value / (total || 1)) * 100
   return p >= 10 ? p.toFixed(0) : p.toFixed(p >= 1 ? 1 : 2)
 }
 
-// Levels the sunburst would draw below `node` (a direct child is 1).
-// Sets the ring count so shallow trees get thick rings instead of a
-// wide empty rim; capped at `cap` so the scan never walks deeper than
-// the rings it could allocate.
+// A node's tooltip line: its bytes, a directory's files, and its share.
+function nodeMeta(node, total) {
+  const pct = pctLabel(node.value, total)
+  return node.isFile ? `${formatBytes(node.value)} · ${pct}% of bundle`
+    : `${formatBytes(node.value)} · ${node.count} ${node.count === 1 ? 'file' : 'files'} · ${pct}%`
+}
+
+// Levels the sunburst would draw below `node` (a child is 1), its ring
+// count, so shallow trees get thick rings; capped at `cap`.
 function levelsBelow(node, cap) {
   if (cap <= 0 || node.isFile || !node.children || node.children.size === 0) return 0
   let depth = 1
@@ -285,11 +234,9 @@ function levelsBelow(node, cap) {
   return depth
 }
 
-// SVG path for an annular sector between radii r0 < r1 spanning
-// a0 → a1 (radians, clockwise, 0 = 3 o'clock). A full-circle sweep is
-// clamped a hair short of 2π — coincident endpoints make the arc
-// commands draw nothing — and the hairline seam hides under the arc
-// stroke.
+// SVG path of an annular sector between radii r0 < r1 from a0 to a1
+// (radians, clockwise, 0 at 3 o'clock). A full circle stops a hair short of
+// 2π, as coincident endpoints draw nothing; the seam hides under the stroke.
 function arcPath(cx, cy, r0, r1, a0, a1) {
   const sweep = Math.min(a1 - a0, Math.PI * 2 - 1e-4)
   const a2 = a0 + sweep
@@ -305,8 +252,8 @@ function arcPath(cx, cy, r0, r1, a0, a1) {
     + `A${p(r0)} ${p(r0)} 0 ${large} 0 ${p(cx + r0 * c0)} ${p(cy + r0 * s0)}Z`
 }
 
-// Truncate the sunburst's center label to a pixel budget — SVG text
-// has no CSS ellipsis. ~6.4px per glyph at the label's .66rem mono.
+// The sunburst's center label cut to `px` (SVG text has no ellipsis), at
+// ~6.4px a glyph of its .66rem mono.
 function fitLabel(s, px) {
   const max = Math.max(4, Math.floor(px / 6.4))
   return s.length > max ? `${s.slice(0, max - 1)}…` : s
@@ -317,19 +264,14 @@ class BundleTreemap extends LitElement {
     details: { attribute: false },
     _w: { state: true },
     _h: { state: true },
-    // Drill-in path: nodes from the root down to the focused subtree
-    // (empty = whole bundle). Reassigned as a fresh array on every
-    // navigation so Lit's identity check re-lays-out.
+    // Nodes from the root down to the focused one (none for the whole
+    // bundle), a new array on every navigation.
     _focus: { state: true },
-    // Active projection, 'treemap' | 'sunburst' (the header switch).
     _mode: { state: true },
     _reason: { state: true },
-    // Code | Resources pill: '' (all), 'code' or 'resources'.
     _kind: { state: true },
   }
 
-  // Light DOM so report.css rules apply and file-cell clicks bubble to
-  // the document-level [data-bundle-view-source] delegate in events.js.
   createRenderRoot() { return this }
 
   constructor() {
@@ -377,11 +319,9 @@ class BundleTreemap extends LitElement {
     if (this._ro) { this._ro.disconnect(); this._ro = null }
   }
 
-  // Custom tooltip — mirrors the graph's #g2-tooltip (graph/canvas.js):
-  // a static element rendered into imperatively and positioned with
-  // edge-flip + clamp, so hovering never triggers the component's
-  // (layout-running) render(). Pointer events are delegated on the plot;
-  // the hovered cell carries its text in data-tt-* attributes.
+  // The tooltip, as the graph's #g2-tooltip (graph/canvas.js): rendered into
+  // imperatively, so hovering never runs the layout's render(), from the
+  // hovered cell's data-tt-* attributes.
   _onPointerMove(e) {
     const cell = e.target.closest('.bundle-treemap-node')
     if (!cell || !this._tooltip) { this._hideTooltip(); return }
@@ -402,9 +342,8 @@ class BundleTreemap extends LitElement {
 
   _onPointerLeave() { this._hideTooltip() }
 
-  // Place the tooltip 12px down-right of the cursor, flipping to the
-  // other side of either axis when it would overflow the plot and
-  // clamping so it never escapes the (overflow-hidden) plot box.
+  // 12px down-right of the cursor, flipped where it would overflow the plot
+  // and clamped inside it.
   _positionTooltip(cx, cy) {
     const tt = this._tooltip
     if (!tt || !this._plot) return
@@ -428,16 +367,11 @@ class BundleTreemap extends LitElement {
     if (this._tooltip) this._tooltip.classList.remove('show')
   }
 
-  // Parse the bundle into a path tree once per bundle or reason change:
-  // build dirs from prefix-stripped paths, collapse single-child
-  // chains, then roll up sizes/counts. Layout itself happens per
-  // render (it depends on the measured size).
+  // The path tree, built on a change of bundle, scope or kind; laid out on
+  // every render, as that depends on the measured size. The old tree's
+  // focus goes with it, the bundle's remembered one resolved again at the end.
   _rebuild() {
     this._root = null
-    // A new bundle invalidates the old node refs — drop any drill-in
-    // so we don't render a focus path into a tree that no longer
-    // exists. This bundle's own remembered focus (path-keyed, not
-    // ref-keyed) is re-resolved at the end once the new tree stands.
     this._focus = []
     this._dirByPath = new Map()
     this._reasons = { ids: [] }
@@ -454,16 +388,11 @@ class BundleTreemap extends LitElement {
       _reasonByBundle.delete(this.details.integrity)
     }
     const reasonFiles = this._reasons.files(this._reason)
-    // Stasis package boundaries (keyed by original path) so each leaf
-    // is colored by its authoritative package — sibling workspace
-    // packages stay distinct instead of merging under a shared parent
-    // dir. Null for sourcemap bundles; leaves then bucket via the path
-    // heuristic alone.
+    // Leaves are colored by Stasis package boundaries, so sibling workspace
+    // packages stay apart (sourcemaps: by the path heuristic alone).
     const packageDirs = bundlePackageDirs(this.details)
-    // Resources (images, fonts) are cells like any file, but have no source
-    // for the viewer to open, so their cells carry no viewer link. The
-    // Code | Resources pill is offered for the whole bundle, not just the
-    // selected scope, so picking a scope doesn't take it away.
+    // The pill is offered by the whole bundle's files, not the scope's, so
+    // picking a scope doesn't take it away.
     const kinds = bundleFileKinds(this.details)
     const isResource = (path) => kinds.get(path) === 'resource'
     const sized = origPaths.filter((path) => sizes.get(path) > 0)
@@ -478,18 +407,13 @@ class BundleTreemap extends LitElement {
     const root = { name: '', children: new Map(), value: 0, isFile: false }
     let total = 0
     for (let i = 0; i < origPaths.length; i++) {
-      // Keep the full bundle's display prefix and original source paths
-      // stable while filtering either projection.
       if (reasonFiles && !reasonFiles.has(origPaths[i])) continue
       if (kind && isResource(origPaths[i]) !== (kind === 'resources')) continue
       const size = sizes.get(origPaths[i])
       if (size <= 0) continue
       const parts = stripped[i].split('/')
-      // Walk/create a directory node per segment but the last. A source
-      // path that is both a file and a prefix-dir of another ("x" and
-      // "x/a.js") can't coexist in one tree; bail on the colliding entry
-      // rather than descending into a file leaf (no `.children`) or
-      // clobbering an already-built subtree.
+      // A directory node per segment but the last; a path that is both a
+      // file and another's directory ("x" and "x/a.js") is skipped.
       let node = root
       let blocked = false
       for (let d = 0; d < parts.length - 1; d++) {
@@ -522,12 +446,6 @@ class BundleTreemap extends LitElement {
     this._dirByPath = dirByPath
     this._meta = { total, prefix }
     this._status = 'ok'
-    // Restore this bundle's remembered drill-in onto the fresh node
-    // refs — the element is rebuilt on every tab switch, so without
-    // this a Treemap → Code → Treemap round trip always landed back
-    // at the root. Defensive existence check: integrity is the
-    // content hash, so the path should always resolve, but a missing
-    // entry must fall back to the root rather than a dead focus.
     const remembered = this.details?.integrity ? _focusPathByBundle.get(this.details.integrity) : null
     if (remembered) {
       const node = dirByPath.get(remembered)
@@ -536,15 +454,12 @@ class BundleTreemap extends LitElement {
     }
   }
 
-  // The subtree currently filling the plot — the deepest focused node,
-  // or the whole-bundle root when nothing is drilled into.
+  // The node filling the plot.
   get _focusNode() {
     return this._focus.length > 0 ? this._focus.at(-1) : this._root
   }
 
-  // Focus chain root→node, built by walking parent pointers
-  // (excluding the virtual root) so the breadcrumb is correct even
-  // when the target sits several levels below the current focus.
+  // The focus chain down to `node`, the virtual root left out.
   _chainTo(node) {
     const chain = []
     for (let n = node; n && n !== this._root; n = n.parent) chain.push(n)
@@ -552,10 +467,7 @@ class BundleTreemap extends LitElement {
     return chain
   }
 
-  // Record the current focus in the per-bundle store so it survives
-  // the element teardown a tab switch triggers. Root focus deletes
-  // the entry rather than storing '' — `_rebuild`'s restore treats
-  // absence as "start at the root".
+  // Remember the focus for the bundle, none at the root.
   _rememberFocus() {
     const integrity = this.details?.integrity
     if (!integrity) return
@@ -572,10 +484,7 @@ class BundleTreemap extends LitElement {
     this._hideTooltip()
   }
 
-  // Jump to a breadcrumb: index -1 is the home crumb (whole bundle);
-  // otherwise keep the first index+1 nodes of the chain. No-op when
-  // it wouldn't change the focus, so re-clicking the active crumb
-  // doesn't churn a render.
+  // Jump to a breadcrumb, -1 the home crumb; the current one changes nothing.
   _focusTo(index) {
     const next = index < 0 ? [] : this._focus.slice(0, index + 1)
     if (next.length === this._focus.length) return
@@ -584,19 +493,14 @@ class BundleTreemap extends LitElement {
     this._hideTooltip()
   }
 
-  // Header switch: flip projection and remember it module-wide so the
-  // choice survives the element teardown a tab switch triggers.
   _toggleMode() {
     this._mode = this._mode === 'sunburst' ? 'treemap' : 'sunburst'
     _sharedMode = this._mode
     this._hideTooltip()
   }
 
-  // Code | Resources pill. From all, a press narrows to its kind; any
-  // press while narrowed returns to all — re-pressing the same side
-  // unchecks it, and pressing the other would check both, which is all.
-  // Remembered module-wide, like the projection, so it survives the
-  // element teardown a tab switch triggers.
+  // From all, a press narrows to its kind; any press while narrowed returns
+  // to all.
   _toggleKind(kind) {
     this._kind = this._kind ? '' : kind
     _sharedKind = this._kind
@@ -611,10 +515,7 @@ class BundleTreemap extends LitElement {
     }
   }
 
-  // Plot-level click delegate. Only directory cells carry
-  // `data-treemap-into`; a file cell has no such attribute, so its
-  // click falls through this handler and reaches the document-level
-  // `[data-bundle-view-source]` delegate that opens the source viewer.
+  // Directory cells drill in; a file cell's click goes on to events.js.
   _onPlotClick(e) {
     const nav = e.target.closest('[data-treemap-into]')
     if (!nav) return
@@ -622,19 +523,13 @@ class BundleTreemap extends LitElement {
     if (node) this._drillInto(node)
   }
 
-  // Breadcrumb trail. The home crumb keeps the old "Source treemap"
-  // title styling and names the active projection (it reads as the
-  // title when nothing's drilled in); each focused segment follows,
-  // the last rendered as plain text (it's the current location, not
-  // a jump target).
+  // The home crumb, naming the projection, reads as the title at the root;
+  // the current location is plain text. Home and ancestors sit in a
+  // shrinkable, clipped lead group, so a deep drill-in clips the middle
+  // ancestors while the current crumb keeps its room.
   _renderCrumbs() {
     const focus = this._focus
     const atRoot = focus.length === 0
-    // Home + ancestors sit in a shrinkable, overflow-clipped lead
-    // group; the current crumb is pinned as a sibling. On a deep
-    // drill-in the lead elides from its trailing edge (home stays,
-    // middle ancestors clip) while the current location — the most
-    // useful crumb — never gives up space.
     const lead = focus.slice(0, -1)
     const current = atRoot ? null : focus.at(-1)
     return html`<nav class="bundle-treemap-crumbs" aria-label="Treemap location">
@@ -672,96 +567,59 @@ class BundleTreemap extends LitElement {
     return { color: pkgColor(pkg), label: pkgLabel(pkg), named: node.pkg != null }
   }
 
+  // A cell: a directory's box (no package line: its children have theirs),
+  // a capped directory's block, or a file. A directory's tooltip path ends
+  // in a slash.
   _cell(c) {
-    const pctStr = pctLabel(c.node.value, this._meta.total)
+    const meta = nodeMeta(c.node, this._meta.total)
     const pos = { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` }
-    const fileCount = `${c.node.count} ${c.node.count === 1 ? 'file' : 'files'}`
-    // dir/agg are directories — tooltip path gets a trailing slash + a
-    // file-count; the dir container omits the package head line (a
-    // directory spans packages), leaves carry it.
     if (c.kind === 'dir') {
       return html`<div
         class="bundle-treemap-node bundle-treemap-dir"
         style=${styleMap(pos)}
         data-treemap-into=${c.node.path}
         data-tt-path=${`${c.node.path}/`}
-        data-tt-meta=${`${formatBytes(c.node.value)} · ${fileCount} · ${pctStr}%`}
+        data-tt-meta=${meta}
       ><span class="bundle-treemap-dirname">${c.node.name}</span></div>`
     }
-    // Leaves carry their package from `_rebuild` (stasis-aware); a
-    // directory rendered as one block inherits it via `finalize` when
-    // its whole subtree shares a package, else `pkg` is null (mixed)
-    // and we fall back to the path heuristic for a stable hue.
     const { color, label } = this._paint(c.node)
-    const style = styleMap({ ...pos, background: color, color: readableTextOn(color) })
-    const ttPkg = label ?? nothing
-    if (c.kind === 'agg') {
-      return html`<div
-        class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-agg"
-        style=${style}
-        data-treemap-into=${c.node.path}
-        data-tt-path=${`${c.node.path}/`}
-        data-tt-pkg=${ttPkg}
-        data-tt-color=${color}
-        data-tt-meta=${`${formatBytes(c.node.value)} · ${fileCount} · ${pctStr}%`}
-      ><span class="bundle-treemap-label">${c.node.name}/</span></div>`
-    }
+    const agg = c.kind === 'agg'
     return html`<div
-      class="bundle-treemap-node bundle-treemap-leaf bundle-treemap-file"
-      style=${style}
-      data-bundle-view-source=${c.node.resource ? nothing : c.node.origPath}
-      data-tt-path=${c.node.path}
-      data-tt-pkg=${ttPkg}
+      class=${`bundle-treemap-node bundle-treemap-leaf bundle-treemap-${c.kind}`}
+      style=${styleMap({ ...pos, background: color, color: readableTextOn(color) })}
+      data-treemap-into=${agg ? c.node.path : nothing}
+      data-bundle-view-source=${agg || c.node.resource ? nothing : c.node.origPath}
+      data-tt-path=${agg ? `${c.node.path}/` : c.node.path}
+      data-tt-pkg=${label ?? nothing}
       data-tt-color=${color}
-      data-tt-meta=${`${formatBytes(c.node.value)} · ${pctStr}% of bundle`}
-    ><span class="bundle-treemap-label">${c.node.name}</span></div>`
+      data-tt-meta=${meta}
+    ><span class="bundle-treemap-label">${agg ? `${c.node.name}/` : c.node.name}</span></div>`
   }
 
-  // One sunburst arc — the radial `_cell`. Same data-* contract:
-  // directories carry `data-treemap-into` (drill), files carry
-  // `data-bundle-view-source` (source viewer), tooltips read the
-  // `data-tt-*` set. Unlike treemap dir boxes (neutral fill, children
-  // painted inside), every arc paints its package hue — rings don't
-  // overlap, so the fill is the only thing identifying a slice. A
-  // mixed-package directory keeps the fallback hue for a stable fill
-  // but drops the tooltip's package line rather than claim one.
+  // A sunburst arc, the radial `_cell`. Every arc paints its hue, as rings
+  // don't overlap; a directory spanning packages keeps a fallback hue but
+  // claims no package in its tooltip.
   _arc(node, d, total) {
-    const pctStr = pctLabel(node.value, total)
     const { color, label, named } = this._paint(node)
-    const ttPkg = label ?? nothing
-    if (node.isFile) {
-      return svg`<path
-        class="bundle-treemap-node bundle-treemap-arc"
-        d=${d}
-        fill=${color}
-        data-bundle-view-source=${node.resource ? nothing : node.origPath}
-        data-tt-path=${node.path}
-        data-tt-pkg=${ttPkg}
-        data-tt-color=${color}
-        data-tt-meta=${`${formatBytes(node.value)} · ${pctStr}% of bundle`}
-      ></path>`
-    }
-    const fileCount = `${node.count} ${node.count === 1 ? 'file' : 'files'}`
+    const dir = !node.isFile
     return svg`<path
       class="bundle-treemap-node bundle-treemap-arc"
       d=${d}
       fill=${color}
-      data-treemap-into=${node.path}
-      data-tt-path=${`${node.path}/`}
-      data-tt-pkg=${named ? ttPkg : nothing}
-      data-tt-color=${named ? color : nothing}
-      data-tt-meta=${`${formatBytes(node.value)} · ${fileCount} · ${pctStr}%`}
+      data-treemap-into=${dir ? node.path : nothing}
+      data-bundle-view-source=${dir || node.resource ? nothing : node.origPath}
+      data-tt-path=${dir ? `${node.path}/` : node.path}
+      data-tt-pkg=${dir && !named ? nothing : label ?? nothing}
+      data-tt-color=${dir && !named ? nothing : color}
+      data-tt-meta=${nodeMeta(node, total)}
     ></path>`
   }
 
-  // Radial layout + render. Rings split the radius outside the center
-  // disc evenly across the focused subtree's (capped) depth; within a
-  // ring each node's sweep is its byte share of the parent. Arcs too
-  // thin to see are dropped — like MIN_RENDER — but siblings still
-  // advance past their angle so the visible ones stay put. There is
-  // no `agg` equivalent: a directory at the depth cap is just an arc
-  // with nothing drawn outside it, and clicking it re-roots the rings
-  // the same way the treemap respends its depth budget.
+  // Rings split the radius outside the center disc evenly over the focused
+  // subtree's capped depth, each node's sweep its share of its parent's
+  // bytes. Arcs too thin to see are dropped, their siblings still advancing
+  // past them; a directory at the cap is an arc with nothing outside it,
+  // re-rooting the rings on a click.
   _renderSunburst(focus) {
     const w = this._w
     const h = this._h
@@ -790,10 +648,9 @@ class BundleTreemap extends LitElement {
       }
     }
     add(focus, -Math.PI / 2, Math.PI * 1.5, 1)
-    // Center disc = the focused dir. Drilled in, it zooms out one
-    // level on click (the parent's path; the root's is '' and resolves
-    // to the whole bundle) and tooltips like any dir; at the root it's
-    // inert — just the hole that anchors the label.
+    // The center disc is the focused directory: drilled in, a click zooms
+    // out a level (the root's path '' resolving to the whole bundle); at the
+    // root it is inert, the label's anchor.
     const focused = this._focus.length > 0
     const centerR = Math.max(r0 - 4, 10)
     const center = focused
@@ -802,7 +659,7 @@ class BundleTreemap extends LitElement {
           cx=${cx} cy=${cy} r=${centerR}
           data-treemap-into=${focus.parent.path}
           data-tt-path=${`${focus.path}/`}
-          data-tt-meta=${`${formatBytes(focus.value)} · ${focus.count} ${focus.count === 1 ? 'file' : 'files'} · ${pctLabel(focus.value, total)}%`}
+          data-tt-meta=${nodeMeta(focus, total)}
         ></circle>`
       : svg`<circle class="bundle-treemap-center" cx=${cx} cy=${cy} r=${centerR}></circle>`
     const label = svg`<text class="bundle-treemap-center-label" x=${cx} y=${cy} text-anchor="middle">
@@ -825,10 +682,7 @@ class BundleTreemap extends LitElement {
       }
     }
     const { prefix } = this._meta
-    // Sub-line tracks the focused subtree so the count + size reflect
-    // what's actually on screen after a drill-in (the whole bundle at
-    // the root, where focus === _root). Before the tree is built there
-    // is no focus node and both read as zero.
+    // What is on screen: the focused subtree's, none before the tree stands.
     const curFiles = focus ? focus.count : 0
     const curBytes = focus ? focus.value : 0
     return html`<header class="bundle-treemap-head">
