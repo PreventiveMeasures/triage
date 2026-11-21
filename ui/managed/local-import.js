@@ -122,29 +122,36 @@ export class ManagedLocalImport {
     void this.refresh()
   }
 
-  async unlock() {
-    if (this.busy) return
+  // `work(abort)` while busy, its failure shown unless aborted.
+  async busyWith(work) {
+    const abort = this.abort = new AbortController()
     this.busy = true
     this.error = ''
-    const abort = this.abort = new AbortController()
     this.host.requestUpdate()
     try {
-      if (await this.source.unlock({ signal: abort.signal }) && !abort.signal.aborted) await this.refresh()
+      await work(abort)
     } catch (err) {
       if (!abort.signal.aborted) this.error = String(err?.message ?? err)
-    } finally { this.busy = false; this.host.requestUpdate() }
+    } finally {
+      if (this.readAbort === abort) this.readAbort = null
+      this.busy = false
+      this.host.requestUpdate()
+    }
+  }
+
+  async unlock() {
+    if (this.busy) return
+    await this.busyWith(async abort => {
+      if (await this.source.unlock({ signal: abort.signal }) && !abort.signal.aborted) await this.refresh()
+    })
   }
 
   async importSelected() {
     if (this.busy || this.loading || !this.value || this.source?.locked) return
-    this.busy = true
-    this.error = ''
     this.success = ''
     const label = this.options.find(option => option.value === this.value)?.label
-    const abort = this.abort = new AbortController()
-    this.readAbort = abort
-    this.host.requestUpdate()
-    try {
+    await this.busyWith(async abort => {
+      this.readAbort = abort
       await this.source.importItem(this.kind, this.value, file => {
         // Refreshes cannot recall an upload once it has been handed off.
         this.readAbort = null
@@ -154,13 +161,7 @@ export class ManagedLocalImport {
         this.success = `Imported ${label}.`
         this.value = null
       }
-    } catch (err) {
-      if (!abort.signal.aborted) this.error = String(err?.message ?? err)
-    } finally {
-      if (this.readAbort === abort) this.readAbort = null
-      this.busy = false
-      this.host.requestUpdate()
-    }
+    })
   }
 
   renderAction() {

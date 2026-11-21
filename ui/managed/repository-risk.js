@@ -664,9 +664,8 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
   }
 
   _tabs() {
-    const actions = this._actions.rows('actions').length
-    const tabs = [['packages', 'Packages'], ['advisories', html`Advisories${this._advisories.size > 0 ? html`<span class="n">${formatCount.format(this._advisories.size)}</span>` : nothing}`],
-      ['actions', html`Actions${actions > 0 ? html`<span class="n">${formatCount.format(actions)}</span>` : nothing}`]]
+    const counted = (label, n) => html`${label}${n > 0 ? html`<span class="n">${formatCount.format(n)}</span>` : nothing}`
+    const tabs = [['packages', 'Packages'], ['advisories', counted('Advisories', this._advisories.size)], ['actions', counted('Actions', this._actions.rows('actions').length)]]
     return tabList('Results', tabs, this._tab, tab => { this._tab = tab })
   }
 
