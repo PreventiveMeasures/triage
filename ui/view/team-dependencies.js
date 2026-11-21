@@ -227,6 +227,8 @@ function untold(repoId, entry, failure) {
 
 const plural = (count, noun) => `${count.toLocaleString('en-US')} ${noun}${count === 1 ? '' : 's'}`
 const pullName = ({ repo, item }) => `${repo.name}#${item.number}`
+// `map`'s entry for `key`, made first where it has none.
+const entryOf = (map, key, make) => map.get(key) ?? map.set(key, make()).get(key)
 
 // The reader's login, in lower case, by which a review is told as theirs.
 const reader = () => state.managedSession?.login?.toLowerCase() ?? null
@@ -280,7 +282,7 @@ function standings(wanting, involved) {
   for (const pull of wanting) {
     for (const pkg of pull.wanted) {
       const has = counting(pkg)
-      ;(wanted.get(versionKey(pkg)) ?? wanted.set(versionKey(pkg), []).get(versionKey(pkg))).push({ pull, has, alike: [...has.keys()].toSorted().join('\0') })
+      entryOf(wanted, versionKey(pkg), () => []).push({ pull, has, alike: [...has.keys()].toSorted().join('\0') })
     }
   }
   // Of two, the one holding more reviews, then leaving fewer, then the first.
@@ -290,7 +292,7 @@ function standings(wanting, involved) {
     const made = new Map()
     for (const { pull, pkg } of involved.get(key)?.values() ?? []) {
       for (const [stance, one] of counting(pkg)) {
-        if (one.comment) (made.get(stance) ?? made.set(stance, { login: one.login, status: one.status, pulls: [] }).get(stance)).pulls.push(pull)
+        if (one.comment) entryOf(made, stance, () => ({ login: one.login, status: one.status, pulls: [] })).pulls.push(pull)
       }
     }
     const of = new Map()
@@ -593,7 +595,7 @@ class TeamDependencies extends StateElement {
     const adding = new Map()
     for (const pull of wanting) {
       for (const pkg of pull.wanted) {
-        const added = adding.get(versionKey(pkg)) ?? adding.set(versionKey(pkg), { pkg, pulls: [], told: [] }).get(versionKey(pkg))
+        const added = entryOf(adding, versionKey(pkg), () => ({ pkg, pulls: [], told: [] }))
         added.pulls.push(pull)
         added.told.push(pkg)
         if (!added.patched && pkg.patch?.path) added.patched = { patch: pkg.patch, pull }
@@ -615,7 +617,7 @@ class TeamDependencies extends StateElement {
     for (const pull of pulls.filter(({ entry }) => entry.status === 'ready' && entry.review)) {
       for (const [adds, versions] of [[true, addedVersions(pull.entry).versions], [false, unreviewedVersions(pull.entry).versions]]) {
         for (const pkg of versions) {
-          const of = involved.get(versionKey(pkg)) ?? involved.set(versionKey(pkg), new Map()).get(versionKey(pkg))
+          const of = entryOf(involved, versionKey(pkg), () => new Map())
           if (!of.has(pullName(pull))) of.set(pullName(pull), { pull, pkg, adds })
         }
       }

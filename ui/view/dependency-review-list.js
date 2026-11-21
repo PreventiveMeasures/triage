@@ -65,7 +65,7 @@ export class DependencyReviewList extends LitElement {
   }
   _toggleDetails(id) {
     const expanded = new Set(this._expanded)
-    if (expanded.has(id)) expanded.delete(id); else expanded.add(id)
+    if (!expanded.delete(id)) expanded.add(id)
     this._expanded = expanded
   }
   _details(review) {

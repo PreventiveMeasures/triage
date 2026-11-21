@@ -503,12 +503,8 @@ export class BundleCompareCode extends LitElement {
     this._treeTruncated = false
     const openAll = !!this._pathQuery() || shown <= OPEN_ALL_MAX
     const treeContent = this._mode === 'code' ? nothing : filtered ? this._renderTree(filtered, current, 0, openAll, openAll ? null : defaultOpenDirectories(filtered)) : html`<div class="bundle-code-search-empty">No changed files match.</div>`
-    const counts = Object.fromEntries(KINDS.map(({ kind }) => [kind, 0]))
-    for (const entry of this._entries.values()) {
-      if (entry.kind !== 'repointed') counts[entry.kind]++
-      if (entry.modified) counts.changed++
-      if (entry.repointed) counts.repointed++
-    }
+    // The kinds of change any file has, each a filter.
+    const present = new Set([...this._entries.values()].flatMap(entry => [entry.kind !== 'repointed' && entry.kind, entry.modified && 'changed', entry.repointed && 'repointed']))
     const search = SEARCH_MODES.find(({ mode }) => mode === this._mode)
     const named = this._mode === 'files' ? this.extensions : null
     return html`<aside class="bundle-code-rail">
@@ -535,7 +531,7 @@ export class BundleCompareCode extends LitElement {
             </span>
           </label>
           ${this.extensions?.filters ?? html`<div class="bundle-compare-code-kinds" role="group" aria-label="Show changes">
-            ${KINDS.filter(({ kind }) => counts[kind] > 0).map(({ kind, label }) => html`<button type="button" class=${`bundle-compare-code-kind ${kind}`}
+            ${KINDS.filter(({ kind }) => present.has(kind)).map(({ kind, label }) => html`<button type="button" class=${`bundle-compare-code-kind ${kind}`}
               aria-pressed=${String(this._kinds.has(kind))} data-tooltip=${`${this._kinds.has(kind) ? 'Hide' : 'Show'} ${label.toLowerCase()} files`}
               @click=${() => this._toggleKind(kind)}>${label.toLowerCase()}</button>`)}
           </div>`}
@@ -587,8 +583,7 @@ export class BundleCompareCode extends LitElement {
 
   _toggleKind(kind) {
     const kinds = new Set(this._kinds)
-    if (kinds.has(kind)) kinds.delete(kind)
-    else kinds.add(kind)
+    if (!kinds.delete(kind)) kinds.add(kind)
     this._kinds = kinds
   }
 
@@ -1624,9 +1619,6 @@ export class BundleCompareCode extends LitElement {
     </div>`
   }
 
-  _noEol(model, side, line) {
-    return line != null && model.noEol[side] && line === model[side].length - 1
-  }
 
   _fold(row, lit) {
     const more = `Show ${EXPAND_STEP} more lines`, some = row.count > EXPAND_STEP
@@ -1660,7 +1652,8 @@ export class BundleCompareCode extends LitElement {
 
   _codeCell(lit, side, line, ranges) {
     const lines = lit.model[side], markup = lit[side]?.[line], text = lines[line]
-    const noEol = this._noEol(lit.model, side, line)
+    // A last line with no newline after it, marked so.
+    const noEol = lit.model.noEol[side] && line === lines.length - 1
     let drawn = drawnCode.get(lines)
     if (!drawn) drawnCode.set(lines, drawn = new Map())
     let code = drawn.get(line)

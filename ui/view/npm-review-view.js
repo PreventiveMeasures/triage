@@ -111,7 +111,7 @@ function teamOptions(page, title, teams, selected, change, footer) {
     .checked=${selected.has(team.id)} .disabled=${busy(page)} @click=${() => {
       if (busy(page)) return
       const next = new Set(selected)
-      if (next.has(team.id)) next.delete(team.id); else next.add(team.id)
+      if (!next.delete(team.id)) next.add(team.id)
       change(next)
     }}></mode-switch>`)}${footer}</fieldset>`
 }
