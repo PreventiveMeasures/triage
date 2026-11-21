@@ -1,16 +1,17 @@
 import { pkgLabel } from '../../../common/bundle-pkg-of.js'
 import { countsTowardsCycles } from './cycle-imports.js'
-import { stronglyConnected } from './matrix-model.js'
+import { condense } from './matrix-model.js'
 import { removalSizes } from './size-flow-removal.js'
 import { packageCounts } from './count-flow.js'
 import { filterSizes } from './size-flow-filter.js'
 import { MAX_FILE_EDGES, MAX_PACKAGE_EDGES, crowdedPackages } from './crowded-packages.js'
 import { batchedReachability } from './size-flow-reachability.js'
 import { fileLabelOf } from './file-label.js'
+import { flowBend } from './size-flow-hit.js'
 
 const bytes = n => Number.isFinite(n) && n >= 0 ? n : 0
 
-export const sizeFlowFilterSize = node => node.filterSize
+// Kept by Large only to connect a larger node to an entry point.
 export const sizeFlowConnector = (node, minSize) => Math.max(node.removable, node.own) < minSize && node.filterSize >= minSize
 
 // Aim for at most 100 nodes, but don't take a step that would leave fewer
@@ -22,7 +23,7 @@ export function sizeFlowLargeThreshold(model) {
   const steps = model.metric === 'count' ? [0, 2, 5, 10, 20, 50, 100, 200] : [0, 1, 4, 10, 20, 50, 100, 200].map(n => n * 1024)
   const counts = steps.map(() => 0)
   for (const node of model.byId.values()) { for (let i = 0; i < steps.length; i++) {
-    if (sizeFlowFilterSize(node) < steps[i]) break
+    if (node.filterSize < steps[i]) break
     counts[i]++
   } }
   let step = 0
@@ -34,17 +35,9 @@ export function sizeFlowLargeThreshold(model) {
 // once to a node's total, even through diamonds, multiple entries, or cycles.
 // Cache scalar totals, not a quadratic collection of per-file reachable sets.
 function reachability(files, links) {
-  const { groups, componentOf } = stronglyConnected([...files.keys()], links)
+  const { groups, componentOf, next, incoming, order } = condense([...files.keys()], links)
   const weights = groups.map(group => group.reduce((sum, id) => sum + bytes(files.get(id).size), 0))
   const unknown = groups.map(group => group.filter(id => !files.get(id).virtual && files.get(id).size == null).length)
-  const incoming = groups.map(() => 0), next = groups.map(() => new Set())
-  for (const [from, targets] of links) {for (const to of targets) {
-    const a = componentOf.get(from), b = componentOf.get(to)
-    if (a !== b && !next[a].has(b)) { next[a].add(b); incoming[b]++ }
-  }}
-  const indegree = [...incoming], order = []
-  indegree.forEach((n, i) => { if (!n) order.push(i) })
-  for (const id of order) for (const to of next[id]) if (--indegree[to] === 0) order.push(to)
   const marks = new Uint32Array(groups.length), totals = new Map()
   // Cheap closures (trees and chains) are faster as walks/additions. Switch
   // to word-sized unions once repeated visits dominate graph preparation.
@@ -181,18 +174,9 @@ function flowLevels(model, roots, shown) {
     if (!active.has(e.to) && shown(e.to)) { active.add(e.to); pending.push(e.to) }
   } }
   const links = new Map(pending.map(id => [id, new Set(model.byId.get(id).outgoing.map(e => e.to).filter(to => active.has(to) && !rootSet.has(to)))]))
-  const { componentOf, groups } = stronglyConnected(pending, links)
-  const incoming = groups.map(() => 0), next = groups.map(() => new Set()), ranks = groups.map(() => 0)
-  for (const [from, targets] of links) { for (const to of targets) {
-    const a = componentOf.get(from), b = componentOf.get(to)
-    if (a !== b && !next[a].has(b)) { next[a].add(b); incoming[b]++ }
-  } }
-  const queue = []
-  incoming.forEach((n, i) => { if (!n) queue.push(i) })
-  for (const id of queue) { for (const to of next[id]) {
-    ranks[to] = Math.max(ranks[to], ranks[id] + 1)
-    if (--incoming[to] === 0) queue.push(to)
-  } }
+  const { componentOf, next, order } = condense(pending, links)
+  const ranks = next.map(() => 0)
+  for (const id of order) for (const to of next[id]) ranks[to] = Math.max(ranks[to], ranks[id] + 1)
   return new Map(pending.map(id => [id, ranks[componentOf.get(id)]]))
 }
 
@@ -269,16 +253,12 @@ function untangleBands(bands, edges, byId) {
   }
 }
 
-// Packages left out of the drawn flow, counted over the whole model so Large
-// and focus never change whether they show (see crowded-packages.js).
-function sizeFlowHiddenPackages(model) {
-  const pkg = id => model.byId.get(id).pkg
-  return crowdedPackages(model.edges.map(e => [pkg(e.from), pkg(e.to)]), model.packages ? MAX_PACKAGE_EDGES : MAX_FILE_EDGES)
-}
-
 export function layoutSizeFlow(model, { focus = null, minSize = 0, width = 1100 } = {}) {
-  const hiddenPackages = sizeFlowHiddenPackages(model)
-  const shown = id => sizeFlowFilterSize(model.byId.get(id)) >= minSize && !hiddenPackages.has(model.byId.get(id).pkg)
+  // Crowded packages (see crowded-packages.js), counted over the whole model
+  // so Large and focus never change whether they show.
+  const pkg = id => model.byId.get(id).pkg
+  const hiddenPackages = crowdedPackages(model.edges.map(e => [pkg(e.from), pkg(e.to)]), model.packages ? MAX_PACKAGE_EDGES : MAX_FILE_EDGES)
+  const shown = id => model.byId.get(id).filterSize >= minSize && !hiddenPackages.has(pkg(id))
   const roots = (focus && model.byId.has(focus) ? [focus] : model.roots).filter(shown)
   const levels = flowLevels(model, roots, shown)
   const candidates = [...levels.keys()]
@@ -335,6 +315,6 @@ export function fitSizeFlowWidth(layout, width, height) {
 
 export function flowRibbon(edge) {
   const { x1, x2, y1, y2, width1, width2 } = edge
-  const bend = edge.returning ? Math.max(y1, y2) + 35 : (y1 + y2) / 2
+  const bend = flowBend(edge)
   return `M${x1},${y1} C${x1},${bend} ${x2},${bend} ${x2},${y2} L${x2 + width2},${y2} C${x2 + width2},${bend} ${x1 + width1},${bend} ${x1 + width1},${y1} Z`
 }

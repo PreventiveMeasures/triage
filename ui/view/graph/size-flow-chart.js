@@ -5,9 +5,7 @@ import { graphBackground, textOnPackage } from './colors.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { flowRibbon, sizeFlowConnector } from './size-flow-model.js'
-import { flowEdgeBounds, flowHitCandidates, flowHitIndex, flowOutside, flowVisibleRibbons } from './size-flow-hit.js'
-
-export const shortSize = formatBytes
+import { flowEdgeBounds, flowHitCandidates, flowHitIndex, flowOutside, flowUnion, flowVisibleRibbons } from './size-flow-hit.js'
 
 // What a flow's bars and ribbons weigh: bytes in Size flow, packages in
 // Package flow (buildSizeFlow's `metric`).
@@ -42,6 +40,9 @@ function flowEdgeTooltip(e, model) {
   const size = model.metric === 'count' ? packageCount(e.size) : formatBytes(e.size)
   return `${model.byId.get(e.from).label} → ${model.byId.get(e.to).label}\n${size} reachable${e.returning ? ' · return / cycle edge' : ''}`
 }
+
+// Bars are 26 high.
+const barBox = node => ({ left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 })
 
 // Inset bar borders use no layout space and stay at most half a bar high.
 const flowBorder = zoom => Math.min(.5 / zoom, 13)
@@ -85,8 +86,7 @@ export class SizeFlowChart {
     this.paths = this.layout.edges.map((edge, order) => ({ edge, order, path: new Path2D(flowRibbon(edge)), ...flowEdgeBounds(edge) }))
     this.pathById = new Map(this.paths.map(entry => [entry.edge.id, entry]))
     this.rows = [...Map.groupBy(this.layout.nodes, node => node.y).values()]
-    const nodes = this.layout.nodes.map((node, i) => ({ node, order: this.paths.length + i,
-      left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }))
+    const nodes = this.layout.nodes.map((node, i) => ({ node, order: this.paths.length + i, ...barBox(node) }))
     this.index = flowHitIndex([...this.paths, ...nodes])
     this.clearHover(); this.focused = null; this.invalidateRaster()
   }
@@ -249,8 +249,7 @@ export class SizeFlowChart {
   drawBars(dpr, key, preview = false) {
     if (!preview && this.barsKey === key && !this.previewVisible) return
     if (this.barsKey !== key) {
-      this.visibleNodes = this.layout.nodes.filter(node =>
-        !flowOutside({ left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }, this.view))
+      this.visibleNodes = this.layout.nodes.filter(node => !flowOutside(barBox(node), this.view))
     }
     // During a gesture the bars layer already contains the projected ribbons.
     // Redraw bars at the current scale on every input frame, keeping labels
@@ -289,7 +288,7 @@ export class SizeFlowChart {
   }
 
   paintNode(ctx, node) {
-    if (flowOutside({ left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }, this.view)) return
+    if (flowOutside(barBox(node), this.view)) return
     const { zoom } = this.host, color = this.colors.get(node.pkg)
     ctx.globalAlpha = this.matches.has(node.id) ? 1 : .15
     ctx.fillStyle = color; ctx.fillRect(node.x, node.y, node.width, 26)
@@ -323,11 +322,8 @@ export class SizeFlowChart {
       highlights.push({ entry, alpha: (alpha - .22) / (1 - .22) })
     }
     const outlines = [...new Set([selected?.node, this.focused])].map(id => this.layout.byId.get(id)).filter(Boolean)
-    const bounds = highlights.map(({ entry }) => entry).concat(outlines.map(node =>
-      ({ left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 })))
-    const union = boxes => boxes.reduce((area, box) => ({ left: Math.min(area.left, box.left), right: Math.max(area.right, box.right),
-      top: Math.min(area.top, box.top), bottom: Math.max(area.bottom, box.bottom) }), { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity })
-    const current = union(bounds), damage = redraw ? this.view : union([current, this.highlightBounds ?? current])
+    const current = flowUnion(highlights.map(({ entry }) => entry).concat(outlines.map(barBox)))
+    const damage = redraw ? this.view : flowUnion([current, this.highlightBounds ?? current])
     this.highlightBounds = current
     const ctx = this.context(this.overlay, dpr, redraw)
     const pad = 2 / this.host.zoom
@@ -345,7 +341,7 @@ export class SizeFlowChart {
       ctx.save(); ctx.beginPath()
       const region = { left: x, right: x + width, top: y, bottom: y + height }
       for (const node of this.visibleNodes) {
-        if (!flowOutside({ left: node.x, right: node.x + node.width, top: node.y, bottom: node.y + 26 }, region)) ctx.rect(node.x, node.y, node.width, 26)
+        if (!flowOutside(barBox(node), region)) ctx.rect(node.x, node.y, node.width, 26)
       }
       ctx.clip(); ctx.clearRect(x, y, width, height); ctx.restore()
     }

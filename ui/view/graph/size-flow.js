@@ -5,8 +5,9 @@ import { hideTooltip, installShadowTooltipListener } from '../tooltip.js'
 import { graph2 } from './state.js'
 import { pkgColor } from './utils.js'
 import { graphBackground } from './colors.js'
-import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow, sizeFlowConnector, sizeFlowFilterSize, sizeFlowLargeThreshold } from './size-flow-model.js'
-import { SizeFlowChart, flowAmount, packageCount, shortSize } from './size-flow-chart.js'
+import { buildSizeFlow, fitSizeFlowWidth, layoutSizeFlow, sizeFlowConnector, sizeFlowLargeThreshold } from './size-flow-model.js'
+import { SizeFlowChart, flowAmount, packageCount } from './size-flow-chart.js'
+import { formatBytes } from '../format.js'
 import { graphTerms } from './data.js'
 import { graphZoomMetrics } from './zoom.js'
 import css from './size-flow.css'
@@ -63,7 +64,7 @@ class SizeFlow extends LitElement {
       this.hover = null
     }
     if (rebuild || this.layoutFocus !== this.focus) this.largeSuppressed = this.isSmallFocus()
-    if (this.focus && sizeFlowFilterSize(this.model.byId.get(this.focus)) < this.minSize) this.focus = null
+    if (this.focus && this.model.byId.get(this.focus).filterSize < this.minSize) this.focus = null
     if (rebuild || this.layoutFocus !== this.focus || this.layoutMinSize !== this.minSize) {
       if (this.renderRoot) hideTooltip(this.renderRoot)
       this.layout = fitSizeFlowWidth(layoutSizeFlow(this.model, { focus: this.focus, minSize: this.minSize }), availableWidth(this.width), this.height)
@@ -171,7 +172,9 @@ class SizeFlow extends LitElement {
     this.pan = { x: sidePadding, y: (this.height - this.layout.height * this.zoom) / 2 }
   }
 
-  syncViewport() {
+  // Fit the layout's width to the viewport, keeping the view centered, and
+  // refit the zoom when asked to or still fitted.
+  syncViewport(fit = false) {
     const box = this.renderRoot.querySelector('.flow-viewport')?.getBoundingClientRect()
     if (!this.layout || !box || box.width <= 0 || box.height <= 0) return
     const layout = fitSizeFlowWidth(this.layout, availableWidth(box.width), box.height)
@@ -181,26 +184,22 @@ class SizeFlow extends LitElement {
     }
     if (layout !== this.layout) { hideTooltip(this.renderRoot); this.layout = layout; this.requestUpdate() }
     this.width = box.width; this.height = box.height
-    if (this.needsFit || this.fitted) { this.fit(); return }
-    // Content and viewport changes can raise the floor. Clamp immediately,
-    // but retain a valid user viewport through popup/data refreshes.
-    const { min, max } = this.zoomMetrics()
-    const zoom = Math.max(min, Math.min(max, this.zoom))
-    if (zoom !== this.zoom) { this.zoom = zoom; this.align() }
+    if (fit || this.needsFit || this.fitted) {
+      this.zoom = this.fitScale()
+      this.needsFit = false
+      this.fitted = true
+      this.align()
+    } else {
+      // Content and viewport changes can raise the floor. Clamp immediately,
+      // but retain a valid user viewport through popup/data refreshes.
+      const { min, max } = this.zoomMetrics()
+      const zoom = Math.max(min, Math.min(max, this.zoom))
+      if (zoom !== this.zoom) { this.zoom = zoom; this.align() }
+    }
     this.drawViewport()
   }
 
-  fit() {
-    const box = this.renderRoot.querySelector('.flow-viewport')?.getBoundingClientRect()
-    if (!this.layout || !box || box.width <= 0 || box.height <= 0) return
-    const layout = fitSizeFlowWidth(this.layout, availableWidth(box.width), box.height)
-    if (layout !== this.layout) { hideTooltip(this.renderRoot); this.layout = layout; this.requestUpdate() }
-    this.width = box.width; this.height = box.height
-    this.zoom = this.fitScale()
-    this.needsFit = false
-    this.fitted = true
-    this.align(); this.drawViewport()
-  }
+  fit() { this.syncViewport(true) }
 
   zoomBy(factor, x = this.width / 2, y = this.height / 2) {
     const { min, max } = this.zoomMetrics()
@@ -264,7 +263,7 @@ class SizeFlow extends LitElement {
   }
 
   matchesNode(node) {
-    if (sizeFlowFilterSize(node) < this.minSize || this.layout?.hiddenPackages?.has(node.pkg)) return false
+    if (node.filterSize < this.minSize || this.layout?.hiddenPackages?.has(node.pkg)) return false
     const query = graph2.pathFilter.trim().toLowerCase()
     if (query && !`${node.label} ${node.pkg} ${node.path ?? ''}`.toLowerCase().includes(query)) return false
     if (this.graph.issuesHidden) return true
@@ -280,6 +279,16 @@ class SizeFlow extends LitElement {
     })
   }
 
+  renderHeading(node) {
+    return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button type="button" class="detail-action" aria-label="Clear flow selection" @click=${() => this.select(null)}>×</button></div>`
+  }
+
+  renderFlows(node, outgoing, incoming) {
+    return html`<h4>${outgoing} · ${node.outgoing.length}</h4>${this.renderLinks(node.outgoing)}
+      <h4>${incoming} · ${node.incoming.length}</h4>${this.renderLinks(node.incoming, true)}
+      ${Math.max(node.incoming.length, node.outgoing.length) > 100 ? html`<p>Showing the 100 largest flows in each direction.</p>` : null}`
+  }
+
   renderSearch() {
     if (!graph2.pathFilter.trim()) return null
     const matches = this.chart.searchMatches()
@@ -292,7 +301,7 @@ class SizeFlow extends LitElement {
     if (this.counts) return this.renderCountPanel()
     const node = this.model.byId.get(this.selection?.node)
     const edge = this.model.edgeById.get(this.selection?.edge)
-    if (!node) {return html`<h3>Size flow</h3><div class="flow-metrics"><b>${shortSize(this.model.total.size)}</b><span>unique reachable source</span></div>
+    if (!node) {return html`<h3>Size flow</h3><div class="flow-metrics"><b>${formatBytes(this.model.total.size)}</b><span>unique reachable source</span></div>
       <p>Bar width shows how much source leaves the bundle when a file or package is removed.</p>
       <p>Select a bar or ribbon for details.<br>Double-click a bar to follow its imports.</p>
       ${this.model.total.missing ? html`<p>${this.model.total.missing} files have unknown sizes; totals include known bytes only.</p>` : null}
@@ -300,9 +309,9 @@ class SizeFlow extends LitElement {
       ${this.model.omittedFiles ? html`<p>${this.model.omittedFiles} files are not reachable from these entry points.</p>` : null}
       <h4>${this.model.inferred ? 'Inferred roots (no entry points in this view)' : 'Entry points'}</h4>
       ${this.renderRoots()}`}
-    return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button type="button" class="detail-action" aria-label="Clear flow selection" @click=${() => this.select(null)}>×</button></div>
-      ${edge ? html`<p class="flow-direction">${this.model.byId.get(edge.from).label}<br>↓ imports<br>${this.model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${shortSize(edge.size)}</b><span>reachable through this edge · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}</span></div>` : null}
-      <div class="flow-metrics"><b>${shortSize(node.removable)}</b><span>unique size · removed if deleted · bar width</span><b>${shortSize(node.size)}</b><span>reachable size</span><b>${shortSize(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
+    return html`${this.renderHeading(node)}
+      ${edge ? html`<p class="flow-direction">${this.model.byId.get(edge.from).label}<br>↓ imports<br>${this.model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${formatBytes(edge.size)}</b><span>reachable through this edge · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}</span></div>` : null}
+      <div class="flow-metrics"><b>${formatBytes(node.removable)}</b><span>unique size · removed if deleted · bar width</span><b>${formatBytes(node.size)}</b><span>reachable size</span><b>${formatBytes(node.own)}</b><span>own source size · ${node.files.length} ${node.files.length === 1 ? 'file' : 'files'}</span></div>
       ${this.renderVersions(node)}
       ${sizeFlowConnector(node, this.minSize) ? html`<p>Kept by Large so retained dependencies remain connected to an entry point.</p>` : null}
       ${node.removableMissing ? html`<p>${node.removableMissing} removed files have unknown sizes; removal totals include known bytes only.</p>` : null}
@@ -310,9 +319,7 @@ class SizeFlow extends LitElement {
       ${node.virtual ? html`<p>Entry source is absent from this bundle; only its recorded imports are counted.</p>` : null}
       <div class="flow-actions"><button aria-pressed=${!!this.focus} @click=${() => this.follow(this.focus ? null : node.id)}>Follow imports</button>
       ${!this.packages && !node.virtual ? html`<button data-bundle-view-source=${this.model.files.get(node.files[0]).origFile ?? node.files[0]}>View source</button>` : null}</div>
-      <h4>Imports · ${node.outgoing.length}</h4>${this.renderLinks(node.outgoing)}
-      <h4>Imported by · ${node.incoming.length}</h4>${this.renderLinks(node.incoming, true)}
-      ${Math.max(node.incoming.length, node.outgoing.length) > 100 ? html`<p>Showing the 100 largest flows in each direction.</p>` : null}`
+      ${this.renderFlows(node, 'Imports', 'Imported by')}`
   }
 
   renderRoots() {
@@ -334,16 +341,14 @@ class SizeFlow extends LitElement {
       <h4>${model.inferred ? 'Inferred roots (no entry points in this view)' : this.graph.packagesOnly ? 'Workspaces' : 'Entry points'}</h4>
       ${this.renderRoots()}`}
     const dependencies = node.size - 1
-    return html`<div class="flow-panel-heading"><h3>${node.label}</h3><button type="button" class="detail-action" aria-label="Clear flow selection" @click=${() => this.select(null)}>×</button></div>
+    return html`${this.renderHeading(node)}
       ${edge ? html`<p class="flow-direction">${model.byId.get(edge.from).label}<br>↓ ${terms.linked}<br>${model.byId.get(edge.to).label}</p><div class="flow-metrics"><b>${edge.size}</b><span>${edge.size === 1 ? 'package' : 'packages'} reachable through this dependency${this.graph.packagesOnly ? '' : ` · ${edge.count} ${edge.count === 1 ? 'file import' : 'file imports'}`}</span></div>` : null}
       <div class="flow-metrics"><b>${node.removable}</b><span>unique ${node.removable === 1 ? 'package' : 'packages'} · removed if deleted · bar width</span><b>${node.size}</b><span>${node.size === 1 ? 'package' : 'packages'} reachable · itself and ${dependencies} ${dependencies === 1 ? 'dependency' : 'dependencies'}</span></div>
       ${this.renderVersions(node)}
       ${sizeFlowConnector(node, this.minSize) ? html`<p>Kept by Large so retained dependencies remain connected to ${this.graph.packagesOnly ? 'a workspace' : 'an entry point'}.</p>` : null}
       ${node.virtual ? html`<p>Entry source is absent from this bundle; only its recorded imports are counted.</p>` : null}
       <div class="flow-actions"><button aria-pressed=${!!this.focus} @click=${() => this.follow(this.focus ? null : node.id)}>Follow dependencies</button></div>
-      <h4>${terms.outgoing} · ${node.outgoing.length}</h4>${this.renderLinks(node.outgoing)}
-      <h4>${terms.incoming} · ${node.incoming.length}</h4>${this.renderLinks(node.incoming, true)}
-      ${Math.max(node.incoming.length, node.outgoing.length) > 100 ? html`<p>Showing the 100 largest flows in each direction.</p>` : null}`
+      ${this.renderFlows(node, terms.outgoing, terms.incoming)}`
   }
 
   renderVersions(node) {
@@ -359,7 +364,7 @@ class SizeFlow extends LitElement {
     }
     const counts = this.counts
     const list = html`<ul class="flow-versions">${node.instances.map(instance => html`<li>
-      <div><span>${instance.version || 'Unknown version'}</span>${counts ? null : html`<span>${shortSize(instance.size)}${instance.missing ? '+' : ''}</span>`}</div>
+      <div><span>${instance.version || 'Unknown version'}</span>${counts ? null : html`<span>${formatBytes(instance.size)}${instance.missing ? '+' : ''}</span>`}</div>
       <small>${instance.directory}</small>
       ${instance.missing && !counts ? html`<small>${instance.missing} files have unknown sizes</small>` : null}
     </li>`)}</ul>`
@@ -369,7 +374,7 @@ class SizeFlow extends LitElement {
   render() {
     if (!this.layout) return null
     const { nodes } = this.layout
-    const minSize = this.counts ? packageCount(this.minSize) : shortSize(this.minSize)
+    const minSize = this.counts ? packageCount(this.minSize) : formatBytes(this.minSize)
     return html`<section class="flow-stage" aria-label=${this.counts ? 'Package dependency flow' : 'Dependency size flow'} style=${styleMap({ '--flow-background': graphBackground() })}>
       <div class="flow-viewport">${this.chart.render()}${nodes.length > 0 ? null : html`<p>${this.minSize ? `No nodes reach ${minSize}. Turn off Large to show all nodes.` : 'No recorded dependency paths in this view.'}</p>`}</div>
       <div class="flow-count">${nodes.length} ${this.model.packages ? nodes.length === 1 ? 'package' : 'packages' : nodes.length === 1 ? 'file' : 'files'}</div>
