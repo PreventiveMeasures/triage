@@ -125,6 +125,7 @@ export interface State {
   bundleDetailsTab: string
   teamDependenciesTab: 'pulls' | 'versions' | 'branch' | 'reviews'
   teamDependenciesSort: 'newest' | 'updated' | 'fewest'
+  teamDependenciesAllBranches: boolean
   selectedPackage: string | null
   selectedPackageVersion: string | null
   packageDetailsTab: 'overview' | 'issues'
@@ -605,6 +606,9 @@ export const state: State = store<State>({
   // newest opened first, the latest updated first, or those adding fewest
   // versions to review first.
   teamDependenciesSort: 'newest',
+  // Whether its Pull requests sub-tab shows those to merge into other
+  // branches than their repository's default too (team-dependencies.js).
+  teamDependenciesAllBranches: false,
   // Packages view selection — the package name (string) of the open
   // row, null when no detail panel is up. Mirrors the selectedBundle
   // pattern: clicking a row sets it; the deselect button clears it.
