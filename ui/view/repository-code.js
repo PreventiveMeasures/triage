@@ -1,11 +1,9 @@
-// The managed code viewer. A directory of a connected repository at a commit
-// opens in the bundle view, as a bundle whose files are the directory's, with
-// the Code, Search and Treemap tabs, as an npm version opens (npm-package.js).
-// Its header picks the repository and the revision (RepositoryCodeSource);
-// `/repo/<repo id>` opens the default branch's head. The server reads
-// it with the reader's own GitHub access, within their grants of it
-// (GET /api/admin/repositories/code). What it answered is kept in memory only
-// while it is shown.
+// The managed code viewer: a connected repository's directory at a commit
+// opens in the bundle view as a bundle of its files, as an npm version does
+// (npm-package.js), its header picking the repository and revision
+// (RepositoryCodeSource); `/repo/<repo id>` opens the default branch's head.
+// Read with the reader's own GitHub access, within their grants
+// (GET /api/admin/repositories/code), and kept only while shown.
 import { LitElement, html, nothing } from 'lit'
 import { appMarkup } from './markup.js'
 import { isManagedUiMode, state } from '#client/index.js'
@@ -48,11 +46,10 @@ const sessionData = sessionKept(new Map(), revisionNames)
 const DATA_RETRY_MS = 30_000
 const HEADER_FRESH_MS = 30_000
 
-// `{ status }`: 'loading', then 'ready' with its `value`, or 'error' until a
-// read after its retry is due; each a new object, so the header repaints. One
-// read again (rereadHeader) is 'ready' with what it held meanwhile, kept
-// where the read fails, so the header names nothing else till GitHub tells
-// otherwise.
+// `{ status }`: 'loading', then 'ready' with its `value`, or 'error' till
+// its retry is due; each a new object, so the header repaints. One read
+// again (rereadHeader) stays 'ready' with what it held, kept where the read
+// fails.
 function headerRead(key, ask) {
   const data = sessionData()
   const held = data.get(key)
@@ -95,9 +92,8 @@ export function rememberRevision(repoId, commit, revision) {
   if (revision) revisionNames.set(`${repoId}\0${commit}`, revision)
 }
 
-// The bundle view's entry for a directory at a commit. It has no managed id,
-// so nothing reads it through the bundle routes; `repository` names it, and
-// the revision it was opened by, where that was a name.
+// The bundle view's entry for a directory at a commit, named by its
+// `repository` (and the revision it was opened by), not a managed id.
 export function repositoryCodeEntry(data, revision = null) {
   const { repoId, repo, commit, path } = data
   const files = Array.isArray(data.files) ? data.files : []
@@ -107,11 +103,9 @@ export function repositoryCodeEntry(data, revision = null) {
   }
 }
 
-// The text files Code opens on, in the order it tries them: the directory's
-// readme, else its top-most package.json outside node_modules
-// (shallowestNamed), else its largest file at its top, else the
-// largest a level down, and so on, so a fixture deep in it never opens over
-// a file nearer its top.
+// The text files Code opens on, in the order it tries them: the readme,
+// the top-most package.json outside node_modules (shallowestNamed), then the
+// largest file of each level from the top, so no deep fixture wins.
 const README = /^readme(?:\.[^/]*)?$/iu
 export function repositoryCodeEntries(paths, sizes = new Map()) {
   const readmes = paths.filter(path => README.test(path))
@@ -139,14 +133,11 @@ export function repositoryCodeRoute(entry, tab = 'code', location = null) {
   return { view: 'repository-code', repoId, commit, path, bundleTab, ...activitySubtabField(bundleTab), ...location }
 }
 
-// Opens a repository's directory on `bundleTab` (Code by default): at
-// `commit`, else at `ref` (`heads/<branch>`, `tags/<tag>`, a commit, or
-// the default branch's head without one), `revision` naming it so in the
-// header, `file` a path in it for Code to open on, `repo` its repository's
-// name for its header while it opens, `compare` what Compare compares it
-// with, `{ target, mode }` (repository-compare.js), its route naming a
-// commit, else holding the name until it is read; an Activity view on the
-// sub-tab it shows.
+// Opens a repository's directory on `bundleTab`: at `commit`, else at `ref`
+// (`heads/<branch>`, `tags/<tag>`, a commit, '' the default branch's head),
+// `revision` naming it in the header, `file` for Code to open on, `repo` the
+// header's name while it opens, `compare` Compare's `{ target, mode }`
+// (repository-compare.js, a commit by its route, a name till read).
 export function navigateToRepositoryCode({ repoId, commit = null, ref = null, revision = undefined, path = '', repo = null, file = null, bundleTab = 'code', compare = null }) {
   if (!isManagedUiMode() || !managedHistory?.active) return
   const compared = compare?.target ? { ...COMMIT.test(compare.target) ? { compareCommit: compare.target.toLowerCase() } : { compareTarget: compare.target },
@@ -187,18 +178,16 @@ function showOpening(opening) {
 }
 
 // The directory opening in place of `entry`, the one shown, while it loads
-// (openRepositoryCodeRoute): for its header to name it, and its body to show
-// the one shown as it waits. Null once it opens or fails, or a navigation
-// since has left both.
+// (openRepositoryCodeRoute), for the header to name; null once it opens or
+// fails, or a navigation since has left both.
 export function repositoryCodePending(entry) {
   const pending = state.repositoryCodePending
   return pending && pending.integrity === entry?.integrity && pending.generation === currentViewGeneration() ? pending.repository : null
 }
 
-// Failures a directory's own entries get past: one too large to read whole,
-// one whose archive is refused, as for a symlink out of the repository,
-// which its other directories need not hold, or none to read, as an
-// ancestor of a manager's grants is, which lists those alone.
+// Failures a directory's subdirectories get past: too large to read whole,
+// an archive refused (a symlink out of the repository), or nothing to read
+// (an ancestor of a manager's grants, listing those alone).
 const LISTED_FAILURES = new Set(['directory-too-large', 'directory-unreadable', 'no-directory'])
 
 // A directory that failed to open lists its directories to open instead,
@@ -215,9 +204,8 @@ async function listDirectories(opening, err) {
   } catch {}
 }
 
-// The commit a directory opening on its Treemap names none of, as the
-// repository's root is read at, for its Treemap to draw its files' sizes
-// at while they are read (openRepositoryCodeRoute).
+// The commit the root is read at, for a Treemap opening at none to draw its
+// files' sizes at while they are read.
 async function sizeAt(opening) {
   try {
     const listed = await fetchRepositoryContents(opening.repoId, routeRef(opening), '', { signal: currentViewSignal(), commitOnly: true })
@@ -234,11 +222,10 @@ export function openRepositoryCodeTab({ repoId, repo, commit, ref, path, revisio
   navigateToRepositoryCode({ repoId, repo, path, commit, bundleTab, ...commit ? {} : { ref: ref ?? '', revision } })
 }
 
-// Open a `repository-code` route: the directory, which replaces whatever
-// bundle was shown, its header showing while it opens, or the directory shown
-// until it does. Answers the route the page ends on, at the commit it opened,
-// or false. A directory that fails to open says why where it would have
-// shown, at its route, for a reload to read it again.
+// Open a `repository-code` route: the directory replaces the bundle shown,
+// its header showing (or the one shown kept) while it opens. Answers the
+// route it ends on, at the commit opened, or false; one that fails says why
+// at its route, for a reload to read it again.
 export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   const { repoId, commit = null, path = '' } = route
   const tab = REPOSITORY_CODE_TABS.has(route.bundleTab) ? route.bundleTab : 'code'
@@ -297,11 +284,10 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     return routeAt(at)
   }
   if (!entry) {
-    // Its Treemap draws its files' sizes as its tree lists them while its
-    // files are read, the sooner (repository-treemap.js), at its commit,
-    // which the repository's root is read at where its route names none.
-    // Another directory, or revision, otherwise keeps the one shown, dimmed,
-    // until it opens, its header naming it meanwhile (repositoryCodePending).
+    // A Treemap draws its tree's sizes while the files read (repository-
+    // treemap.js), at its commit, the root's where the route names none;
+    // otherwise the one shown stays, dimmed, the header naming the one
+    // opening (repositoryCodePending).
     const sizing = tab === 'treemap'
     const pending = shown && !sizing ? { integrity: shown.integrity, generation: currentViewGeneration(), repository: { repoId, repo: opening.repo, commit, path, revision } } : null
     if (pending) {
@@ -340,9 +326,8 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
     details = repositoryCodeDetails(entry, data)
   }
   cleanupGraph2()
-  // What Compare compared the directory with stays while another of its tabs
-  // is open, as Back gives, for Compare to open with again; Compare compares
-  // with what its route names, none on a bare one, as one cleared was left.
+  // What Compare compared with stays while another tab is open, for Back to
+  // return to; Compare itself takes its route's, none on a bare one.
   const compared = state.bundleCompare?.bundle === entry.integrity ? state.bundleCompare : null
   const target = route.compareCommit ?? route.compareTarget ?? null
   state.bundles = [entry]
@@ -367,11 +352,10 @@ export async function openRepositoryCodeRoute(route, isCurrent, renderSidebar) {
   return repositoryCodeRoute(entry, state.bundleDetailsTab, managedTabLocation(state))
 }
 
-// The revision a directory shows, as it was opened: by its name, the default
-// branch's once the repository's branches arrive; else, opened by its commit,
-// by the branch whose head it is, the default branch first, else the tag on
-// it, once they arrive (refs.value's `branchCommits` and `tagCommits`), else
-// by its commit.
+// The revision a directory shows: the name it was opened by (the default
+// branch's once the branches arrive); else, opened by commit, the branch
+// whose head it is, the default first, else its tag (refs.value's
+// `branchCommits`, `tagCommits`), else the commit.
 export function shownRevision({ revision, commit }, refs) {
   if (revision?.name) return revision
   const listed = refs?.status === 'ready' ? refs.value : null
@@ -397,14 +381,11 @@ export function revisionPicked({ how, kind, name }) {
 }
 
 // The header of a repository's directory, or of one opening
-// (render-bundle.js bundleSlideView): the repository, among those the reader
-// may browse (`repos`, browsableRepositories); the directory's path in it,
-// each part opening that directory; the revision as it was opened, among the
-// repository's branches and tags (`refs`, repositoryRefs), as Create a bundle
-// picks one; and the commit, linking its tree on GitHub, all but the
-// repository on the tabs they change something of (REVISIONLESS_TABS). Picking another
-// repository opens its default branch's head, on the same tab; picking another
-// revision, or entering one, opens the same directory there.
+// (render-bundle.js bundleSlideView): the repository (`repos`), another
+// opening at its default branch's head on the same tab; and, on the tabs
+// they change (not REVISIONLESS_TABS), the path, each part opening that
+// directory, the revision (`refs`), another opening the same directory
+// there, and the commit, linking its tree on GitHub.
 class RepositoryCodeSource extends LitElement {
   static properties = {
     repository: { attribute: false }, tab: { type: String }, repos: { attribute: false }, refs: { attribute: false },

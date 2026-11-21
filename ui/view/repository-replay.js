@@ -1,4 +1,4 @@
-// The code viewer's Replay (render-bundle.js): the latest commits of the
+// The code viewer's Replay (render-bundle.js), the latest commits of the
 // revision shown (a directory's, below the root) played as Gource plays a
 // history (replay-model.js), on a canvas: directories a tree, files dots in
 // their kinds' colors, those who made each commit beaming to the files it
@@ -27,10 +27,9 @@ const READ = 50
 // Kinds of files colored, as many as the lanes Commits draws in, in their
 // order; the rest Other's.
 const KINDS = 8
-// How near the canvas's edges the tree comes (clear of the day over it and
-// the commit under it), how far it zooms in at most, how many files' names
-// show at once at most, those who made a commit drawn how wide and how far
-// apart, how often the tree is laid out again at most as it changes (a large
+// How near the canvas's edges the tree comes (clear of the day and commit
+// over and under it), the most zoom, the most files named at once, a maker's
+// disc and spacing, how often at most the tree is laid out again (a large
 // one takes tens of milliseconds), and how long after the last commit it
 // stops.
 const MARGIN = { side: 40, top: 64, bottom: 40 }
@@ -58,11 +57,9 @@ watchActivitySubtabs(tab => { if (tab === 'replay') repaint() })
 const reducedMotion = () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 
 // The replay of the latest `count` commits of the directory `repository`
-// shows, as held, else new: the commits it plays and when (none till its
-// history is read), the kinds of files counted (of how many commits) and
-// colored, its scene, where it is (`clock`, `next` the commit to play
-// next), and whether it plays, waits for what the next commit changes, or
-// ended; how many made its commits, once counted.
+// shows, as held, else new: its commits and when each plays (once its
+// history is read), the kinds of files counted and colored, its scene, where
+// it is (`clock`, `next`), and whether it plays, waits or ended.
 function replayOf(repository, count) {
   const { repoId, commit, path } = repository
   const key = `${repoId}\0${commit}\0${path}\0${count}`
@@ -126,33 +123,41 @@ function countKinds(replay) {
   assignColors(replay.colors, replay.counts, KINDS)
 }
 
+// A replay's commits from where it plays on, then those before.
+const fromNext = replay => [...replay.commits.slice(replay.next), ...replay.commits.slice(0, replay.next)]
+
+// `ask`'s answer for a replay, its `flag` set meanwhile, taken (`took`)
+// while the replay is still the one held; a failure but an abort's said
+// (`error`), for the reader to ask again.
+function readFor(replay, flag, ask, took, error) {
+  replay[flag] = true
+  ask().then(answer => {
+    if (sessionReplays().get(replay.key) === replay) took(answer)
+    return null
+  }, err => {
+    if (err?.name !== 'AbortError') replay.error = err?.message || error
+    return null
+  }).finally(() => {
+    replay[flag] = false
+    repaint()
+  })
+}
+
 // The files commits hold that a replay needs, one commit's at a time, each
 // once: those it starts from first, then those each cut commit leaves, from
 // where it plays on; as many as the server answers (repository-changes.ts
-// MAX_TREE_FILES), `cut` where there were more; a commit the server has
-// none of, none.
+// MAX_TREE_FILES), `cut` where there were more.
 function readTrees(replay) {
   if (replay.treeReading || replay.error) return
-  const order = [...replay.commits.slice(replay.next), ...replay.commits.slice(0, replay.next)]
   const start = startCommit(replay) && !startOf(replay)
-  const sha = start ? startCommit(replay) : order.find(commit => isCut(replay, commit.sha) && !treeOf(replay, commit.sha))?.sha
+  const sha = start ? startCommit(replay) : fromNext(replay).find(commit => isCut(replay, commit.sha) && !treeOf(replay, commit.sha))?.sha
   if (!sha) return
-  replay.treeReading = true
-  const key = changesKey(replay, sha)
-  fetchRepositoryTree(replay.repoId, replay.path, sha).then(answer => {
-    if (sessionReplays().get(replay.key) !== replay) return null
-    // A cut commit's the server has none of making nothing whole: as a tree
-    // cut short of every file, removing none.
+  readFor(replay, 'treeReading', () => fetchRepositoryTree(replay.repoId, replay.path, sha), answer => {
+    // A cut commit's the server has none of makes nothing whole: a tree cut
+    // short of every file, removing none.
     const files = Array.isArray(answer?.files) ? answer.files.map(file => fileOf([file, 'A'], replay.path)?.[0]).filter(Boolean) : []
-    treesRead.set(key, { files, cut: answer?.cut === true || (!start && !Array.isArray(answer?.files)) })
-    return null
-  }, err => {
-    if (err?.name !== 'AbortError') replay.error = err?.message || (start ? 'The files the commits start from could not be read.' : 'The files a commit leaves could not be read.')
-    return null
-  }).finally(() => {
-    replay.treeReading = false
-    repaint()
-  })
+    treesRead.set(changesKey(replay, sha), { files, cut: answer?.cut === true || (!start && !Array.isArray(answer?.files)) })
+  }, start ? 'The files the commits start from could not be read.' : 'The files a commit leaves could not be read.')
 }
 
 // What a commit makes of the files, made whole where it was cut: its files'
@@ -174,41 +179,28 @@ function sceneAt(replay, at) {
   return scene
 }
 
-// The next of a replay's commits what each changes is read of: those from
-// where it plays on, the oldest first, else those before; as many as READ,
-// or FIRST_READ before any is. One the server told nothing of changes none;
-// one failing waits for the reader to ask again.
+// The next of a replay's commits what each changes is read of, from where
+// it plays on: READ, or FIRST_READ before any is. One the server told
+// nothing of changes none.
 function readChanges(replay) {
   if (replay.reading || replay.error || !replay.commits) return
   const size = bufferedOf(replay) === 0 ? FIRST_READ : READ
-  const order = [...replay.commits.slice(replay.next), ...replay.commits.slice(0, replay.next)]
-  const asked = order.filter(commit => !changesOf(replay, commit.sha)).slice(0, size).map(commit => commit.sha)
+  const asked = fromNext(replay).filter(commit => !changesOf(replay, commit.sha)).slice(0, size).map(commit => commit.sha)
   if (asked.length === 0) return
-  replay.reading = true
-  fetchRepositoryChanges(replay.repoId, replay.path, asked).then(answer => {
-    if (sessionReplays().get(replay.key) !== replay) return null
+  readFor(replay, 'reading', () => fetchRepositoryChanges(replay.repoId, replay.path, asked), answer => {
     const told = new Map((Array.isArray(answer?.changes) ? answer.changes : []).filter(item => typeof item?.sha === 'string').map(item => [item.sha, item]))
     for (const sha of asked) {
       changesRead.set(changesKey(replay, sha), Array.isArray(told.get(sha)?.files) ? told.get(sha).files.map(file => fileOf(file, replay.path)).filter(Boolean) : [])
       if (told.get(sha)?.more === true) cutCommits.add(changesKey(replay, sha))
     }
-    return null
-  }, err => {
-    if (err?.name !== 'AbortError') replay.error = err?.message || 'What the commits changed could not be read.'
-    return null
-  }).finally(() => {
-    replay.reading = false
-    repaint()
-  })
+  }, 'What the commits changed could not be read.')
 }
 
-// Who made a commit, as the app tells them apart: its author, and those who
-// made it with them, each once; a user of the app by their account
-// whichever of theirs, with their avatar; an agent whichever of its accounts
-// or the name it gives, by its mark (`mark`, as Commits draws it), else its
-// avatar where the app has one; anyone else by their login, else name. Each
-// by the name the app shows them by, and the letter it draws them by where
-// it has no mark or avatar.
+// Who made a commit, author and co-authors each once, as the app tells them
+// apart: a user of the app by their account, with their avatar; an agent by
+// any of its accounts or names, by its mark (as Commits draws it), else its
+// avatar; anyone else by login, else name; each by the name the app shows,
+// and a letter where no mark or avatar.
 export function makersOf(commit) {
   const makers = new Map()
   for (const { login = null, name = null, agent = null } of [{ login: commit.authorLogin, name: commit.authorName }, ...commit.coauthors ?? []]) {
@@ -307,11 +299,10 @@ class RepositoryReplay extends Shown {
     if (this.replay && ![...shownReplays].some(element => element.replay === this.replay)) this.replay.playing = false
   }
 
-  // Its commits, once its history is read as far as they go (a page of it
-  // failing to read waits for the reader to read on: renderStatus), the
-  // files they start from, drawn once read, and what they change, read ahead
-  // of where it plays, while it shows; playing as soon as what its first
-  // commit changes is read too, the first time it shows.
+  // Its commits once its history is read that far (a page failing waits for
+  // the reader: renderStatus), then the files they start from and what they
+  // change, read ahead while it shows; playing the first time once its first
+  // commit's are read.
   updated() {
     const replay = this.replay
     if (!replay) return
@@ -461,13 +452,10 @@ class RepositoryReplay extends Shown {
     this._colors = colors
   }
 
-  // The scene on the canvas, the camera easing toward the box it fills,
-  // zoomed in no further than MAX_ZOOM: the directories' branches, the files
-  // in their kinds' colors (Other's muted), those touched a while bright and
-  // larger, those removed shrinking away; the beams, those who made commits
-  // and their names, and the names of directories near the root and of
-  // files and directories touched lately, as many as room allows. What
-  // lies under the pointer told over it.
+  // The scene on the canvas, the camera easing toward the box it fills
+  // (MAX_ZOOM at most): branches, files in their kinds' colors (touched ones
+  // a while brighter, removed ones shrinking), beams, those who made commits,
+  // and the names room allows; what lies under the pointer told over it.
   draw(replay, dt) {
     const canvas = this.querySelector('canvas')
     const colors = this._colors
@@ -630,11 +618,9 @@ class RepositoryReplay extends Shown {
     this.hover(scene, sx, sy, fileX, fileY, dot)
   }
 
-  // The files' dots, each its color's (`byColor`: each color's dots, where
-  // each is on the canvas, x then y, `ratio` of its pixels to each), squares
-  // `half` pixels out from where each is, as pixels of a layer the canvas's
-  // size, at `alpha`: many thousands set sooner than as many squares drawn.
-  // A dot over another hides it.
+  // The files' dots (`byColor`: each color's x, y pairs; `ratio` device
+  // pixels to each) as squares `half` pixels out, set as pixels of a layer
+  // the canvas's size at `alpha`: thousands set sooner than drawn.
   dotLayer(canvas, byColor, ratio, half, alpha) {
     const [wide, high] = [canvas.width, canvas.height]
     if (this._dots?.wide !== wide || this._dots?.high !== high) {
@@ -727,9 +713,8 @@ class RepositoryReplay extends Shown {
     const buffered = bufferedOf(replay)
     const last = replay.next > 0 ? replay.commits[replay.next - 1] : null
     const people = replay.commits ? replay.people ??= new Set(replay.commits.flatMap(commit => makersOf(commit).map(maker => maker.key))).size : 0
-    // Drawn in part where the files it starts from, or those a cut commit
-    // leaves, are more than are read: files past them neither drawn nor, of
-    // those a cut commit removes past its own read, removed.
+    // Drawn in part where the files it starts from, or a cut commit leaves,
+    // are more than were read.
     const start = replay.commits ? startOf(replay) : null
     const inPart = start?.cut || replay.commits?.some(commit => isCut(replay, commit.sha) && treeOf(replay, commit.sha)?.cut)
     const summary = replay.commits && total > 0

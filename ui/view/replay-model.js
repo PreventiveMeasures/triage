@@ -1,10 +1,8 @@
-// The code viewer's Replay (repository-replay.js), as Gource draws a
-// repository's history: its directories a tree grown from its root, each
-// directory's files clustered about it, a dot each in its kind's color, and
-// those who made each commit flying to the files it changes, a beam to each,
-// each file added, modified or removed as its beam reaches it. Pure but for
-// the time it is given: the commits played and when each plays, the scene
-// they make, and where everything in it sits and moves to.
+// The model of Replay (repository-replay.js), as Gource draws a history:
+// directories a tree from the root, files clustered about theirs, and those
+// who made each commit beaming to the files it changes. Pure but for the
+// time it is given: which commits play when, the scene, and where
+// everything sits and moves to.
 
 import { historyOrder } from './history-graph.js'
 
@@ -13,18 +11,15 @@ const DAY_MS = 86_400_000
 // How many of the latest commits Replay plays, as the reader picks.
 export const REPLAY_COUNTS = [100, 300, 1000]
 
-// The commits played of those listed: the latest `count` with a time but
-// merges (whose files their other parents' commits change), oldest first,
-// as Commits orders them (history-graph.js historyOrder): by their times,
-// but never a commit before its parent, whatever a clock off dates them.
+// The latest `count` commits with a time but merges (whose files their
+// other parents' commits change), oldest first, in historyOrder's order:
+// never a commit before its parent, whatever a clock off dates them.
 export function playedCommits(commits, count) {
   return historyOrder(commits).filter(commit => commit.parents.length <= 1 && Number.isFinite(commit.committedAt)).slice(0, count).toReversed()
 }
 
-// When each commit plays, in seconds of replay at 1×: the first at once,
-// each after the one before by their times apart, a day DAY_SECONDS, but no
-// sooner than MIN_GAP, nor later than MAX_GAP, quiet spells skipped as
-// Gource's --auto-skip-seconds skips them.
+// When each commit plays, in seconds at 1×: a day apart DAY_SECONDS, but
+// MIN_GAP to MAX_GAP, quiet spells skipped as Gource's --auto-skip-seconds.
 const DAY_SECONDS = 1
 export const MIN_GAP = 0.08
 export const MAX_GAP = 0.6
@@ -45,10 +40,9 @@ export function extensionOf(path) {
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
 }
 
-// The colors of kinds of files, `slots` of them, each kind's its own once
-// it has one, never another's: the kinds counted most (`counts`, by
-// extension) not yet colored take those left, the most first; the rest,
-// and files of no extension, are Other's.
+// The `slots` colors of kinds of files, each kind keeping its own once
+// given: the most counted not yet colored take those left; the rest, and
+// no extension, are Other's.
 export function assignColors(assigned, counts, slots) {
   const taken = new Set(assigned.values())
   const free = Array.from({ length: slots }, (_, slot) => slot).filter(slot => !taken.has(slot))
@@ -58,10 +52,8 @@ export function assignColors(assigned, counts, slots) {
   return assigned
 }
 
-// Seconds of replay a beam shows for, a file touched glows for, a file
-// removed shrinks away over, one who made a commit stays after it, then
-// fades over, and the most the changes of a commit's files are spread over,
-// each after the one before.
+// Seconds a beam shows, a touched file glows, a removed one shrinks, a maker
+// stays then fades, and the most between a commit's file changes.
 export const BEAM_S = 0.9
 export const GLOW_S = 2
 export const REMOVE_S = 1
@@ -69,11 +61,9 @@ export const IDLE_S = 5
 export const FADE_S = 1
 const STAGGER_S = 0.06
 
-// A scene: the tree of directories from its root, each directory and file
-// by its path, the files going (removed, not yet gone), those who made
-// commits by who they are, the beams shown, the changes due (made as their
-// time comes) and whether the tree changed since it was laid out
-// (`layout`).
+// A scene: the directory tree, directories and files by path, the files
+// going (removed, not yet gone), makers by key, beams, the changes due, and
+// whether the tree changed since laid out (`layout`).
 export function createScene() {
   const root = directory('', null)
   return { root, dirs: new Map([['', root]]), files: new Map(), going: new Set(), users: new Map(), beams: [], due: [], layout: true }
@@ -87,12 +77,12 @@ function directory(path, parent) {
 }
 
 // The directory `path` names, made with those above it where it isn't,
-// among its parent's in the order of their names.
+// among its parent's in name order.
+const dirname = path => path.slice(0, Math.max(0, path.lastIndexOf('/')))
 function directoryOf(scene, path) {
   const held = scene.dirs.get(path)
   if (held) return held
-  const slash = path.lastIndexOf('/')
-  const parent = directoryOf(scene, slash === -1 ? '' : path.slice(0, slash))
+  const parent = directoryOf(scene, dirname(path))
   const made = directory(path, parent)
   let [low, high] = [0, parent.dirs.length]
   while (low < high) {
@@ -108,16 +98,14 @@ function directoryOf(scene, path) {
 }
 
 // A file changed at `at` (`kind`: A, M or D): one added or modified made
-// where it isn't, back where it was going; one removed going, gone
-// REMOVE_S later (removeGone). The file, or null for one removed that
-// isn't there.
+// where it isn't, or kept from going; one removed going, gone REMOVE_S
+// later. The file, or null for one removed that isn't there.
 export function changeFile(scene, path, kind, at) {
   let file = scene.files.get(path)
   if (kind === 'D' && !file) return null
   if (!file) {
-    const slash = path.lastIndexOf('/')
-    const dir = directoryOf(scene, slash === -1 ? '' : path.slice(0, slash))
-    file = { path, name: path.slice(slash + 1), extension: extensionOf(path), dir, ox: 0, oy: 0, touched: at, kind, removed: null }
+    const dir = directoryOf(scene, dirname(path))
+    file = { path, name: path.slice(path.lastIndexOf('/') + 1), extension: extensionOf(path), dir, ox: 0, oy: 0, touched: at, kind, removed: null }
     dir.files.push(file)
     scene.files.set(path, file)
     unsettle(dir)
@@ -177,12 +165,10 @@ export function settleCommit(scene, files) {
   }
 }
 
-// What makes the scene's files a tree's (`files`, as many as were read,
-// `cut` where more were not), once the changes due and `changes` (a
-// commit's, as fileChanges gives them) are made: each file of the tree it
-// wouldn't hold, added; each it would hold the tree doesn't, removed, but
-// where the tree was cut. As a commit whose files were more than were read
-// is made whole by the files it leaves.
+// What makes the scene's files a tree's (`files`, `cut` where more were not
+// read) once the changes due and `changes` are made: the tree's missing
+// files added, and, unless cut, those it lacks removed. How a commit with
+// more files than were read is made whole by those it leaves.
 export function treeChanges(scene, files, cut, changes = []) {
   const held = new Set([...scene.files.values()].filter(file => file.removed === null).map(file => file.path))
   for (const [path, kind] of [...scene.due.map(due => [due.path, due.kind]), ...changes]) {
@@ -231,16 +217,11 @@ function fileOffset(index) {
   return [radius * Math.cos(index * GOLDEN_ANGLE), radius * Math.sin(index * GOLDEN_ANGLE)]
 }
 
-// Where each directory sits, its tree packed about it: a directory's files
-// a disc about it (`cluster`, half a gap past them), and each tree under it
-// a disc (`radius`) about its own, beside its files and each other's as
-// near as they go without one on another, the tree turned to face away from
-// the directory it is under. Packed first all at once, the largest trees
-// nearest (packSiblings), the tree as small as it goes; then, as it
-// changes, only the directories it changes under laid out again, and those
-// no more than they must be (relax): a tree new set in the nearest room for
-// it, one grown pushing those it reaches aside, the smaller the further;
-// so a replay's trees move a little as it plays, not all at once.
+// Where each directory sits: its files a disc about it (`cluster`), each
+// subtree a disc (`radius`) packed beside them and each other, turned to
+// face away from its parent. Packed tight at first, the largest nearest
+// (packSiblings); then only what a change dirties is laid out again, moved
+// no more than it must be (relax), so trees shift a little as it plays.
 export function layoutScene(scene) {
   measure(scene.root)
   place(scene.root, -scene.root.node[0], -scene.root.node[1], 0)
@@ -252,10 +233,9 @@ function unsettle(dir) {
   for (let at = dir; at && !at.dirty; at = at.parent) at.dirty = true
 }
 
-// How far a directory's files reach from it, half a gap past (`cluster`),
-// where the trees under it are, each its disc's middle from its files
-// (`lx`, `ly`), and the disc its tree fills (`radius`): where its files are
-// in it (`node`), and where each tree under it is (`at`), from its middle.
+// A directory's `cluster`, its subtrees' middles from its files (`lx`,
+// `ly`), and the disc its tree fills (`radius`), its files' place in it
+// (`node`) and each subtree's (`at`), from its middle.
 function measure(dir) {
   if (!dir.dirty) return
   for (const child of dir.dirs) measure(child)
@@ -384,14 +364,10 @@ function nearness(link) {
   return ((a.x * b.r + b.x * a.r) / both) ** 2 + ((a.y * b.r + b.y * a.r) / both) ** 2
 }
 
-// The least disc about `circles`, each whole in it (Welzl's, as Matoušek,
-// Sharir and Welzl move each circle it leaves out to the front, as
-// d3-hierarchy encloses packed circles): its middle, `x` and `y`, and `r`;
-// taken in an order of their own, the same each time, a disc tried from
-// one circle, then two, then three, each it leaves out added and the rest
-// tried again. Where rounding leaves none (a disc of three in a line), or
-// one not settling in as many tries as ENCLOSE_TRIES a circle, the disc
-// about their box's middle reaching them all.
+// The least disc holding `circles` (Welzl's move-to-front, as d3-hierarchy
+// encloses packed circles), in an order of their own, the same each time;
+// where rounding finds none (three in a line), or ENCLOSE_TRIES a circle
+// don't settle, the disc about their box's middle.
 const ENCLOSE_TRIES = 64
 function enclose(circles) {
   const order = circles.toSorted((a, b) => keyAngle(`${a.x},${a.y}`) - keyAngle(`${b.x},${b.y}`))
@@ -453,14 +429,11 @@ function discOf([a, b, c]) {
   return { x: a.x + xa + xb * r, y: a.y + ya + yb * r, r }
 }
 
-// The trees under a directory (`trees`, each where it was, `x` and `y` from
-// its files, `own`, and its `r`) moved no more than they must: one new (no
-// `x`) set in the nearest room for it (roomFor); then, round after round,
-// any two on one another pushed
-// apart along the line between them, the smaller the further, and any on
-// its files pushed out from them, till none are, or as many rounds as
-// SEPARATE_ROUNDS; an overlap of less than SLACK, the pushes' own rounding,
-// none. Room left where one shrank, or went, is left.
+// A directory's subtrees (`trees`, from its files, `own`) moved no more than
+// they must: a new one (no `x`) set in the nearest room (roomFor); then,
+// for SEPARATE_ROUNDS at most, any two overlapping pushed apart, the smaller
+// further, and any on its files pushed out, overlaps under SLACK (the
+// pushes' own rounding) let be. Room left by one shrunk or gone stays.
 const SEPARATE_ROUNDS = 60
 const SLACK = 0.5
 function relax(own, trees) {
@@ -500,10 +473,9 @@ function relax(own, trees) {
   }
 }
 
-// Where a tree new to a directory goes: the spot nearest its files where it
-// touches none of the trees `set` nor its files, of those where it touches
-// two of them (its files and one of the trees, or two trees); with none,
-// beside its files at its own angle, or past every tree out along it.
+// Where a new subtree goes: of the spots touching two of its files and the
+// trees `set`, the free one nearest its files; else beside its files at its
+// own angle, or out along it past every tree.
 function roomFor(tree, own, set) {
   const free = spot => Math.hypot(spot.x, spot.y) >= own.r + tree.r - SLACK
     && set.every(other => Math.hypot(other.x - spot.x, other.y - spot.y) >= other.r + tree.r - SLACK)
