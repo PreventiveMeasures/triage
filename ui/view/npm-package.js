@@ -29,6 +29,7 @@ import { npmDependencyFlagTags } from './npm-dependency-checks.js'
 import { npmDependencies, npmDependencyChanges } from '../../risk/npm/dependencies.js'
 import { npmAlias } from '../../risk/npm/specs.js'
 import { npmRisk } from './npm-risk.js'
+import { sessionKept as keptForSession } from './activity-reads.js'
 
 import './bundle-selector.js'
 import { currentViewSignal } from './view-navigation.js'
@@ -100,17 +101,7 @@ const packageData = new Map()
 // row, on a render scheduled for then, not on every render.
 const DATA_RETRY_MS = 10_000
 const DATA_RETRY_MAX_MS = 5 * 60_000
-let keptFor = null
-
-function sessionKept() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== keptFor) {
-    keptVersions.clear()
-    packageData.clear()
-    keptFor = session
-  }
-  return keptVersions
-}
+const sessionKept = keptForSession(keptVersions, packageData)
 
 function keep(entry, details) {
   const kept = sessionKept()

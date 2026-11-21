@@ -34,6 +34,7 @@ import './dependency-review-copy.js'
 import './mode-switch.js'
 import { managedHistory } from './managed-history.js'
 import { managedRouteForIds, managedRoutePath } from '../../common/managed/routes.js'
+import { sessionKept } from './activity-reads.js'
 
 const KEEP_MS = 2 * 60_000
 const RETRY_MS = 30_000
@@ -77,14 +78,11 @@ const listeners = new Set()
 const inFlight = new Map()
 // The team each tab shows, by its element.
 const showing = new Map()
-let heldFor = null
 let sweeping = false
 const changed = () => { for (const notify of listeners) notify() }
-function forget() {
-  held.clear()
-  for (const read of inFlight.keys()) read.abort()
-  inFlight.clear()
-}
+// The reads in flight stopped, and with them what is held, as another session or role reads.
+const stopReads = { clear: () => { for (const read of inFlight.keys()) read.abort(); inFlight.clear() } }
+const sessionHeld = sessionKept(held, stopReads)
 // Reads of teams no tab shows stopped, once tabs moved meanwhile are back in place.
 function stopUnshown() {
   if (sweeping) return
@@ -96,18 +94,10 @@ function stopUnshown() {
   })
 }
 globalThis.addEventListener?.('dependency-review-changed', () => {
-  forget()
+  held.clear()
+  stopReads.clear()
   changed()
 })
-
-function sessionHeld() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== heldFor) {
-    forget()
-    heldFor = session
-  }
-  return held
-}
 
 // Team `team`'s repositories `repoIds`, each as held, else asked, all those
 // not held or grown old in one read (readTeam): `{ status }`, 'loading',

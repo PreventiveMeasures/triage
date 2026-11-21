@@ -8,9 +8,9 @@
 // asked within a frame together (ASKED_TOGETHER a request, READ_AT_ONCE
 // requests at once), held for the session, a failure asked again after RETRY_MS.
 import { LitElement, html, nothing } from 'lit'
-import { state } from '#client/index.js'
 import { fetchNpmDeltas } from './client-managed.js'
 import { unwatchNearViewport, watchNearViewport } from './lazy-render.js'
+import { sessionKept } from './activity-reads.js'
 
 const READ_AT_ONCE = 2
 const ASKED_TOGETHER = 50
@@ -23,22 +23,12 @@ const held = new Map()
 const asking = new Map()
 const waiting = []
 const listeners = new Set()
-let heldFor = null
 let inFlight = 0
 let framed = false
 // Each listener told of the delta that changed (its key), none where all may have.
 const changed = key => { for (const notify of listeners) notify(key) }
-
-function sessionHeld() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== heldFor) {
-    held.clear()
-    asking.clear()
-    waiting.length = 0
-    heldFor = session
-  }
-  return held
-}
+// What is held and asked, forgotten as another session or role reads.
+const sessionHeld = sessionKept(held, asking, { clear: () => { waiting.length = 0 } })
 
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
 const lines = told => count(told?.additions) === null || count(told?.deletions) === null ? null : { additions: told.additions, deletions: told.deletions }

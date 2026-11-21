@@ -11,11 +11,11 @@
 // its lockfiles lock wanting reviews, and what fails it. While Stasis still
 // builds a stasis.config.json its review holds to (`stasis-pending`), its
 // answer is held a short while (PENDING_MS), then asked again.
-import { state } from '#client/index.js'
 import { fetchPullDependencies, fetchPullDependenciesOf } from './client-managed.js'
 import { knowGithubUsers } from './github-users.js'
 import { seedNpmDeltas } from './npm-delta.js'
 import { isPatchPath } from '../../common/managed/npm-packages.js'
+import { sessionKept } from './activity-reads.js'
 
 const KEEP_MS = 5 * 60_000
 const RETRY_MS = 30_000
@@ -30,7 +30,6 @@ const waiting = []
 const behind = []
 const queued = new Map()
 const listeners = new Set()
-let keptFor = null
 let reading = 0
 
 // Calls `notify` as what is held changes, with its pull request (`{ repoId,
@@ -41,27 +40,14 @@ export function subscribePullDependencies(notify) {
 }
 const changed = pull => { for (const notify of listeners) notify(pull) }
 
-function forget() {
-  held.clear()
-  waiting.length = 0
-  behind.length = 0
-  queued.clear()
-}
-
+// What is held and waiting, forgotten as another session or role reads.
+const queues = { clear: () => { waiting.length = 0; behind.length = 0 } }
+const sessionHeld = sessionKept(held, queues, queued)
 // A repository's review set anew (the admin's repository page): all held asked again.
 globalThis.addEventListener?.('dependency-review-changed', () => {
-  forget()
+  for (const kept of [held, queues, queued]) kept.clear()
   changed()
 })
-
-function sessionHeld() {
-  const session = state.managedSession ? `${state.managedSession.id}\0${state.managedSession.role}` : null
-  if (session !== keptFor) {
-    forget()
-    keptFor = session
-  }
-  return held
-}
 
 // Whether a pull request's new packages are read: one GitHub says changes a lockfile, or may.
 export const readsDependencies = item => item?.touchesLockfile === true || item?.touchesLockfile === null
@@ -246,11 +232,12 @@ export function heldPullDependencies(repoId, number, review = false) {
 
 // `work` of an answer's lockfiles and review, worked out once, as they never change.
 const worked = new WeakMap()
-function once(name, { lockfiles, review }, work) {
+function once(name, answer, work) {
+  const { lockfiles, review } = answer
   const of = worked.get(lockfiles) ?? worked.set(lockfiles, new Map()).get(lockfiles)
   const known = of.get(name)
   if (known && known.review === review) return known.value
-  const value = work()
+  const value = work(answer)
   of.set(name, { review, value })
   return value
 }
@@ -260,10 +247,7 @@ function once(name, { lockfiles, review }, work) {
 // whether it tells more than it sends; and how many want reviews
 // (`toReview`). One new in one directory and an update in another is an
 // update, its review the less passing of theirs (bothReviewed).
-export function addedVersions(answer) {
-  return once('added', answer, () => added(answer))
-}
-function added({ lockfiles, review }) {
+export const addedVersions = answer => once('added', answer, ({ lockfiles, review }) => {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.added ?? [])) {
     const key = versionKey(pkg)
@@ -277,7 +261,7 @@ function added({ lockfiles, review }) {
   const fresh = versions.filter(pkg => !pkg.was)
   return { versions: [...fresh, ...versions.filter(pkg => pkg.was)], fresh: fresh.length, updated: versions.length - fresh.length, more: lockfiles.some(dir => dir.more > 0),
     toReview: review?.toReview ?? versions.filter(pkg => reviewOf(pkg, review) === 'wanted').length }
-}
+})
 
 // The patch of a version two directories lock patched alike: the first's,
 // else the other's where only it tells its file, which a review needs.
@@ -315,10 +299,7 @@ export const passedByComments = (pkg, review) => Boolean(review?.byComments) && 
 
 // The other versions an answer's lockfiles lock wanting reviews, each once,
 // and how many in all (`count`, as its review tells, else its directories).
-export function unreviewedVersions(answer) {
-  return once('unreviewed', answer, () => unreviewed(answer))
-}
-function unreviewed({ lockfiles, review }) {
+export const unreviewedVersions = answer => once('unreviewed', answer, ({ lockfiles, review }) => {
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.unreviewed ?? [])) {
     const key = versionKey(pkg)
@@ -326,17 +307,14 @@ function unreviewed({ lockfiles, review }) {
     all.set(key, had ? { ...had, ...patchedOf(had, pkg) } : pkg)
   }
   return { versions: [...all.values()], count: review?.unreviewed ?? all.size + lockfiles.reduce((more, dir) => more + (dir.moreUnreviewed ?? 0), 0) }
-}
+})
 
 // What fails a pull request's review where in effect: the versions locked
 // that can't be reviewed, each once, and how many (`count`); the directories
 // whose lockfiles couldn't be read (`unread`, a Stasis build failed among
 // them); how many versions past those checked (`unchecked`); and whether it
 // changes lockfiles left unread (`cut`). Null where nothing does.
-export function reviewFailures(answer) {
-  return once(answer.cut ? 'failures-cut' : 'failures', answer, () => failures(answer))
-}
-function failures({ lockfiles, cut, review }) {
+export const reviewFailures = answer => once(answer.cut ? 'failures-cut' : 'failures', answer, ({ lockfiles, cut, review }) => {
   if (!review) return null
   const all = new Map()
   for (const pkg of lockfiles.flatMap(dir => dir.unsupported ?? [])) {
@@ -346,4 +324,4 @@ function failures({ lockfiles, cut, review }) {
   const sum = field => lockfiles.reduce((total, dir) => total + (dir[field] ?? 0), 0)
   const failed = { versions: [...all.values()], count: review.unsupported ?? all.size + sum('moreUnsupported'), unread: lockfiles.filter(dir => dir.error && !isPending(dir)), unchecked: sum('moreLocked'), cut }
   return failed.count > 0 || failed.unread.length > 0 || failed.unchecked > 0 || cut ? failed : null
-}
+})
