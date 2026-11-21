@@ -102,7 +102,7 @@ test('a source map is listed key by key, its texts line by line and its mappings
     '}',
     '',
   ].join('\n'))
-  assert.equal(text.split('\n', 2).join('\n'), '# Generated: lib/index.js\n# 1 source (1 with text) · 3 names · 8 segments · 5 lines, 3 mapped')
+  assert.deepEqual(text.split('\n').filter(row => row.startsWith('# ')), ['# Generated: lib/index.js'], 'its head the file it is glossed with alone')
   assert.equal(JSON.stringify(unlistSourcemap(text)), mapOf())
   assert.throws(() => unlistSourcemap(text.slice(0, -1)), { message: 'Its listing ends with no line end.' })
   assert.throws(() => unlistSourcemap(`${text}x\n`), { message: /^Its listing's row \d+ names no key\.$/u })

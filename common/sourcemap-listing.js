@@ -153,20 +153,11 @@ function listingRows() {
   }
 }
 
-const plural = (count, what) => `${count} ${what}${count === 1 ? '' : 's'}`
-
 // What a listing says above its values: the file its mappings are glossed
-// with, and how much they map; or why they are shown as written.
-function header(out, value, generated, { lines, reason }) {
-  if (lines) {
-    const segments = lines.reduce((sum, line) => sum + line.length, 0)
-    const mapped = lines.filter(line => line.some(segment => segment.length > 1)).length
-    const withText = value.sources.filter((_, i) => typeof value.sourcesContent?.[i] === 'string').length
-    out.push(`# Generated: ${generated ? gloss(generated.path) : 'no file beside it names this map'}`)
-    out.push(`# ${plural(value.sources.length, 'source')} (${withText} with text) · ${plural(value.names?.length ?? 0, 'name')} · ${plural(segments, 'segment')} · ${plural(lines.length, 'line')}, ${mapped} mapped`)
-  } else if (reason) {
-    out.push(`# Mappings shown as written: ${reason}`)
-  }
+// with, or why they are shown as written.
+function header(out, generated, { lines, reason }) {
+  if (lines) out.push(`# Generated: ${generated ? gloss(generated.path) : 'no file beside it names this map'}`)
+  else if (reason) out.push(`# Mappings shown as written: ${reason}`)
 }
 
 function textRows(out, head, items, sources) {
@@ -264,7 +255,7 @@ function mappingsRows(out, head, value, lines, generated) {
 // file (`{ path, text }`) or none. Throws a RangeError past COPY_LIMIT.
 export function sourcemapListing(value, generated) {
   const mappings = decoded(value), out = listingRows()
-  header(out, value, generated, mappings)
+  header(out, generated, mappings)
   for (const key of Object.keys(value)) {
     const head = `${literal(key)}: `, item = value[key]
     if (key === 'mappings' && mappings.lines) mappingsRows(out, head, value, mappings.lines, generated)
