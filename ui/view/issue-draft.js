@@ -121,12 +121,7 @@ export function toggleIssueDraftSection(draft, id, selected) {
     const head = draft.body.slice(0, at)
     const separator = !head || head.endsWith('\n\n') ? '' : head.endsWith('\n') ? '\n' : '\n\n'
     const start = at + separator.length
-    const end = start + section.text.length
-    const delta = end - at
-    const shift = item => ({ ...item, start: item.start + delta, end: item.end + delta })
-    const sections = draft.sections.map(item => item === section ? { ...item, selected, separator, start, end }
-      : item.selected && item.start >= at ? shift(item) : item)
-    return { body: head + separator + section.text + draft.body.slice(at), sections, footer: footer && footer.start >= at ? shift(footer) : footer }
+    return spliced(draft, section, { ...section, selected, separator, start, end: start + section.text.length }, at, at, separator + section.text)
   }
   // Remove only the section and its separating blank line, leaving surrounding
   // free text and the other sections untouched.
@@ -135,12 +130,15 @@ export function toggleIssueDraftSection(draft, id, selected) {
   const separatorStart = section.start - separator.length
   const ownsSeparator = draft.body.slice(separatorStart, section.start) === separator
     && !draft.sections.some(item => item !== section && item.selected && item.start < section.start && item.end > separatorStart)
-  const start = ownsSeparator ? separatorStart : section.start
-  const body = draft.body.slice(0, start) + draft.body.slice(section.end)
-  const delta = start - section.end
+  return spliced(draft, section, { ...section, text, selected, start: 0, end: 0 }, ownsSeparator ? separatorStart : section.start, section.end, '')
+}
+
+// The body with [from, to) replaced by `text`, `section` made `own`, and the
+// selected sections and footer from `to` on shifted along.
+function spliced(draft, section, own, from, to, text) {
+  const delta = text.length - (to - from)
   const shift = item => ({ ...item, start: item.start + delta, end: item.end + delta })
-  const sections = draft.sections.map(item => item === section
-    ? { ...item, text, selected, start: 0, end: 0 }
-    : item.selected && item.start >= section.end ? shift(item) : item)
-  return { body, sections, footer: footer && footer.start >= section.end ? shift(footer) : footer }
+  const sections = draft.sections.map(item => item === section ? own : item.selected && item.start >= to ? shift(item) : item)
+  const footer = draft.footer ?? null
+  return { body: draft.body.slice(0, from) + text + draft.body.slice(to), sections, footer: footer && footer.start >= to ? shift(footer) : footer }
 }
