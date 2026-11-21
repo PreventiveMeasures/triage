@@ -23,6 +23,7 @@ import { checkBundleBuildLeases } from './_managed-bundle-build-leases.js'
 import { checkManagementCatalog } from './_managed-catalog.js'
 import { checkInitialAdminRecovery } from './_managed-initial-admin.js'
 import { checkReportDedup } from './_managed-report-dedup.js'
+import { checkReportOpenings } from './_managed-report-opening.js'
 import { checkStorageDb, checkStorageMigrationOrder, storageTestKey } from './_managed-storage-db.js'
 import { openPostgresManagedDb } from '../server-managed/db-neon.ts'
 import { config, harness, memoryStore, removal, seedBundle, seedReport, setup } from './_managed-mutation-safety.js'
@@ -439,6 +440,11 @@ test('Postgres upgrades and persists nullable repository default caches without 
 test('Postgres management catalogs preserve permission and linked-bundle filtering', async t => {
   const { db } = await database(t)
   await checkManagementCatalog(db)
+})
+
+test('Postgres reads reports for their opening in one write and carries a switched report to its team and public link', async t => {
+  const { db } = await database(t)
+  await checkReportOpenings(db)
 })
 
 test('Postgres management catalogs use a fixed query budget as reports and bundles grow', async t => {

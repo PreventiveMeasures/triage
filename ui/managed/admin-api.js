@@ -228,6 +228,14 @@ export async function setReportVisible(id, visible, csrfToken) {
   await post('/api/admin/reports/set-visible', csrfToken, { reportId: id, visible })
 }
 
+// Switch a report to open on Confirmed whatever Confirmed hides, or back to
+// the outcome its view works out. Only a report the server offers it for
+// (`confirmedOffered`) can be switched on.
+export async function setReportOpening(id, confirmedDefault, csrfToken) {
+  const res = await postJson('/api/admin/reports/set-opening', csrfToken, { reportId: id, confirmedDefault })
+  if (!res.ok) throw new Error(res.status === 409 ? 'this report already opens as an App view, or has no Confirmed findings' : `HTTP ${res.status}`)
+}
+
 export async function setReportRepo(id, repoId, directory, csrfToken) {
   const res = await postJson('/api/admin/reports/set-repo', csrfToken, { reportId: id, repoId, directory })
   if (!res.ok) {

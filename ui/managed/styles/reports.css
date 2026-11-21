@@ -22,7 +22,7 @@
   background: var(--panel);
 }
 .reports {
-  min-width: 61rem;
+  min-width: 63rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -30,13 +30,13 @@
 .report-list-head,
 .report-main {
   display: grid;
-  grid-template-columns: 1.5rem minmax(12rem, 1fr) minmax(8rem, .6fr) 8rem 6.5rem 4.5rem 4.1rem 9rem;
+  grid-template-columns: 1.5rem minmax(12rem, 1fr) minmax(8rem, .6fr) 8rem 6.5rem 4.5rem 4.1rem 11rem;
   align-items: center;
   gap: .7rem;
   padding: .35rem .85rem;
 }
 .report-list-head {
-  min-width: 61rem;
+  min-width: 63rem;
   min-height: 2.25rem;
   color: var(--muted);
   background: rgb(from var(--text) r g b / .025);
@@ -134,6 +134,10 @@
   color: var(--text);
   background: var(--surface-active);
   border-color: var(--border);
+}
+.report-actions .action.opening[aria-pressed=true] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .report-actions .action.danger:hover {
   color: var(--critical);

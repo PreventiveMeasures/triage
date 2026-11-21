@@ -43,8 +43,13 @@ export function mergeDuplicateFields(survivor, dup) {
 // The row merger also retains the evidence behind a conflict. This must
 // run for every duplicate, including agreeing copies and missing-field fills,
 // so the eventual dialog can name the reports that actually supplied a value.
+//
+// The derived copy is switched to open on Confirmed only where every copy is
+// (finding-filters.js confirmedCoverage): a copy from a report nobody
+// switched is still that report's to lose.
 export function mergeReportDuplicateFields(survivor, dup, reportName, conflicts) {
   if (!survivor || !dup || survivor === dup) return
+  if (survivor._confirmedDefault === true && dup._confirmedDefault !== true) survivor._confirmedDefault = false
   if (survivor.correctedSeverity || dup.correctedSeverity) {
     survivor._correctedByReport ??= {
       [survivor._reportName ?? '']: { severity: effectiveSeverity(survivor), reason: survivor.correctedSeverityReason },

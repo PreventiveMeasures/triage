@@ -18,7 +18,7 @@ import { formatBytes } from '../scan/metrics.js'
 import { adminIcon, openAdminPage } from './navigation.js'
 import { ManagedLocalImport } from './local-import.js'
 import { fetchBundleOrigin } from './bundle-data.js'
-import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundleUsage, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchRepositoryLockfiles, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportRepo, setReportVisible, setRepositoryDependencyReview, setRole, uploadBundle, uploadReport } from './admin-api.js'
+import { addPublicRepository, connectRepositoryApp, createBundle, deleteBundle, deleteReport, fetchBundleUsage, fetchBundles, fetchHistory, fetchReportLocation, fetchReports, fetchRepositories, fetchRepositoryImpact, fetchRepositoryLockfiles, fetchTeams, fetchUsers, postTeam, removeRepository, selectRepository, setBundleRepo, setBundleVisible, setReportOpening, setReportRepo, setReportVisible, setRepositoryDependencyReview, setRole, uploadBundle, uploadReport } from './admin-api.js'
 import { uploadFiles, uploadLocalFile } from './file-uploads.js'
 import { viewAs } from '../../client/managed/session.js'
 import localImportStyles from './styles/local-import.css'
@@ -1030,7 +1030,7 @@ class ManagedAdminReports extends ManagedUploadsPage {
   static locationFamilies = ['reports', 'repo-impact', 'history', 'scan-sources']
   static hintSource = 'report'
   static uploadCopy = 'Drop a report here or browse files above.'
-  static properties = { _preview: { state: true }, _previewLoading: { state: true } }
+  static properties = { _preview: { state: true }, _previewLoading: { state: true }, _openingBusy: { state: true } }
   static styles = [unsafeCSS(reportsStyles), unsafeCSS(locationStyles), unsafeCSS(commonStyles), unsafeCSS(localImportStyles)]
 
   constructor() {
@@ -1038,6 +1038,7 @@ class ManagedAdminReports extends ManagedUploadsPage {
     this._preview = null
     this._previewLoading = null
     this._previewRequest = null
+    this._openingBusy = null
   }
 
   disconnectedCallback() {
@@ -1075,6 +1076,9 @@ class ManagedAdminReports extends ManagedUploadsPage {
     const canAssignLocation = report.repoEmbedded !== true && report.canChangeRepo !== false
     const canMakeVisible = report.repoEmbedded === true || report.repoId != null
     const location = locationOf(report)
+    // Offered only where the report has Confirmed findings but is no App view
+    // on its own; kept where it was set, so it can be switched off.
+    const opening = report.confirmedOffered === true || report.confirmedDefault === true
     return html`<li class=${`report${report.visible === false ? ' content-hidden' : ''}`}>
       <div class="report-main">
         <span class="report-mark" aria-hidden="true">${appMarkup(logo)}</span>
@@ -1086,6 +1090,7 @@ class ManagedAdminReports extends ManagedUploadsPage {
         <span class=${`status ${report.visible ? 'visible' : 'hidden'}`}>${report.visible ? 'Visible' : 'Hidden'}</span>
         <span class="report-actions">
           ${canAssignLocation ? html`<button type="button" class="action" data-tooltip="Set repository location" aria-label=${`Set location for ${name}`} @click=${() => this._openLocation(report)}>${adminIcon('repo')}</button>` : html`<span class="action-spacer"></span>`}
+          ${opening ? html`<button type="button" class="action opening" aria-pressed=${report.confirmedDefault === true ? 'true' : 'false'} aria-label=${`Open ${name} on Confirmed by default`} data-tooltip=${report.confirmedDefault ? 'Opens on Confirmed by default. Click to open as detected' : 'Open on Confirmed by default, hiding findings the pass did not confirm'} ?disabled=${report.canChangeRepo === false || this._openingBusy === report.id} @click=${() => void this._setOpening(report, !report.confirmedDefault)}>${adminIcon('confirmed')}</button>` : html`<span class="action-spacer"></span>`}
           <button type="button" class="action" aria-label=${`Preview ${name}`} aria-expanded=${this._preview === report.id} @click=${() => void this._togglePreview(report)}>${adminIcon('preview')}</button>
           <button type="button" class="action" data-tooltip=${report.visible ? 'Hide from teams' : canMakeVisible ? 'Make visible to teams' : 'Assign a repository before publishing'} aria-label=${`${report.visible ? 'Hide' : 'Make visible'} ${name}`} ?disabled=${report.canChangeRepo === false || (!canMakeVisible && !report.visible)} @click=${() => void this._setVisible(report, !report.visible)}>${adminIcon(report.visible ? 'hide' : 'show')}</button>
           <a class="action" aria-label=${`Download ${name}`} href=${`/api/admin/reports/${encodeURIComponent(report.id)}`}>${adminIcon('download')}</a>
@@ -1120,6 +1125,21 @@ class ManagedAdminReports extends ManagedUploadsPage {
       return text.slice(0, 4000) + (text.length > 4000 ? '\n…' : '')
     }, { apply: text => { this._previewText = text }, settled: () => { this._previewLoading = null },
       failed: err => { if (!this._previewText) this._previewText = `Preview unavailable: ${err?.message ?? err}` } })
+  }
+
+  // Its team views follow: the switch changes the report's catalog key, which
+  // reloads a view of it (state.js setReportCatalog).
+  async _setOpening(report, confirmedDefault) {
+    if (this._openingBusy) return
+    this._openingBusy = report.id
+    try {
+      await this._attempt("Couldn't change how the report opens", async () => {
+        await this.appState.mutate(() => setReportOpening(report.id, confirmedDefault, this._csrf), ['reports', 'history'])
+        report.confirmedDefault = confirmedDefault
+        this.requestUpdate()
+        await this._load()
+      })
+    } finally { this._openingBusy = null }
   }
 
   async _delete(report) {

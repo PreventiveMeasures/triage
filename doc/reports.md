@@ -87,6 +87,24 @@ The sidebar opens a team collapsed to its finding count when its workspace has a
 Other teams open expanded, and the sidebar follows publication, grant, scope and link changes live.
 The server works this classification out as it builds the team's workspace and stores it in `managed_team_app_summary`. It is keyed by a hash of the catalog's content key, which covers the published reports and their content, and the reader's role, dependency and security permissions, scopes and links. Readers with the same access share a stored classification; any other change of access is a new key, as is a new deployment. The workspace is read with each report's catalog key, and a classification is stored only when those keys are the catalog's: one whose reports or access changed after its catalog was read is left unclassified, for a later catalog to ask again. A new server instance answers `/api/teams` from that table instead of building each team's workspace, and maintenance removes classifications stored more than 30 days ago.
 
+## Opening on Confirmed
+
+A view opens on Confirmed only when Confirmed would hide no finding that the opening confidence range shows; otherwise it opens on the range.
+A team opens as an App team, collapsed to its App findings with its outcome fixed to Confirmed, under the same rule and a stricter one for the 6–10 band.
+Managers and admins can switch a report past that check in **Manage → Reports**, with the Confirmed action, for reports they manage.
+The action is offered only where it changes something: the report, on its own, has findings its revalidation pass confirmed, but is not an App view by the stricter rule.
+That is, Confirmed would hide a finding the opening range shows, or a finding that is not LOW and scores 6–10, which a large report's opening range can leave below its floor while still opening on Confirmed.
+It is not offered for reports with no pass, reports that are already an App view on their own, or reports whose copies of a finding contradict each other.
+A switched report's findings count as covered wherever Confirmed would hide them, both for the outcome a view opens on and for whether its team is an App team.
+A team whose only uncovered findings are in switched reports opens as an App team.
+A finding that a report nobody switched also carries still counts as uncovered, so one report's switch never hides another report's findings.
+Readers still reach the findings that Confirmed hides by clearing the outcome, or, where an App view fixes it, by turning the App layer off or opening its detail.
+The switch can always be turned off, and it reloads open views of the report.
+It applies to team views, previews of unpublished reports and public links, and has no effect in local mode.
+New uploads are checked for the switch as they arrive.
+Reports uploaded before this feature are checked as **Manage → Reports** lists them, up to 64 MiB of reports per listing, or when the switch is first used.
+`POST /api/admin/reports/set-opening` with `{ "reportId", "confirmedDefault" }` sets it, and answers `409` `not-offered` for a report that does not offer it.
+
 ## Deduplication reports
 
 Links files (`*.link.json`) group finding IDs that are the same issue.
@@ -234,9 +252,9 @@ A comment whose text the finding already has is skipped, and history records the
 
 ## Activity history
 
-**Manage → Activity history** lists uploads, triage, publication changes, repository assignments and connections, deletions, roles, teams and team access, newest first.
+**Manage → Activity history** lists uploads, triage, publication and opening changes, repository assignments and connections, deletions, roles, teams and team access, newest first.
 Admins see everything.
-Managers see uploads, publication changes, assignments and triage for reports and bundles within their current team access and directory scopes, including unpublished reports.
+Managers see uploads, publication and opening changes, assignments and triage for reports and bundles within their current team access and directory scopes, including unpublished reports.
 Repository administration, team changes and role changes are admin-only.
 Counts, search results and context follow the same limits.
 A deletion shows to managers who could reach the content's repository and path when it was deleted, and other events about removed content are admin-only.

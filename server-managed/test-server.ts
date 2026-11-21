@@ -16,6 +16,7 @@ import { DEFAULT_MANAGED_SCAN_MODEL, MANAGED_SCAN_MODELS } from '../common/manag
 import { MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, type TriageEntryPatch, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { acceptsReportMetadata } from './report-response.ts'
 import { liteWorkspace } from '../common/managed/finding-detail.js'
+import { managedReportConfirmedDefaultOffered } from '../common/managed/team-app.js'
 import { findingValueIndex } from '../common/managed/finding-values.js'
 import { findingsRepository, readManagedReport } from '../common/managed/report-content.ts'
 import { type ManagedComment, canDeleteComment, parseCommentBody } from '../common/managed/comments.ts'
@@ -170,10 +171,14 @@ reportFixtures.push({ ...reportFixtures[0]!, id: 'fixture-links', slug: 'fixture
   content: JSON.stringify([[{ id: 'managed-fixture-1' }, { id: 'managed-fixture-3' }]]),
 })
 
-const reportMetadata = reportFixtures.map(({ content: _content, ...metadata }) => ({
+const reportMetadata = reportFixtures.map(({ content, ...metadata }) => ({
   ...metadata,
   repoFullName: repoById(metadata.repoId)?.fullName ?? null,
   uploadedAt: 1_758_000_000_000,
+  // Whether the reports page offers to open it on Confirmed, as the managed
+  // server reads it (report-opening.ts), and whether it does.
+  confirmedOffered: metadata.analyzer !== 'links' && managedReportConfirmedDefaultOffered(metadata.filename, readManagedReport(content, metadata.filename).data),
+  confirmedDefault: false,
 }))
 
 // The IDs of a fixture report's findings, read as the managed server reads it.
@@ -329,7 +334,8 @@ async function handleProfile(req: IncomingMessage, res: ServerResponse, method: 
 function teamReportRefs(team: (typeof teamFixtures)[number]) {
   return team.reportIds
     .flatMap(id => reportMetadata.filter(report => report.id === id && (report.visible || manages)))
-    .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename, visible: report.visible, analyzer: report.analyzer, repoFullName: report.repoFullName, repoDirectory: report.repoDirectory }))
+    .map((report) => ({ id: report.id, slug: report.slug, filename: report.filename, visible: report.visible, analyzer: report.analyzer, repoFullName: report.repoFullName, repoDirectory: report.repoDirectory,
+      ...report.confirmedDefault ? { cacheKey: 'confirmed' } : {} }))
 }
 
 const currentTeams = () => teamFixtures.map((team) => ({
@@ -1135,6 +1141,18 @@ async function setFixtureVisible(req: IncomingMessage, res: ServerResponse, bund
   sendJson(res, 200, { ok: true, visible: body.visible })
 }
 
+// A report switched to open on Confirmed, where it offers that, as the
+// managed server switches it (http.ts handleSetReportOpening).
+async function setFixtureOpening(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req) as { reportId?: string; confirmedDefault?: boolean }
+  const item = reportMetadata.find(candidate => candidate.id === body.reportId)
+  if (!item || typeof body.confirmedDefault !== 'boolean') { sendJson(res, 400, { error: 'bad-request' }); return }
+  if (body.confirmedDefault && !item.confirmedOffered) { sendJson(res, 409, { error: 'not-offered' }); return }
+  item.confirmedDefault = body.confirmedDefault
+  for (const client of fixtureFeeds) client.write(teamsEvent())
+  sendJson(res, 200, { ok: true, confirmedDefault: body.confirmedDefault })
+}
+
 // The report location editor's suggestion: the selected fixture repository
 // named by the report's findings, as the managed server resolves it.
 function serveReportLocation(url: URL, res: ServerResponse): boolean {
@@ -1324,6 +1342,7 @@ async function handleAdmin(req: IncomingMessage, url: URL, method: string, res: 
     await setFixtureVisible(req, res, url.pathname.includes('/bundles/'))
     return
   }
+  if (url.pathname === '/api/admin/reports/set-opening' && method === 'POST') { await setFixtureOpening(req, res); return }
   if (serveReportLocation(url, res) || serveRiskFixture(url, method, res)) return
   if (url.pathname.startsWith('/api/admin/reports/')) {
     if (method !== 'GET') { send405(res); return }
@@ -1524,7 +1543,8 @@ async function sendTeamReports(url: URL, res: ServerResponse, route: string, rep
   }))
   if (route === 'trees') { sendJson(res, 200, { trees: Object.fromEntries(read.filter(({ tree }) => tree).map(({ report, tree }) => [report.id, tree])) }); return }
   // The board's, without the findings' detail, as the managed server sends it.
-  const whole = read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data, repo: reportRepo(report) }))
+  const whole = read.map(({ report, data }) => ({ id: report.id, filename: report.filename, data, repo: reportRepo(report),
+    ...reportMetadata.find(entry => entry.id === report.id)?.confirmedDefault ? { confirmedDefault: true } : {} }))
   const lite = url.searchParams.get('lite') === '1' ? liteWorkspace(whole, []) : { reports: whole, folded: false, lens: null }
   // Its findings' packages and repositories sent once each, as the managed server sends them.
   const values = findingValueIndex()

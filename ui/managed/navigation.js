@@ -39,6 +39,7 @@ const ICON_PATHS = {
   hide: 'm2 2 12 12M6 3.75A8 8 0 0 1 8 3.5c4.5 0 7 4.5 7 4.5a12 12 0 0 1-2 2.5M3.5 5A13 13 0 0 0 1 8s2.5 4.5 7 4.5a8 8 0 0 0 3-.6',
   download: 'M8 2v8M5 7l3 3 3-3M2 11v3h12v-3',
   upload: 'M8 11V2m-3 3 3-3 3 3M2 10v4h12v-4',
+  confirmed: 'M14.5 8a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0ZM5.25 8.25l1.9 1.9 3.6-3.9',
 }
 
 export function adminIcon(kind) {

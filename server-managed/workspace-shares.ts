@@ -81,7 +81,7 @@ function shareQueries(db: ManagedSql) {
     FROM managed_team_repo tr JOIN managed_selected_repo sr ON sr.repo_id = tr.repo_id
     WHERE tr.team_id = ? ORDER BY tr.repo_id, tr.path`)
   const reports = db.prepare(`SELECT DISTINCT r.id, r.slug, r.filename, r.analyzer, r.byte_size AS byteSize,
-    r.sha256, r.repo_directory AS directory, sr.full_name AS github
+    r.sha256, r.repo_directory AS directory, sr.full_name AS github, r.confirmed_default AS confirmedDefault
     FROM managed_team_repo tr JOIN managed_report r ON r.repo_id = tr.repo_id
     JOIN managed_selected_repo sr ON sr.repo_id = r.repo_id
     WHERE tr.team_id = ? AND r.visible = 1 AND (tr.path = '' OR r.repo_directory = tr.path
@@ -140,12 +140,12 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
       const grant = await q.share.get(tokenHash) as { id: string; slug: string; name: string; dependencies: number; security: number } | undefined
       if (!grant) return null
       const { permissions, ...team } = shareInfo(grant)
-      const rows = await q.reports.all(team.id) as { id: string; slug: string; filename: string; analyzer: string | null; byteSize: number; sha256: string; directory: string; github: string }[]
+      const rows = await q.reports.all(team.id) as { id: string; slug: string; filename: string; analyzer: string | null; byteSize: number; sha256: string; directory: string; github: string; confirmedDefault: number }[]
       const links = await linkRevision(db)
       const bundleRows = (await q.bundles.all(team.id) as (Omit<ManagedBundle, 'buildConditions'> & { buildConditions: string | null; repoFullName: string })[])
         .map(row => ({ ...row, buildConditions: row.buildConditions == null ? null : JSON.parse(row.buildConditions) as BundleBuildConditions }))
       const repositories = await q.repositories.all(team.id) as WorkspaceShareSnapshot['repositories']
-      const keyOf = (row: typeof rows[number]) => JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions, links])
+      const keyOf = (row: typeof rows[number]) => JSON.stringify([row.sha256, row.github, row.directory, row.filename, permissions, links, ...row.confirmedDefault === 1 ? ['confirmed'] : []])
       return {
         user: { id: `share:${tokenHash}`, login: 'public', name: 'Public workspace', avatarUrl: null, role: 'view' },
         teamId: team.id,
@@ -153,7 +153,7 @@ export function workspaceShareMethods(db: ManagedSql): WorkspaceShareStore {
         permissions,
         repositories,
         reports: rows.map(row => ({ id: row.id, filename: row.filename, byteSize: row.byteSize, sha256: row.sha256,
-          repo: { github: row.github, directory: row.directory }, permissions })),
+          repo: { github: row.github, directory: row.directory }, permissions, ...row.confirmedDefault === 1 ? { confirmedDefault: true as const } : {} })),
         catalogKeys: Object.fromEntries(rows.map(row => [row.id, keyOf(row)])),
         team: { ...team, permissions, cacheKey: links,
           repos: repositories.map(repo => ({ repoId: repo.repoId, fullName: repo.github, path: repo.path || null }))
