@@ -5,7 +5,6 @@ dialog { max-width: 515px; width: min(94vw, 515px); }
 
 /* "X of Y findings included", the number in the accent. */
 .ecd-count {
-  margin: 0;
   font-size: 1.02rem;
   color: var(--text);
 

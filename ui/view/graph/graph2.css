@@ -55,7 +55,6 @@
   flex-wrap: wrap;
   align-items: center;
   gap: .75rem;
-  padding: 0;
 }
 
 .graph2-topbar .g2-spacer { flex: 1; }
@@ -199,16 +198,19 @@
   padding: 14px;
 }
 
-.g2-panel-title {
+.g2-panel-title,
+.g2-sel-section-label {
   /* Spelled out: `inherit` is invalid inside the `font` shorthand. */
   font-family: inherit;
   font-weight: 600;
   font-size: 11px;
   line-height: 1;
-  letter-spacing: .14em;
   text-transform: uppercase;
   color: var(--muted);
   opacity: .85;
+}
+.g2-panel-title {
+  letter-spacing: .14em;
   margin: 14px 0 8px;
   display: flex;
   align-items: baseline;
@@ -420,19 +422,18 @@
   overflow: hidden;
 }
 
-.g2-sel-head {
-  padding: 11px 13px;
-  border-bottom: 1px solid var(--graph-divider);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* File card head: the relative path over dot + package name. */
+.g2-sel-head,
 .g2-sel-file-head {
   padding: 11px 13px;
   border-bottom: 1px solid var(--graph-divider);
   display: flex;
+}
+.g2-sel-head {
+  align-items: center;
+  gap: 8px;
+}
+/* File card head: the relative path over dot + package name. */
+.g2-sel-file-head {
   flex-direction: column;
   gap: 6px;
 }
@@ -457,26 +458,23 @@
   min-width: 0;
 }
 /* The full path, one line (the tooltip has it whole). */
-.g2-sel-fullpath {
-  padding: 7px 13px;
+.g2-sel-fullpath,
+.g2-sel-size {
   border-bottom: 1px solid var(--graph-divider);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
   font-size: 10px;
   line-height: 1.3;
   color: var(--muted);
+}
+.g2-sel-fullpath {
+  padding: 7px 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
 /* The file's size, when the analyzer dump carried one (data.js). */
 .g2-sel-size {
   padding: 5px 13px 7px;
-  border-bottom: 1px solid var(--graph-divider);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-  font-size: 10px;
-  line-height: 1.3;
-  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -531,14 +529,7 @@
 }
 
 .g2-sel-section-label {
-  font-family: inherit;
-  font-weight: 600;
-  font-size: 11px;
-  line-height: 1;
   letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  opacity: .85;
   margin-bottom: 5px;
 }
 

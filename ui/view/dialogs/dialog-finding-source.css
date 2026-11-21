@@ -42,6 +42,6 @@ header {
     & div { padding: 0 .75rem; }
     & .cited { background: rgb(from var(--accent) r g b / .18); color: var(--accent); font-weight: 700; }
   }
-  & pre { padding: .75rem 1rem; margin: 0; tab-size: 4; }
+  & pre { padding: .75rem 1rem; tab-size: 4; }
   & pre, & code { font: inherit; white-space: pre; }
 }

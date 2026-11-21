@@ -169,11 +169,6 @@ select {
   font: inherit;
 }
 button,
-select,
-input[type=checkbox] {
-  cursor: default;
-}
-button,
 a,
 input,
 select {
@@ -220,6 +215,7 @@ input::placeholder {
 }
 input[type=checkbox] {
   accent-color: var(--accent);
+  cursor: default;
 }
 .btn,
 .drop-browse {

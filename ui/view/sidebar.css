@@ -312,7 +312,6 @@ sidebar-view-button[hidden] { display: none !important; }
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
   border: 0; border-radius: var(--ui-radius, 3px);
-  padding: 0;
   margin-left: 2px;
   transition: background .12s, color .12s;
 
@@ -376,7 +375,6 @@ sidebar-view-button[hidden] { display: none !important; }
   display: grid; place-items: center;
   background: transparent; color: var(--muted);
   border: 1px solid transparent; border-radius: var(--ui-radius, 4px);
-  padding: 0;
 
   &:hover { color: var(--text); border-color: var(--accent); }
 }
@@ -775,12 +773,12 @@ sidebar-delete-current button {
   max-width: 12rem; padding: .2rem .35rem;
   border-color: transparent; border-radius: var(--ui-radius, 5px);
 }
-#auth-status[data-authed='1']:hover { border-color: transparent; background: rgb(from var(--text) r g b / .07); }
 #manage-status {
   display: inline-grid; place-items: center;
   width: 1.8rem; height: 1.8rem; padding: .25rem;
   border-color: transparent; color: var(--muted);
 }
+#auth-status[data-authed='1']:hover,
 #manage-status:hover { border-color: transparent; background: rgb(from var(--text) r g b / .07); }
 /* A public link's footer: status text, not a control. */
 #public-status {
