@@ -1,16 +1,12 @@
 // Compare's diff of a JavaScript file minified on both sides with renamed
-// names hidden: worked out by the server from the two files pretty-printed,
-// the old one given the new one's names (server-managed/rename-diff.ts),
-// whitespace changes shown and hidden both. Every pair a comparison's view
-// diffs so comes in one request, the first time one is wanted, a line each as
-// the server works it out; a pair it brought none of, or the file a view
-// shows first while they come, is asked for alone, by both files' paths and
-// their texts' hashes, as their copies are (pretty-source.js). The server
-// checks its own diff (@preventive/compare's renamedDiffs); the viewer takes
-// it as it is, once it names the two files asked about and, as the copies it
-// was worked out from, the two the view draws. A comparison's diffs are kept
-// together, for either whitespace setting, the last few comparisons' for the
-// session: turning a setting on or off asks for none again.
+// names hidden, worked out by the server from both files pretty-printed, the
+// old given the new one's names (server-managed/rename-diff.ts; it checks its
+// own diff), whitespace changes shown and hidden both. A comparison's pairs
+// come in one request, a line each, the first time one is wanted; a pair it
+// brought none of, or the file a view shows first meanwhile, is asked for
+// alone, by both paths and hashes. A diff is taken once it names the two
+// files asked about and, as the copies it was worked out from, the two the
+// view draws. The last few comparisons' are kept, for either setting.
 import { computeFileHash } from '@preventive/report'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
 import { fetchBundleRenameDiff, fetchBundleRenameDiffs, fetchNpmRenameDiff, fetchNpmRenameDiffs } from './client-managed.js'

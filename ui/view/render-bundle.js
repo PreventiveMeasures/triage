@@ -1683,6 +1683,12 @@ function repositoryFilelessTab(repository, tab) {
     : html`<repository-issues .repository=${repository} .repo=${repositoryFullName(repository)} .kind=${tab}></repository-issues>`)
 }
 
+// A crumb of the slide's header, back to where the bundle was listed.
+const breadcrumb = (label, onClick) => html`<span class="bundles-slide-breadcrumb">
+  <button type="button" @click=${onClick}>${label}</button>
+  <span aria-hidden="true">&gt;</span>
+</span>`
+
 // The bundle slide: its header, with the bundle's name, or an npm version's
 // with the package's versions to switch to, and its `tabs`, `tab` the one
 // open; that tab's `body` under it. An npm version opening (`opening`)
@@ -1705,14 +1711,8 @@ function bundleSlideView(entry, tab, tabs, body, { overview = false, opening = f
   } : nothing
   return html`<div class="bundles-view bundles-slide-view">
     <bundle-slide-header class="bundles-slide-header"><header class="bundles-slide-bar">
-      ${isManagedUiMode() && entry.managedId && entry.repoId == null ? html`<span class="bundles-slide-breadcrumb">
-        <button type="button" @click=${() => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))}>Bundles</button>
-        <span aria-hidden="true">&gt;</span>
-      </span>` : nothing}
-      ${npm ? html`<span class="bundles-slide-breadcrumb">
-        <button type="button" @click=${() => navigateToNpm()}>npm</button>
-        <span aria-hidden="true">&gt;</span>
-      </span>` : nothing}
+      ${isManagedUiMode() && entry.managedId && entry.repoId == null ? breadcrumb('Bundles', () => document.dispatchEvent(new CustomEvent('managed-admin-navigate', { detail: { view: 'manage-bundles' }, bubbles: true, composed: true }))) : nothing}
+      ${npm ? breadcrumb('npm', () => navigateToNpm()) : nothing}
       <span class="bundles-slide-icon" aria-hidden="true">${appMarkup(npm ? NPM_ICON_SVG : repository ? REPO_ICON_SVG : BUNDLE_ICON_SVG)}</span>
       <div class=${classMap({ 'bundles-slide-title': true, 'bundles-slide-repository': Boolean(repository) })}>
         ${npm ? html`<div class="bundles-slide-name" data-tooltip-truncated data-tooltip=${npm.name}>${npm.name}</div>

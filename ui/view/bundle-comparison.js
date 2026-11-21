@@ -1,11 +1,9 @@
-// One comparison model for Compare and Review (common/bundle-comparison.js
+// The comparison Compare and Review show (common/bundle-comparison.js
 // prepareComparison): two managed bundles', or a package version's against
-// another or none, as the server pairs their files
-// (server-managed/comparison.ts), the viewer pairing none of them; two
-// bundles opened here, which no server holds, as this viewer pairs them, in a
-// chunk loaded only for those (common/bundle-comparison.js). Kept for the last
-// few comparisons, for the session; a failure that may pass is asked again a
-// while after, its view painted again then.
+// another or none, paired by the server (server-managed/comparison.ts); two
+// bundles opened here, which no server holds, paired here, in a chunk loaded
+// only for them. The last few are kept; a failure that may pass is asked
+// again a while after, its view painted again then.
 import { fetchBundleComparison, fetchNpmComparison } from './client-managed.js'
 import { aborted, evict, later, retryWait, retryable, touch } from './server-asks.js'
 

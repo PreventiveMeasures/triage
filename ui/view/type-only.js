@@ -1,12 +1,11 @@
 // Which of a comparison's files changed in types alone, as the server proves
-// them (server-managed/type-only.ts: @preventive/compare's compareTrees
-// stamps `typeOnly`, which needs Node and so can't be proven here), and which
-// in types alone but for what runs, with the lines holding it: asked for
-// once per comparison of two managed bundles or two versions of a package,
-// the first time one of its TypeScript files is drawn, whether or not those
-// changes are hidden, as Compare offers to hide them only where there are
-// any; each taken where it names the files the view shows, by their hashes.
-// Kept for the last few comparisons, for the session.
+// (server-managed/type-only.ts: @preventive/compare's compareTrees stamps
+// `typeOnly`, which needs Node), and which but for what runs, with the lines
+// holding it: asked for once per comparison of two managed bundles or two
+// versions of a package, the first time one of its TypeScript files is
+// drawn, hidden or not, as Compare offers to hide them only where there are
+// any; each taken where it names the files shown, by their hashes. The last
+// few comparisons' are kept.
 import { computeFileHash } from '@preventive/report'
 import { prettyExtension } from '../../common/pretty-print.js'
 import { bundleFilesAsMap } from '../../common/bundle-sources.js'
