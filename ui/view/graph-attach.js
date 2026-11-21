@@ -1,20 +1,13 @@
-// Lazy loader for the graph view. Mirrors the terminal pattern in
-// `./terminal-attach.js`: a runtime-string dynamic import keeps
-// the `<graph-layout>` LitElement (and its ~37 KB inlined CSS
-// bundle) plus `canvas.js`'s ~33 KB of hover / pan / zoom logic
-// out of the main view.js bundle. First call kicks the fetch;
-// subsequent calls share the same promise so graph.js is
-// downloaded + parsed once per session.
+// Lazy loader for the graph view, as terminal-attach.js's: a runtime-string
+// import keeps `<graph-layout>`, its CSS and the canvas logic out of
+// view.js, fetched and parsed once.
 
 import { html, render as litRender } from 'lit'
 
 let loadPromise = null
-// Resolved module reference, cached after the first successful
-// `loadGraph()` so synchronous callers (the refresh wrappers in
-// `view/render.js` / `view/render-bundle.js`, fired from
-// `events.js` click handlers) can dispatch without awaiting. `null`
-// means the graph has never been opened this session — those
-// callers no-op, fine since there's no graph DOM to refresh anyway.
+// The module once loaded, for the synchronous refreshes (render.js,
+// render-bundle.js) to dispatch to; null till the graph first opens, when
+// there is nothing to refresh.
 let loaded = null
 
 export function loadedGraphMod() { return loaded }
@@ -22,22 +15,15 @@ export function loadedGraphMod() { return loaded }
 export function loadGraph() {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
-    // Path held in a variable so esbuild can't statically resolve
-    // it — keeps `ui/graph.js` (and the LitElement + shadow CSS +
-    // canvas modules it transitively pulls in) out of the main
-    // bundle. Browser resolves relative to the page URL, so this
-    // works at any deploy path.
+    // A variable, so esbuild leaves it to the browser, which resolves it
+    // against the page URL.
     const path = './graph.js'
     try {
       const mod = await import(path)
       loaded = mod
       return mod
     } catch (err) {
-      // Don't pin the module to a rejected promise — a transient
-      // failure (offline at first attach, stale service-worker
-      // cache, etc.) would otherwise make every future call replay
-      // the same rejection forever. Reset so the next attach
-      // retries the import from scratch.
+      // Not pinned to a rejection: the next attach retries.
       loadPromise = null
       throw err
     }
@@ -45,33 +31,19 @@ export function loadGraph() {
   return loadPromise
 }
 
-// Mount a `<graph-layout>` host into `slot`, wait for its shadow
-// tree to render, then call the two refresh callbacks (sidebar +
-// top-pkgs slots) before wiring canvas hover / pan / zoom. The
-// canvas's per-click sidebar refresh is bound to `refreshSidebar`
-// so node selections re-paint the selection card in place.
-//
-// `prep` is the raw-inputs shape `buildGraph2Data` /
-// `buildBundleGraphData` assemble from main-bundle state
-// (`state.reports` / `state.bundleDetails`). The lazy module's
-// `buildGraphFromPrep(prep)` does the actual `buildGraph(...)`
-// call — keeps the graph-data assembly out of the main bundle.
-//
-// Returns the host element on success, or null on a module-load
-// failure (with the error text written into the slot so the user
-// sees what went wrong instead of an empty panel).
+// A `<graph-layout>` mounted into `slot` for `prep` (what buildGraph2Data /
+// buildBundleGraphData assemble; the lazy module builds the graph), the
+// sidebar and top-packages refreshed once its shadow tree renders, then the
+// canvas's hover, pan and zoom wired. The host, or null where the module
+// failed to load, said in the slot.
 export async function attachGraphLayout(slot, prep, options, refreshSidebar, refreshTopPkgs) {
   try {
     const mod = await loadGraph()
     const graph = mod.buildGraphFromPrep(prep)
     litRender(html`<graph-layout .graph=${graph} .options=${options}></graph-layout>`, slot)
     const host = slot.querySelector('graph-layout')
-    // Lit's first render is microtask-async, so the shadow tree
-    // isn't populated the microtask the parent template stamps
-    // the host. Wait for the host's pending update to complete
-    // before the refresh helpers (which `querySelector` into the
-    // shadow root) and the canvas attach (which expects
-    // `#g2-canvas` to exist) try to read it.
+    // Lit's first render is a microtask later: the refreshes and the canvas
+    // read its shadow tree.
     await host.updateComplete
     refreshSidebar()
     refreshTopPkgs()

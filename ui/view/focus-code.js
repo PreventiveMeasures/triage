@@ -19,10 +19,8 @@ import { revealCitedLines } from './reveal-cited.js'
 // integrity → { sources, packageFiles, packageDirs, imports, formats, loading, error }
 const sourcesCache = new Map()
 
-// integrity\0file → highlighted HTML string, or null when prism
-// can't highlight this language (caller renders plain text).
-// Async populated; the first `getFocusCode` call kicks the work,
-// subsequent calls pick up the cached result.
+// integrity\0file → prism's HTML, or null for a language it can't
+// highlight; filled asynchronously, as first asked for.
 const highlightCache = new Map()
 const highlightPending = new Set()
 // Weak ownership gives highlighted managed bodies their response's lifetime.
@@ -48,10 +46,8 @@ function kickHighlight(integrity, file, content, format, resolveString, cache = 
 }
 
 async function loadSources(integrity) {
-  // Already loaded or in-flight — nothing to do. Intentionally don't
-  // cache the "state.bundles hasn't listed this integrity" miss below:
-  // that list populates asynchronously on first sidebar render and may
-  // lag a focus-view click, so the next render's call should retry.
+  // A bundle `state.bundles` doesn't list yet isn't remembered: the list
+  // fills on the sidebar's first render, perhaps after a focus-view click.
   const existing = sourcesCache.get(integrity)
   if (existing && (existing.loading || existing.sources)) return
   const entry = (state.bundles ?? []).find((b) => b.integrity === integrity)
@@ -65,26 +61,17 @@ async function loadSources(integrity) {
   } catch (err) {
     sourcesCache.set(integrity, { sources: null, loading: false, error: err.message })
   }
-  // Defer to a fresh microtask so render runs outside the await-
-  // resolution stack. Run mid-chain, the parent template's Lit diff
-  // occasionally commits before the focus-pane-code branch sees the
-  // new cache, leaving the panel on "Loading…" until the next manual
-  // render (navigation, filter change). The state tick also re-flows
-  // observer-util consumers on the page.
+  // Rendered on a fresh microtask, outside the await chain, whose Lit diff
+  // could commit before the panel sees the cache and stay on "Loading…";
+  // the tick tells observer-util's readers. The cited lines revealed on the
+  // next, once painted (setFocusGid's own try found no panel yet).
   state.focusCodeTick++
   queueMicrotask(render)
-  // Scroll the cited lines into view after the render above commits
-  // them. setFocusGid tries this right after its own render(), but on
-  // a cache miss the panel isn't painted yet and the elements don't
-  // exist. A second microtask (FIFO after the render above) retries
-  // once the content has landed.
   queueMicrotask(revealFocusCodeLines)
 }
 
-// Bring the cited lines into view in the focus panel's code body.
-// `.focus-code-body` is the box that scrolls; the rule for where the
-// block lands in it is shared with the card's previews (see
-// reveal-cited.js).
+// The cited lines brought into view in the focus panel's scrolling
+// `.focus-code-body`, as the card's previews are (reveal-cited.js).
 export function revealFocusCodeLines() {
   const rows = report.querySelectorAll('.focus-code-line-active')
   if (rows.length === 0) return
@@ -92,12 +79,10 @@ export function revealFocusCodeLines() {
 }
 
 // The repository and commit each package of a local bundle records
-// (bundlePackageRepos), for the evidence rows in it: integrity →
-// `{ dirs, repos }` (every package's directory, longest first, so a path's
-// own package is the first that holds it), null for a bundle recording
-// none, or a pending read. Kept for the session: a handful of strings per
-// package, read off the bundle's index (bundle-metadata.js), or off the
-// bundle itself when the panel loads it anyway.
+// (bundlePackageRepos), for its evidence rows: integrity → `{ dirs, repos }`
+// (directories longest first, so a path's own package holds it first), null
+// for none, or a pending read; off the bundle's index, or the bundle itself
+// when the panel loads it anyway.
 const packageRepoCache = new Map()
 
 function rememberPackageRepos(integrity, details) {
@@ -129,16 +114,12 @@ function loadPackageRepos(integrity) {
   return job
 }
 
-// Where a finding's bundle places one of its evidence rows in a
-// dependency: `{ file, repo }`, the row's path in its package and the
-// repository and commit that package records, for format.js evidenceUrl
-// (`shipped`). Null where the bundle has no such row, records no
-// repository and commit for its package, or has not been read yet.
-//
-// Reads what is ALREADY loaded. Locally it then reads the bundle's index,
-// once, a small file, and renders again; a managed view does not ask the
-// server for a report's sources for this — those come with the panel and
-// previews, and the issue dialog asks first (loadBundleDependencyRepos).
+// Where a finding's bundle places an evidence row in a dependency, for
+// format.js evidenceUrl (`shipped`): `{ file, repo }`, its path in its
+// package and the repository and commit that records; else null. From what
+// is loaded: locally the bundle's small index is then read once; managed,
+// the report's sources come with the panel, or the issue dialog's ask
+// (loadBundleDependencyRepos).
 export function bundleDependencyRepo(f, row) {
   const bundle = attachedBundle(f)
   if (!bundle || typeof row?.file !== 'string' || row.file === '') return null
@@ -169,16 +150,11 @@ export async function loadBundleDependencyRepos(f) {
   else if (!isManagedUiMode()) await loadPackageRepos(bundle.integrity)
 }
 
-// The bundle attached to a finding, as `{ integrity, file, reportId? }`, or null.
-// Managed source paths are resolved by the report endpoint without a hash index.
-// "Attached" means the analyzer ran against a bundle (`_bundleHashes`,
-// stamped at ingest) that carries a source with this finding's
-// `fileHash` — so the match is by CONTENT, not by path, and the `file`
-// it comes back with is that bundle's own key for it.
-//
-// The one definition of the question "do we have this finding's code",
-// asked by the focus view's inline panel, the card's `Code` shortcut,
-// and the source previews beside its links.
+// The bundle attached to a finding, `{ integrity, file, reportId? }`, else
+// null: the one answer to "do we have its code", for the focus panel, the
+// card's Code button and its previews. A bundle the analyzer ran against
+// (`_bundleHashes`) holding its `fileHash`, matched by content, `file` that
+// bundle's key; managed, the report endpoint's paths, with no hash index.
 export function attachedBundle(f) {
   if (isManagedUiMode()) {
     if (!f?._managedReportId || !Array.isArray(f._bundleHashes) || f._bundleHashes.length === 0) return null
@@ -195,10 +171,8 @@ export function attachedBundle(f) {
   }
   const allowed = f?._bundleHashes
   if (!f?.fileHash || !Array.isArray(allowed) || allowed.length === 0) return null
-  // `includes` over a Set: a finding names the one or two bundles the
-  // analyzer saw, and this runs twice per card on every render of a
-  // list that can be thousands long — building a Set to ask about two
-  // strings costs more than the scan it saves.
+  // `includes`, not a Set: one or two bundles, asked twice per card per
+  // render of a list of thousands.
   return bundlesForFileHash(f.fileHash).find(({ integrity }) => allowed.includes(integrity)) ?? null
 }
 
@@ -237,33 +211,20 @@ function managedSource(reportId, file, kick) {
   return { content, highlighted: highlights.cache.get(`${data.integrity}\0${file}`) ?? null, loading: false }
 }
 
-// One file out of a bundle. Returns:
-//   { content, highlighted, loading: false } — ready to render.
-//      `highlighted` is the prism HTML, `null` for a language the
-//      bundle carries no grammar for, `undefined` until it settles.
-//   { loading: true } — first load in flight; the load triggers
-//      render() on settle, so a caller renders a placeholder and
-//      picks the content up on the next pass.
-//   null — the bundle isn't one we can load, or has no such file.
-//
-// Reading triggers loadSources / kickHighlight as side-effects, which
-// is safe inside render(): both deduplicate, and their follow-up
-// render() is a microtask so it doesn't recurse this frame.
-//
-// `kick: false` asks what we ALREADY have, and answers null rather
-// than starting a load. For a caller that renders one file per mark on
-// a card and would otherwise pull a bundle off disk for every one of
-// them before the reader has asked for any — see render-finding.js,
-// where the hover tooltip peeks and the pointer does the kicking.
+// One file out of a bundle: `{ content, highlighted, loading: false }`
+// (`highlighted` prism's HTML, null for no grammar, undefined till it
+// settles); `{ loading: true }` while it first loads, render() following;
+// null for a bundle that can't load or holds no such file. Safe in
+// render(): the loads deduplicate and render a microtask later. `kick:
+// false` answers from what is loaded alone, null rather than a load, as the
+// card's hover peeks (render-finding.js).
 export function bundleSource(integrity, file, { kick = true, reportId = null } = {}) {
   if (reportId) return managedSource(reportId, file, kick)
   if (isManagedUiMode()) return null
   const cached = sourcesCache.get(integrity)
   if (!cached) {
     if (!kick) return null
-    // First sight of this integrity — kick the load and report
-    // pending. The cache flips to loading:true synchronously inside
-    // loadSources so a sibling call on the same pass doesn't double-fire.
+    // loadSources marks it loading at once, so a sibling call doesn't load it twice.
     void loadSources(integrity)
     return { loading: true }
   }
@@ -272,8 +233,6 @@ export function bundleSource(integrity, file, { kick = true, reportId = null } =
   if (!cached.sources) return null
   const content = cached.sources.get(file)
   if (typeof content !== 'string') return null
-  // Kick Prism highlight if we haven't yet — render() runs again when
-  // the highlighted HTML lands and the second pass picks it up.
   kickHighlight(integrity, file, content, cached.formats?.get(file), sourceLinkResolver(cached.sources, file, cached.imports, cached.packageFiles, cached.packageDirs))
   const key = `${integrity}\0${file}`
   return {
@@ -283,47 +242,26 @@ export function bundleSource(integrity, file, { kick = true, reportId = null } =
   }
 }
 
-// The finding's own file, with its lines marked — where the panel
-// starts, and what focusCodePosition measures the history against.
-//
-// A RANGE, not a line: a report citing `20-30` means the span, and
-// marking only line 20 hides what it was pointing at (format.js
-// lineRange).
+// The finding's own file, its cited range marked (format.js lineRange):
+// where the panel starts. None for a managed placeholder until the
+// endpoint resolves the bundle and its paths.
 function basePosition(f) {
   const match = attachedBundle(f)
-  // Managed loading placeholders may fetch/preview sources, but cannot seed
-  // navigation until the endpoint resolves the actual bundle and file paths.
   if (!match?.integrity) return null
   return { integrity: match.integrity, file: match.file, range: lineRange(match.reportId ? match.line : f.line) }
 }
 
-// Where the panel starts for a finding: the active tab's own file.
-function focusCodeBase(focusedGroup) {
-  if (!focusedGroup) return null
-  return basePosition(activeTabFor(focusedGroup))
-}
-
-// The panel's history for the finding on screen, as state — the rules
-// themselves are in focus-code-history.js, which knows nothing about
-// state or the DOM and is where they are tested.
-//
-// Read-only, deliberately: this runs inside render(), where writing
-// state would either be lost to observer-util's tracking or loop
-// through it. Anything that MOVES the panel writes the state instead
-// (events.js pushFocusCode / stepFocusCode).
+// The panel's history for the finding on screen (focus-code-history.js),
+// from its active tab's file. Read-only, as it runs in render(); what moves
+// the panel writes the state (events.js pushFocusCode / stepFocusCode).
 export function focusCodeHistory(focusedGroup) {
-  const base = focusCodeBase(focusedGroup)
+  const base = focusedGroup ? basePosition(activeTabFor(focusedGroup)) : null
   if (!base) return null
   return { base, ...historyFor(state.focusCodeStack, state.focusCodeAt, base) }
 }
 
-// Where the panel is right now, for a finding — the same answer
-// `getFocusCode` draws, without the source behind it.
-//
-// For the evidence list, which marks the row the panel is on. It takes
-// the active FINDING rather than the group because that is what the
-// card has in hand, and the active tab is what the base is computed
-// from either way.
+// Where the panel is now for a finding, without the source, for the
+// evidence list to mark the row it shows.
 export function focusCodePosition(f) {
   const base = basePosition(f)
   if (!base) return null
@@ -340,10 +278,8 @@ export function focusCodeLinkPosition(group, integrity, parent, file) {
   return source && !source.loading ? { integrity, file, range: null } : null
 }
 
-// The focus view's inline code panel: whatever file the history says
-// it is on, whole, with that position's lines marked. Same three
-// answers as bundleSource above, plus the file / integrity / range the
-// panel's header and gutter need.
+// The focus panel's file, where its history is, whole: bundleSource's
+// answers, with the file, integrity and range its header and gutter need.
 export function getFocusCode(focusedGroup) {
   const finding = focusedGroup && activeTabFor(focusedGroup)
   const bundle = attachedBundle(finding)

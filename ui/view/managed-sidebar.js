@@ -61,17 +61,15 @@ export class ManagedTeamSections {
     const focus = JSON.stringify([section, bundle || report, team?.id])
     if (!force && focus === this.focus) return
     this.focus = focus
-    if (team) {
-      const expanded = this.expanded.get(team.id) ?? new Set()
-      expanded.add(section)
-      this.expanded.set(team.id, expanded)
-    }
+    if (team) this.sectionsOf(team.id).add(section)
+  }
+  sectionsOf(id) {
+    if (!this.expanded.has(id)) this.expanded.set(id, new Set())
+    return this.expanded.get(id)
   }
   toggle(id, section) {
-    const expanded = this.expanded.get(id) ?? new Set()
-    if (expanded.has(section)) expanded.delete(section)
-    else expanded.add(section)
-    this.expanded.set(id, expanded)
+    const expanded = this.sectionsOf(id)
+    if (!expanded.delete(section)) expanded.add(section)
   }
   shown(id, section, compact, search) {
     return !compact || search || this.expanded.get(id)?.has(section) === true
