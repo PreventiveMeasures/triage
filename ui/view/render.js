@@ -1,4 +1,5 @@
 import { html, render as litRender, nothing } from 'lit'
+import { literal, html as staticHtml } from 'lit/static-html.js'
 import { classMap } from 'lit/directives/class-map.js'
 import { repeat } from 'lit/directives/repeat.js'
 import { styleMap } from './style-map.js'
@@ -13,7 +14,7 @@ import { installShadowTooltipListener } from './tooltip.js'
 import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDependencyRepos, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, isRevalidation, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
-import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, runFiltersOffered, scopeRows, shouldLockConfirmed } from './filters.js'
+import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, runFilterValue, runFiltersOffered, scopeRows, shouldLockConfirmed } from './filters.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 import { SOURCE_LABELS, revalidateKindOf } from '@preventive/report'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
@@ -66,86 +67,39 @@ function showReport() {
   dropZone.classList.add('hidden')
 }
 
-// View-mode icons + titles + click handling all live in
-// `<view-mode-buttons>` (see view/view-mode-buttons.js); the host
-// passes the current `state.viewMode` and listens for
-// `view-mode-change` events.
-
-// Build the v2 graph data from the currently-loaded report. Returns
-// null when no tree-bearing report is loaded — callers fall back to
-// a friendlier state.
-//
-// Two filters compose:
-//   - trash split at the GROUP level (group "deleted" when every
-//     member is in state.deletedIds), matching the findings tab so
-//     swapping tabs reads consistently.
-//   - graph2.showAll then optionally pads the file set with clean
-//     files whose subtree contains a (filtered-in) finding,
-//     reachable through imports. Off by default so the canvas
-//     focuses on issue-bearing code.
+// The graph's raw inputs for the loaded reports (`prep`: the lazy
+// ui/graph.js builds the graph from it, keeping graph/data.js out of the
+// main bundle), or null with no tree. Per-report trees merge, so a
+// workspace canvas spans every report. Groups split by the triage tab on
+// screen BEFORE counting, so layout, stats and chip counts follow the
+// findings tab; package focus narrows the files to one package (their
+// findings from outside it still count), and `graph2.showAll` keeps clean
+// files.
 function buildGraph2Data() {
-  // Merge the per-report trees so a workspace canvas spans every
-  // loaded report — the 1st report's tree alone omits files/edges
-  // from the 2nd+ reports whose findings are still merged in below.
   const treeData = mergeReportsTree(state.reports)
   if (!treeData) return null
-  const allFiles = Object.keys(treeData)
-  const allGroups = getMergedGroups()
-  // Filter to live (default) or deleted (trash mode) groups
-  // BEFORE counting per-file findings, so the layout, statistics,
-  // and severity-row counts all reflect the active tab's split.
-  const visibleGroups = allGroups.filter((g) =>
-    groupState(g).commonTriage === state.shownTriage)
+  const visibleGroups = getMergedGroups().filter((g) => groupState(g).commonTriage === state.shownTriage)
   const findingCounts = computeFindingCountsByFile(visibleGroups, state.severityMode)
   const transitiveCounts = computeTransitiveCounts(treeData, findingCounts)
-  // Per-file Sets driving the topbar severity / triage chip counts
-  // AND the canvas dim predicate. Each finding contributes its
-  // severity tier and marker color (default 'none' when unmarked); a
-  // file highlights under a filter iff any of its findings matches —
-  // same union semantics as the findings tab's filter, so the canvas
-  // tracks "issues the table would have shown".
+  // Per file, its findings' severities and mark colors (the chip counts and
+  // the canvas dim predicate, with the findings filter's union semantics),
+  // and each finding's pair, for Packages → Issues to count both at once.
   const severitySets = new Map()
   const colorSets = new Map()
-  // Per-finding `{severity, color}` pairs, so Packages → Issues can
-  // count findings filtered by BOTH severity and color at once (an
-  // intersection the per-severity totals above can't express). Sets
-  // stay separate where set membership alone suffices (dim predicate,
-  // chip counts).
   const fileFindings = new Map()
+  const at = (map, file, make) => map.get(file) ?? map.set(file, make()).get(file)
   for (const g of visibleGroups) {
     for (const f of g) {
-      const sev = displayedSeverity(f, state.severityMode)
-      if (!severitySets.has(f.file)) severitySets.set(f.file, new Set())
-      severitySets.get(f.file).add(sev)
+      const severity = displayedSeverity(f, state.severityMode)
       const color = triageEntry(f)?.color ?? 'none'
-      if (!colorSets.has(f.file)) colorSets.set(f.file, new Set())
-      colorSets.get(f.file).add(color)
-      if (!fileFindings.has(f.file)) fileFindings.set(f.file, [])
-      fileFindings.get(f.file).push({ severity: sev, color })
+      at(severitySets, f.file, () => new Set()).add(severity)
+      at(colorSets, f.file, () => new Set()).add(color)
+      at(fileFindings, f.file, () => []).push({ severity, color })
     }
   }
-  // Package-focus mode narrows to files in the focused package, with
-  // graph2.showAll still gating the clean-file filter inside that
-  // scope (when off, drop files with neither own nor transitive
-  // findings — the full-graph predicate applied to the subset).
-  // Cross-package imports outside the focus aren't drawn, but their
-  // transitive findings still count toward keeping a file in scope
-  // (part of the "reachable issues" the user expects represented).
-  let files
-  if (graph2.focusedPkg) {
-    files = allFiles.filter((f) => (packageOf(f) ?? '__own__') === graph2.focusedPkg)
-    if (!graph2.showAll) {
-      files = files.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
-    }
-  } else {
-    files = graph2.showAll
-      ? allFiles
-      : allFiles.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
-  }
-  // `prep` is the raw-inputs shape — the lazy `ui/graph.js`
-  // module's `buildGraphFromPrep(prep)` does the actual
-  // `buildGraph(...)` call. Keeps `graph/data.js` out of the
-  // main bundle.
+  let files = Object.keys(treeData)
+  if (graph2.focusedPkg) files = files.filter((f) => (packageOf(f) ?? '__own__') === graph2.focusedPkg)
+  if (!graph2.showAll) files = files.filter((f) => fileHasFindings(f, findingCounts, transitiveCounts))
   return {
     treeData, files, ownCounts: findingCounts, transitiveCounts,
     severitySets, colorSets, fileFindings,
@@ -153,22 +107,12 @@ function buildGraph2Data() {
   }
 }
 
-// Surgical sidebar update — keeps the canvas DOM (and its active rAF /
-// hover state) alive across a node / neighbor-link click. `litRender`
-// diffs against the PartInfo it stamps on the container, so feed it
-// the new template directly; clearing `innerHTML` first orphans the
-// cache and the next render `insertBefore`s on a null parent
-// (TypeError on the next click).
-//
-// Wrappers — assemble graph data + bundle-context flag from main-
-// bundle state, then dispatch into the lazy `ui/graph.js` module for
-// the actual `<graph-layout>` shadow-DOM render. No-op when the graph
-// was never opened this session (`loadedGraphMod()` null) — no shadow
-// tree to refresh.
+// Surgical refreshes of the open graph's panels (in the lazy module's
+// shadow DOM), keeping the canvas and its rAF / hover state alive across a
+// node click. No-ops when the graph was never opened this session.
 export function refreshGraph2Sidebar() {
   const mod = loadedGraphMod()
-  if (!mod) return
-  const prep = buildGraph2Data()
+  const prep = mod && buildGraph2Data()
   if (!prep) return
   const isBundleContext = state.currentView === 'bundles'
   mod.refreshSidebar(prep, { isBundleContext, findingsJump: !(isBundleContext && isManagedUiMode()) })
@@ -176,309 +120,159 @@ export function refreshGraph2Sidebar() {
 
 export function refreshGraph2TopPkgs() {
   const mod = loadedGraphMod()
-  if (!mod) return
-  const prep = buildGraph2Data()
-  if (!prep) return
-  mod.refreshTopPkgs(prep)
+  const prep = mod && buildGraph2Data()
+  if (prep) mod.refreshTopPkgs(prep)
 }
 
-
-// Source-specific header title. Used when every loaded report shares
-// the same `source` marker — those reports lack the analyzer
-// (model / effort / exportsMode) metadata that the analyzer-combo
-// breakdown builds from, so they get a fixed product name instead:
-// the report library's own name for the producer (`Claude Security
-// findings`, `DeepSec findings`, …). DeepSec is Vercel's tool
-// (https://github.com/vercel-labs/deepsec); Piolium is Vigolium's
-// (https://github.com/vigolium/piolium).
-function sourceTitle(source) {
-  return `${SOURCE_LABELS[source] ?? source} findings`
-}
-
-// Build the repo-chip element for the page header. The actual visual
-// (three modes — editable+collapsed, editable+expanded, read-only)
-// lives in the `<repo-chip>` Lit component (see view/repo-chip.js);
-// this function picks which props to set based on the load state:
-//
-//   * `declaredRepo` — the report-level `repo.github` (see
-//     headerTemplate). Read-only chip in EVERY mode, ahead of
-//     everything else: the report named its own repository, so
-//     there's nothing left to infer and nothing to type.
-//   * Workspace merge (`state.currentWorkspace`) — only the
-//     read-only chip when every finding shares a `repo.github`;
-//     the per-report URL is stamped on findings as
-//     `_repoFallback` so the global `state.repoUrl` doesn't apply.
-//   * Single report with `repoInputUseful` true — editable chip
-//     fed by `state.repoUrl` / `state.repoEditing`.
-//   * Single report with all per-finding `repo.github` known —
-//     read-only chip showing the common slug.
-//
-// `repoInputUseful` is the existing flag computed in the main render
-// path — true when at least one non-module finding lacks per-finding
-// repo info, so user-typed `state.repoUrl` is needed to build links.
-// It can't outrank `declaredRepo`: a declared repo already fills that
-// gap at ingest (it seeds each finding's `_repoFallback`), so the
-// input would have nothing left to buy.
+// The header's `<repo-chip>` (view/repo-chip.js): read-only for the repo
+// every loaded report declares (ingest seeds each finding's
+// `_repoFallback` with it, so nothing is left to type); none in managed
+// mode, whose server owns the assignment; in a workspace, read-only for
+// the repo every finding shares; otherwise editable where some non-module
+// finding has no repo (`repoInputUseful`), else read-only for the shared one.
 function repoChipTemplate(repoInputUseful, knownRepo, declaredRepo) {
   if (declaredRepo) return html`<repo-chip url=${declaredRepo}></repo-chip>`
-  // The server owns managed report assignments. An unassigned or mixed-repo
-  // view must neither infer a repo from findings nor offer a local editor.
   if (isManagedUiMode()) return nothing
-  if (state.currentWorkspace) {
-    if (knownRepo) return html`<repo-chip url=${knownRepo}></repo-chip>`
-    return nothing
-  }
-  if (repoInputUseful) {
+  if (!state.currentWorkspace && repoInputUseful) {
     return html`<repo-chip url=${state.repoUrl} editable ?editing=${state.repoEditing} ?empty=${!state.repoUrl}></repo-chip>`
   }
-  if (knownRepo) return html`<repo-chip url=${knownRepo}></repo-chip>`
-  return nothing
+  return knownRepo ? html`<repo-chip url=${knownRepo}></repo-chip>` : nothing
 }
 
-// Page header. The h1 carries the tool name plus a pill-shaped file
-// chip naming the active report; the meta-row underneath strings the
-// count followed by the analyzer-combo tags from `buildAnalyzerTags`.
-//
-// Tool name comes from the source marker when every loaded report
-// agrees on one (`Claude Security findings`, `Codex Security
-// findings`, `DeepSec findings`); otherwise it's `Findings`.
+const MULTI_REPORT_STICKER = html`<svg class="file-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
+
+// The page header. The title is the workspace's, else the producer's where
+// every report names the same `source` (`Claude Security findings`, the
+// report library's word), else `Findings`; beside it the file chip (a
+// workspace's report count, or the branded click-to-copy filename), repo
+// chip, Files toggle and sync badge. Under it: the count of EVERY loaded
+// finding (trashed ones too, so it holds still as the trash toggles), a
+// severity bar by each group's primary tab, and the run-meta tags.
 function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, treeFileCount) {
   const totalCount = mergedGroups.length
   const sources = new Set(state.reports.map((r) => r.source))
   const singleSource = sources.size === 1 ? [...sources][0] : null
-  // Workspace mode wins over the source-based title — the user
-  // picked a named workspace, so the header should say so.
-  // Falls through to the source / generic title when the workspace
-  // can't be resolved (deleted between switch and render).
-  const ws = state.currentWorkspace
-    ? listWorkspaces().find((w) => w.id === state.currentWorkspace)
-    : null
+  // A workspace deleted between switch and render falls through.
+  const ws = state.currentWorkspace ? listWorkspaces().find((w) => w.id === state.currentWorkspace) : null
   const context = workspaceContent(state, ws ? [ws] : [], getKind)
-  const titleText = ws
-    ? `Workspace: ${ws.name}`
-    : (singleSource ? sourceTitle(singleSource) : 'Findings')
+  const titleText = ws ? `Workspace: ${ws.name}` : singleSource ? `${SOURCE_LABELS[singleSource] ?? singleSource} findings` : 'Findings'
 
-  // A workspace's counts open its report list. Individual reports keep
-  // their branded filename button and click-to-copy behavior.
-  const singleStickerKey = singleSource && FILE_ICONS[singleSource] ? singleSource : 'default'
-  const singleSticker = appMarkup(FILE_ICONS[singleStickerKey])
-  const multiSticker = html`<svg class="file-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>`
   let fileChip = nothing
   if (context) {
     fileChip = workspaceContentButton(context, 'reports', state.currentView)
   } else if (fileNames.length === 1) {
     const name = reportDisplayName(fileNames[0])
-    fileChip = html`<button type="button" class="file-chip" data-copy-report=${name}>${singleSticker}<span>${name}</span></button>`
+    fileChip = html`<button type="button" class="file-chip" data-copy-report=${name}>${appMarkup(FILE_ICONS[singleSource] ?? FILE_ICONS.default)}<span>${name}</span></button>`
   } else if (fileNames.length > 1) {
-    fileChip = html`<button type="button" class="file-chip" data-copy-report=${fileNames.map(reportDisplayName).join('\n')}>${multiSticker}<span>${fileNames.length} reports</span></button>`
+    fileChip = html`<button type="button" class="file-chip" data-copy-report=${fileNames.map(reportDisplayName).join('\n')}>${MULTI_REPORT_STICKER}<span>${fileNames.length} reports</span></button>`
   }
 
-  // Count covers EVERY loaded finding (live + trashed) — trashed
-  // entries are still part of the report, just hidden from the active
-  // list. The header stays steady so the load total doesn't shift
-  // when the trash toggle flips (the toggle itself signals the mode).
-  const findingNoun = `finding${totalCount === 1 ? '' : 's'}`
-  const countLabel = `${totalCount} ${findingNoun}`
-
-  // Analyzer and run metadata belong to individual reports, not the combined view.
-  const stripTags = state.currentWorkspace ? [] : loadedAnalyzerTags(Boolean(singleSource))
-
-  // Severity status bar — stacked bar sized proportionally to each
-  // severity's group count (using the primary tab's severity, so
-  // each group contributes once and the segments sum to totalCount).
-  // Gives a quick "how bad is this report overall" signal without
-  // scanning the toolbar chips. Rendered for any non-empty load —
-  // single reports, merged loads, AND workspace views all benefit
-  // from the same one-glance summary.
-  let statusBarTpl = nothing
-  if (totalCount > 0) {
-    const sevCounts = {}
-    for (const g of mergedGroups) {
-      const sev = displayedSeverity(primaryTab(g), state.severityMode)
-      if (sev) sevCounts[sev] = (sevCounts[sev] || 0) + 1
-    }
-    const presentSevs = SEVERITIES.filter((s) => sevCounts[s] > 0)
-    if (presentSevs.length > 0) {
-      statusBarTpl = html`<span class="status-bar" aria-hidden="true">${presentSevs.map((s) => {
-        const tip = `${sevCounts[s]} ${s.replaceAll('_', ' ')}`
-        return html`<span class=${`status-seg sev-${s}`} style=${styleMap({ flexGrow: sevCounts[s] })} data-tooltip=${tip}></span>`
-      })}</span>`
-    }
+  const sevCounts = {}
+  for (const g of mergedGroups) {
+    const sev = displayedSeverity(primaryTab(g), state.severityMode)
+    if (sev) sevCounts[sev] = (sevCounts[sev] || 0) + 1
   }
+  const presentSevs = SEVERITIES.filter((s) => sevCounts[s] > 0)
+  const statusBarTpl = presentSevs.length === 0 ? nothing : html`<span class="status-bar" aria-hidden="true">${presentSevs.map((s) =>
+    html`<span class=${`status-seg sev-${s}`} style=${styleMap({ flexGrow: sevCounts[s] })} data-tooltip=${`${sevCounts[s]} ${s.replaceAll('_', ' ')}`}></span>`)}</span>`
 
-  // A team's header is its tabs' (workspace-content.js), counting the
-  // findings loaded here; it names no repository, its Repositories tab
-  // listing them all.
+  // A team's header is its tabs' (workspace-content.js), naming no
+  // repository: its Repositories tab lists them all.
   if (context?.scope === 'team') return teamHeaderTemplate(context, state.currentView, { findings: totalCount, statusBar: statusBarTpl })
 
-  // Report-declared repo — `"repo": { "github": "owner/name" }` at the
-  // top of a native dump, lifted onto the report record at ingest.
-  // Outranks the findings-derived `knownRepo`: a report naming its own
-  // repository beats one inferred from what its findings happened to
-  // carry. Requires every loaded report to declare the SAME slug —
-  // under a workspace merge, one report's declaration says nothing
-  // about the others' findings, and a mixed load falls through to the
-  // findings agreement (which is null for genuinely mixed repos)
-  // rather than labelling the whole header with one of several.
+  // Analyzer and run metadata belong to individual reports.
+  const stripTags = state.currentWorkspace ? [] : loadedAnalyzerTags(Boolean(singleSource))
+  // A report-declared repo (`"repo": { "github": … }`, lifted at ingest)
+  // speaks for the header only when every loaded report declares the same
+  // one; a mixed load falls through to what the findings agree on.
   const declaredRepos = new Set(state.reports.map((r) => r.repo ?? null))
   const declaredRepo = declaredRepos.size === 1 ? [...declaredRepos][0] : null
-  const repoTpl = repoChipTemplate(repoInputUseful, knownRepo, declaredRepo)
-  const sep = html`<span class="sep" aria-hidden="true"></span>`
-
-  // Files toggle — sits right after the repo chip in the title row so
-  // it's visually tied to the report identity, and operates on/off
-  // like the Trash button: clicking flips state.currentView between
-  // 'files' and the previous (saved) view. Gated on
-  // `treeFileCount > 1`; a single-file tree adds no value. A report's
-  // alone: a workspace's Files opens from its graph.
+  // The Files toggle is a report's alone: a workspace's Files opens from
+  // its graph.
   const filesBtnTpl = context ? nothing : filesButtonTemplate(treeFileCount, state.currentView)
 
   return html`<header class="page-head">
     <div class="page-title">
-      <h1>${context ? workspaceTitleTemplate(context, state.currentView) : titleText}${fileChip}${workspaceContentButton(context, 'bundles', state.currentView)}${repoTpl}${filesBtnTpl}${syncBadgeTemplate()}</h1>
+      <h1>${context ? workspaceTitleTemplate(context, state.currentView) : titleText}${fileChip}${workspaceContentButton(context, 'bundles', state.currentView)}${repoChipTemplate(repoInputUseful, knownRepo, declaredRepo)}${filesBtnTpl}${syncBadgeTemplate()}</h1>
       <div class="meta-row">
-        <span>${countLabel}</span>
+        <span>${`${totalCount} finding${totalCount === 1 ? '' : 's'}`}</span>
         ${statusBarTpl}
-        ${stripTags.length > 0 ? html`${sep}${stripTags.map((t) => html`<span class="tag">${t}</span>`)}` : nothing}
+        ${stripTags.length > 0 ? html`${SEP}${stripTags.map((t) => html`<span class="tag">${t}</span>`)}` : nothing}
       </div>
     </div>
   </header>`
 }
 
-// The "Reports out of sync" dialog the badge auto-opens (once per
-// workspace until reload — see sync-suggest.js).
+const SEP = html`<span class="sep" aria-hidden="true"></span>`
+
+// The "Reports out of sync" dialog the badge opens (once per workspace
+// until reload — see sync-suggest.js).
 const { suggestSync } = createSyncSuggester({ open: (names) => openSyncSuggestDialog({ names }) })
 
-// Views this badge is rendered into. A defence rather than a rule —
-// its two call sites (the findings page header, and the links view's
-// header, which takes it as a template) already decide where it goes;
-// this keeps a future third one from surfacing it somewhere the
-// workspace context means nothing.
+// Where the badge is drawn: the findings page header and the links view's.
+// A defence against a third call site where the workspace means nothing.
 const SYNC_BADGE_VIEWS = new Set(['findings', 'files', 'links'])
 
-// Sync-status badge — renders into the title h1 alongside the
-// file-chip / repo-chip so it sits on the same baseline. Two
-// shapes:
-//
-//   - Single-file view (state.currentFile in a workspace): one
-//     chip with `local` / `cloud` status. The whole element is a
-//     <button>; clicking `local` opens the upload-confirmation
-//     dialog. (`cloud` chip is non-interactive in v1.)
-//
-//   - Workspace view: two side-by-side chunks "N cloud / M local"
-//     inside an outer <div>. `N` is the workspace's full remote
-//     inventory size (synced + remote-only); `M` is its members
-//     that are on this device (synced + local-only — see
-//     view/sync-scope.js for why that is membership rather than the
-//     loaded reports).
-//     - Click "cloud" → download dialog scoped to remote-only
-//       reports (non-interactive if every remote file is local).
-//     - Click "local" → upload dialog scoped to local-only
-//       reports (non-interactive if every local file is uploaded).
-//
-// Gated on `triageSync.status === 'online'` — that's the
-// "connection up" signal. The empty-workspace case is intentionally
-// supported (mode === 'workspace', state.reports = []) so a user
-// who just created a workspace and joined a peer's chain still
-// sees the badge and can click "N cloud" to pull the peer's
-// reports down. (`syncBadgeTemplate` only hides when BOTH
-// local and remote counts are zero.)
+const SYNC_ICONS = {
+  local: html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+    <line x1="6" y1="18" x2="6.01" y2="18"/>
+    <line x1="10" y1="18" x2="10.01" y2="18"/>
+    <path d="M6 14V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10"/>
+  </svg>`,
+  // Two opposed arrows — the local and cloud copies pulling apart.
+  differ: html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M7 4v14"/><path d="M3 14l4 4 4-4"/>
+    <path d="M17 20V6"/><path d="M13 10l4-4 4 4"/>
+  </svg>`,
+  cloud: html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M17.5 19a4.5 4.5 0 1 0-1-8.9A6 6 0 0 0 5.07 13.5 4 4 0 0 0 6 21h11.5z"/>
+  </svg>`,
+}
+
+const differTip = (names) => names.length === 1
+  ? `Your copy of "${names[0]}" doesn't match its cloud copy. Click to re-check and bring them in line.`
+  : `${names.length} reports don't match their cloud copies. Click to re-check and bring them in line.`
+const workspaceBundles = (ws) => ws && Array.isArray(ws.bundles) ? ws.bundles : []
+
+// The sync-status badge in the title row, while sync is online
+// (`triageSync.status`). A report opened alone from a workspace shows one
+// chip: `differs`, `cloud`, or `local` (click to upload). A workspace shows
+// up to three chunks, each only when non-zero:
+//   - "N cloud": the full remote inventory, reports and bundles alike, so
+//     the total shows while discovery is still naming them; it opens the
+//     recovery dialog (re-check, repair, download what isn't local).
+//   - "N differ": copies that may differ in a way sync can't settle by
+//     itself, which would otherwise read as plain "cloud".
+//   - "M local": members on this device the remote lacks, by the
+//     synchronous `isInRemote`, so a peer's fresh upload doesn't flicker
+//     in; it opens the upload dialog.
+// Both counts zero hides it, but an empty workspace joined to a peer's
+// chain still shows "N cloud" to pull their reports down.
 function syncBadgeTemplate() {
-  if (triageSync.status !== 'online') return nothing
-  if (!SYNC_BADGE_VIEWS.has(state.currentView)) return nothing
+  if (triageSync.status !== 'online' || !SYNC_BADGE_VIEWS.has(state.currentView)) return nothing
   const wsContext = resolveWorkspaceContext()
   if (!wsContext) return nothing
   const { workspaceId, fileNames, mode } = wsContext
-  // Reports whose local and cloud copies may differ in a way sync can't
-  // settle by itself (changed here since they were in sync, or found
-  // different with nothing showing which is newer). Without saying so
-  // they'd read as plain "cloud" and nobody would know to re-check —
-  // in either view (review r4099376951). Say it out loud once, too: a
-  // dialog offering to sync (see sync-suggest.js for when it opens and
-  // when it stays closed).
   const differing = differingReports(workspaceId)
-  if (differing.length > 0) {
-    suggestSync(workspaceId, differing, { onSync: () => openRecheckFor(workspaceId, mode, fileNames), retry: render })
-  }
+  const recheck = () => openRecheckFor(workspaceId, mode, fileNames)
+  // Say it out loud once, too: a dialog offering to sync.
+  if (differing.length > 0) suggestSync(workspaceId, differing, { onSync: recheck, retry: render })
   if (mode === 'single') {
-    // Single-file view: chip reflects just the active report's
-    // status. Bundles aren't represented here — they live in the
-    // workspace context, which the user can navigate to via the
-    // sidebar to see the combined badge.
     const name = fileNames[0]
-    if (differing.includes(name)) {
-      return badgeChipButton({
-        status: 'differ',
-        label: 'differs',
-        title: `Your copy of "${name}" doesn't match its cloud copy. Click to re-check and bring them in line.`,
-        onClick: () => openRecheckFor(workspaceId, mode, fileNames),
-      })
-    }
-    const status = isInRemote(workspaceId, name) ? 'cloud' : 'local'
-    return badgeChipButton({
-      status,
-      label: status,
-      title: status === 'cloud'
-        ? 'Synced to remote'
-        : 'Local only — click to upload',
-      onClick: status === 'local'
-        ? () => openUploadFromBadge({ workspaceId, items: [{ kind: 'report', identifier: name }] })
-        : null,
-    })
+    if (differing.includes(name)) return badgeChipButton({ status: 'differ', label: 'differs', title: differTip([name]), onClick: recheck })
+    return isInRemote(workspaceId, name)
+      ? badgeChipButton({ status: 'cloud', label: 'cloud', title: 'Synced to remote', onClick: null })
+      : badgeChipButton({ status: 'local', label: 'local', title: 'Local only — click to upload',
+        onClick: () => openUploadFromBadge({ workspaceId, items: [{ kind: 'report', identifier: name }] }) })
   }
-  // Workspace view — two chunks, "N cloud" and "M local", with
-  // each chunk suppressed when its count is zero. Counts:
-  //
-  //   N (cloud) — full remote inventory size (`remoteCount`), so
-  //               the badge surfaces the cloud-side total even
-  //               while background `fetchByTag` discovery is
-  //               still resolving names. A locally-loaded file
-  //               that is ALSO in remote contributes to N, not M
-  //               — "cloud" absorbs "synced" because the bytes are
-  //               already replicated.
-  //   M (local-only) — files in state.reports whose HMAC tag is
-  //                    NOT in the remote set. Partitioned via the
-  //                    synchronous `isInRemote` so a peer-just-
-  //                    uploaded file (whose name hasn't been
-  //                    decoded yet) doesn't briefly flicker into
-  //                    M and offer a redundant upload (review
-  //                    r3242197745).
-  //
-  // Clickability:
-  //   cloud chunk — clickable whenever cloudCount > 0; opens the
-  //                 recovery dialog to re-check remote storage.
-  //   local chunk — clickable iff M > 0 (there's something to
-  //                 upload).
-  //
-  // Hides entirely when both chunks would render empty (e.g. a
-  // freshly-created workspace with no peers and no local
-  // reports). Empty-workspace bug fix #4.
-  //
-  // Aggregate reports + bundles into a single badge: the user sees
-  // one "N cloud / M local" pair in the header instead of two
-  // side-by-side badges. The "local" chunk opens a unified upload
-  // dialog; the "cloud" chunk opens the recovery dialog (re-check +
-  // repair missing bytes + optional download of remote-only objects).
-  //
-  // `cloudCount` is just `remoteCount` (reports + bundles together —
-  // the cardinality of remoteTags, which includes both kinds). The
-  // recovery dialog the "cloud" chunk opens enumerates the live remote
-  // listing itself, so no report-vs-bundle dispatch happens here.
-  const ws = listWorkspaces().find((w) => w.id === workspaceId)
-  const localBundles = ws && Array.isArray(ws.bundles) ? ws.bundles : []
+  const localBundles = workspaceBundles(listWorkspaces().find((w) => w.id === workspaceId))
   const cloudCount = remoteCount(workspaceId)
-  const localOnlyReports = fileNames.filter((n) => !isInRemote(workspaceId, n))
-  const localOnlyBundles = localBundles.filter((i) => !isBundleInRemote(workspaceId, i))
   const localOnly = [
-    ...localOnlyReports.map((n) => ({ kind: 'report', identifier: n })),
-    ...localOnlyBundles.map((i) => ({ kind: 'bundle', identifier: i })),
+    ...fileNames.filter((n) => !isInRemote(workspaceId, n)).map((n) => ({ kind: 'report', identifier: n })),
+    ...localBundles.filter((i) => !isBundleInRemote(workspaceId, i)).map((i) => ({ kind: 'bundle', identifier: i })),
   ]
   if (cloudCount === 0 && localOnly.length === 0) return nothing
-  // The "cloud" chunk is clickable whenever there's remote state: it
-  // opens the recovery dialog to re-check the remote objstore (re-fetch
-  // each object, re-upload any whose bytes went missing, and offer to
-  // download healthy objects not stored locally). The "local" chunk is
-  // clickable whenever there's something to upload.
   const wrapperTitle = [
     cloudCount > 0 ? `${cloudCount} in cloud` : null,
     localOnly.length > 0 ? `${localOnly.length} local-only` : null,
@@ -486,34 +280,23 @@ function syncBadgeTemplate() {
     cloudCount > 0 ? `click "cloud" to re-check storage` : null,
     localOnly.length > 0 ? `click "local" to upload ${localOnly.length}` : null,
   ].filter(Boolean).join(' — ')
-  const differTip = differing.length === 1
-    ? `Your copy of "${differing[0]}" doesn't match its cloud copy. Click to re-check and bring them in line.`
-    : `${differing.length} reports don't match their cloud copies. Click to re-check and bring them in line.`
-  const differChunk = differing.length === 0 ? nothing
-    : html`<button
+  const chunk = (kind, text, label, onClick, tip = nothing) => html`<button
         type="button"
-        class="sync-badge-chunk differ"
-        data-tooltip=${differTip}
-        aria-label=${`${differing.length} report${differing.length === 1 ? '' : 's'} differ from the cloud — re-check`}
-        @click=${(e) => { e.stopPropagation(); openRecheckFor(workspaceId, mode, fileNames) }}
-      >${differIconTpl()}<span>${differing.length} differ</span></button>`
-  const cloudChunk = cloudCount === 0 ? nothing
-    : html`<button
-        type="button"
-        class="sync-badge-chunk cloud"
-        aria-label=${`re-check ${cloudCount} cloud object${cloudCount === 1 ? '' : 's'}`}
-        @click=${(e) => { e.stopPropagation(); openObjstoreRecoveryDialog({ workspaceId, cloudCount, localFileNames: fileNames, localBundles }) }}
-      >${cloudIconTpl()}<span>${cloudCount} cloud</span></button>`
-  const localChunk = localOnly.length === 0 ? nothing
-    : html`<button
-        type="button"
-        class="sync-badge-chunk local"
-        aria-label=${`${localOnly.length} items not yet uploaded — open upload dialog`}
-        @click=${(e) => { e.stopPropagation(); openUploadFromBadge({ workspaceId, items: localOnly }) }}
-      >${localIconTpl()}<span>${localOnly.length} local</span></button>`
+        class=${`sync-badge-chunk ${kind}`}
+        data-tooltip=${tip}
+        aria-label=${label}
+        @click=${(e) => { e.stopPropagation(); onClick() }}
+      >${SYNC_ICONS[kind]}<span>${text}</span></button>`
+  const chunks = [
+    cloudCount > 0 && chunk('cloud', `${cloudCount} cloud`, `re-check ${cloudCount} cloud object${cloudCount === 1 ? '' : 's'}`,
+      () => openObjstoreRecoveryDialog({ workspaceId, cloudCount, localFileNames: fileNames, localBundles })),
+    differing.length > 0 && chunk('differ', `${differing.length} differ`,
+      `${differing.length} report${differing.length === 1 ? '' : 's'} differ from the cloud — re-check`, recheck, differTip(differing)),
+    localOnly.length > 0 && chunk('local', `${localOnly.length} local`, `${localOnly.length} items not yet uploaded — open upload dialog`,
+      () => openUploadFromBadge({ workspaceId, items: localOnly })),
+  ].filter(Boolean)
   // A divider between each pair of chunks present.
   const divider = html`<span class="sync-badge-divider" aria-hidden="true"></span>`
-  const chunks = [cloudChunk, differChunk, localChunk].filter((c) => c !== nothing)
   return html`<div
     class="report-sync-badge report-sync-badge-clickable"
     data-status="mixed"
@@ -521,33 +304,30 @@ function syncBadgeTemplate() {
   >${chunks.map((c, i) => (i === 0 ? c : html`${divider}${c}`))}</div>`
 }
 
-// The re-check the "differ(s)" signals open — already running, since the
-// user asked for it. Given the workspace's members on this device: the
-// dialog offers to download remote reports NOT in that list, so the
-// single-file view's one-name list would wrongly offer all the others.
+// The re-check the "differ(s)" signals open, already running. Given the
+// workspace's members on this device: the dialog offers to download the
+// remote reports NOT listed, so a single report's one-name list would
+// wrongly offer all the others.
 function openRecheckFor(workspaceId, mode, fileNames) {
   const ws = listWorkspaces().find((w) => w.id === workspaceId)
   const localFileNames = mode === 'single'
     ? syncableMembers(ws?.reports ?? [], state.storedFiles ?? [], fileNames)
     : fileNames
-  const localBundles = ws && Array.isArray(ws.bundles) ? ws.bundles : []
-  return openObjstoreRecoveryDialog({ workspaceId, cloudCount: remoteCount(workspaceId), localFileNames, localBundles, autoRun: true })
+  return openObjstoreRecoveryDialog({ workspaceId, cloudCount: remoteCount(workspaceId), localFileNames, localBundles: workspaceBundles(ws), autoRun: true })
 }
 
+// A single report's chip: a `<button>` where clicking does something, else
+// an informational `<span>`, out of the tab order like the workspace's
+// non-clickable chunks.
 function badgeChipButton({ status, label, title, onClick }) {
-  const icon = status === 'cloud' ? cloudIconTpl() : status === 'differ' ? differIconTpl() : localIconTpl()
   const labelTpl = html`<span class="sync-badge-label">${label}</span>`
   if (typeof onClick !== 'function') {
-    // Informational chip — render as a `<span>` so it doesn't pick
-    // up the disabled-button focus / tab semantics or land in the
-    // tab order with a no-op activation. Mirrors the workspace-
-    // aggregate non-clickable chunk (review r3242461680).
     return html`<span
       class="report-sync-badge"
       data-status=${status}
       data-tooltip=${title}
       aria-label=${`report sync status: ${label}`}
-    >${icon}${labelTpl}</span>`
+    >${SYNC_ICONS[status]}${labelTpl}</span>`
   }
   return html`<button
     type="button"
@@ -556,41 +336,15 @@ function badgeChipButton({ status, label, title, onClick }) {
     data-tooltip=${title}
     aria-label=${`report sync status: ${label}`}
     @click=${onClick}
-  >${icon}${labelTpl}</button>`
+  >${SYNC_ICONS[status]}${labelTpl}</button>`
 }
 
-function localIconTpl() {
-  return html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
-    <line x1="6" y1="18" x2="6.01" y2="18"/>
-    <line x1="10" y1="18" x2="10.01" y2="18"/>
-    <path d="M6 14V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10"/>
-  </svg>`
-}
-
-// Two opposed arrows — the local and cloud copies pulling apart.
-function differIconTpl() {
-  return html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M7 4v14"/><path d="M3 14l4 4 4-4"/>
-    <path d="M17 20V6"/><path d="M13 10l4-4 4 4"/>
-  </svg>`
-}
-
-function cloudIconTpl() {
-  return html`<svg class="sync-badge-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M17.5 19a4.5 4.5 0 1 0-1-8.9A6 6 0 0 0 5.07 13.5 4 4 0 0 0 6 21h11.5z"/>
-  </svg>`
-}
-
+// The upload dialog lists bundles by their sidebar names (from the bundle
+// metadata), not the sha512 prefix it would fall back on.
 async function openUploadFromBadge({ workspaceId, items }) {
-  // Resolve user-friendly labels for the bundle items so the dialog
-  // shows the actual sidebar name (e.g. "my-app.js") instead of the
-  // sha512 prefix fallback. The bundle metadata `_meta.json` is the
-  // source of truth for the local label — pull it once and join.
   const bundleItems = items.filter((i) => i.kind === 'bundle')
   if (bundleItems.length > 0) {
-    const meta = await listBundles()
-    const labelByIntegrity = new Map(meta.map((b) => [b.integrity, b.name]))
+    const labelByIntegrity = new Map((await listBundles()).map((b) => [b.integrity, b.name]))
     for (const item of bundleItems) {
       const name = labelByIntegrity.get(item.identifier)
       if (name) item.label = name
@@ -599,91 +353,37 @@ async function openUploadFromBadge({ workspaceId, items }) {
   await openSyncUploadDialog({ workspaceId, items })
 }
 
-// Stats — clickable filter chips: severity on the left, mark-color on
-// the right. Both multi-select: empty selection = no filter; multiple
-// = union across the ticked chips (ticking every chip == ticking
-// none). Zero-count chips hidden so the row stays compact for Claude /
-// Codex / JSON dumps that don't carry every tier. The prototype's
-// "X shown / All / None" actions group is omitted — the search row's
-// `X of Y` count + the per-chip toggle already cover it.
-//
-// Both strips are StateElement components (`<severity-chips>`,
-// `<triage-filter>`) reading the active filter set from `state` via
-// observer-util autorun; counts arrive via Lit property binding (the
-// parent holds the filter-pipeline output). CSS lives in toolbar.css
-// (components render to light DOM so those rules apply). Gating the
-// templates at the call site — not just the components' own empty-set
-// guards — keeps an empty component from claiming a flex `gap` slot
-// between its visible neighbours.
-function severityChipsTemplate(counts) {
-  const hasAny = Object.values(counts).some((n) => n > 0) || state.filterSeverities.size > 0
-  if (!hasAny) return nothing
-  // Property binding (`.counts=`) — `<severity-chips>` extends
-  // StateElement and reads `state.filterSeverities` directly for
-  // the findings kind, so no `selected` prop is needed here.
-  return html`<severity-chips .counts=${counts}></severity-chips>`
-}
+// Whether a filter strip has anything to show: a non-zero count, or an
+// active selection to clear. Gated here, not only in the components' own
+// empty-set guards, so an empty one claims no flex `gap` slot.
+const anyCount = (counts, selected) => Object.values(counts).some((n) => n > 0) || selected.size > 0
 
-function triageFilterTemplate(colorCounts) {
-  const hasAny = Object.values(colorCounts).some((n) => n > 0) || state.filterColors.size > 0
-  if (!hasAny) return nothing
-  return html`<triage-filter .counts=${colorCounts}></triage-filter>`
-}
-
-// `flags` carries per-render applicability: when no finding in the
-// current report has confidence / a node_modules path / file or tree
-// hash metadata, the corresponding control is omitted entirely (and
-// the underlying filter state is forced to its no-op value upstream
-// for confidence / source so it can't be left set from a previous
-// report). Hides chrome the user can't act on usefully.
-// `<triage-selector>` (view/triage-selector.js) reads
-// `state.shownTriage` via StateElement and self-gates its visibility,
-// so the host drops it in unconditionally.
-
-function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCounts, flags, analyzerSelect, repoOptions) {
+// The findings toolbar. Row one: view modes and sort, then the source,
+// confidence / outcome and annotation filters, the triage selector, and at
+// the end the export button, context filters and App lens. Row two: the
+// severity lens and chips, analyzer and repo dropdowns, mark colors and
+// the search with its "X of Y". Each control is offered only where it can
+// do something (`flags`, from renderImpl); the self-gating components
+// (`<triage-selector>`, `<download-button>`) go in unconditionally.
+function toolbarTemplate({ filteredCount, allCount, triageCounts, counts, colorCounts, analyzerSelect, repoOptions, flags }) {
   const { showSource, showConfidence, showPriority, showGraphMode, showFileSort, kanbanMode, showRepo, hasComment, hasIssue, hasFix, hasFlagged, hasDuplicates, hasCrossContext, hasAppStacked, showSecurity, showSeverityMode, revalidateOptions, showPartial, canDropLayer, canDetailLayer, canUpstreamLens, confirmedLocked } = flags
-  // The findings tab gains a "graph" view-mode option when a
-  // tree-bearing report is loaded (showGraphMode). The focus and
-  // kanban modes sit between grouped and graph. Switching to graph
-  // replaces the table / list / grouped / focus / kanban body with
-  // the graph2 canvas — see the findings-graph slot in render()
-  // below.
+  // Graph replaces the whole body with the graph2 canvas (see render()).
   const viewModes = showGraphMode ? 'kanban,focus,table,list,grouped,graph' : 'kanban,focus,table,list,grouped'
-
+  // The confidence block shows for a range or an outcome to offer; an
+  // unscored finding disables the range but leaves the outcome dropdown
+  // usable (conf-filter.js). The App switch's stops: can-drop where taking
+  // the layer off hands a ruled-out finding back, can-detail where the app
+  // view folds rows or holds the partial line back; conflicts swap it for
+  // an inspection button.
   return html`<div class="toolbar">
     <div class="toolbar-row">
-      <!-- Groups in both rows are told apart by the row's own gap
-           alone — no divider rules between them. (A div.sep used to
-           sit before source / annotation / confidence and after the
-           severity lens; the row read as a run of bracketed segments,
-           and the segmented controls inside those groups carry their
-           own internal dividers, so the outer ones were a second kind
-           of line saying something weaker.)
-
-           View mode leads the row — <view-mode-buttons> renders the
-           kanban / focus / table / list / grouped icon group,
-           immediately followed by the Sort dropdown. -->
       <view-mode-buttons modes=${viewModes}></view-mode-buttons>
-      <!-- Sort dropdown — findings-sort owns the native select +
-           the conditional option list. Flags arrive as boolean
-           attributes; the component reads state.sortBy via
-           StateElement and dispatches sort-change on change. -->
       <findings-sort
         ?show-file=${showFileSort}
         ?show-confidence=${showConfidence}
         ?show-priority=${showPriority}
       ></findings-sort>
       ${showSource ? html`<source-filter></source-filter>` : nothing}
-      <!-- Confidence range + the revalidation outcome, one block: the
-           outcome dropdown sits inside it and REPLACES the range when
-           picked (see conf-filter.js). Shown when there is either a
-           confidence to range over or an outcome to offer — an
-           unscored finding blocks the range but leaves the dropdown
-           perfectly usable, so in that case the range comes up
-           DISABLED rather than the block being dropped and the
-           revalidation filter with it. The reachable options come from
-           the scan above, so the dropdown can't list one that filters
-           to nothing. -->
       ${!confirmedLocked && (showConfidence || revalidateOptions.length > 0)
         ? html`<conf-filter
             ?range-disabled=${!showConfidence}
@@ -695,23 +395,6 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
         ? html`<annotation-filter .hasComment=${hasComment} .hasIssue=${hasIssue} .hasFix=${hasFix} .hasFlagged=${hasFlagged}></annotation-filter>`
         : nothing}
       ${kanbanMode ? nothing : html`<triage-selector .counts=${triageCounts}></triage-selector>`}
-      <!-- App / code lens — the far right of the row, past the triage
-           selector that claims the free space before it. A switch of
-           up to three stops (code / app / detailed app), each offered
-           only where it would change something: can-drop where
-           taking the layer off would hand a ruled-out finding back
-           (format.js canDropRevalidation), can-detail where the app
-           view is folding rows or holding the partial line back. Both
-           are properties of the loaded SET, so the control doesn't
-           resize as the reader moves through it. Conflicts replace
-           the App controls with an inspection button; the upstream lens
-           is available wherever the set holds upstream findings. -->
-      <!-- Export — the download icon that opens the export dialog
-           (Download / Print as its two tabs). It rides at the end of
-           the row beside the app lens, its own bordered control rather
-           than a stop inside that switch: the lens changes what the
-           reader is looking at, this takes a copy of it away. The
-           component owns its visibility (view/download-button.js). -->
       <div class="toolbar-end">
         <download-button></download-button>
         ${(!state.currentWorkspace && (hasDuplicates || state.filterDuplicates)) || hasCrossContext || hasAppStacked || showSecurity || state.filterCrossContext || state.filterAppStacked
@@ -727,35 +410,9 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
           : nothing}
       </div>
     </div>
-    <!-- Filter row: severity chips + mark-color triage pill + search
-         field, all inline so they read as one composable filter strip.
-         The "X shown / All / None" actions block from the prototype's
-         outer .sev-row is intentionally left off — the result count
-         at the row's right edge and the per-chip toggle cover those
-         needs. -->
     <div class="toolbar-row sev-row">
-      <!-- Corrected / Original severity lens — leads the row, immediately
-           left of the chips it governs. Self-gated by showSeverityMode
-           (a correction is present, or the user is parked in original). -->
       ${showSeverityMode ? html`<severity-mode-switch></severity-mode-switch>` : nothing}
-      ${severityChipsTemplate(counts)}
-      <!-- Analyzer / model / validation model dropdown — visible only
-           where it has a choice to offer across the loaded reports
-           (filters.js runFiltersOffered: a dimension with more than one
-           distinct value, or a single validation model some row has no
-           pass of; a column whose dimension doesn't vary is likewise
-           omitted inside the panel, but Validation model, which App
-           mode always shows). The component owns the
-           trigger pill + the column popover, the friendly
-           SOURCE_LABELS lookup, and the cross-filtered counts (run
-           over the rows remaining after the source/confidence/outcome selectors). Values with no carrier get synthetic
-           "(none)" / "(no model)" rows riding NULL_ANALYZER_SENTINEL
-           / NULL_MODEL_SENTINEL — control characters that can't
-           collide with an analyzer or model literally named "null".
-           Reads state.filterAnalyzer / state.filterModel itself via
-           StateElement, so stale-filter clears in the parent's
-           pipeline above re-render the trigger label and row
-           highlights on their own. -->
+      ${anyCount(counts, state.filterSeverities) ? html`<severity-chips .counts=${counts}></severity-chips>` : nothing}
       ${analyzerSelect.shown
         ? html`<analyzer-select
             .analyzers=${analyzerSelect.analyzers}
@@ -764,21 +421,8 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
             .groups=${analyzerSelect.groups}
           ></analyzer-select>`
         : nothing}
-      <!-- Repo dropdown — only meaningful in workspace view (single-
-           file mode usually has one repo). Hidden when the loaded
-           reports involve a single repo (no choice to make).
-           The adapter supplies filter state to the shared selector;
-           workspace changes also update the displayed selection. -->
       ${showRepo && repoOptions.length > 1 ? html`<repo-filter .options=${repoOptions}></repo-filter>` : nothing}
-      ${triageFilterTemplate(colorCounts)}
-      <!-- Search field + result count grouped into a single flex item
-           so they wrap as a unit — when the row is too narrow to keep
-           the strip inline, the search and the X of Y count move to a
-           new line together rather than the count clinging to the
-           right of the chips while the search drops below alone. See
-           the .search-row rule in toolbar.css + the wrapping
-           breakpoints under @media (max-width: 1200px) and
-           .findings-content.with-details. -->
+      ${anyCount(colorCounts, state.filterColors) ? html`<triage-filter .counts=${colorCounts}></triage-filter>` : nothing}
       <div class="search-row">
         <toolbar-search kind="findings"></toolbar-search>
         <span class="result-count">${filteredCount} of ${allCount}</span>
@@ -787,11 +431,9 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
   </div>`
 }
 
-// Sort dedup groups by a comparator over each group's primary tab,
-// resolving primaryTab once per group instead of inside the
-// comparator (it re-sorts a multi-tab group's tabs on every call —
-// O(N log N) of that dominated large-list renders). Mirrors
-// applySorting's decoration in filters.js.
+// Sort dedup groups by a comparator over each group's primary tab, resolved
+// once per group: primaryTab re-sorts a multi-tab group's tabs on every
+// call, which dominated large-list renders inside a comparator.
 function sortGroupsByPrimary(groups, cmp) {
   return groups
     .map((g) => ({ p: primaryTab(g), g }))
@@ -799,70 +441,35 @@ function sortGroupsByPrimary(groups, cmp) {
     .map((x) => x.g)
 }
 
-// file → line ordering for the 'file' sort's flat variants (table
-// view + flat list), matching the file-grouped layout's intra-file
-// order.
+// file → line, the file-grouped layout's order, for the 'file' sort's flat
+// layouts.
 const fileLineCmp = (pa, pb) =>
   pa.file.localeCompare(pb.file) || parseInt(pa.line, 10) - parseInt(pb.line, 10)
 
-// Render the body of the findings tab — table view (compact 2-row
-// blocks, never grouped by file) or list view (per-finding cards,
-// optionally grouped by file). `applySorting` already ordered
-// `filtered` by sortBy.
-// Set by findingsBodyHtml's table branch and consumed by render()
-// after #report's slots land; passes the sorted dedup-group list
-// to the <finding-table> custom element via property assignment so
-// item identity survives the trip.
+// The table body's sorted groups, for render() to hand the persistent
+// <finding-table> once the slots land (a property keeps their identity).
 let pendingTableItems = null
 
-// Last index the focus view rendered at. After a triage action
-// removes the currently-focused finding from view (very common —
-// "fix this" / "invalid" / "delete" all drop it out of the
-// default live-bucket filter), `state.focusGid` no longer matches
-// anything in `filtered`. Re-using the same index lands on the
-// item that shifted up into that slot — i.e. the NEXT untriaged
-// finding — which is the expected forward-motion of a triage
-// session. Resets to 0 when filters / sort produce a fresh list.
+// The focus view's last index. A triage that drops the focused finding out
+// of the list leaves `state.focusGid` matching nothing; the same index then
+// lands on the finding that shifted up into its slot — the next one.
 let prevFocusedIdx = 0
 
-// Persistent <finding-table> instance, kept across render() calls so
-// the row list (and its StateElement reactivity in each
-// <finding-row>) survives view switches. It lives as a plain
-// appended child INSIDE the body template's static
-// `.finding-table-slot` div — Lit only manages its template parts,
-// so it never touches (or evicts) the foreign child, and successive
-// table-view renders diff the surrounding layout in place while the
-// table and its rows stay connected (no per-render reconnect /
-// re-render of every row, and the list's scroll position survives
-// natively). Updates flow through the `items` / `selectedGid`
-// properties; rows with unchanged group identity skip re-rendering
-// entirely. When a render drops the table view (view-mode switch,
-// graph shape, empty list), Lit removes the slot div and the table
-// disconnects — the JS reference here keeps it alive for reuse on
-// the next table render. Stays null until the first time the table
-// view renders with non-empty items.
+// The <finding-table>, kept across renders as a plain child of the body's
+// static `.finding-table-slot` div, which Lit never touches: steady table
+// renders diff around it while the table, its rows' reactivity and the
+// list's scroll position survive. When a render drops the table view the
+// slot goes and the table disconnects; this keeps it for the next one.
 let persistentFindingTable = null
 
-// One `<finding-card>` host for a dedup group. The group rides in as
-// a property binding: Lit sets it before the element connects, and an
-// unchanged group on a later render is a no-op, so the keyed `repeat`s
-// below leave a card whose group didn't change entirely alone.
-// `data-gid` stays as an attribute for the selectors that find a card
-// by group (finding-link-nav.js).
-//
-// `context` (`'focus'` or `'kanban-detail'`) reflects as a `context=`
-// attribute on the host so `<finding-card>`'s shadow CSS can target
-// the focus-view variant — inlined triage menu, expanded action
-// chrome — via `:host([context="focus"])`; `nothing` leaves the
-// attribute off, as every existing call site expects.
-//
-// `lazy` is the list surfaces' flag: build the card's body only once
-// it is within a viewport of being seen (see finding-card.js and
-// view/lazy-render.js). The single-card surfaces — the table's
-// details aside, the focus view, the kanban dialog — leave it off and
-// paint at once.
-// `popup` selects the modal-specific marker sizing and conflict outline.
-function findingCardPlaceholder(g, inGroup = false, context = null, lazy = false, popup = false) {
+// One `<finding-card>` for a dedup group, the group a property: an
+// unchanged group is a no-op, so the keyed `repeat`s leave its card alone.
+// `data-gid` is what finding-link-nav.js finds a card by. `context`
+// ('focus' / 'kanban-detail') reflects for the card's shadow CSS; `lazy`,
+// for the list surfaces, builds its body only near the viewport
+// (view/lazy-render.js); `popup` picks the modal's marker sizing and
+// conflict outline.
+function findingCardPlaceholder(g, { inGroup = false, context = null, lazy = false, popup = false } = {}) {
   return html`<finding-card
     data-gid=${groupKey(g)}
     .group=${g}
@@ -873,11 +480,8 @@ function findingCardPlaceholder(g, inGroup = false, context = null, lazy = false
   ></finding-card>`
 }
 
-// Corner brackets pointing outwards / inwards for the kanban column
-// header's fullscreen toggle: outwards = "blow this column up to the
-// whole board", inwards = "put the other columns back". Same 16-unit
-// viewBox and stroke weight as the card action glyphs above so the
-// board's chrome reads as one family.
+// Corner brackets out / in for "give this the whole space" and "put the
+// rest back", in the card action glyphs' 16-unit grid.
 const EXPAND_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   <path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4"/>
 </svg>`
@@ -885,19 +489,6 @@ const COLLAPSE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill=
   <path d="M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2"/>
 </svg>`
 
-// Compact kanban card — tiny colored letter-chip + multi-line
-// title + file:line. The full card (tabs, action buttons, the
-// description body) lives behind a click that opens a centered
-// modal (see kanbanDetailTemplate). The whole card is draggable
-// in the kanban variant; `data-kanban-source` lets the drop-zone
-// predicate in events.js tell us apart from any other element with
-// `data-gid`. The same compact template is reused by both side
-// queues — the focus view's right-hand "up next" list and the
-// detail dialog's same-column rail. Both drop drag and add an
-// `.active` class on the current card; they differ only in the
-// click hook they hang out for the events.js delegates
-// (`[data-focus-select]` swaps the focused finding,
-// `[data-kanban-select]` swaps the one the dialog shows).
 const SEVERITY_LETTERS = {
   critical:      'C',
   high:          'H',
@@ -907,60 +498,47 @@ const SEVERITY_LETTERS = {
   bug:           'B',
   informational: 'i',
 }
+
+// The compact card's variants, each with the click hook events.js listens
+// for: the board's (`data-kanban-source`, draggable, opening the detail
+// modal), the dialog rail's (`data-kanban-select`) and the focus queue's
+// (`data-focus-select`), the last two sharing `.focus-side-card`'s look.
+const CARD_LABELS = { 'kanban': 'Open details for', 'kanban-side': 'Show details for', 'focus': 'Focus on' }
+
+// The compact card: a severity letter chip, the title and file:line; the
+// full card opens in a modal. `active` (the focus queue's current card, or
+// the board card whose modal is open) draws the accent ring, which tracks
+// arrow-key navigation apart from DOM focus. The board hands over the
+// rollup it bucketed the card by (`groupSt`); the rail asks for its own.
 function kanbanCardTemplate(g, opts = {}) {
   const { variant = 'kanban', active = false, expandedTrackLast = false } = opts
-  // The board hands over the rollup it bucketed the card by, read this
-  // same render; the rail asks for its own.
   const groupSt = opts.groupSt ?? groupState(g)
   const activeTab = activeTabFor(g)
   const title = findingTitle(activeTab) || '(untitled finding)'
   const isKanban = variant === 'kanban'
-  const isRail = variant === 'kanban-side'
-  // Producer mark — a small branded chip closing the meta row, on the
-  // same line as file:line and the confidence number. Workspace views
-  // only — that is the one place a board mixes analyzers, so elsewhere
-  // the mark would be the same on every card and say nothing — and
-  // only for a finding some other analyzer produced, DeepView's own
-  // being the unmarked default (`findingBrand` answers both at once).
-  // Board cards only, like the fix / comment shortcut above: the
-  // focus-side queue stays indicator-free.
+  // The producer's mark, on board cards in a workspace only (the one board
+  // that mixes analyzers), for a finding some other analyzer produced.
   const brand = isKanban && state.currentWorkspace ? findingBrand(activeTab) : null
   const classes = {
     'kanban-card': true,
     'has-conflict': groupSt.hasConflict,
     'focus-side-card': !isKanban,
     'kanban-expanded-track-last': expandedTrackLast,
-    // Active = the focus-view queue's current card, or (kanban) the
-    // card whose detail popover is open. Drives the accent ring so it
-    // tracks arrow-key navigation independently of DOM focus.
     'active': active,
   }
   if (!groupSt.hasConflict && groupSt.commonColor) classes[`mark-${groupSt.commonColor}`] = true
   const lineNum = parseInt(activeTab.line, 10)
   const lineSuffix = Number.isFinite(lineNum) ? `:${lineNum}` : ''
   const kanbanSev = displayedSeverity(activeTab, state.severityMode)
-  const letter = SEVERITY_LETTERS[kanbanSev] ?? '?'
-  // Append `*` (a shape cue, not color-only) when the shown severity is a
-  // correction; the title / aria-label spell out the original.
+  // `*` marks a corrected severity by shape, not color alone; the tooltip
+  // and label spell out the original.
   const sevCorrected = hasSeverityCorrection(activeTab) && state.severityMode !== 'original'
-  // Attention flag sits directly under the severity badge (top-right
-  // of the card). Display-only here — the card is a drag/click target,
-  // so toggling lives in the detail popover's finding-card; we only
-  // surface the indicator when the active tab is flagged.
   const activeEntry = triageEntry(activeTab)
-  const flagged = activeEntry?.flagged === true
-  // Fix-link / comment shortcut — pinned to the bottom of the badge
-  // column, directly above the meta row's confidence number (kanban
-  // variant only; the focus-side queue stays indicator-free). One slot,
-  // a link wins over comment, never both: the manual Fix, else the pull
-  // request linked to the saved issue, else the issue it was closed as a
-  // duplicate of, else that issue (cardLinkFor). A
-  // URL renders as a real link (the payoff of surfacing it on the card
-  // is one-click access to the PR or issue); a free-form fix or a
-  // comment reuses the `.mark-fix` / `.mark-comment` classes so the
-  // existing dialog delegates in events.js pick the click up — the
-  // kanban modal-toggle listener skips `.kanban-action` clicks so the
-  // popover stays shut.
+  // The board card's one shortcut, a link winning over a comment
+  // (cardLinkFor: the manual fix, else the issue's pull request, else its
+  // duplicate, else the issue). A URL is a real link; a free-form fix or a
+  // comment reuses `.mark-fix` / `.mark-comment`, so events.js's dialog
+  // delegates pick the click up (the modal toggle skips `.kanban-action`).
   const fix = cardLinkFor(activeTab, activeEntry)
   const comment = activeEntry?.comment ?? ''
   let action = nothing
@@ -971,8 +549,8 @@ function kanbanCardTemplate(g, opts = {}) {
       ? html`<button type="button" class="kanban-action mark-fix" data-tooltip=${`Edit fix link: ${fix}`} aria-label=${`Edit fix link: ${fix}`}>${FIX_ICON}</button>`
       : html`<span class="kanban-action kanban-fix-note" role="img" data-tooltip=${`Fix: ${fix}`} aria-label=${`Fix: ${fix}`}>${FIX_ICON}</span>`
   } else if (isKanban && (comment || (isManagedUiMode() && canTriageFinding(activeTab)))) {
-    // Keep managed subscriptions mounted even before the first remote comment.
-    // Empty previews hide themselves without waiting for a board-wide render.
+    // Managed subscriptions stay mounted before the first remote comment;
+    // an empty preview hides itself.
     action = html`<comment-preview class="kanban-action" .finding=${activeTab} .comment=${comment}>${COMMENT_ICON}</comment-preview>`
   }
   const inner = html`<div class="kanban-badge-col">
@@ -980,8 +558,8 @@ function kanbanCardTemplate(g, opts = {}) {
         class=${`kanban-badge sev-${kanbanSev}`}
         data-tooltip=${sevCorrected ? `${badgeLabel(kanbanSev)} — corrected from ${badgeLabel(activeTab.severity)}` : nothing}
         aria-label=${sevCorrected ? `Severity ${badgeLabel(kanbanSev)}, corrected from ${badgeLabel(activeTab.severity)}` : `Severity ${badgeLabel(kanbanSev)}`}
-      >${letter}${sevCorrected ? '*' : ''}</span>
-      ${flagged ? html`<span class="kanban-flag" aria-label="Flagged">${FLAG_ICON}</span>` : nothing}
+      >${SEVERITY_LETTERS[kanbanSev] ?? '?'}${sevCorrected ? '*' : ''}</span>
+      ${activeEntry?.flagged === true ? html`<span class="kanban-flag" aria-label="Flagged">${FLAG_ICON}</span>` : nothing}
       ${action}
     </div>
     <span class="kanban-title">${title}</span>
@@ -994,44 +572,42 @@ function kanbanCardTemplate(g, opts = {}) {
         ? html`<span class="kanban-analyzer" role="img" data-tooltip=${PRODUCER_LABELS[brand]} aria-label=${PRODUCER_LABELS[brand]}>${appMarkup(REPORT_LOGOS[brand])}</span>`
         : nothing}
     </div>`
-  if (isKanban) {
-    return html`<div
-      class=${classMap(classes)}
-      data-gid=${groupKey(g)}
-      data-kanban-source
-      draggable=${triageScope(g, groupSt).length > 0 ? 'true' : 'false'}
-      role="button"
-      tabindex="0"
-      aria-current=${active ? 'true' : 'false'}
-      aria-label=${`Open details for ${title}`}
-    >${inner}</div>`
-  }
-  // Dialog-rail variant — same card as the focus queue (the shared
-  // `.focus-side-card` class carries the look), with the click hook
-  // that swaps the open dialog to this finding instead.
-  if (isRail) {
-    return html`<div
-      class=${classMap(classes)}
-      data-gid=${groupKey(g)}
-      data-kanban-select
-      role="button"
-      tabindex="0"
-      aria-current=${active ? 'true' : 'false'}
-      aria-label=${`Show details for ${title}`}
-    >${inner}</div>`
-  }
-  // Focus variant — the click handler in events.js looks for
-  // `.focus-side-card[data-focus-select]` and swaps the centered
-  // finding-card to the clicked gid.
   return html`<div
     class=${classMap(classes)}
     data-gid=${groupKey(g)}
-    data-focus-select
+    ?data-kanban-source=${isKanban}
+    ?data-kanban-select=${variant === 'kanban-side'}
+    ?data-focus-select=${variant === 'focus'}
+    draggable=${isKanban ? (triageScope(g, groupSt).length > 0 ? 'true' : 'false') : nothing}
     role="button"
     tabindex="0"
     aria-current=${active ? 'true' : 'false'}
-    aria-label=${`Focus on ${title}`}
+    aria-label=${`${CARD_LABELS[variant]} ${title}`}
   >${inner}</div>`
+}
+
+// The prev / position / next trio heading the focus queue and the kanban
+// dialog's rail (events.js `data-<stem>-nav`, which ←/→ walk too).
+const FOCUS_NAV = literal`focus`
+const KANBAN_NAV = literal`kanban`
+function navTemplate(stem, count, atStart, atEnd) {
+  return staticHtml`<div class="focus-nav">
+    <button
+      type="button"
+      class="focus-nav-btn"
+      data-${stem}-nav="prev"
+      ?disabled=${atStart}
+      aria-label="Previous finding"
+    >${PREV_ICON}</button>
+    <span class="count">${count}</span>
+    <button
+      type="button"
+      class="focus-nav-btn"
+      data-${stem}-nav="next"
+      ?disabled=${atEnd}
+      aria-label="Next finding"
+    >${NEXT_ICON}</button>
+  </div>`
 }
 
 // The Code panel's plain text, kept for the next render of the same file:
@@ -1042,26 +618,19 @@ function focusPlainText(content) {
   return focusPlain.parts
 }
 
-// Per-line rendering for the focus view's inline Code panel.
-// Two-column layout (gutter + source) mirroring the bundle source
-// viewer's structure — line numbers in a sticky narrow rail, the
-// source body as either Prism-highlighted markup (when the
-// language is supported) or plain text. The focused finding's line
-// gets `.focus-code-line-active` so the row stands out; the panel's
-// post-render scroll handler (see events.js) brings it into view.
+// The focus Code panel's lines: a sticky gutter of line numbers and the
+// source, Prism-highlighted where the language is supported. Every line of
+// the cited range is `.focus-code-line-active`; the panel's post-render
+// scroll (events.js) brings the first into view, so a span opens at its top.
 function focusCodeLinesTemplate(code) {
   const { content, range, highlighted } = code
   const lineCount = content.split('\n').length
-  const digits = String(lineCount).length
-  return html`<div class="focus-code-lines" style=${styleMap({ '--lineno-width': `${digits}ch` })}>
+  return html`<div class="focus-code-lines" style=${styleMap({ '--lineno-width': `${String(lineCount).length}ch` })}>
     <aside class="focus-code-gutter" aria-hidden="true">
       ${Array.from({ length: lineCount }, (_, i) => {
         const ln = i + 1
-        // Every line of the cited range. The scroll-into-view below
-        // takes the FIRST of them, so a span opens at its top.
         const active = Boolean(range) && ln >= range.start && ln <= range.end
-        const classes = { 'focus-code-lineno': true, 'focus-code-line-active': active }
-        return html`<div class=${classMap(classes)} data-focus-code-line=${ln}>${ln}</div>`
+        return html`<div class=${classMap({ 'focus-code-lineno': true, 'focus-code-line-active': active })} data-focus-code-line=${ln}>${ln}</div>`
       })}
     </aside>
     <pre class="focus-code-source" tabindex="-1" aria-label=${code.file}><code>${typeof highlighted === 'string'
@@ -1081,62 +650,36 @@ function findingHistoryButton(group) {
   </button>`
 }
 
-// The focus workbench: a finding-card in one pane and, when the
-// analyzer's bundle carries the file it points at, that source in
-// another, with the draggable divider between them.
-//
-// Shared by the focus view and the kanban detail dialog's fullscreen
-// mode. A dialog given the whole screen has exactly the room this
-// layout needs, and the card's `Code` shortcut — which opens the
-// bundle overlay ON TOP of everything — is the affordance you want
-// INSTEAD of a panel, never as well as one. Passing `'focus'` as the
-// card's context is what says so: it reads as "a code panel is beside
-// me", which is why it both drops that shortcut and sends the evidence
-// rows into the panel rather than out to GitHub.
-// `corner` is anything the caller wants floating over the card pane's
-// top-right — the kanban dialog's history / expand / close controls. It goes in as a
-// grid item of `.focus-main` (findings.css parks it on the card's cell)
-// rather than inside the pane, so it neither scrolls with the card nor
-// needs to know where the divider currently sits.
+// The focus workbench: a finding-card in one pane and, when the analyzer's
+// bundle carries the file it cites, that source in another, the draggable
+// divider between them. The focus view's, and the kanban dialog's in
+// fullscreen, where the card's `Code` shortcut (the bundle overlay, ON TOP
+// of everything) is wanted INSTEAD of a panel: the 'focus' card context
+// drops that shortcut and sends evidence rows into the panel. `corner`
+// floats over the card pane's top-right (the dialog's controls) as a grid
+// item of `.focus-main`, so it neither scrolls with the card nor follows
+// the divider.
 function focusMainTemplate(group, corner = nothing, popup = false) {
-  // Lazy bundle-source fetch for the inline Code panel. Returns
-  // `null` when this finding has no bundle code reference,
-  // `{ loading: true }` while the first load is in flight (the
-  // load triggers render() on settle), or the resolved
-  // `{ content, file, line, highlighted }` once ready.
-  // The `focusCodeTick` read subscribes any observer-util-tracked
-  // ancestor to the cache's settle events so the DOM picks up
-  // the new content on the same frame.
+  // `null` without a bundle code reference, `{ loading: true }` while the
+  // first load runs (render() follows its settle), else the source. The
+  // `focusCodeTick` read subscribes a tracked ancestor to those settles.
   void state.focusCodeTick
   const code = getFocusCode(group)
-  // Where the panel has been for this finding. Empty until the reader
-  // follows a reference somewhere the panel wasn't already showing —
-  // which is why the back / forward pair below isn't drawn on
-  // arrival, and isn't drawn by a click on the row the panel is
-  // already on either: there is nothing behind the current entry.
+  // Where the panel has been for this finding: empty until the reader
+  // follows a reference elsewhere, so the back / forward pair isn't drawn
+  // on arrival.
   const codeHistory = focusCodeHistory(group)
-  const mainClass = code ? 'focus-main with-code' : 'focus-main'
-  // The card | code split as the divider's percentage along the
-  // pane (see `.focus-main.with-code` in findings.css). Bound on
-  // every render so a committed drag survives one, and so the two
-  // panes come back at the user's width after a navigation; the
-  // drag itself writes the same property directly on this element
-  // rather than re-rendering per pointermove.
-  const splitStyle = styleMap({ '--focus-split': String(state.focusSplit) })
-  return html`<div class=${mainClass} style=${splitStyle} data-gid=${groupKey(group)}>
+  // The split as the divider's percentage (findings.css), bound every
+  // render so a committed drag survives one; the drag itself writes the
+  // property on this element rather than re-render per pointermove.
+  return html`<div class=${code ? 'focus-main with-code' : 'focus-main'} style=${styleMap({ '--focus-split': String(state.focusSplit) })} data-gid=${groupKey(group)}>
       <div class="focus-pane focus-pane-card">
         <div class="focus-card-wrapper">
           ${popup ? nothing : findingHistoryButton(group)}
-          ${findingCardPlaceholder(group, false, 'focus', false, popup)}
+          ${findingCardPlaceholder(group, { context: 'focus', popup })}
         </div>
       </div>
       ${corner}
-      <!-- Divider between the two panes: drag to resize, double-
-           click to restore the 1:1 default, ← / → while focused to
-           nudge (events.js routes all three to view/focus-splitter.js).
-           Rendered as an ARIA separator with the split percentage as
-           its value; the narrow-viewport rule that stacks the panes
-           hides it, since there's nothing horizontal left to drag. -->
       ${code ? html`<div
         class="focus-splitter"
         data-focus-splitter
@@ -1155,14 +698,18 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
           : html`<header class="focus-code-bar">
               <span class="focus-code-file" data-tooltip-truncated data-tooltip=${code.file}>${code.file}</span>
               ${code.range ? html`<span class="focus-code-line">:${lineRangeLabel(code.range)}</span>` : nothing}
-              <!-- Back / forward through the files the panel has
-                   shown. Both appear together or not at all, and the
-                   one with nowhere to go is DISABLED rather than
-                   removed: a control that vanishes at the end of the
-                   history takes the other one's position with it, so
-                   the button under the cursor moves out from under
-                   it exactly when it is being clicked repeatedly. -->
-              ${(codeHistory?.stack.length ?? 0) > 1 ? html`<div class="focus-code-nav">
+              ${(codeHistory?.stack.length ?? 0) > 1 ? codeHistoryNav(codeHistory) : nothing}
+            </header>
+            <div class="focus-code-body">${focusCodeLinesTemplate(code)}</div>`}
+      </div>` : nothing}
+  </div>`
+}
+
+// Back / forward through the files the Code panel has shown. The one with
+// nowhere to go is DISABLED, not removed: a vanishing button would move the
+// other out from under a cursor clicking it repeatedly.
+function codeHistoryNav(codeHistory) {
+  return html`<div class="focus-code-nav">
                 <button
                   type="button"
                   class="focus-code-nav-btn"
@@ -1177,65 +724,33 @@ function focusMainTemplate(group, corner = nothing, popup = false) {
                   ?disabled=${codeHistory.at === codeHistory.stack.length - 1}
                   aria-label="Forward to the next shown file"
                 >${NEXT_ICON}</button>
-              </div>` : nothing}
-            </header>
-            <div class="focus-code-body">${focusCodeLinesTemplate(code)}</div>`}
-      </div>` : nothing}
-  </div>`
+              </div>`
 }
 
-// Detail modal — opens on kanban-card click, wrapped in
-// `document.startViewTransition` so the open / close animations
-// run as a single view transition (the scale + opacity keyframes
-// against `::view-transition-{new|old}(kanban-detail-modal)` in
-// findings.css drive the visual). Clicking the backdrop (anywhere
-// outside the modal) or pressing Esc clears `state.kanbanPopoverGid`
-// — both transitions go through the same renderImpl path so the
-// animation is symmetric. The modal retains the group's conflict
-// outline; the active finding's color label is a mark in its badge rail.
+// The detail modal a kanban card opens. render()'s callers wrap
+// `state.kanbanPopoverGid` changes in a view transition, so the modal
+// morphs from its card (findings.css); the dim backdrop is a layer of its
+// own so its fade doesn't drag the modal's clip-path animation along.
 //
-// `column` is the bucket the open card belongs to ({ label, items },
-// items in board order) and backs the same-column rail beside the
-// modal — the neighbours the ←/→ keys already step through, made
-// visible and clickable. findings.css docks the rail to the screen's
-// right edge from 1400px up and holds its width out of the backdrop,
-// so the modal sits centered in what's left rather than under it.
-//
-// `columns` is every bucket ({ key, label, count, firstGid }) for the
-// rail's header picker — the way across to a bucket the open finding
-// isn't in.
+// `column` ({ key, label, items }, board order) backs the same-column rail
+// beside the modal, docked to the screen's right edge from 1400px up;
+// `columns` ({ key, label, count, firstGid }) its header's picker, the way
+// across to another bucket. Fullscreen (persisted, state.ts) stretches the
+// modal over everything but the rail and swaps the card for the focus
+// workbench; the history / expand / close cluster then moves to the card
+// pane's corner.
 function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) {
   if (!focusGroup && !preview) return nothing
   const groupSt = focusGroup ? groupState(focusGroup) : {}
-  // Fullscreen drops the modal's width cap and stretches it over the
-  // whole backdrop — which already holds the rail's strip out of its
-  // box, so "everything available" means everything but the rail. The
-  // flag is persisted (see state.ts), so the dialog opens the way it
-  // was last left.
   const full = state.kanbanDetailFullscreen
   // A team's finding shows once its detail is in (managed-details.js).
   const waiting = focusGroup ? managedDetailsWaiting() : null
-  const modalClasses = { 'kanban-detail-modal': true, fullscreen: full, 'has-conflict': groupSt.hasConflict }
   const gid = focusGroup ? groupKey(focusGroup) : null
   const items = column?.items ?? []
-  // Position of the open finding within its column. -1 can't happen
-  // for a group that came out of the same bucket map, but the counter
-  // and the nav buttons read off it, so treat a miss as "somewhere in
-  // there": show the plain total and leave both arrows live.
+  // -1 can't happen for a group from the same bucket map; were it to, the
+  // counter shows the bare total and both arrows stay live.
   const idx = items.findIndex((g) => groupKey(g) === gid)
-  // The dim sibling is a separate layer (its own view-transition-
-  // name) so its opacity fade doesn't drag the modal's clip-path
-  // animation with it. The modal animates by clip alone (no opacity
-  // shift), keeping its background + border at full alpha throughout
-  // the morph between the source card and the centered modal box.
-  // History, expand and close as one corner cluster, with two homes: the modal's
-  // own corner at the readable width, and the card pane's corner in
-  // fullscreen — where the modal's corner belongs to the code panel and
-  // these buttons belong to the finding beside it. Expand borrows the
-  // column header's bracket glyphs so the board's two "give this thing
-  // the space" affordances read as the same control. Neither carries a
-  // title attribute: the native tooltip is not the one this app uses,
-  // and aria-label already names both for the readers that need naming.
+  // No titles: the native tooltip isn't this app's, and aria-label names them.
   const actions = html`<div class="kanban-detail-actions">
     ${findingHistoryButton(focusGroup)}
     <button
@@ -1253,76 +768,39 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
   </div>`
   return html`<div class=${classMap({ 'kanban-detail-backdrop': true, 'links-preview-backdrop': !!preview })}>
     <div class="kanban-detail-dim"></div>
-    <div class=${classMap(modalClasses)} role="dialog" aria-modal="true" aria-label=${preview ? 'Finding preview' : 'Finding details'}>
+    <div class=${classMap({ 'kanban-detail-modal': true, fullscreen: full, 'has-conflict': groupSt.hasConflict })} role="dialog" aria-modal="true" aria-label=${preview ? 'Finding preview' : 'Finding details'}>
       ${full && focusGroup ? nothing : actions}
-      <!-- Fullscreen swaps the single scrolling column for the focus
-           view's workbench: the card in one pane, the bundle's source
-           in the other. At the readable width there is no room for a
-           second pane, so the card keeps its Code shortcut into the
-           bundle overlay instead. -->
       <div class="kanban-detail-body">
         ${focusGroup && !waiting
-          ? (full ? focusMainTemplate(focusGroup, actions, true) : findingCardPlaceholder(focusGroup, false, 'kanban-detail', false, true))
+          ? (full ? focusMainTemplate(focusGroup, actions, true) : findingCardPlaceholder(focusGroup, { context: 'kanban-detail', popup: true }))
           : html`<div class="links-preview-message" role="status">${preview?.error || (waiting === 'failed' ? DETAILS_FAILED : 'Loading finding…')}</div>`}
       </div>
     </div>
     ${items.length === 0 ? nothing : html`<aside class="kanban-detail-side" aria-label=${`${column.label} findings`}>
-      <!-- Header mirrors the focus queue's: bucket name, position
-           counter, and the prev / next pair (reusing its .focus-nav
-           chrome), which walk the same column the arrow keys do. -->
       <div class="kanban-detail-side-header">
-        <!-- The bucket's name is a picker. The rail always lists the
-             open finding's own column, so choosing another column means
-             opening its first finding — the dialog moves, and the rail
-             comes with it. An empty bucket has nothing to open, so it
-             is offered (its count is the answer to "is there anything
-             in Fixed yet?") but not selectable.
-
-             The selected flag is set as a PROPERTY, not an
-             attribute: once a reader has used the select, its
-             selectedness stops following the attribute, so a re-render
-             driven by anything else — triaging the open finding out of
-             this bucket, say — would leave the closed select naming a
-             column it is no longer showing. -->
         <span class="kanban-detail-side-pick">
           <select class="kanban-detail-side-select" data-kanban-column aria-label="Column to show">
             ${columns.map((c) => {
-              // Computed out here rather than inline: a nested template
-              // literal inside html`…` would close it early.
+              // Choosing a column opens its first finding, the rail coming
+              // along; an empty one is listed (its count answers "anything
+              // in Fixed yet?") but not selectable. `selected` is a
+              // PROPERTY: once used, a select's selectedness stops
+              // following the attribute.
               const current = c.key === column.key
-              const label = current ? c.label : `${c.label} (${c.count})`
               return html`<option
                 value=${c.key}
                 data-gid=${c.firstGid}
                 .selected=${current}
                 ?disabled=${c.count === 0}
-              >${label}</option>`
+              >${current ? c.label : `${c.label} (${c.count})`}</option>`
             })}
           </select>
         </span>
-        <div class="focus-nav">
-          <button
-            type="button"
-            class="focus-nav-btn"
-            data-kanban-nav="prev"
-            ?disabled=${idx === 0}
-            aria-label="Previous finding"
-          >${PREV_ICON}</button>
-          <span class="count">${idx < 0 ? items.length : `${idx + 1} / ${items.length}`}</span>
-          <button
-            type="button"
-            class="focus-nav-btn"
-            data-kanban-nav="next"
-            ?disabled=${idx === items.length - 1}
-            aria-label="Next finding"
-          >${NEXT_ICON}</button>
-        </div>
+        ${navTemplate(KANBAN_NAV, idx < 0 ? items.length : `${idx + 1} / ${items.length}`, idx === 0, idx === items.length - 1)}
       </div>
-      <!-- Drawn a screen at a time (view/kanban-rail.js): a column runs
-           to thousands of cards, the board already holds every one of
-           them, and building them all again here was most of the
-           dialog's wait to open. The card renderer is a new function
-           each render, so the cards drawn repaint with the board. -->
+      <!-- Drawn a screen at a time (view/kanban-rail.js): a column runs to
+           thousands of cards. The card renderer is a new function each
+           render, so the cards drawn repaint with the board. -->
       <kanban-rail
         class="kanban-detail-side-body"
         .items=${items}
@@ -1334,178 +812,82 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
   </div>`
 }
 
-// `groupStates`: the rollups renderImpl read this render, by group, for
-// the board to bucket and draw its cards by rather than read each again.
-function findingsBodyTemplate(filtered, selectedGroup, groupStates = new Map()) {
-  if (state.viewMode === 'table') {
-    // Table view is always flat. For 'file' sort we still want
-    // line-within-file ordering to match the file-grouped layout's
-    // intra-file order; applySorting only handles file→line for
-    // severity / confidence sorts. Rows are owned by the
-    // <finding-table> Lit component (see view/finding-table.js); we
-    // stash the sorted list in pendingTableItems so render() can
-    // assign it as a property after the slots land.
-    const items = state.sortBy === 'file'
-      ? sortGroupsByPrimary(filtered, fileLineCmp)
-      : filtered
-    if (items.length === 0) return nothing
-    // selectedGroup has already been validated against the filtered set.
-    pendingTableItems = items
-    // Two-column layout when a row is selected: list on the left
-    // (3 fr, capped at 1200px), details panel on the right (2 fr,
-    // capped at 800px). Collapses to single-column when no row is
-    // selected.
-    const layoutClass = selectedGroup ? 'findings-table-layout open' : 'findings-table-layout'
-    return html`<div class=${layoutClass}>
-      <!-- Static (binding-free) placeholder div — render() appends
-           the persistent <finding-table> inside it after the body
-           lands, and Lit's diffing leaves foreign children of static
-           elements alone. Keeping the table element connected across
-           renders preserves its <finding-row> children (and the
-           StateElement-driven reactivity inside them) plus the
-           list's scroll position, avoiding a full shadow-DOM rebuild
-           on every state change. -->
+// Table view: always flat, two columns while a row's details are open.
+// The rows are the persistent <finding-table>'s, appended by render() into
+// the static (binding-free) `.finding-table-slot`, whose foreign children
+// Lit leaves alone.
+function tableBody(filtered, selectedGroup) {
+  const items = state.sortBy === 'file' ? sortGroupsByPrimary(filtered, fileLineCmp) : filtered
+  if (items.length === 0) return nothing
+  pendingTableItems = items
+  return html`<div class=${selectedGroup ? 'findings-table-layout open' : 'findings-table-layout'}>
       <div class="findings-table-list"><div class="finding-table-slot"></div></div>
       ${selectedGroup ? html`<aside class="findings-table-details" id="findings-table-details" aria-label="Finding details">
         <button type="button" class="findings-table-details-close" data-table-deselect aria-label="Close details">×</button>
         <div class="findings-table-details-body">${findingCardPlaceholder(selectedGroup)}</div>
       </aside>` : nothing}
     </div>`
-  }
-  if (state.viewMode === 'focus') {
-    // Focus view: one centered <finding-card> in the main pane, with
-    // a vertical "up next" queue of compact kanban-style cards on
-    // the right. The same filter pipeline (state.shownTriage +
-    // toolbar filters) feeds the queue, so the user can narrow what
-    // they're working through with the regular toolbar controls.
-    //
-    // Selection rules:
-    //   - `state.focusGid` matches a group still in the filtered
-    //     list  → that group is focused (the explicit pick path:
-    //     click in the sidebar, arrow-key navigation, prior-
-    //     session leftover when the user returns to the focus view).
-    //   - Otherwise fall back to the previous render's index
-    //     (clamped to the new list). After a triage on the centered
-    //     finding, the previous index now points to the item that
-    //     shifted up into its slot — keeping the queue moving
-    //     forward instead of teleporting back to position 0.
-    // The fallback is read-only here; events.js / render() don't
-    // write `state.focusGid` back to the auto-picked group's gid,
-    // so the user's last-explicit pick can re-surface if the
-    // filter reverts to a set that still contains it.
-    if (filtered.length === 0) return nothing
-    const focusedIdx = filtered.indexOf(selectedGroup)
-    prevFocusedIdx = focusedIdx
-    const focused = selectedGroup
-    const atStart = focusedIdx === 0
-    const atEnd = focusedIdx === filtered.length - 1
-    return html`<div class="focus-view">
-      ${focusMainTemplate(focused)}
+}
+
+// Focus view: one centered card, and an "up next" queue of compact cards
+// over the same filtered list. The finding is `state.focusGid` while it is
+// still listed, else the previous render's index (findingDetailGroup), so
+// a triage moves the queue forward; that pick is never written back, so
+// the reader's own can re-surface when the filter brings it back.
+function focusBody(filtered, selectedGroup) {
+  if (filtered.length === 0) return nothing
+  const focusedIdx = filtered.indexOf(selectedGroup)
+  prevFocusedIdx = focusedIdx
+  return html`<div class="focus-view">
+      ${focusMainTemplate(selectedGroup)}
       <aside class="focus-sidebar" aria-label="Up next">
-        <!-- Sidebar header carries both the queue's label and the
-             prev / counter / next controls (consolidated here so the
-             position counter and "Up next" count don't duplicate).
-             Buttons also respond to ←/→ via the events.js keydown
-             handler. -->
         <div class="focus-sidebar-header">
           <span class="label">Up next</span>
-          <div class="focus-nav">
-            <button
-              type="button"
-              class="focus-nav-btn"
-              data-focus-nav="prev"
-              ?disabled=${atStart}
-              aria-label="Previous finding"
-            >${PREV_ICON}</button>
-            <span class="count">${focusedIdx + 1} / ${filtered.length}</span>
-            <button
-              type="button"
-              class="focus-nav-btn"
-              data-focus-nav="next"
-              ?disabled=${atEnd}
-              aria-label="Next finding"
-            >${NEXT_ICON}</button>
-          </div>
+          ${navTemplate(FOCUS_NAV, `${focusedIdx + 1} / ${filtered.length}`, focusedIdx === 0, focusedIdx === filtered.length - 1)}
         </div>
         <div class="focus-sidebar-body">
           ${repeat(filtered, (g) => groupKey(g), (g) => kanbanCardTemplate(g, {
             variant: 'focus',
-            active: groupKey(g) === groupKey(focused),
+            active: groupKey(g) === groupKey(selectedGroup),
           }))}
         </div>
       </aside>
     </div>`
+}
+
+const KANBAN_COLUMNS = [
+  { key: 'untriaged',  label: 'Untriaged' },
+  { key: 'inprogress', label: 'In progress' },
+  { key: 'fixed',      label: 'Fixed' },
+  { key: 'invalid',    label: 'Invalid' },
+  { key: 'deleted',    label: 'Deleted' },
+  { key: 'ignored',    label: 'Ignored' },
+]
+
+// Kanban: a column per triage bucket (`commonTriage`, null = Untriaged),
+// over every bucket at once (renderImpl skips `state.shownTriage` for it).
+// Cards drag between columns ([data-kanban-source] / [data-kanban-target],
+// events.js); a header's toggle gives its column the whole board. The open
+// card's modal lives in this template, so leaving the view unmounts it.
+// `groupStates` holds the rollups renderImpl read this render.
+function kanbanBody(filtered, selectedGroup, groupStates) {
+  const buckets = new Map(KANBAN_COLUMNS.map((c) => [c.key, []]))
+  const stateOf = (g) => {
+    let st = groupStates.get(g)
+    if (!st) groupStates.set(g, st = groupState(g))
+    return st
   }
-  if (state.viewMode === 'kanban') {
-    // Status board: one column per triage bucket. Each filtered
-    // group lands in exactly one column based on `groupState(g)
-    // .commonTriage` — null = the Active column (live, untriaged).
-    // The kanban view intentionally bypasses `state.shownTriage`
-    // (handled by the caller) so every column is populated from
-    // the same filter-respecting input set.
-    //
-    // Cards are intentionally compact (badge + one-line title +
-    // file:line), so a column holds many at a glance. Clicking a
-    // card opens a centered popover with the full `<finding-card>`
-    // for the same group — the entry point for triage actions,
-    // tabs, and comments while the column itself stays uncluttered.
-    // Drag-and-drop ([data-kanban-source] / [data-kanban-target])
-    // moves the card between status columns; the handler lives in
-    // events.js.
-    //
-    // Each header also carries a fullscreen toggle: it drops the
-    // other columns and gives this one the whole board (see
-    // `expandedKey` below), for working through a single bucket
-    // when six narrow columns aren't the useful shape.
-    const columns = [
-      { key: 'untriaged',  label: 'Untriaged' },
-      { key: 'inprogress', label: 'In progress' },
-      { key: 'fixed',      label: 'Fixed' },
-      { key: 'invalid',    label: 'Invalid' },
-      { key: 'deleted',    label: 'Deleted' },
-      { key: 'ignored',    label: 'Ignored' },
-    ]
-    const buckets = new Map(columns.map((c) => [c.key, []]))
-    const stateOf = (g) => {
-      let st = groupStates.get(g)
-      if (!st) groupStates.set(g, st = groupState(g))
-      return st
-    }
-    for (const g of filtered) {
-      const t = stateOf(g).commonTriage
-      const key = t ?? 'untriaged'
-      const slot = buckets.get(key)
-      if (slot) slot.push(g)
-    }
-    // Fullscreen column. Re-validated against the column list rather
-    // than trusted straight from state, so a key left over from a
-    // renamed / dropped bucket degrades to the normal board instead
-    // of blanking it.
-    const expandedKey = columns.some((c) => c.key === state.kanbanExpandedColumn)
-      ? state.kanbanExpandedColumn
-      : null
-    const shownColumns = expandedKey ? columns.filter((c) => c.key === expandedKey) : columns
-    // Stamped on the board so findings.css can lay the expanded
-    // column's cards out in exactly as many tracks as the board would
-    // otherwise have shown columns — keeping the card width identical
-    // either side of the toggle. Derived from the list above so
-    // adding or removing a bucket needs no matching CSS edit.
-    const boardStyle = { '--kanban-cols': String(columns.length) }
-    // Surface the focused group's details modal in the same body
-    // template so the popover's lifecycle is bound to the kanban
-    // view's lifecycle; switching to a different view-mode unmounts
-    // it. The render() caller wraps state.kanbanPopoverGid mutations
-    // in `document.startViewTransition` so the modal scales in / out.
-    const focusGroup = selectedGroup
-    // The open card's own bucket, handed to the dialog for its
-    // same-column rail. Resolved through the column list (not straight
-    // off `commonTriage`) for the same reason the bucketing loop above
-    // guards on `buckets.get`: a triage state no column claims has no
-    // rail to show, and degrades to the bare modal.
-    const focusColumn = focusGroup
-      ? columns.find((c) => c.key === (stateOf(focusGroup).commonTriage ?? 'untriaged'))
-      : null
-    return html`<div class="kanban-board" style=${styleMap(boardStyle)}>
+  // A triage state no column claims has no column, nor a rail.
+  for (const g of filtered) buckets.get(stateOf(g).commonTriage ?? 'untriaged')?.push(g)
+  // A stale key (a renamed bucket) degrades to the normal board.
+  const expandedKey = KANBAN_COLUMNS.some((c) => c.key === state.kanbanExpandedColumn) ? state.kanbanExpandedColumn : null
+  const shownColumns = expandedKey ? KANBAN_COLUMNS.filter((c) => c.key === expandedKey) : KANBAN_COLUMNS
+  const focusColumn = selectedGroup
+    ? KANBAN_COLUMNS.find((c) => c.key === (stateOf(selectedGroup).commonTriage ?? 'untriaged'))
+    : null
+  // `--kanban-cols` lays an expanded column's cards in as many tracks as
+  // the board has columns, so a card's width holds either side of the toggle.
+  return html`<div class="kanban-board" style=${styleMap({ '--kanban-cols': String(KANBAN_COLUMNS.length) })}>
       ${repeat(shownColumns, (c) => c.key, (c) => {
         const items = buckets.get(c.key)
         const isExpanded = c.key === expandedKey
@@ -1529,7 +911,7 @@ function findingsBodyTemplate(filtered, selectedGroup, groupStates = new Map()) 
               ? html`<div class="kanban-empty">No ${c.label.toLowerCase()} findings.</div>`
               : repeat(items, (g) => groupKey(g), (g, index) => kanbanCardTemplate(g, {
                   active: groupKey(g) === state.kanbanPopoverGid,
-                  expandedTrackLast: (index + 1) % columns.length === 0,
+                  expandedTrackLast: (index + 1) % KANBAN_COLUMNS.length === 0,
                   groupSt: stateOf(g),
                 }))}
           </div>
@@ -1537,109 +919,71 @@ function findingsBodyTemplate(filtered, selectedGroup, groupStates = new Map()) 
       })}
     </div>
     ${kanbanDetailTemplate(
-      focusGroup,
-      focusColumn && {
-        key: focusColumn.key,
-        label: focusColumn.label,
-        items: buckets.get(focusColumn.key),
-      },
-      // Same board order as the columns themselves, so the picker reads
-      // left-to-right the way the board does. `firstGid` is where each
-      // one opens: its top card, which is where a reader starting on a
-      // bucket starts.
-      columns.map((c) => {
+      selectedGroup,
+      focusColumn && { ...focusColumn, items: buckets.get(focusColumn.key) },
+      // In board order; each opens on its top card.
+      KANBAN_COLUMNS.map((c) => {
         const items = buckets.get(c.key)
-        return {
-          key: c.key,
-          label: c.label,
-          count: items.length,
-          firstGid: items.length > 0 ? groupKey(items[0]) : '',
-        }
+        return { key: c.key, label: c.label, count: items.length, firstGid: items.length > 0 ? groupKey(items[0]) : '' }
       }),
     )}`
-  }
-  if (state.viewMode === 'grouped') {
-    // Group groups by file. All tabs in a dedup group share the same
-    // file (dedup runs per-file by fileHash upstream), so the primary
-    // tab's file is a safe representative.
-    const byFile = new Map()
-    for (const g of filtered) {
-      const file = primaryTab(g).file
-      if (!byFile.has(file)) byFile.set(file, [])
-      byFile.get(file).push(g)
-    }
-    // For file sort, sort files alphabetically; otherwise preserve
-    // first-appearance order.
-    const fileKeys = state.sortBy === 'file' ? [...byFile.keys()].toSorted() : [...byFile.keys()]
-    return html`${repeat(fileKeys, (file) => file, (file) => {
-      const items = state.sortBy === 'file'
-        ? sortGroupsByPrimary(byFile.get(file), (pa, pb) => parseInt(pa.line, 10) - parseInt(pb.line, 10))
-        : byFile.get(file)
-      // All findings under one file share the same `repo.github` (it's
-      // a property of the source file's package) and the same `file`
-      // (that's the grouping key), so probe the first group's primary
-      // tab — every other tab in this file would carry the same value
-      // or none at all. The per-report `_repoFallback` is also a
-      // per-file property (every finding from one report carries the
-      // same value), so the same probe gets its fallback, and its
-      // report-provided link is the one `fileLink` resolves against.
-      const probe = primaryTab(items[0])
-      return html`<div class="file-group">
+}
+
+// Grouped by file — a dedup group's tabs share one file (dedup runs per
+// file hash), and so do their `repo.github` and `_repoFallback`, so the
+// first group's primary tab links the header. Files alphabetically under
+// the file sort, else by first appearance.
+function groupedBody(filtered) {
+  const byFile = Map.groupBy(filtered, (g) => primaryTab(g).file)
+  const fileKeys = state.sortBy === 'file' ? [...byFile.keys()].toSorted() : [...byFile.keys()]
+  return html`${repeat(fileKeys, (file) => file, (file) => {
+    const items = state.sortBy === 'file'
+      ? sortGroupsByPrimary(byFile.get(file), (pa, pb) => parseInt(pa.line, 10) - parseInt(pb.line, 10))
+      : byFile.get(file)
+    const probe = primaryTab(items[0])
+    return html`<div class="file-group">
         <div class="file-header">
           <span>${fileLink(probe, findingRepoTarget(probe))}</span>
           <span class="count">${items.length}</span>
         </div>
-        <div class="file-body">${repeat(items, (g) => groupKey(g), (g) => findingCardPlaceholder(g, false, null, true))}</div>
+        <div class="file-body">${repeat(items, (g) => groupKey(g), (g) => findingCardPlaceholder(g, { lazy: true }))}</div>
       </div>`
-    })}`
-  }
-  // Flat mode: each dedup group renders inside its own card
-  // (.flat-group) with a small location header on top
-  // (file · line · exportName). For the 'file' sort we extend that
-  // ordering with line-within-file, which the file-grouped path
-  // achieves by sorting per-file.
-  const items = state.sortBy === 'file'
-    ? sortGroupsByPrimary(filtered, fileLineCmp)
-    : filtered
-  // Each group's location header carries the FULL line row (file +
-  // line + exportName + run-meta) for the active tab. The in-body
-  // line-row inside the card is hidden by `:host([in-group])
-  // .line-row` in view/finding-card.css so the same info doesn't
-  // appear twice. Tab switches re-render, so the header tracks the
-  // active tab automatically. The print sheet flips both rules
-  // around when the group has duplicates (.multi-case) — see
-  // styles/print.css and finding-card.css's @media print block.
+  })}`
+}
+
+// Flat list: each group in a `.flat-group` card under a location header
+// carrying the active tab's full line row (file · line · export · run
+// meta); `:host([in-group]) .line-row` hides the card's own. Print flips
+// both for groups with duplicates (.multi-case, styles/print.css).
+function flatBody(filtered) {
+  const items = state.sortBy === 'file' ? sortGroupsByPrimary(filtered, fileLineCmp) : filtered
   return html`${repeat(items, (g) => groupKey(g), (g) => {
     const p = activeTabFor(g)
     const lineLinkTpl = lineLink(p, findingRepoTarget(p))
     const meta = formatRunMeta(p)
     const displayName = findingDisplayName(p)
-    const multiCase = g.length > 1
-    return html`<div class=${classMap({ 'flat-group': true, 'multi-case': multiCase })}>
+    return html`<div class=${classMap({ 'flat-group': true, 'multi-case': g.length > 1 })}>
       <div class="flat-group-loc">
         <span class="file">${fileLink(p, findingRepoTarget(p))}</span>
         ${lineLinkTpl === nothing ? nothing : html`<span class="line-num">${lineLinkTpl}</span>`}
         ${displayName ? html`<span class="meta">${displayName}</span>` : nothing}
         ${meta ? html`<span class="run-meta">${meta}</span>` : nothing}
       </div>
-      ${findingCardPlaceholder(g, true, null, true)}
+      ${findingCardPlaceholder(g, { inGroup: true, lazy: true })}
     </div>`
   })}`
 }
 
-// Cross-report packages view — `renderPackagesView` and its internal
-// helpers live in `./render-packages.js` (they touch no findings-tab
-// state); the orchestrator below dispatches into it for
-// `state.currentView === 'packages'`.
+// The findings tab's body for the view mode (`applySorting` has ordered
+// `filtered`); list, and anything else, is the flat one.
+const BODIES = { table: tableBody, focus: focusBody, kanban: kanbanBody, grouped: groupedBody }
+function findingsBodyTemplate(filtered, selectedGroup, groupStates) {
+  return (BODIES[state.viewMode] ?? flatBody)(filtered, selectedGroup, groupStates)
+}
 
-// Bundle source viewer overlay — rendered into a top-level slot
-// (see index.html) so it can pop over any view: bundles list,
-// findings table, packages, repositories. The finding-card's
-// `[Code]` shortcut piggybacks on this — set
-// `state.bundleSourceFile` + load `state.bundleDetails`, render
-// runs, and the overlay picks it up. Keeping the slot outside
-// `#report` means the modal survives the rebuilds of `#report` the
-// dispatch branches do.
+// The bundle source viewer overlay, in a top-level slot (index.html) so it
+// pops over any view and survives #report's rebuilds; the finding-card's
+// `[Code]` shortcut opens it by setting `state.bundleSourceFile`.
 function mountBundleSourceOverlay() {
   if (state.bundleSourceFile) ensureBundleSources().catch(() => {})
   const slot = document.querySelector('#bundle-source-overlay-slot')
@@ -1656,12 +1000,9 @@ export function render() {
 // An empty slot div for #report, for Lit to render a view into.
 const reportSlot = (id) => Object.assign(document.createElement('div'), { id })
 
-// Reuse #report's single slot div across renders — replacing it with a
-// fresh one would wipe Lit's part-cache (it's keyed on the container
-// element) and force a full DOM rebuild on every render(), trashing
-// scroll state and triggering a flash of layout. A stale slot only
-// appears when we just arrived from another view; #report's content is
-// replaced only in that case.
+// #report's one slot div, reused across renders: Lit's part cache is keyed
+// on the container, so a fresh div would rebuild the whole DOM every render
+// (scroll lost, layout flashing). Replaced only on arrival from another view.
 function ensureReportSlot(id) {
   let slot = document.querySelector(`#${id}`)
   if (!slot || !report.contains(slot) || report.firstElementChild !== slot) {
@@ -1671,11 +1012,20 @@ function ensureReportSlot(id) {
   return slot
 }
 
+// A view painted whole into its slot of #report: `build()` its template
+// (none skips the paint), shown under `title`.
+function paint(slotId, build, title) {
+  const slot = ensureReportSlot(slotId)
+  const template = build()
+  if (template) litRender(template, slot)
+  showReport()
+  document.title = title
+}
+
 // A team's or a report's triage loading (ingest.js switchToManagedTeam):
-// the status in the middle of the page. A team's shows its header above it,
-// Findings selected, as its findings will, so moving to them from another
-// of its tabs keeps the header in place; a report's, or a link report's,
-// shows the status alone.
+// the status mid-page. A team's sits under its header, Findings selected,
+// as its findings will, so moving there from another of its tabs keeps the
+// header in place.
 export function renderTriageLoading(teamId = null) {
   const team = teamId == null ? null : state.managedTeams.find(t => t.id === teamId)
   const context = team ? workspaceContent({ currentWorkspace: `managed-team:${team.id}`, currentManagedTeam: team.id,
@@ -1687,30 +1037,34 @@ export function renderEmptyWorkspace() {
   const context = workspaceContent(state, listWorkspaces(), getKind)
   document.title = context ? `${context.title} — findings` : 'DeepView'
   const slot = ensureReportSlot('empty-workspace-slot')
-  if (slot) litRender(html`${headerTemplate([], [], false, null, 0)}<p class="workspace-content-empty">No findings available.</p>`, slot)
+  litRender(html`${headerTemplate([], [], false, null, 0)}<p class="workspace-content-empty">No findings available.</p>`, slot)
   showReport()
 }
 
-// Managed admin full-page views. The lazily-loaded admin bundle
-// (loaded by the sidebar's "Manage users" / "Manage repositories" /
-// "Manage reports" / "Manage bundles" / "Manage teams" entries)
-// defines each <managed-admin-*> element; the element fetches +
-// paints itself. The sidebar gates content pages to admin|manage roles
-// and access pages (users, repositories, and teams) to admins.
+// The managed admin pages, each a <managed-admin-*> element of the lazily
+// loaded admin bundle that fetches and paints itself (the sidebar gates
+// them by role), by view: its tag's suffix and the title's word. Each
+// renders into `${view}-slot`.
 const ADMIN_VIEWS = {
-  'manage-deduplication': { slot: 'manage-deduplication-slot', tag: 'managed-admin-deduplication', title: 'DeepView — deduplication' },
-  manage:           { slot: 'manage-slot',          tag: 'managed-admin-home',    title: 'DeepView — manage' },
-  'admin-users':    { slot: 'admin-users-slot',    tag: 'managed-admin-users',   title: 'DeepView — users' },
-  'manage-repos':   { slot: 'manage-repos-slot',   tag: 'managed-admin-repos',   title: 'DeepView — repositories' },
-  'manage-repo-risk': { slot: 'manage-repo-risk-slot', tag: 'managed-admin-repo-risk', title: 'DeepView — repository risk' },
-  'manage-reports': { slot: 'manage-reports-slot', tag: 'managed-admin-reports', title: 'DeepView — reports' },
-  'manage-bundles': { slot: 'manage-bundles-slot', tag: 'managed-admin-bundles', title: 'DeepView — bundles' },
-  'manage-history': { slot: 'manage-history-slot', tag: 'managed-admin-history', title: 'DeepView — history' },
-  'manage-teams':   { slot: 'manage-teams-slot',   tag: 'managed-admin-teams',   title: 'DeepView — teams' },
-  'manage-import':  { slot: 'manage-import-slot',  tag: 'managed-admin-import',  title: 'DeepView — import' },
-  'manage-links':   { slot: 'manage-links-slot',   tag: 'managed-admin-links',   title: 'DeepView — links' },
-  'manage-scans':   { slot: 'manage-scans-slot',   tag: 'managed-admin-scans',   title: 'DeepView — scans' },
+  'manage-deduplication': ['deduplication', 'deduplication'],
+  'manage': ['home', 'manage'],
+  'admin-users': ['users', 'users'],
+  'manage-repos': ['repos', 'repositories'],
+  'manage-repo-risk': ['repo-risk', 'repository risk'],
+  'manage-reports': ['reports', 'reports'],
+  'manage-bundles': ['bundles', 'bundles'],
+  'manage-history': ['history', 'history'],
+  'manage-teams': ['teams', 'teams'],
+  'manage-import': ['import', 'import'],
+  'manage-links': ['links', 'links'],
+  'manage-scans': ['scans', 'scans'],
 }
+
+// A page's shadow roots, which the document-level tooltip listener can't
+// see into; a truncated label tips only while it is cut off.
+const installTooltips = (root) => installShadowTooltipListener(root, {
+  gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
+})
 
 // The views a tree draws, left for the findings where there is none to draw.
 function leaveTrees() {
@@ -1721,8 +1075,13 @@ function leaveTrees() {
 const loadingTemplate = what => html`<p class="triage-loading" role="status">Loading ${what}…</p>`
 const DETAILS_FAILED = 'Could not load finding details. Open the team again to retry.'
 
-// Alphabetical with the null bucket pinned last — the shape both the
-// model and repo option lists in renderImpl sort with.
+// The findings' empty-state lines.
+const notice = (style, text) => html`<p style=${styleMap(style)}>${text}</p>`
+const MUTED = { color: 'var(--muted)', margin: '1rem 0' }
+const GREEN = { color: 'var(--green)' }
+
+// Alphabetical with the null bucket pinned last, for the model and repo
+// option lists.
 const nullLastCmp = (a, b) => {
   if (a == null && b == null) return 0
   if (a == null) return 1
@@ -1730,95 +1089,62 @@ const nullLastCmp = (a, b) => {
   return a.localeCompare(b)
 }
 
-// What the toolbar offers off the merged rows alone — none of it triage,
-// which a render follows without the rows changing. Kept for the rows it
-// was read from: getMergedGroups hands back the same array until the
-// loaded set, a lens or the links change, and the paths, repos and run
-// meta it reads never change once a finding is ingested. Kept by the
-// deps dir and the layer as well, which decide `isModule` and the
-// ruled-out rows priority reads.
+// The analyzer options' order: known source-marked producers first, in
+// SOURCE_LABELS' order, then the rest, the null bucket last.
+const SOURCE_ORDER = Object.keys(SOURCE_LABELS)
+const analyzerRank = (a) => {
+  if (a == null) return Infinity
+  const i = SOURCE_ORDER.indexOf(a)
+  return i === -1 ? SOURCE_ORDER.length : i
+}
+
+// What the toolbar offers off the merged rows alone (none of it triage,
+// which a render follows without the rows changing), kept for the rows it
+// was read from: getMergedGroups hands back the same array until the set,
+// a lens or the links change, and the paths, repos and run meta read here
+// never change once a finding is ingested. Keyed by the deps dir and the
+// layer as well, which decide `isModule` and the rows priority reads.
 let rowFacts = null
 function mergedRowFacts(mergedGroups) {
   const key = [mergedGroups, depsDirName(), revalidationShown()]
   if (rowFacts?.key.every((k, i) => k === key[i])) return rowFacts
-  // Priority is offered only when it can order every row. In App view an
-  // App row's source copy cannot supply the missing value: rows carrying App
-  // entries need priority on an App entry as well (see priorityApplies).
-  const hasAnyPriority = priorityApplies(mergedGroups)
-  const hasAnyModulesPath = mergedGroups.some((g) => g.some((f) => isModule(f.file)))
-  const hasAnySourcePath = mergedGroups.some((g) => g.some((f) => !isModule(f.file)))
-  // File sort is only meaningful across multiple files — a single-file
-  // dataset would have nothing to reorder at the file level, so drop
-  // the option from the dropdown and guard against a stale selection
-  // below (matches the confidence / priority drops).
-  let hasMultipleFiles = false
-  let sawFirstFile = false
-  let firstFindingFile
-  outer: for (const g of mergedGroups) {
-    for (const f of g) {
-      if (!sawFirstFile) { sawFirstFile = true; firstFindingFile = f.file }
-      else if (f.file !== firstFindingFile) { hasMultipleFiles = true; break outer }
-    }
-  }
-  // Repo URL input is useful only when at least one finding could
-  // benefit from it: non-node_modules AND no per-finding repo.github.
-  const repoInputUseful = mergedGroups.some((g) => g.some((f) => !f.repo?.github && !isModule(f.file)))
-  // Single common per-finding `repo.github` across every non-module
-  // finding — drives the read-only repo chip in the header when the
-  // user doesn't need to type anything. `null` for mixed-repo loads
-  // (different findings carry different `repo.github`) so we don't
-  // mislead by showing one of several.
-  const perFindingRepos = new Set()
-  for (const g of mergedGroups) {
-    for (const f of g) {
-      if (!isModule(f.file) && f.repo?.github) perFindingRepos.add(f.repo.github)
-    }
-  }
-  const knownRepo = perFindingRepos.size === 1 ? [...perFindingRepos][0] : null
-  // Distinct analyzers + models across the loaded reports — the two
-  // dimension lists for the toolbar's analyzer/model dropdown. Built
-  // from mergedGroups (not the shownTriage-filtered allGroups) so the
-  // option lists stay stable when the user flips between live and
-  // trash views. Analyzers sort for a stable display order: known
-  // source-marked imports first (in SOURCE_LABELS' order), the null
-  // bucket last, the rest alphabetical between them. Models (pretty
-  // names — see modelOfFinding) sort alphabetically with the null
-  // bucket pinned last, same shape as the repo options below. A
-  // revalidation pass's own row gives its model to the Validation model
-  // column instead (filters.js matchesValidationModel), which App mode
-  // alone offers: with the layer off, no row is the pass's.
+  const findings = mergedGroups.flat()
+  // Analyzers and models off the merged rows, not the triage bucket's, so
+  // the lists hold still as the reader changes bucket. A revalidation
+  // pass's own row gives its model to the Validation model column (filters.js
+  // matchesValidationModel), which only App mode, holding those rows, offers.
   const analyzerSet = new Set()
   const modelSet = new Set()
   const validationModelSet = new Set()
-  for (const g of mergedGroups) {
-    for (const f of g) {
-      analyzerSet.add(f._analyzer ?? null)
-      ;(isRevalidation(f) ? validationModelSet : modelSet).add(modelOfFinding(f))
-    }
+  for (const f of findings) {
+    analyzerSet.add(f._analyzer ?? null)
+    ;(isRevalidation(f) ? validationModelSet : modelSet).add(modelOfFinding(f))
   }
-  const knownOrder = Object.keys(SOURCE_LABELS)
-  const rank = (a) => {
-    if (a == null) return Infinity
-    const i = knownOrder.indexOf(a)
-    return i === -1 ? knownOrder.length : i
-  }
-  const analyzerOptions = [...analyzerSet].toSorted((a, b) => {
-    const ai = rank(a)
-    const bi = rank(b)
-    if (ai !== bi) return ai - bi
-    return String(a ?? '').localeCompare(String(b ?? ''))
-  })
-  const modelOptions = [...modelSet].toSorted(nullLastCmp)
-  const validationModelOptions = [...validationModelSet].toSorted(nullLastCmp)
-  const runFiltersShown = runFiltersOffered(mergedGroups, { analyzers: analyzerSet, models: modelSet, validationModels: validationModelSet })
+  // The one `repo.github` every non-module finding carrying one shares,
+  // for the read-only repo chip; null for a mixed load.
+  const perFindingRepos = new Set(findings.filter((f) => !isModule(f.file) && f.repo?.github).map((f) => f.repo.github))
   rowFacts = {
-    key, hasAnyPriority, hasAnyModulesPath, hasAnySourcePath, hasMultipleFiles, repoInputUseful, knownRepo,
-    analyzerSet, modelSet, validationModelSet, analyzerOptions, modelOptions, validationModelOptions, runFiltersShown,
+    key,
+    // Only where it can order every row: in App view, App rows need it on
+    // an App entry (filters.js priorityApplies).
+    hasAnyPriority: priorityApplies(mergedGroups),
+    hasAnyModulesPath: findings.some((f) => isModule(f.file)),
+    hasAnySourcePath: findings.some((f) => !isModule(f.file)),
+    // A single file has nothing to reorder at the file level.
+    hasMultipleFiles: findings.some((f) => f.file !== findings[0].file),
+    // The repo input helps only a non-module finding without a repo.
+    repoInputUseful: findings.some((f) => !f.repo?.github && !isModule(f.file)),
+    knownRepo: perFindingRepos.size === 1 ? [...perFindingRepos][0] : null,
+    analyzerSet, modelSet, validationModelSet,
+    analyzerOptions: [...analyzerSet].toSorted((a, b) => analyzerRank(a) - analyzerRank(b) || String(a ?? '').localeCompare(String(b ?? ''))),
+    modelOptions: [...modelSet].toSorted(nullLastCmp),
+    validationModelOptions: [...validationModelSet].toSorted(nullLastCmp),
+    runFiltersShown: runFiltersOffered(mergedGroups, { analyzers: analyzerSet, models: modelSet, validationModels: validationModelSet }),
   }
   return rowFacts
 }
 
-// What the detail stop of the App switch would hand back (see canDetailLayer
+// What the detail stop of the App switch would hand back (canDetailLayer
 // in renderImpl), read raw off the revalidation layer's rows and kept for
 // them: getRevalidationGroups hands back the same array until the set or
 // the links change, and the stamps it reads are the reports' own.
@@ -1851,13 +1177,12 @@ function detailLayerFacts(groups, workspace) {
 }
 
 // Facts about the loaded set alone, each kept for the reports it was read
-// from — by identity, which is what changes when the set does: a report
-// is never changed once it is ingested, and render asks these of every
-// finding on every draw.
+// from, by identity: a report never changes once ingested, and render asks
+// these of every finding on every draw.
 const sameReports = (kept, reports) => kept.length === reports.length && kept.every((r, i) => r === reports[i])
 
-// While a team's board is drawn from a copy leaving rows out, what those rows
-// tell the team's view offers beside its App view (managed-details.js
+// While a team's board is drawn from a copy leaving rows out, what those
+// rows tell the view offers beside its App view (managed-details.js
 // managedDetailsLens), in place of what its rows on hand would.
 const teamLens = () => state.currentWorkspace ? managedDetailsLens() : null
 
@@ -1872,9 +1197,8 @@ function loadedCanDropRevalidation() {
 }
 
 // Whether any loaded finding is upstream code, its stamps settled first.
-// Kept by the deps dir as well: the stamps follow it, and only it (format.js
-// stampUpstreamFindings), so with neither changed the walk would find what
-// it found last time and write nothing.
+// Keyed by the deps dir as well, which alone the stamps follow (format.js
+// stampUpstreamFindings): with neither changed, the walk would write nothing.
 let upstreamFacts = { reports: [], depsDir: null, value: false }
 function loadedUpstream() {
   const depsDir = depsDirName()
@@ -1899,27 +1223,25 @@ function loadedAnalyzerTags(single) {
   return analyzerTags.tags
 }
 
-// The revalidation mode a CONFLICT took away, held until the set that
-// carried it is gone (see the conflict branch in renderImpl). Module
-// state rather than `state`: it is this module's bookkeeping between
-// renders, not anything a view persists or a component reads.
+// The revalidation mode a CONFLICT took away, held until the set carrying
+// it is gone: this module's bookkeeping between renders, not view state.
 let modeBeforeConflict = null
 
-// `held` where the loaded reports are a team board's copy leaving out rows
-// App mode does not show (managed-details.js managedDetailsFolded): the
-// rows that would tell whether the layer can come off, or an upstream lens
-// has ground, may be among them, so the reader's lens is left as they had it
-// until the whole reports tell.
+// Settle the App layer for the loaded set, before anything reads a
+// `revalidate` value (format.js configureRevalidation); returns whether the
+// switch is offered. A set it isn't offered for goes back ONTO the layer
+// (off would only drop the pass's own rows, with no control to bring them
+// back); a set whose reports CONTRADICT each other about the pass comes off
+// it and stays off, as dedup would keep whichever copy loaded first — the
+// mode it took away is given back on leaving that set. `held` where the
+// reports are a team board's copy leaving out rows App mode doesn't show
+// (managed-details.js managedDetailsFolded): rows that could tell whether
+// the layer can come off, or an upstream lens has ground, may be among
+// them, so the reader's lens stays as they had it.
 export function configureReportRevalidation({ held = false } = {}) {
   const conflicted = state.revalidateConflicts.size > 0
   const canDropLayer = !conflicted && loadedCanDropRevalidation()
   if (conflicted) {
-    // Remember the mode the conflict takes away, so leaving that set
-    // gives it back. Without it the next report opens in the code
-    // view — its outcome default computed with the layer off — for a
-    // disagreement in a set the reader has already left, and with no
-    // switch on screen while the conflict lasted there was no moment
-    // at which they chose it.
     if (state.showRevalidation !== false) {
       modeBeforeConflict = state.showRevalidation
       state.showRevalidation = false
@@ -1931,8 +1253,8 @@ export function configureReportRevalidation({ held = false } = {}) {
     }
     if (!canDropLayer && state.showRevalidation === false && !held) state.showRevalidation = true
   }
-  // Clear a lens left on by a previous report before configuring the display
-  // and opening filters for a set without upstream findings.
+  // A lens left on by a previous report goes before the display and the
+  // opening filters are configured for a set without upstream findings.
   if (state.upstreamOnly && !held && (!canDropLayer || state.showRevalidation === false || !loadedUpstream())) {
     state.upstreamOnly = false
   }
@@ -1941,79 +1263,73 @@ export function configureReportRevalidation({ held = false } = {}) {
 }
 
 // The bundle Graph tab's live canvas attachment and what it was built
-// from — lets a re-render that can't change the canvas skip re-attaching
-// it (see the bundles branch of renderImpl).
+// from, so a re-render that can't change the canvas keeps it.
 let bundleGraphAttachment = null
+
+// The bundle Graph tab: the findings graph's canvas fed bundle-synthesised
+// data, into the slot render-bundle.js emits. The first open loads the lazy
+// ui/graph.js (attachGraphLayout renders the host, then refreshes its
+// panels and wires the canvas). With Issues off the canvas draws no
+// findings, so a re-render that leaves this bundle's view alone changes at
+// most the topbar's Issues switch: the live canvas stays and the host only
+// takes its new options. View switches tear it down (cleanupGraph2).
+function renderBundleGraph(details) {
+  const graphSlot = document.querySelector('#bundle-graph-slot')
+  if (!graphSlot) return
+  const prep = buildBundleGraphData(state.bundleDetails)
+  if (!prep) return
+  setCurrentBundleGraphPrep(prep)
+  const options = {
+    // Every file always shows, so no "All files" toggle.
+    hideAllFiles: true,
+    triageCounts: countBundleTriageBuckets(state.bundleDetails, new Set(prep.strippedToOrig.values())),
+    triageStates: ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored'],
+    // Per-file graph or one node per package, offered from 3 packages up.
+    showPackagesView: prep.canPackagesView,
+    showBundleLayouts: true,
+    // The Issues switch, where findings matched this bundle's files.
+    hasIssues: prep.hasIssues,
+  }
+  const attached = bundleGraphAttachment
+  const host = graphSlot.querySelector('graph-layout')
+  if (!prep.issuesShown && attached && !attached.issuesShown && host
+      && attached.state === graph2.graphState && attached.details === details && attached.reason === graph2.bundleReason) {
+    host.options = options
+    return
+  }
+  bundleGraphAttachment = null
+  void attachGraphLayout(graphSlot, prep, options, refreshBundleGraphSidebar, refreshBundleGraphTopPkgs).then((attachedHost) => {
+    if (attachedHost && graph2.graphState) {
+      bundleGraphAttachment = { state: graph2.graphState, details, reason: graph2.bundleReason, issuesShown: prep.issuesShown }
+    }
+    return null
+  })
+}
 
 function renderImpl() {
   if (!getLinksPreview()) closeLinksPreview()
   mountBundleSourceOverlay()
-  // Recompute the active deps dir before any helper consults it
-  // (isModule / packageOf / stripPackagePrefix / pkgRelative). The
-  // detection scans paths in the loaded reports + tree blobs to
-  // pick `node_modules` (preferred when present) vs `dependencies`
-  // (fallback). Once per render is enough — every helper call below
-  // sees the freshly chosen dir.
+  // The deps dir (`node_modules`, else `dependencies`) before any helper
+  // consults it (isModule / packageOf / …), and the installs whose upstream
+  // a loaded finding names at a commit (format.js evidenceUrl).
   configureDepsDir(state.reports)
-  // And the installs whose upstream a loaded finding names at a commit,
-  // which evidence rows in them link to (format.js evidenceUrl).
   configureDependencyRepos(state.reports)
   if (migrateLoadedIgnores()) queueMicrotask(() => { void saveTriage() })
-  // With the dir settled, the source-layer findings that sit in it can
-  // be marked as upstream code. Idempotent — it only fills a field in —
-  // and kept for the set and the dir, so a re-render walks nothing.
-  const anyUpstream = loadedUpstream()
-  // Same deal for the revalidation layer — the toolbar's "App" switch.
-  // Hand format.js the mode before anything reads a `revalidate` value
-  // through it, and every helper below sees one answer for this render
-  // (see the note over configureRevalidation). group.js reads
-  // `state.showRevalidation` directly for the row-dropping pass, since
-  // getMergedGroups is reachable from outside a render.
-  //
-  // Whether the switch is offered at all decides the mode first: a set
-  // it isn't offered for is forced back ONTO the layer, the way the
-  // stale filter clears further down put an unreachable selection
-  // back. A report loaded while the switch was off would otherwise
-  // open with the pass's rows dropped and no control on screen to
-  // bring them back — and for a set with nothing the pass ruled out,
-  // dropping those rows is all "off" would ever do (format.js
-  // canDropRevalidation). Written only when it actually differs, since
-  // this runs on every render and `state` is observed.
-  //
-  // A set whose reports CONTRADICT each other about the pass goes the
-  // other way: the layer comes off and stays off. Two copies of one
-  // finding in a mergeable row under two different `revalidate*` answers (via
-  // finding-duplicates.js mergeDuplicateFields) means the view cannot say what the
-  // pass concluded — dedup keeps whichever loaded first, so the app
-  // view would be one report's verdicts chosen by an accident of read
-  // order. Show code mode and a conflict inspection button in that case.
+  // With the dir settled, upstream code is stamped (idempotent, and kept for
+  // the set and the dir). The upstream lens is offered wherever the SET
+  // holds such a finding — read off the reports, not the groups the lens
+  // itself left drawn, or it would take its own ground away.
+  const canUpstreamLens = loadedUpstream()
+  // The App layer's mode, settled before anything reads a `revalidate`
+  // value (group.js reads `state.showRevalidation` itself, as getMergedGroups
+  // is reachable outside a render).
   const canDropLayer = configureReportRevalidation({ held: Boolean(managedDetailsFolded()) })
-  // The upstream lens is offered wherever the SET holds an upstream
-  // finding. Read off the reports rather than the groups on screen, for
-  // the same reason the layer above reads raw: answered from what the
-  // lens itself left drawn, the control would keep itself lit and then
-  // take its own ground away. `isUpstream` is stamped just above
-  // (stampUpstreamFindings), so this sees the settled answer.
-  const canUpstreamLens = anyUpstream
-  // configureReportRevalidation already cleared a stale upstream lens before
-  // configuring the display, so the first render sees the correct mode.
-  // Print-button body class is owned by an observer-util autorun (see
-  // view/print-btn-visibility.js) — render() must not touch it.
-  // Bundles view — paints from `state.bundles` (cached by
-  // renderSidebar's listBundles call), so it stays paint-only here.
-  // Lives before the reports-gate below because the bundles list is
-  // independent of any loaded report; the user can browse OPFS
-  // bundles even without a finding-bearing JSON open.
-  // A lockfile dropped in local or e2e mode, open alone in an editor of its
-  // own and never saved (lockfile-drop.js). Gone, as no view keeps it, it
-  // leaves for the findings as an emptied bundles view does.
+  // The paint-only views, which need no loaded report.
+  // A lockfile dropped in local or e2e mode (lockfile-drop.js), never saved:
+  // gone, it leaves for the findings.
   if (state.currentView === 'lockfile') {
     if (state.droppedLockfile) {
-      const slot = ensureReportSlot('dropped-lockfile-slot')
-      if (slot) litRender(renderDroppedLockfile(state.droppedLockfile), slot)
-      showReport()
-      document.title = `DeepView — ${state.droppedLockfile.name}`
-      return
+      return paint('dropped-lockfile-slot', () => renderDroppedLockfile(state.droppedLockfile), `DeepView — ${state.droppedLockfile.name}`)
     }
     state.currentView = 'findings'
   }
@@ -2021,92 +1337,24 @@ function renderImpl() {
     const kind = state.currentView.slice(10)
     const context = workspaceContent(state, listWorkspaces(), getKind)
     const slot = ensureReportSlot('workspace-content-slot')
-    if (slot) litRender(renderWorkspaceContent(context, kind), slot)
+    litRender(renderWorkspaceContent(context, kind), slot)
     document.title = context ? `${context.title} — ${kind}` : `DeepView — ${kind}`
     return
   }
+  // The bundles list paints from `state.bundles` (cached by the sidebar).
+  // The last bundle deleted between renders drops back to the findings.
   if (state.currentView === 'bundles') {
     if ((state.bundles ?? []).length === 0) {
-      // Defensive fallback — the sidebar header that drove the user
-      // into this view is suppressed when no bundles exist, but the
-      // last bundle could've been deleted between renders. Drop back
-      // to findings rather than render an empty list.
       state.currentView = 'findings'
     } else {
       if (bundleNeedsSources(state.bundleDetailsTab, state.bundleSourceFile)) ensureBundleSources().catch(() => {})
       const slot = ensureReportSlot('bundles-slot')
-      if (slot) litRender(renderBundlesList(state.bundles), slot)
+      litRender(renderBundlesList(state.bundles), slot)
       const details = state.bundleDetails
       const bundleOpen = state.selectedBundle && details && (details.json || details.bundle)
-      // Bundle graph tab — populate the slot emitted by
-      // `renderBundleSlide`'s `choose(tab, ...)` ladder (in
-      // render-bundle.js) with the same renderGraph2Layout the
-      // findings tab uses, fed bundle-synthesised graph data. The
-      // two refresh helpers fill the right-panel slots; attaching
-      // the canvas wires hover / click / pan / zoom onto the new
-      // DOM.
-      if (bundleOpen && state.bundleDetailsTab === 'graph') {
-        const graphSlot = document.querySelector('#bundle-graph-slot')
-        if (graphSlot) {
-          const prep = buildBundleGraphData(state.bundleDetails)
-          if (prep) {
-            setCurrentBundleGraphPrep(prep)
-            const triageCounts = countBundleTriageBuckets(state.bundleDetails, new Set(prep.strippedToOrig.values()))
-            // The triage selector inside the bundle graph topbar
-            // reads `state.shownTriage` directly (via
-            // `<triage-selector>`); the bundle path always uses the
-            // 4-bucket form (no `ignored` — that's a per-report
-            // concern).
-            const options = {
-              // The bundle graph always shows every file, so it carries
-              // no "All files" toggle (that's a findings-tab control).
-              hideAllFiles: true,
-              triageCounts,
-              triageStates: ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored'],
-              // Bundle-only "Packages" toggle — per-file graph
-              // (default) vs. one node per package. Hidden below 3
-              // packages, where the package graph carries no signal.
-              showPackagesView: prep.canPackagesView,
-              showBundleLayouts: true,
-              // Offers the topbar's Issues switch only when findings
-              // matched this bundle's files.
-              hasIssues: prep.hasIssues,
-            }
-            // First open of the graph tab triggers the dynamic
-            // import of `ui/graph.js` (LitElement + ~37 KB shadow
-            // CSS + canvas.js); subsequent opens are a no-op
-            // module-cache hit. attachGraphLayout owns the
-            // post-load sequence: render the host, await its first
-            // shadow update, fire the refresh helpers + wire the
-            // canvas interaction.
-            // With Issues off the canvas draws no findings, so a re-render
-            // from findings or file hashes arriving (or anything else that
-            // leaves this bundle's view alone) changes at most the topbar's
-            // Issues switch: keep the live canvas, without relayout or
-            // repaint, and hand the host its new options. View switches
-            // tear the attachment down (cleanupGraph2), so they still rebuild.
-            const attached = bundleGraphAttachment
-            const host = graphSlot.querySelector('graph-layout')
-            if (!prep.issuesShown && attached && !attached.issuesShown && host
-                && attached.state === graph2.graphState && attached.details === details && attached.reason === graph2.bundleReason) {
-              host.options = options
-            } else {
-              bundleGraphAttachment = null
-              void attachGraphLayout(graphSlot, prep, options,
-                refreshBundleGraphSidebar, refreshBundleGraphTopPkgs).then((attachedHost) => {
-                if (attachedHost && graph2.graphState) {
-                  bundleGraphAttachment = { state: graph2.graphState, details, reason: graph2.bundleReason, issuesShown: prep.issuesShown }
-                }
-                return null
-              })
-            }
-          }
-        }
-      }
-      // Terminal tab — lazy-load `ui/terminal.js` into the slot, which
-      // the Code tab's terminal pane renders too. The attach helper is
-      // idempotent for the same bundle (matched by `integrity`), so
-      // flipping tabs in and out preserves the running shell session.
+      if (bundleOpen && state.bundleDetailsTab === 'graph') renderBundleGraph(details)
+      // The terminal, in its tab or the Code tab's pane: attaching is
+      // idempotent per bundle, so tab flips keep the running shell.
       if (bundleOpen && !details.metadataOnly
           && (state.bundleDetailsTab === 'terminal' || state.bundleDetailsTab === 'code' && state.bundleCodeTerminal)) {
         const terminalSlot = document.querySelector('#bundle-terminal-slot')
@@ -2119,120 +1367,76 @@ function renderImpl() {
     }
   }
   if (state.currentView === 'reviews') {
-    const slot = ensureReportSlot('dependency-reviews-slot')
-    if (slot) litRender(withCompare(() => html`<dependency-review-list .session=${state.managedSession}></dependency-review-list>`), slot)
-    showReport()
-    document.title = 'DeepView — my reviews'
-    return
+    return paint('dependency-reviews-slot', () => withCompare(() => html`<dependency-review-list .session=${state.managedSession}></dependency-review-list>`), 'DeepView — my reviews')
   }
   if (state.currentView === 'profile') {
-    const slot = ensureReportSlot('managed-profile-slot')
-    if (slot) litRender(html`<managed-profile .session=${state.managedSession} .linkError=${state.profileLinkError}></managed-profile>`, slot)
-    showReport()
-    document.title = 'DeepView — profile'
-    return
+    return paint('managed-profile-slot', () => html`<managed-profile .session=${state.managedSession} .linkError=${state.profileLinkError}></managed-profile>`, 'DeepView — profile')
   }
   // The npm viewer's lookup page; a package it opens shows as a bundle, its
   // header already while it opens, in the slot it then shows in.
   if (state.currentView === 'npm') {
     const opening = state.npmOpening
-    const slot = ensureReportSlot(opening ? 'bundles-slot' : 'npm-slot')
-    if (slot) litRender(opening ? renderNpmOpening(opening) : renderNpmLookup(), slot)
-    showReport()
-    document.title = opening ? `DeepView — ${npmPackageInput(opening.name, opening.spec)}` : 'DeepView — npm packages'
-    return
+    return paint(opening ? 'bundles-slot' : 'npm-slot', () => opening ? renderNpmOpening(opening) : renderNpmLookup(),
+      opening ? `DeepView — ${npmPackageInput(opening.name, opening.spec)}` : 'DeepView — npm packages')
   }
-  // A repository's directory opening, or why it didn't; once it opens it
-  // shows as a bundle, its header the same, in the same slot.
+  // A repository's directory opening, or why it didn't; once open it shows
+  // as a bundle, in the same slot.
   if (state.currentView === 'repository-code') {
     const opening = state.repositoryCodeOpening
-    const slot = ensureReportSlot('bundles-slot')
-    if (slot && opening) litRender(renderRepositoryCodeOpening(opening), slot)
-    showReport()
-    document.title = `DeepView — ${opening?.repo ?? 'code'}`
-    return
+    return paint('bundles-slot', () => opening && renderRepositoryCodeOpening(opening), `DeepView — ${opening?.repo ?? 'code'}`)
   }
-  // Packages view — cross-report aggregation by package, fed by
-  // the OPFS-wide finding index (bundle-finding-index.js). Doesn't
-  // depend on state.reports — works the moment any report has
-  // landed in OPFS, even if it isn't the currently-loaded one.
-  if (state.currentView === 'packages') {
-    const slot = ensureReportSlot('packages-slot')
-    if (slot) litRender(renderPackagesView(), slot)
-    showReport()
-    document.title = 'DeepView — packages'
-    return
-  }
-  // Repositories view — same pattern as Packages (cross-report
-  // aggregation from the OPFS-wide finding index, no dependency
-  // on state.reports). Reuses the `packages-slot` shape via the
-  // shared `.packages-view` chrome the render-repositories.js
-  // module emits.
-  if (state.currentView === 'repositories') {
-    const slot = ensureReportSlot('repositories-slot')
-    if (slot) litRender(renderRepositoriesView(), slot)
-    showReport()
-    document.title = 'DeepView — repositories'
-    return
-  }
-  // Links view — one dropped links file, listing which findings it
-  // ties together and which reports hold them (render-links.js). Sits
-  // with the other paint-only branches because it reads no loaded
-  // report: a links file carries no findings, so `state.reports` is
-  // empty the whole time it's up and the gate below would drop it.
-  //
-  // `currentLinks` is set alongside the view by `switchToFile`, but a
-  // path that clears one without the other (or a future one that
-  // forgets to) would leave an empty page with no way out; fall back
-  // to findings rather than paint nothing, matching how the bundles
-  // branch handles losing its list.
+  // Cross-report aggregations off the OPFS-wide finding index
+  // (bundle-finding-index.js), not `state.reports`.
+  if (state.currentView === 'packages') return paint('packages-slot', renderPackagesView, 'DeepView — packages')
+  if (state.currentView === 'repositories') return paint('repositories-slot', renderRepositoriesView, 'DeepView — repositories')
+  // A links file: which findings it ties together and which reports hold
+  // them (render-links.js). It carries no findings, so `state.reports` stays
+  // empty while it is up. The sync badge is built here, from the workspace /
+  // remote state this module holds: a links file is a workspace member
+  // like any other. Without `currentLinks` it falls back to the findings.
   if (state.currentView === 'links') {
     if (state.currentLinks) {
-      const slot = ensureReportSlot('links-slot')
-      // The badge is built here, not there: it reads the workspace /
-      // remote state this module already holds, and a links file has
-      // the same claim on it as a report — it is a workspace member
-      // like any other, and its page is the one place that can say
-      // whether this device has shared it yet.
-      const preview = getLinksPreview()
-      if (slot) {
-        litRender(html`${renderLinksView(syncBadgeTemplate())}${
+      return paint('links-slot', () => {
+        const preview = getLinksPreview()
+        return html`${renderLinksView(syncBadgeTemplate())}${
           preview ? kanbanDetailTemplate(preview.group, null, [], preview) : nothing
-        }`, slot)
-      }
-      showReport()
-      document.title = `DeepView — ${state.currentLinks.name}`
-      return
+        }`
+      }, `DeepView — ${state.currentLinks.name}`)
     }
     state.currentView = 'findings'
   }
-  // Optional local/E2E scan surface. Its host owns navigation and transport.
+  // The optional local/E2E scan surface; its host owns navigation and transport.
   if (state.currentView === 'scan' && customElements.get('local-scan-page')) {
     const slot = ensureReportSlot('scan-slot')
-    if (slot && !slot.firstElementChild) {
+    if (!slot.firstElementChild) {
       const el = document.createElement('local-scan-page')
       el.selection = state.scanSelection
       slot.append(el)
-      void el.updateComplete.then(() => installShadowTooltipListener(el.renderRoot, {
-        gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
-      }))
+      void el.updateComplete.then(() => installTooltips(el.renderRoot))
     }
     showReport()
     document.title = 'DeepView — scans'
     return
   }
-  // Managed admin full pages — see ADMIN_VIEWS.
   const adminView = ADMIN_VIEWS[state.currentView]
   if (adminView) {
-    const slot = ensureReportSlot(adminView.slot)
-    slot?.classList.add('managed-page-slot')
-    const previous = slot?.firstElementChild?.session
-    if (previous?.id !== state.managedSession?.id || previous?.role !== state.managedSession?.role) slot?.replaceChildren()
-    if (slot && !slot.firstElementChild) {
-      const el = document.createElement(adminView.tag)
-      const installTooltips = root => installShadowTooltipListener(root, {
-        gate: target => !Object.hasOwn(target.dataset, 'tooltipTruncated') || target.scrollWidth > target.clientWidth,
-      })
+    const [name, word] = adminView
+    const tag = `managed-admin-${name}`
+    const slot = ensureReportSlot(`${state.currentView}-slot`)
+    slot.classList.add('managed-page-slot')
+    // Another session or role gets a fresh page.
+    const previous = slot.firstElementChild?.session
+    if (previous?.id !== state.managedSession?.id || previous?.role !== state.managedSession?.role) slot.replaceChildren()
+    const configure = (el) => {
+      el.session = state.managedSession
+      el.allowShare = state.managed?.allowShare === true
+      if (state.currentView === 'manage-scans') el.selection = state.scanSelection
+      if (state.currentView === 'manage-bundles') el.createRepoId = state.bundleCreationRepoId
+    }
+    if (slot.firstElementChild) {
+      configure(slot.firstElementChild)
+    } else {
+      const el = document.createElement(tag)
       el.localImportSource = createManagedLocalImportSource()
       if (state.currentView === 'manage-import') {
         el.localDeps = managedWorkspaceImportDeps()
@@ -2242,67 +1446,41 @@ function renderImpl() {
         el.confirmContentImport = openLocalContentImportDialog
         el.showTriageComparison = openTriageComparisonDialog
       }
-      el.session = state.managedSession
-      el.allowShare = state.managed?.allowShare === true
-      if (state.currentView === 'manage-scans') el.selection = state.scanSelection
-      if (state.currentView === 'manage-bundles') {
-        el.createRepoId = state.bundleCreationRepoId
-        el.installTooltips = installTooltips
-      }
+      configure(el)
+      // Nested pickers get the installer too: pointer transitions inside
+      // their shadow root are trimmed before reaching this outer one.
+      if (state.currentView === 'manage-bundles') el.installTooltips = installTooltips
       slot.append(el)
-      // The admin bundle is its own esbuild entry (no code splitting),
-      // so it can't import view/tooltip.js without duplicating the
-      // module — and with it the single `#styled-tooltip` node. Its
-      // role pickers / repo checkboxes carry `data-tooltip` inside
-      // shadow roots the document-level handler can't see, so wire the
-      // listener from here instead, on this bundle's instance, once
-      // the element has upgraded and painted. Pass the same installer
-      // to nested pickers: pointer transitions within their shadow root
-      // are trimmed before reaching this outer root.
+      // The admin bundle is its own esbuild entry (no code splitting), so it
+      // can't import view/tooltip.js without a second `#styled-tooltip`:
+      // wire this bundle's listener once the element has upgraded and painted.
       void (async () => {
-        await customElements.whenDefined(adminView.tag)
+        await customElements.whenDefined(tag)
         await el.updateComplete
         installTooltips(el.renderRoot)
       })().catch(() => {})
     }
-    if (slot?.firstElementChild) {
-      slot.firstElementChild.session = state.managedSession
-      slot.firstElementChild.allowShare = state.managed?.allowShare === true
-    }
-    if (state.currentView === 'manage-scans' && slot?.firstElementChild) slot.firstElementChild.selection = state.scanSelection
-    if (state.currentView === 'manage-bundles' && slot?.firstElementChild) slot.firstElementChild.createRepoId = state.bundleCreationRepoId
     showReport()
-    document.title = adminView.title
+    document.title = `DeepView — ${word}`
     return
   }
-  // Sync/presence notifications can render between clearing the report state
-  // and finishing a navigation load. Keep the current surface until navigation
-  // replaces it; Home and mode transitions explicitly clear the active view.
-  // So can a team's whole reports being ingested in place of its board's copy
-  // (managed-details.js).
+  // Sync / presence notifications can render between clearing the reports
+  // and a navigation's load finishing, as can a team's whole reports being
+  // ingested in place of its board's copy (managed-details.js): the current
+  // surface stays until the navigation replaces it.
   if (state.reports.length === 0 || managedDetailsReplacing()) {
     if (state.reports.length === 0 && state.currentWorkspace && document.querySelector('#empty-workspace-slot')) renderEmptyWorkspace()
     return
   }
-  // Merge across all loaded reports. Every entry is a Finding[] (a dedup
-  // group); single findings were wrapped at ingest, so downstream code
-  // doesn't branch on shape. The trash-view split happens here, not in
-  // applyFilters, so the "X of Y" counter and severity stats reflect
-  // the set currently being viewed (live groups, or the trash).
+  // Every loaded report's dedup groups, merged. The triage bucket splits
+  // here, not in applyFilters, so the "X of Y" counter and the stats are
+  // the bucket's; kanban shows every bucket as a column. One groupState
+  // pass (the priciest per-group helper) tallies the triage selector's
+  // counts too; a conflict group counts as live.
   const mergedGroups = getMergedGroups()
-  // Kanban view shows every triage bucket as a column, so it
-  // ignores the shownTriage single-bucket filter entirely; every
-  // other view-mode (table / list / grouped / graph) honours it.
   const isKanban = state.viewMode === 'kanban'
-  // Per-bucket counts drive the toolbar's triage-state segmented
-  // selector. Conflict groups stay in the "live" bucket (their
-  // commonTriage is null) regardless of which states their member
-  // tabs carry — matching the original behaviour. The shownTriage
-  // bucket split shares this loop so groupState — the priciest
-  // per-group helper — runs once per group here, not twice.
   const triageCounts = { inprogress: 0, fixed: 0, invalid: 0, deleted: 0, ignored: 0 }
   const allGroups = []
-  // Kept for the board below, which buckets by the same rollup.
   const groupStates = new Map()
   for (const g of mergedGroups) {
     const st = groupState(g)
@@ -2311,20 +1489,13 @@ function renderImpl() {
     if (t) triageCounts[t]++
     if (isKanban || t === state.shownTriage) allGroups.push(g)
   }
-  // The Confirmed lock needs the same ruled-out evidence as opening filters,
-  // even though those copies were removed before workspace rows were merged.
+  // The Confirmed lock needs the same ruled-out evidence as the opening
+  // filters, though a workspace removed those copies before its rows merged.
   Object.defineProperty(allGroups, 'ruledOutIds', { value: mergedGroups.ruledOutIds })
-  // The annotation filter group (comment | issue | fix | flag) self-gates
-  // per chip like the triage selector: a chip shows only once at least one
-  // finding carries that annotation (scanned over the full loaded set,
-  // independent of the active filters) — or while its filter is on, so a
-  // left-active filter can always be switched off. One pass for all four.
+  // Over the whole loaded set: whether any finding carries each annotation
+  // (comment / issue / fix / flag chips) or a severity correction (the
+  // corrected / original lens).
   let hasComment = false, hasFix = false, hasFlagged = false, hasIssue = false
-  // Same single pass also detects whether ANY finding carries a severity
-  // correction — gates the <severity-mode-switch> (scanned over the full
-  // loaded set, not just the active filter). Checked before the triage
-  // early-continue since a correction is report data, independent of any
-  // triage entry.
   let hasCorrectedSeverity = false
   for (const g of mergedGroups) {
     for (const f of g) {
@@ -2338,38 +1509,25 @@ function renderImpl() {
       if (e.flagged === true) hasFlagged = true
     }
   }
+  // Unlike the annotation chips, these filters go (and their selection
+  // with them) once no qualifying row remains. Duplicates is report-only;
+  // cross-context rows are offered outside App mode and App-stacked ones
+  // in it, each tested on the tabs the lens left; security needs rows on
+  // both sides, tested before filters so a side can't hide its own toggle.
   const duplicateIds = reportDuplicateIds()
   const hasDuplicates = mergedGroups.some((g) => g.some((f) => duplicateIds.has(f.id)))
-  // Unlike the annotation chips, this report-only filter disappears when
-  // no qualifying row remains (or on entering a workspace).
   if (!hasDuplicates) state.filterDuplicates = ''
-  // These two filters are mutually exclusive by lens. Cross-context rows
-  // are offered only outside App mode; App-stacked rows are offered in App
-  // mode, including underlying detail. Both predicates inspect the tabs after
-  // the active lens has narrowed the row.
   const hasCrossContext = allGroups.some(isCrossContextGroup)
   const hasAppStacked = allGroups.some(isAppStackedGroup)
   if (!hasCrossContext) state.filterCrossContext = ''
   if (!hasAppStacked) state.filterAppStacked = ''
-  // Test the available rows before filters, so selecting one side cannot hide
-  // its own toggle. Homogeneous sets have nothing to switch between.
   const showSecurity = hasSecurityContrast(allGroups)
   if (!showSecurity) state.filterSecurity = ''
-  // Which values of `revalidate` the rows ON SCREEN carry, which decide
-  // the outcomes the <revalidate-filter> can offer (one option covers
-  // more than one value — see REVALIDATE_FILTERS). The toolbar drops
-  // the control when nothing reaches an option, so the dropdown never
-  // lists one that filters to nothing.
-  //
-  // Over `allGroups`, not the whole load — the bucket the reader is in,
-  // like hasAnyConfidence above, and for the same reason: the two are
-  // one control (conf-filter.js), and a control has to be about what is
-  // in front of the reader. It is also what keeps an outcome from
-  // outliving the bucket it was chosen for. The selection is cleared
-  // below when it stops being reachable, so walking into a bucket
-  // nothing in it was ever stamped for hands back the range and the
-  // rows, rather than a list filtered to nothing under a count that
-  // says otherwise.
+  // The `revalidate` values on screen, which decide the outcomes the
+  // dropdown offers (REVALIDATE_FILTERS), over the bucket the reader is in
+  // like the confidence range it shares a block with: walking into a bucket
+  // nothing was stamped for hands back the range rather than a list
+  // filtered to nothing.
   const revalidateKinds = new Set()
   for (const g of allGroups) {
     for (const f of g) {
@@ -2377,244 +1535,127 @@ function renderImpl() {
       if (kind) revalidateKinds.add(kind)
     }
   }
-  // What the switch's DETAIL stop would hand back, asked of the set
-  // rather than of the view it is currently drawing: rows the
-  // simplified app view folds under the pass's (a `revalidation` row
-  // sharing its group with the analyzer's own — group.js drawnTabs),
-  // and partial stamps for the chip inside Confirmed to sort.
-  //
-  // Read RAW, past the layer's gate, which is what keeps the stop from
-  // coming and going under the reader's hand: gated, both answers
-  // would go empty the moment the switch reached its code stop, and
-  // the control would resize itself mid-click.
+  // What the switch's DETAIL stop would hand back — rows the simplified
+  // app view folds under the pass's (group.js drawnTabs), partial stamps for
+  // the chip inside Confirmed — asked of the set, RAW past the layer's
+  // gate: gated, both would go empty at the switch's code stop and the
+  // control would resize itself mid-click.
   const lens = teamLens()
   const { hasFoldedRows, hasPartialRow, hasRuledOutRow } = lens ? { hasFoldedRows: lens.detail, hasPartialRow: false, hasRuledOutRow: false }
     : detailLayerFacts(getRevalidationGroups(), Boolean(state.currentWorkspace))
-  // Preserve first-seen order for the type label so "security, correctness"
-  // reads in load order rather than alphabetical.
-  const types = [...new Set(state.reports.map((r) => r.type))]
-  const typeLabel = types.join(', ')
+  // Types in first-seen order: "security, correctness" reads in load order.
+  const typeLabel = [...new Set(state.reports.map((r) => r.type))].join(', ')
   const fileNames = state.reports.map((r) => r.fileName)
 
-  // Per-render applicability flags. The toolbar hides controls the
-   // user can't act on usefully, and the underlying filter state is
-   // forced back to its no-op value so a previously-set filter from
-   // a prior report can't keep findings hidden silently. Stats /
-   // sorting / include-exclude always make sense, so no flags for
-   // those.
-  // The slider shows where the range is a live control over the rows
-  // on screen — filters.js rangeApplies, which the opening auto-tune
-  // reads too, so the control and the answer it opens on can't
-  // disagree about whether the floor is running.
+  // Controls the reader can't act on usefully are hidden, and their filter
+  // state forced back to its no-op value, so a filter left set by a
+  // previous report can't silently hide findings.
   //
-  // Every row needs a spot on the 0–10 scale (confidenceOnScale, the
-  // same reader the range matches against): a real `confidence`, the
-  // `critical: true` flag (the boolean — NOT severity 'critical'), or
-  // coming from another producer. The last two read as 10, so they
-  // clear any min floor and are never silently dropped. An analyzer
-  // finding with no confidence and not critical has no spot, and
-  // vanishes the moment the user lifts min off 0 — so a single one of
-  // those disables the slider for the whole set.
-  //
-  // An import used to be one of those too, and it took the range away
-  // from every workspace holding one: a Claude Security report beside
-  // an analyzer's own left the control disabled at 0—10, filtering
-  // nothing, with every low-confidence row still on screen. It
-  // carries no confidence because its producer emits none, not
-  // because anyone was unsure, so it vouches for itself at the top of
-  // the scale rather than gating everyone.
-  //
-  // Riding the scale is not the same as establishing it, which is the
-  // other half of rangeApplies: a set of nothing but UNSCORED rows is
-  // all 10s, and gets no range at all rather than a disabled one. A
-  // producer that scores its findings establishes it like the
-  // analyzer does — a load of nothing but DeepSec reports gets the
-  // slider, the sort and the opening floor, over the numbers DeepSec
-  // wrote.
-  //
-  // The test is per-finding, not per-report: `critical` varies
-  // finding-to-finding, so a lone critical finding must not vouch for
-  // unscored, non-critical neighbours that would still be dropped.
-  //
-  // `allGroups` is already the on-screen set — the current
-  // state.shownTriage bucket on every layout but kanban (which shows
-  // all buckets at once) — so the gate is status-aware for free:
-  // viewing Untriaged with every untriaged finding scored shows the
-  // slider even when hidden buckets (fixed / ignored) hold unscored
-  // ones.
+  // The confidence range is a live control over the rows on screen
+  // (filters.js rangeApplies, which the opening auto-tune reads too): every
+  // row needs a spot on the 0–10 scale — a real `confidence`, the
+  // `critical: true` flag (NOT severity 'critical'), or another producer's
+  // row, which carries no confidence because its producer emits none and so
+  // reads as 10 — and a set of nothing but unscored rows doesn't establish
+  // one. Per finding, not per report, and over `allGroups` (the bucket on
+  // screen) so it is status-aware for free.
   const visibleAllGroups = allGroups.map(drawnTabs).filter((g) => g.length > 0)
   const hasAnyConfidence = visibleAllGroups.length > 0 && rangeApplies(visibleAllGroups)
   const {
     hasAnyPriority, hasAnyModulesPath, hasAnySourcePath, hasMultipleFiles, repoInputUseful, knownRepo,
     analyzerSet, modelSet, validationModelSet, analyzerOptions, modelOptions, validationModelOptions, runFiltersShown,
   } = mergedRowFacts(mergedGroups)
-  // If the previously-selected analyzer / model is no longer present
-  // (report unload / workspace switch), clear that dimension so a
-  // stale selection can't silently empty the list. Matches the same
-  // guard pattern used for source / confidence / sort below.
-  //
-  // Also clear when the dimension stops VARYING (size < 2): its
-  // column is omitted from the panel then, so a retained selection —
-  // vacuous as a filter, since every finding carries the lone value —
-  // would keep the trigger in its accented "filtering" state with no
-  // row left to clear it from. Same philosophy as filterSources being
-  // force-cleared when no modules path exists.
-  if (state.filterAnalyzer) {
-    const want = state.filterAnalyzer === NULL_ANALYZER_SENTINEL ? null : state.filterAnalyzer
-    if (!analyzerSet.has(want) || analyzerSet.size < 2) state.filterAnalyzer = ''
+  // An analyzer / model no longer present, or whose column stopped varying
+  // (the panel omits it then, leaving a vacuous selection no row can
+  // clear), would keep the list narrowed: clear it. The validation model's
+  // column shows with a single value too, wherever the dropdown does.
+  if (state.filterAnalyzer && (!analyzerSet.has(runFilterValue(state.filterAnalyzer, NULL_ANALYZER_SENTINEL)) || analyzerSet.size < 2)) state.filterAnalyzer = ''
+  if (state.filterModel && (!modelSet.has(runFilterValue(state.filterModel, NULL_MODEL_SENTINEL)) || modelSet.size < 2)) state.filterModel = ''
+  if (state.filterValidationModel && (!validationModelSet.has(runFilterValue(state.filterValidationModel, NULL_MODEL_SENTINEL)) || !runFiltersShown)) {
+    state.filterValidationModel = ''
   }
-  if (state.filterModel) {
-    const want = state.filterModel === NULL_MODEL_SENTINEL ? null : state.filterModel
-    if (!modelSet.has(want) || modelSet.size < 2) state.filterModel = ''
-  }
-  if (state.filterValidationModel) {
-    const want = state.filterValidationModel === NULL_MODEL_SENTINEL ? null : state.filterValidationModel
-    // Its column is offered with a single value too, wherever the
-    // dropdown is (analyzer-select.js, filters.js runFiltersOffered).
-    if (!validationModelSet.has(want) || !runFiltersShown) state.filterValidationModel = ''
-  }
-  // Same for a revalidation outcome the loaded set no longer reaches —
-  // a report unloaded out from under the selection would otherwise
-  // filter every finding away with no visible cause.
+  // Likewise a revalidation outcome the set no longer reaches.
   const revalidateOptions = reachableRevalidateFilters(revalidateKinds)
   if (state.filterRevalidate && !revalidateOptions.some((o) => o.value === state.filterRevalidate)) {
     state.filterRevalidate = ''
   }
   const confirmedLocked = shouldLockConfirmed(allGroups)
   if (confirmedLocked) state.filterRevalidate = 'confirmed'
-  // The partial switch rides inside the Confirmed option (see
-  // revalidate-filter.js), so it's offered only where there are
-  // partial rows to sort — and only in the DETAILED app view, since
-  // the stamps it sorts by ride the analyzer's own rows and the
-  // simplified one has folded those under the pass's (group.js
-  // drawnTabs), leaving nothing on screen to fall either side of the
-  // line it draws. A mode left set from a report that had them, or
-  // from the detailed view, is cleared here, or it would keep
-  // narrowing Confirmed with no control on screen to say so.
+  // The partial switch inside Confirmed (revalidate-filter.js) sorts the
+  // stamps on the analyzer's own rows, which only the DETAILED app view
+  // keeps on screen; a mode left set elsewhere would narrow Confirmed with
+  // no control saying so.
   const showPartial = revalidateKinds.has('partial') && underlyingFindingsShown()
   if (!showPartial) state.filterPartial = ''
-  // The switch's third stop — the detailed app view — offered where it
-  // would change something: rows folded under a pass row, or the
-  // partial line to draw. A property of the SET, not of the stop the
-  // switch is standing at, so the control keeps its size and its stops
-  // while the reader moves through them.
-  //
-  // Ruled-out rows count only outside a workspace. There they are dropped
-  // before the reports' rows merge, so that one app's refutation neither
-  // bridges two rows nor gap-fills another app's answer
-  // (workspace-groups.js hideRuledOut) — the stop has no way to hand them
-  // back, and offering it for a set whose only qualifying rows are those
-  // would put a control on screen that does nothing when clicked.
+  // The switch's detail stop, offered where it would change something: a
+  // property of the SET, so the control keeps its stops as the reader moves
+  // through them. Ruled-out rows count only outside a workspace, which
+  // drops them before its reports' rows merge (workspace-groups.js
+  // hideRuledOut), leaving the stop nothing to hand back.
   const canDetailLayer = canDropLayer
     && (hasFoldedRows || hasPartialRow || (!state.currentWorkspace && hasRuledOutRow))
-  // If a previously-loaded report had node_modules and the user
-  // narrowed the source filter, switching to a report without any
-  // node_modules paths would leave the filter at 'own' or 'modules'
-  // and silently empty the list. resetFilters() runs only on isFirst
-  // in ingest.js, so guard here too. Upstream view already selects only
-  // dependencies, so hide the redundant control and clear its selection.
-  // The source/dependency lens only makes sense when both sides exist. App
-  // mode already speaks for App findings, so it hides this code-level lens;
-  // when the App layer is unavailable, its effective behavior is code mode.
+  // The source / dependency lens needs both sides. App mode already speaks
+  // for App findings and the upstream view selects only dependencies, so
+  // both hide it (resetFilters runs only on a view's first report).
   const appModeActive = canDropLayer && state.showRevalidation !== false
   const showSource = !appModeActive && !state.upstreamOnly && hasAnyModulesPath && hasAnySourcePath
   if (!showSource && state.filterSources.size > 0) state.filterSources.clear()
+  // Sorts drop out of the dropdown with what they sort by.
   if (!hasAnyConfidence) {
     state.filterConfMin = 0; state.filterConfMax = 10
-    // Sort options for confidence drop out alongside the filter, so a
-    // user-set confidence sort would stay selected against an absent
-    // option in the dropdown and applySorting would fall through to
-    // its `?? -1` placeholder. Reset to 'file' when that happens.
     if (state.sortBy === 'confidence-desc' || state.sortBy === 'confidence-asc') state.sortBy = 'severity'
   }
-  // Same guard for priority — the option drops out of the dropdown
-  // when no finding carries it, so a stale state.sortBy would point
-  // at a non-existent option and applySorting would shuffle on `?? -1`.
   if (!hasAnyPriority && (state.sortBy === 'priority-desc' || state.sortBy === 'priority-asc')) {
     state.sortBy = 'severity'
   }
   if (!hasMultipleFiles && state.sortBy === 'file') state.sortBy = 'severity'
 
+  // Severity / color stats count each surviving row once per value its
+  // visible tabs hold (App mode's folded source tabs excluded).
   const selectorGroups = applyScopeFilters(allGroups)
-  // Severity/color stats count each surviving row once per value its
-  // visible tabs contain, excluding source tabs folded away by App mode.
   const counts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
   const colorCounts = { red: 0, blue: 0, green: 0, gray: 0, none: 0 }
+  const bump = (tally, key) => { tally[key] = (tally[key] || 0) + 1 }
   for (const g of selectorGroups) {
-    if (g.length === 1) {
-      const sev = displayedSeverity(g[0], state.severityMode)
-      counts[sev] = (counts[sev] || 0) + 1
-      const color = triageEntry(g[0])?.color ?? 'none'
-      colorCounts[color] = (colorCounts[color] || 0) + 1
-      continue
-    }
-    const sevs = new Set(g.map((f) => displayedSeverity(f, state.severityMode)))
-    for (const sev of sevs) counts[sev] = (counts[sev] || 0) + 1
-    const colors = new Set(g.map((f) => triageEntry(f)?.color ?? 'none'))
-    for (const color of colors) colorCounts[color] = (colorCounts[color] || 0) + 1
+    for (const sev of new Set(g.map((f) => displayedSeverity(f, state.severityMode)))) bump(counts, sev)
+    for (const color of new Set(g.map((f) => triageEntry(f)?.color ?? 'none'))) bump(colorCounts, color)
   }
-  // Repository choices follow source/confidence/outcome filtering within
-  // the active App/underlying/upstream lens, before the other filters.
-  // Null represents findings with no known repo.
+  // Repository choices within the same selectors and lens; null is the
+  // no-repo bucket. A scope filter or workspace change can remove the pick.
   const repoSet = repositoryFilterValues(selectorGroups)
   const repoOptions = [...repoSet].toSorted(nullLastCmp)
-  // A scope filter or workspace change can remove the selected repo.
-  if (state.filterRepo) {
-    const want = state.filterRepo === NO_REPO_SENTINEL ? null : state.filterRepo
-    if (!repoSet.has(want)) state.filterRepo = ''
-  }
+  if (state.filterRepo && !repoSet.has(runFilterValue(state.filterRepo, NO_REPO_SENTINEL))) state.filterRepo = ''
 
   const filtered = applySorting(applyFilters(allGroups))
 
-  // Two top-level views: the default `findings` (table / list /
-  // grouped / graph view-modes — chrome owned by render() below)
-  // and `files` (per-file tree, reached via the page-header Files
-  // toggle). Files is gated on a tree-bearing report with >1 file;
-  // a single-file tree adds no navigation value. Stale state on a
-  // report swap (or workspace switch) auto-falls back to findings.
-  // `treeData` merges across every loaded report so a workspace
-  // with N reports surfaces the union of their files / edges —
-  // matches the findings merge above and the canvas merge inside
-  // buildGraph2Data.
-  // A team's reports tell how many files their trees hold, the trees asked
-  // for once its graph or Files shows, which says it is loading meanwhile
-  // (managed-trees.js).
+  // The Files view and the graph view mode need a tree of more than one
+  // file, merged across the loaded reports; stale state on a report swap
+  // falls back to the findings. A team's reports tell how many files their
+  // trees hold, the trees asked for once its graph or Files shows
+  // (managed-trees.js), loading meanwhile.
   const treeData = mergeReportsTree(state.reports)
   const treeFileCount = treeData ? Object.keys(treeData).length : state.reports.reduce((sum, r) => sum + (r.treeFiles ?? 0), 0)
   const treesLoading = treeFileCount > 1 && !treeData && (state.currentView === 'files' || state.viewMode === 'graph')
     && loadManagedTrees(loaded => { if (!loaded) leaveTrees(); render() })
   const treeAvailable = treeFileCount > 1
-  // A team's board is drawn before its findings have their detail; any other
-  // view mode waits for it, saying it is loading, or that it never came, as
-  // does a lens other than App's where the board's copy folded rows under
-  // their App row, and where it holds only the rows its App view shows, any
-  // view but that one: the whole team's, on Confirmed (managed-details.js).
+  // A team's board is drawn before its findings have their detail; any
+  // other view mode waits for it, saying it is loading or that it never
+  // came, as does a lens other than App's where the board's copy folded
+  // rows under their App row, and where it holds only the rows its App view
+  // shows, any view but that one: the whole team's, on Confirmed
+  // (managed-details.js).
   const appLens = revalidationShown() && !underlyingFindingsShown()
   const folded = managedDetailsFolded()
   const drawnFromCopy = !folded || appLens && (folded === 'rows' || Boolean(state.currentWorkspace) && state.filterRevalidate === 'confirmed')
   const detailsWaiting = state.viewMode === 'kanban' && drawnFromCopy ? null : managedDetailsWaiting()
-  // Same shape as the sort-priority drop above — `graph` is only a
-  // valid view-mode while a tree-bearing report is loaded; if the
-  // user previously picked it and the underlying data went away
-  // (workspace switch, report unload), fall back to the default
-  // kanban board so a stale selection can't render an empty body.
   if (!treeAvailable || !treeData && !treesLoading) leaveTrees()
 
-  // `headerTemplate` returns a Lit template — slot reuse below
-  // ensures the part-cache survives across renders so Lit can
-  // diff in place rather than rebuilding the chrome on every
-  // render() (see the slot-reuse PRs in the bundles / files /
-  // findings paths).
   const headerTpl = headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, treeFileCount)
 
   if (state.currentView === 'files') {
     const findingCounts = computeFindingCountsByFile(mergedGroups, state.severityMode)
-    // Reuse the existing slots across renders so Lit's part-cache
-    // (keyed on each slot element) survives — without this guard
-    // every render() wiped #report, the slot elements were fresh,
-    // and the file tree got fully rebuilt instead of diffed (lost
-    // scroll, lost expand state). Recreate only on cross-view
-    // entry, detected by the slots' presence as #report children.
+    // The slots are reused across renders, so Lit diffs the tree in place
+    // (scroll and expand state kept); rebuilt only on arrival.
     let fHeader = document.querySelector('#header-slot')
     let treeSlot = document.querySelector('#tree-view-slot')
     if (!fHeader || !treeSlot || !report.contains(fHeader) || !report.contains(treeSlot)) {
@@ -2622,52 +1663,28 @@ function renderImpl() {
       treeSlot = reportSlot('tree-view-slot')
       report.replaceChildren(fHeader, treeSlot)
     }
-    if (fHeader) litRender(headerTpl, fHeader)
-    if (treeSlot) litRender(treeData ? renderTreeView(treeData, findingCounts) : loadingTemplate('files'), treeSlot)
+    litRender(headerTpl, fHeader)
+    litRender(treeData ? renderTreeView(treeData, findingCounts) : loadingTemplate('files'), treeSlot)
     showReport()
     document.title = `DeepView — ${typeLabel || 'no analyzer'}`
     return
   }
 
-  // Wrap the findings-only body in a max-width container so the
-  // header + tabs above can span full width (giving the graph
-  // tabs more room to breathe), while finding cards stay
-  // readable at typewriter widths. The wrapper is left-aligned,
-  // not centered: the page reads top-down with the dense tab
-  // bar full-bleed and the finding list anchored against the
-  // sidebar edge with empty space to the right at wide
-  // viewports.
-  //
-  // When the table view has its details panel open, the wrapper
-  // expands to accommodate both the 1200px list + the 800px
-  // details panel side-by-side (max 2000px). The .with-details
-  // modifier flips the cap; CSS handles the rest.
+  // The findings body sits in a capped, left-aligned wrapper (the header
+  // spans the page); `.with-details` widens it for the table's list +
+  // details, and graph mode lifts the cap for the canvas, which brings the
+  // view-mode chooser into its own topbar instead of a toolbar above it.
   const tableWithDetails =
     state.viewMode === 'table' &&
     state.tableSelectedGid &&
     filtered.some((g) => groupKey(g) === state.tableSelectedGid)
-  // Graph view-mode within the Findings tab swaps the table/list/grouped
-  // body for the same canvas the dedicated Graph tab uses. The
-  // wrapper drops its max-width cap so the graph layout (a CSS grid
-  // with 1fr stage + 300px sidebar) can spread across the full
-  // viewport like the standalone Graph tab does. The view-mode
-  // chooser moves INSIDE the graph2 topbar (as an extra row) so
-  // there's a single toolbar instead of stacking a Findings-tab
-  // toolbar above the graph's own — see the
-  // `extraTopRow` argument to renderGraph2Layout below.
   let g2DataForBody = null
   if (state.viewMode === 'graph' && treeData && !detailsWaiting) {
     g2DataForBody = buildGraph2Data()
-    // Tree disappeared between the treeAvailable gate and buildGraph2Data
-    // (workspace switch race); fall back to the default kanban view so
-    // we don't render an empty graph slot.
+    // The tree gone since the gate above (a workspace switch race).
     if (!g2DataForBody) state.viewMode = 'kanban'
   }
   const renderGraphInBody = !!g2DataForBody
-
-  // Wrapper class — modifiers come and go between renders without
-  // changing the wrapper's identity, so we update className in
-  // place rather than rebuilding the element.
   let wrapperClass = 'findings-content'
   if (tableWithDetails) wrapperClass += ' with-details'
   if (renderGraphInBody) wrapperClass += ' with-graph'
@@ -2678,91 +1695,66 @@ function renderImpl() {
   let emptyStateTpl = nothing
   let bodyTemplate = nothing
   const selectedGroup = findingDetailGroup(filtered, state, prevFocusedIdx)
-  // Reset unconditionally (not just on the non-graph path) so a
-  // graph-mode render can't reattach a stale item list from the
-  // last table render.
+  // Reset on every path, so a graph render can't reattach a stale list.
   pendingTableItems = null
 
   if (!renderGraphInBody) {
-    toolbarTpl = toolbarTemplate(filtered.length, allGroups.length, triageCounts, counts, colorCounts, {
-      showSource,
-      showConfidence: hasAnyConfidence,
-      showPriority: hasAnyPriority,
-      showGraphMode: treeAvailable,
-      showFileSort: hasMultipleFiles,
-      kanbanMode: isKanban,
-      // Repo dropdown is workspace-only — single-file mode usually
-      // has exactly one repo, so the dropdown would either be empty
-      // or single-option, and the per-finding repo URL already
-      // shows on the header chip. Workspace merges (multiple
-      // reports stacked into one view) are where the user benefits
-      // from narrowing to a single repo.
-      showRepo: !!state.currentWorkspace,
-      hasComment,
-      revalidateOptions,
-      showPartial,
-      canDropLayer,
-      canDetailLayer,
-      canUpstreamLens,
-      confirmedLocked,
-      hasIssue,
-      hasFix,
-      hasFlagged,
-      hasDuplicates,
-      hasCrossContext,
-      hasAppStacked,
-      showSecurity,
-      // Corrected/Original lens switch — shown only when a correction
-      // exists in the loaded set, or while parked in 'original' so the
-      // user can always flip back (mirrors the annotation-filter rule).
-      showSeverityMode: hasCorrectedSeverity || state.severityMode === 'original',
-    },
-    // Counts use scope-filtered groups; analyzer/model option lists
-    // stay stable so values excluded by those filters can still show zero.
-    { shown: runFiltersShown, analyzers: analyzerOptions, models: modelOptions, validationModels: validationModelOptions, groups: scopeRows(allGroups) }, repoOptions)
-
-    // Empty-state line — slot-based so the typeLabel (which can carry
-    // user-controlled analyzer-type strings) flows through Lit's
-    // auto-escape rather than a hand-rolled `esc()`. Empty template
-    // when none of the empty-state branches matches.
-    //
-    // The last branch splits on whether the report contained any
-    // findings at all: an empty report reads as "No X issues found"
-    // (clean baseline), but a report whose findings have all been
-    // moved to a triage bucket reads as "All X issues triaged" so
-    // the user knows they cleared the queue rather than mistaking it
-    // for a no-op load.
-    //
-    // The filters-mismatch line is the one branch kanban sits out.
-    // The board renders either way, and each empty column already
-    // carries its own "No <bucket> findings." — six of them saying
-    // what the line would. It isn't just redundant: the slot is a
-    // flex child of `.findings-content.with-kanban` (report.css), so
-    // the line takes its height out of the board's `flex: 1` share
-    // and pushes the columns down every time a filter empties the
-    // view. The other two branches only fire on an empty loaded set,
-    // where the board has nothing to shift and the line is the only
-    // thing saying why.
+    toolbarTpl = toolbarTemplate({
+      filteredCount: filtered.length, allCount: allGroups.length, triageCounts, counts, colorCounts,
+      // Counts use the scope-filtered rows; the option lists stay stable so
+      // values those filters exclude can still show zero.
+      analyzerSelect: { shown: runFiltersShown, analyzers: analyzerOptions, models: modelOptions, validationModels: validationModelOptions, groups: scopeRows(allGroups) },
+      repoOptions,
+      flags: {
+        showSource,
+        showConfidence: hasAnyConfidence,
+        showPriority: hasAnyPriority,
+        showGraphMode: treeAvailable,
+        showFileSort: hasMultipleFiles,
+        kanbanMode: isKanban,
+        // A workspace's stacked reports are where narrowing to one repo
+        // helps; a single report's repo is on the header chip.
+        showRepo: !!state.currentWorkspace,
+        hasComment,
+        revalidateOptions,
+        showPartial,
+        canDropLayer,
+        canDetailLayer,
+        canUpstreamLens,
+        confirmedLocked,
+        hasIssue,
+        hasFix,
+        hasFlagged,
+        hasDuplicates,
+        hasCrossContext,
+        hasAppStacked,
+        showSecurity,
+        // While a correction exists, or while parked in 'original' so the
+        // reader can always flip back.
+        showSeverityMode: hasCorrectedSeverity || state.severityMode === 'original',
+      },
+    })
+    // The empty-state line, `typeLabel` (analyzer-controlled) escaped by Lit.
+    // An empty bucket of a load with findings says they were all triaged.
+    // Kanban sits out the filters line: each empty column says it already,
+    // and as a flex child of `.with-kanban` the line would push the board
+    // down whenever a filter empties the view.
     if (state.shownTriage && allGroups.length === 0) {
-      emptyStateTpl = html`<p style=${styleMap({ color: 'var(--muted)', margin: '1rem 0' })}>No ${state.shownTriage} findings.</p>`
+      emptyStateTpl = notice(MUTED, `No ${state.shownTriage} findings.`)
     } else if (filtered.length === 0 && allGroups.length > 0 && !isKanban) {
-      emptyStateTpl = html`<p style=${styleMap({ color: 'var(--muted)', margin: '1rem 0' })}>No findings match the current filters.</p>`
+      emptyStateTpl = notice(MUTED, 'No findings match the current filters.')
     } else if (allGroups.length === 0) {
-      emptyStateTpl = mergedGroups.length > 0
-        ? html`<p style=${styleMap({ color: 'var(--green)' })}>All ${typeLabel} issues triaged.</p>`
-        : html`<p style=${styleMap({ color: 'var(--green)' })}>No ${typeLabel} issues found.</p>`
+      emptyStateTpl = notice(GREEN, mergedGroups.length > 0 ? `All ${typeLabel} issues triaged.` : `No ${typeLabel} issues found.`)
     }
 
     bodyTemplate = treesLoading ? loadingTemplate('graph') : detailsWaiting === 'loading' ? loadingTemplate('findings')
       : detailsWaiting ? html`<p class="triage-loading" role="status">${DETAILS_FAILED}</p>` : findingsBodyTemplate(filtered, selectedGroup, groupStates)
   }
 
-  // Slot-reuse: only rebuild the chrome when the structure
-  // actually changes (cross-view entry, or switching between
-  // graph mode and non-graph mode — the slot set differs). Inside
-  // a stable shape, every render() is just litRender into existing
-  // slots → Lit diffs in place, scroll / focus / persistent
-  // <finding-table> all survive without manual capture-restore.
+  // The chrome is rebuilt only when its shape changes (arrival from another
+  // view, or into / out of graph mode); within a shape every render diffs
+  // into the existing slots, so scroll, focus and the <finding-table>
+  // survive without capture-restore.
   let headerSlot = document.querySelector('#header-slot')
   let wrapper = report.querySelector(':scope > .findings-content')
   const hadGraphSlot = wrapper && wrapper.querySelector(':scope > #findings-graph-slot')
@@ -2781,89 +1773,44 @@ function renderImpl() {
     wrapper.className = wrapperClass
   }
 
-  if (headerSlot) litRender(headerTpl, headerSlot)
-  // Always litRender into existing slots — passing `nothing`
-  // clears the slot's prior content. Without this, a slot that
-  // was populated last render would keep stale content when the
-  // current render's template resolves to `nothing` (e.g. the
-  // empty-state line disappearing once findings appear).
+  litRender(headerTpl, headerSlot)
+  // Always render into the slots present: `nothing` clears what the last
+  // render left there.
   const toolbarSlot = document.querySelector('#toolbar-slot')
   if (toolbarSlot) litRender(toolbarTpl, toolbarSlot)
   const emptyStateSlot = document.querySelector('#empty-state-slot')
   if (emptyStateSlot) litRender(emptyStateTpl, emptyStateSlot)
-
-  // Now that the slots are in the DOM, litRender the Lit-templated
-  // findings body into its placeholder and let Lit diff it in place
-  // across renders. The body template covers every viewMode (table /
-  // list / grouped); the table case emits a static (binding-free)
-  // `.finding-table-slot` div which the reattach below appends the
-  // persistent <finding-table> INTO — Lit never tracks or touches a
-  // static element's foreign children, so the part-cache stays valid
-  // and the table (with its <finding-row> subtree, scroll position,
-  // and per-row StateElement autoruns) survives successive renders
-  // without disconnecting. (The previous design replaceWith'd the
-  // slot div, which orphaned nodes out of Lit's part-cache and
-  // forced a full bodySlot rebuild — reconnecting and re-rendering
-  // every row — on each render.)
   const bodySlot = document.querySelector('#findings-body-slot')
   if (bodySlot) litRender(bodyTemplate, bodySlot)
 
-  // Graph view-mode: render the graph2 layout into the
-  // findings-graph slot and wire the canvas interaction. The
-  // view-mode chooser rides along as an extra row in the graph's
-  // own topbar so this view doesn't need a separate toolbar above
-  // the canvas.
+  // Graph mode: the canvas, the view-mode chooser as an extra row of its own
+  // topbar, and the triage counts tallied above (in the main bundle, so the
+  // lazy graph bundle stays free of `groupState` / `state`).
   if (g2DataForBody) {
     const graphSlot = document.querySelector('#findings-graph-slot')
     if (graphSlot) {
-      const viewModeRow = html`<view-mode-buttons
-        modes="kanban,focus,table,list,grouped,graph"
-      ></view-mode-buttons>`
-      // Triage bucket counts across every loaded report's groups —
-      // the findings-tab graph's topbar uses this for its triage
-      // selector (In progress / Fixed / Invalid / Deleted / Ignored).
-      // `triageCounts` was already tallied over mergedGroups above
-      // (in the main bundle, so the lazy `ui/graph.js` bundle stays
-      // free of `groupState` / `state` imports) — reuse it.
       const options = {
-        extraTopRow: viewModeRow,
+        extraTopRow: html`<view-mode-buttons
+        modes="kanban,focus,table,list,grouped,graph"
+      ></view-mode-buttons>`,
         triageCounts,
         triageStates: ['inprogress', 'fixed', 'invalid', 'deleted', 'ignored'],
       }
-      // First open of the graph view-mode kicks the dynamic
-      // import of `ui/graph.js`; subsequent opens reuse the
-      // cached module. attachGraphLayout handles render → await
-      // updateComplete → fire refresh helpers → wire canvas.
-      // Slots are emitted empty by `<graph-layout>` — each refresh
-      // helper runs its own `litRender` into the appropriate
-      // shadow-DOM slot, so subsequent clicks diff against a
-      // single Lit cache per slot.
       attachGraphLayout(graphSlot, g2DataForBody, options,
         refreshGraph2Sidebar, refreshGraph2TopPkgs)
     }
   }
 
-  // Hand the sorted item list and current selection to the
-  // <finding-table> custom element after the DOM lands. Stashing the
-  // items via a property (rather than serialising through an
-  // attribute) keeps object identity and avoids a JSON round-trip on
-  // every re-render. The element is appended as a child of the
-  // static `.finding-table-slot` div (NOT replaceWith — see the
-  // bodySlot comment above): on a steady-state table render it's
-  // already in place and only the property updates run; it moves /
-  // reconnects only when the slot itself was rebuilt (cross-view or
-  // cross-shape entry).
+  // Hand the <finding-table> its rows and selection by property (object
+  // identity kept, no attribute round trip). It moves into the static slot
+  // only when that slot was rebuilt; steady renders update properties only.
   if (pendingTableItems) {
     const slot = report.querySelector('.finding-table-slot')
     if (slot) {
-      if (!persistentFindingTable) {
-        persistentFindingTable = document.createElement('finding-table')
-      }
+      persistentFindingTable ??= document.createElement('finding-table')
       persistentFindingTable.items = pendingTableItems
       persistentFindingTable.selectedGid = state.tableSelectedGid
-      if (persistentFindingTable.parentNode !== slot) {
-        slot.append(persistentFindingTable)
-      }
+      if (persistentFindingTable.parentNode !== slot) slot.append(persistentFindingTable)
     }
   }
   showReport()
