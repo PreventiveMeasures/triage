@@ -7,15 +7,15 @@ import './_polyfills.js'
 
 const state = { bundles: [], focusCodeTick: 0 }
 const loads = []
-mock.module('../client/index.js', { exports: { state, isManagedUiMode: () => false, bundleFilePath: () => null, bundlesForFileHash: () => [], readBundleIndex: async () => null } })
-mock.module('../ui/view/client-managed.js', { exports: { fetchReportSources: async () => null, readReportSources: () => null } })
+mock.module('../client/index.js', { exports: { state, isManagedUiMode: () => false, bundleFilePath: () => null, bundlesForFileHash: () => [], readBundleIndex: () => Promise.resolve(null) } })
+mock.module('../ui/view/client-managed.js', { exports: { fetchReportSources: () => Promise.resolve(null), readReportSources: () => null } })
 mock.module('../ui/view/group.js', { exports: { activeTabFor: group => group } })
-mock.module('../ui/view/bundle-load.js', { exports: { buildBundleDetails: async integrity => { loads.push(integrity); return { integrity, kind: 'sourcemaps' } } } })
+mock.module('../ui/view/bundle-load.js', { exports: { buildBundleDetails: integrity => { loads.push(integrity); return Promise.resolve({ integrity, kind: 'sourcemaps' }) } } })
 mock.module('../ui/view/bundle-metadata.js', { exports: { parseBundleMetadata: () => null } })
 mock.module('../ui/view/bundle-sources.js', { exports: { bundleFilesAsMap: () => new Map(), bundlePackageDirs: () => [], bundlePackageRepos: () => new Map(),
   bundleSourcesAsMap: details => new Map([['app.js', `code of ${details.integrity}`]]) } })
 mock.module('../common/bundle-source-links.js', { exports: { bundleSourceImports: () => new Map(), sourceLinkResolver: () => () => null } })
-mock.module('../ui/view/prism-highlight.js', { exports: { langForPath: () => null, highlight: async () => null } })
+mock.module('../ui/view/prism-highlight.js', { exports: { langForPath: () => null, highlight: () => Promise.resolve(null) } })
 mock.module('../ui/view/render.js', { exports: { render: () => {} } })
 mock.module('../ui/view/dom.js', { exports: { report: { querySelector: () => null, querySelectorAll: () => [] } } })
 mock.module('../ui/view/reveal-cited.js', { exports: { revealCitedLines: () => {} } })
