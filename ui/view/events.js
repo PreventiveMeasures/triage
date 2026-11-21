@@ -910,8 +910,10 @@ const REPORT_CLICKS = [
   [deep('.mark-claude'), (el, e) => {
     const text = findingHandoffText(e)
     if (text === null) return
+    // Built outside the try: a malformed text's URIError surfaces, as before.
+    const url = `claude://code/new?q=${encodeURIComponent(`Confirm and fix:\n\n${text}`)}`
     try {
-      window.location.href = `claude://code/new?q=${encodeURIComponent(`Confirm and fix:\n\n${text}`)}`
+      window.location.href = url
       pulseCopied(el)
     } catch {}
   }],

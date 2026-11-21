@@ -796,9 +796,7 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
                 ?disabled=${c.count === 0}
               >${current ? c.label : `${c.label} (${c.count})`}</option>`
             })}
-          </select>
-        </span>
-        ${navTemplate(KANBAN_NAV, idx < 0 ? items.length : `${idx + 1} / ${items.length}`, idx === 0, idx === items.length - 1)}
+          </select></span>${navTemplate(KANBAN_NAV, idx < 0 ? items.length : `${idx + 1} / ${items.length}`, idx === 0, idx === items.length - 1)}
       </div>
       <!-- Drawn a screen at a time (view/kanban-rail.js): a column runs to
            thousands of cards. The card renderer is a new function each
@@ -844,8 +842,7 @@ function focusBody(filtered, selectedGroup) {
       ${focusMainTemplate(selectedGroup)}
       <aside class="focus-sidebar" aria-label="Up next">
         <div class="focus-sidebar-header">
-          <span class="label">Up next</span>
-          ${navTemplate(FOCUS_NAV, `${focusedIdx + 1} / ${filtered.length}`, focusedIdx === 0, focusedIdx === filtered.length - 1)}
+          <span class="label">Up next</span>${navTemplate(FOCUS_NAV, `${focusedIdx + 1} / ${filtered.length}`, focusedIdx === 0, focusedIdx === filtered.length - 1)}
         </div>
         <div class="focus-sidebar-body">
           ${repeat(filtered, (g) => groupKey(g), (g) => kanbanCardTemplate(g, {
