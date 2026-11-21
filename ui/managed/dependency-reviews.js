@@ -30,15 +30,14 @@ async function requestReview(path, signal, operation, change, csrfToken) {
   if (!response.ok) throw new Error(ERRORS[body.error] ?? `Could not ${operation} (${response.status}).`)
   return body
 }
+// A page of reviews, the latest first, on from `cursor`.
+const before = cursor => cursor ? { beforeTime: cursor.time, beforeId: cursor.id } : {}
 export function myDependencyReviews(cursor, signal) {
-  const query = cursor ? `?${new URLSearchParams({ beforeTime: cursor.time, beforeId: cursor.id })}` : ''
+  const query = cursor ? `?${new URLSearchParams(before(cursor))}` : ''
   return requestReview(`/mine${query}`, signal, 'load your reviews')
 }
-// The reviews published to team `teamId`, the latest first, a page on from
-// `cursor`.
 export function teamDependencyReviews(teamId, cursor, signal) {
-  const query = new URLSearchParams({ teamId, ...cursor ? { beforeTime: cursor.time, beforeId: cursor.id } : {} })
-  return requestReview(`/team?${query}`, signal, 'load the team’s reviews')
+  return requestReview(`/team?${new URLSearchParams({ teamId, ...before(cursor) })}`, signal, 'load the team’s reviews')
 }
 export function discardDependencyReview(reviewId, revision, csrfToken, signal) {
   return requestReview('/discard', signal, 'discard review', { reviewId, revision }, csrfToken)
