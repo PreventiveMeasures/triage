@@ -1,21 +1,13 @@
 .file-group {
   margin-bottom: 1rem;
   &.hidden { display: none; }
-  /* A source-preview tooltip is drawn inside a card's shadow root,
-     which sits inside `.file-body` — and `.file-body` has a
-     backdrop-filter, so it is a stacking context the tooltip cannot
-     paint its way out of however high its z-index goes. A tooltip that
-     overhangs its group therefore went UNDER the next group's header,
-     for no better reason than that the next group comes later in the
-     document. Lifting the group the pointer is in puts it back in
-     front; only one group can be hovered, so nothing else moves. */
+  /* A card's source-preview tooltip paints inside `.file-body`, whose
+     backdrop-filter makes a stacking context, so an overhanging tooltip went
+     under the next group's header. Lift the hovered group (only one can be). */
   &:hover { position: relative; z-index: 1; }
 }
 
-/* file-header + file-body form one visual card (shared borders +
-   rounding). Both get glass so the whole card reads as a single
-   continuous frosted surface, not a frosted top over a plain body.
-   Same logic for .flat-group below. */
+/* file-header + file-body form one glass card (shared borders + rounding). */
 .file-header {
   font-size: .9rem; font-weight: 600; padding: .5rem .75rem;
   background: var(--surface); backdrop-filter: var(--glass-blur);
@@ -35,74 +27,45 @@
   box-shadow: var(--shadow-glass);
 }
 
-/* Flat mode (group by file = OFF): each dedup group is a self-
-   contained card. The card border replaces the per-finding
-   border-bottom; a header strip carries the FULL line row (file +
-   line + exportName + run-meta, run-meta floated right) so every
-   result reads as a complete unit. The in-body line-row is
-   suppressed so that same info doesn't appear twice. */
+/* Flat mode (group by file off): each dedup group is its own card, its
+   header strip carrying the full line row; the in-body line row is hidden. */
 .flat-group {
   margin-bottom: 1rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden;
   background: var(--surface); backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-glass);
 
-  /* `.finding` is a `<finding-card>` host: this light-DOM rule
-     reaches the host to drop its bottom border. The in-body
-     `.line-row` lives in the card's shadow DOM, so its hide rule is
-     `:host([in-group]) .line-row` in view/finding-card.css, which
-     the parent triggers by emitting `<finding-card in-group>`. */
+  /* `.finding` is the `<finding-card>` host. Its in-body `.line-row` is
+     hidden by `:host([in-group])` in finding-card.css. */
   & .finding { border-bottom: none; }
 }
 
 .flat-group-loc {
   display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
   padding: .4rem .7rem; font-size: .85rem;
-  /* Parent .flat-group owns the glass surface + blur, so this
-     location-row header is just a translucent tint over it (no
-     backdrop-filter of its own), reading as a subtle band. */
+  /* A tint over the parent's glass, no blur of its own. */
   background: var(--surface); border-bottom: 1px solid var(--border);
 
   & .file { color: var(--text); font-weight: 500; }
   & .file:hover { color: var(--accent); }
-  & .line-num { color: var(--muted); font-size: .8rem; }
-  & .meta { color: var(--muted); font-size: .8rem; }
+  & .line-num, & .meta { color: var(--muted); font-size: .8rem; }
   & .run-meta { color: var(--muted); font-size: .65rem; margin-left: auto; }
 }
 
-/* The `.finding` finding-card body lives in `<finding-card>`'s
-   shadow DOM (see view/finding-card.css); the host keeps the
-   `.finding` class so external selectors like `.flat-group .finding`
-   still match the card from this stylesheet. */
-
-/* Render-on-demand for long lists (mirrors the finding-row rule in
-   view/finding-table.css): offscreen flat-list cards and grouped-view
-   cards skip style / layout / paint via `content-visibility: auto`,
-   so large reports render in viewport-proportional time. The
-   estimate stands in for a typical card until its first paint, after
-   which the `auto` keyword pins the real size for stable scrolling.
-   The cards' DOM is built on the same terms — a card out of range is
-   an empty shell until it comes within a viewport of being seen (see
-   finding-card.js and view/lazy-render.js), so building the list
-   costs what the viewport shows, not what the report holds.
-   Scoped to the list containers so the table-details aside and the
-   focus / kanban detail cards (single, always on screen) keep plain
-   rendering. Gated off print so paginated output never interacts
-   with containment. */
+/* Long lists render on demand (as finding-table.css does): off-screen cards
+   skip style, layout and paint, and an out-of-range card is an empty shell
+   until it nears the viewport (finding-card.js, lazy-render.js). Scoped to
+   the list containers; the single detail cards render plainly. Not in print. */
 @media not print {
-  /* Lit inserts the list shell before the first lazy card completes.
-     Keep the whole body slot out of the paint until at least one real
-     card is ready; otherwise the location header / glass surface can
-     flash for a frame before the finding content arrives. Once the
-     first card is ready, individual pending cards remain hidden by the
-     rules below while they are built. */
+  /* Lit inserts the list shell before the first lazy card is built; keep the
+     body slot unpainted until one is ready so the headers and glass don't
+     flash empty for a frame. */
   #findings-body-slot:has(> .flat-group):not(:has(> .flat-group > finding-card.content-ready)),
   #findings-body-slot:has(> .file-group):not(:has(> .file-group > .file-body > finding-card.content-ready)) {
     visibility: hidden;
   }
 
-  /* The header and surface live outside the card's shadow root. Hide
-     the complete visual wrapper until it has content, retaining its
-     layout box so the viewport observer can still request the body. */
+  /* The header and surface are outside the card's shadow root: hide the
+     whole wrapper until it has content, keeping its box for the observer. */
   .flat-group:has(> finding-card[lazy]:not(.content-ready)),
   .file-group:not(:has(> .file-body > finding-card.content-ready)) {
     visibility: hidden;
@@ -116,11 +79,8 @@
 }
 
 /* ── Table view ─────────────────────────────────────────────────────
-   With a row selected, the view splits into a list column (left) and
-   a sticky details panel (right): 3fr:2fr, capped 1200px:800px. With
-   nothing selected the list takes full width. The panel renders the
-   same per-finding card the list view uses (renderGroup) so body
-   content reads consistently across both view modes. */
+   A selected row splits the view into the list and a details panel
+   (3fr:2fr, capped 1200:800px) showing the list view's card. */
 .findings-table-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -129,15 +89,11 @@
 }
 .findings-table-layout.open {
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  /* No own max-width — the parent .findings-content.with-details
-     already caps at 2000 px (1200 list + 800 panel). */
+  /* Capped by `.findings-content.with-details` (2000px). */
 }
 .findings-table-list { min-width: 0; }
-/* Bound the row to the body slot's height (set by report.css's
-   `@media not print` flex chain) so the list column can cap at
-   `max-height: 100%` and scroll internally — without it the
-   implicit row sizes to content and grows past the viewport. Print
-   skips this so paginated output flows over page breaks, not clips. */
+/* Bound the row to the body slot's height (report.css) so the list caps at
+   `max-height: 100%` and scrolls itself. Not in print. */
 @media not print {
   .findings-table-layout {
     grid-template-rows: minmax(0, 1fr);
@@ -148,10 +104,7 @@
     overflow-y: auto; overscroll-behavior: none;
     -webkit-app-region: no-drag; app-region: no-drag;
     scrollbar-gutter: stable;
-    /* Bottom gap lives inside the scroller — #report's
-       padding-bottom is zeroed for table/list/grouped modes (see
-       report.css). List/grouped get the equivalent gap from the last
-       .flat-group / .file-group's margin-bottom. */
+    /* The bottom gap lives inside the scroller: #report's is zeroed here. */
     padding-bottom: 1rem;
   }
 }
@@ -160,24 +113,10 @@
 .findings-table-details {
   --finding-line-end-inset: 1rem;
   position: relative;
-  /* Bounded by the GRID AREA, not the viewport. The panel sits in the
-     body slot, which starts below the page header and the toolbar, so
-     a cap of `100vh - 2rem` was taller than the space it had by
-     exactly the height of that chrome — and the surplus pushed
-     `#main-content` into a scroll of its own, carrying the whole app
-     shell up as the reader moved through a long finding. The row is
-     `minmax(0, 1fr)` of a grid that is itself `height: 100%` (see
-     `@media not print` above), so 100% here is the space that is
-     actually free, and the body below scrolls inside it.
-
-     The rem it stops short of the bottom is the same gap the list
-     column keeps there (its `padding-bottom`, inside the scroller):
-     `#report` gives the body slot no bottom padding in these views,
-     so each column pays for its own.
-
-     No `position: sticky` either: it was there to follow that page
-     scroll, and there is no page scroll to follow once the panel
-     fits. */
+  /* Bounded by the grid area, not the viewport: `100vh` was taller than the
+     space under the header and toolbar, and pushed #main-content into a
+     scroll of its own. The rem short of the bottom matches the list's
+     padding-bottom. */
   max-height: calc(100% - 1rem);
   max-width: 800px;
   background: var(--surface);
@@ -185,8 +124,6 @@
   border: 1px solid var(--border);
   border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
-  /* Clip the scrollbar to the rounded corners and keep the scrollable
-     body bounded by the panel's height. */
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -217,52 +154,41 @@
   overscroll-behavior: none;
   -webkit-app-region: no-drag; app-region: no-drag;
   scrollbar-gutter: stable;
+}
+:is(.findings-table-details-body, .kanban-board, .kanban-column-body, .kanban-detail-body, .kanban-detail-side-body,
+  .focus-pane, .focus-code-body, .focus-sidebar-body) {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 
-  &::-webkit-scrollbar { width: 5px; }
   &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
+:is(.findings-table-details-body, .kanban-column-body, .kanban-detail-body, .kanban-detail-side-body,
+  .focus-sidebar-body)::-webkit-scrollbar { width: 5px; }
+.kanban-board::-webkit-scrollbar { height: 6px; }
+.focus-pane::-webkit-scrollbar { width: 6px; }
+.focus-code-body::-webkit-scrollbar { width: 6px; height: 6px; }
 
 /* ── Kanban view ────────────────────────────────────────────────────
-   One column per triage bucket (Active / Fixed / Invalid / Deleted /
-   Ignored). The board fills the full viewport height (via the
-   `.findings-content.with-kanban` flex chain below); only the column
-   bodies scroll. The wrapper drops its max-width cap so the five
-   columns lay out edge-to-edge and overflow horizontally inside the
-   board when the viewport is too narrow. */
+   A column per triage bucket. The board fills the height (the
+   `.findings-content.with-kanban` chain) and only column bodies scroll. */
 .kanban-board {
-  /* Board spacings, named because the fullscreen-column rule below
-     has to reproduce the normal card width from them. `--kanban-cols`
-     (the column count) is stamped inline by render.js. */
+  /* Named so the fullscreen column can reproduce the card width;
+     `--kanban-cols` is set inline by render.js. */
   --kanban-gap: .4rem;
   --kanban-col-border: 1px;
 
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(200px, 1fr);
-  /* Force the implicit row to fill the board height, not auto-size
-     to content. An `auto` row sized to max(column content heights)
-     makes the board outgrow its parent whenever a column overflows,
-     and the per-column `overflow-y: auto` never kicks in because the
-     column got enough height for everything. `minmax(0, 1fr)` clamps
-     the row to the parent (flex: 1 inside the bounded
-     findings-content), letting the column bodies scroll. */
+  /* `minmax(0, 1fr)`, not auto: an auto row grows to the tallest column, the
+     board outgrows its parent and the columns never scroll. */
   grid-template-rows: minmax(0, 1fr);
   gap: var(--kanban-gap);
   overflow-x: auto;
   flex: 1; min-height: 0;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-
-  &::-webkit-scrollbar { height: 6px; }
-  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* Columns take their height from the grid row (which fills the
-   board via flex: 1) — no `max-height` heuristic needed. The column
-   body owns the vertical scroll (overflow-y: auto, flex: 1) below
-   the header. */
+/* Columns take the row's height; their body scrolls under the header. */
 .kanban-column {
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
@@ -272,15 +198,13 @@
   transition: border-color .12s, background .12s;
 }
 
-/* drag-over state (applied by events.js while a card is over the
-   column): accent border + faint inner tint so the drop target reads
-   immediately. */
+/* Drop target while a card is dragged over (events.js). */
 .kanban-column.drag-over {
   border-color: var(--accent);
   background: rgb(from var(--accent) r g b / .08);
 }
 
-.kanban-column-header {
+:is(.kanban-column-header, .kanban-detail-side-header, .focus-sidebar-header) {
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between;
   gap: .5rem;
@@ -290,14 +214,6 @@
   text-transform: uppercase; letter-spacing: .06em;
   color: var(--muted);
 
-  /* Label soaks up the free space so the count and the fullscreen
-     toggle stay pinned to the right edge as a pair, and a label too
-     long for a narrow column ellipsises instead of shoving them out. */
-  & .label {
-    flex: 1 1 auto; min-width: 0;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-
   & .count {
     font-weight: 500; font-size: .7rem;
     color: var(--muted);
@@ -305,11 +221,19 @@
     background: rgb(from var(--text) r g b / .08);
   }
 }
+:is(.kanban-detail-side-header, .focus-sidebar-header) .count { font-variant-numeric: tabular-nums; }
 
-/* Fullscreen toggle at the right end of the header — hands this
-   column the whole board and back (state.kanbanExpandedColumn; the
-   click handler lives in events.js). Borrows the card's .kanban-action
-   chip treatment so the board's two icon affordances match. */
+.kanban-column-header {
+  /* The label takes the free space and ellipsizes, keeping the count and
+     fullscreen toggle pinned right. */
+  & .label {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+}
+
+/* Fullscreen toggle (state.kanbanExpandedColumn, events.js), styled as the
+   card's `.kanban-action`. */
 .kanban-column-header .kanban-expand {
   flex-shrink: 0;
   display: inline-flex;
@@ -326,15 +250,13 @@
   & svg { width: 12px; height: 12px; }
 }
 
-/* Per-column accent — the header label adopts the same bucket color
-   as .triage-state-btn.active.triage-state-* so columns read at a
-   glance even without their labels. */
+/* Header label in its bucket's color, as `.triage-state-btn.active`. */
 .kanban-column-untriaged  .kanban-column-header .label { color: var(--text); }
-.kanban-column-inprogress .kanban-column-header .label { color: var(--warning, #d97706); }
-.kanban-column-fixed      .kanban-column-header .label { color: var(--green, #4ade80); }
+.kanban-column-inprogress .kanban-column-header .label { color: var(--warning); }
+.kanban-column-fixed      .kanban-column-header .label { color: var(--green); }
 .kanban-column-invalid    .kanban-column-header .label { color: var(--muted); }
 .kanban-column-deleted    .kanban-column-header .label { color: var(--critical); }
-.kanban-column-ignored    .kanban-column-header .label { color: var(--accent, #2563eb); }
+.kanban-column-ignored    .kanban-column-header .label { color: var(--accent); }
 
 .kanban-column-body {
   flex: 1 1 auto;
@@ -343,24 +265,12 @@
   overscroll-behavior: none;
   padding: 0;
   display: flex; flex-direction: column;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-
-  &::-webkit-scrollbar { width: 5px; }
-  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* Fullscreen column — render.js drops the other columns, so this one
-   takes the board's single grid track edge to edge. Its cards then lay
-   out across `--kanban-cols` tracks (the number of columns the board
-   would have shown) rather than one, so a wide column shows a wide
-   grid of cards instead of a single very long strip.
-
-   The cards fill their grid cells, with separators instead of gutters.
-
-   `align-content: start` is load-bearing: grid rows are auto-sized, and
-   the default stretch would balloon them to fill a body taller than its
-   cards, so a half-empty column would render enormous ones. */
+/* Fullscreen column: render.js drops the others and its cards lay out in
+   `--kanban-cols` tracks, separated by rules instead of gutters.
+   `align-content: start` is load-bearing: stretched auto rows would balloon
+   the cards of a half-empty column. */
 .kanban-column.expanded > .kanban-column-body {
   display: grid;
   grid-template-columns: repeat(var(--kanban-cols, 6), minmax(0, 1fr));
@@ -370,9 +280,7 @@
   & > .kanban-card:not(.kanban-expanded-track-last) { border-right: 1px solid var(--border); }
 }
 
-/* The empty-state line is a grid item too once the column is
-   fullscreen — span every track so it stays centered on the column
-   rather than sitting in the first one. */
+/* Span every track so the empty line stays centered. */
 .kanban-column.expanded > .kanban-column-body > .kanban-empty {
   grid-column: 1 / -1;
 }
@@ -384,9 +292,7 @@
   padding: .75rem .5rem;
 }
 
-/* Sidebars identify their selected item with a leading edge and a subtle
-   tint. Kanban rows stay flush with the column and keep their normal
-   surface when their detail popover is open. */
+/* A selected sidebar card gets a leading edge and tint. */
 .kanban-card.focus-side-card.active {
   box-shadow: inset 3px 0 var(--accent);
 }
@@ -397,14 +303,8 @@
   padding: .25rem .5rem;
 }
 
-/* Compact kanban card — three-area grid: title clamps to three
-   lines on the left, severity chip in the top-right corner,
-   meta row (file:line + confidence) across both columns at the
-   bottom. The grid layout was preferred over float-flow because
-   `-webkit-line-clamp` (needed for the ellipsis on truncated
-   titles) requires `display: -webkit-box`, which doesn't cooperate
-   with floated children; a column reservation for the chip is a
-   small layout cost for getting the ellipsis back. */
+/* Compact card: a grid, not floats, because the title's line clamp needs
+   `display: -webkit-box`, which floats don't cooperate with. */
 .kanban-card {
   position: relative;
   display: grid;
@@ -424,10 +324,8 @@
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   &.dragging { opacity: .45; }
   &.has-conflict { outline: 1px dashed var(--accent); outline-offset: -1px; }
-  /* Deep-link arrival ring — stamped by view/finding-link-nav.js after
-     it scrolls a `#finding=…` target into view and cleared on a timer.
-     Inset box-shadow (not an outline) so it stacks with the `.active` /
-     `.has-conflict` outlines above rather than replacing them. */
+  /* Deep-link arrival ring (finding-link-nav.js, cleared on a timer); an
+     inset box-shadow so it stacks with the outlines above. */
   &.link-target { animation: link-target-flash 1.6s ease-out; }
   &.mark-red   { background: var(--mark-red-bg); }
   &.mark-blue  { background: var(--mark-blue-bg); }
@@ -440,30 +338,23 @@
   100% { box-shadow: inset 0 0 0 2px rgb(from var(--accent) r g b / 0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  /* Same ring, held flat for the same duration — the JS timer removes
-     the class either way. */
+  /* The same ring held flat; the JS timer removes the class either way. */
   .kanban-card.link-target { animation: none; box-shadow: inset 0 0 0 2px var(--accent); }
 }
 
 .kanban-card .kanban-badge-col {
   grid-area: badge;
-  /* Stretch (not start) so the fix/comment shortcut's margin-top: auto
-     can pin it to the column's bottom edge — directly above the meta
-     row's confidence number. With no shortcut rendered the items stay
-     top-anchored, so this is a no-op for badge + flag alone. */
+  /* Stretch so the shortcut's `margin-top: auto` pins it to the bottom,
+     over the confidence number. */
   align-self: stretch;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: .3rem;
 }
-/* Fix-link / comment shortcut at the bottom of the badge column, right
-   on top of the confidence number. margin-top: auto soaks up the slack
-   under the badge + flag stack, so on the typical multi-line-title card
-   it fills existing whitespace instead of adding height. Renders as an
-   <a> (URL fix → opens the PR or issue), a .mark-fix / .mark-comment <button>
-   (dialog via the events.js delegates), or, for a free-form fix the
-   reader cannot edit, an inert note; all get the same icon-chip look. */
+/* Fix-link / comment shortcut: an <a> (opens the PR or issue), a
+   .mark-fix / .mark-comment button (events.js), or an inert note for a
+   free-form fix the reader can't edit; all the same icon chip. */
 .kanban-card .kanban-action {
   margin-top: auto;
   display: inline-flex;
@@ -480,10 +371,8 @@
   & svg { width: 12px; height: 12px; }
 }
 .kanban-card .kanban-fix-link { align-self: flex-end; }
-/* Flag indicator stacked under the severity badge — display-only on the
-   compact card (toggling lives in the detail popover's finding-card).
-   Rendered a touch larger than the 11px base glyph so it reads clearly
-   at the small kanban scale. */
+/* Display-only flag under the badge (toggled in the detail popover),
+   slightly larger than the 11px glyph. */
 .kanban-card .kanban-flag {
   display: inline-flex;
   line-height: 0;
@@ -519,9 +408,6 @@
   color: var(--text);
   overflow-wrap: anywhere;
   min-width: 0;
-  /* Cap to three lines with trailing ellipsis. `-webkit-line-clamp`
-     ships in every browser we target and behaves consistently with
-     the (newer) standalone `line-clamp` property. */
   display: -webkit-box;
   -webkit-line-clamp: 3;
   line-clamp: 3;
@@ -549,105 +435,63 @@
   }
 }
 
-/* Producer mark for a finding another analyzer wrote — workspace
-   kanban only (see kanbanCardTemplate for who gets one). The finding
-   tabs' branded right segment (view/finding-tabs.css `.tab-analyzer`)
-   at a smaller scale and cut loose into a rounded chip of its own,
-   ringed on all four sides.
-   It rides the meta row's flow as that row's last item rather than
-   being pinned to the card's corner, which is what keeps it on the
-   same line as file:line and the confidence number — and means the
-   row's own gap and the card's padding do the spacing, with nothing
-   to reserve and nothing to overlap. `align-self` because the row
-   aligns its text on a shared baseline and a glyph box has none worth
-   sharing. */
+/* The producer mark for a finding another analyzer wrote (workspace kanban
+   only): the finding tabs' `.tab-analyzer` (finding-tabs.css) as a small
+   chip, last in the meta row's flow so it stays on the file:line line.
+   `align-self` since a glyph box has no baseline worth sharing. */
 .kanban-card .kanban-analyzer {
   flex: 0 0 auto;
   align-self: center;
-  /* Nudged a pixel down off the row's optical center, where it sits
-     better against the descender-less file path beside it. Relative
-     rather than a margin so it is a paint offset only — the layout
-     box stays put and the row (and so the card) keeps its height. */
+  /* A paint-only 1px nudge down, which sits better beside the file path. */
   position: relative;
   top: 1px;
-  box-sizing: border-box;
   display: flex;
   width: 15px;
   height: 15px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 4px;
-  /* Brand fills are the loudest color on an otherwise muted row; back
-     them off a touch so the chip identifies without competing with
-     the severity badge above it. */
+  /* Backed off a touch so it doesn't compete with the severity badge. */
   opacity: .9;
 
-  /* The logo fills the chip; its own right-hand rule is the file
-     row's separator and has nothing to separate here. */
+  /* The logo's own right rule has nothing to separate here. */
   & .report-logo { flex: 1; border: 0; }
   & svg { display: block; width: 11px; height: 11px; }
 }
 
 /* ── Kanban detail modal ────────────────────────────────────────────
-   Centered overlay opened from a kanban card click. The wrapping
-   backdrop catches outside-clicks; the inner panel holds a real
-   `<finding-card>` for full detail (tabs, action buttons, the
-   description body). Open / close animations run as a single
-   view transition — see the
-   `::view-transition-{new|old}(kanban-detail-modal)` rules below. */
+   Overlay with a real `<finding-card>`, opened from a card; it opens and
+   closes as one view transition (rules below). */
 .kanban-detail-backdrop {
-  /* Width of the docked same-column rail (`.kanban-detail-side`).
-     The wide-viewport rule at the end of this block holds the same
-     width out of the backdrop's own box, so the modal centres in
-     what's left instead of running under the rail. Matches the focus
-     view's queue, whose cards these are. */
+  /* The docked rail's width, also held out of the backdrop on wide
+     viewports so the modal centers beside it. */
   --kanban-side-w: 240px;
-  /* Height shared by the dialog's two chrome rows — the rail's header
-     and, in fullscreen, the code panel's file bar — so their bottom
-     rules line up across the screen instead of missing each other by
-     the 7px their contents happen to differ by. The measure is the
-     taller of the two: the rail's nav buttons (1.4rem) plus the .35rem
-     padding above and below them and the 1px rule under. */
+  /* Shared by the rail's header and, in fullscreen, the code panel's file
+     bar so their bottom rules line up: the rail's 1.4rem buttons plus
+     padding and rule. */
   --kanban-head-h: calc(1.4rem + .7rem + 1px);
 
   position: fixed;
   inset: 0;
-  /* Above the floating theme toggle, which sits at z-index 1000 in
-     the same (root) stacking context via its own shadow `:host`. At
-     the previous 200 it painted through the dim and, once the rail
-     docked into its corner, right on top of the rail's header. The
-     app's `<dialog>`s (comment, fix link) are further up still, so a
-     dialog opened from inside the modal keeps covering it. */
+  /* Above the floating theme toggle (z-index 1000 in the root stacking
+     context); the app's <dialog>s stay above this. */
   z-index: 1100;
   display: grid; place-items: center;
   padding: 1rem;
-  /* Click-pass-through: cards stay interactive while the modal is
-     open so re-clicking the active card toggles it closed; clicks
-     not on the modal bubble up to the close-on-outside fallthrough
-     in the report click handler. */
+  /* Click-through: cards stay clickable so re-clicking the active one closes
+     it; other clicks reach the report's close-on-outside handler. */
   pointer-events: none;
 }
 
-/* Chrome the dialog covers rather than competes with. The theme
-   toggle is the one floating control left on screen, and the corner it
-   occupies is the rail's — so it goes away for as long as the dialog
-   is up, at every width. Ordering alone wasn't enough: a live control
-   sitting on the dim, over a dialog it has nothing to do with, reads
-   as part of it. */
+/* The theme toggle sits in the rail's corner; hide it while the dialog is up. */
 body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 
-/* Dim layer — a separate sibling of the modal that animates
-   independently. Keeping the dim on its own element with its own
-   `view-transition-name` means the dim's opacity fade doesn't
-   propagate down to (or visually compete with) the modal's
-   clip-path animation. */
+/* The dim is its own element with its own transition name, so its fade
+   doesn't touch the modal's clip-path animation. */
 .kanban-detail-dim {
   position: fixed;
   inset: 0;
-  /* Theme color (the same value the `meta[name="theme-color"]`
-     gets) — `--theme-bar` is the canonical variable for it
-     (`#1a1a1b` dark / `#f6f6fa` light), distinct from `--bg`
-     which is the page surface (`#121212` / `#fff`). */
+  /* `--theme-bar` (the theme-color meta's value), not the page's `--bg`. */
   background: rgb(from var(--theme-bar) r g b / .75);
   pointer-events: none;
   view-transition-name: kanban-detail-dim;
@@ -655,32 +499,22 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 
 .kanban-detail-modal {
   --finding-line-end-inset: 4rem;
-  /* Focus uses --surface over the page background. Composite the same
-     neutral colors here so the popup stays opaque above the dim layer. */
+  /* Composited over --bg so the popup stays opaque above the dim. */
   --kanban-detail-bg: linear-gradient(var(--surface), var(--surface)), var(--bg);
   /* Body + card padding between the color tab and the modal edge. */
   --finding-mark-inset: 1rem;
   position: relative;
-  /* Wider than the original 560px cap — finding descriptions
-     can include long lines of code spans that clipped on the
-     right edge at the smaller cap. Caps at viewport too so
-     narrow displays still get a sensible inset; once the rail is
-     mounted the cap is re-measured against the space it leaves
-     instead (see the media query below). */
+  /* Long code spans need the width; the rail's media query re-caps it. */
   width: min(1100px, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   background: var(--kanban-detail-bg);
   border: 1px solid var(--border); border-radius: var(--ui-radius, 8px);
-  /* Tighter shadow — the previous 12px/40px stack visibly flickered
-     during view-transition snapshots as the modal morphed sizes,
-     because the shadow extent scaled with the snapshot bitmap. */
+  /* Small: a larger shadow flickered as view-transition snapshots scaled. */
   box-shadow: 0 4px 14px rgb(0 0 0 / .25);
   overflow: hidden;
   display: flex; flex-direction: column;
   view-transition-name: kanban-detail-modal;
-  /* The backdrop is pointer-events: none; explicitly re-enable
-     pointer events on the modal panel itself so clicks inside still
-     reach buttons / tabs. */
+  /* The backdrop is click-through; the panel isn't. */
   pointer-events: auto;
 
   /* Labels appear in the left rail; the reading surface stays neutral. */
@@ -693,27 +527,14 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   position: absolute; top: .25rem; right: .25rem; z-index: 1;
   display: flex; align-items: center; gap: .1rem;
 
-  /* The bracket glyphs are drawn on a 16-unit viewBox at the card
-     scale; hold them to the same 12px the column header's toggle uses
-     so the two expand controls match. */
+  /* Held to the column header toggle's 12px. */
   & .kanban-detail-expand svg { width: 12px; height: 12px; }
 }
 
-/* Fullscreen — the modal gives up its width cap, its frame and the
-   backdrop's inset, and runs to the edges of everything it's allowed:
-   the viewport, less the rail's strip on the right (the wide-viewport
-   rule below keeps exactly that much padding, and no more, so the two
-   panels meet flush and the rail's own left border draws the seam).
-   `width: auto` is load-bearing — `place-self: stretch` fills the grid
-   area only while the item's own size is auto, and the base rule sets
-   an explicit width. `max-height` has to go for the same reason: at
-   `calc(100vh - 2rem)` it would hold a 2rem strip of dim at the bottom
-   of a dialog that no longer has an inset to match it.
-
-   The border and shadow go with the inset. Both exist to lift a panel
-   off the page behind it; against the viewport's own edges there's
-   nothing to lift away from, and the shadow's only remaining job would
-   be to smudge the rail's border. */
+/* Fullscreen: no width cap, frame or backdrop inset; runs to the viewport
+   less the rail's strip, the rail's border drawing the seam. `width: auto`
+   and no `max-height` are load-bearing: `place-self: stretch` only fills
+   while the size is auto. */
 .kanban-detail-modal.fullscreen {
   /* The fullscreen pane uses .4rem above the card's .5rem inset. */
   --finding-mark-inset: .9rem;
@@ -725,121 +546,74 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   border-radius: 0;
   box-shadow: none;
 
-  /* Pin the card's action row to the bottom of its pane (finding-card
-     .marks spends these): at this size a description runs for screens,
-     and the buttons that act on it shouldn't be screens away. The row
-     needs the dialog's background to scroll content under. */
+  /* Pin the card's action row to the pane's bottom (finding-card .marks reads
+     these): a description can run for screens. The row needs the dialog's
+     background to scroll content under. */
   --finding-left-position: sticky;
   --finding-marks-position: sticky;
-  /* The row sits against the bottom of the pane whether or not there is
-     anything to scroll: `auto` takes up the slack of a short finding,
-     and sticky (above) holds the same edge once there is none. */
+  /* `margin-top: auto` takes up a short finding's slack; sticky holds the
+     edge once it scrolls. */
   --finding-card-display: flex;
   --finding-marks-margin-top: auto;
   --finding-card-pad-bottom: 0;
   --finding-marks-bg: var(--kanban-detail-bg);
-  /* The row pins flush to the pane's bottom edge (the pane gives up its
-     bottom inset below, so no strip is left for text to scroll through
-     under the row) and keeps the buttons off that edge itself. */
+  /* Flush to the pane's bottom edge, which has no inset; the row pads itself. */
   --finding-marks-pad-bottom: .4rem;
-
 }
 
-/* The inset belongs to the backdrop, not the modal, so shedding it is
-   a rule on the backdrop — matched through the modal's own state
-   rather than a second class on the parent, since fullscreen is a fact
-   about the dialog. Below the rail's breakpoint this is the whole
-   viewport; the wide-viewport rule at the end of this block puts the
-   rail's strip back. */
+/* The inset is the backdrop's; below the rail's breakpoint fullscreen
+   covers the viewport (the wide rule puts the rail's strip back). */
 .kanban-detail-backdrop:has(> .kanban-detail-modal.fullscreen) {
   padding: 0;
 }
 
-/* Fullscreen mounts the focus view's workbench in the dialog body (see
-   focusMainTemplate in render.js), and the two want opposite things of
-   this box: the single-column body IS the scroller, while the
-   workbench's panes each own their scroll and only need a bounded box
-   to lay out in. So in fullscreen the body stops scrolling and becomes
-   that box — flex so `.focus-main` can fill it, `min-height: 0` so it
-   may shrink below the panes' content instead of pushing the modal
-   past the viewport. */
+/* Fullscreen mounts the focus workbench (render.js focusMainTemplate),
+   whose panes scroll on their own: the body stops scrolling and becomes the
+   bounded box they lay out in. */
 .kanban-detail-modal.fullscreen .kanban-detail-body {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   overflow: hidden;
-  /* The inset moves off this box and onto the finding column alone
-     (below): the code panel wants to run to the rail and to the top of
-     the screen — flush is what lines its file bar up with the rail's
-     header — while the finding, and the buttons in its corner, want the
-     air back. */
+  /* The inset moves to the finding column alone (below): the code panel runs
+     flush to the rail and the top so its file bar lines up with the rail's
+     header. */
   padding: 0;
 
-  /* The gap goes with the frames below — that .75rem was the air
-     between two glass cards, and there are none here. */
+  /* No glass cards here, so no gap between them. */
   & .focus-main {
     flex: 1 1 auto;
     gap: 0;
   }
 
-  /* The corner buttons belong to the finding, not to the source
-     beside it, so they ride the card pane's cell rather than floating
-     over the modal's top-right (which in this layout is the code
-     pane). Overlapping the cell as a grid item rather than sitting
-     inside the pane keeps them off the pane's scroller, so they stay
-     put while the card scrolls — and they follow the divider on a
-     drag for free, since the cell is what the divider resizes. With
-     no code panel there is one column and this is still its corner. */
+  /* The corner buttons belong to the finding: as a grid item over the card's
+     cell they stay off its scroller and follow the divider when dragged. */
   & .kanban-detail-actions {
     position: static;
     grid-area: 1 / 1;
     place-self: start end;
-    /* Hard into the corner, and staying there: the column's inset
-       below moves the card's run-meta line (`security · opus 5 · max ·
-       list`) down and in, away from these, which is the clearance.
-       Taking the inset here too would put them back on top of it. The
-       1px is optical, not structural — it drops the glyphs onto the
-       same line the file bar's text sits on across the divider. */
+    /* Hard into the corner; the column's inset keeps the run-meta line clear of
+       them. The 1px drops the glyphs onto the file bar's text line. */
     margin: 1px 0 0;
   }
 
-  /* Pinning the cluster to the card's cell takes that cell out of
-     auto-placement, and every other item then walks: the panes get
-     shoved a column along, and — since the cluster holds row 1 of
-     column 1 — into an implicit SECOND ROW, where they size to their
-     content instead of filling the pane. So the workbench's own items
-     get their cells spelled out here too, row and column both: card,
-     divider, source, in the order `.focus-main.with-code` lays its
-     tracks out. Without the code panel there is one track and the
-     first line is all that applies. */
-  /* The finding column keeps the inset the body gave up — but not on
-     the right, where the divider already separates it from the source,
-     and not shared with the code panel, whose file bar has to start
-     level with the rail's header. */
+  /* Pinning the cluster takes the card's cell out of auto-placement, so every
+     workbench item gets its cell spelled out (card, divider, source). The
+     finding column keeps the body's inset, except on the right (the divider)
+     and the top's shared edge with the code panel. */
   & .focus-pane-card {
     grid-area: 1 / 1;
-    /* No bottom inset: the sticky action row is what sits against that
-       edge, and a strip below it would just be somewhere for the
-       scrolling text to show through. The row carries the equivalent
-       padding of its own. */
+    /* No bottom inset: the sticky action row sits against that edge. */
     padding: .4rem 0 0 .4rem;
   }
-  /* Half the focus view's grab band. There it separates two glass
-     cards and wants presence; here it is a hairline between two flush
-     panes, and the band's other job — being the finding column's right
-     margin — is served by half as much. The track's width is a
-     variable the column math reads too, so the split percentage keeps
-     landing on the line. */
+  /* Half the focus view's grab band: a hairline between flush panes. The
+     column math reads this too, so the split still lands on the line. */
   & .focus-main.with-code { --focus-splitter-width: .375rem; }
 
   & .focus-splitter {
     grid-area: 1 / 2;
-    /* The hairline sits at the END of the divider's track, not its
-       centre: centred, it left half the track — 6px — standing between
-       itself and the gutter, and the source panel is meant to start AT
-       the line. The other half stays where it is, as the width the
-       pointer still has to grab, and reads as the finding column's
-       right margin. */
+    /* The hairline sits at the track's end, so the source starts at the line;
+       the rest of the track is grab area and the finding's right margin. */
     justify-content: flex-end;
 
     &::before {
@@ -850,21 +624,14 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   }
   & .focus-pane-code { grid-area: 1 / 3; }
 
-  /* The file bar is the code panel's header, and the rail's header is
-     right beside it across the screen — so it takes the same height.
-     Centred rather than baseline-aligned, because in a box now taller
-     than its text the baseline would park that text at the top while
-     the rail's sits in the middle. */
+  /* The code panel's header matches the rail's header height, centered so its
+     text sits level with the rail's. */
   & .focus-code-bar {
     min-height: var(--kanban-head-h);
     align-items: center;
   }
 
-  /* The focus view frames each pane as a glass card, which is right
-     on the page and wrong here: the dialog IS the panel, so a rounded
-     card inside it — at the screen's own edge — is chrome drawn around
-     chrome. The panes lose their frames and run to the dialog's edges,
-     the way the rail runs to the screen's. */
+  /* The dialog is the panel: the panes drop their glass frames. */
   & .focus-card-wrapper,
   & .focus-pane-code {
     background: none;
@@ -874,18 +641,10 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     box-shadow: none;
   }
 
-  /* `overflow: hidden` on the wrapper would make IT the sticky row's
-     scrollport, and this box is exactly as tall as its content — so the
-     row would pin to the end of the card rather than to the bottom of
-     the pane. What that clipping was for is the rounded corner this
-     mode doesn't draw.
-
-     `min-height: 100%` is the other half of the bottom-anchoring: the
-     card has to be at least as tall as the pane before there is any
-     slack for the row's `margin-top: auto` to take up. Flex the whole
-     way down — wrapper, host, card — because a percentage height can't
-     be inherited through an auto-height box, and this way each one just
-     fills the one above it. */
+  /* Not `overflow: hidden`, which would make the wrapper the sticky row's
+     scrollport and pin the row to the card's end. `min-height: 100%` gives the
+     row's `margin-top: auto` slack; flex all the way down, since a percentage
+     height doesn't pass through an auto-height box. */
   & .focus-card-wrapper {
     overflow: visible;
     min-height: 100%;
@@ -900,15 +659,8 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     min-height: 0;
   }
 
-  /* Which leaves the divider as the only seam between them, so it
-     draws one: a hairline down the full height, in place of the short
-     centred grip that only had to say "grab here" between two cards
-     that were already separated. It still takes the accent on hover
-     and through a drag. */
-
-  /* And the card fills its pane. The 1100px cap reads as a measure
-     when the frame around it makes the empty margin deliberate;
-     without one it just looks like the text stopped early. */
+  /* The card fills its pane: unframed, the 1100px cap would look like the
+     text stopped early. */
   & .focus-main.with-code .focus-card-wrapper { max-width: none; }
 }
 
@@ -916,73 +668,41 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: .5rem .5rem .4rem;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-
-  &::-webkit-scrollbar { width: 5px; }
-  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
 /* ── Same-column rail ───────────────────────────────────────────────
-   A queue of every finding sharing the open card's column, docked
-   full-height to the right edge of the screen: the kanban answer to
-   the focus view's "Up next" sidebar, down to reusing its cards
-   (`.focus-side-card`) and its prev / next controls (`.focus-nav`).
-   Working through one bucket then needs no round trip to the board —
-   the neighbours are on screen and one click swaps the dialog to any
-   of them.
-
-   Mounted only above the breakpoint at the end of this block, the
-   first width that can give up a 240px strip and still leave the
-   modal its full cap.
-
-   Fixed rather than a grid item: the backdrop pads itself 1rem on
-   every side, which is exactly what a panel meant to sit ON the
-   screen's edges can't have. It stays above the dim without a
-   z-index — both are positioned, and the rail comes later in the
-   backdrop's markup. */
+   A queue of the open card's column docked to the screen's right edge, the
+   kanban counterpart of the focus view's "Up next" (its cards and prev /
+   next controls). Mounted only above the breakpoint at this block's end.
+   Fixed, not a grid item: the backdrop's 1rem padding would keep it off the
+   screen edge. It stays above the dim without a z-index (positioned, later
+   in the markup). */
 .kanban-detail-side {
   position: fixed;
   inset: 0 0 0 auto;
   width: var(--kanban-side-w);
   display: none;
   flex-direction: column;
-  background: var(--bg, var(--surface));
-  /* Only the left edge is on screen. A border or a rounded corner on
-     the other three would draw a hairline along the viewport's own
-     and read as a panel someone forgot to finish. */
+  background: var(--bg);
+  /* Only the left edge is on screen. */
   border-left: 1px solid var(--border);
   box-shadow: -4px 0 14px rgb(0 0 0 / .25);
   overflow: hidden;
-  /* Same deal as the modal: the backdrop passes clicks through, the
-     panels themselves take them. */
   pointer-events: auto;
   view-transition-name: kanban-detail-side;
 }
 
 .kanban-detail-side-header {
-  flex-shrink: 0;
-  display: flex; align-items: center; justify-content: space-between;
-  gap: .5rem;
   min-height: var(--kanban-head-h);
-  padding: .35rem .55rem;
-  border-bottom: 1px solid var(--border);
-  font-size: .72rem; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .06em;
-  color: var(--muted);
 
-  /* The picker soaks up the free space so the position counter and
-     the prev / next pair stay pinned to the right edge, and a long
-     bucket name ellipsises instead of shoving them out. */
+  /* The picker takes the free space and ellipsizes. */
   & .kanban-detail-side-pick {
     flex: 1 1 auto; min-width: 0;
     position: relative;
     display: block;
   }
 
-  /* Chevron, same two-borders-rotated glyph the toolbar's selects
-     carry — drawn on the wrapper because pseudo-elements don't apply
-     to a <select>, and clicks fall through it to the control. */
+  /* On the wrapper: pseudo-elements don't apply to a <select>. */
   & .kanban-detail-side-pick::after {
     content: '';
     position: absolute;
@@ -994,8 +714,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     pointer-events: none;
   }
 
-  /* The control wears the header text's own type — it replaced a
-     label, and should still read as one until it's used. */
+  /* Wears the header's type: it replaced a label. */
   & .kanban-detail-side-select {
     width: 100%;
     appearance: none;
@@ -1008,30 +727,16 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
     cursor: default;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 
-    /* No focus ring. Chromium matches `:focus-visible` on a <select>
-       the moment it's CLICKED — the popup it opens is keyboard-
-       operable, so the UA calls that keyboard interaction — which puts
-       an accent ring around a control the reader just pointed at. The
-       toolbar's selects settled this the same way (`:focus` with
-       `outline: none` and a quieter cue); borderless, this one
-       brightens its label, which is also what hover does. */
+    /* No focus ring: Chromium matches `:focus-visible` on a clicked <select>
+       (its popup is keyboard-operable). As the toolbar's selects, a quieter cue:
+       the label brightens, as on hover. */
     &:hover, &:focus { color: var(--text); }
     &:focus { outline: none; }
   }
 
-  & .count {
-    font-weight: 500; font-size: .7rem;
-    color: var(--muted);
-    padding: 0 .35rem; border-radius: 999px;
-    background: rgb(from var(--text) r g b / .08);
-    font-variant-numeric: tabular-nums;
-    /* `3 / 9` is one token: let it wrap and the rail's 240px turns the
-       counter into two stacked lines and the header into two rows. */
-    white-space: nowrap;
-  }
+  /* `3 / 9` is one token: wrapped, it would make the header two rows. */
+  & .count { white-space: nowrap; }
 
-  /* The counter and the arrows keep their size; the picker beside them
-     is what ellipsises when a bucket's name is long. */
   & .focus-nav { flex: none; }
 }
 
@@ -1042,80 +747,46 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   overscroll-behavior: contain;
   padding: 0;
   display: flex; flex-direction: column;
-  /* The rail draws a screen at a time and puts the list back under the
-     reader itself as its cards are measured (view/kanban-rail.js); the
-     browser's scroll anchoring would move it a second time. */
+  /* The rail restores the reader's position itself as cards are measured
+     (kanban-rail.js); scroll anchoring would move it again. */
   overflow-anchor: none;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
 
-  &::-webkit-scrollbar { width: 5px; }
-  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
-  /* The spacers standing in for the cards not drawn keep the heights
-     they're given, however full the column. */
   & > .kanban-rail-spacer { flex: none; }
 }
 
-/* WCO PWA mode (the hidden-title-bar window): the fullscreen dialog
-   and the docked rail both run to the screen's edges, and up there the
-   edges belong to the OS window controls — top-left on macOS, top-right
-   on Windows / Linux. Push each side's content clear of the strip the
-   platform actually paints into, and only that side: an inset on the
-   side with no controls would be a band of nothing.
-
-   The clamp is that condition, written as arithmetic because `env()`
-   inside a media query has patchy support while `env()` inside a
-   property value doesn't (the same reason report.css ramps its header
-   padding this way). Read it as "the titlebar's height if this side's
-   control strip has any width at all, otherwise zero": multiplying the
-   strip's width by 1000 sends any non-zero value past the height, so
-   the clamp lands on one end or the other, and the 0px floor keeps a
-   sub-pixel negative — 100vw and the titlebar area disagreeing by a
-   rounding error — from invalidating the whole declaration. */
+/* WCO: the fullscreen dialog and the rail reach the screen edges, where the
+   OS window controls are (top-left on macOS, top-right elsewhere). Inset
+   only the side that has controls. The clamp reads "the titlebar height if
+   this side's strip has any width, else 0" — arithmetic because env() in a
+   media query is poorly supported; the 0px floor absorbs sub-pixel
+   negatives. */
 /* stylelint-disable media-feature-name-value-no-unknown, length-zero-no-unit */
 @media (display-mode: window-controls-overlay) {
-  /* Fullscreen starts the card at the very top-left, which is where
-     macOS puts its traffic lights — and what they land on is the
-     card's badge rail, `.finding-left`, about their own width. Only
-     that rail moves: pushing the whole body down would leave a band of
-     nothing across the full width to clear something occupying 80px of
-     one corner.
-
-     The rail lives in the finding-card's shadow root, so the inset
-     travels as a custom property (they inherit through the boundary,
-     which the theme's own tokens already rely on) and finding-card.css
-     spends it. Set on the pane rather than the card so the card stays
-     a card wherever else it is mounted. */
+  /* The traffic lights land on the card's badge rail (`.finding-left`), so
+     only it moves. It lives in the card's shadow root, so the inset travels
+     as a custom property (finding-card.css), set on the pane so the card is
+     unaffected elsewhere. */
   .kanban-detail-modal.fullscreen .focus-pane-card {
     --finding-left-inset: clamp(0px, env(titlebar-area-x, 0px) * 1000, env(titlebar-area-height, 0px));
   }
 
-  /* The rail is docked to the right edge whether or not the dialog is
-     fullscreen, so its header meets the Windows / Linux controls in
-     both — hence no `.fullscreen` here. `--wco-right-toolbar`
-     (theme.css) is the shared measure of that strip. */
+  /* The rail is docked right in both modes, so it meets the Windows / Linux
+     controls either way; `--wco-right-toolbar` is theme.css's measure. */
   .kanban-detail-side {
     padding-top: clamp(0px, var(--wco-right-toolbar) * 1000, env(titlebar-area-height, 0px));
   }
 }
 /* stylelint-enable media-feature-name-value-no-unknown, length-zero-no-unit */
 
-/* Wide viewports: mount the rail and hold its width out of the
-   backdrop's own box, so the centred modal lands beside the rail
-   rather than under it. The 1rem added on top of the rail's width is
-   the inset the backdrop's other three sides already carry, which
-   makes the modal's two gutters measure the same thing — screen edge
-   to modal on the left, modal to rail on the right. Its cap is then
-   `100%` of what that leaves rather than of the viewport. */
+/* Wide viewports: mount the rail and pad the backdrop by its width plus the
+   1rem the other sides have, so the modal centers beside it with equal
+   gutters. */
 @media (width >= 1400px) {
   .kanban-detail-backdrop:has(> .kanban-detail-side) {
     padding-right: calc(var(--kanban-side-w) + 1rem);
   }
 
-  /* Fullscreen reserves the rail's width and nothing else — the 1rem
-     that separates the two in the normal layout is the gutter the
-     dialog just gave up. */
+  /* Fullscreen gave up the gutter: reserve the rail's width alone. */
   .kanban-detail-backdrop:has(> .kanban-detail-side):has(> .kanban-detail-modal.fullscreen) {
     padding-right: var(--kanban-side-w);
   }
@@ -1125,38 +796,15 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   .kanban-detail-side { display: flex; }
 }
 
-/* Shared-element fly transition (open: card → modal, close:
-   modal → card). events.js pairs the snapshots
-   by name and the GROUP pseudo morphs position + size between them
-   via its default transform animation.
-
-   Both snapshots animate `clip-path` at full opacity. The closing
-   card's background fills its animated box, while `object-fit: none`
-   keeps the captured text at its natural size inside that box.
-
-   The pseudos are CENTERED inside the image-pair via `top: 50%;
-   left: 50%; translate: -50% -50%`. The spec default puts each
-   pseudo at the top-left of the image-pair sized to its
-   captured element's natural rect — so the small OLD card
-   (~200×60) and the larger NEW modal (~560×400) sat at offset
-   positions and their clip-path centers landed at different
-   points. Centering aligns the clip-path centers so both
-   converge on the same visual point. (The `translate` property
-   is independent of the `transform` property the browser uses
-   for the GROUP's morph animation, so they compose.)
-
-   The clip's minimum size is NOT zero — it's the source card's
-   own dimensions (set from a real `.kanban-card` measurement in
-   events.js as the CSS variables `--kanban-clip-card-w/h`).
-   The modal's clip can't shrink past the card's footprint, so
-   at the "small" end of the animation the modal's visible
-   area exactly overlaps the card's visible area, producing a
-   single rect rather than two-rectangles-at-different-sizes.
-
-   `animation-fill-mode: forwards` holds the terminal keyframe
-   until the pseudo is detached — otherwise the pseudo snaps
-   back to its `from` clip-path for one frame and the modal
-   briefly reappears at the end of close. */
+/* Shared-element fly transition (card ↔ modal): events.js pairs the
+   snapshots by name and the group pseudo morphs between them. Both snapshots
+   animate clip-path at full opacity.
+   The pseudos are centered in the image pair (`top/left: 50%` +
+   `translate`, which composes with the group's transform) so their clips
+   converge on one point. The clip's smallest size is the source card's
+   (`--kanban-clip-card-w/h`, measured in events.js), so at the small end
+   the two rects coincide. `forwards` holds the final keyframe, or the
+   modal flashes back for a frame at the end of close. */
 :root {
   /* Fallback when no .kanban-card is mounted to measure. */
   --kanban-clip-card-w: 180px;
@@ -1181,12 +829,8 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
 @keyframes kanban-fade-out { 0% { opacity: 1; } 100% { opacity: 0; } }
 
 ::view-transition-group(kanban-detail-modal) {
-  /* Force the modal group to paint above the dim group's pseudo.
-     Without this z-index, the browser's default pseudo ordering
-     puts the dim — which is a NEW-only element — visually on top
-     of the modal pair (OLD card + NEW modal) during the morph,
-     so the modal looks dimmed-out / darker than its final state
-     until the very last frame. */
+  /* Above the dim group: by default the NEW-only dim paints over the modal
+     pair, darkening it until the last frame. */
   z-index: 2;
   animation-duration: .2s;
   animation-timing-function: cubic-bezier(.3, 0, .2, 1);
@@ -1195,9 +839,7 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   z-index: 1;
 }
 ::view-transition-group(kanban-detail-side) {
-  /* Snapshot groups have their own stacking order. Keep the sidebar
-     above the dim during both fades, matching the live overlay, so
-     it doesn't jump in brightness when the transition ends. */
+  /* Above the dim too, matching the live overlay. */
   z-index: 3;
 }
 ::view-transition-old(kanban-detail-modal),
@@ -1213,9 +855,8 @@ body:has(.kanban-detail-backdrop) theme-toggle { display: none; }
   animation: kanban-clip-reveal .18s cubic-bezier(0, 0, .25, 1) forwards;
 }
 
-/* Preserve the original card motion and full opacity. Only the
-   captured image stays unscaled, so the text cannot balloon. Fill
-   the surrounding box with the card's actual color as it resizes. */
+/* Closing: the snapshot stays unscaled so its text can't balloon; the box
+   fills with the card's color as it resizes. */
 html.kanban-closing::view-transition-new(kanban-detail-modal) {
   object-fit: none;
   background: var(--kanban-return-card-bg);
@@ -1227,22 +868,13 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   visibility: hidden;
 }
 
-/* Dim layer fades on its own track. Plain opacity is fine here
-   because the dim is on a SEPARATE element from the modal — the
-   modal's own (clip-path) animation isn't affected. */
-::view-transition-new(kanban-detail-dim) {
-  animation: kanban-fade-in .16s ease-out forwards;
-}
-::view-transition-old(kanban-detail-dim) {
-  animation: kanban-fade-out .14s ease-in forwards;
-}
-
-/* The rail rides the dim's fade track. It has no card to fly out of,
-   and a scale / clip of its own would compete with the modal's
-   animation right next to it. */
+/* The dim fades on its own track (plain opacity is fine on a separate
+   element), and the rail, with no card to fly from, rides it. */
+::view-transition-new(kanban-detail-dim),
 ::view-transition-new(kanban-detail-side) {
   animation: kanban-fade-in .16s ease-out forwards;
 }
+::view-transition-old(kanban-detail-dim),
 ::view-transition-old(kanban-detail-side) {
   animation: kanban-fade-out .14s ease-in forwards;
 }
@@ -1258,30 +890,20 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 }
 
 /* ── Focus view ─────────────────────────────────────────────────────
-   One finding at a time, full-detail, in the main pane, with a
-   vertical "up next" queue of compact kanban-style cards on the
-   right. The board-style flex chain
-   (#report → .findings-content.with-focus → .focus-view) bounds
-   the layout to the viewport so the main pane and the sidebar
-   scroll independently — the toolbar stays pinned. */
+   One finding in full beside an "up next" queue. The flex chain
+   (#report → .findings-content.with-focus) bounds it to the viewport so the
+   panes scroll independently. */
 .focus-view {
   display: grid;
-  /* Narrow queue at 240px keeps the main pane wide; the queue's
-     cards still fit comfortably (the kanban-card title clamp + meta
-     row are sized for ~200px content). Narrow viewports collapse
-     the queue below the main via the @media rule at the bottom of
-     this file. */
+  /* A 240px queue keeps the main pane wide; it stacks below on narrow
+     viewports (end of file). */
   grid-template-columns: minmax(0, 1fr) 240px;
   gap: .75rem;
   flex: 1; min-height: 0;
 }
 
-/* Main pane layout — finding-card by default, with the inline
-   Code panel added as a second column when the focused finding
-   has a bundle-source reference (`.focus-main.with-code`). The
-   prev / counter / next nav lives in the sidebar header (see
-   `.focus-nav` below), not in the main pane, so the card +
-   code can each run the full height. */
+/* The card, plus the Code panel as a second column when the finding has a
+   bundle source (`.with-code`). Navigation lives in the sidebar header. */
 .focus-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1290,18 +912,11 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   min-width: 0; min-height: 0;
 }
 .focus-main.with-code {
-  /* Card | divider | code. `--focus-split` is where the divider sits
-     as a percentage of the pane — 50 (an even 1:1 split) by default,
-     bound per-render from `state.focusSplit` and moved live while the
-     divider is dragged (view/focus-splitter.js). The divider's own
-     track is `auto`, so it takes the width below and stands in for
-     the column gap the two panes used to sit in — hence the gap going
-     to 0 here. Half that width comes off the card column so the split
-     percentage lands on the divider's CENTRE: the panes are then
-     equal at 50, and the drag math (cursor's fraction of the pane =
-     the split) puts the divider exactly under the cursor.
-     `minmax(0, …)` on both panes keeps a long unwrapped source line
-     from pushing the code column past the width the user picked. */
+  /* Card | divider | code. `--focus-split` is the divider's position in % of
+     the pane (state.focusSplit, focus-splitter.js), 50 by default. Half the
+     divider's width comes off the card column so the split lands on its
+     center and the drag math puts it under the cursor. `minmax(0, …)` keeps
+     long source lines from widening the code column. */
   --focus-splitter-width: .75rem;
 
   grid-template-columns:
@@ -1311,21 +926,16 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   column-gap: 0;
 }
 
-/* The drag handle itself — a gutter exactly as wide as the column
-   gap it replaced, so the panes sit where they always did. */
+/* The drag handle: as wide as the gap it replaced. */
 .focus-splitter {
   display: flex; align-items: center; justify-content: center;
   width: var(--focus-splitter-width, .75rem);
   cursor: default;
-  /* Pointer drags belong to the resize handler, not to the scroller
-     underneath — without this a touch drag pans the page instead. */
+  /* Without this a touch drag pans the page. */
   touch-action: none;
 
-  /* A short centred grip, not a full-height rule: both panes already
-     carry their own border, so a third line down the whole pane would
-     read as chrome rather than as something to grab. It takes the
-     accent on hover / focus and runs the full height for the length
-     of a drag, where "this is the edge that's moving" is the point. */
+  /* A short grip, not a full-height rule (both panes have borders); full
+     height while dragging. */
   &::before {
     content: '';
     width: 2px;
@@ -1338,23 +948,16 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   &.dragging::before { height: 100%; background: var(--accent); }
   &:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 }
-/* Keep the resize cursor (and suppress selection) across BOTH panes
-   for the length of a drag — the pointer is captured by the handle,
-   so it spends the gesture over content that would otherwise show a
-   text caret and highlight as it swept past. */
+/* Default cursor and no selection across both panes for the whole drag. */
 .focus-main:has(> .focus-splitter.dragging) {
   cursor: default;
   user-select: none;
 }
 
-/* Prev / counter / next group inside the sidebar header. The
-   sidebar header is a flex row (`.focus-sidebar-header` below),
-   so this group lives on its right edge next to the queue label
-   and behaves as a single navigation cluster. */
 .focus-nav {
   display: inline-flex; align-items: center; gap: .25rem;
 }
-.focus-nav-btn {
+.focus-nav-btn, .focus-code-nav-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.4rem; height: 1.4rem;
   background: transparent;
@@ -1366,35 +969,17 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
     color: var(--accent);
     border-color: var(--accent);
   }
-  &:disabled {
-    opacity: .35;
-  }
+  &:disabled { opacity: .35; }
 }
 
-/* Each pane (card / code) is its own scroll container so the
-   nav bar and the queue stay pinned while the inner content
-   moves. The card pane horizontally centers the finding-card on
-   wide viewports via `margin-inline: auto`; code grows to fill. */
+/* Each pane scrolls on its own so the nav and queue stay put. */
 .focus-pane {
   min-width: 0; min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-
-  &::-webkit-scrollbar { width: 6px; }
-  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* The finding-card sits inside its own glass panel so it reads
-   as a distinct surface against the page background (matching
-   the Code panel + sidebar). The wrapper stops at a wide-but-
-   readable cap; without the Code panel mounted the pane scrolls
-   vertically and the wrapper centers, and with the Code panel
-   mounted the card column is itself narrower so the cap rarely
-   kicks in. `:host(:last-child) .card { border-bottom: none }` in
-   finding-card.css already strips the inner card's bottom border
-   so the panel's own border lands cleanly. */
+/* The card in its own glass panel, as the Code panel and sidebar are. */
 .focus-card-wrapper {
   position: relative;
   width: 100%;
@@ -1414,19 +999,12 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 @media print {
   .finding-history { display: none; }
 }
-/* Cap the wrapper at a comfy reading width ONLY when the Code
-   panel is alongside it. Without code, the wrapper fills the
-   main pane so the finding-card sits visually centered between
-   the sidebar and the viewport edge instead of pinching in a
-   narrow strip with empty space to either side. */
+/* Capped only beside the Code panel; alone it fills the pane. */
 .focus-main.with-code .focus-card-wrapper {
   max-width: 1100px;
 }
 
-/* Code panel — file path bar pinned at the top, source body
-   scrolling below. The whole pane sits inside its own glass
-   card so the panel reads as a distinct surface from the
-   finding-card. */
+/* Code panel: path bar over a scrolling source, in its own glass card. */
 .focus-pane-code {
   display: flex; flex-direction: column;
   background: var(--surface); backdrop-filter: var(--glass-blur);
@@ -1451,8 +1029,6 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
     color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
-  /* Pushed to the far end of the bar, so the path can run as long as
-     it likes without the buttons drifting with it. */
   & .focus-code-nav {
     margin-left: auto;
     flex-shrink: 0;
@@ -1460,33 +1036,14 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
     align-self: center;
   }
 }
-/* Smaller than `.focus-nav-btn`, which sits in a header of its own —
-   these ride inside a .7rem path bar and would otherwise set its
-   height. Disabled keeps its box: see the note at the markup. */
-.focus-code-nav-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.1rem; height: 1.1rem;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--ui-radius, 3px);
-  color: var(--text);
-
-  &:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  &:disabled { opacity: .35; }
-}
+/* Smaller than `.focus-nav-btn`: inside the .7rem path bar it would set the
+   bar's height. Disabled keeps its box (see the markup). */
+.focus-code-nav-btn { width: 1.1rem; height: 1.1rem; }
 .focus-code-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-
-  &::-webkit-scrollbar { width: 6px; height: 6px; }
-  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 .focus-code-empty {
   flex: 1; min-height: 0;
@@ -1497,10 +1054,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 
 .focus-code-lines {
   display: grid;
-  /* The gutter rail's width follows the digit count of the
-     highest line number; set per-render via inline
-     `--lineno-width` so 4-digit files don't waste horizontal
-     space and 5-digit files don't truncate. */
+  /* `--lineno-width` (inline, per render) follows the digit count. */
   grid-template-columns: calc(var(--lineno-width, 4ch) + 1.4rem) minmax(0, 1fr);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .75rem;
@@ -1519,11 +1073,6 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   font-variant-numeric: tabular-nums;
 }
 .focus-code-line-active {
-  /* Subtle accent tint on the gutter row that matches the
-     finding's line — strong enough to spot the relevant slot at a
-     glance, soft enough to not compete with the source code
-     content next to it. The bold + accent text color carries
-     most of the affordance. */
   background: rgb(from var(--accent) r g b / .08);
   color: var(--accent);
   font-weight: 600;
@@ -1549,25 +1098,6 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   overflow: hidden;
 }
 
-.focus-sidebar-header {
-  flex-shrink: 0;
-  display: flex; align-items: center; justify-content: space-between;
-  gap: .5rem;
-  padding: .35rem .55rem;
-  border-bottom: 1px solid var(--border);
-  font-size: .72rem; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .06em;
-  color: var(--muted);
-
-  & .count {
-    font-weight: 500; font-size: .7rem;
-    color: var(--muted);
-    padding: 0 .35rem; border-radius: 999px;
-    background: rgb(from var(--text) r g b / .08);
-    font-variant-numeric: tabular-nums;
-  }
-}
-
 .focus-sidebar-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -1575,18 +1105,9 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   overscroll-behavior: contain;
   padding: 0;
   display: flex; flex-direction: column;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-
-  &::-webkit-scrollbar { width: 5px; }
-  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 }
 
-/* Narrow viewports: stack the queue under the main pane so the
-   finding-card keeps its full width instead of being squeezed
-   into the leftover gap next to a 240px sidebar. The queue caps
-   its height so the page doesn't grow to fit everything — the
-   focus view still owns the viewport. */
+/* Narrow viewports: the queue stacks under the main pane, height-capped. */
 @media (width <= 900px) {
   .focus-view {
     grid-template-columns: minmax(0, 1fr);
@@ -1595,12 +1116,8 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   .focus-sidebar { max-height: 40vh; }
 }
 
-/* Below a usable two-pane width, fold the Code panel under the
-   finding-card so each pane keeps enough horizontal room to read.
-   The divider goes with the side-by-side layout it divides: there's
-   no horizontal room left to trade, and dropping it out of the grid
-   leaves exactly the two rows the panes need. The split the user
-   picked stays in state, so widening the window brings it back. */
+/* Below a usable two-pane width, the Code panel folds under the card and
+   the divider goes; the split stays in state for when it widens again. */
 @media (width <= 1200px) {
   .focus-main.with-code {
     grid-template-columns: minmax(0, 1fr);
