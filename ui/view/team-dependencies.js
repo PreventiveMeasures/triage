@@ -125,12 +125,11 @@ function teamRepositories(team, repoIds) {
 // held as its lines tell it; those the server's time left asked again,
 // `resumes` times at most.
 function readTeam(team, asked, repoIds, resumes) {
-  const data = held
   // Each one's entry as this read last held it, those it told all of left out.
-  const current = new Map(asked.map(repoId => [repoId, data.get(repoId)]))
+  const current = new Map(asked.map(repoId => [repoId, held.get(repoId)]))
   const set = (repoId, entry) => {
-    if (data.get(repoId) === current.get(repoId)) data.set(repoId, entry)
-    if (data.get(repoId) === entry && entry.telling) current.set(repoId, entry)
+    if (held.get(repoId) === current.get(repoId)) held.set(repoId, entry)
+    if (held.get(repoId) === entry && entry.telling) current.set(repoId, entry)
     else current.delete(repoId)
   }
   const controller = new AbortController()
@@ -155,9 +154,9 @@ function readTeam(team, asked, repoIds, resumes) {
     for (const [repoId, entry] of [...current]) {
       if (err?.name !== 'AbortError') set(repoId, untold(repoId, entry, err?.message || 'It couldn’t be read.'))
       // One aborted read again once drawn, shown as it was meanwhile.
-      else if (data.get(repoId) === entry) {
-        if (entry.status === 'ready') data.set(repoId, { ...entry, until: 0, telling: null })
-        else data.delete(repoId)
+      else if (held.get(repoId) === entry) {
+        if (entry.status === 'ready') held.set(repoId, { ...entry, until: 0, telling: null })
+        else held.delete(repoId)
       }
     }
   }).finally(() => {

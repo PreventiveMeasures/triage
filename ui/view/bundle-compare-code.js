@@ -114,7 +114,6 @@ const stasisFormat = (details, path) => (details?.kind === 'stasis' ? details.bu
 // Renamed names are hidden in JavaScript alone, what a minifier renames: in
 // another language a short word (a CSS selector, a tag, prose) is no binding.
 const renamable = path => /\.[cm]?js$/iu.test(path)
-const hidesRenames = (path, { ignoreRenames } = prefs) => ignoreRenames && renamable(path)
 // Minified text's short names are a minifier's, not its author's.
 const minified = (details, path, text) => npmFileReadabilityRead(details, path, text).category === 'minified'
 // `make()`'s value, kept in `cache` by `key` while `inputs` are the same
@@ -182,7 +181,7 @@ const readsSaid = reads => `Renamed names are hidden, though the file reads ${re
 
 // A file's line model by the settings it was diffed with, and whether its
 // sides were pretty-printed.
-export const modelKey = (path, pretty, settings = prefs) => `${path}\0${settings.ignoreWhitespace}\0${hidesRenames(path, settings)}\0${!!settings.markRenames}\0${pretty}`
+export const modelKey = (path, pretty, settings = prefs) => `${path}\0${settings.ignoreWhitespace}\0${settings.ignoreRenames && renamable(path)}\0${!!settings.markRenames}\0${pretty}`
 
 // `${integrity}\0${path}` → the text colored and its highlighted lines, or
 // null when Prism has no grammar for it or it is too large to color.
@@ -315,13 +314,6 @@ export class BundleCompareCode extends LitElement {
     this.files = null
     this.scope = ''
     this.resolutions = []
-    this.baseAlerts = null
-    this.otherAlerts = null
-    this.alertTags = null
-    this.newHosts = null
-    this.newHostTag = null
-    this.extensions = null
-    this.path = null
     this._query = ''
     this._kinds = new Set(KINDS.map(entry => entry.kind))
     this._mode = 'files'
@@ -376,13 +368,8 @@ export class BundleCompareCode extends LitElement {
     }
     if (['files', 'resolutions', 'base', 'other'].some(name => changed.has(name))) {
       this._entries = comparisonEntries(this.base, this.other, this.files, this.resolutions ?? [])
-      this._counted = new Map()
-      this._countModels = new Map()
-      this._drawnCounts = new Map()
-      this._drawnTotals = new Map()
+      for (const kept of [this._counted, this._countModels, this._drawnCounts, this._drawnTotals, this._blocks, this._rowless]) kept.clear()
       this._treeLimit = this.extensions?.treePageSize ?? Infinity
-      this._blocks.clear()
-      this._rowless.clear()
       this._sought = this._soughtRow = null
       this._soughtSettling = false
     }
