@@ -46,7 +46,7 @@ export interface BundleCacheStorage {
 }
 
 const filename = `v${BUNDLE_METADATA_VERSION}-metadata.json.br`
-const packagesFilename = 'v7-advisory-inventory.json'
+const packagesFilename = 'v8-advisory-inventory.json'
 
 // An entry point's inventory is rows of the bundle's own, a package's versions
 // in order and then the skipped: kept as a 0 or 1 for each, since spelled out,

@@ -296,6 +296,7 @@
     "common/linked-workspace-groups.js",
     "common/managed/agent-tasks.ts",
     "common/managed/comments.ts",
+    "common/managed/directory-packages.ts",
     "common/managed/finding-detail.d.ts",
     "common/managed/finding-detail.js",
     "common/managed/finding-values.d.ts",

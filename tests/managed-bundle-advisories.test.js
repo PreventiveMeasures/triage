@@ -50,6 +50,22 @@ function inventoryOf(modules, paths = null) {
   return bundleAdvisoryInventory({ kind: 'stasis', bundle }, paths)
 }
 
+test('advisory inventory leaves out a package installed from a directory, the repository’s own code', () => {
+  // As a Stasis that records `directory` parses one; 1.0.0-rc.6 drops it.
+  const parsed = (modules, paths = null) => bundleAdvisoryInventory({ kind: 'stasis', bundle: { modules: new Map(modules) } }, paths)
+  const directory = { name: 'log', version: '1.0.0', ecosystem: 'npm:directory', directory: 'vendor/log', files: { 'index.js': 'own source' } }
+  const modules = [
+    ['node_modules/.pnpm/log@file+vendor+log/node_modules/log', directory],
+    ['node_modules/other', { name: 'other', version: '1.0.0', files: { 'index.js': 'npm source' } }],
+  ]
+  assert.deepEqual(parsed(modules), { packages: [{ ecosystem: 'npm', name: 'other', versions: ['1.0.0'] }], skipped: [] }, 'neither audited nor skipped')
+  assert.deepEqual(parsed(modules, ['node_modules/.pnpm/log@file+vendor+log/node_modules/log/index.js']), { packages: [], skipped: [] })
+  for (const malformed of [{ ...directory, integrity: `sha512-${'A'.repeat(86)}==` }, { ...directory, directory: undefined }]) {
+    assert.deepEqual(parsed([['node_modules/log', malformed]]), { packages: [], skipped: [{ ecosystem: 'npm:directory', name: 'log', version: '1.0.0',
+      because: 'Recorded as installed from a directory, but with an integrity or naming no directory.' }] }, 'malformed, skipped: its bundle’s review fails')
+  }
+})
+
 test('advisory inventory retains dependency repository hints across ecosystems and versions', () => {
   const modules = ['npm', 'cargo', 'composer', 'soldeer', 'github'].map(ecosystem => [
     `dependencies/${ecosystem}`, { ecosystem, name: ecosystem === 'composer' || ecosystem === 'github' ? 'org/dep' : 'dep',

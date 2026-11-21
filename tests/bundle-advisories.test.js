@@ -224,6 +224,9 @@ test('managed bundles without dependency packages hide the tab once their module
   assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/dep', { name: 'dep', version: null, files: {} }])), false, 'v0 modules carry no versions')
   assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/dep', { name: 'dep', version: '1.0.0', files: {} }])), true)
   assert.equal(showAdvisoriesTab(entry, withModules(['vendor/log', { ecosystem: 'cargo', name: 'log', version: '0.4.22', files: {} }])), true)
+  const directory = { ecosystem: 'npm:directory', name: 'lib', version: '1.0.0', directory: 'vendor/lib', files: {} }
+  assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/lib', directory])), false, 'one installed from a directory is own code')
+  assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/lib', { ...directory, directory: undefined }])), true, 'a malformed one is listed as not audited')
   state.managedSession = { id: 'alice', role: 'none', csrfToken: 'session' }
   assert.equal(showAdvisoriesTab(entry, withModules(['node_modules/dep', { name: 'dep', version: '1.0.0', files: {} }])), false, 'access still applies')
   assert.equal(showAdvisoriesTab(entry, withModules(), true), false, 'even to the open tab')

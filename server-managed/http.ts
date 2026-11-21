@@ -179,6 +179,7 @@ import { filterReportData } from '../common/managed/report-filter.ts'
 import { ourRepoSlugs, withoutStrayRepos } from '../common/finding-repo.js'
 import type { TriageEntryPatch } from '../common/managed/triage.ts'
 import { GITHUB_AGENTS } from '../common/managed/github-agents.ts'
+import { isDirectoryEcosystem } from '../common/managed/directory-packages.ts'
 import { MAX_FINDING_ID, MAX_TRIAGE_BODY_BYTES, MAX_TRIAGE_ENTRIES, MAX_TRIAGE_HISTORY, parseTriageEntryPatch } from '../common/managed/triage.ts'
 import { reportRepoGithub, repoDirectory as stampedDirectory } from '@preventive/report'
 import { findingsRepository, loadManagedFindings, ownFileDirectory, readManagedReport } from '../common/managed/report-content.ts'
@@ -3718,6 +3719,8 @@ async function handleBundleDependencyReview(res: ServerResponse, deps: ManagedHt
     commit = (await deps.bundleCache.summary(record))?.commit
   } catch { sendJson(res, 422, { error: 'bundle-unavailable' }); return }
   if (inventory === null) { sendJson(res, 413, { error: 'payload-too-large' }); return }
+  // Skipped, one installed from a directory is one whose record is malformed.
+  if (inventory?.skipped.some(pkg => isDirectoryEcosystem(pkg.ecosystem))) { sendJson(res, 422, { error: 'directory-package-malformed' }); return }
   const bundled = (inventory?.packages ?? []).filter(pkg => pkg.ecosystem === 'npm').flatMap(pkg => pkg.versions.map(version => ({ name: pkg.name, version })))
   // Its commit as GitHub names one, of SHA-1.
   if (!commit || !SHA.test(commit) || bundled.length === 0) { none(); return }

@@ -1335,7 +1335,8 @@ const BUILT = { [since]: BASELINE, [built]: {
 } }
 // A bundle stored at repository 1's `web`, of `versions` by package, built
 // from `commit`, its summary and inventory as its cache tells them.
-async function bundleFixture(t, { commit = built, packages = { absent: ['1.0.0'], 'left-pad': ['1.3.0'], mine: ['1.0.0'], ms: ['2.1.3'], stray: ['1.0.0'] }, directory = 'web' } = {}) {
+async function bundleFixture(t, { commit = built, packages = { absent: ['1.0.0'], 'left-pad': ['1.3.0'], mine: ['1.0.0'], ms: ['2.1.3'], stray: ['1.0.0'] }, directory = 'web',
+  skipped = [] } = {}) {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
   const users = await people(db)
@@ -1344,7 +1345,7 @@ async function bundleFixture(t, { commit = built, packages = { absent: ['1.0.0']
     repoId: 1, repoDirectory: directory }, Date.now())
   const bundleCache = {
     summary: () => Promise.resolve({ files: 1, codeFiles: 1, lines: 1, ...commit ? { commit } : {} }),
-    advisoryInventory: () => Promise.resolve({ packages: Object.entries(packages).map(([name, versions]) => ({ ecosystem: 'npm', name, versions })), skipped: [] }),
+    advisoryInventory: () => Promise.resolve({ packages: Object.entries(packages).map(([name, versions]) => ({ ecosystem: 'npm', name, versions })), skipped }),
   }
   const send = api(db, users, { bundleCache })
   return { db, users, ask: (who = 'alice') => send(`/api/bundles/${id}/dependency-review`, { who }) }
@@ -1390,6 +1391,20 @@ test('a bundle of no commit, or of no npm versions, is told no review, GitHub no
     await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
     github(t, { files: BUILT })
     assert.deepEqual((await ask()).body, { review: null }, JSON.stringify(options))
+    assert.equal(globalThis.fetch.mock.callCount(), 0)
+    t.mock.restoreAll()
+  }
+})
+
+test('a bundle recording a package installed from a directory malformed fails its review, GitHub not asked; one skipped otherwise is left out of it', async t => {
+  const because = 'Recorded as installed from a directory, but with an integrity or naming no directory.'
+  for (const [skipped, status] of [[[{ ecosystem: 'npm:directory', name: 'lib', version: '1.0.0', because }], 422],
+    [[{ ecosystem: 'cargo-git', name: 'crate', version: '1.0.0', because: 'Crate vendored from git.' }], 200]]) {
+    const { db, ask } = await bundleFixture(t, { packages: {}, skipped })
+    await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
+    github(t, { files: BUILT })
+    const answer = await ask()
+    assert.deepEqual([answer.status, answer.body], [status, status === 422 ? { error: 'directory-package-malformed' } : { review: null }])
     assert.equal(globalThis.fetch.mock.callCount(), 0)
     t.mock.restoreAll()
   }

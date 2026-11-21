@@ -2,6 +2,7 @@ import { isEvidenceFile } from '@exodus/stasis/audit-corrections'
 import { packageRepo } from '@exodus/stasis-core/bundle-util'
 import type { Package } from '@preventive/upstream/advisories.js'
 import type { BundleDetails } from '../common/bundle-metadata.js'
+import { MALFORMED_DIRECTORY_PACKAGE, isDirectoryEcosystem, malformedDirectoryPackage } from '../common/managed/directory-packages.ts'
 
 interface SkippedAdvisoryPackage {
   ecosystem: string
@@ -10,7 +11,7 @@ interface SkippedAdvisoryPackage {
   because: string
 }
 export interface BundleAdvisoryInventory { packages: Package[]; skipped: SkippedAdvisoryPackage[] }
-interface BundleModule { ecosystem?: string; name?: string; version?: string; repo?: { github?: Package['github'] }; files: Record<string, unknown> }
+interface BundleModule { ecosystem?: string; name?: string; version?: string; integrity?: string; directory?: string; repo?: { github?: Package['github'] }; files: Record<string, unknown> }
 
 // The GitHub repository a bundled package.json's text names, read as Stasis
 // records a dependency's (packageRepo) and as Node reads the file, past a byte
@@ -46,6 +47,13 @@ export function bundleAdvisoryInventory(details: BundleDetails, paths: Iterable<
     const { name, version } = info
     if (ecosystem === undefined || typeof name !== 'string' || !name || typeof version !== 'string' || !version) continue
     if (!Object.keys(info.files).some(file => (!selected || selected.has(`${dir}/${file}`)) && isEvidenceFile(name, version, file, ecosystem))) continue
+    // One installed from a directory is the repository's own code, neither
+    // audited nor reviewed as a dependency; one whose record isn't as Stasis
+    // records one is skipped, its bundle's dependency review failing.
+    if (isDirectoryEcosystem(ecosystem)) {
+      if (malformedDirectoryPackage(info)) skipped.set(JSON.stringify([ecosystem, name, version]), { ecosystem, name, version, because: MALFORMED_DIRECTORY_PACKAGE })
+      continue
+    }
     const because = skipReason(ecosystem, version)
     if (!supported(ecosystem) || because !== undefined) {
       skipped.set(JSON.stringify([ecosystem, name, version]), { ecosystem, name, version, because: because ?? `No advisory source is supported for ${ecosystem}.` })

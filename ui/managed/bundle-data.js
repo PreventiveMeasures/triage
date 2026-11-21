@@ -341,6 +341,7 @@ const BUNDLE_DEPENDENCY_REVIEW_ERRORS = {
   ...BRANCH_DEPENDENCIES_ERRORS,
   'no-bundle': 'This bundle is not available to you.',
   'bundle-unavailable': 'This bundle’s packages couldn’t be read.',
+  'directory-package-malformed': 'This bundle records a package installed from a directory with an integrity, or naming no directory.',
   'payload-too-large': 'This bundle holds too many packages to check here.',
   'repository-changed': 'The bundle or its repository changed while it was read. Try again.',
   'github-not-found': 'GitHub has none of the commit this bundle was built from, or of a lockfile it lists there.',

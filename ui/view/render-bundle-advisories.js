@@ -10,6 +10,7 @@ import { fetchBundleAdvisories } from './client-managed.js'
 import { bundleKind } from './ingest.js'
 import { bundlePackageVersions } from './bundle-sources.js'
 import { bundleScopes, scopeOptions } from '../../common/bundle-reasons.js'
+import { isDirectoryEcosystem, malformedDirectoryPackage } from '../../common/managed/directory-packages.ts'
 import { SCAN_ICON_SVG } from './icons.js'
 import { advisoryRow } from './advisory-parts.js'
 import './bundle-scope-selector.js'
@@ -78,11 +79,14 @@ function bundleHasAdvisoryCandidates(details) {
 // A dependency package as the managed audit inventories one
 // (server-managed/bundle-advisory-inventory.ts), short of its evidence-file
 // rule, which only the server applies: a module other than the root, with an
-// ecosystem (recorded, or npm under node_modules), a name and a version.
+// ecosystem (recorded, or npm under node_modules), a name and a version; but
+// one installed from a directory, the repository's own code, its record as
+// Stasis records one (a malformed one is listed as not audited).
 function bundleHasDependencyPackages(details) {
   if (!details || details.kind !== 'stasis' || !details.bundle) return false
   for (const [dir, info] of details.bundle.modules) {
     if (dir === '.' || typeof info?.name !== 'string' || !info.name || typeof info.version !== 'string' || !info.version) continue
+    if (isDirectoryEcosystem(info.ecosystem) && !malformedDirectoryPackage(info)) continue
     if (info.ecosystem || /(?:^|\/)node_modules\//u.test(dir)) return true
   }
   return false
