@@ -424,8 +424,7 @@ export class BundleCompareCode extends LitElement {
 
   // Both bundles' modules by directory, the base's moved with the root where theirs differ.
   _modules() {
-    const base = this.base?.kind === 'stasis' ? this.base.bundle?.modules : null
-    const other = this.other?.kind === 'stasis' ? this.other.bundle?.modules : null
+    const [base, other] = [this.base, this.other].map(details => (details?.kind === 'stasis' ? details.bundle?.modules : null))
     const layout = { root: this.files?.root, paths: this.files?.basePaths ?? new Map() }
     return base || other ? new Map([...[...base ?? []].map(([dir, info]) => [layoutDir(layout, dir, Object.keys(info.files ?? {})), info]), ...(other ?? [])]) : null
   }

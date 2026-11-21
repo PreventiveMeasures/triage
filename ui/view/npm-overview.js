@@ -90,15 +90,17 @@ const socketLevel = (score, good) => score === 100 ? 'is-good is-max' : score >=
 const socketGauge = score => html`<svg class="npm-socket-gauge" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" pathLength="100"></circle>
   <circle class="npm-socket-gauge-fill" cx="8" cy="8" r="6" pathLength="100" stroke-dasharray=${`${score} 100`}></circle></svg>`
 
-// Its Socket scores, a chip each with a ring filled to it, tinted (socketLevel).
+// A Socket score's chip, linking to its report on `npm`: a ring filled to
+// it, tinted (socketLevel), its `count` beside (the score, or how it moved).
+const socketChip = (npm, label, score, good, count = score, tooltip = nothing, tip = nothing) => html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(score, good)}`}
+  href=${npmSocketHref({ npm })} target="_blank" rel="noopener noreferrer" data-tooltip=${tooltip} .tooltipContent=${tip}>
+  ${socketGauge(score)}<span>${label}</span><span class="npm-extension-count">${count}</span></a></li>`
+
+// Its Socket scores, a chip each.
 function npmSocketRow(entry) {
   const scores = npmSocketReport(entry)?.scores
   if (!scores) return nothing
-  return html`<ul class="npm-extensions npm-socket-scores" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label, , good]) => {
-    const score = Math.round(scores[key] * 100)
-    return html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(score, good)}`} href=${npmSocketHref(entry)} target="_blank" rel="noopener noreferrer">
-      ${socketGauge(score)}<span>${label}</span><span class="npm-extension-count">${score}</span></a></li>`
-  })}</ul>`
+  return html`<ul class="npm-extensions npm-socket-scores" aria-label="Socket scores">${SOCKET_SCORES.map(([key, label, , good]) => socketChip(entry.npm, label, Math.round(scores[key] * 100), good))}</ul>`
 }
 
 // Socket's severities, as advisories name theirs.
@@ -839,12 +841,10 @@ function socketBadges(sides, affecting, malware = null) {
     if (after === null || after >= bar) return []
     if (key === 'vulnerability' && !(affecting && vulnerabilityBeyond(after, affecting.at(-1), bar))) return []
     if (key === 'maintenance' && to.manifest?.deprecated && after >= DEPRECATED_MAINTENANCE) return []
-    return [html`<li><a class=${`npm-extension npm-socket-score ${socketLevel(after, good)}`} href=${npmSocketHref({ npm: to })} target="_blank" rel="noopener noreferrer"
-      data-tooltip=${`Socket's ${label.toLowerCase()} score: ${sides.map(({ version }, i) => `${scores[i] ?? 'none'} for ${version}`).join(', ')}`}
-      .tooltipContent=${compareTip(`Socket's ${label.toLowerCase()} score`, sides, scores.map(score => score === null ? html`<span class="compare-tip-none">none</span>`
+    return [socketChip(to, label, after, good, fromTo(before, after), `Socket's ${label.toLowerCase()} score: ${sides.map(({ version }, i) => `${scores[i] ?? 'none'} for ${version}`).join(', ')}`,
+      compareTip(`Socket's ${label.toLowerCase()} score`, sides, scores.map(score => score === null ? html`<span class="compare-tip-none">none</span>`
         : html`<span class=${`compare-tip-score ${socketLevel(score, good)}`}>${socketGauge(score)}${score}</span>`),
-      key === 'vulnerability' ? `Shown under ${bar}, where worse than the advisories found` : `Shown under ${bar}`)}>
-      ${socketGauge(after)}<span>${label}</span><span class="npm-extension-count">${fromTo(before, after)}</span></a></li>`]
+      key === 'vulnerability' ? `Shown under ${bar}, where worse than the advisories found` : `Shown under ${bar}`))]
   })
 }
 
