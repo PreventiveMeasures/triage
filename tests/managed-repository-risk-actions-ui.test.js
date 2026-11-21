@@ -123,15 +123,26 @@ test('a reference\'s advisories, each by its id, the row as severe as the worst,
   state.apply({ type: 'workflow', repo: 1, path: 'a.yml', kind: 'workflow', ...scanWorkflow('workflow', `on: push\njobs:\n  a:\n    steps:\n      - uses: org/act@${SHA('1')} # v1.0.0\n`) })
   const url = 'https://github.com/advisories/GHSA-2345-6789-cfgh'
   state.apply({ type: 'action', key: `org/act@${SHA('1')} # v1.0.0`, commit: SHA('1'), at: 'sha', tags: ['v1.0.0'], uses: [], findings: [
-    { id: 'advisory', severity: 'moderate', advisory: 'GHSA-2345-6789-cfgh', title: 'Leaks secrets', url, versions: ['v1.0.0'] },
+    { id: 'advisory', severity: 'moderate', advisory: 'GHSA-2345-6789-cfgh', title: 'Leaks secrets', url, versions: ['v1.0.0'], source: 'osv', aliases: ['CVE-2025-1234'],
+      cvss: 5.3, cwe: ['CWE-200'], range: '< 1.1.0' },
     { id: 'advisory', severity: 'critical', advisory: 'MAL-2025-1', malware: true, versions: ['v1.0.0'] },
+    { id: 'advisory', severity: 'moderate', advisory: 'GHSA-3456-789c-fghj', unrated: true, url: 'javascript:alert(1)', versions: ['v1.0.0'] },
     { id: 'advisories-unavailable', severity: 'notice' },
   ] })
   const [row] = state.rows('actions')
   assert.equal(row.severity, 'critical')
-  assert.deepEqual(row.findings.map(({ advisory, id }) => advisory ?? id), ['GHSA-2345-6789-cfgh', 'MAL-2025-1', 'advisories-unavailable'], 'two advisories, both kept')
+  assert.deepEqual(row.findings.map(({ advisory, id }) => advisory ?? id), ['GHSA-2345-6789-cfgh', 'MAL-2025-1', 'GHSA-3456-789c-fghj', 'advisories-unavailable'], 'three advisories, all kept')
   const cell = templateText(findingsCell(row.findings))
-  assert.match(cell, new RegExp(`risk-moderate\\s+data-tooltip=A published advisory of the version it runs\\.\\nLeaks secrets\\naffects v1\\.0\\.0\\n${url}>GHSA-2345-6789-cfgh<`, 'u'))
-  assert.match(cell, /risk-critical\s+data-tooltip=A published advisory of the version it runs\.\nMalware, not a vulnerability\.\naffects v1\.0\.0>MAL-2025-1</u)
-  assert.match(cell, /risk-notice\s+data-tooltip=Its advisories couldn’t be had: asked again by the next scan\.>Advisories unavailable</u)
+  const items = cell.split('<li ').slice(1)
+  assert.doesNotMatch(cell, /A published advisory/u, 'none prefixed with what an advisory is')
+  assert.match(items[0], new RegExp(String.raw`^class=risk-moderate\s+data-tooltip=Leaks secrets\nSeverity: Moderate, CVSS 5\.3\nAlso: CVE-2025-1234\nAffected: < 1\.1\.0\nRuns: v1\.0\.0\nCWE: CWE-200\nSource: OSV ` +
+    String.raw`\.tooltipContent=<div class="compare-tip"><div class="compare-tip-head">Leaks secrets</div>\s*<div class="compare-tip-rows"><span class="compare-tip-label">Severity</span><span>Moderate, CVSS 5\.3</span>` +
+    String.raw`<span class="compare-tip-label">Also</span><span>CVE-2025-1234</span><span class="compare-tip-label">Affected</span><span>< 1\.1\.0</span>` +
+    String.raw`<span class="compare-tip-label">Runs</span><span>v1\.0\.0</span><span class="compare-tip-label">CWE</span><span>CWE-200</span><span class="compare-tip-label">Source</span><span>OSV</span></div></div>>` +
+    String.raw`<a class="risk-advisory" href=${url} target="_blank" rel="noopener noreferrer">GHSA-2345-6789-cfgh<svg class="external-link-icon"`, 'u'),
+  'its tooltip what tells it apart, its id linking to it')
+  assert.match(items[1], /^class=risk-critical\s+data-tooltip=Kind: Malware, not a vulnerability\nSeverity: Critical\nRuns: v1\.0\.0 [^]*<div class="compare-tip-head">MAL-2025-1<\/div>[^]*>MAL-2025-1<\/li>/u,
+    'one of no title headed by its id, of no link plain')
+  assert.match(items[2], /data-tooltip=Severity: Unrated\nRuns: v1\.0\.0 [^]*>GHSA-3456-789c-fghj<\/li>/u, 'one its source rates none unrated, its link to no web page none')
+  assert.match(items[3], /^class=risk-notice\s+data-tooltip=Its advisories couldn’t be had: asked again by the next scan\. \.tooltipContent=>Advisories unavailable</u)
 })

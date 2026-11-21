@@ -464,15 +464,17 @@ describe('a reference\'s advisories', () => {
   it('each a finding, malware red, else as rated and unrated yellow, before its code\'s; why not where they couldn\'t be had, the rest resolved', async () => {
     const url = 'https://github.com/advisories/GHSA-2345-6789-cfgh'
     const advised = (name, versions) => [
-      { ecosystem: 'github', name, source: 'osv', id: 'GHSA-2345-6789-cfgh', ghsa: 'GHSA-2345-6789-cfgh', url, aliases: [], title: 'Leaks secrets', severity: 'high', cwe: [], versions },
+      { ecosystem: 'github', name, source: 'osv', id: 'GHSA-2345-6789-cfgh', ghsa: 'GHSA-2345-6789-cfgh', url, aliases: ['CVE-2025-1234'], title: 'Leaks secrets', severity: 'high',
+        cvss: 7.5, cvssVector: 'CVSS:3.1/AV:N', cwe: ['CWE-200'], range: '< 1.1.0', details: 'Its whole text, which its link has.', versions },
       { ecosystem: 'github', name, source: 'osv', id: 'MAL-2025-1', aliases: [], severity: 'low', cwe: [], malware: true, versions },
       { ecosystem: 'github', name, source: 'repository', id: 'GHSA-3456-789c-fghj', aliases: [], cwe: [], versions },
     ]
     assert.deepEqual((await resolve(`org/act@${SHA('c')}`, { advised })).findings, [
-      { id: 'advisory', severity: 'high', advisory: 'GHSA-2345-6789-cfgh', title: 'Leaks secrets', url, versions: ['v1.0.0'] },
-      { id: 'advisory', severity: 'critical', advisory: 'MAL-2025-1', malware: true, versions: ['v1.0.0'] },
-      { id: 'advisory', severity: 'moderate', advisory: 'GHSA-3456-789c-fghj', versions: ['v1.0.0'] },
-    ])
+      { id: 'advisory', severity: 'high', advisory: 'GHSA-2345-6789-cfgh', title: 'Leaks secrets', url, versions: ['v1.0.0'], source: 'osv', aliases: ['CVE-2025-1234'], cvss: 7.5,
+        cwe: ['CWE-200'], range: '< 1.1.0' },
+      { id: 'advisory', severity: 'critical', advisory: 'MAL-2025-1', malware: true, versions: ['v1.0.0'], source: 'osv' },
+      { id: 'advisory', severity: 'moderate', advisory: 'GHSA-3456-789c-fghj', unrated: true, versions: ['v1.0.0'], source: 'repository' },
+    ], 'each with what tells it apart, not its text; one its source rates none, unrated')
     assert.deepEqual((await resolve('org/act@v1', { advised })).found.slice(0, 4), ['outdated/low', 'advisory/high', 'advisory/critical', 'advisory/moderate'])
     const failed = await resolve('org/act@v1', { advised: () => Promise.reject(new Error('busy')) })
     assert.deepEqual(failed.found, ['outdated/low', 'advisories-unavailable/notice', 'unpinned/high@4', 'remote-script/high@6'])

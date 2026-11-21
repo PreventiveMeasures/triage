@@ -204,6 +204,15 @@ td { padding-top: .35rem; padding-bottom: .35rem; vertical-align: top; }
   list-style: none;
 }
 .risk-findings li { color: var(--sev); white-space: nowrap; }
+/* An advisory's id, linking to it, in its severity's color. */
+.risk-advisory {
+  color: inherit;
+  text-decoration: none;
+
+  &:hover { text-decoration: underline; }
+  & .external-link-icon { margin-left: .2em; vertical-align: -.05em; opacity: .6; }
+  &:hover .external-link-icon { opacity: 1; }
+}
 .risk-critical { --sev: var(--critical); }
 .risk-high { --sev: var(--high); }
 .risk-moderate { --sev: var(--yellow); }
