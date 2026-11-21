@@ -1,19 +1,8 @@
-// Single source of truth for inline SVG glyphs reused across more
-// than one surface. Stored as raw SVG strings so callers can pick
-// the binding that fits:
-//   - Sidebar rows (shadow DOM, Lit templates) wrap with
-//     `appMarkup(...)` (view/markup.js) to land the markup inside the
-//     row template.
-//   - Drop-zone supported-formats list (light DOM, static HTML)
-//     has the boot path inject these strings via `.innerHTML`
-//     (through `trustedHTML`) into
-//     `<span data-icon="…">` placeholders so the same source
-//     paints both surfaces without duplicating the path data.
-//
-// Report-bucket stickers (default / claude-security / codex-security
-// / deepsec / piolium) live in `view/file-display.js` alongside the
-// bucket-detection helpers that consume them; they're imported by
-// name from the same drop-zone boot path.
+// Inline SVG glyphs used on more than one surface, as raw strings: Lit
+// templates wrap them with `appMarkup` (markup.js), and the drop zone's
+// static supported-formats list gets them through `trustedHTML`
+// (drop-supported-icons.js). The report-bucket stickers are
+// file-display.js's.
 
 // Claude mark shared by report stickers, the Claude Code action, the
 // Anthropic provider icon and Claude's agent mark. Coordinates match the
@@ -32,20 +21,14 @@ export const COPILOT_MARK_PATH = 'M23.922 16.997C23.061 18.492 18.063 22.02 12 2
 // 24×24 viewBox. Fill with `currentColor`.
 export const NODEJS_MARK_PATH = 'M11.998 24c-.321 0-.641-.084-.922-.247l-2.936-1.737c-.438-.245-.224-.332-.08-.383c.585-.203.703-.25 1.328-.604c.065-.037.151-.023.218.017l2.256 1.339c.082.045.197.045.272 0l8.795-5.076c.082-.047.134-.141.134-.238V6.921c0-.099-.053-.192-.137-.242l-8.791-5.072c-.081-.047-.189-.047-.271 0L3.075 6.68C2.99 6.729 2.936 6.825 2.936 6.921v10.15c0 .097.054.189.139.235l2.409 1.392c1.307.654 2.108-.116 2.108-.89V7.787c0-.142.114-.253.256-.253h1.115c.139 0 .255.112.255.253v10.021c0 1.745-.95 2.745-2.604 2.745c-.508 0-.909 0-2.026-.551L2.28 18.675c-.57-.329-.922-.945-.922-1.604V6.921c0-.659.353-1.275.922-1.603l8.795-5.082c.557-.315 1.296-.315 1.848 0l8.794 5.082c.57.329.924.944.924 1.603v10.15c0 .659-.354 1.273-.924 1.604l-8.794 5.078C12.643 23.916 12.324 24 11.998 24zM19.099 13.993c0-1.9-1.284-2.406-3.987-2.763c-2.731-.361-3.009-.548-3.009-1.187c0-.528.235-1.233 2.258-1.233c1.807 0 2.473.389 2.747 1.607c.024.115.129.199.247.199h1.141c.071 0 .138-.031.186-.081c.048-.054.074-.123.067-.196c-.177-2.098-1.571-3.076-4.388-3.076c-2.508 0-4.004 1.058-4.004 2.833c0 1.925 1.488 2.457 3.895 2.695c2.88.282 3.103.703 3.103 1.269c0 .983-.789 1.402-2.642 1.402c-2.327 0-2.839-.584-3.011-1.742c-.02-.124-.126-.215-.253-.215h-1.137c-.141 0-.254.112-.254.253c0 1.482.806 3.248 4.655 3.248C17.501 17.007 19.099 15.91 19.099 13.993z'
 
-// Generic bundle glyph — a 3D box / package outline. Stroke-based
-// (uses `currentColor`) rather than the filled `.file-icon.brand-*`
-// stickers that mark report buckets, so bundles read as a distinct
-// kind of artifact in the same column. Authored at 14px to match
-// the sidebar's row icons; the drop-zone supported list scales it
-// up to 20px in CSS.
+// A bundle: a package outline, stroked in `currentColor` where the report
+// buckets' stickers are filled, so bundles read as another kind of artifact.
 export const BUNDLE_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2 2 5v6l6 3 6-3V5L8 2Z"/><path d="M2 5l6 3 6-3"/><path d="M8 8v6"/></svg>'
 
 // npm's mark: the `n` in its square, filled like the package icon in the Code tree.
 export const NPM_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M1 1h14v14H1Zm3 3v8h4V6h2v6h2V4Z"/></svg>'
 
-// Workspace glyph — a labelled folder / tray. Same stroke treatment
-// as `BUNDLE_ICON_SVG` so workspace rows in the sidebar read as a
-// peer to bundle rows.
+// A workspace: a tray, stroked like the bundle so the rows read as peers.
 export const WORKSPACE_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="11" height="9" rx="1.2"/><path d="M6 4V3h4v1"/></svg>'
 
 // Layout glyphs; graph is also used by the findings view selector.
@@ -59,17 +42,10 @@ export const DEPENDENCIES_ICON_SVG = '<svg viewBox="0 0 16 16" width="16" height
 // Manage glyph shared by the sidebar action and the managed landing button.
 export const MANAGE_ICON_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'
 
-// Links-file glyph — two interlocking chain links, the picture of the
-// one thing the file does: hold two findings together. Same stroke
-// treatment as the bundle / workspace glyphs above, which is also the
-// point — a links file is a different KIND of artifact from a report,
-// and the branded report "stickers" in `view/file-display.js` are
-// filled sheets, so the two never read as the same thing in the
-// sidebar's single column.
-//
-// Distinct from the workspace row's own chain button
-// (`WORKSPACE_SHARE_ICON` in sidebar.js), which is a small
-// hover-revealed action at 11px: this is a 14px row identity.
+// A links file: two chain links, holding two findings together — stroked
+// like the bundle and workspace glyphs, as it is another kind of artifact
+// than the filled report stickers. The workspace row's share button
+// (sidebar.js) is an 11px action; this is a 14px row identity.
 export const LINKS_ICON_SVG = '<svg class="file-icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.67 8.67a3.33 3.33 0 0 0 5.03.36l2-2a3.33 3.33 0 0 0-4.71-4.71l-1.15 1.14"/><path d="M9.33 7.33a3.33 3.33 0 0 0-5.03-.36l-2 2a3.33 3.33 0 0 0 4.71 4.71l1.14-1.14"/></svg>'
 
 // Scan and report glyphs shared by setup, management, and landing actions.

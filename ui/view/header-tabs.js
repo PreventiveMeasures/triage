@@ -1,25 +1,22 @@
-// A header tab strip (dialogs/dialog-tabs.css), the dialogs' (their
-// shared.js re-exports it) and a page's view drawing its tabs as theirs are
-// (team-dependencies.js), apart from the dialogs, which views import only
-// through lazy-dialogs.js.
+// A header tab strip (dialogs/dialog-tabs.css), for the dialogs (re-exported
+// by their shared.js) and for a page drawing tabs as theirs are
+// (team-dependencies.js).
 import { html, nothing } from 'lit'
 
-// Header tab strip for a dialog that opens on more than one thing —
-// the workspace export's two exports, the report export's download and
-// print. Renders the `role="tablist"` chrome (dialog-tabs.css) and
-// carries the keyboard contract that role implies: arrows walk the
-// strip, wrapping at the ends, and selection follows focus.
+// For a dialog opening on more than one thing — the workspace export's two
+// exports, the report export's download and print: `role="tablist"` chrome
+// and its keyboard contract, arrows walking the strip (wrapping) with
+// selection following focus.
 //
 //   tabs     [{ id, label, icon? }] in strip order
 //   current  the selected id
-//   prefix   ids are `${prefix}-tab-${id}`, panels
-//            `${prefix}-panel-${id}` — the caller labels its panel
-//            with the same pair
+//   prefix   ids are `${prefix}-tab-${id}`, panels `${prefix}-panel-${id}`
+//            (the caller labels its panel with the same pair)
 //   select   called with the id to open
 //   disabled locks the tabs that are not open (mid-export, say)
 //
-// The host re-renders on `select`, so the focus move waits a frame for
-// the roving tabindex to land on the tab it is about to focus.
+// The host re-renders on `select`, so the focus waits a frame for the
+// roving tabindex to land.
 export function dialogTabs({ tabs, current, prefix, select, disabled = false }) {
   const onKeydown = (e) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return

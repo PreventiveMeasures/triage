@@ -1,24 +1,19 @@
 // The app's Trusted Types policy. index.html's CSP sets
-// `require-trusted-types-for 'script'`, so every DOM sink that parses
-// HTML or loads a script refuses a plain string, and `trusted-types`
-// admits two policies by name: Lit's own `lit-html`, which blesses its
-// templates, and this one, for the few sinks outside Lit.
+// `require-trusted-types-for 'script'`, so every sink parsing HTML or loading
+// a script refuses a plain string; `trusted-types` admits Lit's own
+// `lit-html` and this policy, for the few sinks outside Lit.
 //
-// `trustedHTML` takes the markup this app writes — an icon, Prism's
-// colouring, the export preview's rows — and markup.js decides what that
-// is: the same check `appMarkup()` makes for Lit, run inside the policy, so
-// nothing it blesses has skipped it. A string that fails is set as the
-// text it is, escaped, and reported. Never a way in for data: text a
-// report, a user or the network supplied goes in as text (`textContent`,
-// a Lit binding), not through here.
+// `trustedHTML` takes the markup this app writes, which markup.js decides —
+// the check `appMarkup()` makes, run inside the policy, so nothing it
+// blesses skipped it. A failing string is set as its escaped text, and
+// reported. Never a way in for data: text from a report, a user or the
+// network goes in as text (`textContent`, a Lit binding).
 //
-// `trustedScriptURL` admits a same-origin script only (the brotli
-// fallback's worker), so a URL from anywhere else throws at the sink
-// just as it would with no policy at all.
+// `trustedScriptURL` admits a same-origin script only (the brotli fallback's
+// worker); any other URL throws at the sink, as with no policy at all.
 //
-// Without Trusted Types (Node under the tests, a browser that predates
-// them) the markup is checked all the same, and both hand back strings,
-// which the sinks take as they are.
+// Without Trusted Types (Node in tests, an older browser) the markup is
+// checked all the same and both return strings.
 import { isAppMarkup, refusedMarkup } from './markup.js'
 
 const escapeText = text => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')

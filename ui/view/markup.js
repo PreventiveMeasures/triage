@@ -1,26 +1,21 @@
-// The one way markup written as a string reaches the page. Lit escapes
-// everything bound into its templates; a string that is meant as markup —
-// an icon, Prism's colouring of some code — goes in through `appMarkup()`
-// here (in place of Lit's `unsafeHTML`), and through `trustedHTML` for the
-// few sinks outside Lit (trusted-types.js), and both check it first.
+// The one way markup written as a string reaches the page: `appMarkup()`
+// for Lit (in place of `unsafeHTML`), `trustedHTML` for the few sinks
+// outside it (trusted-types.js), both checked here first.
 //
-// The check is an allowlist of the markup this app writes and nothing
-// else: the SVG icons in icons.js, file-display.js and report-logos.js;
-// Prism's token spans; the bundle source links Prism's output carries
-// (prism-source-links.js); the marks control-chars.js and the compare
-// view lay over it; the export preview's line rows. A tag that isn't one of
-// those, an attribute it doesn't take, or a value outside what it allows,
-// and the whole string is drawn as the text it is instead, and reported.
-// So a renderer that one day hands a report's or GitHub's text over as
-// markup shows that text; no link, image, form, frame or style of the
-// text's own reaches the page.
+// The check is an allowlist of the markup this app writes and nothing else:
+// the SVG icons (icons.js, file-display.js, report-logos.js), Prism's token
+// spans, the bundle source links in its output (prism-source-links.js), the
+// marks control-chars.js and the compare view lay over it, the export
+// preview's line rows. Any other tag, attribute or value, and the whole
+// string is drawn as the text it is, and reported — so a renderer that one
+// day hands a report's or GitHub's text over as markup shows text, and no
+// link, image, form, frame or style of its own reaches the page.
 //
-// Rejecting rather than cleaning keeps this small: the shapes allowed are
-// few and known, each tag is read whole by one pattern, and a string either
-// is made only of them or is text. Nothing is parsed, so what is checked
-// is what the browser reads: only lowercase names, double-quoted values,
-// the HTML parser's own whitespace, and no comment, declaration or
-// processing instruction, since none of the app's markup has one.
+// Rejecting rather than cleaning keeps this small: each allowed tag is read
+// whole by one pattern, and a string is made only of them or is text.
+// Nothing is parsed, so what is checked is what the browser reads: only
+// lowercase names, double-quoted values, the HTML parser's own whitespace,
+// and no comment, declaration or processing instruction (the app writes none).
 import { nothing } from 'lit'
 import { unsafeHTML } from 'lit/directives/unsafe-html.js'
 
