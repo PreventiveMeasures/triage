@@ -1,17 +1,9 @@
-/* `<export-confirm-dialog>` layer on top of dialog-base.css. The base
-   supplies the `dialog` frame, `.nwd-intro` / `.nwd-note` body text,
-   and the `.nwd-actions` footer; this adds the count headline and the
-   active-filters definition list. */
-
-/* Wider than the base 480px — the tab strip put two labelled controls
-   on the header line, and the intro under them reads better before it
-   wraps. (The workspace export widens for the same reason; this one
-   stops short of that 520px because its body is shorter.) */
+/* `<export-confirm-dialog>` over dialog-base.css: the count headline and
+   the active-filters list. Wider than the base for the tab strip's two
+   labelled controls. */
 dialog { max-width: 515px; width: min(94vw, 515px); }
 
-/* Count headline — the "X of Y findings included" line. Sized up from
-   body copy so the number the user is committing to reads at a glance,
-   in the accent color to anchor the dialog. */
+/* "X of Y findings included", the number in the accent. */
 .ecd-count {
   margin: 0;
   font-size: 1.02rem;
@@ -19,16 +11,13 @@ dialog { max-width: 515px; width: min(94vw, 515px); }
 
   & strong { color: var(--accent); font-weight: 700; }
 }
-/* Secondary "N filtered out" clause — muted so it reads as a footnote
-   to the included count rather than competing with it. */
+/* "N filtered out", a footnote to the count. */
 .ecd-excluded {
   margin: .25rem 0 0;
   color: var(--muted); font-size: .82rem;
 }
 
-/* Active-filters list: a two-column definition list (label → value).
-   `align-items: baseline` keeps multi-line values aligned to their
-   label's first line. */
+/* Active filters, label → value. */
 .ecd-filters {
   margin: .9rem 0 0;
   display: grid;
@@ -40,11 +29,8 @@ dialog { max-width: 515px; width: min(94vw, 515px); }
   color: var(--muted); font-weight: 600;
   white-space: nowrap;
 }
-/* Value + its drop button on one row. The button takes `margin-left:
-   auto` rather than a grid column of its own: every `dd` shares the
-   same column width, so pushing each one to its own right edge lines
-   them all up anyway — and a `<dl>` may not hold a bare `<button>` as
-   a child, which a third column would have required. */
+/* A value and its drop button, pushed right (a `<dl>` may not hold a bare
+   `<button>`, so no third column). */
 .ecd-filters dd {
   display: flex; align-items: baseline; gap: .5rem;
   color: var(--text);
@@ -52,11 +38,7 @@ dialog { max-width: 515px; width: min(94vw, 515px); }
 }
 .ecd-filter-value { min-width: 0; }
 
-/* Drops one filter from the export. Muted at rest — it is an escape
-   hatch beside a statement of fact, not an action the dialog is asking
-   for — and reddens on approach, since what it does is take a
-   constraint off the file. Sized off the row's own text so it stays a
-   footnote next to the value rather than a control competing with it. */
+/* Drops a filter from the export: muted, reddening on hover. */
 .ecd-filter-drop {
   margin-left: auto; flex: none;
   padding: 0 .2rem;
@@ -64,7 +46,7 @@ dialog { max-width: 515px; width: min(94vw, 515px); }
   background: none; color: var(--muted);
   font: inherit; font-size: 1rem; line-height: 1;
 
-  &:hover { color: var(--critical, #f87171); }
+  &:hover { color: var(--critical); }
   &:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 

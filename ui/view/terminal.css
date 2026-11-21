@@ -11,8 +11,8 @@
   position: relative;
   height: 100%;
   min-height: 0;
-  background: var(--bg, #0c0c0c);
-  color: var(--text, #e6edf3);
+  background: var(--bg);
+  color: var(--text);
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.45;
@@ -31,7 +31,7 @@
 /* The banner is guidance, not output: kept out of a selection, so
    copying the transcript starts at the first command. */
 .banner {
-  color: var(--muted, #8b949e);
+  color: var(--muted);
   margin-bottom: 8px;
   user-select: none;
 }
@@ -40,7 +40,7 @@
    no button chrome; inherits monospace/size from the host so the line
    reads as continuous prose. */
 .banner .cmd {
-  color: var(--accent, #58a6ff);
+  color: var(--accent);
 }
 .banner .cmd:hover {
   text-decoration: underline;
@@ -51,9 +51,9 @@
   overflow-wrap: break-word;
 }
 
-.cwd { color: var(--accent, #58a6ff); }
+.cwd { color: var(--accent); }
 /* A transcript line spaces its sigil with real spaces, which copy. */
-.sigil { color: var(--muted, #8b949e); }
+.sigil { color: var(--muted); }
 
 .stdout,
 .stderr {
@@ -63,7 +63,7 @@
   overflow-wrap: break-word;
 }
 
-.stderr { color: var(--critical, #d8413a); }
+.stderr { color: var(--critical); }
 
 /* Diff colouring. ui/view/diff-color.js decides whether a block of
    stdout is a diff at all and labels each line; these are the six
@@ -72,21 +72,21 @@
    carry a span, so the context lines that make up most of a unified
    diff stay plain text inside the same <pre>. */
 .diff-head {
-  color: var(--text, #e6edf3);
+  color: var(--text);
   font-weight: 600;
 }
-.diff-hunk { color: var(--accent, #58a6ff); }
-.diff-add { color: var(--green, #3fb950); }
-.diff-del { color: var(--critical, #d8413a); }
-.diff-chg { color: var(--yellow, #d29922); }
-.diff-meta { color: var(--muted, #8b949e); }
+.diff-hunk { color: var(--accent); }
+.diff-add { color: var(--green); }
+.diff-del { color: var(--critical); }
+.diff-chg { color: var(--yellow); }
+.diff-meta { color: var(--muted); }
 
 .form {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   padding: var(--terminal-form-padding, 8px 14px 10px);
-  border-top: 1px solid var(--border, #2c2c2c);
+  border-top: 1px solid var(--border);
 }
 
 /* Visible focus indicator. The input strips its outline for the
@@ -94,7 +94,7 @@
    while focus is anywhere in the row — satisfies WCAG 2.4.7 without
    boxing the input itself. */
 .form:focus-within {
-  border-top-color: var(--accent, #58a6ff);
+  border-top-color: var(--accent);
 }
 
 /* While a line is running the send is refused (see #onSubmit), so the
@@ -168,7 +168,7 @@
   overflow: hidden;
   pointer-events: none;
   user-select: none;
-  color: var(--muted, #8b949e);
+  color: var(--muted);
   opacity: .55;
 }
 
@@ -208,12 +208,12 @@
 .note {
   box-sizing: border-box;
   padding: 5px 9px;
-  border: 1px solid var(--border, #2c2c2c);
+  border: 1px solid var(--border);
   border-radius: var(--ui-radius, 5px);
   /* Opaque: these overlap live output, which would otherwise show
      through and make both unreadable. */
-  background: var(--bg, #0c0c0c);
-  color: var(--muted, #8b949e);
+  background: var(--bg);
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
   /* The stack is right-aligned; the text inside it is not. */
@@ -234,8 +234,8 @@
    `silenced` in the text carries the same distinction, so the colour
    is never the only thing saying it. */
 .note-gap {
-  border-color: var(--warning, #d97706);
-  color: var(--text, #e6edf3);
+  border-color: var(--warning);
+  color: var(--text);
 }
 
 @keyframes note-in {

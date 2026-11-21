@@ -1,10 +1,8 @@
-/* `<triage-export-dialog>` layer — full triage backup / restore
-   dialog (DeepView.export() console command). Composed into the
-   shadow `static styles` on top of dialog-base.css. */
-
+/* `<triage-export-dialog>`: triage backup / restore (DeepView.export()),
+   over dialog-base.css. */
 dialog { max-width: 560px; width: min(94vw, 560px); }
 
-header h3 { margin: 0 0 .25rem; }  /* tighter than base */
+header h3 { margin: 0 0 .25rem; }
 header p {
   margin: 0 0 .9rem; color: var(--muted); font-size: .82rem;
 }
@@ -20,13 +18,18 @@ hr {
 .section p {
   margin: 0 0 .55rem; color: var(--muted); font-size: .78rem;
 }
-.section button {
+.section button,
+.actions button {
   background: transparent; border: 1px solid var(--border);
   color: var(--text); border-radius: var(--ui-radius, 5px);
-  padding: .35rem .9rem;
-  font: inherit; font-size: .8rem;
+  font: inherit;
 
   &:hover { border-color: var(--accent); color: var(--accent); }
+}
+.section button {
+  padding: .35rem .9rem;
+  font-size: .8rem;
+
   &.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
   &.primary:hover { filter: brightness(1.08); }
   &:disabled { opacity: .5; }
@@ -37,13 +40,16 @@ input[type='file'] {
   font: inherit; font-size: .78rem;
   margin-bottom: .5rem;
 }
+.error,
+.status.status-err {
+  border: 1px solid var(--critical);
+  background: rgb(from var(--critical) r g b / .07);
+  color: var(--text);
+}
 .error {
   margin: .5rem 0;
   padding: .4rem .6rem;
-  border: 1px solid var(--critical, #f87171);
   border-radius: var(--ui-radius, 5px);
-  background: rgb(from var(--critical, #f87171) r g b / .07);
-  color: var(--text);
   font-size: .78rem;
 }
 .summary {
@@ -82,11 +88,6 @@ input[type='file'] {
     background: rgb(from var(--accent) r g b / .08);
     color: var(--text);
   }
-  &.status-err {
-    border: 1px solid var(--critical, #f87171);
-    background: rgb(from var(--critical, #f87171) r g b / .07);
-    color: var(--text);
-  }
 }
 .actions {
   display: flex; justify-content: flex-end; gap: .4rem;
@@ -95,10 +96,6 @@ input[type='file'] {
   border-top: 1px solid var(--border);
 }
 .actions button {
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text); border-radius: var(--ui-radius, 5px);
   padding: .3rem .8rem;
-  font: inherit; font-size: .78rem;
-
-  &:hover { border-color: var(--accent); color: var(--accent); }
+  font-size: .78rem;
 }

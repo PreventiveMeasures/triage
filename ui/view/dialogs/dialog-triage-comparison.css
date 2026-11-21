@@ -3,9 +3,9 @@ dialog:not([open]) { display: none; }
 .comparison-results { overflow: auto; min-height: 0; }
 .difference-counts { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin: .8rem 0; font-size: .8rem; }
 .difference-counts span { border-inline-start: 3px solid var(--difference); padding-inline-start: .5rem; }
-.managed-only { --difference: var(--marker-blue, #559adf); }
-.local-only { --difference: var(--marker-green, #53a96a); }
-.mismatch { --difference: var(--high, #d69d37); }
+.managed-only { --difference: var(--marker-blue); }
+.local-only { --difference: var(--marker-green); }
+.mismatch { --difference: var(--high); }
 .finding { margin: .8rem 0 1.3rem; }
 h4 { font-size: .9rem; font-weight: 600; overflow-wrap: anywhere; }
 .location, .finding-id { margin-top: .3rem; color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
@@ -21,6 +21,6 @@ td { white-space: pre-wrap; }
 .unset { color: var(--muted); font-style: normal; }
 .comment + .comment { margin-top: .6rem; }
 .comment.changed { border-inline-start: 3px solid var(--difference); padding-inline-start: .5rem; }
-.skipped { color: var(--high, #d69d37); margin: .75rem 0; font-size: .8rem; }
+.skipped { color: var(--high); margin: .75rem 0; font-size: .8rem; }
 .skipped ul { padding: .6rem 0 .6rem 1.2rem; overflow-wrap: anywhere; }
 .empty { margin: 1rem 0; color: var(--muted); font-size: .85rem; }

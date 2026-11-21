@@ -1,11 +1,8 @@
-/* `<fix-link-dialog>` layer — single-line URL editor for the per-
-   finding .mark-fix button. Composed into the shadow `static styles`
-   on top of dialog-base.css and dialog-severity.css (`.conflict-sev`). */
-
-/* Wider than the base 480px for the URL row. */
+/* `<fix-link-dialog>`: the fix URL editor, over dialog-base.css; wider
+   for the URL row. */
 dialog { max-width: 560px; width: min(94vw, 560px); }
 
-header h3 { margin: 0 0 .4rem; }  /* tighter than base */
+header h3 { margin: 0 0 .4rem; }
 
 .finding {
   display: flex; align-items: center; gap: .5rem;
@@ -33,7 +30,7 @@ input {
   flex: 1; min-width: 0;
   padding: .5rem .65rem;
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
-  background: var(--bg, var(--surface));
+  background: var(--bg);
   color: var(--text);
   font: inherit; font-size: .88rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

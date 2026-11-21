@@ -5,7 +5,7 @@
   padding: 0 clamp(1rem, 3vw, 3rem) 3rem;
   color: var(--text);
   container-type: inline-size;
-  font-family: var(--sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: .875rem;
   line-height: 1.5;
   --panel:color-mix(in srgb, var(--bg) 50%, var(--surface));
