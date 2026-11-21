@@ -1,18 +1,12 @@
-// Server-side triage for managed team reports. When a team report is open
-// (`state.managedReport`), the server's per-finding entries hydrate the local
-// triage map, and local edits push back debounced through the triage
-// managed change-notifier — independent of the e2e sync fan-out. The wire carries color / triage / fix / flagged;
-// `ignoredReports` stays client-local and `deleted` folds into the bucket.
-//
-// Both sides are keyed by finding id alone. `state.triage` is one map across
-// every loaded report — reports mostly repeat one another (a re-scan of the
-// same code carries the same finding ids), and a finding's triage is shared
-// by every report that carries it — and the server stores one row per finding
-// id the same way; a report is only the scope through which a viewer may read
-// or write the ids it carries. So opening a report merges the two maps over
-// its findings: an id the server knows (a value, or the tombstone of a cleared
-// entry) is adopted wholesale, and one it has never seen carries whatever is
-// local up.
+// Server-side triage for managed team reports: the server's per-finding
+// entries hydrate the local triage map, and local edits push back, debounced,
+// through the managed change-notifier (apart from the e2e sync). The wire
+// carries color / triage / fix / flagged; `ignoredReports` stays local and
+// `deleted` folds into the bucket. Both sides are keyed by finding id alone,
+// a report only the scope a viewer reads or writes its ids through: opening
+// one adopts each id the server knows (a value or a cleared entry's
+// tombstone) wholesale, and carries up what is local of one it has never
+// seen.
 import { bucketOf, saveTriage, setEntry, setManagedTriageChangeNotifier, state } from '#client/index.js'
 import { clearManagedWorkspace } from '../../client/managed/workspace.js'
 import { roleAtLeast } from '../../common/managed/roles.ts'
@@ -80,19 +74,11 @@ let pushTimer = null
 // wire (whole-entry replace — the last one to land wins).
 let flushChain = Promise.resolve()
 
-// Server-persistable finding ids of the loaded report(s): real `f.id` values
-// only — session-local numeric `_id` fallbacks never leave the client.
-function loadedFindingIds() {
-  const ids = new Set()
-  for (const r of state.reports) {
-    for (const g of r.groups) {
-      for (const f of g) {
-        if (typeof f.id === 'string' && f.id) ids.add(f.id)
-      }
-    }
-  }
-  return ids
-}
+// The server-persistable finding ids of `reports`: real `f.id` values only,
+// session-local numeric `_id` fallbacks never leaving the client.
+const findingIdsOf = reports => new Set(reports.flatMap(report => (report.groups ?? []).flat())
+  .flatMap(f => typeof f.id === 'string' && f.id ? [f.id] : []))
+const loadedFindingIds = () => findingIdsOf(state.reports)
 
 function activeManagedReports() {
   if (Array.isArray(state.managedReports) && state.managedReports.length > 0) return state.managedReports
@@ -100,18 +86,10 @@ function activeManagedReports() {
 }
 
 function findingIdsForManagedReport(reportId) {
-  const ids = new Set()
-  let matched = false
-  for (const report of state.reports) {
-    if (report._managedReportId !== reportId) continue
-    matched = true
-    for (const group of report.groups ?? []) {
-      for (const finding of group) if (typeof finding.id === 'string' && finding.id) ids.add(finding.id)
-    }
-  }
+  const own = state.reports.filter(report => report._managedReportId === reportId)
   // A single-report open predates the source-id stamp; its loaded findings
   // are the complete scope for the active report.
-  return matched || state.reports.length === 0 ? ids : new Set(loadedFindingIds())
+  return own.length > 0 || state.reports.length === 0 ? findingIdsOf(own) : loadedFindingIds()
 }
 
 function reportForFinding(id) {
@@ -141,15 +119,17 @@ function refusedAsSent(status) {
   return status >= 400 && status < 500 && status !== 401 && status !== 403 && status !== 408 && status !== 429
 }
 
+// The edits pending for `report` of team `teamId` (by `key`, scopeFor's).
+function queueFor(key, report, teamId) {
+  if (!pending.has(key)) pending.set(key, { report, key, teamId, changes: new Map() })
+  return pending.get(key)
+}
+
 // Put a batch's unsent tail back for the next flush. A newer capture for the
 // same id (an edit made while the batch was in flight) wins over what didn't
 // land.
 function requeue(p, ids) {
-  let q = pending.get(p.key)
-  if (q == null) {
-    q = { report: p.report, key: p.key, teamId: p.teamId, changes: new Map() }
-    pending.set(p.key, q)
-  }
+  const q = queueFor(p.key, p.report, p.teamId)
   for (const id of ids) if (!q.changes.has(id)) q.changes.set(id, p.changes.get(id))
 }
 
@@ -236,13 +216,7 @@ function scheduleTriagePush() {
     const report = reportForFinding(id)
     if (report == null || !hydratedReports.has(scopeFor(report.id))) continue
     const teamId = state.currentManagedTeam
-    const scopeKey = scopeFor(report.id, teamId)
-    let q = pending.get(scopeKey)
-    if (q == null) {
-      q = { report, key: scopeKey, teamId, changes: new Map() }
-      pending.set(scopeKey, q)
-    }
-    q.changes.set(id, wire)
+    queueFor(scopeFor(report.id, teamId), report, teamId).changes.set(id, wire)
   }
   if (pending.size === 0) return
   if (pushTimer != null) clearTimeout(pushTimer)
@@ -273,6 +247,16 @@ export function resetManagedTriage() {
   pending.clear()
   hydratedReports.clear()
   baseline.clear()
+}
+
+// The server's entry for `id` (as wireEntryOf gives it) adopted: as the
+// baseline, and locally, but for the client-local ignores, kept unless it
+// carries a triage bucket (the triage⊻ignore mutex). Whether it changed.
+function adopt(id, wire) {
+  baseline.set(id, { key: wireKey(wire), fix: wire?.fix ?? '' })
+  const local = state.triage.get(id)
+  const ignoredReports = (wire?.triage == null || wire.triage === 'ignored') ? local?.ignoredReports : undefined
+  return setEntry(state.triage, id, { ...wire, ignoredReports, scopedIgnoredReports: local?.scopedIgnoredReports })
 }
 
 // Merge the server's entries for a just-opened team report's findings into
@@ -314,10 +298,7 @@ export async function hydrateManagedReportTriage(reportId, { renderView = true, 
       baseline.delete(id)
       continue
     }
-    const wire = wireEntryOf(entries[id])
-    baseline.set(id, { key: wireKey(wire), fix: wire?.fix ?? '' })
-    const ignoredReports = (wire?.triage == null || wire.triage === 'ignored') ? state.triage.get(id)?.ignoredReports : undefined
-    if (setEntry(state.triage, id, { ...wire, ignoredReports, scopedIgnoredReports: state.triage.get(id)?.scopedIgnoredReports })) changed = true
+    if (adopt(id, wireEntryOf(entries[id]))) changed = true
   }
   hydratedReports.add(scopeFor(reportId))
   if (annotations) refreshManagedIssueMetadata(teamId, reportFindingIds, previousIssues)
@@ -374,9 +355,7 @@ export async function refreshManagedReportTriage(reportId, { signal, readAnnotat
     if (baseline.get(id) !== known || wireKey(local) !== (known?.key ?? '')) continue
     const wire = wireEntryOf(entries[id])
     if ((known?.fix ?? '') !== (wire?.fix ?? '')) fixChanged = true
-    baseline.set(id, { key: wireKey(wire), fix: wire?.fix ?? '' })
-    const ignoredReports = (wire?.triage == null || wire.triage === 'ignored') ? state.triage.get(id)?.ignoredReports : undefined
-    if (setEntry(state.triage, id, { ...wire, ignoredReports, scopedIgnoredReports: state.triage.get(id)?.scopedIgnoredReports })) changed = true
+    if (adopt(id, wire)) changed = true
   }
   if (fixChanged) invalidateManagedFixes(teamId)
   if (annotations) refreshManagedIssueMetadata(teamId, ids, previousIssues)

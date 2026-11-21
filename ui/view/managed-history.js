@@ -70,6 +70,25 @@ export function createManagedHistory(browser) {
     currentPath = path
   }
 
+  // An entry of its own for `path`, already the share's.
+  function push(path) {
+    browser.history.pushState({ [KEY]: generation }, '', path)
+    currentPath = path
+  }
+
+  // `route`'s path over the entry shown, where `same` says it is that page's
+  // (a late repaint of a previous one must not steal the URL); held as the
+  // navigation still loading's `field` where `opens(its route)`, for its end.
+  function replaceShown(route, same, field, opens) {
+    const path = managedRoutePath(route)
+    if (path == null) return
+    if (restoring) {
+      if (opens(restoring.route)) restoring[field] = route
+      return
+    }
+    if (same(route, parseManagedRoute(new URL(browser.location.href))) && publicSharePath(path, publicShare) !== currentPath) replace(path)
+  }
+
   async function navigate(route, { replace: replacing = false, pop = false } = {}) {
     if (!active || !restore || shareChanged()) return false
     route ??= { view: 'home' }
@@ -102,11 +121,7 @@ export function createManagedHistory(browser) {
     restoring = null
     // One its page showed early has its entry already (showing).
     if (pop || replacing || pending.shown) replace(path)
-    else if (publicSharePath(path, publicShare) !== currentPath) {
-      path = publicSharePath(path, publicShare)
-      browser.history.pushState({ [KEY]: generation }, '', path)
-      currentPath = path
-    }
+    else if (publicSharePath(path, publicShare) !== currentPath) push(publicSharePath(path, publicShare))
     return true
   }
 
@@ -184,16 +199,8 @@ export function createManagedHistory(browser) {
     navigate,
     replaceFindingRoute(route) {
       if (!active || route?.view !== 'findings' || shareChanged()) return
-      const path = managedRoutePath(route)
-      if (path == null) return
-      if (restoring) {
-        if (restoring.route.view === 'home' && restoring.route.finding
-            || sameFindingsPage(route, { ...restoring.route, view: 'findings' })) restoring.findingRoute = route
-        return
-      }
-      // A late repaint of a previous report must not steal the current URL.
-      if (!sameFindingsPage(route, parseManagedRoute(new URL(browser.location.href)))) return
-      if (publicSharePath(path, publicShare) !== currentPath) replace(path)
+      replaceShown(route, sameFindingsPage, 'findingRoute',
+        opening => opening.view === 'home' && opening.finding || sameFindingsPage(route, { ...opening, view: 'findings' }))
     },
     // The file a bundle's Code tab shows, as the tab renders it. Replaced, so
     // Back leaves the page rather than stepping through files, which the
@@ -201,14 +208,7 @@ export function createManagedHistory(browser) {
     // the tab, like replaceFindingRoute's.
     replaceCodeRoute(route) {
       if (!active || shareChanged() || !['bundles', 'npm', 'repository-code'].includes(route?.view) || route.bundleTab !== 'code') return
-      const path = managedRoutePath(route)
-      if (path == null) return
-      if (restoring) {
-        if (sameBundleCode(route, restoring.route)) restoring.codeRoute = route
-        return
-      }
-      if (!sameBundleCode(route, parseManagedRoute(new URL(browser.location.href)))) return
-      if (publicSharePath(path, publicShare) !== currentPath) replace(path)
+      replaceShown(route, sameBundleCode, 'codeRoute', opening => sameBundleCode(route, opening))
     },
     // The page a navigation still loading opens (`route`, the one it was
     // given) shows itself now, its header naming it as it loads: its URL
@@ -220,10 +220,7 @@ export function createManagedHistory(browser) {
       pending.shown = true
       const path = publicSharePath(pending.path, publicShare)
       if (!pending.push || path === currentPath) replace(pending.path)
-      else {
-        browser.history.pushState({ [KEY]: generation }, '', path)
-        currentPath = path
-      }
+      else push(path)
     },
     replaceRoute(route) {
       if (!active || !route || shareChanged()) return
@@ -244,10 +241,7 @@ export function createManagedHistory(browser) {
       ++revision
       restoring = null
       path = publicSharePath(path, publicShare)
-      if (path !== currentPath) {
-        browser.history.pushState({ [KEY]: generation }, '', path)
-        currentPath = path
-      }
+      if (path !== currentPath) push(path)
       if (loading) cancelled?.()
     },
     reset({ force = false } = {}) {

@@ -1,19 +1,7 @@
-// Per-finding deep links — DOM half. `revealFinding(ref)` takes a ref
-// parsed out of `#finding=…` (see `client/finding-link.js`) and gets the
-// user looking at it: navigate to the report or workspace holding it,
-// un-hide it (which in kanban means opening its detail modal), paint,
-// scroll it into view, flash a ring.
-//
-// Resolve the workspace/report in `v=` before inspecting loaded findings.
-// A report hint selects that report; a workspace hint on its own selects
-// the workspace. Missing or stale hints fall back to locally held data.
-// The viewer's display mode is preserved throughout.
-//
-// Managed links resolve through the user's teams and the server report loader.
-// E2E links keep their hints and fall back to accessible reports in either mode.
-//
-// The state rules (which bucket, which filters, which member of a dedup
-// group) live in `finding-link.js`; this module is navigation + paint.
+// Per-finding deep links, the DOM half: a ref parsed from `#finding=…`
+// (client/finding-link.js) navigated to (finding-link-route.js), unhidden
+// (finding-link.js), painted, scrolled into view and ringed, the viewer's
+// display mode kept.
 import { isManagedUiMode, saveTriage, state } from '#client/index.js'
 import { report } from './dom.js'
 import { unhideFinding } from './finding-link.js'
@@ -24,16 +12,12 @@ import { scrollRootOf } from './lazy-render.js'
 import { render } from './render.js'
 import { renderSidebar } from './sidebar.js'
 
-// How long the arrived-at finding keeps its highlight. Long enough to
-// catch the eye after the scroll settles, short enough that it doesn't
-// read as a persistent selection state the user has to dismiss.
+// How long the arrived-at finding keeps its ring: caught by the eye after
+// the scroll, gone before it reads as a selection.
 const FLASH_MS = 1600
 const FLASH_CLASS = 'link-target'
 
-// Shown when every step above came up empty. It deliberately doesn't
-// name a report: the hints are digests, so we never learn the sender's
-// filename — and after step 4 the honest statement is the broader one
-// anyway, that the finding is in none of the reports this user holds.
+// Naming no report: the hints are digests of names never learnt.
 const NOT_FOUND = "Couldn't find that finding in any of your reports. "
   + 'Import the report it came from, then open the link again.'
 
@@ -49,13 +33,10 @@ const SETTLE_MAX_FRAMES = 150
 // last card in a list), which would otherwise be asked forever.
 const SCROLL_ROUNDS = 5
 
-// Clear the previous highlight before painting a new one — two links
-// followed in quick succession should leave exactly one thing lit.
+// One thing lit, however many links were followed.
 function flash(el) {
   if (flashTimer !== null) clearTimeout(flashTimer)
-  for (const prev of document.querySelectorAll(`.${FLASH_CLASS}`)) {
-    prev.classList.remove(FLASH_CLASS)
-  }
+  for (const prev of document.querySelectorAll(`.${FLASH_CLASS}`)) prev.classList.remove(FLASH_CLASS)
   el.classList.add(FLASH_CLASS)
   flashTimer = setTimeout(() => {
     el.classList.remove(FLASH_CLASS)
@@ -81,12 +62,8 @@ function settled(el) {
   })
 }
 
-// The part of the screen `el` can be seen in: the box of the nearest
-// container that scrolls it (the lists scroll inside
-// `#findings-body-slot` / `.findings-table-list`, under the page header
-// and the toolbar), cut down to the window. Measured against the
-// window alone, an element sitting under the toolbar — on screen by
-// its coordinates, clipped by the scroller — would count as visible.
+// The part of the screen `el` can be seen in: its scroller's box (the lists
+// scroll under the header and toolbar), cut down to the window.
 function visibleBox(el) {
   let top = 0
   let bottom = window.innerHeight
@@ -111,18 +88,10 @@ function inView(el) {
   return (r.top >= top && r.bottom <= bottom) || (r.top <= mid && r.bottom >= mid)
 }
 
-// Scroll `el` to the middle of the view, and make sure it stays there.
-//
-// The lists estimate the height of everything not yet built — the
-// `contain-intrinsic-size` of a skipped group (findings.css,
-// finding-table.css) and the shell of a card still out of range
-// (view/lazy-render.js) — so the position a scroll aims at is a guess,
-// and a smooth scroll that builds a thousand cards on its way there
-// arrives somewhere the target has since moved away from: thousands
-// of pixels short, on a long list. Once the animation has stopped
-// moving the element, the heights around it are real, and an instant
-// correction lands on it. One round usually does; the loop is for a
-// correction that itself builds the last few neighbours.
+// `el` scrolled to the middle of the view, and kept there: the lists only
+// estimate what isn't built yet (`contain-intrinsic-size`, lazy-render.js
+// shells), so a smooth scroll lands short; once it settles the heights
+// around it are real, and an instant one corrects it.
 async function scrollToSettled(el) {
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   for (let round = 0; round < SCROLL_ROUNDS; round++) {
@@ -132,31 +101,11 @@ async function scrollToSettled(el) {
   }
 }
 
-// Find the element standing in for `gid` in the just-painted view.
-//
-// Table view first, because it's the one mode where the gid appears
-// TWICE: once on the row and once on the `<finding-card>` in the
-// details aside `unhideFinding` just opened. The row is what needs
-// scrolling — the aside is pinned in view already. Rows are
-// `<finding-row>` children inside `<finding-table>`'s shadow root,
-// populated when the table's own Lit update flushes (hence the
-// `updateComplete` await), and each row stamps its own `data-gid` a
-// microtask later still — so they're matched on the `group` property
-// the table assigned rather than on the attribute.
-//
-// Kanban is the third double-up, and resolves the other way: the detail
-// modal `unhideFinding` just opened holds a `<finding-card>` for the
-// same gid, but that one is centred on screen already. What needs
-// positioning is the BOARD card underneath, so dismissing the modal
-// leaves the finding in view instead of wherever its column happened to
-// be scrolled — and `scrollIntoView` on it also brings its column into
-// view on a horizontally-scrolled board.
-//
-// Everywhere else `data-gid` comes from the PARENT template and lands
-// with the synchronous render. `finding-card` is preferred over a bare
-// `[data-gid]` for the focus view's double-up: the centred card and its
-// "up next" queue entry both carry the gid, and the card is the one the
-// user is reading.
+// The element standing in for `gid` in the view just painted, where it may
+// show twice: the table's row, not its pinned details card (matched on the
+// row's `group`, as its `data-gid` lands a microtask after the table's
+// update); kanban's board card under the detail modal, so closing it
+// leaves the finding in view; the focus card, not its "up next" entry.
 async function findRenderedFinding(gid) {
   const escaped = CSS.escape(gid)
   if (state.viewMode === 'table') {
@@ -176,17 +125,11 @@ async function findRenderedFinding(gid) {
     ?? report.querySelector(`[data-gid="${escaped}"]`)
 }
 
-// Put a located finding on screen: un-hide it, paint, scroll to it,
-// ring it. Shared by both entry points below — everything up to this
-// point is about FINDING the thing, and everything from here is the
-// same regardless of how it was found.
+// A located finding put on screen: unhidden, painted, scrolled to, ringed.
 async function focusFound(hit, id, isCurrent = () => true) {
   const gid = unhideFinding(hit.group, id)
-  // A link opens this finding as surely as a click does, so its group
-  // gets the same levelling the detail surfaces do (see
-  // syncGroupTriage). It lives here rather than in `unhideFinding`,
-  // which is a pure state mutation by contract; persistence waits for
-  // the paint, as everywhere else that levels.
+  // Opened as by a click, its group levelled as the detail surfaces level
+  // it (syncGroupTriage), saved after the paint.
   const shownGroup = findGroupById(gid)
   if (shownGroup && syncGroupTriage(shownGroup)) queueMicrotask(saveTriage)
   render()
@@ -194,32 +137,19 @@ async function focusFound(hit, id, isCurrent = () => true) {
   if (!isCurrent()) return { ok: false }
   const el = await findRenderedFinding(gid)
   if (!isCurrent()) return { ok: false }
-  if (!el) {
-    // Nothing painted for this group. `unhideFinding` clears whatever
-    // it can reach — the view, the filters, the triage bucket — so
-    // this is now the residue: a mode whose DOM doesn't carry the
-    // group, or a group that fell out between the mutation and the
-    // paint. Still a success, because the navigation happened and the
-    // right member is selected; only the scroll is missing, and an
-    // alert here would fire on something the reader can't act on.
-    return { ok: true }
-  }
-  // A card or row past the first screen is an empty shell until it
-  // comes within range (view/lazy-render.js): build it first, so the
-  // scroll lands on its real height and the ring has a body to sit on.
+  // Nothing painted for it: navigated and selected all the same, only the
+  // scroll missing, which the reader couldn't act on.
+  if (!el) return { ok: true }
+  // A lazy shell built first, so the scroll lands on its real height.
   if (typeof el.ensureRendered === 'function') await el.ensureRendered()
   await scrollToSettled(el)
   if (!isCurrent()) return { ok: false }
-  // Flash after the scroll, not before it: the ring lasts a moment and
-  // a long scroll would spend most of that moment on the way.
   flash(el)
   return { ok: true }
 }
 
-// Follow a parsed link ref. Resolves to `{ ok: true }` once the finding
-// is on screen, or `{ ok: false, reason }` with a message the caller can
-// show — a link that goes nowhere has to say so, otherwise pasting one
-// into an already-open tab looks like the app ignored the paste.
+// A parsed link ref followed: `{ ok: true }` once on screen, else
+// `{ ok: false, reason }`, for the caller to say why.
 export async function revealFinding(ref, { openManagedReport = switchToManagedTeam, isCurrent = () => true } = {}) {
   if (!ref?.id) return { ok: false, reason: 'This link is missing a finding id.' }
   const hit = await locateLinkedFinding(ref, {
