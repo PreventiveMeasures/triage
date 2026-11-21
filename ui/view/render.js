@@ -14,7 +14,6 @@ import { dropZone, report } from './dom.js'
 import { SEVERITIES, canDropRevalidation, configureDependencyRepos, configureDepsDir, configureRevalidation, depsDirName, displayedSeverity, fileLink, findingDisplayName, findingTitle, formatRunMeta, hasSeverityCorrection, isHttpUrl, isModule, isRevalidation, lineLink, lineRangeLabel, reachableRevalidateFilters, revalidateKind, revalidationShown, stampUpstreamFindings } from './format.js'
 import { activeTabFor, canEditTriage, canTriageFinding, clearMergedGroups, drawnTabs, findingRepoTarget, getMergedGroups, getRevalidationGroups, groupKey, groupState, primaryTab, triageEntry, triageScope, underlyingFindingsShown } from './group.js'
 import { NO_REPO_SENTINEL, NULL_ANALYZER_SENTINEL, NULL_MODEL_SENTINEL, applyFilters, applyScopeFilters, applySorting, hasSecurityContrast, isAppStackedGroup, isCrossContextGroup, modelOfFinding, priorityApplies, rangeApplies, repositoryFilterValues, runFiltersOffered, scopeRows, shouldLockConfirmed } from './filters.js'
-import { ANALYZER_LABELS } from './analyzer-select.js'
 import { reportDuplicateIds } from './report-duplicates.js'
 import { SOURCE_LABELS, revalidateKindOf } from '@preventive/report'
 import { COMBO_FIELDS, buildAnalyzerTags } from './analyzer-tags.js'
@@ -748,7 +747,7 @@ function toolbarTemplate(filteredCount, allCount, triageCounts, counts, colorCou
            omitted inside the panel, but Validation model, which App
            mode always shows). The component owns the
            trigger pill + the column popover, the friendly
-           ANALYZER_LABELS lookup, and the cross-filtered counts (run
+           SOURCE_LABELS lookup, and the cross-filtered counts (run
            over the rows remaining after the source/confidence/outcome selectors). Values with no carrier get synthetic
            "(none)" / "(no model)" rows riding NULL_ANALYZER_SENTINEL
            / NULL_MODEL_SENTINEL — control characters that can't
@@ -1781,7 +1780,7 @@ function mergedRowFacts(mergedGroups) {
   // from mergedGroups (not the shownTriage-filtered allGroups) so the
   // option lists stay stable when the user flips between live and
   // trash views. Analyzers sort for a stable display order: known
-  // source-marked imports first (in ANALYZER_LABELS' order), the null
+  // source-marked imports first (in SOURCE_LABELS' order), the null
   // bucket last, the rest alphabetical between them. Models (pretty
   // names — see modelOfFinding) sort alphabetically with the null
   // bucket pinned last, same shape as the repo options below. A
@@ -1797,7 +1796,7 @@ function mergedRowFacts(mergedGroups) {
       ;(isRevalidation(f) ? validationModelSet : modelSet).add(modelOfFinding(f))
     }
   }
-  const knownOrder = Object.keys(ANALYZER_LABELS)
+  const knownOrder = Object.keys(SOURCE_LABELS)
   const rank = (a) => {
     if (a == null) return Infinity
     const i = knownOrder.indexOf(a)

@@ -1,40 +1,20 @@
-// `<source-filter>` — `Sources` / `Dependencies` chip pair in the
-// findings toolbar that filters the row set to OWN-source vs.
-// node_modules findings.
-//
-// Selection is SINGLE-SELECT WITH TOGGLE-OFF:
-//   * Click an inactive chip → it becomes the active one
-//   * Click the active chip again → clear (no filter; both shown)
-//
-// Reactivity: extends StateElement, so reads of `state.filterSources`
-// during render() are tracked by observer-util — the active chip
-// follows state mutations on its own.
-//
-// Click dispatches a `source-toggle(detail: { source })` CustomEvent;
-// events.js's listener applies the clear+add logic (a Set-based
-// state slice rather than a single string keeps the predicate in
-// filters.js stable as `size === 1` checks).
-//
-// The host element carries the bordered-pill chrome directly via
-// the `source-filter` element selector in toolbar.css; the two
-// chip buttons render as direct children.
+// `<source-filter>` — the `Sources` / `Deps` chip pair narrowing the
+// findings to own source or node_modules. Single-select with toggle-off:
+// clicking the active chip clears the filter. Click dispatches
+// `source-toggle(detail: { source })`; events.js applies it to the
+// `state.filterSources` Set (a Set keeps filters.js's `size === 1` test).
 import { classMap } from 'lit/directives/class-map.js'
-import { StateElement, html } from '@rray/frontend/state-element'
+import { html } from '@rray/frontend/state-element'
+import { ToolbarControl } from './toolbar-control.js'
 import { state } from '#client/index.js'
-import { ensureHostAria } from './host-aria.js'
 
 const SOURCES = [
   ['own',     'Sources'],
   ['modules', 'Deps'],
 ]
 
-class SourceFilter extends StateElement {
-  createRenderRoot() { return this }
-
-  connectedCallback() {
-    super.connectedCallback()
-    ensureHostAria(this, { role: 'group', 'aria-label': 'Source filter' })
-  }
+class SourceFilter extends ToolbarControl {
+  groupLabel = 'Source filter'
 
   render() {
     return html`${SOURCES.map(([value, label]) => {
@@ -43,17 +23,9 @@ class SourceFilter extends StateElement {
         type="button"
         class=${classMap({ 'source-chip': true, active })}
         aria-pressed=${String(active)}
-        @click=${() => this._toggle(value)}
+        @click=${() => this.emit('source-toggle', { source: value })}
       >${label}</button>`
     })}`
-  }
-
-  _toggle(source) {
-    this.dispatchEvent(new CustomEvent('source-toggle', {
-      detail: { source },
-      bubbles: true,
-      composed: true,
-    }))
   }
 }
 
