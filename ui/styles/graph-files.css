@@ -2,11 +2,16 @@
    import names link to their file's card. */
 .tree-view { display: flex; flex-direction: column; gap: .75rem; }
 
-.tree-file {
-  padding: .6rem .8rem;
+/* Glass cards: a file's, the table's list and its details panel. */
+.tree-file,
+.tree-table-list,
+.tree-table-details {
   background: var(--surface); backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
+}
+.tree-file {
+  padding: .6rem .8rem;
   scroll-margin-top: 1rem;
 }
 
@@ -117,12 +122,7 @@
   }
 }
 
-.tree-table-list {
-  background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
-  box-shadow: var(--shadow-glass);
-  overflow: hidden;
-}
+.tree-table-list { overflow: hidden; }
 
 .tree-table-row {
   display: flex; align-items: center; gap: .75rem;
@@ -175,9 +175,6 @@
 }
 
 .tree-table-details {
-  background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
-  box-shadow: var(--shadow-glass);
   display: flex; flex-direction: column;
   position: sticky; top: 1rem;
   max-height: calc(100vh - 8rem);

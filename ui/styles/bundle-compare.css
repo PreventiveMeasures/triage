@@ -619,13 +619,17 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
 .bundle-compare-rename-to { color: var(--green); }
 /* A renamed file's old name, as much of it as changed, after the new. */
 .bundle-compare-code-name.renamed { flex: 0 1 auto; }
-/* A file a bundle or package starts from, labelled in its head; a license
-   file, in grey. */
-.bundle-compare-code-entry {
+/* Tags in a file's head and tree. */
+:is(.bundle-compare-code-entry, .bundle-compare-code-install, .bundle-compare-code-meta, .npm-runs-code, .npm-exfiltration,
+  .npm-new-host, .npm-install-script-name) {
   flex: none; padding: 0 .3rem;
-  color: var(--text); background: color-mix(in srgb, var(--accent) 18%, var(--bg));
-  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border)); border-radius: var(--ui-radius, 3px);
+  color: var(--text); border-radius: var(--ui-radius, 3px);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .62rem; font-weight: 600; line-height: 1.45;
+}
+/* A file a bundle or package starts from; a license file, in grey. */
+.bundle-compare-code-entry {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border));
 
   &.is-license { background: color-mix(in srgb, var(--muted) 14%, var(--bg)); border-color: var(--border); }
 }
@@ -635,10 +639,8 @@ bundle-compare-all { min-width: 0; background: var(--bg); }
    (file-hosts.js), and hosts new since the compared version
    (npm-overview.js npmNewHostTag). What a file no longer is, struck through. */
 :is(.bundle-compare-code-install, .bundle-compare-code-meta, .npm-runs-code, .npm-exfiltration, .npm-new-host, .npm-install-script-name) {
-  flex: none; padding: 0 .3rem;
-  color: var(--text); background: color-mix(in srgb, var(--high) 22%, var(--bg));
-  border: 1px solid var(--high); border-radius: var(--ui-radius, 3px);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .62rem; font-weight: 600; line-height: 1.45;
+  background: color-mix(in srgb, var(--high) 22%, var(--bg));
+  border: 1px solid var(--high);
 
   &.is-dropped { color: var(--muted); background: none; border-color: var(--border); text-decoration: line-through; }
   /* Worse: the whole environment read out, publishing, a host that catches

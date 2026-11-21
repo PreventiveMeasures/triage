@@ -29,10 +29,19 @@
 
 /* Flat mode (group by file off): each dedup group is its own card, its
    header strip carrying the full line row; the in-body line row is hidden. */
-.flat-group {
-  margin-bottom: 1rem; border: 1px solid var(--border); border-radius: var(--ui-radius, 6px); overflow: hidden;
+/* Glass cards: a flat-mode group, the table's details panel, the focus
+   view's card and Code panel. */
+.flat-group,
+.findings-table-details,
+.focus-card-wrapper,
+.focus-pane-code {
   background: var(--surface); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
   box-shadow: var(--shadow-glass);
+  overflow: hidden;
+}
+.flat-group {
+  margin-bottom: 1rem;
 
   /* `.finding` is the `<finding-card>` host. Its in-body `.line-row` is
      hidden by `:host([in-group])` in finding-card.css. */
@@ -119,12 +128,6 @@
      padding-bottom. */
   max-height: calc(100% - 1rem);
   max-width: 800px;
-  background: var(--surface);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border);
-  border-radius: var(--ui-radius, 6px);
-  box-shadow: var(--shadow-glass);
-  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -978,13 +981,6 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
   position: relative;
   width: 100%;
   margin-inline: auto;
-  background: var(--surface);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border);
-  border-radius: var(--ui-radius, 6px);
-  box-shadow: var(--shadow-glass);
-  /* Clip the inner card's content to the wrapper's rounded outline. */
-  overflow: hidden;
 }
 .focus-card-wrapper:has(> .finding-history) { --finding-line-end-inset: 1.5rem; }
 .focus-card-wrapper > .finding-history {
@@ -999,13 +995,7 @@ html.kanban-opening::view-transition-old(kanban-detail-modal) {
 }
 
 /* Code panel: path bar over a scrolling source, in its own glass card. */
-.focus-pane-code {
-  display: flex; flex-direction: column;
-  background: var(--surface); backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 6px);
-  box-shadow: var(--shadow-glass);
-  overflow: hidden;
-}
+.focus-pane-code { display: flex; flex-direction: column; }
 .focus-code-bar {
   flex-shrink: 0;
   padding: .35rem .55rem;

@@ -1,3 +1,14 @@
+/* The toolbar's standalone 30px controls: the analyzer picker, the
+   confidence filter, the export button. */
+.toolbar .analyzer-btn,
+.toolbar conf-filter,
+.toolbar-export-btn {
+  display: inline-flex; align-items: center;
+  height: 30px; box-sizing: border-box;
+  background: transparent;
+  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
+}
+
 .toolbar {
   display: flex; flex-direction: column; gap: .5rem;
   margin-bottom: 1rem; padding: .6rem .75rem;
@@ -53,13 +64,10 @@
     display: inline-block;
   }
   & .analyzer-btn {
-    display: inline-flex; align-items: center; gap: .45rem;
-    height: 30px; box-sizing: border-box;
+    gap: .45rem;
     padding: .3rem .55rem;
     min-width: 8.5rem;
-    background: transparent;
     color: var(--text);
-    border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
     font-family: inherit; font-size: .8rem; font-weight: 500;
 
     &:hover { border-color: var(--accent); }
@@ -96,13 +104,8 @@
      slider and the `low – high` read-out; the host is the layout container. */
   & conf-filter {
     position: relative;
-    display: inline-flex; align-items: center;
-    height: 30px; box-sizing: border-box;
     padding: 0 .55rem;
     gap: .5rem;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--ui-radius, 4px);
 
     & .conf-range-label {
       color: var(--muted);
@@ -283,13 +286,11 @@
    kanban) no gap is left behind. */
 download-button { display: contents; }
 .toolbar-export-btn {
-  height: 30px; box-sizing: border-box;
-  display: inline-flex; align-items: center; justify-content: center;
+  justify-content: center;
   padding: 0 .55rem;
   /* Transparent over the toolbar's glass (a `--bg` fill would be an opaque
      box), muted glyph, hover tint as the view-mode buttons. */
-  background: transparent; color: var(--muted);
-  border: 1px solid var(--border); border-radius: var(--ui-radius, 4px);
+  color: var(--muted);
   font-family: inherit;
   transition: background .12s, color .12s;
 

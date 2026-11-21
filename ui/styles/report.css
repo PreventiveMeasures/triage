@@ -60,19 +60,22 @@
       display: flex; align-items: center; gap: .625rem var(--header-column-gap, .625rem); flex-wrap: wrap;
     }
 
-    /* Pill naming the active report file beside its brand sticker. Min-height
-       matches the repo-chip so all title-row pills share one height. */
-    & .file-chip, & .files-toggle-btn {
+    /* The title row's pills; min-height matches the repo-chip so all share
+       one height. */
+    & :is(.file-chip, .files-toggle-btn, .report-sync-badge) {
       display: inline-flex; align-items: center; gap: .375rem;
       min-height: 24px;
-      padding: .125rem .5rem;
       background: var(--surface);
       border: var(--header-tag-border, 1px solid var(--border));
-      border-radius: var(--ui-radius, 999px);
       color: var(--muted);
       font-family: inherit;
-      font-size: .75rem;
       font-weight: 500;
+    }
+    /* Pill naming the active report file beside its brand sticker. */
+    & .file-chip, & .files-toggle-btn {
+      padding: .125rem .5rem;
+      border-radius: var(--ui-radius, 999px);
+      font-size: .75rem;
       line-height: 1.5;
       letter-spacing: normal;
       white-space: nowrap;
@@ -149,17 +152,10 @@
        the header's right edge. `data-status`: local (not uploaded; opens the
        upload dialog), cloud, differ. */
     & .report-sync-badge {
-      display: inline-flex; align-items: center; gap: .375rem;
-      min-height: 24px;
       margin-left: auto;
       padding: .125rem .5rem .125rem .4rem;
-      background: var(--surface);
-      color: var(--muted);
-      border: var(--header-tag-border, 1px solid var(--border));
       border-radius: 999px;
-      font-family: inherit;
       font-size: .72rem;
-      font-weight: 500;
       cursor: default;
       flex-shrink: 0;
 
@@ -828,35 +824,35 @@ bundle-code-search {
   padding-bottom: .25rem;
 }
 .bundle-code-search-file:last-child { border-bottom: none; }
+/* The rail's result rows: full-width buttons, tinted on hover. */
+.bundle-code-search-file-name,
+.bundle-code-largest-file,
+.bundle-code-search-hit-link,
+.bundle-code-search-issue-link {
+  width: 100%;
+  border: 0; border-radius: var(--ui-radius, 3px);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+
+  &:hover { background: var(--bg); }
+}
 .bundle-code-search-file-name {
   display: block;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: 0;
   padding: .25rem .35rem;
   color: var(--text);
-  font: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .72rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  border-radius: var(--ui-radius, 3px);
 }
-.bundle-code-search-file-name:hover { background: var(--bg); }
 /* Largest-mode rows — one file each: its path, then its size. */
 .bundle-code-largest { list-style: none; margin: 0; padding: 0; }
 .bundle-code-largest-file {
   display: flex; align-items: baseline; gap: .5rem;
-  width: 100%;
   padding: .2rem .35rem;
-  border: 0; border-radius: var(--ui-radius, 3px);
-  background: transparent;
   color: var(--text);
-  font: inherit;
   font-size: .72rem;
-  text-align: left;
 }
-.bundle-code-largest-file:hover { background: var(--bg); }
 .bundle-code-largest-path {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -875,16 +871,10 @@ bundle-code-search {
 .bundle-code-search-hit { padding: 0; }
 .bundle-code-search-hit-link {
   display: flex; align-items: baseline; gap: .35rem;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: 0;
   padding: .15rem .35rem;
   color: var(--muted);
-  font: inherit;
-  border-radius: var(--ui-radius, 3px);
 }
-.bundle-code-search-hit-link:hover { background: var(--bg); color: var(--text); }
+.bundle-code-search-hit-link:hover { color: var(--text); }
 .bundle-code-search-hit-ln {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
@@ -913,16 +903,9 @@ bundle-code-search {
 .bundle-code-search-issue-link {
   display: flex; flex-direction: column;
   gap: .15rem;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: 0;
   padding: .35rem .4rem;
-  border-radius: var(--ui-radius, 3px);
-  font: inherit;
   border-bottom: 1px solid var(--border);
 }
-.bundle-code-search-issue-link:hover { background: var(--bg); }
 .bundle-code-search-issue:last-child .bundle-code-search-issue-link { border-bottom: none; }
 /* Top row — severity chip + (stripped) file path on one line.
    Path takes the remaining width and ellipsis-clips on overflow. */
@@ -1601,17 +1584,19 @@ bundle-search {
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
-.bundle-issue-sev {
+/* The severity and triage pills of an issue row and the source panel. */
+.bundle-issue-sev,
+.bundle-source-panel-sev,
+.bundle-source-panel-triage {
   text-transform: uppercase;
   font-size: .6rem;
   font-weight: 700;
   letter-spacing: .08em;
   padding: 1px .4rem;
   border-radius: 3px;
-  color: #000;
   white-space: nowrap;
-  flex-shrink: 0;
 }
+.bundle-issue-sev { color: #000; flex-shrink: 0; }
 /* Report chips under each issue, as the workspace `.report-chip`; buttons so
    they're focusable ([data-bundle-issue-report] in events.js). */
 .bundle-issue-reports {
@@ -2311,17 +2296,7 @@ body.report-fullscreen {
   padding: .5rem .75rem;
   border-bottom: 1px solid var(--border);
 }
-.bundle-source-panel-sev {
-  text-transform: uppercase;
-  font-size: .6rem;
-  font-weight: 700;
-  letter-spacing: .08em;
-  padding: 1px .4rem;
-  border-radius: 3px;
-  color: #000;
-  flex: 1;
-  white-space: nowrap;
-}
+.bundle-source-panel-sev { color: #000; flex: 1; }
 /* `Line N` left, the run meta (analyzer · model · …) filling the right. */
 .bundle-source-panel-line-row {
   display: flex; align-items: baseline; gap: .5rem;
@@ -2337,15 +2312,8 @@ body.report-fullscreen {
 /* Triage badge as an outline chip, a status rather than a tier; colors match
    the toolbar's selector. */
 .bundle-source-panel-triage {
-  text-transform: uppercase;
-  font-size: .6rem;
-  font-weight: 700;
-  letter-spacing: .08em;
-  padding: 1px .4rem;
-  border-radius: 3px;
   border: 1px solid currentcolor;
   background: transparent;
-  white-space: nowrap;
   flex-shrink: 0;
   &.triage-inprogress { color: var(--warning); }
   &.triage-fixed   { color: var(--green); }
