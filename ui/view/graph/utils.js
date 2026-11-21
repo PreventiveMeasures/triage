@@ -1,23 +1,13 @@
 import { depsDirName, isModule } from '../format.js'
+import { graphTheme } from './colors.js'
 
-// Graph-flavored utilities. Helpers consumed by the Files tab and
-// graph data prep (rather than graph-internal rendering) live in
-// `view/file-counts.js`: `treeAnchor`, `computeFindingCountsByFile`,
-// `computeTransitiveCounts`, `fileHasFindings`, `totalFindings`.
-// `forceLayout` lives in `./force-layout.js` next to canvas.js.
-
-// Group key for clustering + coloring nodes in the graph. Files
-// inside the active deps dir (`node_modules/<pkg>/` by default;
-// `vendor/<pkg>/` or `dependencies/<pkg>/` when the project ships no
-// node_modules — see `configureDepsDir` in format.js) group by
-// package name. Own source uses the single `__own__` identity.
+// Group key for clustering and coloring graph nodes: files inside the active
+// deps dir (`node_modules/<pkg>/` by default, see `configureDepsDir` in
+// format.js) group by package name, own source under `__own__`.
 export function packageOf(file) {
   if (!file) return null
-  const dir = depsDirName()
-  const re = new RegExp(`^(?:.*/)?${dir}/(@[^/]+/[^/]+|[^/]+)`, 'u')
-  const m = file.match(re)
-  if (m) return m[1]
-  return '__own__'
+  const m = file.match(new RegExp(`^(?:.*/)?${depsDirName()}/(@[^/]+/[^/]+|[^/]+)`, 'u'))
+  return m ? m[1] : '__own__'
 }
 
 // Snapshot the report's active dependency-directory classifier before handing
@@ -26,21 +16,10 @@ export function reportOwnSourceFiles(files) {
   return new Set(files.filter(file => !isModule(file)))
 }
 
-// ── Vivid per-package color palette ─────────────────────────────────────────
-// 20 perceptually distinct colors from Tableau 20, adjusted for UI
-// legibility. Ordered for maximum hue distance between adjacent
-// indices (not sequential) so even small 3-4 package graphs get
-// very distinct colors.
-//
-// Two parallel palettes — same hue order, different lightness — so a
-// package keeps its identity (a "blue package" stays blue) across
-// dark/light themes; only saturation/lightness shifts. Dark stays
-// bright and pastel to read on the near-black canvas; light pulls
-// toward GitHub-primary saturated tones so colors don't wash out
-// against #f6f8fa. Several dark variants (pinks, pale blues, light
-// grays, sage greens) drop ~25-30 lightness in the light variant —
-// they were the worst "I can barely see the node" offenders on a
-// light bg.
+// Tableau 20, adjusted for legibility and ordered for maximum hue distance
+// between adjacent indices, so even 3-4 packages get distinct colors. The two
+// palettes share their hue order, so a package keeps its color across themes;
+// the light one is darker and more saturated to read on a light canvas.
 const PKG_PALETTE_DARK = [
   '#4e9af1', // blue
   '#f28e2b', // orange
@@ -51,7 +30,7 @@ const PKG_PALETTE_DARK = [
   '#b07aa1', // purple
   '#ff9da7', // pink
   '#9c755f', // brown
-  '#5cd1e5', // cyan (was '#bab0ac' gray — read as a "missing" color)
+  '#5cd1e5', // cyan
   '#f1ce63', // gold
   '#d37295', // rose
   '#a0cbe8', // light blue
@@ -59,8 +38,8 @@ const PKG_PALETTE_DARK = [
   '#8cd17d', // light green
   '#b6992d', // dark gold
   '#499894', // dark teal
-  '#e15759', // crimson (intentional near-repeat — far enough in ordering)
-  '#e879c7', // magenta (was '#79706e' warm gray)
+  '#e15759', // crimson (repeats red, far from it in the order)
+  '#e879c7', // magenta
   '#d4a6c8', // lavender
 ]
 const PKG_PALETTE_LIGHT = [
@@ -73,7 +52,7 @@ const PKG_PALETTE_LIGHT = [
   '#9560e8', // purple
   '#d24a9c', // pink → magenta
   '#8a5d40', // brown
-  '#0891b2', // cyan (was '#6e7781' gray)
+  '#0891b2', // cyan
   '#a07a14', // gold
   '#c14e8e', // rose
   '#1f7ad0', // light blue → deeper
@@ -82,45 +61,31 @@ const PKG_PALETTE_LIGHT = [
   '#a07a14', // dark gold (matches gold)
   '#2a8278', // dark teal
   '#cb2c40', // crimson
-  '#c026d3', // magenta (was '#52504e' warm gray)
+  '#c026d3', // magenta
   '#965f93', // lavender
 ]
-function isLightTheme() {
-  // "Light" for the canvas's purposes means the light G2_THEMES
-  // palette (light backdrop, dark text). Light, pink, w95 and paper
-  // qualify; theme-green and the default dark theme use the
-  // dark palette. Mirrors the predicate in view/graph/canvas.js.
-  if (typeof document === 'undefined') return false
-  const c = document.body?.classList
-  return !!c && (c.contains('theme-light') || c.contains('theme-pink') || c.contains('theme-w95') || c.contains('theme-paper'))
-}
-// Cache is keyed by `${theme}:${pkg}` so the dark + light variants
-// don't collide. Toggling the theme doesn't invalidate the cache — we
-// just look up under the new prefix on the next call. Old entries
-// stay around but they're tiny and the package-name set is bounded.
+const palette = () => graphTheme() === 'dark' ? PKG_PALETTE_DARK : PKG_PALETTE_LIGHT
+// Keyed by palette too: a theme switch looks up under the other one.
 const _pkgColorCache = new Map()
 // The palette's colors in their order, for groups told apart by rank: the
 // first few are as far apart as it has.
 export function paletteColor(index) {
-  const palette = isLightTheme() ? PKG_PALETTE_LIGHT : PKG_PALETTE_DARK
-  return palette[index % palette.length]
+  const colors = palette()
+  return colors[index % colors.length]
 }
 
 // A fill for what spans several of them.
-export const mixedColor = () => isLightTheme() ? '#8c959f' : '#6e7681'
+export const mixedColor = () => graphTheme() === 'dark' ? '#6e7681' : '#8c959f'
 
 export function pkgColor(pkg) {
-  const light = isLightTheme()
-  const palette = light ? PKG_PALETTE_LIGHT : PKG_PALETTE_DARK
+  const colors = palette()
   const key = pkg ?? '__own__'
-  const cacheKey = `${light ? 'l' : 'd'}:${key}`
+  const cacheKey = `${colors === PKG_PALETTE_LIGHT ? 'l' : 'd'}:${key}`
   if (_pkgColorCache.has(cacheKey)) return _pkgColorCache.get(cacheKey)
   let h = 0
   for (const c of key) h = (h * 37 + c.codePointAt(0)) | 0
-  // Spread indices: interleave halves so sequential packages get distant hues
-  const raw = ((h % palette.length) + palette.length) % palette.length
-  const idx = (raw * 7 + 3) % palette.length
-  const col = palette[idx]
-  _pkgColorCache.set(cacheKey, col)
-  return col
+  // Interleave the hash's index so sequential packages get distant hues.
+  const color = colors[((((h % colors.length) + colors.length) % colors.length) * 7 + 3) % colors.length]
+  _pkgColorCache.set(cacheKey, color)
+  return color
 }

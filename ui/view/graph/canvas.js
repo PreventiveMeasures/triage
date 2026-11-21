@@ -3,18 +3,19 @@ import { styleMap } from '../style-map.js'
 import { cleanupGraph2, graph2 } from './state.js'
 import { layoutFilesVogel, layoutSpiral } from './layout.js'
 import { renderSevChips } from './render.js'
-import { buildPackageGraph, graphTerms, packageVersions, pkgLabelOf, withoutPackages } from './data.js'
+import { buildPackageGraph, graphTerms, packageVersions, withoutPackages } from './data.js'
+import { pkgLabel } from '../../../common/bundle-pkg-of.js'
 import { pkgRelative } from './file-label.js'
 import { pkgColor } from './utils.js'
-import { GRAPH_BACKGROUNDS } from './colors.js'
+import { GRAPH_BACKGROUNDS, graphTheme } from './colors.js'
 import { forceLayout } from './force-layout.js'
-import { fitCompactGraph } from './fit.js'
+import { fitCompactGraph, nodeBounds } from './fit.js'
 import { graphZoomMetrics } from './zoom.js'
 import { formatBytes } from '../format.js'
 import { layoutDependencyLayers } from './layered-layout.js'
 import { drawDependencyLayers } from './layered-render.js'
 import { layoutPackageDependencies } from './dependency-layout.js'
-import { drawPackageDependencies } from './dependency-render.js'
+import { DEPENDENCY_FONT, dependencyLabel, drawPackageDependencies } from './dependency-render.js'
 import { dependencyFilesOn, dependencyNetwork } from './package-network.js'
 import { circleOutside, createRenderCache, edgeGradient, edgeOutside, edgePaints, haloGradient, updateRenderCache } from './render-cache.js'
 import { graphViewKey } from './view-key.js'
@@ -22,32 +23,35 @@ import { createNodePicker } from './node-picker.js'
 import { outsideDamage, panDamage } from './pan-damage.js'
 import { MAX_FILE_EDGES, MAX_PACKAGE_EDGES, crowdedGraphPackages } from './crowded-packages.js'
 
-// Severity palette baked into the canvas. Vivid hot colors for
-// critical/high pop above the package hue; calmer tones for
-// medium/low; bug-class tiers (high_bug, bug) use earthy browns to
-// distinguish them from the saturated vuln palette; informational
-// is a saturated blue. Theme-independent — they read as data colors
-// regardless of chrome lightness. Critical rings get a larger
-// radius + thicker stroke (see drawIssueRing) so they stand
-// out without a time-driven pulse. Tier set matches format.js
-// SEVERITIES so the topbar pill row shows every tier the findings
-// tab can produce.
-const SEV_COLORS = {
-  critical: '#ff5470',
-  high: '#ff9d4a',
-  medium: '#f4d35e',
-  low: '#67c2ff',
-  high_bug: '#a06c3f',
-  bug: '#7a6d62',
-  informational: '#218bff',
+// Severity rings, theme-independent data colors: [color, gap past the node,
+// stroke width]. Critical and high get a wider, thicker ring so they stand
+// out without a time-driven pulse.
+const SEV_RINGS = {
+  critical: ['#ff5470', 4.2, 1.8],
+  high: ['#ff9d4a', 3.4, 1.5],
+  medium: ['#f4d35e', 2.8, 1.3],
+  low: ['#67c2ff', 2.8, 1.1],
+  high_bug: ['#a06c3f', 2.8, 1.1],
+  bug: ['#7a6d62', 2.8, 1.1],
+  informational: ['#218bff', 2.8, 1.1],
 }
 
-// Theme-aware canvas palette. Baked into JS rather than read from
-// CSS so the per-frame draw doesn't pay a getComputedStyle
-// round-trip. Chrome around the canvas (panels, toolbar, tooltip)
-// is plain CSS on the shared --bg / --surface / etc. vars so it
-// flips with the theme; canvas-internal fills flip alongside via
-// currentTheme().
+// Canvas palettes per theme (see graphTheme), in JS so a frame needs no
+// getComputedStyle round-trip. The body-class observer below repaints on a
+// theme switch.
+const LIGHT_THEME = {
+  bg: GRAPH_BACKGROUNDS.light,
+  grid: 'rgba(0, 0, 0, 0.04)',
+  selectRing: '#0969da',
+  edgeIntra: (alpha) => `rgba(50, 70, 100, ${alpha})`,
+  hubRing: (alpha) => `rgba(0, 0, 0, ${alpha})`,
+  labelFill: 'rgba(40, 50, 70, 0.85)',
+  labelShadow: 'rgba(255, 255, 255, 0.95)',
+  labelOutline: 'rgba(255, 255, 255, 0.9)',
+  labelDefault: 'rgba(50, 60, 80, 0.85)',
+  labelHover: 'rgba(20, 25, 35, 0.95)',
+  labelSelected: '#000',
+}
 const G2_THEMES = {
   dark: {
     bg: GRAPH_BACKGROUNDS.dark,
@@ -56,144 +60,89 @@ const G2_THEMES = {
     edgeIntra: (alpha) => `rgba(180, 195, 215, ${alpha})`,
     hubRing: (alpha) => `rgba(255, 255, 255, ${alpha})`,
     labelFill: 'rgba(230, 233, 238, 0.78)',
-    // Package-view label palette — tuned so labels read against
-    // the canvas backdrop without bleeding into adjacent nodes.
     labelShadow: 'rgba(12, 12, 12, 0.98)',
     labelOutline: 'rgba(12, 12, 12, 0.9)',
     labelDefault: 'rgba(200, 210, 225, 0.78)',
     labelHover: 'rgba(230, 237, 243, 0.95)',
     labelSelected: '#fff',
   },
-  light: {
-    bg: GRAPH_BACKGROUNDS.light,
-    grid: 'rgba(0, 0, 0, 0.04)',
-    selectRing: '#0969da',
-    edgeIntra: (alpha) => `rgba(50, 70, 100, ${alpha})`,
-    hubRing: (alpha) => `rgba(0, 0, 0, ${alpha})`,
-    labelFill: 'rgba(40, 50, 70, 0.85)',
-    labelShadow: 'rgba(255, 255, 255, 0.95)',
-    labelOutline: 'rgba(255, 255, 255, 0.9)',
-    labelDefault: 'rgba(50, 60, 80, 0.85)',
-    labelHover: 'rgba(20, 25, 35, 0.95)',
-    labelSelected: '#000',
+  light: LIGHT_THEME,
+  // Light's palette on a canvas one step lighter than the page's pink, so it
+  // reads as a lifted panel rather than a grey island.
+  pink: { ...LIGHT_THEME, bg: GRAPH_BACKGROUNDS.pink },
+  paper: {
+    ...LIGHT_THEME,
+    bg: GRAPH_BACKGROUNDS.paper,
+    selectRing: '#000',
+    edgeIntra: (alpha) => `rgba(0, 0, 0, ${alpha})`,
+    labelFill: '#000',
+    labelShadow: '#fff',
+    labelOutline: '#fff',
+    labelDefault: '#000',
+    labelHover: '#000',
   },
-  // Pink mirrors light — the package palette, label colours, edge
-  // hue and select ring all already read well on a soft pink wash —
-  // but pulls the canvas fill toward the body's pink so the graph
-  // surface doesn't read as a grey island inside the pink chrome.
-  // Same hue/saturation as --bg (HSL ≈330° 100%) but one step
-  // lighter (97% vs the body's 96%) so the canvas reads as a
-  // lifted panel sitting above the page.
-  pink: {
-    bg: GRAPH_BACKGROUNDS.pink,
-    grid: 'rgba(0, 0, 0, 0.04)',
-    selectRing: '#0969da',
-    edgeIntra: (alpha) => `rgba(50, 70, 100, ${alpha})`,
-    hubRing: (alpha) => `rgba(0, 0, 0, ${alpha})`,
-    labelFill: 'rgba(40, 50, 70, 0.85)',
-    labelShadow: 'rgba(255, 255, 255, 0.95)',
-    labelOutline: 'rgba(255, 255, 255, 0.9)',
-    labelDefault: 'rgba(50, 60, 80, 0.85)',
-    labelHover: 'rgba(20, 25, 35, 0.95)',
-    labelSelected: '#000',
-  },
+  // A white well, picked in the theme's navy.
+  w95: { ...LIGHT_THEME, bg: GRAPH_BACKGROUNDS.w95, selectRing: '#000080' },
 }
+const currentTheme = () => G2_THEMES[graphTheme()]
 
-const G2_PAPER_THEME = {
-  ...G2_THEMES.light,
-  bg: GRAPH_BACKGROUNDS.paper,
-  selectRing: '#000',
-  edgeIntra: (alpha) => `rgba(0, 0, 0, ${alpha})`,
-  labelFill: '#000',
-  labelShadow: '#fff',
-  labelOutline: '#fff',
-  labelDefault: '#000',
-  labelHover: '#000',
-}
-
-// W95 draws the graph in a white well, picked in the theme's navy.
-const G2_W95_THEME = {
-  ...G2_THEMES.light,
-  bg: GRAPH_BACKGROUNDS.w95,
-  selectRing: '#000080',
-}
-
-function currentTheme() {
-  // Each named light-style theme picks its own G2_THEMES entry so
-  // the canvas fill matches the surrounding page chrome; anything
-  // unmatched (default dark, theme-green) falls through to dark.
-  // The body-class observer in attachGraph2Interaction requestDraws
-  // on any class swap, so theme changes repaint with the new palette.
-  const c = document.body.classList
-  if (c.contains('theme-paper')) return G2_PAPER_THEME
-  if (c.contains('theme-pink')) return G2_THEMES.pink
-  if (c.contains('theme-w95')) return G2_W95_THEME
-  if (c.contains('theme-light')) return G2_THEMES.light
-  return G2_THEMES.dark
-}
+const LABEL_FONT = '600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
 
 // Screen-space AABB overlap test shared by the label collision passes.
 const overlaps = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
 
-// Greedy label placement: highest `prio` first, drop any candidate
-// whose box overlaps one already placed. Sorts `candidates` in place.
+// Greedy label placement: highest `prio` first, dropping any candidate whose
+// box overlaps one already placed. Sorts `candidates` in place.
 function placeLabels(candidates) {
   candidates.sort((a, b) => b.prio - a.prio)
   const placed = []
-  for (const c of candidates) {
-    let collide = false
-    for (const p of placed) {
-      if (overlaps(c, p)) { collide = true; break }
-    }
-    if (!collide) placed.push(c)
-  }
+  for (const c of candidates) if (!placed.some((p) => overlaps(c, p))) placed.push(c)
   return placed
 }
 
-// Precompute the 256 suffixes once; hot node/halo/arrow loops only round,
-// clamp, and index instead of allocating strings with toString/padStart.
+// Precomputed so hot node/halo/arrow loops only round, clamp and index.
 const ALPHA_HEX = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'))
-function alphaHex(a) {
-  const v = Math.max(0, Math.min(255, Math.round(a * 255)))
-  return ALPHA_HEX[v]
+const alphaHex = (a) => ALPHA_HEX[Math.max(0, Math.min(255, Math.round(a * 255)))]
+
+// Rich renderers' node radius, constant in screen space: a focused package's
+// files, and packages, whose area tracks their file count (sqrt, capped).
+const focusNodeRadius = (n) => (n.isHub ? 6 : 4) * graph2.nodeSize
+const pkgNodeRadius = (p) => Math.min(26, 5 + Math.sqrt(p.fileCount) * 1.7) * graph2.nodeSize
+
+// Bidirectional pairs get arrows at both ends, others at the import's target
+// (data.js records which ends import: fromLo / fromHi).
+function directed(e, na, nb) {
+  const bidi = e.fromLo && e.fromHi
+  return !bidi && e.fromHi ? { a: nb, b: na, bidi } : { a: na, b: nb, bidi }
 }
 
-// Wire up the v2 canvas: layout (deferred to first resize so the
-// solver gets real dimensions), draw loop, hover/click hit-test,
-// pan/zoom, and the live corner-readout counters. refreshSidebar
-// is passed in by the renderer to rebuild the right-panel
-// selection card after a click (it owns the card's data context);
-// refreshTopPkgs (optional) re-paints the Packages list when a
-// click changes the solo'd package (packages view only — file
-// clicks don't touch solo).
+// Nothing hides nodes: the render cache and picker take an always-true
+// visibility predicate.
+const shown = () => true
+
+// Wire up the canvas: layout (deferred to the first resize so it gets real
+// dimensions), draw loop, hover / click hit-testing, pan / zoom and the zoom
+// readout. `refreshSidebar` rebuilds the selection card after a click;
+// `refreshTopPkgs` (optional) repaints the Packages list when a click changes
+// the solo'd package.
 export function attachGraph2Interaction(container, graph, refreshSidebar, refreshTopPkgs) {
-  // Pierce the `<graph-layout>` shadow root — the canvas + corner
-  // overlays + zoom controls all live inside it. Callers pass the
-  // outer slot (`#findings-graph-slot` / `#bundle-graph-slot` /
-  // the `#report` host); finding the shadow host here keeps the
-  // call site free of shadow-DOM knowledge.
-  const host = container.querySelector('graph-layout')
-  const root = host?.shadowRoot
+  // Callers pass the slot holding `<graph-layout>`; the canvas, overlays and
+  // zoom controls live in its shadow root.
+  const root = container.querySelector('graph-layout')?.shadowRoot
   if (!root) return
   const canvas = root.querySelector('#g2-canvas')
   const tooltip = root.querySelector('#g2-tooltip')
   const stage = root.querySelector('.graph2-stage')
   const statsEl = root.querySelector('.g2-stage-stats')
   const zoomEl = root.querySelector('#g2-zoom-pct')
-
   if (!canvas) return
 
-  // render.js calls this on every render() while viewMode==='graph',
-  // not just on the transition in — a triageSync push or any
-  // unrelated re-render mid-graph would otherwise stack window
-  // listeners + ResizeObserver + MutationObserver on top of the
-  // previous set, leaking handlers. Tear down any prior attachment
-  // before re-wiring, keeping its pan and zoom for the same view.
+  // Every render() while the graph shows calls this, so drop the previous
+  // attachment's listeners and observers first, keeping its pan and zoom.
   cleanupGraph2({ keepViewport: true })
-  // Re-attaching the view already on screen (an unrelated re-render, the
-  // bundle Issues switch) restores the user's pan and zoom, and lays out
-  // in the previous attachment's pixel space so positions match: layouts
-  // are deterministic in their inputs. Any other graph or view refits.
+  // A re-attach of the view already on screen restores that pan and zoom,
+  // laying out in the previous pixel space so positions match (layouts are
+  // deterministic in their inputs). Any other graph or view refits.
   const viewKey = graphViewKey(graph)
   let restore = graph2.keptViewport?.key === viewKey ? graph2.keptViewport : null
   graph2.keptViewport = null
@@ -209,86 +158,70 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   let layoutW = restore?.layoutW ?? 0
   let needsLayout = true
   let needsFit = !restore
-  const renderCaches = new WeakMap()
+  let renderCaches = new WeakMap()
   let nodePicker = null
   let paintedFrame = null
   let paintBounds = null
 
-  // Package-level view (the bundle Graph tab's "Packages" toggle).
-  // Effective only when the graph qualifies — 3+ packages, stamped
-  // as `canPackagesView` by buildGraphFromPrep, so a toggle value
-  // persisted from another bundle can't engage on a graph whose
-  // topbar doesn't even offer the switch — and outside a package-
-  // focus drill-in, which is a file-level mode and takes priority
-  // (back out of focus and the packages view resumes). A graph of
-  // packages alone (`packagesOnly`) is always at package altitude.
-  const layersOn = () => graph.supportsLayers && graph2.bundleLayout === 'layers' && !graph2.focusedPkg
-  const dependenciesOn = () => graph.supportsLayers && graph2.bundleLayout === 'dependencies' && !graph2.focusedPkg
+  // Layers and Dependencies are package-level layouts of bundle graphs, off
+  // while a package is focused (a file-level mode). The Graph layout shows
+  // packages when the Packages toggle is on and the graph qualifies
+  // (`canPackagesView`, so a toggle persisted from another bundle can't
+  // engage), and always for a graph of packages alone.
+  const layoutOn = (id) => graph.supportsLayers && graph2.bundleLayout === id && !graph2.focusedPkg
+  const layersOn = () => layoutOn('layers')
+  const dependenciesOn = () => layoutOn('dependencies')
   const dependencyPackagesOn = () => dependenciesOn() && !dependencyFilesOn(graph, graph2.dependencyPackagesView)
   const pkgViewOn = () => layersOn() || (graph2.bundleLayout === 'graph'
     && (graph.packagesOnly || graph2.packagesView && (graph.canPackagesView ?? false)) && !graph2.focusedPkg)
+  // At package altitude, graph2.solo is the selection: the package card's
+  // slot, which the Packages rows write too.
+  const selectsPackages = () => pkgViewOn() || dependencyPackagesOn()
   let layers = null
   let dependencyLayout = null
-  // The Graph view's file graph and the package graph both leave out
-  // crowded packages (see crowded-packages.js) before anything is laid
-  // out, so their layouts arrange only what they draw.
+  // The file and package graphs leave out crowded packages (see
+  // crowded-packages.js) before layout, so layouts arrange only what's drawn.
   const fileGraph = withoutPackages(graph, crowdedGraphPackages(graph, MAX_FILE_EDGES))
 
-  // Derived once per attach on first use; the file graph is
-  // immutable for the attachment's lifetime, so the aggregate is
-  // too. Lazy so the findings tab / file views never pay for it.
-  let _pkgGraph = null
+  // Built on first use: the file graph is fixed for the attachment, so its
+  // aggregate is too.
+  let pkgGraph = null
   function getPkgGraph() {
-    if (!_pkgGraph) {
-      const crowded = crowdedGraphPackages(buildPackageGraph(graph), MAX_PACKAGE_EDGES)
-      _pkgGraph = buildPackageGraph(withoutPackages(graph, crowded))
-      if (layersOn() && graph.layerRoots?.appImports.length > 0) {
-        if (!_pkgGraph.byPkg.has('__own__')) {
-          const app = { file: '__own__', pkg: '__own__', label: 'App (source not bundled)', size: null, fileCount: 0, totalIssues: 0 }
-          _pkgGraph.nodes.push(app)
-          _pkgGraph.byPkg.set('__own__', app)
-        }
-        _pkgGraph.importsOf.set('__own__', [...new Set([
-          ...(_pkgGraph.importsOf.get('__own__') ?? []), ...graph.layerRoots.appImports.filter((pkg) => !crowded.has(pkg)),
-        ])])
+    if (pkgGraph) return pkgGraph
+    const crowded = crowdedGraphPackages(buildPackageGraph(graph), MAX_PACKAGE_EDGES)
+    pkgGraph = buildPackageGraph(withoutPackages(graph, crowded))
+    if (layersOn() && graph.layerRoots?.appImports.length > 0) {
+      if (!pkgGraph.byPkg.has('__own__')) {
+        const app = { file: '__own__', pkg: '__own__', label: 'App (source not bundled)', size: null, fileCount: 0, totalIssues: 0 }
+        pkgGraph.nodes.push(app)
+        pkgGraph.byPkg.set('__own__', app)
       }
+      pkgGraph.importsOf.set('__own__', [...new Set([
+        ...(pkgGraph.importsOf.get('__own__') ?? []), ...graph.layerRoots.appImports.filter((pkg) => !crowded.has(pkg)),
+      ])])
     }
-    return _pkgGraph
+    return pkgGraph
   }
-  function getDependencyGraph() {
-    return dependencyNetwork(graph, graph2.dependencyPackagesView)
-  }
+  const activeGraph = () => pkgViewOn() ? getPkgGraph() : fileGraph
+  const getDependencyGraph = () => dependencyNetwork(graph, graph2.dependencyPackagesView)
 
-  const layerLabel = (id) => id === '__own__' ? 'App' : layers?.depth.get(id) === 0 ? `App · ${pkgLabelOf(id)}` : pkgLabelOf(id)
+  const layerLabel = (id) => id === '__own__' ? 'App' : layers?.depth.get(id) === 0 ? `App · ${pkgLabel(id)}` : pkgLabel(id)
 
-  // Package-node layout — same split the package-focus mode makes
-  // for files, at the same 50-node limit: force-directed while the
-  // O(N²)-per-iteration solver stays interactive (clusters by
-  // import structure), fixed-slot Vogel sunflower past it with
-  // edge-length-optimized node assignment. The package graph's
-  // `importsOf` already has the (ids, imports-map) shape the
-  // file-level solver consumes; layoutFilesVogel uses its nodes and
-  // drawn edges just as it does for the file graph.
-  function layoutPackages(pg, w, h) {
-    if (pg.nodes.length > 50) {
-      layoutFilesVogel(pg, w, h)
-      return
-    }
-    // groupOf identity: the ids are package NAMES, which the
-    // solver's default packageOf clustering would mis-bucket (see
-    // force-layout.js) — singleton groups disable the centroid
-    // pull, leaving spring + repulsion to shape the layout.
-    const sol = forceLayout(pg.nodes.map((n) => n.pkg), pg.importsOf, w, h, { groupOf: (id) => id })
-    copyPositions(pg.nodes, new Map(sol.map((s) => [s.file, s])))
-  }
-
-  // Copy solved positions onto the live nodes, matched by `file`
-  // (which doubles as the package name on package aggregates).
+  // Copy solved positions onto the live nodes, matched by `file` (which
+  // doubles as the package name on package aggregates).
   function copyPositions(nodes, pos) {
     for (const n of nodes) {
       const p = pos.get(n.file)
       if (p) { n.x = p.x; n.y = p.y }
     }
+  }
+
+  // A focused package's files, or few packages: force-directed while its
+  // O(N²) iterations stay interactive (it clusters by import structure), past
+  // 50 nodes a Vogel sunflower with an edge-length-optimized assignment.
+  function layoutCompact(g, ids, options) {
+    if (g.nodes.length > 50) return layoutFilesVogel(g, layoutW, layoutH)
+    copyPositions(g.nodes, new Map(forceLayout(ids, g.importsOf, layoutW, layoutH, options).map((s) => [s.file, s])))
   }
 
   // ── Layout (deferred until we have real canvas dimensions) ─────
@@ -297,12 +230,15 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     paintedFrame = null
     paintBounds = null
     nodePicker = null
+    layOut()
+    needsLayout = false
+  }
+  function layOut() {
     if (layersOn()) {
       const pg = getPkgGraph()
       layers = layoutDependencyLayers(pg.nodes.map((n) => ({ id: n.pkg, size: n.size })), pg.importsOf, graph.layerRoots?.roots ?? ['__own__'], {
         width: Math.max(360, layoutW - 190),
       })
-      needsLayout = false
       return
     }
     if (dependenciesOn()) {
@@ -310,87 +246,60 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       dependencyLayout = layoutPackageDependencies(pg.nodes.map((n) => n.file), pg.importsOf, pg.fileLevel ? [] : graph.layerRoots?.roots ?? [], {
         width: layoutW, height: layoutH, cycleImportsOf: pg.cycleImportsOf,
       })
-      needsLayout = false
       return
     }
     const cache = graph2.layoutCache
     const focused = graph2.focusedPkg
     const pkgView = pkgViewOn()
-    // Positions land on (and cache under) the active node set —
-    // package aggregates in packages view (their `file` is the
-    // package name), files otherwise.
-    const nodes = pkgView ? getPkgGraph().nodes : fileGraph.nodes
+    const nodes = activeGraph().nodes
     if (cache && cache.files === graph.files && cache.w === layoutW && cache.h === layoutH
         && cache.focused === focused && (cache.pkgView ?? false) === pkgView) {
-      // Reuse cached positions — copy back into the live nodes.
       copyPositions(nodes, cache.pos)
-    } else {
-      if (pkgView) {
-        layoutPackages(getPkgGraph(), layoutW, layoutH)
-      } else if (focused) {
-        // Package-focus mode: the force-directed solver gives the
-        // structural-cluster look on small subgraphs (a few dozen
-        // files), but it's O(N²) per iteration and locks up the UI
-        // on packages with hundreds of files. Switch to a
-        // file-level Vogel sunflower past 50 files, using a bounded
-        // assignment search to shorten edges on its fixed positions.
-        if (fileGraph.nodes.length > 50) {
-          layoutFilesVogel(fileGraph, layoutW, layoutH)
-        } else {
-          const sol = forceLayout(fileGraph.files, fileGraph.importsOf, layoutW, layoutH)
-          copyPositions(fileGraph.nodes, new Map(sol.map((s) => [s.file, s])))
-        }
-      } else {
-        layoutSpiral(fileGraph, layoutW, layoutH)
-      }
-      const pos = new Map()
-      for (const n of nodes) pos.set(n.file, { x: n.x, y: n.y })
-      graph2.layoutCache = { files: graph.files, w: layoutW, h: layoutH, pos, focused, pkgView }
+      return
     }
-    needsLayout = false
+    // Package ids are names, which force-layout's default packageOf
+    // clustering would mis-bucket: singleton groups disable its centroid pull.
+    if (pkgView) layoutCompact(getPkgGraph(), getPkgGraph().nodes.map((n) => n.pkg), { groupOf: (id) => id })
+    else if (focused) layoutCompact(fileGraph, fileGraph.files)
+    else layoutSpiral(fileGraph, layoutW, layoutH)
+    graph2.layoutCache = { files: graph.files, w: layoutW, h: layoutH, pos: new Map(nodes.map((n) => [n.file, { x: n.x, y: n.y }])), focused, pkgView }
   }
 
-  // (k, tx, ty) that fits the graph's bounding box into the
-  // viewport with max(20px, 3%) padding for large overviews and 4%
-  // safe zones for compact file/focused layouts, plus one stats line.
-  // Pure — doesn't mutate viewport or measure DOM in the wheel handler.
-  // Used by fitToView() and by the wheel handler to clamp
-  // min-zoom and locate "centered" for the pan-to-center fallback.
-  // Bounds come from whichever node set is on screen — package
-  // aggregates in packages view, files otherwise.
+  // (k, tx, ty) fitting what's on screen into the viewport above one stats
+  // line. Pure: the wheel handler uses it for the min-zoom floor and the
+  // re-centering target.
   function computeFit() {
+    const fitScale = (w, h, padShare, max) => {
+      const pad = Math.max(20, Math.min(W, H) * padShare)
+      return Math.max(0.05, Math.min((W - pad * 2) / w, (H - pad * 2 - statsSafeHeight) / h, max))
+    }
     if (dependenciesOn() && dependencyLayout) {
-      if (getDependencyGraph().nodes.length <= 100) {
+      const deps = getDependencyGraph()
+      if (deps.nodes.length <= 100) {
         let side = 12
         ctx.save()
-        ctx.font = '11px SFMono-Regular, Consolas, "Liberation Mono", monospace'
-        for (const n of getDependencyGraph().nodes) {
-          const label = n.label.length > 38 ? `${n.label.slice(0, 36)}…` : n.label
-          side = Math.max(side, ctx.measureText(label).width / 2 + 4)
-        }
+        ctx.font = DEPENDENCY_FONT
+        for (const n of deps.nodes) side = Math.max(side, ctx.measureText(dependencyLabel(n)).width / 2 + 4)
         ctx.restore()
         return fitCompactGraph([...dependencyLayout.nodes.values()], W, H, { statsHeight: statsSafeHeight, left: side, top: 12, bottom: 27 })
       }
-      const pad = Math.max(20, Math.min(W, H) * 0.04)
-      const rawK = Math.min((W - pad * 2) / dependencyLayout.width, (H - pad * 2 - statsSafeHeight) / dependencyLayout.height, 2.5)
-      const k = Math.max(0.05, rawK)
+      const k = fitScale(dependencyLayout.width, dependencyLayout.height, 0.04, 2.5)
       return { k, tx: (W - dependencyLayout.width * k) / 2, ty: (H - statsSafeHeight - dependencyLayout.height * k) / 2 }
     }
     if (layersOn() && layers) {
-      const k = Math.min((W - 24) / (layers.width + 185), (H - 70) / (layers.height + layers.gap), 1.5)
-      const scale = Math.max(0.05, k)
-      return { k: scale, tx: (W - (layers.width + 185) * scale) / 2 + 145 * scale,
-        ty: 24 + Math.max(0, (H - 70 - (layers.height + layers.gap) * scale) / 2) }
+      const k = Math.max(0.05, Math.min((W - 24) / (layers.width + 185), (H - 70) / (layers.height + layers.gap), 1.5))
+      return { k, tx: (W - (layers.width + 185) * k) / 2 + 145 * k,
+        ty: 24 + Math.max(0, (H - 70 - (layers.height + layers.gap) * k) / 2) }
     }
-    const nodes = pkgViewOn() ? getPkgGraph().nodes : fileGraph.nodes
+    const nodes = activeGraph().nodes
     if (nodes.length <= 50) {
-      // Include the fixed-size circles, halos, and always-on labels. Fitting
+      // Include the screen-space circles, halos and always-on labels: fitting
       // centers alone clips disconnected packages pushed to the layout edges.
       let bottom = 0, side = 0, top = 0
       ctx.save()
-      ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
+      ctx.font = LABEL_FONT
       for (const n of nodes) {
-        const r = pkgViewOn() ? pkgNodeRadius(n) : (n.isHub ? 6 : 4) * graph2.nodeSize
+        const r = pkgViewOn() ? pkgNodeRadius(n) : focusNodeRadius(n)
         const halo = r * 1.85 + 5
         side = Math.max(side, halo, ctx.measureText(n.label).width / 2 + 6)
         top = Math.max(top, halo)
@@ -399,29 +308,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       ctx.restore()
       return fitCompactGraph(nodes, W, H, { statsHeight: statsSafeHeight, left: side, top, bottom })
     }
-    if (nodes.length === 0) {
-      return { k: 1, tx: W / 2, ty: (H - statsSafeHeight) / 2 }
-    }
-    let maxX = -Infinity
-    let maxY = -Infinity
-    let minX = Infinity
-    let minY = Infinity
-    for (const n of nodes) {
-      if (n.x < minX) minX = n.x
-      if (n.y < minY) minY = n.y
-      if (n.x > maxX) maxX = n.x
-      if (n.y > maxY) maxY = n.y
-    }
-    const h = Math.max(20, maxY - minY)
-    const w = Math.max(20, maxX - minX)
-    const cx = (minX + maxX) / 2
-    const cy = (minY + maxY) / 2
-    // The large circular overview benefits from the tighter fit. Focused
-    // graphs need room for labels and arrows around their sparse nodes.
-    const pad = Math.max(20, Math.min(W, H) * (graph2.focusedPkg ? 0.04 : 0.03))
-    const rawK = Math.min((W - pad * 2) / w, (H - pad * 2 - statsSafeHeight) / h, 4)
-    const k = Math.max(0.05, rawK)
-    return { k, tx: W / 2 - cx * k, ty: (H - statsSafeHeight) / 2 - cy * k }
+    const { x0, y0, x1, y1 } = nodeBounds(nodes)
+    // The large overview takes the tighter fit; a focused package's sparse
+    // nodes need room for labels and arrows.
+    const k = fitScale(Math.max(20, x1 - x0), Math.max(20, y1 - y0), graph2.focusedPkg ? 0.04 : 0.03, 4)
+    return { k, tx: W / 2 - (x0 + x1) / 2 * k, ty: (H - statsSafeHeight) / 2 - (y0 + y1) / 2 * k }
   }
 
   function fitToView() {
@@ -442,41 +333,62 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     if (zIn) zIn.disabled = viewport.k >= metrics.max * .9999
   }
 
-  function worldToScreen(x, y) {
-    return [x * viewport.k + viewport.tx, y * viewport.k + viewport.ty]
-  }
-  function screenToWorld(sx, sy) {
-    return [(sx - viewport.tx) / viewport.k, (sy - viewport.ty) / viewport.k]
-  }
+  const worldToScreen = (x, y) => [x * viewport.k + viewport.tx, y * viewport.k + viewport.ty]
+  const screenToWorld = (sx, sy) => [(sx - viewport.tx) / viewport.k, (sy - viewport.ty) / viewport.k]
 
-  // Visibility predicate — only the legacy package-hide set,
-  // which nothing currently writes to. Solo and the severity
-  // filter are NOT here on purpose: they dim non-matching nodes
-  // to 0.1 instead of hiding them, so they still occupy space and
-  // read as context (where the matching subgraph sits in the whole).
-  function nodeVisible(n) {
-    return !graph2.hidden.has(n.pkg)
-  }
-
-  // Severity ring around a node dot — larger radius + thicker stroke
-  // for critical/high so they stand out without a time-driven pulse.
-  function drawIssueRing(sx, sy, r, issue, dim) {
-    const ringR = r + (issue === 'critical' ? 4.2 : issue === 'high' ? 3.4 : 2.8)
-    const lw = issue === 'critical' ? 1.8 : issue === 'high' ? 1.5 : issue === 'medium' ? 1.3 : 1.1
-    ctx.strokeStyle = SEV_COLORS[issue]
-    ctx.globalAlpha = dim
-    ctx.lineWidth = lw
+  function fillCircle(x, y, r) {
     ctx.beginPath()
-    ctx.arc(sx, sy, ringR, 0, Math.PI * 2)
+    ctx.arc(x, y, r, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  function strokeCircle(x, y, r, color, width) {
+    ctx.strokeStyle = color
+    ctx.lineWidth = width
+    ctx.beginPath()
+    ctx.arc(x, y, r, 0, Math.PI * 2)
     ctx.stroke()
+  }
+
+  function drawIssueRing(sx, sy, r, issue, dim) {
+    const [color, gap, width] = SEV_RINGS[issue]
+    ctx.globalAlpha = dim
+    strokeCircle(sx, sy, r + gap, color, width)
     ctx.globalAlpha = 1
   }
 
-  // Trace (no fill) the arrowhead triangle at one end of the quadratic
-  // curve (sx,sy)→(qcx,qcy)→(ex,ey). Tangent comes from the Bezier
-  // derivative at t=0.9 (target end) / t=0.1 (source end, `atStart`)
-  // — just inside the endpoint so the arrow doesn't overshoot.
-  function traceArrowhead(sx, sy, qcx, qcy, ex, ey, atStart) {
+  // A radial glow from 0.6 r out to `haloR`, fading to transparent.
+  function drawHalo(sx, sy, r, haloR, color, alpha) {
+    const grad = ctx.createRadialGradient(sx, sy, r * 0.6, sx, sy, haloR)
+    grad.addColorStop(0, color + alphaHex(alpha))
+    grad.addColorStop(1, color + '00')
+    ctx.fillStyle = grad
+    fillCircle(sx, sy, haloR)
+  }
+
+  // The rich renderers' edge: a quadratic curve bowed to one side, from the
+  // rim of `a` to just short of `b` (room for the arrowhead).
+  function curve(a, b, ra, rb) {
+    const [ax, ay] = worldToScreen(a.x, a.y)
+    const [bx, by] = worldToScreen(b.x, b.y)
+    const dx = bx - ax, dy = by - ay
+    const len = Math.sqrt(dx * dx + dy * dy) || 1
+    const ux = dx / len, uy = dy / len
+    const sx = ax + ux * (ra + 1.5), sy = ay + uy * (ra + 1.5)
+    const ex = bx - ux * (rb + 3.5), ey = by - uy * (rb + 3.5)
+    const off = Math.min(len * 0.15, 30)
+    return { sx, sy, ex, ey, qcx: (sx + ex) / 2 - uy * off, qcy: (sy + ey) / 2 + ux * off }
+  }
+  function strokeCurve(c) {
+    ctx.beginPath()
+    ctx.moveTo(c.sx, c.sy)
+    ctx.quadraticCurveTo(c.qcx, c.qcy, c.ex, c.ey)
+    ctx.stroke()
+  }
+
+  // Trace the arrowhead triangle at one end of the curve. The tangent comes
+  // from the Bezier derivative at t=0.9 (target end) / t=0.1 (source end), just
+  // inside the endpoint so the arrow doesn't overshoot.
+  function traceArrowhead({ sx, sy, qcx, qcy, ex, ey }, atStart) {
     const arrowLen = 7
     const arrowW = arrowLen * 0.42
     const t = atStart ? 0.1 : 0.9
@@ -496,62 +408,63 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     }
     ctx.closePath()
   }
+  function drawArrows(c, bidi, endColor, startColor = endColor) {
+    traceArrowhead(c, false)
+    ctx.fillStyle = endColor
+    ctx.fill()
+    if (!bidi) return
+    traceArrowhead(c, true)
+    ctx.fillStyle = startColor
+    ctx.fill()
+  }
 
-  // Soft-dim predicate — true when a node should render at reduced
-  // opacity (0.1). Triggered by any of:
-  //   - severity filter: 1+ severities selected, no finding matches
-  //   - color filter: 1+ marker colors selected, no finding carries
-  //     one (union within each axis; severity/color combine
-  //     independently — same semantics as the findings tab, so the
-  //     canvas highlight tracks the table's view)
-  //   - package-solo: a package is solo'd and this node isn't in it
-  //   - path filter: non-empty and neither file path nor package
-  //     name case-insensitively contains the text
-  // All filters AND-combine — a node passes only when it satisfies
-  // every active filter.
+  // The rich renderers' labels: centered under every node, outlined and
+  // shadowed to read on any backdrop, claiming space by `priority`.
+  function drawRichLabels(T, nodes, selected, radius, priority, alpha) {
+    ctx.font = LABEL_FONT
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    ctx.lineJoin = 'round'
+    const candidates = nodes.map((n) => {
+      const [sx, sy] = worldToScreen(n.x, n.y)
+      const ty = sy + radius(n) + 4
+      const halfW = ctx.measureText(n.label).width / 2 + 2
+      return { n, sx, ty, prio: priority(n), x0: sx - halfW, x1: sx + halfW, y0: ty, y1: ty + 13 }
+    })
+    for (const { n, sx, ty } of placeLabels(candidates)) {
+      ctx.globalAlpha = alpha(n)
+      ctx.shadowColor = T.labelShadow
+      ctx.shadowBlur = 4
+      ctx.strokeStyle = T.labelOutline
+      ctx.lineWidth = 3
+      ctx.strokeText(n.label, sx, ty)
+      ctx.shadowBlur = 0
+      ctx.fillStyle = n.file === selected ? T.labelSelected : n.file === hovered ? T.labelHover : T.labelDefault
+      ctx.fillText(n.label, sx, ty)
+      ctx.globalAlpha = 1
+    }
+  }
+
+  // Soft-dim predicate: a node renders at 0.1 opacity unless it passes every
+  // active filter — severity and mark color (any of its findings matching,
+  // as in the findings tab), the solo'd package, and the path filter (file
+  // path, package name or label containing the text).
   function nodeIsDimmed(n) {
-    if (!graph.issuesHidden && graph2.selectedSeverities.size > 0) {
-      const sevs = n.severitySet
-      if (!sevs) return true
-      let hit = false
-      for (const s of graph2.selectedSeverities) if (sevs.has(s)) { hit = true; break }
-      if (!hit) return true
-    }
-    if (!graph.issuesHidden && graph2.selectedColors.size > 0) {
-      const cols = n.colorSet
-      if (!cols) return true
-      let hit = false
-      for (const c of graph2.selectedColors) if (cols.has(c)) { hit = true; break }
-      if (!hit) return true
-    }
-    // Solo is a package FILTER in the file views; in the packages
-    // view it IS the selection (the package card's slot), and the
-    // selected-neighbor dimming handles emphasis there — the hard
-    // 0.1 filter dim on top would gray the selection's neighbors.
-    if (graph2.solo && n.pkg !== graph2.solo && !pkgViewOn() && !dependencyPackagesOn()) return true
-    const pathQ = graph2.pathFilter
-    if (pathQ) {
-      const q = pathQ.toLowerCase()
-      // Package nodes carry `pathText` (member file paths, pre-
-      // lowercased) so a path fragment matches the aggregate the
-      // same way it matches files in the file views; the label
-      // covers the `__own__` → "own source" naming gap.
-      const matchesFile = n.pathText ? n.pathText.includes(q) : n.file.toLowerCase().includes(q)
-      const matchesPkg = n.pkg && n.pkg.toLowerCase().includes(q)
-      const matchesLabel = n.label && n.label.toLowerCase().includes(q)
-      if (!matchesFile && !matchesPkg && !matchesLabel) return true
-    }
-    return false
+    const misses = (filter, values) => filter.size > 0 && !(values && [...filter].some((v) => values.has(v)))
+    if (!graph.issuesHidden && (misses(graph2.selectedSeverities, n.severitySet) || misses(graph2.selectedColors, n.colorSet))) return true
+    // At package altitude solo is the selection, emphasized by neighbor
+    // dimming instead; this dim on top would gray its neighbors.
+    if (graph2.solo && n.pkg !== graph2.solo && !selectsPackages()) return true
+    const q = graph2.pathFilter.toLowerCase()
+    if (!q) return false
+    // Package nodes carry their member paths, lowercased, as `pathText`; the
+    // label covers the `__own__` → "own source" naming gap.
+    const matchesFile = n.pathText ? n.pathText.includes(q) : n.file.toLowerCase().includes(q)
+    return !matchesFile && !(n.pkg && n.pkg.toLowerCase().includes(q)) && !(n.label && n.label.toLowerCase().includes(q))
   }
 
-  function nodeRadius(n) {
-    // Hub : member radius ratio = 1.4× — clear read without
-    // overpowering the cluster. A larger ratio (~1.71×) was too
-    // dominant once cross-imported mode lit up many more hubs.
-    const base = (n.isHub ? 4.9 : 3.5) * graph2.nodeSize
-    const z = Math.max(0.6, Math.min(1.6, viewport.k))
-    return base * z
-  }
+  // The dot renderer's radius: hubs 1.4× members, growing with zoom up to a point.
+  const nodeRadius = (n) => (n.isHub ? 4.9 : 3.5) * graph2.nodeSize * Math.max(0.6, Math.min(1.6, viewport.k))
 
   // ── Resize / DPR handling ─────────────────────────────────────
   function resize() {
@@ -560,29 +473,24 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const prevW = W
     W = Math.max(80, rect.width)
     H = Math.max(80, rect.height)
-    // Reserve one line plus a gap above it, even when stats wrap; measure only on resize.
+    // Reserve one stats line plus a gap, even when the stats wrap.
     statsSafeHeight = statsEl ? (parseFloat(getComputedStyle(statsEl).lineHeight) || 0) + 8 : 0
     dpr = window.devicePixelRatio || 1
     canvas.width = W * dpr; canvas.height = H * dpr
     paintedFrame = null
-    // Canvas resize resets its context (and may change DPR). Paint objects
-    // were created under the old transform, so rebuild them on the next draw.
-    renderCaches.delete(fileGraph)
-    if (_pkgGraph) renderCaches.delete(_pkgGraph)
+    // Resizing resets the context (and may change DPR): paint objects made
+    // under the old transform must be rebuilt.
+    renderCaches = new WeakMap()
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px'
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    // Layout in the same pixel space the canvas paints in, so
-    // the layout's per-package disk and ring radii track the
-    // viewport.
+    // Lay out in the pixel space the canvas paints in, so package disk and
+    // ring radii track the viewport.
     if (layoutW === 0 || layoutH === 0) {
       layoutW = W; layoutH = H; needsLayout = true
     }
     ensureLayout()
-    // Refit on first resize OR a substantial viewport change (e.g.
-    // fullscreen toggle: ~600×500 → ~1400×900). Without this the
-    // old pan/zoom framing leaves the canvas opening on a slice of
-    // the graph. The 15% threshold avoids re-fitting on cosmetic
-    // 1px reflows from sub-pixel rounding when DPR changes.
+    // Refit on the first resize or a substantial change (a fullscreen
+    // toggle), not on 1px reflows from sub-pixel rounding.
     const sizeChanged = prevW > 0 && (Math.abs(W - prevW) / prevW > 0.15 || Math.abs(H - prevH) / prevH > 0.15)
     if (restore) {
       // Keep the view centered when the stage changed size between
@@ -592,47 +500,28 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       viewport.ty = restore.ty + (H - restore.H) / 2
       restore = null
     } else if (needsFit || sizeChanged) { fitToView(); needsFit = false }
-    // Always redraw on resize: the canvas pixel buffer was just
-    // resized via canvas.width/.height, which clears it. Without
-    // an explicit draw the canvas would render blank until the
-    // next user interaction.
+    // Setting the canvas size cleared it.
     requestDraw()
   }
 
   // ── Draw ──────────────────────────────────────────────────────
-  // On-demand scheduling: redraw only on change (pan / zoom / hover
-  // / selection / layout / theme / resize). Continuous rAF would be
-  // wasteful on a 12k-file canvas at 60fps and nothing animates
-  // per-frame. requestDraw() sets a dirty flag and coalesces changes
-  // within a frame into a single rAF draw.
+  // On demand only (pan, zoom, hover, selection, layout, theme, resize):
+  // nothing animates, and changes within a frame coalesce into one draw.
   let rafId = null
-  let needsDraw = true
-  let drawScheduled = false
   let destroyed = false
   function requestDraw() {
-    needsDraw = true
-    if (drawScheduled || destroyed) return
-    drawScheduled = true
+    if (rafId !== null || destroyed) return
     rafId = requestAnimationFrame(() => {
-      drawScheduled = false
-      if (needsDraw && !destroyed) {
-        needsDraw = false
-        draw()
-      }
+      rafId = null
+      if (!destroyed) draw()
     })
   }
 
   function draw() {
-    const G = pkgViewOn() ? getPkgGraph() : fileGraph
+    const G = activeGraph()
     // Only the dense dot renderer, below its label threshold, is invariant
     // under translation. Label collision/placement depends on viewport edges.
-    if (paintBounds?.graph !== G) {
-      paintBounds = { graph: G, x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
-      for (const n of G.nodes) {
-        paintBounds.x0 = Math.min(paintBounds.x0, n.x); paintBounds.x1 = Math.max(paintBounds.x1, n.x)
-        paintBounds.y0 = Math.min(paintBounds.y0, n.y); paintBounds.y1 = Math.max(paintBounds.y1, n.y)
-      }
-    }
+    if (paintBounds?.graph !== G) paintBounds = { graph: G, ...nodeBounds(G.nodes) }
     // Canvas backends can rasterize clipped strokes differently. Keep the
     // fast path to overviews containing the entire graph (including halos);
     // once a primitive reaches an edge, use the ordinary renderer.
@@ -645,7 +534,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const next = { tx: viewport.tx, ty: viewport.ty, key: JSON.stringify([
       viewport.k, currentTheme().bg, graph2.nodeSize, graph2.edgeOpacity,
       hovered, graph2.selected, graph2.solo, graph2.focusedPkg, pkgViewOn(),
-      graph2.showAll, graph2.pathFilter, [...graph2.selectedSeverities], [...graph2.selectedColors], [...graph2.hidden],
+      graph2.showAll, graph2.pathFilter, [...graph2.selectedSeverities], [...graph2.selectedColors],
     ]) }
     const damage = canReuse ? panDamage(paintedFrame, next, W, H, dpr) : null
     ctx.save()
@@ -663,6 +552,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         ctx.clip()
       }
       paint(damage)
+      updateZoomLabel()
       paintedFrame = canReuse ? next : null
     } finally { ctx.restore() }
   }
@@ -671,34 +561,22 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     const T = currentTheme()
     ctx.fillStyle = T.bg
     ctx.fillRect(0, 0, W, H)
-
-    // Subtle grid — dimmed at low zoom so it doesn't fight the data.
     drawGrid(T)
 
-    // Packages view (bundle Graph tab toggle) — one node per
-    // package. G swaps the node/edge source for the default
-    // renderer below; the selection key swaps to graph2.solo (the
-    // package card's slot — canvas clicks and the Packages rows
-    // both write it). Normalized through the node lookup so a
-    // stale key from another bundle can't dim everything against
-    // a ghost node.
-    const dependencyView = dependenciesOn()
+    // The selection key, normalized through the node lookup so a stale key
+    // from another bundle can't dim everything against a ghost node.
     const pkgView = pkgViewOn()
-    const G = dependencyView ? getDependencyGraph() : pkgView ? getPkgGraph() : fileGraph
-    const selKey = dependencyPackagesOn() || pkgView ? graph2.solo : graph2.selected
+    const G = dependenciesOn() ? getDependencyGraph() : activeGraph()
+    const selKey = selectsPackages() ? graph2.solo : graph2.selected
     const sel = selKey ? G.nodeByFile.get(selKey) : null
     const selected = sel ? selKey : null
 
-    if (dependencyView) {
+    if (dependenciesOn()) {
       drawPackageDependencies(ctx, dependencyLayout, G, {
         theme: T, viewport, width: W, height: H, colorOf: pkgColor,
-        selected, hovered, query: graph2.pathFilter,
-        dimmed: (n) => nodeIsDimmed(n),
+        selected, hovered, query: graph2.pathFilter, dimmed: nodeIsDimmed,
       })
-      updateZoomLabel()
-      return
-    }
-    if (layersOn()) {
+    } else if (layersOn()) {
       ctx.save()
       ctx.translate(viewport.tx, viewport.ty)
       ctx.scale(viewport.k, viewport.k)
@@ -710,45 +588,23 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         dimmed: (id) => nodeIsDimmed(G.byPkg.get(id)),
       })
       ctx.restore()
-      updateZoomLabel()
-      return
-    }
+    // Up to 50 packages, or a focused package's files, get the rich chrome:
+    // curved edges, arrowheads, always-on labels. Past that the arrows and
+    // labels stop reading, and the dot renderer draws them.
+    } else if (pkgView && G.nodes.length <= 50) drawPackagesGraph(T, G, selected, sel)
+    else if (graph2.focusedPkg && G.nodes.length <= 50) drawPackageView(T, selected, sel)
+    else drawDots(T, G, damage, selected, sel)
+  }
 
-    // Packages view, few packages (≤ 50): v1-style package chrome —
-    // curved edges, arrowheads, always-on labels — the same split
-    // the package-focus mode makes for files, at the same limit.
-    // Past 50 the arrows + label soup stop reading, so the default
-    // dot renderer below takes over with G as its node source: one
-    // plain dot per package, spiral-view visual language.
-    if (pkgView && G.nodes.length <= 50) {
-      drawPackagesGraph(T)
-      return
-    }
-
-    // Package-focus mode has two render paths matching the
-    // layout split. Small packages (≤ 50 files) get the v1
-    // graph treatment — curved edges, arrowheads, file labels
-    // on every node — because the file count is low enough
-    // that the chrome reads cleanly. Larger packages reuse
-    // the spiral renderer below: straight edges, opt-in
-    // labels (zoom > 1.4 via showLabels), no per-node text
-    // crowding, just the Vogel-laid-out subgraph rendered
-    // as a subset of the main canvas.
-    if (graph2.focusedPkg && G.nodes.length <= 50) {
-      drawPackageView(T, selected, sel)
-      return
-    }
-
+  function drawDots(T, G, damage, selected, sel) {
     if (!renderCaches.has(G)) renderCaches.set(G, createRenderCache(G))
     const frame = renderCaches.get(G)
     const paintKey = JSON.stringify([viewport.k, viewport.tx, viewport.ty, graph2.nodeSize, T.bg,
-      graph2.solo, graph2.pathFilter, [...graph2.selectedSeverities], [...graph2.selectedColors], [...graph2.hidden]])
-    updateRenderCache(frame, { viewport, selected, paintKey, visible: nodeVisible, dimmed: nodeIsDimmed, radius: nodeRadius, color: pkgColor })
+      graph2.solo, graph2.pathFilter, [...graph2.selectedSeverities], [...graph2.selectedColors]])
+    updateRenderCache(frame, { viewport, selected, paintKey, visible: shown, dimmed: nodeIsDimmed, radius: nodeRadius, color: pkgColor })
 
-    // ── Edges (back layer) — always drawn, cross/intra still
-    // get distinct visual treatment (cross = gradient between
-    // package hues, intra = neutral structural gray) so the
-    // axis is still readable without a topbar toggle.
+    // ── Edges (back layer): cross-package ones a gradient between the
+    // package hues, intra-package ones the theme's neutral gray.
     const paints = edgePaints(frame, graph2.edgeOpacity, T.edgeIntra, !!selected)
     const focus = selected || hovered
     const crossWidth = 0.85 / viewport.k, intraWidth = 0.55 / viewport.k
@@ -762,21 +618,14 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       if (outsideDamage(damage, Math.min(a.x, b.x) - 2, Math.min(a.y, b.y) - 2, Math.max(a.x, b.x) + 2, Math.max(a.y, b.y) + 2)) continue
 
       const touches = focus && (e.a === focus || e.b === focus)
-      // Soft-dim when neither endpoint passes the active
-      // filter set (severity highlight + package solo). The
-      // edge connects two "context" nodes in that case; fade
-      // it hard so the matching subgraph stands out. When at
-      // least one endpoint matches, keep the edge legible
-      // so the user can trace what the matching node
-      // connects to.
+      // Between two filtered-out nodes an edge fades hard, so the matching
+      // subgraph stands out; one matching end keeps it legible to trace.
       const style = a.dimmed && b.dimmed
         ? (touches ? paints.emphasisDim : paints.baseDim)
         : (touches ? paints.emphasis : paints.base)
 
-      // Cross-package gradients retain their endpoint hues; intra-package
-      // edges keep the theme's neutral color. Avoid repeated native setters
-      // for runs sharing a style, without batching/reordering translucent
-      // strokes (which would change their overlaps).
+      // Skip repeated native setters for runs sharing a style, without
+      // batching/reordering translucent strokes (which would change overlaps).
       const stroke = e.cross ? edgeGradient(entry, ctx) : style.neutral
       const alpha = e.cross ? style.opacity : 1
       const width = e.cross ? crossWidth : intraWidth
@@ -791,27 +640,19 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     }
     ctx.restore()
 
-    // ── Halos (hubs / hover / selected) ─────────────────────────
-    {
-      for (const entry of frame.nodes) {
-        if (!entry.visible) continue
-        const n = entry.node
-        const isHov = n.file === hovered
-        const isSel = n.file === selected
-        if (!n.isHub && !isHov && !isSel) continue
-        // Skip halos for filter-dimmed nodes (severity or
-        // package-solo) unless they're the hover / selection
-        // target — those should always read clearly.
-        if (entry.dimmed && !isHov && !isSel) continue
-        const r = entry.radius, sx = entry.x, sy = entry.y
-        const haloR = r * (isSel ? 6 : isHov ? 4.5 : 3)
-        if (circleOutside(sx, sy, haloR, W, H)) continue
-        if (outsideDamage(damage, sx - haloR - 2, sy - haloR - 2, sx + haloR + 2, sy + haloR + 2)) continue
-        ctx.fillStyle = haloGradient(entry, haloR, ctx)
-        ctx.beginPath()
-        ctx.arc(sx, sy, haloR, 0, Math.PI * 2)
-        ctx.fill()
-      }
+    // ── Halos: hubs, hover and selection, though not on filtered-out hubs.
+    for (const entry of frame.nodes) {
+      if (!entry.visible) continue
+      const n = entry.node
+      const isHov = n.file === hovered
+      const isSel = n.file === selected
+      if (!isHov && !isSel && (!n.isHub || entry.dimmed)) continue
+      const r = entry.radius, sx = entry.x, sy = entry.y
+      const haloR = r * (isSel ? 6 : isHov ? 4.5 : 3)
+      if (circleOutside(sx, sy, haloR, W, H)) continue
+      if (outsideDamage(damage, sx - haloR - 2, sy - haloR - 2, sx + haloR + 2, sy + haloR + 2)) continue
+      ctx.fillStyle = haloGradient(entry, haloR, ctx)
+      fillCircle(sx, sy, haloR)
     }
 
     // ── Nodes ───────────────────────────────────────────────────
@@ -819,149 +660,69 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       if (!entry.visible) continue
       const n = entry.node
       const r = entry.radius, sx = entry.x, sy = entry.y
-      // Includes the widest severity ring and its stroke. Labels retain
-      // their existing separate bounds/collision pass below.
+      // Includes the widest severity ring and its stroke.
       if (circleOutside(sx, sy, r + 6, W, H)) continue
       if (outsideDamage(damage, sx - r - 8, sy - r - 8, sx + r + 8, sy + r + 8)) continue
+      // Beside a selection, unconnected nodes dim to 0.25; filtered-out ones
+      // to 0.1 (stacking via min); the selection itself never dims.
       let dim = 1
       const isExplicitlySelected = selected && n.file === selected
-      if (selected && !isExplicitlySelected) {
-        dim = frame.neighbors.has(n.file) ? 1 : 0.25
-      }
-      // Filter dim — severity-filter-out OR package-solo-out
-      // nodes drop to 0.1 so the highlighted subgraph reads
-      // as the focus. Skipped for the explicitly-selected node
-      // (always full opacity) and stacks with file-selection
-      // dim via Math.min, so a non-matching non-touching node
-      // ends up at min(0.25, 0.1) = 0.1.
-      if (!isExplicitlySelected && entry.dimmed) {
-        dim = Math.min(dim, 0.1)
-      }
+      if (selected && !isExplicitlySelected) dim = frame.neighbors.has(n.file) ? 1 : 0.25
+      if (!isExplicitlySelected && entry.dimmed) dim = Math.min(dim, 0.1)
 
       ctx.fillStyle = entry.color + alphaHex(dim)
-      ctx.beginPath()
-      ctx.arc(sx, sy, r, 0, Math.PI * 2)
-      ctx.fill()
-
+      fillCircle(sx, sy, r)
       if (n.isHub) {
-        // White ring on dark, near-black on light — the hub marker
-        // needs maximum contrast against the package-colored fill.
+        // Maximum contrast against the package-colored fill.
         ctx.strokeStyle = T.hubRing(0.55 * dim)
         ctx.lineWidth = 0.8
         ctx.stroke()
       }
-
       if (n.issue) drawIssueRing(sx, sy, r, n.issue, dim)
     }
 
-    // ── Labels (auto-on at high zoom or low on-screen count,
-    // collision-avoidant) ──────────────────────────────────────
-    // Auto-enable when zoom ≥ 900% (detailed inspection) OR fewer
-    // than 50 nodes visible in the viewport (labels fit without
-    // much overlap). graph2.showLabels force-ons regardless.
-    //
-    // Zoom legibility brackets, enforced however labels were
-    // turned on:
-    //   - zoom ≤ 1.4: none (text too small vs layout density).
-    //   - 1.4 < zoom < 2.4: hubs only (load-bearing nodes get
-    //     priority screen real estate).
-    //   - zoom ≥ 2.4: all visible nodes are candidates; the
-    //     collision pass thins them by priority.
-    if (viewport.k > 1.4) {
-      const VISIBLE_THRESHOLD = 50
-      let onScreenCount = 0
-      if (viewport.k < 9 && !graph2.showLabels) {
-        // Only count when needed to decide auto-on; cap at the
-        // threshold so we exit early on dense graphs.
-        for (const n of G.nodes) {
-          if (!nodeVisible(n)) continue
-          const [sx, sy] = worldToScreen(n.x, n.y)
-          if (sx < 0 || sx > W || sy < 0 || sy > H) continue
-          onScreenCount++
-          if (onScreenCount >= VISIBLE_THRESHOLD) break
-        }
-      }
-      const labelsAutoOn = viewport.k >= 9 || onScreenCount < VISIBLE_THRESHOLD
-      if (graph2.showLabels || labelsAutoOn) {
-        ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
-        ctx.fillStyle = T.labelFill
-        ctx.textAlign = 'left'
-        ctx.textBaseline = 'middle'
-        const lineH = 11
-        const pad = 2
-        // Nodes more than `LABEL_MARGIN` px outside the viewport
-        // can't contribute to either the placement candidates (text
-        // renders offscreen) or the collision-target boxes (their
-        // circles aren't drawn). Skipping them is a big speedup: the
-        // candidates loop calls `ctx.measureText` per node (expensive)
-        // and the collision pass is O(candidates × nodeBoxes), so
-        // trimming both by viewport cuts cost super-linearly. Margin
-        // covers the longest label (~200px) plus a node-radius of
-        // slack, so labels for nodes JUST offscreen can still place
-        // against on-screen neighbours.
-        const LABEL_MARGIN = 250
-        const inLabelBounds = (sx, sy) =>
-          sx > -LABEL_MARGIN && sx < W + LABEL_MARGIN &&
-          sy > -LABEL_MARGIN && sy < H + LABEL_MARGIN
-        // Pre-build AABBs for every visible node circle. The label
-        // collision pass checks against these so a label can't
-        // straddle a neighbour's dot (not just other labels).
-        const nodeBoxes = []
-        for (const n of G.nodes) {
-          if (!nodeVisible(n)) continue
-          const [sx, sy] = worldToScreen(n.x, n.y)
-          if (!inLabelBounds(sx, sy)) continue
-          const r = nodeRadius(n)
-          nodeBoxes.push({
-            file: n.file,
-            x0: sx - r, x1: sx + r,
-            y0: sy - r, y1: sy + r,
-          })
-        }
-        const candidates = []
-        for (const n of G.nodes) {
-          if (!nodeVisible(n)) continue
-          // Hubs-only filter for the 1.4 < zoom < 2.4 bracket.
-          if (!n.isHub && viewport.k < 2.4) continue
-          const [sx, sy] = worldToScreen(n.x, n.y)
-          if (!inLabelBounds(sx, sy)) continue
-          const r = nodeRadius(n)
-          const tx = sx + r + 4
-          const ty = sy + 1
-          const w = ctx.measureText(n.label).width + pad
-          const isSel = n.file === selected
-          const isHov = n.file === hovered
-          const prio = isSel ? 3 : isHov ? 2 : (n.isHub ? 1 : 0)
-          candidates.push({
-            file: n.file, n, tx, ty, prio,
-            x0: tx - pad, x1: tx + w,
-            y0: ty - lineH / 2, y1: ty + lineH / 2,
-          })
-        }
-        // Reject candidates whose label box would cover another
-        // node's circle (skip the candidate's own node — its label
-        // sits adjacent to its own dot by design), then place the
-        // rest greedily by priority.
-        const placed = placeLabels(candidates.filter((c) =>
-          !nodeBoxes.some((nb) => nb.file !== c.file && overlaps(c, nb))))
-        for (const c of placed) ctx.fillText(c.n.label, c.tx, c.ty)
-      }
-    }
+    if (viewport.k > 1.4) drawDotLabels(T, G, selected)
 
-    // Selection ring on top so it never gets hidden by neighbors.
-    // White on dark canvas, accent-blue on light — the
-    // G2_THEMES.selectRing swap.
-    if (sel && nodeVisible(sel)) {
+    // Selection ring on top so neighbors never hide it.
+    if (sel) {
       const [sx, sy] = worldToScreen(sel.x, sel.y)
-      const r = nodeRadius(sel)
-      ctx.strokeStyle = T.selectRing
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-      ctx.arc(sx, sy, r + 5, 0, Math.PI * 2)
-      ctx.stroke()
+      strokeCircle(sx, sy, nodeRadius(sel) + 5, T.selectRing, 1.5)
     }
+  }
 
-    updateZoomLabel()
+  // Dot labels past 140% zoom: hubs only below 240%, every node from there,
+  // thinned by a collision pass. They show when forced (showLabels), at 900%
+  // and up, or with fewer than 50 nodes on screen.
+  function drawDotLabels(T, G, selected) {
+    if (viewport.k < 9 && !graph2.showLabels) {
+      let onScreen = 0
+      for (const n of G.nodes) {
+        const [sx, sy] = worldToScreen(n.x, n.y)
+        if (!(sx < 0 || sx > W || sy < 0 || sy > H) && ++onScreen >= 50) return
+      }
+    }
+    ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace'
+    ctx.fillStyle = T.labelFill
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    // Nodes more than 250px off screen (past the longest label) can neither
+    // place a label nor block one. Skipping them keeps measureText and the
+    // O(candidates × boxes) collision pass to the viewport.
+    const boxes = [], candidates = []
+    for (const n of G.nodes) {
+      const [sx, sy] = worldToScreen(n.x, n.y)
+      if (!(sx > -250 && sx < W + 250 && sy > -250 && sy < H + 250)) continue
+      const r = nodeRadius(n)
+      boxes.push({ file: n.file, x0: sx - r, x1: sx + r, y0: sy - r, y1: sy + r })
+      if (!n.isHub && viewport.k < 2.4) continue
+      const tx = sx + r + 4, ty = sy + 1
+      const w = ctx.measureText(n.label).width + 2
+      const prio = n.file === selected ? 3 : n.file === hovered ? 2 : (n.isHub ? 1 : 0)
+      candidates.push({ file: n.file, n, tx, ty, prio, x0: tx - 2, x1: tx + w, y0: ty - 11 / 2, y1: ty + 11 / 2 })
+    }
+    // A label may not cover another node's circle (its own sits beside it).
+    const placed = placeLabels(candidates.filter((c) => !boxes.some((nb) => nb.file !== c.file && overlaps(c, nb))))
+    for (const c of placed) ctx.fillText(c.n.label, c.tx, c.ty)
   }
 
   function drawGrid(T) {
@@ -977,14 +738,11 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     ctx.stroke()
   }
 
-  // Package-focus rendering — v1-style: curved edges with
-  // arrowheads, file labels on every node, single hue (the focused
-  // package's color). Same nodes/edges as the spiral view, but
-  // assumes the layout pass produced a force-directed arrangement.
+  // A focused package's files in one hue: curved edges with arrowheads,
+  // labels on every node, hover dimming what's unconnected.
   function drawPackageView(T, selected, sel) {
-    const baseColor = pkgColor(graph2.focusedPkg)
+    const color = pkgColor(graph2.focusedPkg)
     const hubRing = T.hubRing(0.55)
-    // Connected-files set for hover dimming (mirrors v1's pattern)
     const connected = new Set()
     if (hovered) {
       connected.add(hovered)
@@ -993,369 +751,124 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         connected.add(e.a); connected.add(e.b)
       }
     }
-    // Nodes' display radius — bigger than spiral's tight dots
-    // since the package view zooms into a small subgraph and
-    // can afford to read at a coarser grain.
-    const nodeR = (n) => (n.isHub ? 6 : 4) * graph2.nodeSize
+    const active = selected || hovered
 
-    // ── Edges with curves + arrowheads ────────────────────────
     for (const e of fileGraph.edges) {
       const na = fileGraph.nodeByFile.get(e.a)
       const nb = fileGraph.nodeByFile.get(e.b)
       if (!na || !nb) continue
-      if (!nodeVisible(na) || !nodeVisible(nb)) continue
-      // Direction: bidi (both directions present) → arrows on
-      // both ends; unidirectional → arrow on the target end.
-      // `fromLo/fromHi` was set in data.js from the original
-      // imports relation before edge dedup.
-      const bidi = e.fromLo && e.fromHi
-      const reversed = !bidi && e.fromHi
-      const a = reversed ? nb : na
-      const b = reversed ? na : nb
+      const { a, b, bidi } = directed(e, na, nb)
       const isHov = hovered && (e.a === hovered || e.b === hovered)
       const isSel = selected && (e.a === selected || e.b === selected)
-      const isDim = (selected || hovered) && !isHov && !isSel
-
-      const ra = nodeR(a), rb = nodeR(b)
-      const [ax, ay] = worldToScreen(a.x, a.y)
-      const [bx, by] = worldToScreen(b.x, b.y)
-      const dx = bx - ax, dy = by - ay
-      const len = Math.sqrt(dx * dx + dy * dy) || 1
-      const ux = dx / len, uy = dy / len
-      // Inset endpoints by node radius so the curve starts on
-      // the rim of the source and ends on the rim of the target.
-      const sx = ax + ux * (ra + 1.5), sy = ay + uy * (ra + 1.5)
-      const ex = bx - ux * (rb + 3.5), ey = by - uy * (rb + 3.5)
-      const off = Math.min(len * 0.15, 30)
-      const qcx = (sx + ex) / 2 - uy * off
-      const qcy = (sy + ey) / 2 + ux * off
-
-      ctx.beginPath()
-      ctx.moveTo(sx, sy)
-      ctx.quadraticCurveTo(qcx, qcy, ex, ey)
-      let edgeAlpha
-      if (isSel) edgeAlpha = 0.9
-      else if (isHov) edgeAlpha = 0.85
-      else if (isDim) edgeAlpha = 0.05
-      else edgeAlpha = Math.min(0.85, graph2.edgeOpacity * 3)
-      ctx.strokeStyle = baseColor + alphaHex(edgeAlpha)
+      const isDim = active && !isHov && !isSel
+      const c = curve(a, b, focusNodeRadius(a), focusNodeRadius(b))
+      const alpha = isSel ? 0.9 : isHov ? 0.85 : isDim ? 0.05 : Math.min(0.85, graph2.edgeOpacity * 3)
+      ctx.strokeStyle = color + alphaHex(alpha)
       ctx.lineWidth = isSel || isHov ? 1.5 : 0.85
-      ctx.stroke()
-
-      if (isDim) continue
-      traceArrowhead(sx, sy, qcx, qcy, ex, ey, false)
-      ctx.fillStyle = baseColor + alphaHex(Math.min(1, edgeAlpha + 0.15))
-      ctx.fill()
-
-      if (bidi) {
-        // Back-arrow at the start of the curve for bidi pairs.
-        traceArrowhead(sx, sy, qcx, qcy, ex, ey, true)
-        ctx.fill()
-      }
+      strokeCurve(c)
+      if (!isDim) drawArrows(c, bidi, color + alphaHex(Math.min(1, alpha + 0.15)))
     }
 
-    // ── Nodes ─────────────────────────────────────────────────
     for (const n of fileGraph.nodes) {
-      if (!nodeVisible(n)) continue
       const [sx, sy] = worldToScreen(n.x, n.y)
-      const r = nodeR(n)
+      const r = focusNodeRadius(n)
       const isHov = n.file === hovered
       const isSel = n.file === selected
-      const dim = (selected || hovered) && !connected.has(n.file) && !isSel ? 0.15 : 1
-
+      const dim = active && !connected.has(n.file) && !isSel ? 0.15 : 1
       ctx.globalAlpha = dim
-      // Halo for selected / hovered / hubs — gives them visual
-      // weight without changing radius (which would shift the
-      // edge rim-anchors).
-      if (isSel || isHov || n.isHub) {
-        const haloR = r * (isSel ? 4 : isHov ? 3 : 2.4)
-        const grad = ctx.createRadialGradient(sx, sy, r * 0.6, sx, sy, haloR)
-        grad.addColorStop(0, baseColor + alphaHex(isSel ? 0.4 : 0.25))
-        grad.addColorStop(1, baseColor + '00')
-        ctx.fillStyle = grad
-        ctx.beginPath()
-        ctx.arc(sx, sy, haloR, 0, Math.PI * 2)
-        ctx.fill()
-      }
-
-      ctx.fillStyle = baseColor
-      ctx.beginPath()
-      ctx.arc(sx, sy, r, 0, Math.PI * 2)
-      ctx.fill()
-
+      // Halos weigh selection, hover and hubs without changing the radius
+      // (which would shift the edges' rim anchors).
+      if (isSel || isHov || n.isHub) drawHalo(sx, sy, r, r * (isSel ? 4 : isHov ? 3 : 2.4), color, isSel ? 0.4 : 0.25)
+      ctx.fillStyle = color
+      fillCircle(sx, sy, r)
       if (n.isHub) {
         ctx.strokeStyle = hubRing
         ctx.lineWidth = 0.9
         ctx.stroke()
       }
-
       if (n.issue) drawIssueRing(sx, sy, r, n.issue, dim)
       ctx.globalAlpha = 1
     }
 
-    // ── Labels (collision-avoidant) ───────────────────────────
-    // Walk nodes in a priority order so the most important labels
-    // claim screen real-estate first; subsequent labels are
-    // dropped when their AABB overlaps any already-placed one.
-    // Priority: selected > hovered > hubs > rest. The selected /
-    // hovered slot is reserved unconditionally — those always
-    // render even if a hub label would collide with them.
-    ctx.font = `600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    ctx.lineJoin = 'round'
-    const labelLineHeight = 13
-    const labelPad = 2
-    // Pre-measure every label so the overlap test below is a
-    // pure rect-vs-rect compare. measureText() runs once per node
-    // per frame; cheap on the typical <50-node focus view.
-    const labelCandidates = []
-    for (const n of fileGraph.nodes) {
-      if (!nodeVisible(n)) continue
-      const [sx, sy] = worldToScreen(n.x, n.y)
-      const r = nodeR(n)
-      const ty = sy + r + 4
-      const halfW = ctx.measureText(n.label).width / 2 + labelPad
-      const isSel = n.file === selected
-      const isHov = n.file === hovered
-      // Priority: selected (3) > hovered (2) > hub (1) > rest (0).
-      const prio = isSel ? 3 : isHov ? 2 : (n.isHub ? 1 : 0)
-      labelCandidates.push({
-        n, sx, ty, halfW, isSel, isHov, prio,
-        // AABB in screen space.
-        x0: sx - halfW, x1: sx + halfW,
-        y0: ty, y1: ty + labelLineHeight,
-      })
-    }
-    const placed = placeLabels(labelCandidates)
-    for (const cand of placed) {
-      const { n, sx, ty, isSel, isHov } = cand
-      const dim = (selected || hovered) && !connected.has(n.file) && !isSel ? 0.2 : 1
-      ctx.globalAlpha = dim
-      // Outline + shadow for legibility on any backdrop.
-      ctx.shadowColor = T.labelShadow
-      ctx.shadowBlur = 4
-      ctx.strokeStyle = T.labelOutline
-      ctx.lineWidth = 3
-      ctx.strokeText(n.label, sx, ty)
-      ctx.shadowBlur = 0
-      ctx.fillStyle = isSel ? T.labelSelected : isHov ? T.labelHover : T.labelDefault
-      ctx.fillText(n.label, sx, ty)
-      ctx.globalAlpha = 1
-    }
+    drawRichLabels(T, fileGraph.nodes, selected, focusNodeRadius,
+      (n) => n.file === selected ? 3 : n.file === hovered ? 2 : (n.isHub ? 1 : 0),
+      (n) => active && !connected.has(n.file) && n.file !== selected ? 0.2 : 1)
 
-    // Selection ring on top.
-    if (sel && nodeVisible(sel)) {
+    if (sel) {
       const [sx, sy] = worldToScreen(sel.x, sel.y)
-      const r = nodeR(sel)
-      ctx.strokeStyle = T.selectRing
-      ctx.lineWidth = 1.8
-      ctx.beginPath()
-      ctx.arc(sx, sy, r + 4, 0, Math.PI * 2)
-      ctx.stroke()
+      strokeCircle(sx, sy, focusNodeRadius(sel) + 4, T.selectRing, 1.8)
     }
-
-    updateZoomLabel()
   }
 
-  // Package-node radius — area tracks file count (sqrt growth,
-  // capped) so a 100-file package reads clearly bigger than a
-  // 4-file one without dwarfing the canvas. Constant in screen
-  // space, like the package-focus view's nodes.
-  function pkgNodeRadius(p) {
-    return Math.min(26, 5 + Math.sqrt(p.fileCount) * 1.7) * graph2.nodeSize
-  }
-
-  // Packages-view rendering — one node per package, curved edges
-  // with arrowheads aggregated from the cross-package imports.
-  // Borrows the package-focus view's chrome (curves, arrows,
-  // always-on collision-avoidant labels) but keeps per-package
-  // hues: each edge runs a gradient importer → importee so
-  // direction reads from color before the arrowhead resolves, and
-  // stroke width scales with how many file-level import pairs
-  // collapsed into it. graph2.solo doubles as the package selection
-  // here (canvas clicks and the right panel's Packages rows both
-  // set it), so the package card and the ring highlight always
-  // agree.
-  function drawPackagesGraph(T) {
-    const pg = getPkgGraph()
-    const soloPkg = graph2.solo && pg.byPkg.has(graph2.solo) ? graph2.solo : null
-    // Neighborhood highlight follows the hover when present, else
-    // the selected package.
-    const focusPkg = hovered ?? soloPkg
+  // One node per package, the focused view's chrome in per-package hues:
+  // each edge a gradient importer → importee, so direction reads from color
+  // before the arrowhead, its width growing with the file imports it merges.
+  function drawPackagesGraph(T, pg, selected, sel) {
+    // The neighborhood of the hover, else of the selection.
+    const focus = hovered ?? selected
     const connected = new Set()
-    if (focusPkg) {
-      connected.add(focusPkg)
+    if (focus) {
+      connected.add(focus)
       for (const e of pg.edges) {
-        if (e.a === focusPkg) connected.add(e.b)
-        else if (e.b === focusPkg) connected.add(e.a)
+        if (e.a === focus) connected.add(e.b)
+        else if (e.b === focus) connected.add(e.a)
       }
     }
-    // Hover / selection always read at full opacity; otherwise
-    // out-of-neighborhood soft-dim stacks with filter dim
-    // (nodeIsDimmed — package nodes carry the aggregated sets it
-    // reads) via min, mirroring the file views.
-    const dimOf = (p) => {
-      if (p.pkg === soloPkg || p.pkg === hovered) return 1
-      let dim = 1
-      if (focusPkg && !connected.has(p.pkg)) dim = 0.2
-      if (nodeIsDimmed(p)) dim = Math.min(dim, 0.1)
-      return dim
-    }
+    // Hover and selection at full opacity; otherwise the out-of-neighborhood
+    // dim stacks with the filter dim, as in the file views.
+    const dimOf = (p) => p.file === selected || p.file === hovered ? 1
+      : Math.min(focus && !connected.has(p.file) ? 0.2 : 1, nodeIsDimmed(p) ? 0.1 : 1)
 
-    // ── Edges (curves + arrowheads, width ∝ √link count) ────────
     for (const e of pg.edges) {
       const na = pg.byPkg.get(e.a)
       const nb = pg.byPkg.get(e.b)
       if (!na || !nb) continue
-      if (!nodeVisible(na) || !nodeVisible(nb)) continue
-      // Direction handling mirrors drawPackageView: bidi pairs get
-      // arrows on both ends, unidirectional ones an arrow at the
-      // import target.
-      const bidi = e.fromLo && e.fromHi
-      const reversed = !bidi && e.fromHi
-      const a = reversed ? nb : na
-      const b = reversed ? na : nb
-      const touches = focusPkg !== null && (e.a === focusPkg || e.b === focusPkg)
-      // Fully filter-dimmed (both endpoints) edges drop with their
-      // nodes AND skip arrowheads below — an arrow at +0.15 alpha
-      // over a 0.05 body would keep "dimmed" links visibly arrowed.
+      const { a, b, bidi } = directed(e, na, nb)
+      const touches = focus !== null && (e.a === focus || e.b === focus)
+      // Edges between two filtered-out packages fade with them, arrowheads
+      // too: +0.15 over a 0.05 body would keep them visibly arrowed.
       const bothDimmed = nodeIsDimmed(na) && nodeIsDimmed(nb)
-      const isDim = (focusPkg !== null && !touches) || bothDimmed
-
-      const ra = pkgNodeRadius(a), rb = pkgNodeRadius(b)
-      const [ax, ay] = worldToScreen(a.x, a.y)
-      const [bx, by] = worldToScreen(b.x, b.y)
-      const dx = bx - ax, dy = by - ay
-      const len = Math.sqrt(dx * dx + dy * dy) || 1
-      const ux = dx / len, uy = dy / len
-      const sx = ax + ux * (ra + 1.5), sy = ay + uy * (ra + 1.5)
-      const ex = bx - ux * (rb + 3.5), ey = by - uy * (rb + 3.5)
-      const off = Math.min(len * 0.15, 30)
-      const qcx = (sx + ex) / 2 - uy * off
-      const qcy = (sy + ey) / 2 + ux * off
-
-      let edgeAlpha
-      if (bothDimmed) edgeAlpha = 0.05
-      else if (touches) edgeAlpha = 0.9
-      else if (isDim) edgeAlpha = 0.06
-      else edgeAlpha = 0.5
-
-      const grad = ctx.createLinearGradient(sx, sy, ex, ey)
-      grad.addColorStop(0, pkgColor(a.pkg) + alphaHex(edgeAlpha))
-      grad.addColorStop(1, pkgColor(b.pkg) + alphaHex(edgeAlpha))
-      ctx.beginPath()
-      ctx.moveTo(sx, sy)
-      ctx.quadraticCurveTo(qcx, qcy, ex, ey)
+      const isDim = (focus !== null && !touches) || bothDimmed
+      const c = curve(a, b, pkgNodeRadius(a), pkgNodeRadius(b))
+      const alpha = bothDimmed ? 0.05 : touches ? 0.9 : isDim ? 0.06 : 0.5
+      const grad = ctx.createLinearGradient(c.sx, c.sy, c.ex, c.ey)
+      grad.addColorStop(0, pkgColor(a.pkg) + alphaHex(alpha))
+      grad.addColorStop(1, pkgColor(b.pkg) + alphaHex(alpha))
       ctx.strokeStyle = grad
       ctx.lineWidth = Math.min(3.5, 0.8 + Math.sqrt(e.count) * 0.3) * (touches ? 1.3 : 1)
-      ctx.stroke()
-
-      if (isDim) continue
-      // Arrowhead colored by the endpoint it lands on so it visually
-      // fuses with the target node.
-      traceArrowhead(sx, sy, qcx, qcy, ex, ey, false)
-      ctx.fillStyle = pkgColor(b.pkg) + alphaHex(Math.min(1, edgeAlpha + 0.15))
-      ctx.fill()
-
-      if (bidi) {
-        traceArrowhead(sx, sy, qcx, qcy, ex, ey, true)
-        ctx.fillStyle = pkgColor(a.pkg) + alphaHex(Math.min(1, edgeAlpha + 0.15))
-        ctx.fill()
-      }
+      strokeCurve(c)
+      // Each arrowhead takes the color of the node it lands on.
+      const arrowAlpha = alphaHex(Math.min(1, alpha + 0.15))
+      if (!isDim) drawArrows(c, bidi, pkgColor(b.pkg) + arrowAlpha, pkgColor(a.pkg) + arrowAlpha)
     }
 
-    // ── Nodes ───────────────────────────────────────────────────
     for (const p of pg.nodes) {
-      if (!nodeVisible(p)) continue
       const [sx, sy] = worldToScreen(p.x, p.y)
       const r = pkgNodeRadius(p)
-      const isHov = p.pkg === hovered
-      const isSel = p.pkg === soloPkg
-      const col = pkgColor(p.pkg)
+      const isSel = p.file === selected
+      const color = pkgColor(p.pkg)
       const dim = dimOf(p)
-
-      if (isSel || isHov) {
-        const haloR = r * (isSel ? 2.6 : 2.2)
-        const grad = ctx.createRadialGradient(sx, sy, r * 0.6, sx, sy, haloR)
-        grad.addColorStop(0, col + alphaHex(isSel ? 0.4 : 0.25))
-        grad.addColorStop(1, col + '00')
-        ctx.fillStyle = grad
-        ctx.beginPath()
-        ctx.arc(sx, sy, haloR, 0, Math.PI * 2)
-        ctx.fill()
-      }
-
-      ctx.fillStyle = col + alphaHex(dim)
-      ctx.beginPath()
-      ctx.arc(sx, sy, r, 0, Math.PI * 2)
-      ctx.fill()
-
+      if (isSel || p.file === hovered) drawHalo(sx, sy, r, r * (isSel ? 2.6 : 2.2), color, isSel ? 0.4 : 0.25)
+      ctx.fillStyle = color + alphaHex(dim)
+      fillCircle(sx, sy, r)
       if (p.issue) drawIssueRing(sx, sy, r, p.issue, dim)
     }
 
-    // ── Labels (always candidates — package counts are small;
-    // collision pass thins by priority) ─────────────────────────
-    ctx.font = `600 11px ui-monospace, SFMono-Regular, Menlo, Monaco, monospace`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    ctx.lineJoin = 'round'
-    const labelLineHeight = 13
-    const labelPad = 2
-    const labelCandidates = []
-    for (const p of pg.nodes) {
-      if (!nodeVisible(p)) continue
-      const [sx, sy] = worldToScreen(p.x, p.y)
-      const r = pkgNodeRadius(p)
-      const ty = sy + r + 4
-      const halfW = ctx.measureText(p.label).width / 2 + labelPad
-      const isSel = p.pkg === soloPkg
-      const isHov = p.pkg === hovered
-      // Priority: selected > hovered > bigger packages.
-      const prio = isSel ? Infinity : isHov ? 1e9 : p.fileCount
-      labelCandidates.push({
-        p, sx, ty, isSel, isHov, prio,
-        x0: sx - halfW, x1: sx + halfW,
-        y0: ty, y1: ty + labelLineHeight,
-      })
-    }
-    const placed = placeLabels(labelCandidates)
-    for (const cand of placed) {
-      const { p, sx, ty, isSel, isHov } = cand
-      // Labels never drop below 0.25 — a dimmed package's name
-      // stays legible enough to explain why a filter skipped it.
-      ctx.globalAlpha = Math.max(0.25, dimOf(p))
-      ctx.shadowColor = T.labelShadow
-      ctx.shadowBlur = 4
-      ctx.strokeStyle = T.labelOutline
-      ctx.lineWidth = 3
-      ctx.strokeText(p.label, sx, ty)
-      ctx.shadowBlur = 0
-      ctx.fillStyle = isSel ? T.labelSelected : isHov ? T.labelHover : T.labelDefault
-      ctx.fillText(p.label, sx, ty)
-      ctx.globalAlpha = 1
-    }
+    // Bigger packages claim label space first. A dimmed package's name stays
+    // at 0.25 or more, legible enough to tell why a filter skipped it.
+    drawRichLabels(T, pg.nodes, selected, pkgNodeRadius,
+      (p) => p.file === selected ? Infinity : p.file === hovered ? 1e9 : p.fileCount,
+      (p) => Math.max(0.25, dimOf(p)))
 
-    // Selection ring on top so neighbors can't hide it.
-    if (soloPkg) {
-      const p = pg.byPkg.get(soloPkg)
-      const [sx, sy] = worldToScreen(p.x, p.y)
-      ctx.strokeStyle = T.selectRing
-      ctx.lineWidth = 1.8
-      ctx.beginPath()
-      ctx.arc(sx, sy, pkgNodeRadius(p) + 4, 0, Math.PI * 2)
-      ctx.stroke()
+    if (sel) {
+      const [sx, sy] = worldToScreen(sel.x, sel.y)
+      strokeCircle(sx, sy, pkgNodeRadius(sel) + 4, T.selectRing, 1.8)
     }
-
-    updateZoomLabel()
   }
 
   // ── Hit test ──────────────────────────────────────────────────
-  // Operates on the active node set (package aggregates in the
-  // packages view). The radius source follows the renderer's ≤ 50
-  // split: the rich package path draws bigger weighted nodes, the
-  // dot paths draw nodeRadius-sized ones — picking must agree with
-  // what's on screen or rim clicks miss.
+  // On the node set on screen, with the radius its renderer draws: rim clicks
+  // must land.
   function pickNode(sx, sy) {
     if (dependenciesOn()) {
       const [x, y] = screenToWorld(sx, sy)
@@ -1368,63 +881,45 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     }
     if (layersOn()) {
       const [x, y] = screenToWorld(sx, sy)
-      for (const r of layers.rects.values()) {
-        if (r.width > 0 && x >= r.x && x < r.x + r.width && y >= r.y && y <= r.y + r.height) return getPkgGraph().byPkg.get(r.id)
-      }
-      return null
+      const rect = [...layers.rects.values()].find((r) => r.width > 0 && x >= r.x && x < r.x + r.width && y >= r.y && y <= r.y + r.height)
+      return rect ? getPkgGraph().byPkg.get(rect.id) : null
     }
-    const pkgView = pkgViewOn()
-    const G = pkgView ? getPkgGraph() : fileGraph
-    const rich = pkgView && G.nodes.length <= 50
+    const G = activeGraph()
     if (G.nodes.length > 50) {
       nodePicker ??= createNodePicker(G.nodes)
-      const maxRadius = 4.9 * graph2.nodeSize * Math.max(0.6, Math.min(1.6, viewport.k))
-      return nodePicker(sx, sy, viewport, maxRadius, nodeRadius, nodeVisible)
+      return nodePicker(sx, sy, viewport, nodeRadius({ isHub: true }), nodeRadius, shown)
     }
+    const radius = pkgViewOn() ? pkgNodeRadius : nodeRadius
     let best = null, bestD = Infinity
-    const tol = 6
     for (const n of G.nodes) {
-      if (!nodeVisible(n)) continue
       const [nx, ny] = worldToScreen(n.x, n.y)
       const dx = nx - sx, dy = ny - sy
       const d = dx * dx + dy * dy
-      const r = (rich ? pkgNodeRadius(n) : nodeRadius(n)) + tol
+      const r = radius(n) + 6
       if (d < r * r && d < bestD) { bestD = d; best = n }
     }
     return best
   }
 
+  // A file's path in its package, its package, and its finding chips. Lit
+  // escapes the report's paths.
   function showTooltip(n, cx, cy) {
     if (!tooltip) return
-    const col = pkgColor(n.pkg)
-    const pkgLabel = pkgLabelOf(n.pkg)
-    const relPath = pkgRelative(n.file, n.pkg)
-    // Three-line layout:
-    //   1. file path relative to package root (monospace, primary
-    //      text colour) — the main node identifier.
-    //   2. dot + package name — secondary context.
-    //   3. per-severity chips when n.totalIssues > 0 — same block
-    //      the selection card uses.
-    // Lit's `html` interpolation auto-escapes `relPath`/`pkgLabel`
-    // (both user-provided — file paths from a loaded report).
     render(html`
-      <div class="g2-tt-path">${relPath}</div>
+      <div class="g2-tt-path">${pkgRelative(n.file, n.pkg)}</div>
       <div class="g2-tt-head">
-        <span class="g2-tt-dot" style=${styleMap({ background: col })}></span>
-        <span class="g2-tt-pkg">${pkgLabel}</span>
+        <span class="g2-tt-dot" style=${styleMap({ background: pkgColor(n.pkg) })}></span>
+        <span class="g2-tt-pkg">${pkgLabel(n.pkg)}</span>
       </div>
       ${n.totalIssues > 0 ? renderSevChips(n.own) : null}
     `, tooltip)
     placeTooltip(cx, cy)
   }
 
-  // Packages-view tooltip — same chrome, package-level facts:
-  // name, file count + summed source bytes, severity chips. A graph
-  // of packages alone counts dependents in every layout, and its
-  // members are installed copies, so it tells their versions.
+  // A package's file count and bytes, its finding chips; for a graph of
+  // packages alone, whose members are installed copies, their versions.
   function showPkgTooltip(p, cx, cy) {
     if (!tooltip) return
-    const col = pkgColor(p.pkg)
     const sizeText = formatBytes(p.size)
     const versions = graph.packagesOnly ? packageVersions(graph, p.pkg) : []
     const members = graph.packagesOnly
@@ -1437,7 +932,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
         ? `Level ${layers.depth.get(p.pkg)} · shortest import distance from App`
         : 'No known import path from App'}</div>` : null}
       <div class="g2-tt-head">
-        <span class="g2-tt-dot" style=${styleMap({ background: col })}></span>
+        <span class="g2-tt-dot" style=${styleMap({ background: pkgColor(p.pkg) })}></span>
         <span class="g2-tt-pkg">${members}</span>
       </div>
       ${p.totalIssues > 0 ? renderSevChips(p.own) : null}
@@ -1445,30 +940,19 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     placeTooltip(cx, cy)
   }
 
+  // 12px below-right of the cursor, flipped at the stage's right and bottom
+  // edges, kept 4px inside its top-left.
   function placeTooltip(cx, cy) {
     const stageRect = stage.getBoundingClientRect()
-    // Show first, THEN measure — the browser doesn't compute layout
-    // for `display: none` / opacity: 0 elements and we need the real
-    // width/height to do edge-flip correctly. Adding the .show class
-    // bumps opacity, which is enough to get a reliable bbox.
+    // Shown before measuring: a hidden tooltip has no layout.
     tooltip.classList.add('show')
-    const ttW = tooltip.offsetWidth
-    const ttH = tooltip.offsetHeight
-    const sx = cx - stageRect.left
-    const sy = cy - stageRect.top
-    const stageW = stageRect.width
-    const stageH = stageRect.height
-    // Default: 12px right and below the cursor (near it, not under
-    // it). Flip horizontally when it would overshoot the right edge
-    // (sized to the actual tooltip width so the flip holds for any
-    // content). Flip vertically when too close to the bottom; clamp
-    // at top so it doesn't scroll out of view near the top edge.
-    const PAD = 12
-    let tx = sx + PAD
-    if (tx + ttW > stageW - 4) tx = sx - ttW - PAD
+    const ttH = tooltip.offsetHeight, ttW = tooltip.offsetWidth
+    const sx = cx - stageRect.left, sy = cy - stageRect.top
+    let tx = sx + 12
+    if (tx + ttW > stageRect.width - 4) tx = sx - ttW - 12
     if (tx < 4) tx = 4
-    let ty = sy + PAD
-    if (ty + ttH > stageH - 4) ty = sy - ttH - PAD
+    let ty = sy + 12
+    if (ty + ttH > stageRect.height - 4) ty = sy - ttH - 12
     if (ty < 4) ty = 4
     tooltip.style.left = `${tx}px`
     tooltip.style.top = `${ty}px`
@@ -1479,26 +963,22 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   let dragging = false
   let dragStart = null
   let dragMoved = false
+  const stagePoint = (e) => {
+    const rect = stage.getBoundingClientRect()
+    return [e.clientX - rect.left, e.clientY - rect.top]
+  }
 
   const onMouseDown = (e) => {
     if (e.button !== 0) return
-    // Bail when the press originates inside one of the canvas's
-    // corner overlays (back button, zoom controls, focus-pkg
-    // icon). Without this, mousedown sets dragging=true →
-    // mouseup picks a node at the overlay's corner (none, so
-    // selection clears) → refreshSidebar replaces the overlay
-    // slot → the original button is detached → its click
-    // handler never runs. The overlay's own click handlers
-    // already do the right thing; the canvas just needs to
-    // stay out of their way.
+    // Presses on the corner overlays (back, zoom, focus-package buttons) are
+    // theirs: a canvas click would clear the selection and re-render the
+    // overlay slot, detaching the button before its click handler runs.
     if (e.target.closest('.g2-stage-overlay, .g2-stage-overlay-tr, .g2-zoom-ctrl')) return
     dragging = true
     dragMoved = false
     dragStart = { x: e.clientX, y: e.clientY, tx: viewport.tx, ty: viewport.ty }
   }
   const onMouseMove = (e) => {
-    const rect = stage.getBoundingClientRect()
-    const sx = e.clientX - rect.left, sy = e.clientY - rect.top
     if (dragging) {
       const dx = e.clientX - dragStart.x
       const dy = e.clientY - dragStart.y
@@ -1509,30 +989,21 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       requestDraw()
       return
     }
-    // `hovered` is keyed by the active node set's `file` — the
-    // package name doubles as it in packages view. Mode flips
-    // always go through a canvas teardown + re-attach, so a key
-    // from one mode never leaks into the other's draw.
-    const hit = pickNode(sx, sy)
+    // Keyed by the active node set's `file` (the package name at package
+    // altitude). Mode flips re-attach, so a key never leaks across modes.
+    const hit = pickNode(...stagePoint(e))
     const prev = hovered
     hovered = hit?.file ?? null
     canvas.style.cursor = 'default'
-    if (hit) {
-      if (pkgViewOn() || dependencyPackagesOn()) showPkgTooltip(hit, e.clientX, e.clientY)
-      else showTooltip(hit, e.clientX, e.clientY)
-    } else if (prev) hideTooltip()
+    if (hit) (selectsPackages() ? showPkgTooltip : showTooltip)(hit, e.clientX, e.clientY)
+    else if (prev) hideTooltip()
     if (hovered !== prev) requestDraw()
   }
   const onMouseUp = (e) => {
     if (dragging && !dragMoved) {
-      const rect = stage.getBoundingClientRect()
-      const sx = e.clientX - rect.left, sy = e.clientY - rect.top
-      const hit = pickNode(sx, sy)
-      if (pkgViewOn() || dependencyPackagesOn()) {
-        // Package click — toggle the selection through graph2.solo,
-        // the same slot the right panel's Packages rows write, so
-        // the package card, the row highlight, and the canvas ring
-        // all track one source of truth. Empty space deselects.
+      const hit = pickNode(...stagePoint(e))
+      if (selectsPackages()) {
+        // Toggle the package selection; empty space deselects.
         graph2.solo = hit && graph2.solo !== hit.pkg ? hit.pkg : null
         graph2.selected = null
         refreshSidebar()
@@ -1551,19 +1022,26 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     hideTooltip()
     if (wasHovered) requestDraw()
   }
+
+  // Zoom to `k` within the fit floor and the 999% ceiling, keeping the screen
+  // point (sx, sy) in place. Dependencies measures zoom from its fit, so
+  // small graphs still get the full range.
+  function zoomAt(k, sx, sy, fitK = computeFit().k) {
+    const metrics = graphZoomMetrics(viewport.k, fitK, dependenciesOn())
+    const [wx, wy] = screenToWorld(sx, sy)
+    viewport.k = Math.max(metrics.min, Math.min(metrics.max, k))
+    viewport.tx = sx - wx * viewport.k
+    viewport.ty = sy - wy * viewport.k
+    requestDraw()
+  }
   const onWheel = (e) => {
     e.preventDefault()
-    const rect = stage.getBoundingClientRect()
-    const sx = e.clientX - rect.left, sy = e.clientY - rect.top
+    const [sx, sy] = stagePoint(e)
     const factor = Math.exp(-e.deltaY * 0.0015)
     const fit = computeFit()
-    // Trying to zoom out further than the fit zoom doesn't
-    // make the graph any smaller — instead, re-center the
-    // viewport. Each scroll-out step lerps current tx/ty
-    // toward the fit-centered position; repeated scrolls
-    // converge on center. Step size proportional to wheel
-    // magnitude so trackpad ticks feel smooth and mouse-wheel
-    // ticks feel decisive without overshooting.
+    // Zooming out past the fit re-centers instead: each step lerps toward
+    // the fitted position, in proportion to the wheel's magnitude, so
+    // trackpads glide and mouse wheels snap without overshooting.
     if (factor < 1 && viewport.k <= fit.k * 1.0001) {
       viewport.k = fit.k
       const step = Math.min(0.4, (1 - factor) * 3)
@@ -1572,15 +1050,7 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
       requestDraw()
       return
     }
-    // Dependency view reports zoom relative to fit; its upper bound uses
-    // the same reference, so small graphs still get the full zoom range.
-    const [wx, wy] = screenToWorld(sx, sy)
-    const metrics = graphZoomMetrics(viewport.k, fit.k, dependenciesOn())
-    const nk = Math.max(metrics.min, Math.min(metrics.max, viewport.k * factor))
-    viewport.k = nk
-    viewport.tx = sx - wx * viewport.k
-    viewport.ty = sy - wy * viewport.k
-    requestDraw()
+    zoomAt(viewport.k * factor, sx, sy, fit.k)
   }
 
   stage.addEventListener('mousedown', onMouseDown)
@@ -1589,64 +1059,35 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
   stage.addEventListener('mouseleave', onMouseLeave)
   stage.addEventListener('wheel', onWheel, { passive: false })
 
-  // Zoom buttons — each mutation requestDraws so the next
-  // animation frame paints with the new viewport. Min = fit
-  // zoom (same floor and 999% upper bound the wheel handler enforces).
-  function zoomTo(nk) {
-    const metrics = graphZoomMetrics(viewport.k, computeFit().k, dependenciesOn())
-    nk = Math.max(metrics.min, Math.min(metrics.max, nk))
-    const cx = W / 2, cy = H / 2
-    const [wx, wy] = screenToWorld(cx, cy)
-    viewport.k = nk
-    viewport.tx = cx - wx * viewport.k
-    viewport.ty = cy - wy * viewport.k
-    requestDraw()
-  }
   const zIn = root.querySelector('#g2-zoom-in')
   const zOut = root.querySelector('#g2-zoom-out')
   const zFit = root.querySelector('#g2-zoom-fit')
-  zIn?.addEventListener('click', () => zoomTo(viewport.k * 1.4))
-  zOut?.addEventListener('click', () => zoomTo(viewport.k / 1.4))
+  zIn?.addEventListener('click', () => zoomAt(viewport.k * 1.4, W / 2, H / 2))
+  zOut?.addEventListener('click', () => zoomAt(viewport.k / 1.4, W / 2, H / 2))
   zFit?.addEventListener('click', () => { fitToView(); requestDraw() })
 
-  // Resize observer — handles container resize (sidebar collapse,
-  // window resize, tab switch with different available space).
-  // Relayout-on-resize is intentionally off: even cheap closed-form
-  // passes would jitter the graph on every drag of the window edge.
-  // The canvas just refits its viewport so positions stay centered.
+  // A resized stage (sidebar collapse, window resize) refits the viewport
+  // but keeps the layout: relaying out on every drag of a window edge would
+  // jitter the graph.
   resize()
   const ro = new ResizeObserver(() => resize())
   ro.observe(stage)
 
-  // Body-class observer — handles two distinct triggers:
-  //   - Fullscreen toggle: the layout needs to retune to the new
-  //     viewport (forceLayout's k constant scales with canvas
-  //     dimensions), so invalidate layoutW/H + cache and let
-  //     ResizeObserver fire resize() against the new size.
-  //   - Theme toggle: canvas-internal palette changes (bg, grid,
-  //     edge colors) — needs a redraw but no layout / cache work.
-  // attributeOldValue lets us distinguish the two by comparing the
-  // old class string against the new one.
+  // Body-class changes: a fullscreen toggle lays out again for the new
+  // viewport (layout constants scale with the canvas) once the
+  // ResizeObserver reports, with a fallback for when the size ends up the
+  // same; any other change (a theme) repaints.
   const fsObserver = new MutationObserver((mutations) => {
     for (const m of mutations) {
-      const wasFs = (m.oldValue || '').includes('report-fullscreen')
-      const isFs = document.body.classList.contains('report-fullscreen')
-      if (wasFs !== isFs) {
+      if ((m.oldValue || '').includes('report-fullscreen') !== document.body.classList.contains('report-fullscreen')) {
         layoutW = 0
         layoutH = 0
         needsLayout = true
         needsFit = true
         graph2.layoutCache = null
-        // ResizeObserver should fire shortly with the new size and
-        // run resize() (which itself requestDraws). setTimeout is
-        // a fallback for the rare case where the size change ends
-        // up identical (e.g. the sidebar was already collapsed),
-        // so RO doesn't fire but we still want a fresh layout.
         setTimeout(() => resize(), 80)
         return
       }
-      // Non-fullscreen body-class change (theme toggle, others) —
-      // just redraw with the current theme palette.
       requestDraw()
     }
   })
@@ -1655,11 +1096,6 @@ export function attachGraph2Interaction(container, graph, refreshSidebar, refres
     attributeFilter: ['class'],
     attributeOldValue: true,
   })
-
-  // Kick the first draw — resize() above already requestDraws,
-  // but in case it was a no-op (canvas size unchanged across
-  // re-attach), force one paint so the canvas isn't blank.
-  requestDraw()
 
   graph2.graphState = {
     requestDraw,

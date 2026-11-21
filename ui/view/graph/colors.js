@@ -1,13 +1,13 @@
 export const GRAPH_BACKGROUNDS = { dark: '#0c0c0c', light: '#f6f8fa', pink: '#fff0f7', w95: '#fff', paper: '#fff' }
 
-export function graphBackground() {
+// The graph palette the page theme picks: each light-style theme its own;
+// the default and any other theme (green) the dark one.
+export function graphTheme() {
   const classes = typeof document === 'undefined' ? null : document.body?.classList
-  if (classes?.contains('theme-paper')) return GRAPH_BACKGROUNDS.paper
-  if (classes?.contains('theme-pink')) return GRAPH_BACKGROUNDS.pink
-  if (classes?.contains('theme-w95')) return GRAPH_BACKGROUNDS.w95
-  if (classes?.contains('theme-light')) return GRAPH_BACKGROUNDS.light
-  return GRAPH_BACKGROUNDS.dark
+  return ['paper', 'pink', 'w95', 'light'].find((name) => classes?.contains(`theme-${name}`)) ?? 'dark'
 }
+
+export const graphBackground = () => GRAPH_BACKGROUNDS[graphTheme()]
 
 // Shared by Layers and Size flow: choose text against the opaque package
 // fill, rather than using the surrounding page's foreground color.
