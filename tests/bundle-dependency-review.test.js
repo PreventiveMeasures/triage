@@ -63,7 +63,8 @@ test('a bundle whose versions pass says so, of how many it holds; one wanting re
   }
   const passes = await shown(entry('passes'))
   assert.match(passes, /<dt>Dependency review<\/dt>/u)
-  assert.match(passes, /bundle-review-state is-passed[^]*Passes[^]*12 npm versions, each reviewed or needing none/u)
+  assert.match(passes, /bundle-review-state is-passed[^]*Passes[^]*12 npm versions</u)
+  assert.doesNotMatch(passes, /each reviewed/u)
   const before = asked.length
   await shown(entry('passes'))
   assert.equal(asked.length, before, 'kept')
