@@ -71,7 +71,7 @@ The patch is read only where:
 It is applied as pnpm applies it (the patch-package code pnpm 10 and 11 bundle): each file it deletes, creates, renames or changes, each hunk found in the file as it was, where its header says, else as many as 20 lines either side, its lines matched but for the whitespace they end in, the lines it keeps left as the file has them, and the lines it adds as the patch has them, CRs and all. The review page says why where it doesn't apply.
 What it changes of a file's mode isn't shown.
 
-The Dependencies tab and a pull request's popup link a patched version to its review where its patch's file is known, against the version it patches where that was one, and mark it **patched**; they count no lines it changes, as those would be npm's.
+The Dependencies tab and a pull request's popup link a patched version to its review where its patch's file is known, against the version it patches where that was one, and mark it **patched**; its line count is of its files as the patch changes them, the patch read as its review page reads it, so a version patched against itself counts the patch's lines alone.
 A review keeps where its patch was read, so one listed under **My reviews** or a team's **Reviews** opens as patched for a reader who may still read that repository.
 
 A review's base can be a version as a patch changes it too, named by the patch's hash alone (`basePatch`, below): only a patch kept here, of a repository its reader may read all of, is read so.
@@ -179,6 +179,7 @@ An open pull request without the label is then not listed there, whatever it add
 Its sub-tabs are:
 
 - **Pull requests**: those whose versions want reviews or whose review fails, each a card that opens its popup.
+  One into a branch other than the default that adds no version to review is left out, unless its comments review its dependencies.
   A selector orders them newest first (the default), most recently updated first, or fewest versions to review first.
   Pull requests that add only versions listed under others come after the rest, one line each, and can be hidden; one whose lockfiles lock other versions that want reviews says how many on its line.
 - **Versions**: every added version that wants reviews, once, with the pull requests that add it; those lacking a review made in another are red.
@@ -188,6 +189,7 @@ Its sub-tabs are:
   Each author shows with their avatar and their name in the app, with their GitHub login in its tooltip.
 
 Where several pull requests add a version, its reviews in each are compared: who passes it and who rejects it there, by login.
+A version's tooltip names its reviewers with their avatars and names in the app.
 
 - Reviewed alike, one pull request lists it, the one with the fewest reviews left to make, and the others show it dimmed, naming that one.
 - A pull request that holds some reviews of it but lacks one made in another's comments shows it red, and its tooltip names whose review and where.

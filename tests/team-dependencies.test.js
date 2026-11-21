@@ -177,7 +177,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
     'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
   assert.doesNotMatch(cards.slice(1).join(''), /dependency-review-copy/u, 'none where it formats none')
   assert.doesNotMatch(cards[0], /vouched/u, 'one the reviewed dependencies pass not told')
-  assert.match(cards[0], /rej[^]*<npm-delta \.name=rej [^]*shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\)><\/npm-delta>/u,
+  assert.match(cards[0], /rej[^]*<npm-delta \.name=rej [^]*shared[^]*<npm-delta \.name=shared \.version=1\.0\.0 \.base=\(empty\) \.patch=><\/npm-delta>/u,
     'the lines each wanting reviews changes, a new one\'s whole; the one reviewed there already first, the one another lists after its own')
   assert.match(cards[1], />b#6<[^]*class="team-deps-count">3 deps<[^]*and 3 more versions past those listed</u, 'one whose versions wanting reviews aren\'t listed kept')
   assert.doesNotMatch(cards[1], /<li>/u)
@@ -187,7 +187,7 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   assert.match(cards[2], /<a class="team-deps-row" href=\/npm\/shared@1\.0\.0\/review [^]*<span class="team-deps-review is-wanted">1\/2<\/span>\s*<span class="team-deps-also">\+1<\/span>[^]*aria-expanded=false [^]*<\/svg>and 3 more<\/button>/u,
     'the one holding every review made of it lists it, as it was, whoever is shown first: how many reviews it has, whose in its tooltip')
   assert.equal(cards[2].split('aria-expanded').length - 1, 1)
-  assert.match(cards[2], /data-tooltip=shared@1\.0\.0 \.tooltipContent=[^]*<span class="compare-tip-label">Review<\/span><span>1 review of 2 required; 1 reviewer in its comments, which count here alone<\/span><\/div>[^]*<span class=team-deps-tip-here>a#1<\/span>[^]*<span>kay<\/span>\s*<span>accepts, in a#1’s comments<\/span>/u,
+  assert.match(cards[2], /data-tooltip=shared@1\.0\.0 \.tooltipContent=[^]*<span class="compare-tip-label">Review<\/span><span>1 review of 2 required; 1 reviewer in its comments<\/span><\/div>[^]*<span class=team-deps-tip-here>a#1<\/span>[^]*<span>kay<\/span>\s*<span>accepts, in a#1’s comments<\/span>/u,
     'its tooltip telling neither a review it lacks nor another listing it')
 
   // Each list past those shown opened, and closed again.
@@ -227,8 +227,8 @@ test('the pull requests wanting reviews, fewest first, each version with its rev
   const patched = branch.split('<li>').find(row => row.includes('>pat<'))
   assert.match(patched, new RegExp(`href=/npm/pat@1\\.0\\.0/review\\?patch=${patch.hash}&repo=7&commit=${'f'.repeat(40)}&path=patches/pat%401\\.0\\.0\\.patch `, 'u'),
     'a patched one reviewed as patched, its patch read at the default branch\'s head')
-  assert.match(patched, /<span class="team-deps-patched">patched<\/span>\s*<span class="team-deps-elsewhere">a#9<\/span>/u,
-    'its reviews of it as patched, those a pull request\'s comments make of the same patch told so')
+  assert.match(patched, new RegExp(`<span class="team-deps-patched">patched</span>\\s*<npm-delta \\.name=pat \\.version=1\\.0\\.0 \\.base=\\(empty\\) \\.patch=\\[object Object\\]></npm-delta>\\s*<span class="team-deps-elsewhere">a#9</span>`, 'u'),
+    'its lines counted as its patch changes it; its reviews of it as patched, those a pull request\'s comments make of the same patch told so')
   assert.match(patched, /<span class="compare-tip-label">Patched<\/span><span>patches\/pat@1\.0\.0\.patch<\/span>/u, 'its patch\'s file in its tooltip')
   assert.match(patched, /<span class=>a#9<\/span>\s*<span>locks it, 1\/2<\/span>[^]*<span>lee<\/span>\s*<span>accepts, in a#9’s comments<\/span>/u,
     'and who reviews the same patch in that pull request\'s comments')
@@ -688,10 +688,33 @@ test('where the host names bases, a row reviews its version against the one it n
   const { versionRow } = await import('../ui/view/team-dependencies.js')
   const review = { required: 1, canReview: true, reviewedBases: true }
   const row = (pkg, more = review) => templateText(versionRow({ source: 'registry', version: '3.0.0', reviews: 0, ...pkg }, more, { added: true }))
-  assert.match(row({ name: 'ms', base: { name: 'ms', version: '2.0.0' } }), /href=\/npm\/ms@3\.0\.0\/review\/ms@2\.0\.0 [^]*<npm-delta \.name=ms \.version=3\.0\.0 \.base=2\.0\.0>/u)
+  assert.match(row({ name: 'ms', base: { name: 'ms', version: '2.0.0' } }), /href=\/npm\/ms@3\.0\.0\/review\/ms@2\.0\.0 [^]*<npm-delta \.name=ms \.version=3\.0\.0 \.base=2\.0\.0 \.patch=>/u)
   const forked = row({ name: '@fork/ms', base: { name: 'ms', version: '2.1.3' } })
   assert.match(forked, /href=\/npm\/@fork\/ms@3\.0\.0\/review\/ms@2\.1\.3 /u)
   assert.doesNotMatch(forked, /<npm-delta/u, 'no lines counted against another package\'s')
-  assert.match(row({ name: 'ms', was: ['2.1.2'] }), /href=\/npm\/ms@3\.0\.0\/review [^]*\.base=\(empty\)>/u, 'none named: whole, not against the version it was')
+  assert.match(row({ name: 'ms', was: ['2.1.2'] }), /href=\/npm\/ms@3\.0\.0\/review [^]*\.base=\(empty\) \.patch=>/u, 'none named: whole, not against the version it was')
   assert.match(row({ name: 'ms', was: ['2.1.2'] }, { ...review, reviewedBases: undefined }), /href=\/npm\/ms@3\.0\.0\/review\/ms@2\.1\.2 /u, 'where the host names none')
+})
+
+test('a row\'s tooltip names its reviewers the app knows by their names and avatars, the rest by their logins', async () => {
+  const { versionRow } = await import('../ui/view/team-dependencies.js')
+  const { knowGithubUsers } = await import('../ui/view/github-users.js')
+  knowGithubUsers({ users: { kay: { id: 'u-kay', login: 'kay', name: 'Kay Lee' } }, reviewers: [{ login: 'kay' }, { login: 'stranger' }] })
+  const pkg = { name: 'ms', version: '2.1.3', source: 'registry', reviews: 1, reviewers: [{ login: 'kay', status: 'accept', passes: true }, { login: 'stranger', status: 'reject' }] }
+  const text = templateText(versionRow(pkg, { required: 2, canReview: true }, { added: true, lacks: [{ login: 'kay', status: 'accept', where: ['a#1'] }] }))
+  assert.match(text, /Reviewed by<\/div>[^]*<span class="app-user" data-tooltip=@kay on GitHub><span class="app-user-avatar" aria-hidden="true">K<img src=\/api\/avatar\/u-kay [^]*<span class="app-user-name">Kay Lee<\/span>[^]*<span>stranger<\/span>/u)
+  assert.match(text, /Lacks<\/span><span>Kay Lee’s review in a#1<\/span>/u)
+})
+
+test('a pull request into a branch other than the default is left out where it adds none to review and its comments review none', async () => {
+  const was = dependencies['7#9']
+  try {
+    for (const [session, more, shownToo] of [['into-other', {}, false], ['into-other-commented', { commentReviews: 1 }, true]]) {
+      state.managedSession = { id: session, role: 'triage' }
+      dependencies['7#9'] = { ...was, intoOther: true, review: { ...was.review, ...more } }
+      const names = new Set(cardsOf(await read(shown([repo(7, 'org/a')]))).map(nameOf))
+      assert.equal(names.has('a#9'), shownToo, session)
+      assert.ok(names.has('a#1'), 'one adding some still')
+    }
+  } finally { dependencies['7#9'] = was }
 })

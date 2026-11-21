@@ -315,12 +315,14 @@ export function fetchPullDependencies(repoId, number, { review = false, listed =
 // Those of several of a repository's pull requests at once, by number, each
 // its answer, else an error of why GitHub failed it.
 export async function fetchPullDependenciesOf(repoId, numbers, { review = false, listed = false, signal } = {}) {
-  const { pulls } = await request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, numbers: numbers.join(','), ...pullDependencyFlags({ review, listed }) })}`,
+  const { pulls, users } = await request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, numbers: numbers.join(','), ...pullDependencyFlags({ review, listed }) })}`,
     PULL_DEPENDENCIES_ERRORS, response => response.json(), signal)
-  return pullAnswers(pulls)
+  return pullAnswers(pulls, users)
 }
-const pullAnswers = pulls => new Map((Array.isArray(pulls) ? pulls : []).filter(pull => Number.isSafeInteger(pull?.number)).map(pull => [pull.number,
-  typeof pull.error === 'string' ? Object.assign(new Error(PULL_DEPENDENCIES_ERRORS[pull.error] ?? `It couldn’t be read (${pull.error}).`), { code: pull.error }) : pull]))
+// Each with the app's users the answer names (`users`).
+const pullAnswers = (pulls, users) => new Map((Array.isArray(pulls) ? pulls : []).filter(pull => Number.isSafeInteger(pull?.number)).map(pull => [pull.number,
+  typeof pull.error === 'string' ? Object.assign(new Error(PULL_DEPENDENCIES_ERRORS[pull.error] ?? `It couldn’t be read (${pull.error}).`), { code: pull.error })
+    : users ? { ...pull, users } : pull]))
 
 // Why the versions the repository's default branch's lockfiles lock that
 // want review, where its review is in effect for the reader, couldn't be read.

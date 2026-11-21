@@ -403,7 +403,7 @@ function contents(path, text) {
 // `asked` what was asked of it; `missing` the files listed it has none of;
 // `failing` what it fails to answer for a while (as asked), as it is down;
 // `graphql` the data its GraphQL API answers with.
-function github(t, { files, compared = [], missing = [], failing = [], graphql = () => ({}) }) {
+function github(t, { files, compared = [], missing = [], failing = [], graphql = () => ({}), baseRef = 'main' }) {
   const asked = []
   const commits = Object.fromEntries(Object.entries(files).map(([commit, tree]) => [commit, gitTrees(tree)]))
   t.mock.method(globalThis, 'fetch', (input, init) => {
@@ -412,7 +412,7 @@ function github(t, { files, compared = [], missing = [], failing = [], graphql =
     asked.push(`${url.pathname}${url.search}`)
     if (failing.includes(asked.at(-1))) return Promise.resolve(Response.json({ message: 'Service Unavailable' }, { status: 503 }))
     if (url.pathname === '/repos/org/repo/pulls/5') {
-      return Promise.resolve(Response.json({ number: 5, state: 'open', base: { sha: tip, ref: 'main', repo: { full_name: 'org/repo' } },
+      return Promise.resolve(Response.json({ number: 5, state: 'open', base: { sha: tip, ref: baseRef, repo: { full_name: 'org/repo' } },
         head: { sha: head, ref: 'bump-ms', repo: { full_name: 'org/repo' } } }))
     }
     // A query's data, or GitHub's whole answer to it, where it is given one.
@@ -726,6 +726,20 @@ test('where the host names each version\'s base, a pull request into the default
   assert.ok(read.some(request => request.includes(`ref=${mergeBase}`)))
 })
 
+test('an open pull request into a branch other than the default is told so, where its review is asked for and on', async t => {
+  for (const [baseRef, told] of [['main', [undefined, undefined]], ['develop', [true, undefined]]]) {
+    const db = openSqliteManagedDb(':memory:')
+    t.after(() => db.close())
+    const send = api(db, await people(db))
+    await db.setRepoDependencyReview(1, { enabled: true, required: 1, since: null })
+    coldInstance()
+    t.mock.restoreAll()
+    github(t, { ...PULL, baseRef })
+    const ask = query => send(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId: '1', number: '5', ...query })}`)
+    assert.deepEqual([(await ask({ review: '1' })).body.intoOther, (await ask({})).body.intoOther], told, `into ${baseRef}, its review asked for, or not`)
+  }
+})
+
 test('where the host reads an open pull request\'s comments, the reviews they make by those who review for the repository count for it', async t => {
   const db = openSqliteManagedDb(':memory:')
   t.after(() => db.close())
@@ -1002,8 +1016,10 @@ test('a team\'s Dependencies in one request: each repository as its own endpoint
   const answer = await read()
   assert.equal(answer.status, 200)
   assert.equal(answer.headers['content-type'], 'application/x-ndjson')
-  assert.deepEqual(answer.lines, [{ repoId: 2, branch: null }, { repoId: 3, branch: null }, { repoId: 1, branch, pulls: { items: pulls.map(slim), more: false } },
-    { repoId: 1, dependencies }, { done: true }], 'the two read of no GitHub first, then org/repo\'s, each open pull request by what its card tells of its tile, their dependencies after')
+  assert.deepEqual(answer.lines.map(line => line.users ? without(line) : line), [{ repoId: 2, branch: null }, { repoId: 3, branch: null },
+    { repoId: 1, branch, pulls: { items: pulls.map(slim), more: false } }, { repoId: 1, dependencies }, { done: true }],
+  'the two read of no GitHub first, then org/repo\'s, each open pull request by what its card tells of its tile, their dependencies after')
+  assert.deepEqual(Object.keys(answer.lines[3].users), ['alice'], 'with the app\'s users its reviewers are, as a repository\'s activity is told')
   assert.ok(answer.ended)
   assert.ok(!asked.some(path => /org\/(?:other|part)/u.test(path)), 'GitHub asked nothing of those reviewing none, or read only in part')
   assert.match(answer.headers['server-timing'], /db;dur=[\d.]+;desc="\d+ statements"/u, 'its time told, the database\'s')
@@ -1286,7 +1302,7 @@ test('a bundle\'s npm versions, where its repository\'s review is in effect, are
   await publish(db, users.alice, context('ms', '2.1.3', '2.1.2'), ['one'])
   const answer = await ask()
   assert.equal(answer.status, 200)
-  assert.deepEqual(answer.body, { head: built, cut: false, versions: 5, unlocked: [{ name: 'absent', version: '1.0.0' }, { name: 'stray', version: '1.0.0' }], moreUnlocked: 0,
+  assert.deepEqual(without(answer.body), { head: built, cut: false, versions: 5, unlocked: [{ name: 'absent', version: '1.0.0' }, { name: 'stray', version: '1.0.0' }], moreUnlocked: 0,
     review: { required: 1, since, canReview: true, toReview: 0, unreviewed: 0, unsupported: 1, baselineUnread: ['berry/yarn.lock', 'bun.lock'] },
     lockfiles: [{ paths: ['web/yarn.lock', 'package-lock.json'], added: [], more: 0, moreLocked: 0, unreviewed: [], moreUnreviewed: 0,
       unsupported: [{ name: 'mine', version: '1.0.0', source: 'git', from: 'git+ssh://github.com/org/mine.git', unsupported: 'git' }], moreUnsupported: 0 }] },
@@ -1301,7 +1317,7 @@ test('a bundle\'s npm versions, where its repository\'s review is in effect, are
 
   // Its review holding to none of the lockfiles installing it: not reviewed.
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'include', paths: ['other/'] } })
-  assert.deepEqual((await ask()).body, { review: null })
+  assert.deepEqual(without((await ask()).body), { review: null })
   await db.setRepoDependencyReview(1, { enabled: true, required: 1, lockfiles: { mode: 'exclude', paths: ['web/'] } })
   assert.deepEqual((await ask()).body.lockfiles[0].paths, ['package-lock.json'], 'those it holds to alone')
 

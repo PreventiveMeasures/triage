@@ -40,6 +40,7 @@ import { sourcePackageIcon } from './source-file-icon.js'
 import { dialogTabs } from './header-tabs.js'
 import { withCompare } from './compare-load.js'
 import { reviewBase, seedNpmDeltas } from './npm-delta.js'
+import { githubUser, githubUserName, knowGithubUsers } from './github-users.js'
 import './dependency-review-copy.js'
 import { managedHistory } from './managed-history.js'
 import { managedRouteForIds, managedRoutePath } from '../../common/managed/routes.js'
@@ -198,6 +199,7 @@ function readTeam(team, asked, repoIds, resumes) {
 // fewer. Each with the lines its versions change, seeded first
 // (seedNpmDeltas), lest their rows ask for them.
 function toldLine(line, entry, hold) {
+  knowGithubUsers(line)
   if (Array.isArray(line.deltas)) seedNpmDeltas(line.deltas)
   if (typeof line.error === 'string') hold({ status: 'error', until: Date.now() + RETRY_MS, error: line.error })
   else if (line.branch === null) hold({ status: 'ready', until: Date.now() + KEEP_MS, branch: null })
@@ -254,7 +256,7 @@ function reviewState(pkg, review) {
   if (pkg.rejected) return { label: 'rejected', tint: 'is-failed', said: 'A reviewer rejects it: it wants their newer accepting review' }
   if (shown === 'wanted') {
     return { label: `${pkg.reviews}/${review.required}`, tint: 'is-wanted',
-      said: `${plural(pkg.reviews, 'review')} of ${review.required} required${pkg.commented ? `; ${plural(pkg.commented, 'reviewer')} in its comments, which count here alone` : ''}` }
+      said: `${plural(pkg.reviews, 'review')} of ${review.required} required${pkg.commented ? `; ${plural(pkg.commented, 'reviewer')} in its comments` : ''}` }
   }
   return null
 }
@@ -368,7 +370,7 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
     pkg.patch ? ['Patched', pkg.patch.path ?? 'by a patch whose file isn’t known, which reviews here can’t read'] : null,
     pkg.unreached ? ['Asked for', UNREACHED_SAID] : null,
     stance ? ['Review', stance.said ?? stance.label] : null, under ? ['Listed', `under ${under}`] : null,
-    lacks.length > 0 ? ['Lacks', lacks.map(one => `${isReader(one) ? 'your' : `${one.login}’s`} review in ${one.where.join(', ')}`).join('; ')] : null]
+    lacks.length > 0 ? ['Lacks', lacks.map(one => `${isReader(one) ? 'your' : `${githubUserName(one.login)}’s`} review in ${one.where.join(', ')}`).join('; ')] : null]
     .filter(Boolean)
   const reviewers = new Map()
   for (const { name, pkg: theirs } of [{ name: here, pkg }, ...involved]) {
@@ -385,7 +387,7 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
       <div class="compare-tip-rows">${involved.map(({ name, adds, pkg: theirs, review: theirReview }) => html`<span class=${name === here ? 'team-deps-tip-here' : nothing}>${name}</span>
         <span>${[adds ? 'adds it' : 'locks it', reviewedThere(theirs, theirReview)].filter(Boolean).join(', ')}</span>`)}</div>` : nothing}
     ${reviewers.size > 0 ? html`<div class="compare-tip-head">Reviewed by</div>
-      <div class="compare-tip-rows">${[...reviewers.values()].map(one => html`<span>${one.login}</span>
+      <div class="compare-tip-rows">${[...reviewers.values()].map(one => html`<span>${githubUser(one.login)}</span>
         <span>${VERDICT_SAID[one.status]}${ACCEPTING.has(one.status) && !one.passes ? ', not counted' : ''}${one.where ? `, in ${one.where}’s comments` : ''}</span>`)}</div>`
       : nothing}
   </div>`
@@ -399,7 +401,8 @@ function versionTip(pkg, review, { added, under, lacks, involved, here }) {
 // read at, where it is told its file, else its page; a mark (`!`) where
 // its package manager alone asks for it (`unreached`); its review;
 // the lines it changes against the version it was, or whole, where it
-// wants reviews and isn't patched, as they are npm's (npm-delta.js); the
+// wants reviews, a patched one's as its patch changes them, where its file
+// is told (npm-delta.js); the
 // reviews it lacks that others hold (`lacks`, standings), its row red,
 // its tooltip telling them; the pull requests reviewing it in their comments
 // (`elsewhere`), which count for them alone; the pull request listing it
@@ -422,8 +425,8 @@ export function versionRow(pkg, review, { others = [], adders = false, elsewhere
   const label = html`${sourcePackageIcon(pkg.ecosystem)}<span class="team-deps-name">${pkg.name}${pkg.version ? html`<span class="team-deps-version">@${pkg.version}</span>` : nothing}</span>
     ${pkg.patch ? html`<span class="team-deps-patched">patched</span>` : nothing}
     ${pkg.unreached ? html`<span class="team-deps-unreached" role="img" aria-label=${`Asked for ${UNREACHED_SAID}`}>!</span>` : nothing}
-    ${npm && !pkg.patch && reviewOf(pkg, review) === 'wanted' && (!before || before.name === pkg.name)
-      ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'}></npm-delta>` : nothing}
+    ${npm && (!pkg.patch || patch) && reviewOf(pkg, review) === 'wanted' && (!before || before.name === pkg.name)
+      ? html`<npm-delta .name=${pkg.name} .version=${pkg.version} .base=${before?.version ?? '(empty)'} .patch=${patch}></npm-delta>` : nothing}
     ${reviewBadge(pkg, review)}
     ${under ? html`<span class="team-deps-under">${under}</span>` : nothing}
     ${lacking.length > 0 ? html`<span class="team-deps-lacks">${few(lacking)}</span>` : nothing}
@@ -503,7 +506,7 @@ class TeamDependencies extends StateElement {
     if (items.length === 0) return nothing
     const open = this._open.has(key)
     return html`<ul class="team-deps-versions${same ? ' is-same' : ''}">${(open ? items : items.slice(0, shown)).map(row)}</ul>
-      ${items.length > shown ? html`<button type="button" class="team-deps-more" aria-expanded=${String(open)} @click=${() => this.toggle(key)}>${CHEVRON}${open
+      ${items.length > shown ? html`<button type="button" class="team-deps-more is-list" aria-expanded=${String(open)} @click=${() => this.toggle(key)}>${CHEVRON}${open
         ? 'Show fewer' : `and ${(items.length - shown).toLocaleString('en-US')} more`}</button>` : nothing}`
   }
 
@@ -537,8 +540,9 @@ class TeamDependencies extends StateElement {
     // it is kept; how many reviews they still want between them (`left`),
     // one rejected at least one, those past them as many as it requires; and
     // the other versions its lockfiles lock that want them (`others`), the
-    // default branch's mostly, which hold it too; those adding fewest first,
-    // as Versions takes them, then as picked.
+    // default branch's mostly, which hold it too, one into another branch
+    // left out where it adds none and its comments review none (`intoOther`);
+    // those adding fewest first, as Versions takes them, then as picked.
     const wanting = pulls.filter(({ entry }) => entry.status === 'ready' && entry.review).map(pull => {
       const { review } = pull.entry
       const wanted = addedVersions(pull.entry).versions.filter(pkg => ['wanted', 'unsupported'].includes(reviewOf(pkg, review)))
@@ -547,7 +551,7 @@ class TeamDependencies extends StateElement {
       const past = toReview - told.length
       return { ...pull, wanted, failed: reviewFailures(pull.entry), toReview, untold: past, size: wanted.length + past,
         left: told.reduce((sum, pkg) => sum + Math.max(1, review.required - pkg.reviews), past * review.required), others: unreviewedVersions(pull.entry).count }
-    }).filter(pull => pull.size > 0 || pull.others > 0 || pull.failed).toSorted(fewest)
+    }).filter(pull => pull.size > 0 || ((pull.others > 0 || pull.failed) && !(pull.entry.intoOther && !pull.entry.review.commentReviews))).toSorted(fewest)
     const sort = Object.hasOwn(SORTS, state.teamDependenciesSort) ? state.teamDependenciesSort : 'newest'
     const sorted = sort === 'fewest' ? wanting : wanting.toSorted(SORTS[sort][1])
     // The repositories whose open pull requests are more than are read, and

@@ -23,6 +23,7 @@
 // asked again by those showing it, its lockfiles' versions told meanwhile.
 import { state } from '#client/index.js'
 import { fetchPullDependencies, fetchPullDependenciesOf } from './client-managed.js'
+import { knowGithubUsers } from './github-users.js'
 import { isPatchPath } from '../../common/managed/npm-packages.js'
 
 const KEEP_MS = 5 * 60_000
@@ -132,7 +133,8 @@ const versionsOf = list => Array.isArray(list) ? list.flatMap(checkedVersion) : 
 // whether reviews count by comments alone, those published here not; the
 // lockfiles it holds to, where not every one, those of the rest told to none;
 // and the comment the server's host formats of the reader's own reviews of
-// its versions, to copy (`formatted`), where it formats one. Whether a
+// its versions, to copy (`formatted`), where it formats one, and whether it
+// is into a branch other than the default (`intoOther`). Whether a
 // stasis.config.json of its is still being built (`pending`).
 export function checked(answer) {
   if (!Array.isArray(answer?.lockfiles)) throw new TypeError('The server answered with no lockfiles.')
@@ -142,7 +144,7 @@ export function checked(answer) {
       moreLocked: count(dir.moreLocked) ?? 0 })
   const review = answer.review
   return { lockfiles, cut: answer.cut === true, pending: lockfiles.some(isPending), ...typeof answer.head === 'string' && /^[\da-f]{40}$/u.test(answer.head) ? { head: answer.head } : {},
-    ...typeof answer.formatted === 'string' && answer.formatted.trim() !== '' ? { formatted: answer.formatted } : {},
+    ...typeof answer.formatted === 'string' && answer.formatted.trim() !== '' ? { formatted: answer.formatted } : {}, ...answer.intoOther === true ? { intoOther: true } : {},
     ...count(review?.required) > 0 ? { review: { required: review.required,
     since: typeof review.since === 'string' ? review.since : null, canReview: review.canReview === true,
     ...count(review.toReview) === null ? {} : { toReview: review.toReview },
@@ -239,7 +241,7 @@ function answered(told, entry) {
   let failure = told instanceof Error ? told : null
   if (!failure) {
     try {
-      const answer = checked(told)
+      const answer = checked(knowGithubUsers(told))
       return { status: 'ready', until: Date.now() + (answer.pending ? PENDING_MS : KEEP_MS), ...answer }
     } catch (err) { failure = err }
   }

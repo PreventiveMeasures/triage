@@ -14,6 +14,7 @@
 import { html, nothing, svg } from 'lit'
 import { state } from '#client/index.js'
 import { fetchBundleDependencyReview } from './client-managed.js'
+import { knowGithubUsers } from './github-users.js'
 import { checked, reviewFailures, unreviewedVersions } from './pull-dependencies.js'
 import { versionRow } from './team-dependencies.js'
 import { CHECKS, icon } from './repository-tiles.js'
@@ -71,7 +72,7 @@ export function bundleDependencyReview(bundle) {
   if (entry && Date.now() < entry.until) return entry
   const loading = entry?.status === 'ready' ? { ...entry, until: Number.POSITIVE_INFINITY, refreshing: true } : { status: 'loading', until: Number.POSITIVE_INFINITY }
   data.set(id, loading)
-  fetchBundleDependencyReview(bundle.managedId).then(answer => ({ status: 'ready', until: Date.now() + KEEP_MS, answer: checkedBundleReview(answer) }))
+  fetchBundleDependencyReview(bundle.managedId).then(answer => ({ status: 'ready', until: Date.now() + KEEP_MS, answer: checkedBundleReview(knowGithubUsers(answer)) }))
     .catch(err => err?.name === 'AbortError' ? null : { status: 'error', until: Date.now() + RETRY_MS, error: err?.message || 'It couldn’t be read.' })
     .then(next => {
       if (data.get(id) !== loading) return false
