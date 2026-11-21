@@ -1,5 +1,4 @@
 import { html, nothing, unsafeCSS } from 'lit'
-import { adminNavigation } from './navigation.js'
 import commonStyles from './styles/common.css'
 import importStyles from './styles/workspace-import.css'
 import { decodeWorkspaceFile, prepareWorkspaceImport, runWorkspaceImport, workspaceImportApi } from '../../client/managed/workspace-import.js'
@@ -13,6 +12,7 @@ import { prepareLocalTriageComparison } from '../../client/managed/triage-compar
 export function registerWorkspaceImport(ManagedPage, request) {
   if (customElements.get('managed-admin-import')) return
   class WorkspaceImport extends ManagedPage {
+    static view = 'manage-import'
     static styles = [unsafeCSS(commonStyles), unsafeCSS(importStyles)]
     static properties = { localDeps: { attribute: false }, _busy: { state: true }, _error: { state: true }, _message: { state: true },
       _plan: { state: true }, _catalog: { state: true }, _localOpen: { state: true }, _workspaces: { state: true }, _localId: { state: true },
@@ -154,7 +154,7 @@ export function registerWorkspaceImport(ManagedPage, request) {
         } finally {
           // A failed multi-step import can already have created managed records.
           this.appState.invalidate(families)
-          if (plan.team) this.dispatchEvent(new CustomEvent('managed-import-complete', { bubbles: true, composed: true }))
+          if (plan.team) this._emit('managed-import-complete')
         }
       })
       if (!this._plan && !this._error) await this._nextFile()
@@ -185,7 +185,7 @@ export function registerWorkspaceImport(ManagedPage, request) {
           // Earlier batches may have committed even if a later batch failed or
           // the session was cancelled before its response arrived.
           this.appState.invalidate(families)
-          if (importedIds.size > 0) this.dispatchEvent(new CustomEvent('managed-import-complete', { bubbles: true, composed: true }))
+          if (importedIds.size > 0) this._emit('managed-import-complete')
         }
       })
     }
@@ -235,7 +235,7 @@ export function registerWorkspaceImport(ManagedPage, request) {
         } finally {
           unsubscribe(); this._readingLocal = false; this._importingContent = false
           this.appState.invalidate(families)
-          if (imported.size > 0) this.dispatchEvent(new CustomEvent('managed-import-complete', { bubbles: true, composed: true }))
+          if (imported.size > 0) this._emit('managed-import-complete')
         }
       })
     }
@@ -246,7 +246,7 @@ export function registerWorkspaceImport(ManagedPage, request) {
       const bundleHashes = new Set([...(plan?.references ?? []), ...(plan?.bundles.map(bundle => bundle.integrity) ?? [])])
       const reusedBundles = (this._catalog?.bundles ?? []).filter(bundle => bundleHashes.has(bundle.integrity))
       const missing = plan?.references.filter(hash => !plan.bundles.some(bundle => bundle.integrity === hash)).length ?? 0
-      return html`<div class="wrap" @dragleave=${() => { this._drag = false }}>${adminNavigation('manage-import', this._role, this.allowShare)}
+      return html`<div class="wrap" @dragleave=${() => { this._drag = false }}>${this._nav()}
         <h1>Import</h1>
         <section class="triage-import" aria-label="Import local files">
           <div class="actions"><button type="button" class="btn" ?disabled=${this._busy || !this._csrf} @click=${() => this._importLocalContent('bundle')}>Import bundles</button>
