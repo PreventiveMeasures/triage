@@ -1,23 +1,9 @@
-// Prism syntax highlighter — loaded lazily, and only when something
-// asks for a language it bundles: the bundle source viewer opening a
-// file whose format or extension we know, a finding card drawing a fenced code
-// block / source preview (view/code-highlight.js), or the export-view
-// dialog colouring its Markdown preview. Built as a separate esbuild entry point so prismjs
-// (~50KB minified for the core + the languages we care about)
-// doesn't land in the main view.js bundle. `view/prism-highlight.js`
-// `await import('./prism.js')`s this file lazily on first
-// use; the dynamic import URL is a runtime string so esbuild leaves
-// it alone and the browser resolves it against the page's URL.
-// prismjs/prism.js publishes itself to `window.Prism` as a side
-// effect of its IIFE, so the language packs (plain scripts that
-// reference `Prism` as a free global) resolve correctly once they
-// run. ES module evaluation order matches the import order here,
-// so base-grammar chains stay correct: clike must precede the
-// javascript/typescript that extend it (→ jsx/tsx), markup before html.
-// c, java and ruby extend clike too, and c in turn is the base cpp
-// and objectivec extend — so c must land before both of them.
-// php needs markup-templating (which needs markup, above), and
-// php-extras augments php via insertBefore so it must follow php.
+// Prism, an esbuild entry of its own (~50KB) that view/prism-highlight.js
+// imports by a runtime string the first time a known language is
+// highlighted. prismjs/prism.js publishes `window.Prism`, which the language
+// packs use as a free global, in import order: a base grammar precedes those
+// extending it (clike → javascript/typescript → jsx/tsx, c, java, ruby;
+// c → cpp, objectivec; markup → markup-templating → php → php-extras).
 import Prism from 'prismjs/prism.js'
 import { stringifySourceLinks } from './view/prism-source-links.js'
 import { scanTemplateLiterals } from './view/prism-template-literals.js'
@@ -45,9 +31,7 @@ import 'prismjs/components/prism-markup-templating.js'
 import 'prismjs/components/prism-php.js'
 import 'prismjs/components/prism-php-extras.js'
 
-// Suppress auto-highlightAll. Prism checks `manual` from a
-// DOMContentLoaded callback, which fires after this module body
-// runs, so setting it here is in time.
+// No highlightAll: Prism reads this on DOMContentLoaded, after this module runs.
 Prism.manual = true
 
 // After every grammar above, so each copy of the JavaScript rule is there to
@@ -84,11 +68,9 @@ function tokenNames(languages) {
   return names
 }
 
-// Returns highlighted HTML for `code` under `lang`, or null when
-// the language isn't loaded. Caller falls back to plain text on
-// null. Prism.highlight does its own escaping of the source, so
-// the returned string goes in through view/markup.js's `appMarkup`. Bundle viewers may
-// supply a resolver to link strings, PHP names, and Rust paths to bundle sources.
+// Highlighted, escaped HTML for view/markup.js's `appMarkup`, or null for a
+// language not loaded. A bundle viewer's resolver links strings, PHP names
+// and Rust paths to its sources.
 export function highlight(code, lang, resolveString = null) {
   const grammar = Prism.languages[lang]
   if (!grammar) return null

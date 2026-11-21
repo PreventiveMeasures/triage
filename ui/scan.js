@@ -1,8 +1,6 @@
-// Scans: the shared scan page (`<deepview-scan-page>`) and the local/E2E
-// host's `<local-scan-page>` around it, as an esbuild entry point of its own.
-// `view/scan-load.js` imports it by a runtime string the first time Scans
-// opens, from the landing's Scan button or Manage's Scans page, so neither
-// view.js nor client-managed.js carries it. Built with them, it takes lit and
-// the client state from the same chunks, and so the same instances.
+// Scans: `<deepview-scan-page>` and the local/E2E `<local-scan-page>` around
+// it. An esbuild entry that view/scan-load.js imports by a runtime string when
+// Scans first opens, so neither view.js nor client-managed.js carries it;
+// built with them, it shares their lit and client state.
 import './scan/page.js'
 import './view/local-scan-page.js'

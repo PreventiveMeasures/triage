@@ -1,7 +1,6 @@
-// Entry point. Modules attach DOM listeners / expose `window.__*`
-// hooks at evaluation time, so importing them here is what makes the
-// page interactive. Order is mostly free; sidebar before ingest so the
-// sidebar click delegate exists when `addFiles` calls `renderSidebar`.
+// Entry point. Modules attach their listeners and `window.__*` hooks as they
+// evaluate; sidebar before ingest, so its click delegate exists when
+// `addFiles` renders it.
 import { dropZone, sidebar } from './view/dom.js'
 import { attachSharedWorkspace, ensureKnownLinkedFindingsIndexed, extractFindingRef, extractShareEncoded, getSecureItem, hydrateSecureStorage, isDisablingInThisTab, isEncryptionEnabled, isManagedUiMode, isUnlocked, listFiles, listWorkspaces, onVaultStateChange, setTriageReloadNotifier, state, syncObservedAfterHydrate } from '#client/index.js'
 import { onAutoDownloaded, onBundleAutoDownloaded, onChange as onPresenceChange, setRedraw, triageSync } from './view/client-sync.js'
@@ -58,95 +57,44 @@ import './view/download-button.js'
 import './view/managed-fix-link.js'
 import './view/comment-preview.js'
 import './view/api.js'
-// Eager side-effect import — runs the native DecompressionStream('br')
-// detection at boot and drops any leftover brotli SW from an older
-// revision. The JS fallback decoder it dispatches to when native is
-// missing runs in a worker, and only starts once a brotli payload
-// actually arrives.
+// Detects native brotli at boot; the worker fallback starts on first use.
 import './view/brotli-decompress.js'
-// Side-effect import — paints the empty drop-zone's supported-formats
-// list with the same SVG glyphs the sidebar uses for its rows.
 import './view/drop-supported-icons.js'
 import './view/scan-navigation.js'
 
-// Wire render() into triage-sync so a remote update repaints the view.
-// The client/ layer doesn't import ui/, so this hook bridges the two.
+// The client/ layer doesn't import ui/: these hooks repaint the view on a
+// remote triage update, a sibling tab's triage save (the imperatively
+// rendered kanban, counts and buckets don't react on their own), a presence
+// change, and a sync status change (the badge shows only while online).
 setRedraw(render)
-// Same bridge for cross-tab learning: a sibling tab's saveTriage fires
-// a `storage` event that reloads the blob straight into the reactive
-// `state.triage` (see client/triage.js). The StateElement cards pick
-// that up on their own, but the imperatively-rendered surfaces (kanban
-// board, toolbar counts, bucket filtering) need an explicit render() —
-// without it they stay stale on a sibling edit until the next click.
 setTriageReloadNotifier(render)
-// objstore-presence cache changes (initial list() snapshot + live
-// objstore-put / objstore-deleted broadcasts) repaint the header
-// sync-status badge. Full render() rather than a targeted patch — Lit
-// reconciles efficiently and the no-active-report early return
-// short-circuits before any work.
 onPresenceChange(render)
-// triage-sync status transitions gate the badge: it renders only while
-// sync is `online` — any other state means `isInRemote` can't answer
-// trustworthily, so showing "local" would mislead.
 triageSync.onStatusChange(render)
-// Auto-download bridge — the presence module silently fetches + saves
-// peer-uploaded reports it discovers. If the gaining workspace is the
-// active view, re-run `switchToWorkspace` so the report lands in
-// state.reports + the merged findings list. renderSidebar already
-// picks up the attachment via the membership listener; this hop is
-// only for the merged-view refresh.
-//
-// Only fires with an open WS session, which is post-unlock only
-// (workspaces come from secure-storage, empty until hydrate in
-// continueBoot) — so an auto-download can't land while the vault is
-// enabled-but-locked.
+// A peer's report saved in the background (only with an open session, so
+// never while the vault is locked) refreshes the view showing it.
 onAutoDownloaded(async (workspaceId, fileName) => {
   if (state.currentWorkspace === workspaceId) {
     await switchToWorkspace(workspaceId)
   } else if (state.currentFile && state.currentFile === fileName) {
-    // Single-file view of the auto-downloaded report. The
-    // replace-refetch path in objstore-presence.js reuses this listener
-    // for in-place updates where the active single-file view CAN match
-    // the changed file — reload so the user sees the peer's new bytes
-    // without a manual navigate.
+    // An in-place replacement of the open report (objstore-presence.js).
     await switchToFile(fileName)
   } else {
     await renderSidebar()
   }
 })
-// Bundle auto-download bridge. Bundles aren't in state.reports, so no
-// `switchToWorkspace` — just refresh the sidebar (re-populates
-// `state.bundles` via `listBundles()`) and the main view if the
-// bundles list is showing.
 onBundleAutoDownloaded(async () => {
   await renderSidebar()
   if (state.currentView === 'bundles') render()
 })
-// Report-attach conflict dialog: triage-sync surfaces conflicts via
-// a callback the UI installs here.
 installHydrationConflictResolver()
-// Operator-side password prompt: triage-sync's first-action gate
-// (server's `unauthorized` frame) surfaces here when the cached
-// password is absent or was rejected.
 installSyncAuthResolver()
 
-// `#share=<base64url>` → prompt for the password, decrypt to
-// `{ id, name, privateKey }`, prompt for a local name (default: the
-// sender's), and attach under the SENDER's id so both ends derive the
-// same Ed25519 signing keypair (sync-crypto derives from `(privateKey,
-// workspaceId)`) and land on the same chain.
-//
-// The hash fragment is stripped right after extracting the payload,
-// BEFORE the dialog opens — so a Cancel / wrong-password / page-share
-// doesn't leave the encrypted blob in the address bar, history, or a
-// "copy current URL" (paste the link again to retry). `location.search`
-// is dropped too: the target takes no query params and leaving them
-// confuses copy-and-paste of the resulting URL.
-//
-// The upsert is gated on a final name/id collision check so a share
-// link can't silently clobber or rename an existing workspace. The
-// dialog surfaces collisions inline; this check is defense-in-depth
-// against a sibling-tab race during dialog user-time.
+// `#share=<base64url>`: decrypt `{ id, name, privateKey }` with a password
+// and attach it under the SENDER's id, so both ends derive the same signing
+// keypair and chain. The fragment (and query) is stripped before the dialog
+// opens, so a cancelled or failed attempt leaves no encrypted blob in the
+// address bar or history. attachSharedWorkspace refuses a name or id
+// collision, which a sibling tab can cause while the dialog is open.
 async function handleShareHashIfPresent() {
   const encoded = extractShareEncoded()
   if (!encoded) return false
@@ -157,20 +105,13 @@ async function handleShareHashIfPresent() {
   try {
     payload = await openWorkspaceUnlockLinkDialog({ encoded })
   } catch (err) {
-    // Dialog-open failure (e.g. stacked-modal) — surface and bail so
-    // the caller doesn't proceed with an empty payload. Worded as the
-    // receiver-side unlock prompt (not the sender-side share dialog) so
-    // a user pasting a link doesn't read it as "corrupt".
+    // Worded as the receiver's prompt, so a pasted link doesn't read as corrupt.
     alert(`Couldn't open the share-link unlock prompt: ${err.message}`)
     return false
   }
   if (!payload) return false
-  // `attachSharedWorkspace` does the id + (sanitised-)name collision
-  // check AND the write inside one Web Lock, so a sibling-tab
-  // `createWorkspace` racing the dialog can't slip a same-name twin
-  // past us. The dialog already gave inline feedback for the common
-  // path; these alerts only surface a collision a sibling tab snuck
-  // in while the user was typing.
+  // The check and the write share one Web Lock; the dialog already reported
+  // the common collisions inline.
   const result = await attachSharedWorkspace({
     id: payload.id,
     name: payload.name,
@@ -181,45 +122,24 @@ async function handleShareHashIfPresent() {
     return false
   }
   if (result.status === 'name-collision') {
-    // `existing` is null when the sanitised name was empty (the dialog
-    // rejects empty input, but a hostile payload could ship `n: '   '`).
-    // Generic message rather than an empty-string fallback.
+    // `existing` is null for a name that sanitises to empty (a hostile payload).
     const existingName = result.existing?.name
     alert(existingName
       ? `A workspace named "${existingName}" already exists. Open the share link again and pick a different name.`
       : 'The shared workspace name is empty or invalid. Ask the sender to re-share with a real name.')
     return false
   }
-  // `switchToWorkspace` re-renders the sidebar at its tail, so skip the
-  // explicit pre-render — it would just duplicate the OPFS scan and the
-  // bundle-findings indexing kick.
+  // switchToWorkspace renders the sidebar itself.
   if (result.workspace?.id) await switchToWorkspace(result.workspace.id)
   else await renderSidebar()
   return true
 }
 
-// `#finding=<id>[&v=<hints>]` → open the report or workspace holding
-// that finding, un-hide it (its triage bucket, and the toolbar filters
-// if they exclude it) and scroll it into view with a brief ring. The counterpart to the per-finding Link button; see
-// `client/finding-link.js` for the fragment format (`v=` packs two
-// 3-byte digests, not names) and `view/finding-link{,-nav}.js` for the
-// resolution rules — including the scan that finds the finding in
-// another report when neither hint matches.
-//
-// The fragment is stripped BEFORE the first await, same as the share
-// handler above, for two reasons that happen to coincide: it makes a
-// re-entrant hashchange a no-op (a second dispatch reads an empty
-// hash), and it keeps the address bar honest — the app reflects no
-// other navigation in the URL, so a fragment left behind would turn
-// every later "copy this URL" into a link to whatever finding the user
-// arrived on hours ago.
-//
-// Unlike the share link, a miss is NOT terminal: the caller falls
-// through to the ordinary last-file restore, so a link to a finding the
-// user doesn't hold leaves them where they usually start rather than on
-// an empty drop zone. `alert` (not a silent console warn) because a
-// pasted link doing nothing visible is indistinguishable from a broken
-// app.
+// `#finding=<id>[&v=<hints>]` (client/finding-link.js): open, un-hide and
+// reveal that finding (view/finding-link-nav.js). The fragment is stripped
+// before the first await, so a re-entrant hashchange reads an empty hash and
+// a later copied URL doesn't point at it. A miss alerts (a link doing
+// nothing looks broken) and falls through to the last-file restore.
 async function handleFindingHashIfPresent() {
   const ref = extractFindingRef()
   if (!ref) return false
@@ -234,26 +154,11 @@ async function handleFindingHashIfPresent() {
   return true
 }
 
-// Boot continuation — everything that touches encrypted data,
-// triage-sync sessions, OPFS reads, or the UI's restored state.
-// Gated behind `bootContinuationRan` so it runs once per page load,
-// whether via the boot IIFE (vault disabled or unlocked at boot) or
-// the vault-state-change listener (unlock dismissed at boot, user
-// later unlocks via the overlay).
-//
-// While `bootContinuationRan === false` and the vault is locked,
-// NOTHING operational runs in this tab:
-//   - secure-storage cache is empty → workspaces / sync sessions
-//     appear empty, no last-file pointer, etc.
-//   - The sidebar isn't rendered, so OPFS is never scanned.
-//   - triage-sync never opens a WS connection (sessions open only via
-//     a workspace's `openSession`, i.e. switchToWorkspace, part of
-//     this continuation).
-//   - objstore-presence never sees a session, so no auto-download
-//     fires — the locked-vault saveFileBytes rejection is
-//     defensive-only.
-//   - The lock overlay is the only interactive surface; the rest
-//     of the app is effectively suspended.
+// Everything touching encrypted data, sync sessions, OPFS or the restored
+// view, once per page load: from the boot IIFE, or on a later unlock. Until
+// then, with the vault locked, nothing operational runs in this tab (no
+// sidebar or OPFS scan, no sync connection, no auto-download); the lock
+// overlay is the only interactive surface.
 let bootContinuationRan = false
 
 async function continueBoot() {
@@ -264,12 +169,10 @@ async function continueBoot() {
   try {
     await restoreInitialView()
   } finally {
-    // The static welcome stays hidden while storage and the saved view
-    // load. Restoring a report adds `.hidden`; only an empty result
-    // reveals the welcome once this initial-load gate is removed.
+    // The welcome stays hidden while the saved view loads; a restored
+    // report adds `.hidden` of its own.
     dropZone.hidden = false
-    // The full index walks the sidebar asked for start now, behind the
-    // view restored (index-walks.js).
+    // The sidebar's full index walks start behind the restored view.
     releaseIndexWalks()
   }
 }
@@ -277,47 +180,27 @@ async function continueBoot() {
 async function restoreInitialView() {
   const generation = currentViewGeneration()
   const isCurrent = () => generation === currentViewGeneration() && !isManagedUiMode()
-  // Managed mode owns its reports on the server. Do not touch the local
-  // encrypted cache, OPFS listing, or local triage until the user explicitly
-  // switches that managed server into its local/offline surface.
+  // Managed mode's reports are on the server: no local cache, OPFS or triage
+  // until the user switches to its local surface.
   if (isManagedUiMode()) {
     await renderSidebar()
     return
   }
-  // Hydrate the encrypted-localStorage cache (workspaces, sync
-  // sessions, repoUrls, fileCounts, lastFile). MUST run BEFORE
-  // renderSidebar / restore-last-file — those paths read the cache
-  // synchronously via getItem(). No-op fast path when the vault is
-  // disabled (everything was plaintext on disk, cached verbatim).
+  // The sidebar and last-file restore read this cache synchronously.
   await hydrateSecureStorage()
   if (!isCurrent()) return
-  // Snapshot the now-decrypted workspaces as "already observed" so the
-  // first sibling-tab storage event doesn't fire phantom
-  // workspace-created listeners for entries present in storage at boot.
+  // Workspaces present at boot are not "created" by the first storage event.
   syncObservedAfterHydrate()
-  // Sync chunk loading is driven by the sidebar's `renderSyncStatus`
-  // (called from `renderSidebar` below): it loads `ui/client-sync.js`
-  // only when the status button is visible (usable URL + ≥1 workspace)
-  // and the user hasn't opted out. Boot does NOT pre-load — a user with
-  // no workspaces never downloads the sync payload.
-  // Restore the small, known links set before findings can paint. The sidebar's
-  // full-library walks start in the background once the view is restored
-  // (continueBoot); awaiting them instead would put every unrelated report read
-  // on the initial view's critical path.
+  // The known links index before findings paint; the full walks wait
+  // (continueBoot) so unrelated reads stay off the critical path.
   await Promise.all([
     renderSidebar(),
     ensureKnownLinkedFindingsIndexed().catch((err) => console.warn('initial linked findings:', err)),
   ])
   if (!isCurrent()) return
-  // Share-link hash takes precedence over the last-file restore so
-  // the user lands on the freshly-attached workspace, not whatever
-  // they were looking at last time.
+  // A share or finding link takes precedence over the last-file restore.
   const attached = await handleShareHashIfPresent()
   if (attached || !isCurrent()) return
-  // Finding deep link — same precedence over the last-file restore, and
-  // for the same reason: land the user on what the LINK names, not on
-  // whatever they had open last time. Falls through on a miss (see the
-  // handler) so the restore below still runs.
   const revealed = await handleFindingHashIfPresent()
   if (revealed || !isCurrent()) return
   const last = getSecureItem(LAST_FILE_KEY)
@@ -328,16 +211,8 @@ async function restoreInitialView() {
       const id = last.slice(3)
       if (listWorkspaces().some((w) => w.id === id)) await switchToWorkspace(id)
     } else if (last.startsWith('b:')) {
-      // Bundle restore — mirrors the bundle-only-drop branch in
-      // `addFiles` / the sidebar's `bundleEl` click handler. The
-      // `renderSidebar()` above populated the bundles list, so
-      // membership is checked synchronously; missing entries (deleted
-      // in another tab between sessions) fall through to the empty
-      // drop-zone. A space-delimited suffix encodes the active tab
-      // (terminal / treemap / graph / compare / advisories / issues / code /
-      // search); an
-      // unknown / missing suffix defaults to Overview (also catching
-      // old persisted suffixes for removed values).
+      // `b:<integrity>[ <tab>]`, an unknown tab as Overview; a bundle
+      // deleted meanwhile leaves the drop zone.
       const rest = last.slice(2)
       const spaceIdx = rest.indexOf(' ')
       const integrity = spaceIdx >= 0 ? rest.slice(0, spaceIdx) : rest
@@ -366,51 +241,25 @@ async function restoreInitialView() {
   }
 }
 
-// Vault state transitions:
-//   1. First unlock after a locked-boot → run the deferred
-//      continueBoot.
-//   2. Mid-session sibling-tab enable / re-key (we were running with
-//      no encryption or a different credential, vault now
-//      enabled-but-not-unlocked-here) → force reload. Our in-memory
-//      state (open WS sessions, decrypted `state.*` maps,
-//      secure-storage cache) is stale vs. the just-flipped storage
-//      shape and unsafe to keep operating against. The reload restarts
-//      this tab in the locked-boot state, overlay covering everything
-//      until unlock.
-//   3. Mid-session sibling-tab DISABLE (we were operational under an
-//      enabled vault, sibling just decrypted-and-cleared metadata) →
-//      force reload. Without it, our hydrate runs against sibling's
-//      mid-migration disk and `propagate*` listeners fire spurious
-//      per-workspace deletes as the cache transiently empties (envelope
-//      keys un-decryptable once sibling's `clearMetadata` storage event
-//      drops our sessionKey). `isDisablingInThisTab()` distinguishes
-//      this from our OWN `disableEncryption` — that user clicked Disable
-//      here and expects to continue in this tab.
-//   4. Any other transition (intra-tab disable, intra-tab unlock
-//      that didn't go through the boot-deferred path) just
-//      re-renders.
-//
-// `alert()` (single "OK") rather than `confirm()` for the reload
-// prompts: a decline path is a footgun — the lock overlay's opaque
-// backdrop covers everything, so the user can't usefully "stash unsaved
-// work" after declining. Acknowledgement-only avoids that trap while
-// still giving notice.
-// Initialize this baseline only after a confirmed mode permits local reads.
+// Vault state transitions: the first unlock after a locked boot runs
+// continueBoot. A sibling tab enabling or re-keying the vault, or disabling
+// it (not this tab's own disable, isDisablingInThisTab), reloads this tab:
+// its sessions, decrypted state and cache no longer match storage, and a
+// sibling's disable would otherwise fire spurious per-workspace deletes as
+// the cache empties. Anything else re-renders. The reload notice is an
+// alert, not a confirm: declining could do nothing useful under the overlay.
+// The baseline is set only once a confirmed mode permits local reads.
 let lastSeenEnabled = false
 let reloadPending = false
-// A managed → local transition hydrates the secure cache without changing
-// the vault itself. Reset this observer baseline before the next vault event
-// so unlocking a passkey in local mode is not mistaken for a sibling-tab
-// enable that requires a reload.
+// Managed → local hydrates the cache without changing the vault: reset the
+// baseline so a later passkey unlock isn't read as a sibling's enable.
 document.addEventListener('managed-client-mode-change', () => {
   lastSeenEnabled = !isManagedUiMode() && isEncryptionEnabled()
 })
 function scheduleReload(reason) {
   if (reloadPending) return
   reloadPending = true
-  // Defer to a microtask so the synchronous `render()` above paints the
-  // new vault state BEFORE the alert grabs the event loop — the user
-  // sees context for the reload.
+  // After the caller's render paints the new vault state.
   queueMicrotask(() => {
     alert(reason + ' This tab will reload to refresh its state. Any unsaved edits in this tab will be lost.')
     location.reload()
@@ -439,37 +288,11 @@ onVaultStateChange(async () => {
   }
 })
 
-// A share link opened in a FRESH tab rides the boot pipeline above
-// (`continueBoot` → `handleShareHashIfPresent`, off the initial
-// `location.hash`). But pasting one into the address bar of an
-// ALREADY-OPEN tab only mutates the fragment — no navigation, so boot
-// never re-runs and the link used to silently do nothing. Re-run the
-// same handler on `hashchange` so it attaches in place.
-//
-// Gated on `bootContinuationRan`: while the vault is enabled-but-locked
-// the continuation hasn't run (workspaces un-hydrated, lock overlay
-// up), so leave the hash in the URL for the post-unlock `continueBoot`
-// to pick up rather than stacking the unlock dialog over the overlay
-// against an empty workspaces list. No re-entrancy flag is needed —
-// `handleShareHashIfPresent` strips the fragment synchronously before
-// its first await, so a same-hash re-entry reads an empty hash and
-// no-ops, and a second DISTINCT link arriving mid-dialog trips the
-// dialog's own modal-conflict guard. The same strip also covers a
-// hashchange landing mid-boot: `bootContinuationRan` flips true at
-// `continueBoot`'s top, BEFORE boot's own one-shot call, so the two can
-// race — but only one sees the (then-stripped) payload, leaving at
-// worst a redundant last-file restore, never a double-attach. The
-// handler swallows its expected failures (dialog-open, collisions)
-// internally; the catch here is a
-// backstop so an unexpected rejection in an event listener doesn't
-// surface as an unhandledrejection.
-//
-// Finding links ride the same listener. `handleShareHashIfPresent`
-// only strips (and only returns true) for a fragment that actually
-// carried a `share=` payload, so chaining is safe: a `#finding=` hash
-// falls straight through to the second handler, and a share link that
-// failed leaves an already-stripped hash the second handler reads as
-// empty.
+// A link pasted into an open tab only changes the fragment, so its handlers
+// run again here. While locked (before continueBoot) the hash waits for the
+// unlock. Each handler strips its fragment before its first await, so a
+// re-entry or a hashchange racing boot finds it gone; a `#finding=` hash
+// passes the share handler untouched.
 window.addEventListener('hashchange', () => {
   if (!bootContinuationRan || isManagedUiMode()) return
   ;(async () => {
@@ -479,20 +302,14 @@ window.addEventListener('hashchange', () => {
 })
 
 ;(async () => {
-  // Legacy-origin redirect: deepaudit.dev users with no local data
-  // bounce silently to triage.space; users with data get a confirm
-  // dialog. Either resolves to a navigation that supersedes this boot,
-  // so a `true` return short-circuits the file-restore below — running
-  // it would re-touch OPFS / state.* in a tab about to unload.
+  // deepaudit.dev redirects to triage.space; this tab is about to unload.
   if (await runLegacyOriginCheck()) return
   await ensureClientMode()
   lastSeenEnabled = !isManagedUiMode() && isEncryptionEnabled()
   try {
-    // In WCO mode the sidebar header is the surface the OS controls
-    // overlay onto, and CSS hides the collapse toggle there; collapsing it
-    // would strand close / min / max over a 32px strip with no way back,
-    // so the persisted flag applies only outside WCO — re-applied as the
-    // user collapses or restores the title bar without reloading.
+    // Under window-controls-overlay the sidebar header carries the OS
+    // controls and has no collapse toggle, so the saved collapse applies
+    // only outside it, re-applied as the title bar is toggled.
     const appHeader = window.matchMedia?.('(display-mode: window-controls-overlay)')
     const applySavedCollapse = () => {
       let saved = false
@@ -501,20 +318,12 @@ window.addEventListener('hashchange', () => {
     }
     applySavedCollapse()
     appHeader?.addEventListener('change', applySavedCollapse)
-    const isAppHeader = appHeader?.matches
-    // Installed-PWA modes (standalone OR window-controls-overlay) —
-    // launched as a standalone app, not a browser tab, so app-level
-    // page zoom (ctrl/cmd+wheel, ctrl/cmd+ +/-/0, touch-pinch) should be
-    // inert as in any native app. Browser tabs keep the default.
-    // matchMedia on display-mode is the standard installed-PWA detector.
-    const isInstalled = window.matchMedia?.('(display-mode: standalone)').matches || isAppHeader
+    // An installed app, as a native one, doesn't page-zoom (wheel, keys, pinch).
+    const isInstalled = window.matchMedia?.('(display-mode: standalone)').matches || appHeader?.matches
     if (isInstalled) {
       const viewport = document.querySelector('meta[name="viewport"]')
       if (viewport) viewport.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
-      // Desktop ctrl/cmd+wheel = browser zoom; passive: false so
-      // preventDefault actually inhibits it. Canvas / scroll-container
-      // wheel handlers run first (no capture phase here) so their pan /
-      // zoom still fires; we just stop the browser from also zooming.
+      // Not passive, so preventDefault holds; element handlers still run first.
       window.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }, { passive: false })
       window.addEventListener('keydown', (e) => {
         if (!(e.ctrlKey || e.metaKey)) return
@@ -522,14 +331,8 @@ window.addEventListener('hashchange', () => {
       })
     }
   } catch {}
-  // Vault enabled-but-locked at boot: skip continueBoot and let the
-  // lock overlay (`view/lock-overlay.js`) be the sole unlock affordance.
-  // Clicking the overlay button opens the unlock dialog; on success the
-  // vault-state-change listener above kicks continueBoot. While locked,
-  // no operational work happens here — no WS connection, no sidebar
-  // render, no auto-download. The dialog appears only on user intent
-  // (not auto-opened) so it doesn't stack two unlock surfaces over the
-  // overlay.
+  // Locked at boot: the lock overlay alone unlocks, and the vault listener
+  // above then runs continueBoot.
   if (!isManagedUiMode() && isEncryptionEnabled() && !isUnlocked()) return
   await continueBoot()
 })()
