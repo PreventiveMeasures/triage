@@ -188,8 +188,9 @@ const REPOSITORY_CODE_ERRORS = {
   502: 'GitHub couldn’t be reached.',
 }
 
-const requestRepository = (part, params, signal) =>
-  request(`/api/admin/repositories/${part}?${new URLSearchParams(params)}`, REPOSITORY_CODE_ERRORS, json, signal)
+// A repository's `part`, its failures named by `errors`.
+const requestRepository = (part, params, signal, errors = REPOSITORY_CODE_ERRORS) =>
+  request(`/api/admin/repositories/${part}?${new URLSearchParams(params)}`, errors, json, signal)
 
 // A repository's directory at a revision (`ref`: a commit, `heads/<branch>`,
 // `tags/<tag>`, or '' for the default branch's head), for the code viewer:
@@ -224,9 +225,8 @@ const REPOSITORY_HISTORY_ERRORS = {
 // The History tab's commits, a `page` at a time from a revision, or across
 // the most recently updated branches (`all`), on from those `from` names.
 export function fetchRepositoryHistory(repoId, ref, path, { page = 1, all = false, fresh = false, from = null, signal } = {}) {
-  return request(`/api/admin/repositories/history?${new URLSearchParams({ repoId, ref, path, page, ...all ? { all: 'true' } : {}, ...fresh ? { fresh: 'true' } : {},
-    ...from ? { from: from.join(',') } : {} })}`,
-    REPOSITORY_HISTORY_ERRORS, json, signal)
+  return requestRepository('history', { repoId, ref, path, page, ...all ? { all: 'true' } : {}, ...fresh ? { fresh: 'true' } : {},
+    ...from ? { from: from.join(',') } : {} }, signal, REPOSITORY_HISTORY_ERRORS)
 }
 
 const REPOSITORY_CHANGES_ERRORS = {
@@ -239,13 +239,12 @@ const REPOSITORY_CHANGES_ERRORS = {
 // The files each of the commits `shas` names changes within `path`, as
 // Replay plays them, fifty commits at most.
 export function fetchRepositoryChanges(repoId, path, shas, { signal } = {}) {
-  return request(`/api/admin/repositories/changes?${new URLSearchParams({ repoId, path, shas: shas.join(',') })}`,
-    REPOSITORY_CHANGES_ERRORS, json, signal)
+  return requestRepository('changes', { repoId, path, shas: shas.join(',') }, signal, REPOSITORY_CHANGES_ERRORS)
 }
 
 // The files commit `commit` holds within `path`, which Replay starts from.
 export function fetchRepositoryTree(repoId, path, commit, { signal } = {}) {
-  return request(`/api/admin/repositories/tree?${new URLSearchParams({ repoId, path, commit })}`, REPOSITORY_CHANGES_ERRORS, json, signal)
+  return requestRepository('tree', { repoId, path, commit }, signal, REPOSITORY_CHANGES_ERRORS)
 }
 
 const REPOSITORY_ISSUES_ERRORS = {
@@ -287,7 +286,7 @@ const REPOSITORY_ITEM_ERRORS = {
 
 // An issue or pull request, as its popup shows it, with its description.
 export function fetchRepositoryItem(repoId, number, { signal } = {}) {
-  return request(`/api/admin/repositories/item?${new URLSearchParams({ repoId, number })}`, REPOSITORY_ITEM_ERRORS, json, signal)
+  return requestRepository('item', { repoId, number }, signal, REPOSITORY_ITEM_ERRORS)
 }
 
 const PULL_DEPENDENCIES_ERRORS = {
@@ -304,13 +303,12 @@ const PULL_DEPENDENCIES_ERRORS = {
 // requests page it is listed on names.
 const pullDependencyFlags = ({ review, listed }) => ({ ...review ? { review: '1' } : {}, ...listed ? { listed: '1' } : {} })
 export function fetchPullDependencies(repoId, number, { review = false, listed = false, signal } = {}) {
-  return request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, number, ...pullDependencyFlags({ review, listed }) })}`,
-    PULL_DEPENDENCIES_ERRORS, json, signal)
+  return requestRepository('pull-dependencies', { repoId, number, ...pullDependencyFlags({ review, listed }) }, signal, PULL_DEPENDENCIES_ERRORS)
 }
 // Several pull requests' at once, by number: each answer, or why GitHub failed it.
 export async function fetchPullDependenciesOf(repoId, numbers, { review = false, listed = false, signal } = {}) {
-  const { pulls, users, deltas } = await request(`/api/admin/repositories/pull-dependencies?${new URLSearchParams({ repoId, numbers: numbers.join(','), ...pullDependencyFlags({ review, listed }) })}`,
-    PULL_DEPENDENCIES_ERRORS, json, signal)
+  const { pulls, users, deltas } = await requestRepository('pull-dependencies', { repoId, numbers: numbers.join(','), ...pullDependencyFlags({ review, listed }) },
+    signal, PULL_DEPENDENCIES_ERRORS)
   return pullAnswers(pulls, users, deltas)
 }
 // Each with the users the answer names and the counted `deltas`.
@@ -408,8 +406,8 @@ export function prefetchActivity(repoId, tab, { state = 'open', weeks = 4 } = {}
 // The Pulse tab's pull requests and issues of the days `from` to `to`
 // (YYYY-MM-DD; none, on) and of any of `authors` (GitHub logins).
 export function fetchRepositoryPulseItems(repoId, weeks, { from, to = null, authors = [] }, { signal } = {}) {
-  const query = new URLSearchParams({ repoId, weeks, from, ...to === null ? {} : { to }, ...authors.length > 0 ? { authors: authors.join(',') } : {} })
-  return request(`/api/admin/repositories/pulse/items?${query}`, REPOSITORY_PULSE_ERRORS, json, signal)
+  return requestRepository('pulse/items', { repoId, weeks, from, ...to === null ? {} : { to }, ...authors.length > 0 ? { authors: authors.join(',') } : {} },
+    signal, REPOSITORY_PULSE_ERRORS)
 }
 
 // A version's manifest and files; with `patch`, its files alone, as the
