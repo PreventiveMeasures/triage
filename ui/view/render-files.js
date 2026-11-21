@@ -48,6 +48,7 @@ export function renderTreeView(treeData, findingCounts) {
     </span>`
   }
 
+  const empty = files.length === 0 ? html`<div class="tree-table-empty">No files match the search.</div>` : nothing
   const toolbar = html`<div class="tree-toolbar">
     <view-mode-buttons modes="table,list" kind="files"></view-mode-buttons>
     <div class="search-row">
@@ -63,15 +64,11 @@ export function renderTreeView(treeData, findingCounts) {
       && (!search || state.filesSelectedFile.toLowerCase().includes(search))
       ? state.filesSelectedFile
       : null
-    const wrapperClass = selected
-      ? 'tree-view tree-view-table with-details'
-      : 'tree-view tree-view-table'
-    const layoutClass = selected ? 'tree-table-layout open' : 'tree-table-layout'
-    return html`<div class=${wrapperClass}>
+    return html`<div class=${selected ? 'tree-view tree-view-table with-details' : 'tree-view tree-view-table'}>
       ${toolbar}
-      <div class=${layoutClass}>
+      <div class=${selected ? 'tree-table-layout open' : 'tree-table-layout'}>
         <div class="tree-table-list">
-          ${files.length === 0 ? html`<div class="tree-table-empty">No files match the search.</div>` : nothing}
+          ${empty}
           ${files.map((file) => {
             const issues = totalFindings(findingCounts.get(file))
             const isSel = file === selected
@@ -102,7 +99,7 @@ export function renderTreeView(treeData, findingCounts) {
   // List mode — card layout, filtered by the toolbar's search input.
   return html`<div class="tree-view">
     ${toolbar}
-    ${files.length === 0 ? html`<div class="tree-table-empty">No files match the search.</div>` : nothing}
+    ${empty}
     ${files.map((file) => {
       const entry = treeData[file]
       const incoming = importedBy.get(file) ?? []
@@ -144,22 +141,16 @@ function treeIndex(treeData) {
 // A file's hashes / imports / imported-by / exports, in the list card and
 // the table's details panel alike.
 function fileSections(entry, incoming, linkOrText) {
+  const sections = [['imports', entry.imports, linkOrText], ['imported by', incoming, linkOrText],
+    ['exports', entry.exports, (ex) => html`<span class="name">${ex}</span>`]]
   return html`${(entry.fileHash || entry.treeHash) ? html`<div class="tree-hashes hashes">
       ${entry.fileHash ? html`<div class="tree-hash">file: ${entry.fileHash}</div>` : nothing}
       ${entry.treeHash ? html`<div class="tree-hash">tree: ${entry.treeHash}</div>` : nothing}
-    </div>` : nothing}
-    ${entry.imports?.length > 0 ? html`<div class="tree-section">
-      <span class="tree-section-label">imports</span>
-      <ul>${entry.imports.map((imp) => html`<li>${linkOrText(imp)}</li>`)}</ul>
-    </div>` : nothing}
-    ${incoming.length > 0 ? html`<div class="tree-section">
-      <span class="tree-section-label">imported by</span>
-      <ul>${incoming.map((f) => html`<li>${linkOrText(f)}</li>`)}</ul>
-    </div>` : nothing}
-    ${entry.exports?.length > 0 ? html`<div class="tree-section">
-      <span class="tree-section-label">exports</span>
-      <ul>${entry.exports.map((ex) => html`<li><span class="name">${ex}</span></li>`)}</ul>
-    </div>` : nothing}`
+    </div>` : nothing}${sections.map(([label, items, item]) => html`
+    ${items?.length > 0 ? html`<div class="tree-section">
+      <span class="tree-section-label">${label}</span>
+      <ul>${items.map((x) => html`<li>${item(x)}</li>`)}</ul>
+    </div>` : nothing}`)}`
 }
 
 // The table view's details panel for the selected file.

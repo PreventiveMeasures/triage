@@ -68,17 +68,13 @@ const slideBucket = (f) => {
 // grouped under `keyOf(file)` (several install paths can name one file).
 function findingsByFile(files, mode, keyOf = (file) => file) {
   const result = new Map()
-  for (const [file, findings] of files) {
-    const filtered = findings.filter((f) => slideBucket(f) === mode)
-    if (filtered.length === 0) continue
-    for (const f of filtered) pushTo(result, keyOf(file), f)
-  }
+  for (const [file, findings] of files) for (const f of findings) if (slideBucket(f) === mode) pushTo(result, keyOf(file), f)
   return result
 }
 
 const countOf = (byFile) => [...byFile.values()].reduce((n, fs) => n + fs.length, 0)
 const countsLine = (bucket) => `${plural(bucket.files.size, 'file')} · ${plural(bucket.reports.size, 'report')}`
-export const githubUrl = (slug) => /^https?:/iu.test(slug) ? slug : `https://github.com/${slug}`
+const githubUrl = (slug) => /^https?:/iu.test(slug) ? slug : `https://github.com/${slug}`
 
 function severityCounts(findings) {
   const counts = { critical: 0, high: 0, medium: 0, low: 0, high_bug: 0, bug: 0, informational: 0 }
@@ -89,22 +85,50 @@ function severityCounts(findings) {
   return { counts, present: SEVERITIES.filter((s) => counts[s] > 0) }
 }
 
-// A list row's findings · files · reports line, and its severity chips.
-export const rowMeta = (bucket) =>
-  html`<span class="packages-row-meta">${plural(bucket.findings.length, 'finding')} · ${countsLine(bucket)}</span>`
-
-export function rowChips(bucket) {
+// One list row: a click selects it (`data-select-<kind>`), `Issues →`
+// opens the slide directly. `name` is its name line, `label` what the
+// button names, and a package's `version` (`''` for the unknown one) the
+// attributes saying which; under the name, the findings · files · reports
+// line, and the severity chips beside it.
+export function entityRow(kind, { classes, key, version = nothing, name, label, bucket }) {
+  const { stem } = KINDS[kind]
   const { counts, present } = severityCounts(bucket.findings)
-  return present.length > 0 ? html`<div class="packages-row-chips">
+  return staticHtml`<li
+    class=${classes}
+    data-select-${stem}=${key}
+    data-select-${stem}-version=${version}
+  >
+    <span class="packages-dot" style=${styleMap({ background: pkgColor(key) })}></span>
+    <div class="packages-row-text">
+      ${name}
+      <span class="packages-row-meta">${plural(bucket.findings.length, 'finding')} · ${countsLine(bucket)}</span>
+    </div>
+    ${present.length > 0 ? html`<div class="packages-row-chips">
       ${present.map((s) => html`<span class=${`tree-count-chip ${s}`} data-tooltip=${s.replaceAll('_', ' ')}>${counts[s]}</span>`)}
-    </div>` : nothing
+    </div>` : nothing}
+    <button
+      type="button"
+      class="packages-row-issues"
+      data-${stem}-row-issues=${key}
+      data-${stem}-row-issues-version=${version}
+      aria-label=${`Open issues for ${label}`}
+    >Issues →</button>
+  </li>`
 }
 
-// The page: header with its counts and toolbar, then the list (`rows`)
-// and, for the open row, its details. `filtered` is every row in the
-// triage bucket on screen, `visible` those the search leaves.
-export function entityPage(kind, { indexing, filtered, visible, triageCounts, rows, details }) {
+// The Overview's row linking a repository on GitHub.
+export const repositoryMeta = (slug, label = slug) =>
+  html`<dt>Repository</dt><dd class="mono"><a href=${githubUrl(slug)} target="_blank" rel="noopener">${label}</a></dd>`
+
+// The page: header with its counts and toolbar, then the list and, for the
+// open row, its details. `filtered` is every row in the triage bucket on
+// screen; `rows(visible)` draws those the search leaves (by key, or by
+// `labelOf` it), in the order picked, which ties by `labelOf` too.
+export function entityPage(kind, { indexing, filtered, triageCounts, rows, details, labelOf = (key) => key }) {
   const { title, one, many, stem } = KINDS[kind]
+  const query = state[`${many}SearchQuery`].trim().toLowerCase()
+  const visible = query ? filtered.filter(([key]) => key.toLowerCase().includes(query) || labelOf(key).toLowerCase().includes(query)) : filtered.slice()
+  sortEntities(visible, state[`${many}SortBy`], labelOf)
   const totalFindings = filtered.reduce((n, [, bucket]) => n + bucket.findings.length, 0)
   const totalReports = new Set(filtered.flatMap(([, bucket]) => [...bucket.reports]))
   const count = plural(filtered.length, one, many)
@@ -131,7 +155,7 @@ export function entityPage(kind, { indexing, filtered, visible, triageCounts, ro
         ? empty(`No ${many} match "${state[`${many}SearchQuery`]}".`)
         : html`<div class=${details ? 'packages-layout open' : 'packages-layout'}>
           <ul class="packages-list">
-            ${rows}
+            ${rows(visible)}
           </ul>
           ${details ? staticHtml`<aside class="packages-details" id=${`${many}-details`}>
             <header class="packages-details-bar">
@@ -231,9 +255,9 @@ export function entitySlide(kind, { name, key, files, bucket, keyOf }) {
   </div>`
 }
 
-// In-place sort by the user-selected key, ties by `labelOf` (the row's key
-// by default) so the list stays stable across renders.
-export function sortEntities(arr, sortBy, labelOf = (key) => key) {
+// In-place sort by the user-selected key, ties by `labelOf` so the list
+// stays stable across renders.
+function sortEntities(arr, sortBy, labelOf) {
   const size = sortBy === 'files-desc' ? (b) => b.files.size
     : sortBy === 'reports-desc' ? (b) => b.reports.size
     : sortBy === 'name-asc' ? () => 0
@@ -272,16 +296,12 @@ export function renderPackagesView() {
   // a lone remaining slot; otherwise the details cover the whole package.
   const selected = state.selectedPackage
   const selectedEntry = selected ? filtered.find(([pkg]) => pkg === selected) ?? null : null
-  let selectedVersionEntry = null
-  if (selectedEntry) {
-    const versionList = selectedEntry[1].versions
-    selectedVersionEntry = versionList.find(([v]) => v === state.selectedPackageVersion) ?? null
-    if (!selectedVersionEntry && versionList.length === 1) selectedVersionEntry = versionList[0]
-  }
+  const versionList = selectedEntry?.[1].versions ?? []
+  const selectedVersionEntry = versionList.find(([v]) => v === state.selectedPackageVersion) ?? (versionList.length === 1 ? versionList[0] : null)
   const selectedBucket = selectedVersionEntry?.[1] ?? selectedEntry?.[1] ?? null
   // `undefined` for the package-wide aggregate, unlike `null`'s slot.
   const version = selectedVersionEntry ? selectedVersionEntry[0] : undefined
-  const rawBucket = selectedEntry ? getPackagesIndex().get(selectedEntry[0]) : null
+  const rawBucket = selectedEntry ? buckets.get(selectedEntry[0]) : null
   const rawFiles = (version === undefined ? rawBucket?.files : rawBucket?.byVersion.get(version)?.files) ?? new Map()
   if (selectedEntry && state.packageDetailsTab === 'issues') {
     const pkg = selectedEntry[0]
@@ -289,77 +309,47 @@ export function renderPackagesView() {
       files: rawFiles, bucket: selectedBucket, keyOf: (file) => pkgRelativePath(pkg, file) })
   }
   // The search narrows the list only: the open row stays open.
-  const searchQuery = state.packagesSearchQuery.trim().toLowerCase()
-  const visible = searchQuery ? filtered.filter(([pkg]) => pkg.toLowerCase().includes(searchQuery)) : filtered.slice()
-  sortEntities(visible, state.packagesSortBy)
   return entityPage('package', {
-    indexing: buckets.size === 0, filtered, visible, triageCounts,
-    rows: repeat(buildVisibleRows(visible), keyForVisibleRow, (row) => renderPackageRow(row, selected, state.selectedPackageVersion)),
+    indexing: buckets.size === 0, filtered, triageCounts,
+    rows: (visible) => repeat(buildVisibleRows(visible), keyForVisibleRow, (row) => renderPackageRow(row, selected, state.selectedPackageVersion)),
     details: selectedEntry && entityDetails('package', { files: rawFiles, bucket: selectedBucket,
       meta: packageMeta(selectedEntry[0], version, rawBucket), fileLabel: (file) => pkgRelativePath(selectedEntry[0], file) }),
   })
 }
 
 // The `<ul>`'s rows: a single-version package as one row; a multi-version
-// one as its latest version (`latest`, with the chevron) and, expanded
-// (`state.expandedPackages`), the older ones under it (`other`).
+// one as its latest version (`latest`, with the chevron counting the
+// `others`) and, expanded (`state.expandedPackages`), the older ones under
+// it (`other`).
 function buildVisibleRows(visible) {
-  const rows = []
-  for (const [pkg, { versions }] of visible) {
-    if (versions.length <= 1) {
-      const [version, bucket] = versions[0]
-      rows.push({ kind: 'single', pkg, version, bucket, totalVersions: 1 })
-      continue
-    }
+  return visible.flatMap(([pkg, { versions }]) => {
+    if (versions.length === 1) return [{ kind: 'single', pkg, version: versions[0][0], bucket: versions[0][1] }]
     const expanded = state.expandedPackages.has(pkg)
-    versions.forEach(([version, bucket], i) => {
-      if (i === 0) rows.push({ kind: 'latest', pkg, version, bucket, totalVersions: versions.length, expanded })
-      else if (expanded) rows.push({ kind: 'other', pkg, version, bucket, totalVersions: versions.length })
-    })
-  }
-  return rows
+    return (expanded ? versions : versions.slice(0, 1)).map(([version, bucket], i) =>
+      ({ kind: i === 0 ? 'latest' : 'other', pkg, version, bucket, others: versions.length - 1, expanded }))
+  })
 }
 
 // Keyed per version, so a package's `latest` and `other` rows don't
 // collide when expansion flips.
 const keyForVisibleRow = (row) => row.version === null ? `${row.kind}:${row.pkg}` : `${row.kind}:${row.pkg}@${row.version}`
 
-// One package row: click selects (`data-select-package`); `Issues →` opens
-// the slide directly. A `single` row (often the unknown `null` version)
+// One package row. A `single` row (often the unknown `null` version)
 // always matches the selection; a multi-version row matches on its pinned
 // version. `other` rows indent under their `latest` (CSS).
-function renderPackageRow(row, selectedPkg, selectedVer) {
-  const { kind, pkg, version, bucket } = row
-  const classes = {
+function renderPackageRow({ kind, pkg, version, bucket, others, expanded }, selectedPkg, selectedVer) {
+  const label = version === null ? pkg : `${pkg}@${version}`
+  const classes = classMap({
     selected: pkg === selectedPkg && (kind === 'single' || version === selectedVer),
     'packages-row-latest': kind === 'latest',
     'packages-row-other': kind === 'other',
-  }
-  const versionAttr = version === null ? '' : version
-  return html`<li
-    class=${classMap(classes)}
-    data-select-package=${pkg}
-    data-select-package-version=${versionAttr}
-  >
-    <span class="packages-dot" style=${styleMap({ background: pkgColor(pkg) })}></span>
-    <div class="packages-row-text">
-      <div class="packages-name-line">
-        <span class="packages-name" data-tooltip-truncated data-tooltip=${version === null ? pkg : `${pkg}@${version}`}>
+  })
+  return entityRow('package', { classes, key: pkg, version: version ?? '', label, bucket, name: html`<div class="packages-name-line">
+        <span class="packages-name" data-tooltip-truncated data-tooltip=${label}>
           ${pkg}${version === null ? nothing : html`<span class="packages-version">@${version}</span>`}
         </span>
-        ${kind === 'latest' ? renderExpandButton(pkg, row.expanded, row.totalVersions - 1) : nothing}
-      </div>
-      ${rowMeta(bucket)}
-    </div>
-    ${rowChips(bucket)}
-    <button
-      type="button"
-      class="packages-row-issues"
-      data-package-row-issues=${pkg}
-      data-package-row-issues-version=${versionAttr}
-      aria-label=${version === null ? `Open issues for ${pkg}` : `Open issues for ${pkg}@${version}`}
-    >Issues →</button>
-  </li>`
+        ${kind === 'latest' ? renderExpandButton(pkg, expanded, others) : nothing}
+      </div>` })
 }
 
 // The headline row's chevron: "+N versions" counts the hidden ones, "Hide"
@@ -386,7 +376,7 @@ function packageMeta(pkg, version, rawBucket) {
   const repoSlug = repoSet && repoSet.size === 1 ? [...repoSet][0] : null
   return html`<dt>Package</dt><dd class="mono">${pkg}</dd>
     ${version ? html`<dt>Version</dt><dd class="mono">${version}</dd>` : nothing}
-    ${repoSlug ? html`<dt>Repository</dt><dd class="mono"><a href=${githubUrl(repoSlug)} target="_blank" rel="noopener">${repoSlug}</a></dd>` : nothing}`
+    ${repoSlug ? repositoryMeta(repoSlug) : nothing}`
 }
 
 // A file as the path inside its package (`lib/index.js`, not
