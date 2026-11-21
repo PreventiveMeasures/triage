@@ -102,12 +102,15 @@ export const versionKey = pkg => `${pkg.name}@${pkg.version ?? ''}\0${pkg.patch?
 // (`commented`), and its reviewers (`reviewers`, checkedReviewers). And
 // whether its package manager alone asks for it (`unreached`). And the
 // version the host's reviewed dependencies name to review it against
-// (`base`, its package's name and version), where they name one.
+// (`base`, its package's name and version), where they name one. And the
+// reader's own latest published review of it, whether it counts or not
+// (`yours`: its verdict, and whether it is partial).
 function checkedVersion(pkg) {
   if (typeof pkg?.name !== 'string') return []
-  const { was, base, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patch, unreached, ...version } = pkg
+  const { was, base, reviews, rejected, commented, reviewers, baseline, reviewed, unsupported, patch, unreached, yours, ...version } = pkg
   const by = checkedReviewers(reviewers)
   return [{ ...version, ...Array.isArray(was) && was.length > 0 && was.every(other => typeof other === 'string') ? { was } : {},
+    ...VERDICTS.has(yours?.status) ? { yours: { status: yours.status, ...yours.partial === true ? { partial: true } : {} } } : {},
     ...typeof base?.name === 'string' && typeof base.version === 'string' ? { base: { name: base.name, version: base.version } } : {},
     ...typeof patch?.hash === 'string' ? { patch: { hash: patch.hash, ...isPatchPath(patch.path) ? { path: patch.path } : {} } } : {},
     ...unreached === true ? { unreached } : {},
@@ -309,7 +312,7 @@ function added({ lockfiles, review }) {
     if (!had) { all.set(key, pkg); continue }
     const { reviews: _reviews, baseline: _baseline, reviewed: _reviewed, unsupported: _unsupported, reviewers: _reviewers, base: _base, ...version } = had
     all.set(key, { ...version, ...pkg.was || had.was ? { was: [...new Set([...had.was ?? [], ...pkg.was ?? []])] } : {}, ...patchedOf(had, pkg),
-      ...bothReviewed(had, pkg, review) })
+      ...!had.yours && pkg.yours ? { yours: pkg.yours } : {}, ...bothReviewed(had, pkg, review) })
   }
   const versions = [...all.values()]
   const fresh = versions.filter(pkg => !pkg.was)

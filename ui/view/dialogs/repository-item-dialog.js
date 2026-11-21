@@ -184,7 +184,7 @@ class RepositoryItemDialog extends AppDialog {
       : entry.status === 'error' ? html`<p class="repo-item-quiet" role="alert">${entry.error}</p>`
       : this.renderAdded(entry)
     return html`<section class="repo-item-section"><h4 class="repo-item-deps-heading">New dependency versions${entry.formatted
-      ? html`<dependency-review-copy .text=${entry.formatted} .label=${'Copy your dependency reviews of its versions'}></dependency-review-copy>` : nothing}</h4>${body}</section>`
+      ? html`<dependency-review-copy .text=${entry.formatted} .label=${'Copy your dependency reviews'}></dependency-review-copy>` : nothing}</h4>${body}</section>`
   }
 
   // Each directory's lockfiles and the package versions new to them, those of

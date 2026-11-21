@@ -205,6 +205,7 @@ A version's tooltip names its reviewers with their avatars and names in the app.
   Where none of those wanting it has any, one of them lists it and the rest show it dimmed.
 
 A patched version stands by its patch, as each patch of it is reviewed apart.
+A version you reviewed yourself, published to a team counting for the repository, ends its row with your latest verdict's icon (a green check for **Accept**), and its tooltip names it, partial ones too, whether or not your review counts there: it marks what you reviewed that still waits on others' reviews or on the host.
 A version with a review of those it needs shows how many (`1/2`), and its tooltip names the reviewers; one with none shows no count.
 Each list shows the versions with a review already (`1/2`, or rejected) first, and those marked **!** (see [Stasis entries](#stasis-entries)) last; on a card, the dimmed ones stay below both.
 

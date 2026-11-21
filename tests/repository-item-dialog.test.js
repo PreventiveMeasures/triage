@@ -246,7 +246,7 @@ test('where the server registers reviewed dependencies, its terms say so, with i
   assert.doesNotMatch(alone, /count too/u)
   assert.match(text, /role="alert">Its comments couldn’t be read for reviews, so none of theirs count\./u)
   assert.match(text, /These lockfiles aren’t reviewed: <code>docs\/<\/code>\./u)
-  assert.match(text, /<h4 class="repo-item-deps-heading">New dependency versions<dependency-review-copy \.text=Reviewed refused \.label=Copy your dependency reviews of its versions>/u,
+  assert.match(text, /<h4 class="repo-item-deps-heading">New dependency versions<dependency-review-copy \.text=Reviewed refused \.label=Copy your dependency reviews>/u,
     'the reader\'s reviews of its versions to copy, as the server\'s host formats them')
   assert.match(text, /href=\/npm\/refused@1\.0\.0\/review [^]*class="repo-item-review is-failed" data-tooltip="A reviewer rejects it[^>]*>rejected</u, 'one rejected wants reviews, however many pass it')
   assert.match(text, /href=\/npm\/vouched@1\.0\.0\/review [^]*class="repo-item-review is-passed" data-tooltip="The server’s reviewed dependencies pass it"><svg[^]*<\/svg>reviewed</u)
