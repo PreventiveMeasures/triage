@@ -52,7 +52,8 @@ test('all managed pages and team/report Files routes round-trip', () => {
   const routes = [{ view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'overview' }, { view: 'home' },
     { view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'code', file: 7 }, { view: 'bundles', teamSlug: null, bundleSlug: 'bundle-id', bundleTab: 'code', file: 1 },
     { view: 'bundles', teamSlug: 'team', bundleSlug: 'bundle-id', bundleTab: 'code', file: 7, line: 42 }, { view: 'bundles', teamSlug: null, bundleSlug: 'bundle-id', bundleTab: 'code', file: 1, line: 42, endLine: 69 }, ...Object.keys(MANAGED_PAGES).map(view => ({ view })),
-    { view: 'manage-history', actor: 'user name & repo' }, { view: 'manage-scans', bundleId: 'bundle-id' }, { view: 'manage-scans', bundleId: 'bundle-id', scanMode: 'dependencies' }, { view: 'manage-scans', scanMode: 'link' }, { view: 'manage-bundles', createRepoId: 106 }]
+    { view: 'manage-history', actor: 'user name & repo' }, { view: 'manage-scans', bundleId: 'bundle-id' }, { view: 'manage-scans', bundleId: 'bundle-id', scanMode: 'dependencies' }, { view: 'manage-scans', scanMode: 'link' }, { view: 'manage-bundles', createRepoId: 106 },
+    { view: 'manage-repo-risk', riskScope: 'team', riskTarget: 'team-id' }, { view: 'manage-repo-risk', riskScope: 'repo', riskTarget: 106 }, { view: 'manage-repo-risk', riskScope: 'repo' }, { view: 'manage-repo-risk', riskScope: 'all' }]
   for (const view of ['findings', 'files']) for (const reportSlug of [null, 'report-id']) routes.push({ view, teamSlug: 'team-id', reportSlug })
   for (const route of routes) assert.deepEqual(parseManagedRoute(new URL(managedRoutePath(route), 'https://triage.test')), route)
   for (const path of ['/bundles', '/bundles/%2f', '/bundles/../api/config', '/api/config', '/api/admin/users', '/manage/missing', '/teams/a/reports', '/teams/%2f', '/teams/%00', '/teams/%ff',

@@ -1494,7 +1494,7 @@ async function refreshManagedTeams(isCurrent, { strict = false, signal = current
 
 // Manage pages are the MANAGED_PAGES routes; each key is also the
 // `state.currentView` render() paints as its `<managed-admin-*>` element.
-// Users, repositories (and their risk), teams, import and deduplication are
+// Users, repositories, their risk, teams, import and deduplication are
 // admin-only; the rest are also open to managers.
 const ADMIN_ONLY_PAGES = new Set(['admin-users', 'manage-repos', 'manage-repo-risk', 'manage-teams', 'manage-import', 'manage-deduplication'])
 let readyManagedView = null
@@ -1680,7 +1680,7 @@ document.addEventListener('managed-feed-closed', () => {
 export async function navigateToAdminPage(view, options = {}) {
   if (options.history !== false && isManagedUiMode()) {
     if (!managedHistory.active) await refreshManagedSession()
-    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(['link', 'dependencies'].includes(options.scanMode) ? { scanMode: options.scanMode } : {}), ...(options.linkId ? { linkId: options.linkId } : {}) })
+    if (managedHistory.active) return managedHistory.navigate({ view, ...(options.actor ? { actor: options.actor } : {}), ...(options.bundleId ? { bundleId: options.bundleId } : {}), ...(['link', 'dependencies'].includes(options.scanMode) ? { scanMode: options.scanMode } : {}), ...(options.linkId ? { linkId: options.linkId } : {}), ...riskRoute(view, options, { keep: true }) })
   }
   if (!Object.hasOwn(MANAGED_PAGES, view) || !isManagedUiMode() || !canAccessManagedPage(view)) return false
   const navigation = beginViewNavigation()
@@ -1695,6 +1695,7 @@ export async function navigateToAdminPage(view, options = {}) {
   state.scanSelection = view === 'manage-scans' ? options.scanMode === 'link' ? { mode: 'report', reportMode: 'link' }
     : options.bundleId ? { bundleId: options.bundleId, ...(options.scanMode === 'dependencies' ? { mode: 'dependencies' } : {}) } : null : null
   state.bundleCreationRepoId = view === 'manage-bundles' ? options.createRepoId ?? null : null
+  state.riskSelection = view === 'manage-repo-risk' ? riskRoute(view, options) : null
   render({ animate: false })
   renderSidebar()
   // Use the known role and CSRF token immediately; apply session changes when
@@ -1714,6 +1715,15 @@ export async function navigateToAdminPage(view, options = {}) {
   return true
 }
 
+// The scope Risk opens on: the one `options` names, else, where it `keep`s
+// one and Risk is shown already, the one it shows, so its tab clicked there
+// keeps it; none opens a team to choose.
+function riskRoute(view, options, { keep = false } = {}) {
+  if (view !== 'manage-repo-risk') return {}
+  const { riskScope, riskTarget } = keep && options.riskScope == null && state.currentView === view ? state.riskSelection ?? {} : options
+  return { ...(riskScope == null ? {} : { riskScope }), ...(riskTarget == null ? {} : { riskTarget }) }
+}
+
 // Admin pages live in a separate lazy-loaded bundle, so the shared back button
 // and management hub communicate through a composed event instead of importing
 // the sidebar module into that bundle (which would duplicate application state).
@@ -1722,7 +1732,7 @@ document.addEventListener('managed-notice', event => showToast(event.detail.mess
 document.addEventListener('managed-admin-navigate', (event) => {
   const view = event.detail?.view
   const actor = event.detail?.actor
-  if (typeof view === 'string') void navigateToAdminPage(view, { actor, scanMode: event.detail?.scanMode, linkId: event.detail?.linkId })
+  if (typeof view === 'string') void navigateToAdminPage(view, { actor, scanMode: event.detail?.scanMode, linkId: event.detail?.linkId, riskScope: event.detail?.riskScope, riskTarget: event.detail?.riskTarget })
 })
 
 // A repository's code, from its row on the Repositories page or a team's: at

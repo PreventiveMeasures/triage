@@ -5,6 +5,7 @@ import './_polyfills.js'
 import '../ui/client-managed.js'
 import './_scan-bundle.js'
 import { ManagedPage } from '../ui/managed/page.js'
+import { adminNavigation } from '../ui/managed/navigation.js'
 import { ManagedAppState, managedAppState } from '../ui/managed/state.js'
 import { templateText, templates } from './_lit.js'
 
@@ -1132,20 +1133,18 @@ test('upload and location refusals name team access only when the server reports
   }
 })
 
-test('an admin opens the repositories\' risk page from its button beside Aliases', t => {
+test('Risk is an admin\'s Manage tab of its own, after Repositories, whose page keeps Aliases alone beneath its list', () => {
   const page = createPage(Repositories)
   page.session = adminSession
   page._data = { repositories: [], connectedCount: 0 }
-  // The page's events go to the document, as the sidebar listens for them there.
-  const events = []
-  const document = new EventTarget()
-  document.addEventListener('managed-admin-navigate', event => { events.push(event.detail) })
-  globalThis.document = document
-  t.after(() => { delete globalThis.document })
   const pages = templates(page.render()).find(template => template.strings.join('').includes('class="repository-pages"'))
-  assert.match(pages.strings.join(''), />Aliases<\/button>[^]*>Risk<\/button>/u, 'Risk beside Aliases')
-  pages.values[1]()
-  assert.deepEqual(events, [{ view: 'manage-repo-risk' }])
+  assert.match(pages.strings.join(''), />Aliases<\/button>\s*<\/div>$/u, 'Aliases alone')
+  const tabs = (current, role) => adminNavigation(current, role).values[0].map(template => [template.values.at(-1), template.values[0] === 'page'])
+  const admin = tabs('manage-repo-risk', 'admin')
+  assert.deepEqual(admin[admin.findIndex(([label]) => label === 'Repositories') + 1], ['Risk', true], 'after Repositories, current on its page')
+  assert.equal(admin.find(([label]) => label === 'Repositories')[1], false, 'Repositories no longer current there')
+  assert.equal(customElements.get('managed-admin-repo-risk').view, 'manage-repo-risk')
+  assert.equal(tabs('manage', 'manage').some(([label]) => label === 'Risk'), false, 'an admin\'s alone')
   page.session = { ...adminSession, role: 'manage' }
   assert.equal(templates(page.render()).some(template => template.strings.join('').includes('class="repository-pages"')), false, 'an admin\'s alone')
 })

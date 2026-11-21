@@ -3,6 +3,7 @@ import { BUNDLE_TABS } from '../bundle-tabs.js'
 import { MAX_FINDING_ID_LENGTH, isLinkableFindingId } from '../finding-id.js'
 import { isGithubRepoName } from '../github-pr.ts'
 import { isNpmPackageName, isNpmPackageSpec, isPatchHash, isPatchPath } from './npm-packages.js'
+import { parseRiskRoute, riskPath } from './risk-routes.js'
 import { filtersOf, filtersQuery } from './team-filters.js'
 
 // How Compare reviews the changes, past its Overview: `code`, beside the
@@ -21,7 +22,7 @@ export const MANAGED_PAGES = Object.freeze({
   'manage-scans': '/manage/scans',
   'manage-reports': '/manage/report',
   'manage-repos': '/manage/repositories',
-  'manage-repo-risk': '/manage/repositories/risk',
+  'manage-repo-risk': '/manage/risk',
   'admin-users': '/manage/users',
   'manage-teams': '/manage/team',
   'manage-import': '/manage/import',
@@ -73,6 +74,7 @@ export function managedRoutePath(route) {
       ? `/${route.compareSlug}${compareModeSuffix(route.compareMode)}` : ''
     return `${parent}/bundle/${route.bundleSlug}${tab === 'overview' ? '' : `/${tab}`}${file}${compare}${lines}`
   }
+  if (route.view === 'manage-repo-risk') return riskPath(route)
   if (Object.hasOwn(MANAGED_PAGES, route.view)) {
     const path = MANAGED_PAGES[route.view]
     if (route.view === 'manage-deduplication' && route.linkId) return `${path}?report=${encodeURIComponent(route.linkId)}`
@@ -289,7 +291,8 @@ export function parseManagedRoute(url) {
   const dependencies = /^\/team\/([A-Za-z0-9_-]+)\/dependencies\/([a-z]+)$/u.exec(path)
   if (dependencies) return DEPENDENCY_TABS.has(dependencies[2]) ? { view: 'workspace-dependencies', teamSlug: dependencies[1], dependencyTab: dependencies[2] } : null
   const match = /^\/team\/([^/]+)(?:\/report\/([^/]+))?(?:\/(files)|\/finding\/([^/]+))?$/u.exec(path)
-  if (!match) return null
+  // Risk's scopes, past its own page (MANAGED_PAGES).
+  if (!match) return parseRiskRoute(path) ?? null
   try {
     const teamSlug = decodeURIComponent(match[1])
     const reportSlug = match[2] ? decodeURIComponent(match[2]) : null

@@ -1,6 +1,7 @@
-// Manage → Repositories → Risk, for admins: the npm lockfiles of every
-// connected repository (or a team's, or one), their packages and what risk
-// finds of each (GET /api/admin/repositories/risk, repository-risk.ts).
+// Manage → Risk, for admins: the npm lockfiles of every connected repository
+// (or a team's, or one), their packages and what risk finds of each (GET
+// /api/admin/repositories/risk, repository-risk.ts). Each scope is a page of
+// its own (common/managed/risk-routes.js).
 // Tabs: packages by risk (dev-only ones tagged, either kind shown alone);
 // npm's advisories, blended with each repository's Dependabot alerts (by GHSA
 // and package; a dismissed alert struck through and never listed alone); and
@@ -14,6 +15,7 @@ import { isHttpUrl } from '@preventive/report'
 import { npmRiskLevel } from '../../risk/npm/score.js'
 import { managedRoutePath } from '../../common/managed/routes.js'
 import { ManagedPage } from './page.js'
+import { openAdminPage } from './navigation.js'
 import { request, responseLines } from './bundle-data.js'
 import { fetchTeams } from './admin-api.js'
 import { BUNDLE_ICON_SVG, DEPENDABOT_ICON_SVG, GITHUB_ICON_SVG, NPM_ICON_SVG } from '../view/icons.js'
@@ -250,10 +252,10 @@ const tabList = (name, tabs, current, choose) => html`<div class="risk-tabs" rol
   aria-selected=${current === tab} @click=${() => choose(tab)}>${label}</button>`)}</div>`
 
 class ManagedAdminRepositoryRisk extends ManagedPage {
-  static view = 'manage-repos'
-  static properties = { _state: { state: true }, _filter: { state: true }, _kind: { state: true }, _packageKind: { state: true },
+  static view = 'manage-repo-risk'
+  static properties = { selection: { attribute: false }, _state: { state: true }, _filter: { state: true }, _kind: { state: true }, _packageKind: { state: true },
     _query: { state: true }, _tab: { state: true }, _actionKind: { state: true }, _files: { state: true },
-    _scope: { state: true }, _target: { state: true }, _choices: { state: true } }
+    _scope: { state: true }, _target: { state: true }, _choices: { state: true }, _unlisted: { state: true } }
   static styles = [unsafeCSS(commonStyles), unsafeCSS(linksStyles), unsafeCSS(riskStyles)]
 
   constructor() {
@@ -262,9 +264,13 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     // _packageKind the packages', _actionKind the Actions tab's. _tab:
     // packages, advisories or actions; _files: lockfiles or workflows.
     // _scope (SCOPES) names a team's or repository's id in _target; _choices
-    // are the teams and repositories, as Teams has them.
-    Object.assign(this, { _state: 'idle', _filter: 'all', _kind: 'production', _packageKind: 'all', _actionKind: 'all', _query: '',
-      _tab: 'packages', _files: 'lockfiles', _scope: 'all', _target: '', _choices: null })
+    // are the teams and repositories, as Teams has them. `selection` is the
+    // scope the page's route names (_follow); _unlisted the scope of one it
+    // names that _choices don't list.
+    Object.assign(this, { selection: null, _state: 'idle', _filter: 'all', _kind: 'production', _packageKind: 'all', _actionKind: 'all', _query: '',
+      _tab: 'packages', _files: 'lockfiles', _scope: 'all', _target: '', _choices: null, _unlisted: null })
+    // A team or repository the route names, waiting for _choices to find it.
+    this._awaiting = false
     this._scan = null
     this._drawTimer = null
     // The parts a scan has been asked in so far (MAX_PARTS).
@@ -274,6 +280,33 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
 
   _load() {
     return this._loadCollection('teams', 'teams', fetchTeams, data => { this._choices = data })
+  }
+
+  willUpdate(changed) {
+    if (changed.has('selection') || changed.has('_choices') && this._awaiting) this._follow()
+  }
+
+  // The scope the route names, a team to choose where it names none: a team
+  // by its slug, a repository by its id, each once _choices list it. Another
+  // than the one scanning stops the scan, as leaving the page does.
+  _follow() {
+    const { riskScope: scope = 'team', riskTarget: target = null } = this.selection ?? {}
+    const listed = target == null ? null : scope === 'team' ? this._choices?.teams?.filter(team => team.slug === target).map(team => team.id)
+      : this._choices?.repos?.filter(repo => repo.repoId === target).map(repo => String(repo.repoId))
+    const id = listed?.length === 1 ? listed[0] : ''
+    this._awaiting = target != null && !this._choices
+    this._unlisted = target != null && this._choices && !id ? scope : null
+    if (this._state === 'running' && (scope !== this._scope || id !== this._target)) this.stop()
+    this._choose(scope, id)
+  }
+
+  // A scope chosen on the page, shown at once and its page navigated to.
+  _pick(scope, target = '') {
+    if (this._state === 'running') return
+    this._choose(scope, target)
+    Object.assign(this, { _awaiting: false, _unlisted: null })
+    const riskTarget = target && (scope === 'repo' ? Number(target) : this._choices?.teams?.find(team => team.id === target)?.slug)
+    openAdminPage('manage-repo-risk', { riskScope: scope, ...(riskTarget ? { riskTarget } : {}) })
   }
 
   // What later scans read, dropping what was found of another; not while
@@ -679,12 +712,14 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const loading = this._choices ? '' : 'Loading…'
     return html`<div class="risk-scope-bar">
       <div class="risk-scope" role="group" aria-label="What to scan">${SCOPES.map(([scope, label]) => html`<button type="button"
-        aria-pressed=${this._scope === scope} ?disabled=${running} @click=${() => this._choose(scope)}>${label}</button>`)}</div>
+        aria-pressed=${this._scope === scope} ?disabled=${running} @click=${() => this._pick(scope)}>${label}</button>`)}</div>
       ${this._scope === 'team' ? this._teamPicker(running, loading) : nothing}
       ${this._scope === 'repo' ? html`<repository-selector label="Which repository" placeholder=${loading || 'Choose a repository…'} ?disabled=${running || !this._choices}
         .options=${(this._choices?.repos ?? []).map(repo => ({ value: String(repo.repoId), label: repo.fullName }))} .value=${this._target || null}
-        @repository-change=${event => this._choose('repo', event.detail.value)}></repository-selector>` : nothing}
-    </div>`
+        @repository-change=${event => this._pick('repo', event.detail.value)}></repository-selector>` : nothing}
+    </div>
+    ${this._unlisted ? html`<p class="msg" role="status">${this._unlisted === 'team' ? 'This link’s team isn’t listed. Choose a team.'
+      : 'This link’s repository isn’t connected. Choose a repository.'}</p>` : nothing}`
   }
 
   _teamPicker(running, loading) {
@@ -692,9 +727,9 @@ class ManagedAdminRepositoryRisk extends ManagedPage {
     const name = team => team.hidden ? `${team.name} (hidden)` : team.name
     if (teams.length > 0 && teams.length <= TEAM_BUTTONS) {
       return html`<div class="risk-scope" role="group" aria-label="Which team">${teams.map(team => html`<button type="button"
-        aria-pressed=${team.id === this._target} ?disabled=${running} @click=${() => this._choose('team', team.id)}>${name(team)}</button>`)}</div>`
+        aria-pressed=${team.id === this._target} ?disabled=${running} @click=${() => this._pick('team', team.id)}>${name(team)}</button>`)}</div>`
     }
-    return html`<select aria-label="Which team" ?disabled=${running} @change=${event => this._choose('team', event.target.value)}>
+    return html`<select aria-label="Which team" ?disabled=${running} @change=${event => this._pick('team', event.target.value)}>
       <option value="" ?selected=${!this._target}>${loading || 'Choose a team…'}</option>
       ${teams.map(team => html`<option value=${team.id} ?selected=${team.id === this._target}>${name(team)}</option>`)}
     </select>`

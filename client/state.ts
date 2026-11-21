@@ -121,6 +121,9 @@ export interface State {
   selectedBundleWorkspace: string | null
   scanSelection: { bundleId: string, repoId?: string | number } | { mode: 'report', reportMode: 'link' } | null
   bundleCreationRepoId: number | null
+  // The scope Risk scans, as its route names it (common/managed/routes.js):
+  // a team by its slug, a repository by its id, or none yet to choose.
+  riskSelection: { riskScope?: 'all' | 'team' | 'repo', riskTarget?: string | number } | null
   bundleDetails: unknown
   bundleDetailsTab: string
   teamDependenciesTab: 'pulls' | 'versions' | 'branch' | 'reviews'
@@ -590,6 +593,7 @@ export const state: State = store<State>({
   selectedBundleWorkspace: null,
   scanSelection: null,
   bundleCreationRepoId: null,
+  riskSelection: null,
   bundleDetails: null,
   // Active tab in the bundle view's tab strip: 'overview' (the
   // metadata + Packages / Files / Reports nested view), 'terminal',

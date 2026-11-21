@@ -504,7 +504,6 @@ class ManagedAdminRepos extends ManagedPage {
       <div class="manage-list"><div aria-busy=${this._loading}>${this._body(choices)}</div>
         ${connected && this._role === 'admin' ? html`<div class="repository-pages">
           <button type="button" class="btn" @click=${() => { this._publicRepoOpen = false; this._actionError = null; this._aliases = true }}>Aliases</button>
-          <button type="button" class="btn" @click=${() => openAdminPage('manage-repo-risk')}>Risk</button>
         </div>` : nothing}
       </div>
     </div>`
