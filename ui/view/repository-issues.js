@@ -232,7 +232,7 @@ function dependencyLine(entry) {
   const named = pkg => `${pkg.name}@${pkg.version ?? '?'}${pkg.patch ? ', patched' : ''}${pkg.was ? ` (was ${pkg.was.join(', ')}${reviewed(pkg)})` : ` (new${reviewed(pkg)})`}`
   const rest = versions.length - TOLD_PACKAGES
   const told = [versions.length > 0 ? `New in its lockfiles: ${versions.slice(0, TOLD_PACKAGES).map(named).join(', ')}${rest > 0 ? ` and ${rest.toLocaleString('en-US')}${plus} more` : more ? ' and more' : ''}` : null,
-    others > 0 ? `${others.toLocaleString('en-US')} other ${others === 1 ? 'version' : 'versions'} in its lockfiles unreviewed` : null,
+    others > 0 ? `${others.toLocaleString('en-US')} on the base branch unreviewed` : null,
     failed ? `Its review fails: ${failedTold(failed)}` : null,
     entry.pending ? 'Stasis is still working out what its stasis.config.json’s entries reach' : null].filter(Boolean).join('. ')
   const counted = [fresh ? `${fresh.toLocaleString('en-US')} new` : null, updated ? `${updated.toLocaleString('en-US')} updated` : null].filter(Boolean).join(', ')

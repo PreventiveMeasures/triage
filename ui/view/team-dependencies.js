@@ -357,21 +357,24 @@ const few = (names, more = names.length - 1) => `${names[0]}${more > 0 ? ` +${mo
 // What a version its package manager alone asks for says of that.
 const UNREACHED_SAID = 'by its lockfile alone: the stasis.config.json beside it reaches it by no entry'
 
-// A version's details, its row's tooltip, formatted: its name and version
-// whole, as its row may cut them short; where it is from, other
-// than npm's registry; its patch's file, where it is patched, or that it
-// is told none, which reviews here then read none of; its review; the
+// A version's details, its row's tooltip, formatted: its ecosystem's icon,
+// its name and version whole, as its row may cut them short, tagged where
+// it is patched, as Review's version selector tags it; where it is from, other
+// than npm's registry; its patch's hash and file, where it is patched, or
+// that it is told no file, which reviews here then read none of; its review; the
 // pull request listing it, where another does (`under`); the reviews it
 // lacks (`lacks`, each `{ login, status, where }`); the pull requests adding
-// it, or locking it otherwise (`involved`, each `{ name, adds, pkg, review
-// }`), its patch the same, each with its review there, the one it is listed
+// it, then those holding it on their base branch (`involved`, each `{ name,
+// adds, pkg, review }`), by name, its patch the same, each with its review
+// there, but none of no reviews on a base branch, the one it is listed
 // under (`here`) marked; and who reviews it, each once where its teams'
 // reviews count, and by the pull request in whose comments they review it,
 // which count there alone.
 function versionTip(pkg, review, { under, lacks, involved, here }) {
   const stance = reviewState(pkg, review)
   const facts = [pkg.source !== 'registry' && pkg.from ? ['From', pkg.from] : null,
-    pkg.patch ? ['Patched', pkg.patch.path ?? 'by a patch whose file isn’t known, which reviews here can’t read'] : null,
+    pkg.patch ? ['Patch', html`<code class="team-deps-tip-hash">${pkg.patch.hash}</code>`] : null,
+    pkg.patch ? ['Patch file', pkg.patch.path ?? 'not known, so reviews here can’t read it'] : null,
     pkg.unreached ? ['Asked for', UNREACHED_SAID] : null,
     stance ? ['Review', stance.said ?? stance.label] : null, under ? ['Listed', `under ${under}`] : null,
     lacks.length > 0 ? ['Lacks', lacks.map(one => `${isReader(one) ? 'your' : `${githubUserName(one.login)}’s`} review in ${one.where.join(', ')}`).join('; ')] : null]
@@ -385,12 +388,14 @@ function versionTip(pkg, review, { under, lacks, involved, here }) {
     }
   }
   return html`<div class="compare-tip">
-    <div class="team-deps-tip-name">${pkg.name}${pkg.version ? `@${pkg.version}` : ''}${pkg.patch ? ' (patched)' : ''}</div>
+    <div class="team-deps-tip-name">${sourcePackageIcon(pkg.ecosystem)}<span>${pkg.name}${pkg.version ? `@${pkg.version}` : ''}</span>${pkg.patch
+      ? html`<span class="team-deps-tip-patched">patched</span>` : nothing}</div>
     ${facts.length > 0 ? html`<div class="compare-tip-rows">${facts.map(([label, value]) => html`<span class="compare-tip-label">${label}</span><span>${value}</span>`)}</div>` : nothing}
     ${involved.length > 0 ? html`<div class="compare-tip-head">Pull requests</div>
-      <div class="compare-tip-rows">${involved.map(({ name, adds, pkg: theirs, review: theirReview }) => html`<span class=${`team-deps-tip-pull${name === here ? ' team-deps-tip-here' : ''}`}>${
-        GITHUB_ICON}${name}</span>
-        <span>${[adds ? 'adds it' : 'locks it', reviewedThere(theirs, theirReview)].filter(Boolean).join(', ')}</span>`)}</div>` : nothing}
+      <div class="compare-tip-rows">${involved.toSorted((one, other) => Number(other.adds) - Number(one.adds) || one.name.localeCompare(other.name, 'en', { numeric: true }))
+        .map(({ name, adds, pkg: theirs, review: theirReview }) => html`<span class=${`team-deps-tip-pull${name === here ? ' team-deps-tip-here' : ''}`}>${GITHUB_ICON}${name}</span>
+        <span>${[adds ? 'adds it' : 'on the base branch', adds || theirs.reviews !== 0 || theirs.rejected ? reviewedThere(theirs, theirReview) : null].filter(Boolean).join(', ')}</span>`)}</div>`
+      : nothing}
     ${reviewers.size > 0 ? html`<div class="compare-tip-head">Reviewed by</div>
       <div class="compare-tip-rows">${[...reviewers.values()].map(one => html`<span>${githubUser(one.login)}</span>
         <span>${VERDICT_SAID[one.status]}${ACCEPTING.has(one.status) && !one.passes ? ', not counted' : ''}${one.where ? `, in ${one.where}’s comments` : ''}</span>`)}</div>`
@@ -451,6 +456,15 @@ const CHEVRON = icon(svg`<path d="m6 4 4 4-4 4"/>`)
 // GitHub's mark, before each pull request a tooltip names.
 const GITHUB_ICON = appMarkup(GITHUB_ICON_SVG)
 
+// The rows of its masonry grid a card spans: as many as it is tall, with
+// the gap under it, of its list's rows (`grid-auto-rows`); none where it
+// isn't in one.
+export function masonrySpan(card) {
+  const row = card.isConnected ? parseFloat(getComputedStyle(card.parentElement).gridAutoRows) : Number.NaN
+  if (!(row > 0)) return
+  card.style.gridRowEnd = `span ${Math.max(1, Math.ceil((card.getBoundingClientRect().height + (parseFloat(getComputedStyle(card).marginBottom) || 0)) / row))}`
+}
+
 class TeamDependencies extends StateElement {
   static properties = { repositories: { attribute: false }, team: { attribute: false }, _open: { state: true } }
 
@@ -478,6 +492,20 @@ class TeamDependencies extends StateElement {
   // where none wants reviews once all is read, giving way to the first.
   updated() {
     if (this._shown && this._shown !== state.teamDependenciesTab) this.pick(this._shown, { push: false })
+    this._pack()
+  }
+
+  // Its pull requests' cards packed as masonry (team-deps-pulls.is-masonry),
+  // each spanning rows as it is tall, spanned anew as it grows or shrinks;
+  // those it no longer shows let go.
+  _pack() {
+    if (!globalThis.ResizeObserver) return
+    this._masonry ??= new ResizeObserver(entries => { for (const { target } of entries) masonrySpan(target) })
+    this._masonry.disconnect()
+    for (const list of this.querySelectorAll('.team-deps-pulls')) {
+      list.classList.add('is-masonry')
+      for (const card of list.children) this._masonry.observe(card)
+    }
   }
 
   toggle(key) {
@@ -499,6 +527,7 @@ class TeamDependencies extends StateElement {
     this._unsubscribe?.()
     showing.delete(this)
     stopUnshown()
+    this._masonry?.disconnect()
   }
 
   open(event, { repo, item }) {
@@ -708,8 +737,8 @@ class TeamDependencies extends StateElement {
         ${opened ? html`${this.rows(`${key}:own`, listed, row(pull))}
         ${pull.untold > 0 ? html`<p class="team-deps-quiet">and ${plural(pull.untold, 'more version')} past those listed</p>` : nothing}
         ${this.rows(`${key}:same`, same, row(pull), covered ? SHOWN_VERSIONS : SHOWN_SAME, true)}
-        ${pull.others > 0 ? this.disclosed(`${key}:others`, pull.size > 0 || pull.failed ? `${plural(pull.others, 'other version')} its lockfiles lock ${pull.others === 1 ? 'wants' : 'want'} reviews`
-          : `Its own versions pass; ${plural(pull.others, 'version')} its lockfiles locked before ${pull.others === 1 ? 'wants' : 'want'} reviews`,
+        ${pull.others > 0 ? this.disclosed(`${key}:others`, pull.size > 0 || pull.failed ? `${pull.others.toLocaleString('en-US')} on the base branch`
+          : `Its own versions pass; ${pull.others.toLocaleString('en-US')} on the base branch`,
         prioritized(others.versions), pkg => versionRow(pkg, pull.entry.review, { elsewhere: elsewhere(pkg, pull), involved: among(pkg), here: named(pull), ...readAt(pull) }),
         pull.others - others.versions.length) : nothing}` : nothing}
       </li>`

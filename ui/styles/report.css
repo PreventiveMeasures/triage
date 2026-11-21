@@ -1977,11 +1977,16 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
   /* What the red rows are, in their color. */
   & > .team-deps-key { color: var(--critical); }
 }
-/* The pull requests' cards side by side in their order, each a column a
-   little wider than its versions', however many it lists. */
+/* The pull requests' cards side by side in their order, each a column at
+   least 26rem wide, however many versions it lists, as many columns as
+   fit; once measured, packed as masonry (team-dependencies.js masonrySpan):
+   rows of 4px, each card spanning as many as it takes with its gap under it,
+   so it sits under the shortest column's last, in the room a taller one
+   beside it leaves. */
 .team-deps-pulls {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 32rem), 1fr));
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 26rem), 1fr));
   align-items: start; gap: .5rem .625rem; margin: 0; padding: 0; list-style: none;
+  &.is-masonry { grid-auto-rows: 4px; row-gap: 0; & > .team-deps-pull { margin-bottom: .5rem; } }
 }
 .team-deps-pull {
   min-width: 0; padding: .4375rem .75rem .3125rem;
@@ -2012,6 +2017,9 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 .team-deps-versions {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr)); column-gap: 1.5rem;
   margin: .25rem 0 0; padding: 0; list-style: none;
+  /* A pull request's own one column, however wide its card: the cards'
+     columns alone change with the width. */
+  .team-deps-pull & { grid-template-columns: minmax(0, 1fr); }
 }
 .team-deps-row {
   display: flex; align-items: center; gap: .5rem; min-width: 0;
@@ -2065,7 +2073,17 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 }
 /* A version's details, its row's tooltip: its name and version whole, the
    pull request it is listed under marked among those adding it. */
-.team-deps-tip-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.team-deps-tip-name {
+  display: flex; align-items: center; gap: .35em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  & > span { min-width: 0; overflow-wrap: anywhere; }
+  & > svg { flex: none; }
+}
+/* A patched one's tag, as Review's version selector tags it (searchable-selector.js .detail.is-noted). */
+.team-deps-tip-patched {
+  flex: none; padding: 0 .35rem; border-radius: 3px; color: var(--accent); background: rgb(from var(--accent) r g b / .13);
+  font-family: var(--font-ui, system-ui); font-size: .66rem; font-weight: 600;
+}
+.team-deps-tip-hash { font-size: .7rem; overflow-wrap: anywhere; }
 .team-deps-tip-here { font-weight: 600; }
 .team-deps-tip-pull { display: inline-flex; align-items: center; gap: .3em; & svg { flex: none; } }
 /* The versions another pull request lists, each naming that one: dimmed,
@@ -2084,6 +2102,7 @@ span.workspace-content-icon > svg { display: block; width: 18px; height: 18px; }
 }
 .team-deps-pulls.is-covered {
   gap: .25rem .625rem;
+  &.is-masonry { row-gap: 0; & > .team-deps-pull { margin-bottom: .25rem; } }
   /* Where any has reviews to copy, room for it on the rest, so their tags line up. */
   &:has(dependency-review-copy) .team-deps-pull-top:not(:has(dependency-review-copy))::after { content: ''; flex: none; width: 1.1rem; }
 }
