@@ -14,7 +14,9 @@ const MAP_NAME = /^(?:[\w.~@+-]+\/)*[\w.~@+-]+\.map$/u
 // file's own (MAP_NAME), or null: none named, or one named otherwise (a data:
 // URL, a site's).
 export function mapNamed(text) {
-  const directive = typeof text === 'string' ? SOURCE_MAP_FILE.exec(text.trimEnd().split('\n').at(-1)) : null
+  if (typeof text !== 'string') return null
+  const trimmed = text.trimEnd()
+  const directive = SOURCE_MAP_FILE.exec(trimmed.slice(trimmed.lastIndexOf('\n') + 1))
   const name = directive?.[1] ?? directive?.[2]
   return name && MAP_NAME.test(name) ? name : null
 }

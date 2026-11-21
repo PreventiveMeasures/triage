@@ -403,8 +403,8 @@ export class BundleCompareCode extends LitElement {
     // Whether a file's printed copies diff in fewer lines than it (_smaller).
     this._shorter = new Map()
     // Source maps whose listings' diff, as drawn, didn't read back to the new
-    // map, by both sides' integrity and paths: the copy failed that each is
-    // drawn with since, as published (_fileState, _printing).
+    // map, by both sides' paths: the copy failed that each is drawn with
+    // since, as published (_fileState, _printing).
     this._unrebuilt = new Map()
     // Whether the texts a file shows are too large to diff unasked (_large).
     this._larges = new Map()
@@ -427,6 +427,7 @@ export class BundleCompareCode extends LitElement {
       this._models.clear()
       this._spaced.clear()
       this._shorter.clear()
+      this._unrebuilt.clear()
       this._larges.clear()
       this._expansions.clear()
       this._limits.clear()
@@ -1183,13 +1184,14 @@ export class BundleCompareCode extends LitElement {
     const { key, changes, warned, renamed, hiding, shown, model } = found
     // A source map's listings are drawn only where the diff drawn of them, the
     // old side's lines and the changes it shows, reads back to the new map
-    // (pretty-source.js comparedListingRefusal), as counted too: else it is
-    // drawn as published, the toggle saying why.
+    // (pretty-source.js comparedListingRefusal), as counted too, the answer
+    // kept on the model: else it is drawn as published, the toggle saying why.
     if (printing?.map && pretty?.status === 'ready' && model) {
-      const drawn = { a: model.a ?? textLines(shown), b: model.b ?? textLines(after), blocks: model.blocks }
-      const refusal = comparedListingRefusal(this.base, this.other, basePath, path, contents, drawn)
-      if (refusal !== null) {
-        this._unrebuilt.set(this._rebuildKey(path, entry), { status: 'error', message: `Its listings' diff wouldn't show every change: ${refusal}`, retry: false })
+      if (!Object.hasOwn(model, 'listingRefusal')) {
+        model.listingRefusal = comparedListingRefusal(this.base, this.other, basePath, path, contents, { a: model.a ?? textLines(shown), b: model.b ?? textLines(after), blocks: model.blocks })
+      }
+      if (model.listingRefusal !== null) {
+        this._unrebuilt.set(`${basePath}\0${path}`, { status: 'error', message: `Its listings' diff wouldn't show every change: ${model.listingRefusal}`, retry: false })
         return this._fileState(path, entry, counting)
       }
     }
@@ -1266,19 +1268,14 @@ export class BundleCompareCode extends LitElement {
     const sides = [['base', this.base, basePath, before], ['other', this.other, path, after]]
     if (!sides.every(([side, , file, text]) => text === '' || comparedPrintable(this.base, this.other, side, file, text))) return null
     const json = sides.every(([, , file, text]) => text === '' || jsonPrinted(file))
-    const map = !json && sides.every(([, , file, text]) => text === '' || sourcemapPrinted(file))
+    const map = sides.every(([, , file, text]) => text === '' || sourcemapPrinted(file))
     const unreadable = !json && !map && sides.some(([, details, file, text]) => text !== '' && minified(details, file, text))
     const both = sides.map(([side, , file, text]) => (text === '' ? { status: 'ready', text } : comparedCopy(this.base, this.other, side, file, text, this._repaint)))
-    const copies = (map ? this._unrebuilt.get(this._rebuildKey(path, entry)) : undefined)
+    const copies = this._unrebuilt.get(`${basePath}\0${path}`)
       ?? both.find(copy => copy.status === 'error') ?? both.find(copy => copy.status === 'loading') ?? both.find(copy => copy.status === 'off')
       ?? { status: 'ready', before: both[0].text, after: both[1].text, hashes: both.map(copy => copy.hash) }
     const smaller = !json && !map && !unreadable && before !== '' && after !== '' && copies.status === 'ready' && this._smaller(path, contents, copies)
     return { copies, json, map, minified: unreadable, smaller, applies: json || map || unreadable || smaller }
-  }
-
-  // What a source map's listings that didn't read back are kept by (_unrebuilt).
-  _rebuildKey(path, { basePath = path }) {
-    return `${this.base?.integrity}\0${this.other?.integrity}\0${basePath}\0${path}`
   }
 
   // Whether the texts a file shows are too large to diff unasked

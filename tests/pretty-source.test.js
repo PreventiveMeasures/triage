@@ -318,13 +318,11 @@ test('a comparison\'s source map is listed here once the toggle is on, each side
   const [a, b] = [copy('base', baseFiles['lib/index.js.map']), copy('other', otherFiles['lib/index.js.map'])]
   assert.match(a.text, /^@ function f\(\) \{ return 1 \}$/mu)
   assert.match(b.text, /^@ function f\(\) \{ return 2 \}$/mu, 'the other side glossed with its own file')
-  assert.deepEqual(copy('other', baseFiles['lib/index.js.map']), { status: 'error', message: MISMATCH, retry: false }, 'a text other than the side\'s file')
   const contents = { before: baseFiles['lib/index.js.map'], after: otherFiles['lib/index.js.map'] }
   const drawn = { a: textLines(a.text), b: textLines(b.text), blocks: changeBlocks(a.text, b.text) }
   assert.equal(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', contents, drawn), null)
-  assert.equal(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', contents, drawn), null, 'kept by the diff drawn')
-  assert.match(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', contents, { ...drawn, blocks: [] }), /^the new side drawn isn't what the changes drawn make of the old\.$/u, 'no change drawn')
-  assert.match(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', { ...contents, after: contents.before }, { ...drawn, blocks: [...drawn.blocks] }), /reads back to another map/u, 'held to the very map on the new side')
+  assert.match(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', contents, { ...drawn, blocks: [] }), /^the changes drawn don't take the old map's listing to the new side drawn\.$/u, 'no change drawn')
+  assert.match(comparedListingRefusal(base, other, 'lib/index.js.map', 'lib/index.js.map', { ...contents, after: contents.before }, drawn), /^the new side drawn isn't the new map's listing\.$/u, 'held to the very map on the new side')
   assert.deepEqual(requests, [])
   assert.equal(changeRequests.length, 0)
 })

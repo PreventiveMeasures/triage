@@ -18,12 +18,11 @@
 // newline, so it could not be relied on to be there anyway. The label is not
 // selectable, so a copy leaves these out rather than copying their labels.
 import { html } from 'lit'
-import { passed } from '../../risk/files/characters.js'
+import { UNSEEN, passed } from '../../risk/files/characters.js'
 
-// The characters, a pair of surrogates read as the one it spells (`u`), so
-// \p{Cs} is only ever a lone one. A candidate, not yet one to show: see shown.
-// eslint-disable-next-line no-control-regex
-const CANDIDATE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u2800\u3000\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}]/u
+// The characters (characters.js UNSEEN), each a candidate, not yet one to
+// show: see shown.
+const CANDIDATE = UNSEEN
 const CANDIDATES = new RegExp(CANDIDATE.source, 'gu')
 
 // Labels and names of the ones a viewer meets, the rest labelled by number.

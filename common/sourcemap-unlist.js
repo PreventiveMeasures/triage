@@ -8,23 +8,17 @@ import { encodeMappings } from './sourcemap-mappings.js'
 const KEY_ROW = /^("(?:[^"\\]|\\.)*"): (.*)$/u
 const RUN_ROW = /^ {2}← (\S+) ([+-]\d+)(?: {2}.+)?$/u
 const SEGMENT = /([+-]?\d+)(?::(\d+)(?: ("(?:[^"\\]|\\.)*"|#\d+))?)?(?: |$)/uy
+const MINUS = 45, PLUS = 43
 
-class UnlistError extends Error {
-  constructor(message) {
-    super(message)
-    this.name = 'UnlistError'
-  }
-}
 const fail = (row, why) => {
-  throw new UnlistError(`Its listing's row ${row + 1} ${why}`)
+  throw new Error(`Its listing's row ${row + 1} ${why}`)
 }
 
 // A line of a text (`│` as written, `┊` as JSON).
 function textLine(row, i) {
   if (row === '  │') return ''
   if (row.startsWith('  │ ')) return row.slice(4)
-  if (!row.startsWith('  ┊ ')) return fail(i, 'is no line of a text.')
-  const text = JSON.parse(row.slice(4))
+  const text = row.startsWith('  ┊ ') ? JSON.parse(row.slice(4)) : null
   return typeof text === 'string' && !text.includes('\n') ? text : fail(i, 'is no line of a text.')
 }
 
@@ -67,10 +61,11 @@ function segmentsFrom(read, text, i) {
   for (let at = 0; at < text.length;) {
     SEGMENT.lastIndex = at
     const match = SEGMENT.exec(text)
-    if (!match || match[0] === '' || (SEGMENT.lastIndex === text.length && match[0].endsWith(' '))) fail(i, 'gives a segment that reads as none.')
+    if (!match || (SEGMENT.lastIndex === text.length && match[0].endsWith(' '))) fail(i, 'gives a segment that reads as none.')
     at = SEGMENT.lastIndex
     const [, step, sourceColumn, name] = match
-    if (read.previous === null ? !/^\d+$/u.test(step) : !/^[+-]\d+$/u.test(step)) fail(i, 'gives a column neither first on its line nor from the one before.')
+    const sign = step.codePointAt(0)
+    if ((sign === PLUS || sign === MINUS) === (read.previous === null)) fail(i, 'gives a column neither first on its line nor from the one before.')
     const column = (read.previous ?? 0) + Number(step)
     if (!Number.isSafeInteger(column) || column < 0) fail(i, "gives a column before its line's first.")
     read.previous = column
@@ -82,7 +77,7 @@ function segmentsFrom(read, text, i) {
     const segment = [column, run.source, run.line, Number(sourceColumn)]
     if (name !== undefined) {
       const index = name.startsWith('#') ? Number(name.slice(1)) : read.nameIndex.get(JSON.parse(name))
-      if (index === undefined || !(index < read.names.length)) fail(i, 'names no name of the map.')
+      if (!(index < read.names.length)) fail(i, 'names no name of the map.')
       segment.push(index)
     }
     read.line.push(segment)
@@ -128,7 +123,7 @@ function mappingsFrom(rows, from, { sources, names = [] }) {
 // The map a listing lists, as JSON.parse made it of the text it was listed
 // from. Throws for rows that aren't a listing's.
 export function unlistSourcemap(text) {
-  if (!text.endsWith('\n')) throw new UnlistError('Its listing ends with no line end.')
+  if (!text.endsWith('\n')) throw new Error('Its listing ends with no line end.')
   const rows = text.slice(0, -1).split('\n'), value = {}
   let i = 0, mappings = null
   while (i < rows.length && rows[i].startsWith('# ')) i++

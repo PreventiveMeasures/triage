@@ -8,9 +8,9 @@
 // off. The viewer keeps the last few bundle copies it read, and the last few
 // versions' and comparisons', for the session; a copy's line numbers are its
 // own, so the file's line links and marks stay with the file as published.
-// JSON is formatted here instead, in any bundle (prettyJsonCopy), and a
-// source map listed (prettySourcemapCopy), a comparison's two listings drawn
-// only where their diff reads back to the new map (comparedListingRefusal).
+// JSON is formatted here instead, in any bundle, and a source map listed
+// (VIEWER_KINDS), a comparison's two listings drawn only where their diff
+// reads back to the new map (comparedListingRefusal).
 import { html } from 'lit'
 import { computeFileHash } from '@preventive/report'
 import { state } from '#client/index.js'
@@ -111,62 +111,41 @@ const versions = new Map()
 // as the server was busy, is asked for alone (fileCopy).
 const comparisons = new Map()
 
-// JSON files by details and path: the text each was read from, whether it
-// can be formatted (JSON, not too large), and its copy in the layout last
-// asked for.
-const jsonFiles = new WeakMap()
-
+// The files formatted here, by kind, each by what its path names: JSON, in
+// the toggle's layout (`layouts`), and source maps, listed (pretty-sourcemap.js),
+// glossed with the file beside the map in the same details that names it; and
+// what makes a file of the kind printable, past being no larger than formatted.
 const parses = text => {
   try { JSON.parse(text); return true } catch { return false }
 }
+const VIEWER_KINDS = [
+  { printed: jsonPrinted, printable: parses, layouts: true, copy: (_details, _path, content, layout) => prettyJsonText(content, { width: JSON_LAYOUTS[layout].width }) },
+  { printed: sourcemapPrinted, printable: isSourceMap, layouts: false, copy: (details, path, content) => listSourcemap(content, path, bundleFilesAsMap(details)).text },
+]
+const viewerKind = path => VIEWER_KINDS.find(kind => kind.printed(path)) ?? null
 
-function jsonFile(details, path, content) {
-  let files = jsonFiles.get(details)
-  if (!files) jsonFiles.set(details, files = new Map())
+// Files formatted here by details and path: the text each was read from,
+// whether it can be formatted, and its copy in the layout last asked for.
+const viewerFiles = new WeakMap()
+
+function viewerFile(details, kind, path, content) {
+  let files = viewerFiles.get(details)
+  if (!files) viewerFiles.set(details, files = new Map())
   let file = files.get(path)
-  if (file?.content !== content) files.set(path, file = { content, printable: printableSize(content) && parses(content), layout: null, copy: null })
+  if (file?.content !== content) files.set(path, file = { content, printable: printableSize(content) && kind.printable(content), layout: null, copy: null })
   return file
 }
 
-// A JSON file's copy in the layout the toggle is in, made here as it is first
-// asked for in it: ready, or an error where it would read otherwise than the
-// file; null where it can't be.
-function prettyJsonCopy(details, path, content) {
-  const file = jsonFile(details, path, content), layout = state.bundleSourcePretty
+// A file's copy, in the layout the toggle is in where its kind has layouts,
+// made here as it is first asked for in it: ready, or an error where it would
+// read otherwise than the file; null where it can't be.
+function viewerCopy(details, kind, path, content) {
+  const file = viewerFile(details, kind, path, content), layout = kind.layouts ? state.bundleSourcePretty : 'listed'
   if (!file.printable) return null
   if (file.layout !== layout) {
     file.layout = layout
     try {
-      file.copy = { status: 'ready', text: prettyJsonText(content, { width: JSON_LAYOUTS[layout].width }) }
-    } catch (err) {
-      file.copy = { status: 'error', message: err?.message ?? String(err), retry: false }
-    }
-  }
-  return file.copy
-}
-
-// Source maps by details and path: the text each was listed from, whether it
-// can be (a source map, not too large), and its listing once asked for, glossed
-// with the file beside it of the same details that names it (pretty-sourcemap.js).
-const sourcemapFiles = new WeakMap()
-
-function sourcemapFile(details, path, content) {
-  let files = sourcemapFiles.get(details)
-  if (!files) sourcemapFiles.set(details, files = new Map())
-  let file = files.get(path)
-  if (file?.content !== content) files.set(path, file = { content, printable: typeof content === 'string' && printableSize(content) && isSourceMap(content), copy: null })
-  return file
-}
-
-// A source map's listing, made here the first time it is asked for: ready, or
-// an error saying why it can't be listed, which is shown as published; null
-// where it isn't a source map.
-function prettySourcemapCopy(details, path, content) {
-  const file = sourcemapFile(details, path, content)
-  if (!file.printable) return null
-  if (!file.copy) {
-    try {
-      file.copy = { status: 'ready', text: listSourcemap(content, path, bundleFilesAsMap(details)).text }
+      file.copy = { status: 'ready', text: kind.copy(details, path, content, layout) }
     } catch (err) {
       file.copy = { status: 'error', message: err?.message ?? String(err), retry: false }
     }
@@ -182,8 +161,8 @@ const formattable = new WeakMap()
 // bundle, or a formattable file of a managed bundle or an npm version.
 export function prettyPrintable(details, entry, path, content) {
   if (typeof content !== 'string') return false
-  if (jsonPrinted(path)) return jsonFile(details, path, content).printable
-  if (sourcemapPrinted(path)) return sourcemapFile(details, path, content).printable
+  const kind = viewerKind(path)
+  if (kind) return viewerFile(details, kind, path, content).printable
   if (!(entry?.managedId || entry?.npm)) return false
   let files = formattable.get(details)
   if (!files) formattable.set(details, files = new Map())
@@ -336,8 +315,8 @@ function versionCopy(details, entry, path, content, notify) {
 // is off.
 export function prettyCopy(details, entry, path, content, notify) {
   if (!state.bundleSourcePretty) return null
-  if (jsonPrinted(path)) return prettyJsonCopy(details, path, content)
-  if (sourcemapPrinted(path)) return prettySourcemapCopy(details, path, content)
+  const kind = viewerKind(path)
+  if (kind) return viewerCopy(details, kind, path, content)
   if (entry.npm) return versionCopy(details, entry, path, content, notify)
   return fileCopy(details, path, content, notify, entry)
 }
@@ -418,8 +397,8 @@ async function loadComparison(key, comparison, base, other) {
 // JSON and source maps in any comparison, other code the server formats
 // between two managed bundles or two versions of a package.
 export function comparedPrintable(base, other, side, path, content) {
-  return jsonPrinted(path) ? jsonFile(side === 'base' ? base : other, path, content).printable
-    : sourcemapPrinted(path) ? sourcemapFile(side === 'base' ? base : other, path, content).printable
+  const kind = viewerKind(path)
+  return kind ? viewerFile(side === 'base' ? base : other, kind, path, content).printable
     : renameDiffable(base, other) && prettyExtension(path) !== null && printableSize(content)
 }
 
@@ -432,12 +411,8 @@ export function comparedPrintable(base, other, side, path, content) {
 // and a source map listed.
 export function comparedCopy(base, other, side, path, content, notify) {
   const details = side === 'base' ? base : other
-  if (jsonPrinted(path)) return state.bundleSourcePretty ? prettyJsonCopy(details, path, content) : { status: 'off' }
-  if (sourcemapPrinted(path)) {
-    if (!state.bundleSourcePretty) return { status: 'off' }
-    if (content !== bundleFilesAsMap(details).get(path)) return { status: 'error', message: MISMATCH, retry: false }
-    return prettySourcemapCopy(details, path, content) ?? { status: 'error', message: "It isn't a source map.", retry: false }
-  }
+  const kind = viewerKind(path)
+  if (kind) return state.bundleSourcePretty ? viewerCopy(details, kind, path, content) : { status: 'off' }
   const key = `${base.integrity}\0${other.integrity}`
   let comparison = comparisons.get(key)
   comparisons.delete(key)
@@ -456,16 +431,14 @@ export function comparedCopy(base, other, side, path, content, notify) {
 // doesn't show every change between them (pretty-sourcemap.js
 // sourcemapDiffRebuilds), or null where it does: `basePath` and `path` the
 // map's on each side, `before` and `after` their texts ('' for a side with
-// none), `drawn` the diff's lines (`a`, `b`) and `blocks`. Kept by its blocks,
-// as a view asks of the diff it draws each time it draws it.
-const rebuilds = new WeakMap()
+// none), `drawn` the diff's lines (`a`, `b`) and `blocks`; each side held to
+// the listing its copy has.
 export function comparedListingRefusal(base, other, basePath, path, { before, after }, drawn) {
-  const kept = rebuilds.get(drawn.blocks)
-  if (kept && kept.a === drawn.a && kept.b === drawn.b && kept.before === before && kept.after === after) return kept.refusal
-  const side = (details, file, text) => ({ text, path: file, files: bundleFilesAsMap(details) })
-  const refusal = sourcemapDiffRebuilds(drawn, side(base, basePath, before), side(other, path, after))
-  if (Array.isArray(drawn.blocks)) rebuilds.set(drawn.blocks, { a: drawn.a, b: drawn.b, before, after, refusal })
-  return refusal
+  const side = (details, file, text) => {
+    const copy = text === '' ? { status: 'ready', text: '' } : viewerCopy(details, viewerKind(file), file, text)
+    return { text, listing: copy?.status === 'ready' ? copy.text : null }
+  }
+  return sourcemapDiffRebuilds(drawn, side(base, basePath, before), side(other, path, after))
 }
 
 // The toggle pressed: on, then off, or on a JSON file's (`json`) on indented,

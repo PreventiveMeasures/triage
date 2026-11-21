@@ -12,6 +12,8 @@
 // a run's source line from the last mapped in that source, a segment's
 // column from the one before on its line. So a change shows on the rows it
 // changes and on none past them.
+import { UNSEEN as HIDDEN } from '../risk/files/characters.js'
+import { COPY_LIMIT } from './pretty-json.js'
 import { decodeMappings, encodeMappings } from './sourcemap-mappings.js'
 
 // Lines as the format counts them, for a mapping's line of a file.
@@ -20,17 +22,10 @@ const LINE_END = /\r\n|[\n\r\u2028\u2029]/u
 const WHOLE_LINE = 160
 // The longest gloss shown of a line, cut short past it.
 const GLOSS_WIDTH = 160
-// The most characters a listing runs to, as a JSON file's copy may.
-const COPY_LIMIT = 16 * 1024 * 1024
 
 // Characters a line is written as JSON for (`┊`), or a gloss shown as JSON:
-// those control-chars.js boxes in the viewer, which show as nothing or as
-// another character (controls but tab, format characters such as the bidi
-// controls and zero-width ones, lone surrogates, private use and unassigned
-// code points, the line and paragraph separators, spaces other than a space,
-// default-ignorable ones), so that a listing never leaves one to the viewer.
-// eslint-disable-next-line no-control-regex
-export const HIDDEN = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u2800\u3000\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}]/u
+// those the viewer boxes (risk/files/characters.js UNSEEN), so that a listing
+// never leaves one to the viewer.
 const HIDDEN_ALL = new RegExp(HIDDEN.source, 'gu')
 function escapeHidden(char) {
   const point = char.codePointAt(0)
@@ -46,8 +41,14 @@ const shown = text => (HIDDEN.test(text) ? literal(text) : text)
 function clip(text) {
   if (text.length <= GLOSS_WIDTH) return text
   let end = GLOSS_WIDTH - 1
-  if (/[\uDC00-\uDFFF]/u.test(text[end] ?? '')) end--
+  if (/[\uDC00-\uDFFF]/u.test(text[end])) end--
   return `${text.slice(0, end)}…`
+}
+// A gloss of a text, read no further than it shows, however long the text.
+function gloss(text) {
+  let end = Math.min(text.length, GLOSS_WIDTH + 1)
+  if (end < text.length && text.codePointAt(end - 1) > 0xFFFF) end--
+  return clip(shown(text.slice(0, end)))
 }
 const signed = number => (number < 0 ? `${number}` : `+${number}`)
 export function counted(list) {
@@ -104,22 +105,30 @@ function decoded({ mappings, sources, names }) {
   return { lines, reason: null }
 }
 
-// Whether a value is listed an item to a line: a list of values that aren't
-// lists or objects; a list of texts and nulls, as sourcesContent is, a text
-// at a time.
-const listed = value => Array.isArray(value) && value.length > 0 && value.every(item => item === null || typeof item !== 'object')
-const texts = value => Array.isArray(value) && value.length > 0 && value.every(item => item === null || typeof item === 'string')
+// Whether a value is listed an item to a line: a list of values each of
+// which is null or holds to `each`, as values that aren't lists or objects
+// are each on a line, and sourcesContent's texts a text at a time.
+const listOf = (value, each) => Array.isArray(value) && value.length > 0 && value.every(item => item === null || each(item))
+const plainValue = item => typeof item !== 'object'
+const textValue = item => typeof item === 'string'
 
-const IDENTIFIER = /[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*/uy
+// The name at a column of a generated line, at most GLOSS_WIDTH characters of
+// it; and a character that goes on with one.
+const IDENTIFIER = /[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]{0,159}/uy
+const IDENTIFIER_PART = /[\p{ID_Continue}$\u200C\u200D]/uy
 // What a minifier renamed in a run: the name at each named segment of the
-// generated line, where it isn't the name the segment gives.
+// generated line, where it isn't the name the segment gives. Read no further
+// than that name, or a gloss of the one there.
 function renamesOf(text, run, names) {
   const renamed = new Set()
   for (const [column, , , , name] of run) {
     if (name === undefined || text.startsWith('${', column)) continue
+    const given = names[name]
+    IDENTIFIER_PART.lastIndex = column + given.length
+    if (text.startsWith(given, column) && !IDENTIFIER_PART.test(text)) continue
     IDENTIFIER.lastIndex = column
     const id = IDENTIFIER.exec(text)?.[0]
-    if (id !== undefined && id !== names[name]) renamed.add(`${shown(id)} ← ${shown(names[name])}`)
+    if (id !== undefined) renamed.add(`${gloss(id)} ← ${gloss(given)}`)
   }
   return [...renamed].join(', ')
 }
@@ -143,7 +152,7 @@ function header(out, value, generated, { lines, reason }) {
   out.push('# mappings decoded: @ a line of the generated file; ← the source line the segments below map from, as lines on from the')
   out.push('# last mapped in that source, ″ the one above, ∅ none; each segment its column (+ past the one before), source column, name.')
   if (lines) {
-    out.push(generated ? `# Glossed (@ ‹) with ${shown(generated.path)}, whose sourceMappingURL names this map.` : '# No file beside it whose sourceMappingURL names this map, to gloss it with.')
+    out.push(generated ? `# Glossed (@ ‹) with ${gloss(generated.path)}, whose sourceMappingURL names this map.` : '# No file beside it whose sourceMappingURL names this map, to gloss it with.')
     const segments = lines.reduce((sum, line) => sum + line.length, 0)
     const mapped = lines.filter(line => line.some(segment => segment.length > 1)).length
     const withText = value.sources.filter((_, i) => typeof value.sourcesContent?.[i] === 'string').length
@@ -168,9 +177,20 @@ function textRows(out, head, items, sources) {
 
 const pieceRow = (text, from, to) => {
   const part = text.slice(from, to)
-  return part === '' ? '    ‹' : `    ‹ ${clip(shown(part))}`
+  return part === '' ? '    ‹' : `    ‹ ${gloss(part)}`
 }
 const sameRun = (a, b) => (a.length === 1 ? b.length === 1 : b.length > 1 && b[1] === a[1] && b[2] === a[2])
+
+// The gloss of a source line runs map from, made once for each line, however
+// many runs map from it.
+function sourceGloss(map, source, line) {
+  const key = `${source}:${line}`
+  if (!map.glosses.has(key)) {
+    const at = map.sourceLines[source]?.[line]?.trim()
+    map.glosses.set(key, map.sourceLines[source] === null || at === '' ? '' : at === undefined ? '  (past the end of its text)' : `  ${gloss(at)}`)
+  }
+  return map.glosses.get(key)
+}
 
 // A run's rows: what it maps from, the piece of a long line it covers, what
 // it renamed, and its segments; the column of its last, for the next run's.
@@ -181,10 +201,7 @@ function runRows(map, run, { text, long, end, previous }) {
   else if (map.above?.[0] === first[1] && map.above[1] === first[2]) out.push(RUN_AS_ABOVE)
   else {
     const [, source, line] = first
-    const lines = map.sourceLines[source]
-    const at = lines?.[line]?.trim()
-    const gloss = lines === null || at === '' ? '' : at === undefined ? '  (past the end of its text)' : `  ${clip(shown(at))}`
-    out.push(`  ← ${map.labels[source]} ${signed(line - map.last[source])}${gloss}`)
+    out.push(`  ← ${map.labels[source]} ${signed(line - map.last[source])}${sourceGloss(map, source, line)}`)
     map.last[source] = line
     map.above = [source, line]
   }
@@ -204,12 +221,12 @@ function runRows(map, run, { text, long, end, previous }) {
 
 // A generated line's rows: an `@` row glossed with its text, or how long it
 // is where its runs gloss it a piece at a time, and its runs'.
-function lineRows(map, segments, text, path) {
+function lineRows(map, segments, text) {
   const long = text !== undefined && text.length > WHOLE_LINE
-  map.out.push(path === null || text === '' ? '@'
-    : text === undefined ? `@ (past the end of ${shown(path)})`
+  map.out.push(map.path === null || text === '' ? '@'
+    : text === undefined ? `@ (past the end of ${gloss(map.path)})`
     : long ? `@ (${text.length.toLocaleString('en')} characters)`
-    : `@ ${clip(shown(text))}`)
+    : `@ ${gloss(text)}`)
   if (long && segments.length > 0 && segments[0][0] > 0) map.out.push(pieceRow(text, 0, segments[0][0]))
   let previous = null
   for (let i = 0; i < segments.length;) {
@@ -226,11 +243,11 @@ function mappingsRows(out, head, value, lines, generated) {
   const map = {
     out, names, labels: sourceLabels(value.sources), nameOf: nameLabels(names),
     sourceLines: value.sources.map((_, i) => (typeof value.sourcesContent?.[i] === 'string' ? value.sourcesContent[i].split(LINE_END) : null)),
-    last: value.sources.map(() => 0), above: null,
+    last: value.sources.map(() => 0), above: null, glosses: new Map(), path: generated?.path ?? null,
   }
   const code = generated ? generated.text.split(LINE_END) : null
   out.push(`${head}${MAPPINGS_OPEN}`)
-  lines.forEach((segments, g) => lineRows(map, segments, code?.[g], code === null ? null : generated.path))
+  lines.forEach((segments, g) => lineRows(map, segments, code?.[g]))
   out.push('}')
 }
 
@@ -242,8 +259,8 @@ export function sourcemapListing(value, generated) {
   for (const key of Object.keys(value)) {
     const head = `${literal(key)}: `, item = value[key]
     if (key === 'mappings' && mappings.lines) mappingsRows(out, head, value, mappings.lines, generated)
-    else if (key === 'sourcesContent' && texts(item)) textRows(out, head, item, value.sources)
-    else if (listed(item)) {
+    else if (key === 'sourcesContent' && listOf(item, textValue)) textRows(out, head, item, value.sources)
+    else if (listOf(item, plainValue)) {
       out.push(`${head}[`)
       for (const each of item) out.push(`  ${literal(each)}`)
       out.push(']')

@@ -73,7 +73,7 @@ export function decodeMappings(mappings, sourcesCount, namesCount) {
       }
       continue
     }
-    const digit = code < 128 ? DIGIT_OF[code] : -1
+    const digit = DIGIT_OF[code] ?? -1
     if (digit < 0) throw new MappingsError(`${JSON.stringify(mappings[i])} at ${i} is no base64 digit.`)
     value += (digit & 31) * 2 ** shift
     shift += 5

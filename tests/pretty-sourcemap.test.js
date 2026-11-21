@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { changeBlocks, textLines } from '../common/line-diff.js'
 import { listSourcemap, sourcemapDiffRebuilds, sourcemapGenerated, unlistSourcemap } from '../common/pretty-sourcemap.js'
-import { HIDDEN } from '../common/sourcemap-listing.js'
+import { UNSEEN } from '../risk/files/characters.js'
 import { encodeMappings } from '../common/sourcemap-mappings.js'
 
 // Characters made here, not written in this file: what a listing must show
@@ -19,7 +19,7 @@ const FILES = new Map([['lib/index.js', JS]])
 
 // Random maps, the same each run: sources, texts and names made of pieces a
 // listing could misread (its own markers, line ends of every kind, quotes,
-// escapes, HIDDEN characters), keys in any order with others beside them.
+// escapes, UNSEEN characters), keys in any order with others beside them.
 function randomMaps(count) {
   let seed = 5
   const rand = n => (seed = (seed * 48271) % 2147483647) % n
@@ -105,6 +105,8 @@ test('a source map is listed key by key, its texts line by line and its mappings
   assert.match(text, /^# Glossed \(@ ‹\) with lib\/index\.js, whose sourceMappingURL names this map\.$/mu)
   assert.match(text, /^# Sources: 1 \(1 with text\) · names: 3 · segments: 8 · lines: 5, 3 mapped\.$/mu)
   assert.equal(JSON.stringify(unlistSourcemap(text)), mapOf())
+  assert.throws(() => unlistSourcemap(text.slice(0, -1)), { message: 'Its listing ends with no line end.' })
+  assert.throws(() => unlistSourcemap(`${text}x\n`), { message: /^Its listing's row \d+ names no key\.$/u })
   const alone = listSourcemap(mapOf()).text
   assert.match(alone, /^# No file beside it whose sourceMappingURL names this map, to gloss it with\.$/mu)
   assert.match(alone, /\n@\n@\n {2}← index\.ts \+0 {2}export function add/u, 'its lines unglossed with no file')
@@ -115,7 +117,7 @@ test('a listing reads back to the very map it lists, whatever its values hold, a
     const text = JSON.stringify(map)
     const { text: listing } = listSourcemap(text)
     assert.equal(JSON.stringify(unlistSourcemap(listing)), text)
-    for (const row of listing.split('\n')) assert.ok(!HIDDEN.test(row), `a row shows no hidden character: ${JSON.stringify(row)}`)
+    for (const row of listing.split('\n')) assert.ok(!UNSEEN.test(row), `a row shows no hidden character: ${JSON.stringify(row)}`)
   }
 })
 
@@ -125,39 +127,37 @@ test('every change between two maps changes their listings, and the diff of the 
     const [a, b] = [before, after].map(text => listSourcemap(text).text)
     const blocks = changeBlocks(a, b)
     assert.ok(blocks.length > 0, `a change shows: ${k % 6}`)
-    assert.equal(sourcemapDiffRebuilds({ a: textLines(a), b: textLines(b), blocks }, { text: before }, { text: after }), null)
+    assert.equal(sourcemapDiffRebuilds({ a: textLines(a), b: textLines(b), blocks }, { text: before, listing: a }, { text: after, listing: b }), null)
   })
 })
 
 test('a diff that does not show every change between two maps is refused, saying why', () => {
   const [before, after] = [mapOf(), mapOf({ sourcesContent: [TS.replace('a + b', 'a - b')], names: ['add', 'a', 'b', 'c'] })]
-  const sides = [{ text: before, path: 'lib/index.js.map', files: FILES }, { text: after, path: 'lib/index.js.map', files: FILES }]
-  const [a, b] = sides.map(side => textLines(listSourcemap(side.text, side.path, side.files).text))
-  const blocks = changeBlocks(`${a.join('\n')}\n`, `${b.join('\n')}\n`)
+  const [oldListing, newListing] = [before, after].map(text => listSourcemap(text, 'lib/index.js.map', FILES).text)
+  const [a, b] = [oldListing, newListing].map(textLines)
+  const sides = [{ text: before, listing: oldListing }, { text: after, listing: newListing }]
+  const blocks = changeBlocks(oldListing, newListing)
   assert.equal(sourcemapDiffRebuilds({ a, b, blocks }, ...sides), null)
   assert.ok(blocks.length >= 2)
-  const refused = (drawn, why) => assert.match(sourcemapDiffRebuilds({ a, b, blocks, ...drawn }, ...sides), why)
-  const even = blocks.findIndex(({ a0, a1, b0, b1 }) => a1 - a0 === b1 - b0), uneven = blocks.findIndex(({ a0, a1, b0, b1 }) => a1 - a0 !== b1 - b0)
-  refused({ blocks: blocks.filter((_, i) => i !== uneven) }, /^the changes drawn don't fit the listings drawn\.$/u)
-  refused({ blocks: blocks.filter((_, i) => i !== even) }, /^the new side drawn isn't what the changes drawn make of the old\.$/u)
-  refused({ blocks: [] }, /^the changes drawn don't fit/u)
-  refused({ blocks: null }, /^the changes drawn don't fit/u)
-  refused({ blocks: [{ ...blocks[0], b1: blocks[0].b1 - 1 }, ...blocks.slice(1)] }, /^the changes drawn don't fit/u)
+  const refused = (drawn, why, given = sides) => assert.match(sourcemapDiffRebuilds({ a, b, blocks, ...drawn }, ...given), why)
+  const notTaken = /^the changes drawn don't take the old map's listing to the new side drawn\.$/u
+  for (const tampered of [blocks.slice(1), blocks.slice(0, -1), [], null, [{ ...blocks[0], b1: blocks[0].b1 - 1 }, ...blocks.slice(1)]]) refused({ blocks: tampered }, notTaken)
   // A row the changes leave as it was, drawn otherwise on the new side.
-  const kept = b.map((row, i) => (i === 0 ? `${row} ` : row))
-  refused({ b: kept }, /^the new side drawn isn't what the changes drawn make of the old\.$/u)
-  // A line of a text the changes draw otherwise than the new map holds it.
+  refused({ b: b.map((row, i) => (i === 0 ? `${row} ` : row)) }, notTaken)
+  // A row a change draws otherwise than the new map's listing has it: a line of a text, or a gloss.
   const inText = blocks.find(({ b0, b1 }) => b.slice(b0, b1).some(row => row.startsWith('  │')))
-  const retexted = b.map((row, i) => (i >= inText.b0 && i < inText.b1 && row.startsWith('  │') ? `${row}!` : row))
-  refused({ b: retexted }, /^what the changes drawn make of the old listing reads back to another map than the new one\.$/u)
-  // A gloss drawn otherwise than the new map's listing has it: read past, held to it by listing it again.
+  refused({ b: b.map((row, i) => (i >= inText.b0 && i < inText.b1 && row.startsWith('  │') ? `${row}!` : row)) }, /^the new side drawn isn't the new map's listing\.$/u)
   const atGloss = b.findIndex(row => row.startsWith('@ '))
   const swapped = b.map((row, i) => (i === atGloss ? '@ (another line)' : row))
-  refused({ b: swapped, blocks: changeBlocks(`${a.join('\n')}\n`, `${swapped.join('\n')}\n`) }, /^what the changes drawn make of the old listing isn't the new map's listing\.$/u)
+  refused({ b: swapped, blocks: changeBlocks(oldListing, `${swapped.join('\n')}\n`) }, /^the new side drawn isn't the new map's listing\.$/u)
   refused({ a: a.slice(1) }, /^the old side drawn isn't the old map's listing\.$/u)
-  assert.match(sourcemapDiffRebuilds({ a: b, b: a, blocks: changeBlocks(`${b.join('\n')}\n`, `${a.join('\n')}\n`) }, ...sides), /^the old side drawn isn't/u, 'sides swapped')
-  assert.equal(sourcemapDiffRebuilds({ a: [], b, blocks: [{ a0: 0, a1: 0, b0: 0, b1: b.length }] }, { text: '' }, sides[1]), null, 'a map added')
-  assert.equal(sourcemapDiffRebuilds({ a, b: [], blocks: [{ a0: 0, a1: a.length, b0: 0, b1: 0 }] }, sides[0], { text: '' }), null, 'a map removed')
+  refused({ a: b, b: a, blocks: changeBlocks(newListing, oldListing) }, /^the old side drawn isn't/u, sides)
+  // The new map rebuilt of the side drawn, by JSON.stringify: another map than the new one, or none.
+  refused({}, /^the new side drawn reads back to another map than the new one\.$/u, [sides[0], { text: before, listing: newListing }])
+  const broken = [...b.slice(0, -1), 'not a row', b.at(-1)]
+  refused({ b: broken, blocks: changeBlocks(oldListing, `${broken.join('\n')}\n`) }, /^Its listing's row \d+ is no row of mappings\.$/u, [sides[0], { text: after, listing: `${broken.join('\n')}\n` }])
+  assert.equal(sourcemapDiffRebuilds({ a: [], b, blocks: [{ a0: 0, a1: 0, b0: 0, b1: b.length }] }, { text: '', listing: '' }, sides[1]), null, 'a map added')
+  assert.equal(sourcemapDiffRebuilds({ a, b: [], blocks: [{ a0: 0, a1: a.length, b0: 0, b1: 0 }] }, sides[0], { text: '', listing: '' }), null, 'a map removed')
 })
 
 test('a map is listed only where its listing reads back to its text, and its mappings decoded only where they read back to theirs', () => {
@@ -210,7 +210,7 @@ test('a character that shows as another or none is shown escaped, in a text, a n
   assert.match(listing, /^ {2}"a\\u200b\.ts"$/mu, 'a source')
   assert.match(listing, / "ad\\u200bmin"$/mu, 'a name as a segment gives it')
   assert.match(listing, /^ {2}← #0 \+1 {2}"const admin = \\"\\u202e/mu, 'a source line gloss, its source by index')
-  assert.ok(listing.split('\n').every(row => !HIDDEN.test(row)))
+  assert.ok(listing.split('\n').every(row => !UNSEEN.test(row)))
   assert.equal(JSON.stringify(unlistSourcemap(listing)), text)
 })
 
@@ -243,4 +243,14 @@ test('a minified line is glossed a run at a time, with what its minifier renamed
     '}',
   ])
   assert.equal(JSON.stringify(unlistSourcemap(listing)), text)
+})
+
+test('a gloss is read no further than it shows, however many runs map from its line', () => {
+  // Two lines of a million characters, ten thousand runs mapping from each by turns.
+  const long = 'x'.repeat(1_000_000)
+  const text = JSON.stringify({ version: 3, sources: ['a.ts'], sourcesContent: [`${long}\n${long}`], names: [], mappings: encodeMappings([Array.from({ length: 10_000 }, (_, i) => [i, 0, i % 2, 0])]) })
+  const started = performance.now()
+  const { text: listing } = listSourcemap(text)
+  assert.ok(performance.now() - started < 4000, 'each line glossed once, from its start alone')
+  assert.match(listing, new RegExp(`^ {2}← a\\.ts \\+1 {2}${'x'.repeat(159)}…$`, 'mu'))
 })
