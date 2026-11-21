@@ -352,7 +352,8 @@ export function niceScale(max) {
 const compactNumber = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 const compact = value => compactNumber.format(value)
 const plural = (count, one, many = `${one}s`) => `${number(count)} ${count === 1 ? one : many}`
-const day = (at, year = false) => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...year ? { year: 'numeric' } : {}, timeZone: 'UTC' })
+const day = (at, year = false, weekday = false) => new Date(at).toLocaleDateString('en-US', { ...weekday ? { weekday: 'short' } : {}, month: 'short', day: 'numeric',
+  ...year ? { year: 'numeric' } : {}, timeZone: 'UTC' })
 const isoDay = at => new Date(at).toISOString().slice(0, 10)
 const otherYear = (at, now) => new Date(at).getUTCFullYear() !== new Date(now).getUTCFullYear()
 // A period's days, the years named where they differ.
@@ -362,9 +363,7 @@ const rangeName = (since, now) => {
   return since >= today ? day(today, years) : `${day(since, years)} – ${day(today, years)}`
 }
 // A column's day, or week, the year named where it is not this one's.
-const columnName = (column, now) => column.day
-  ? new Date(column.from).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', ...otherYear(column.from, now) ? { year: 'numeric' } : {}, timeZone: 'UTC' })
-  : `Week of ${day(column.from, otherYear(column.from, now))}`
+const columnName = (column, now) => `${column.day ? '' : 'Week of '}${day(column.from, otherYear(column.from, now), column.day)}`
 // A column's figures, in words: with agents, and releases, where the plots
 // set them apart (`apart`).
 const columnText = (column, now, apart = {}) => `${columnName(column, now)}: ${plural(column.commits, 'commit')}${apart.agents
@@ -674,16 +673,14 @@ class RepositoryPulse extends Shown {
     const [from, to, week] = columnSpan(column, answer.stats.contributors)
     const people = everyone ? periodContributors(answer.stats.contributors, from, to).slice(0, COLUMN_CONTRIBUTORS) : []
     const middle = (at + 0.5) / columns.length
+    // Its values, each its key's kind, figure and name.
+    const rows = [[apart.agents || apart.releases ? ' is-none' : '', number(column.commits), column.commits === 1 ? 'commit' : 'commits'],
+      ...apart.agents ? [['', number(column.agents), 'with agents']] : [], ...apart.releases ? [[' is-release', number(column.releases), column.releases === 1 ? 'release' : 'releases']] : [],
+      ...column.additions === null ? [] : [[' is-added', `+${number(column.additions)}`, 'added'], [' is-removed', `−${number(column.deletions)}`, 'removed']]]
     return html`<div class=${`pulse-tip${middle > 0.6 ? ' is-left' : ''}`} style=${styleMap({ '--x': `${middle}` })} aria-hidden="true">
       <span class="pulse-tip-when">${columnName(column, now)}${column.day ? column.from === today ? html` <span>today</span>` : nothing
-        : now < column.to ? html` <span>so far</span>` : nothing}</span>
-      <span class="pulse-tip-row"><span class=${`pulse-tip-key${apart.agents || apart.releases ? ' is-none' : ''}`}></span><strong>${number(column.commits)}</strong> ${
-  column.commits === 1 ? 'commit' : 'commits'}</span>
-      ${apart.agents ? html`<span class="pulse-tip-row"><span class="pulse-tip-key"></span><strong>${number(column.agents)}</strong> with agents</span>` : nothing}
-      ${apart.releases ? html`<span class="pulse-tip-row"><span class="pulse-tip-key is-release"></span><strong>${number(column.releases)}</strong> ${column.releases === 1
-        ? 'release' : 'releases'}</span>` : nothing}
-      ${column.additions === null ? nothing : html`<span class="pulse-tip-row"><span class="pulse-tip-key is-added"></span><strong>+${number(column.additions)}</strong> added</span>
-        <span class="pulse-tip-row"><span class="pulse-tip-key is-removed"></span><strong>−${number(column.deletions)}</strong> removed</span>`}
+        : now < column.to ? html` <span>so far</span>` : nothing}</span>${rows.map(([key, value, name]) => html`
+      <span class="pulse-tip-row"><span class=${`pulse-tip-key${key}`}></span><strong>${value}</strong> ${name}</span>`)}
       ${people.length > 0 ? html`<span class="pulse-tip-people">${week ? html`<span class="pulse-tip-note">Its week’s</span>` : nothing}
         ${people.map(person => html`<span class="pulse-tip-person">${contributor(person)}<strong>${number(person.commits)}</strong></span>`)}</span>` : nothing}
     </div>`
