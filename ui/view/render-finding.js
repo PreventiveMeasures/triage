@@ -50,12 +50,8 @@ function severityBadge(f, { variant = 'full' } = {}) {
   const variants = variant === 'tab' ? null : correctedVariants(f)
   if (!hasCorr && !variants) return primary
 
-  const variesTip = variants
-    ? `Corrected severity varies across reports — ${Object.entries(variants).map(([r, v]) => `${r || '(this report)'}: ${badgeLabel(v.severity)}`).join('; ')}`
-    : null
-  const variesChip = variants
-    ? html`<span class="badge-varies" data-tooltip=${variesTip} aria-label=${variesTip}>varies</span>`
-    : nothing
+  const variesTip = variants && `Corrected severity varies across reports — ${Object.entries(variants).map(([r, v]) => `${r || '(this report)'}: ${badgeLabel(v.severity)}`).join('; ')}`
+  const variesChip = variants ? html`<span class="badge-varies" data-tooltip=${variesTip} aria-label=${variesTip}>varies</span>` : nothing
 
   // A deduped sibling's correction alone.
   if (!hasCorr) return html`<span class=${`badge-pair badge-pair-${variant}`}>${primary}${variesChip}</span>`
@@ -713,31 +709,26 @@ function triageMenuTemplate(group, title, context, groupSt, activeTab) {
   const gid = groupKey(group)
   const disabled = !canEditTriage(activeTab) || triageScope(group, groupSt).length === 0
   const current = disabled ? null : scopedTriage(group, groupSt, activeTab)
-  const inTriageView = Boolean(state.shownTriage)
-  const buttonLabel = inTriageView ? TRIAGE_STATES[state.shownTriage] : null
-  const listed = Object.keys(TRIAGE_ACTIONS).map((s) => ({ key: s, label: TRIAGE_ACTIONS[s] }))
-  const actions = inTriageView && context !== 'focus'
-    ? [{ key: 'restore', label: 'Restore' }, ...listed.filter((a) => a.key !== state.shownTriage)]
-    : listed
-  const btnClasses = ['mark-triage-menu']
-  if (inTriageView) btnClasses.push('with-label', `triage-state-${state.shownTriage}`)
+  const shown = state.shownTriage
+  const listed = Object.entries(TRIAGE_ACTIONS)
+  const actions = shown && context !== 'focus' ? [['restore', 'Restore'], ...listed.filter(([key]) => key !== shown)] : listed
   // A gid's `.` / `:` escaped, for a selectable id.
   const popId = `triage-menu-${gid.replaceAll(/[^A-Za-z0-9_-]/gu, '_')}`
   return html`<div class="triage-menu-wrap">
-    <button type="button" class=${btnClasses.join(' ')} popovertarget=${popId} popovertargetaction="toggle" aria-label=${title} ?disabled=${disabled}>
-      ${buttonLabel ? html`<span class="mark-triage-label">${buttonLabel}</span>` : nothing}
+    <button type="button" class=${shown ? `mark-triage-menu with-label triage-state-${shown}` : 'mark-triage-menu'} popovertarget=${popId} popovertargetaction="toggle" aria-label=${title} ?disabled=${disabled}>
+      ${shown && TRIAGE_STATES[shown] ? html`<span class="mark-triage-label">${TRIAGE_STATES[shown]}</span>` : nothing}
       <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
         <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
     <div popover="auto" id=${popId} class="triage-menu" data-gid=${gid} role="menu" @beforetoggle=${positionTriagePopover}>
-      ${actions.map((a) => html`<button
+      ${actions.map(([key, label]) => html`<button
         type="button"
-        class=${classMap({ 'triage-menu-item': true, [`triage-menu-${a.key}`]: true, active: current === a.key })}
-        data-triage-action=${a.key}
+        class=${classMap({ 'triage-menu-item': true, [`triage-menu-${key}`]: true, active: current === key })}
+        data-triage-action=${key}
         ?disabled=${disabled}
         role="menuitem"
-      >${a.label}</button>`)}
+      >${label}</button>`)}
     </div>
   </div>`
 }
@@ -819,16 +810,12 @@ function npmChipTemplate(npm) {
   if (typeof name !== 'string' || !NPM_NAME_RE.test(name)) return nothing
   const version = npm?.version
   const hasVersion = typeof version === 'string' && version.length > 0
-  const href = hasVersion
-    ? `https://www.npmjs.com/package/${name}/v/${encodeURIComponent(version)}`
-    : `https://www.npmjs.com/package/${name}`
-  const label = hasVersion ? `${name}@${version}` : name
   return html`<span class="line-num"><a
     class="npm-link"
-    href=${href}
+    href=${`https://www.npmjs.com/package/${name}${hasVersion ? `/v/${encodeURIComponent(version)}` : ''}`}
     target="_blank"
     rel="noopener noreferrer"
-  >npm: ${label}</a></span>`
+  >npm: ${hasVersion ? `${name}@${version}` : name}</a></span>`
 }
 
 // One tab's body: the rail, and the finding beside it. Only the active one

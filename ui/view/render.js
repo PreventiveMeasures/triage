@@ -157,15 +157,11 @@ function headerTemplate(mergedGroups, fileNames, repoInputUseful, knownRepo, tre
   const context = workspaceContent(state, ws ? [ws] : [], getKind)
   const titleText = ws ? `Workspace: ${ws.name}` : singleSource ? `${SOURCE_LABELS[singleSource] ?? singleSource} findings` : 'Findings'
 
-  let fileChip = nothing
-  if (context) {
-    fileChip = workspaceContentButton(context, 'reports', state.currentView)
-  } else if (fileNames.length === 1) {
-    const name = reportDisplayName(fileNames[0])
-    fileChip = html`<button type="button" class="file-chip" data-copy-report=${name}>${appMarkup(FILE_ICONS[singleSource] ?? FILE_ICONS.default)}<span>${name}</span></button>`
-  } else if (fileNames.length > 1) {
-    fileChip = html`<button type="button" class="file-chip" data-copy-report=${fileNames.map(reportDisplayName).join('\n')}>${MULTI_REPORT_STICKER}<span>${fileNames.length} reports</span></button>`
-  }
+  const names = context ? [] : fileNames.map(reportDisplayName)
+  const fileChip = context ? workspaceContentButton(context, 'reports', state.currentView)
+    : names.length === 1 ? html`<button type="button" class="file-chip" data-copy-report=${names[0]}>${appMarkup(FILE_ICONS[singleSource] ?? FILE_ICONS.default)}<span>${names[0]}</span></button>`
+    : names.length > 1 ? html`<button type="button" class="file-chip" data-copy-report=${names.join('\n')}>${MULTI_REPORT_STICKER}<span>${names.length} reports</span></button>`
+    : nothing
 
   const sevCounts = {}
   for (const g of mergedGroups) {
@@ -739,21 +735,23 @@ function codeHistoryNav(codeHistory) {
 // morphs from its card (findings.css); the dim backdrop is a layer of its
 // own so its fade doesn't drag the modal's clip-path animation along.
 //
-// `column` ({ key, label, items }, board order) backs the same-column rail
-// beside the modal, docked to the screen's right edge from 1400px up;
-// `columns` ({ key, label, count, firstGid }) its header's picker, the way
+// The board's `buckets` (key → groups, board order) back the same-column
+// rail beside the modal (`focusKey`'s, the open card's), docked to the
+// screen's right edge from 1400px up, and its header's picker, the way
 // across to another bucket. Fullscreen (persisted, state.ts) stretches the
 // modal over everything but the rail and swaps the card for the focus
 // workbench; the history / expand / close cluster then moves to the card
 // pane's corner.
-function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) {
+function kanbanDetailTemplate(focusGroup, buckets = null, focusKey = null, preview = null) {
   if (!focusGroup && !preview) return nothing
   const groupSt = focusGroup ? groupState(focusGroup) : {}
   const full = state.kanbanDetailFullscreen
   // A team's finding shows once its detail is in (managed-details.js).
   const waiting = focusGroup ? managedDetailsWaiting() : null
   const gid = focusGroup ? groupKey(focusGroup) : null
-  const items = column?.items ?? []
+  // A triage state no column claims has no rail.
+  const column = buckets && KANBAN_COLUMNS.find((c) => c.key === focusKey)
+  const items = column ? buckets.get(column.key) : []
   // -1 can't happen for a group from the same bucket map; were it to, the
   // counter shows the bare total and both arrows stay live.
   const idx = items.findIndex((g) => groupKey(g) === gid)
@@ -787,19 +785,20 @@ function kanbanDetailTemplate(focusGroup, column, columns = [], preview = null) 
       <div class="kanban-detail-side-header">
         <span class="kanban-detail-side-pick">
           <select class="kanban-detail-side-select" data-kanban-column aria-label="Column to show">
-            ${columns.map((c) => {
+            ${KANBAN_COLUMNS.map((c) => {
               // Choosing a column opens its first finding, the rail coming
               // along; an empty one is listed (its count answers "anything
               // in Fixed yet?") but not selectable. `selected` is a
               // PROPERTY: once used, a select's selectedness stops
               // following the attribute.
               const current = c.key === column.key
+              const count = buckets.get(c.key).length
               return html`<option
                 value=${c.key}
-                data-gid=${c.firstGid}
+                data-gid=${count > 0 ? groupKey(buckets.get(c.key)[0]) : ''}
                 .selected=${current}
-                ?disabled=${c.count === 0}
-              >${current ? c.label : `${c.label} (${c.count})`}</option>`
+                ?disabled=${count === 0}
+              >${current ? c.label : `${c.label} (${count})`}</option>`
             })}
           </select></span>${navTemplate(KANBAN_NAV, idx < 0 ? items.length : `${idx + 1} / ${items.length}`, idx === 0, idx === items.length - 1)}
       </div>
@@ -881,14 +880,11 @@ function kanbanBody(filtered, selectedGroup, groupStates) {
     if (!st) groupStates.set(g, st = groupState(g))
     return st
   }
-  // A triage state no column claims has no column, nor a rail.
+  // A triage state no column claims has no column.
   for (const g of filtered) buckets.get(stateOf(g).commonTriage ?? 'untriaged')?.push(g)
   // A stale key (a renamed bucket) degrades to the normal board.
   const expandedKey = KANBAN_COLUMNS.some((c) => c.key === state.kanbanExpandedColumn) ? state.kanbanExpandedColumn : null
   const shownColumns = expandedKey ? KANBAN_COLUMNS.filter((c) => c.key === expandedKey) : KANBAN_COLUMNS
-  const focusColumn = selectedGroup
-    ? KANBAN_COLUMNS.find((c) => c.key === (stateOf(selectedGroup).commonTriage ?? 'untriaged'))
-    : null
   // `--kanban-cols` lays an expanded column's cards in as many tracks as
   // the board has columns, so a card's width holds either side of the toggle.
   return html`<div class="kanban-board" style=${styleMap({ '--kanban-cols': String(KANBAN_COLUMNS.length) })}>
@@ -922,15 +918,7 @@ function kanbanBody(filtered, selectedGroup, groupStates) {
         </div>`
       })}
     </div>
-    ${kanbanDetailTemplate(
-      selectedGroup,
-      focusColumn && { ...focusColumn, items: buckets.get(focusColumn.key) },
-      // In board order; each opens on its top card.
-      KANBAN_COLUMNS.map((c) => {
-        const items = buckets.get(c.key)
-        return { key: c.key, label: c.label, count: items.length, firstGid: items.length > 0 ? groupKey(items[0]) : '' }
-      }),
-    )}`
+    ${kanbanDetailTemplate(selectedGroup, buckets, selectedGroup && (stateOf(selectedGroup).commonTriage ?? 'untriaged'))}`
 }
 
 // Grouped by file — a dedup group's tabs share one file (dedup runs per
@@ -1073,7 +1061,7 @@ const PAINTED_VIEWS = {
   // like any other.
   links: ({ currentLinks }) => currentLinks && ['links-slot', () => {
     const preview = getLinksPreview()
-    return html`${renderLinksView(syncBadgeTemplate())}${preview ? kanbanDetailTemplate(preview.group, null, [], preview) : nothing}`
+    return html`${renderLinksView(syncBadgeTemplate())}${preview ? kanbanDetailTemplate(preview.group, null, null, preview) : nothing}`
   }, `DeepView — ${currentLinks.name}`],
 }
 
@@ -1118,12 +1106,7 @@ const GREEN = { color: 'var(--green)' }
 
 // Alphabetical with the null bucket pinned last, for the model and repo
 // option lists.
-const nullLastCmp = (a, b) => {
-  if (a == null && b == null) return 0
-  if (a == null) return 1
-  if (b == null) return -1
-  return a.localeCompare(b)
-}
+const nullLastCmp = (a, b) => (a == null || b == null ? (a == null) - (b == null) : a.localeCompare(b))
 
 // The analyzer options' order: known source-marked producers first, in
 // SOURCE_LABELS' order, then the rest, the null bucket last.
