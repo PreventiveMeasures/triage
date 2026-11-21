@@ -44,24 +44,17 @@ export function managedTeamFindings(app) {
   return (app?.appMode ? app.appFindings : app?.findings) ?? null
 }
 
-// Match local workspace section behavior: reveal selection on navigation,
-// preserve manual collapse on repaint, and reveal search results temporarily.
-export class ManagedTeamSections {
-  constructor() { this.expanded = new Map() }
-  sync(state, force = false) {
-    const owner = JSON.stringify([state.managedSession?.id, state.managedSession?.role, state.managedSession?.csrfToken])
-    if (owner !== this.owner) { this.expanded.clear(); this.focus = ''; this.owner = owner }
-    const teams = state.managedTeams ?? []
-    for (const id of this.expanded.keys()) if (!teams.some(team => team.id === id)) this.expanded.delete(id)
-    const bundle = shownManagedBundleId(state)
-    const report = ['findings', 'files', 'links'].includes(state.currentView) ? state.currentManagedReport : null
-    const section = bundle ? 'bundles' : 'reports'
-    const team = teams.find(candidate => candidate.id === state.currentManagedTeam
-      && (bundle ? candidate.bundles?.some(b => b.id === bundle) : candidate.reports?.some(r => r.id === report)))
-    const focus = JSON.stringify([section, bundle || report, team?.id])
+// Which sections of a compact (App) team or workspace are expanded: revealed
+// on navigation to the selection inside them, kept through repaints (a user
+// can collapse the selected one), and all shown while a search lasts.
+export class SectionExpansion {
+  expanded = new Map()
+  focus = ''
+  // Expand `section` of each id, only when the selection (`focus`) moved.
+  reveal(focus, ids, section, force) {
     if (!force && focus === this.focus) return
     this.focus = focus
-    if (team) this.sectionsOf(team.id).add(section)
+    for (const id of ids) this.sectionsOf(id).add(section)
   }
   sectionsOf(id) {
     if (!this.expanded.has(id)) this.expanded.set(id, new Set())
@@ -73,5 +66,21 @@ export class ManagedTeamSections {
   }
   shown(id, section, compact, search) {
     return !compact || search || this.expanded.get(id)?.has(section) === true
+  }
+}
+
+// The teams' sections, reset with the account and pruned of teams gone.
+export class ManagedTeamSections extends SectionExpansion {
+  sync(state, force = false) {
+    const owner = JSON.stringify([state.managedSession?.id, state.managedSession?.role, state.managedSession?.csrfToken])
+    if (owner !== this.owner) { this.expanded.clear(); this.focus = ''; this.owner = owner }
+    const teams = state.managedTeams ?? []
+    for (const id of this.expanded.keys()) if (!teams.some(team => team.id === id)) this.expanded.delete(id)
+    const bundle = shownManagedBundleId(state)
+    const report = ['findings', 'files', 'links'].includes(state.currentView) ? state.currentManagedReport : null
+    const section = bundle ? 'bundles' : 'reports'
+    const team = teams.find(candidate => candidate.id === state.currentManagedTeam
+      && (bundle ? candidate.bundles?.some(b => b.id === bundle) : candidate.reports?.some(r => r.id === report)))
+    this.reveal(JSON.stringify([section, bundle || report, team?.id]), team ? [team.id] : [], section, force)
   }
 }

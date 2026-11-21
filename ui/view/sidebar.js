@@ -17,7 +17,7 @@ import { openNpmRoute } from './npm-package.js'
 import { navigateToRepositoryCode, openRepositoryCodeRoute } from './repository-code.js'
 import { createManagedTeamsProbe } from './managed-teams-probe.js'
 import { currentViewSignal } from './view-navigation.js'
-import { ManagedTeamSections, filterManagedTeams, managedBundleStats, managedRepositoryPath, managedTeamCollapses, managedTeamFindings } from './managed-sidebar.js'
+import { ManagedTeamSections, SectionExpansion, filterManagedTeams, managedBundleStats, managedRepositoryPath, managedTeamCollapses, managedTeamFindings } from './managed-sidebar.js'
 import { railLetters } from './sidebar-rail.js'
 import { cleanupGraph2 } from './graph/state.js'
 import { applyLinkedFilters } from './filters.js'
@@ -90,10 +90,9 @@ const REPORT_DT = 'application/x-deepview-report'
 const SOURCE_WS_DT = 'application/x-deepview-source-ws'
 const BUNDLE_DT = 'application/x-deepview-bundle'
 
-// Mid-drag, the Reports / Bundles header shows as the detach target even
-// with no unfiled row to sit above.
-let isDraggingReport = false
-let isDraggingBundle = false
+// The payload type mid-drag (null otherwise), whose Reports / Bundles header
+// shows as the detach target even with no unfiled row to sit above.
+let dragging = null
 
 // Section headers per report bucket, in render order. Named buckets carry
 // their producer's name (DeepSec is Vercel's tool, Piolium Vigolium's);
@@ -108,7 +107,11 @@ const GROUP_LABELS = {
   'markdown-generic': 'Markdown (generic)',
   [LINKS_KIND]: 'Links',
 }
-const GROUP_ORDER = ['default', 'claude-security', 'codex-security', 'deepsec', 'piolium', 'markdown-generic', LINKS_KIND]
+const GROUP_ORDER = Object.keys(GROUP_LABELS)
+
+// The search row's view buttons (sidebar-view-button.js), and the index
+// each counts.
+const VIEW_BUTTONS = [['packages', getPackagesIndex], ['repositories', getRepositoriesIndex]]
 
 const WORKSPACE_CONTENT_VIEWS = ['workspace-reports', 'workspace-bundles', 'workspace-repositories', 'workspace-dependencies']
 
@@ -116,13 +119,12 @@ const WORKSPACE_CONTENT_VIEWS = ['workspace-reports', 'workspace-bundles', 'work
 // across file switches.
 let searchQuery = ''
 let searchActive = false
-// App workspaces start compact. Search temporarily reveals matching children
-// without changing the user's independent report/bundle expansion choices.
-const expandedWorkspaceSections = new Map()
-let lastWorkspaceFocus = ''
+// App workspaces and teams start compact (managed-sidebar.js).
+const workspaceSections = new SectionExpansion()
 const teamSections = new ManagedTeamSections()
+// The views that show a report.
+const REPORT_VIEWS = new Set(['findings', 'files', 'links'])
 
-const toggleIn = (set, value) => { if (!set.delete(value)) set.add(value) }
 const plural = (n, noun) => `${n.toLocaleString()} ${noun}${n === 1 ? '' : 's'}`
 const setHidden = (selector, hidden) => root?.querySelector(selector)?.toggleAttribute('hidden', hidden)
 const hideUserMenu = () => root?.querySelector('#user-menu')?.hidePopover?.()
@@ -130,36 +132,27 @@ const bundleName = integrity => (state.bundles ?? []).find((b) => b.integrity ==
 
 function revealFocusedWorkspaceSection(workspaces, force) {
   const bundle = state.currentView === 'bundles' ? state.selectedBundle : null
-  const report = ['findings', 'files', 'links'].includes(state.currentView) ? state.currentFile : null
+  const report = REPORT_VIEWS.has(state.currentView) ? state.currentFile : null
   const section = bundle ? 'bundles' : 'reports'
   const reportWorkspace = report ? reportWorkspaceFor(report) : null
-  const parents = workspaces.filter((w) => bundle ? w.bundles.includes(bundle) : w.id === reportWorkspace)
-  const focus = JSON.stringify([section, bundle || report, parents.map((w) => w.id)])
-  if (!force && focus === lastWorkspaceFocus) return
-  lastWorkspaceFocus = focus
-  // Reveal on navigation, not every repaint: a user can still collapse the
-  // selected section. Search's temporary expansion does not change this state.
-  for (const w of parents) {
-    const expanded = expandedWorkspaceSections.get(w.id) ?? new Set()
-    expanded.add(section)
-    expandedWorkspaceSections.set(w.id, expanded)
-  }
+  const parents = workspaces.filter((w) => bundle ? w.bundles.includes(bundle) : w.id === reportWorkspace).map((w) => w.id)
+  workspaceSections.reveal(JSON.stringify([section, bundle || report, parents]), parents, section, force)
 }
 
 // A report row. Under a workspace it carries the workspace id, so a drop on
 // it assigns to that workspace; a top-level row's drop falls through to
 // "outside any workspace". The bucket stickers are file-display.js's own
 // SVG, hence `appMarkup`.
-function fileItemTemplate(n, opts = {}) {
-  const isCurrent = reportRowIsCurrent(n, opts.workspaceId ?? null)
-  const cls = `file-item${isCurrent ? ' current' : ''}${opts.indented ? ' indented' : ''}`
+function fileItemTemplate(n, workspaceId = null) {
+  const isCurrent = reportRowIsCurrent(n, workspaceId)
+  const cls = `file-item${isCurrent ? ' current' : ''}${workspaceId == null ? '' : ' indented'}`
   const label = displayName(n)
   const count = getCount(n)
   const iconHtml = FILE_ICONS[groupOf(n)] ?? FILE_ICONS.default
   return html`<li
     class=${cls}
     data-file=${n}
-    data-workspace-id=${opts.workspaceId ?? nothing}
+    data-workspace-id=${workspaceId ?? nothing}
     draggable="true"
   ><button type="button" class="file-name" data-tooltip=${label}>${appMarkup(iconHtml)}<span class="file-label">${label}</span>${count === undefined ? nothing : html`<span class="file-count">${count}</span>`}</button></li>`
 }
@@ -168,15 +161,14 @@ function fileItemTemplate(n, opts = {}) {
 // highlighted would read as stale.
 function reportRowIsCurrent(n, workspaceId) {
   return n === state.currentFile && workspaceId === reportWorkspaceFor(n)
-    && (state.currentView === 'findings' || state.currentView === 'files'
-      || state.currentView === 'links')
+    && REPORT_VIEWS.has(state.currentView)
 }
 
-function groupHeaderTemplate(label, opts = {}) {
-  const cls = `file-group-header${opts.dropTarget ? ' default-reports' : ''}`
+function groupHeaderTemplate(label, dropTarget = false) {
+  const cls = `file-group-header${dropTarget ? ' default-reports' : ''}`
   return html`<li
     class=${cls}
-    data-default-reports=${opts.dropTarget ? 'true' : nothing}
+    data-default-reports=${dropTarget ? 'true' : nothing}
   ><span class="group-label">${label}</span></li>`
 }
 
@@ -191,10 +183,6 @@ const WORKSPACE_EXPORT_ICON = html`<svg viewBox="0 0 16 16" width="11" height="1
 const WORKSPACE_LEAVE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3H4v10h5"/><path d="M7 8h7M11 5l3 3-3 3"/></svg>`
 const WORKSPACE_SHARE_ICON = html`<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9.5L9 7.5"/><path d="M9.5 5.5L10.5 4.5a2.1 2.1 0 1 1 3 3l-1 1"/><path d="M6.5 11.5L5.5 12.5a2.1 2.1 0 1 1-3-3l1-1"/></svg>`
 
-function workspaceHeaderTemplate() {
-  return html`<li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>`
-}
-
 // The signed-in user's teams (managed mode). Opening a team combines its
 // reports in a workspace view; repository-owned bundles list alongside.
 function teamsSectionTemplate() {
@@ -205,8 +193,7 @@ function teamsSectionTemplate() {
     ${repeat(teams, ({ team }) => team.id, ({ team: t, reports, bundles }) => {
       const app = t.app
       const compact = managedTeamCollapses(app, (t.reports ?? []).filter(r => r.analyzer !== LINKS_KIND).length)
-      const showReports = teamSections.shown(t.id, 'reports', compact, searchActive)
-      const showBundles = teamSections.shown(t.id, 'bundles', compact, searchActive)
+      const [showReports, showBundles] = shownSections(teamSections, t.id, compact)
       const reportCount = reports.filter(r => r.analyzer !== LINKS_KIND).length
       const findings = managedTeamFindings(app)
       return html`
@@ -215,44 +202,41 @@ function teamsSectionTemplate() {
           <button type="button" class="file-name" @click=${() => void switchToManagedTeam(t)}>${TEAM_ICON}<span class="file-label">${t.name}</span></button>
           ${state.managed?.allowShare && ['admin', 'manage'].includes(state.managedSession?.role) ? html`<button type="button" class="workspace-share" aria-label=${`Share ${t.name} publicly`} @click=${() => void openManagedShareDialog(t)}>${WORKSPACE_SHARE_ICON}</button>` : nothing}
         </div>
-        ${compact ? html`<div class="workspace-meta">
-          ${findings === null ? nothing : html`<span class="workspace-findings">${plural(findings, 'finding')}</span>`}
-          <span class="workspace-sections" role="group" aria-label="Team files">
-            <button type="button" data-team-section="reports" aria-expanded=${String(showReports)} ?disabled=${searchActive}>${plural(reportCount, 'report')}</button>
-            ${bundles.length > 0 ? html`<button type="button" data-team-section="bundles" aria-expanded=${String(showBundles)} ?disabled=${searchActive}>${plural(bundles.length, 'bundle')}</button>` : nothing}
-          </span>
-        </div>` : nothing}
+        ${compact ? sectionsMetaTemplate(true, findings, reportCount, bundles.length, showReports, showBundles) : nothing}
       </li>
       ${showReports ? repeat(reports, r => r.id, r => teamReportTemplate(t, r)) : nothing}
       ${showBundles ? repeat(bundles, b => b.id, b => teamBundleTemplate(t, b)) : nothing}`
     })}`
 }
 
+const shownSections = (sections, id, compact) => ['reports', 'bundles'].map((section) => sections.shown(id, section, compact, searchActive))
+
+// A compact team's or workspace's second row: the findings it counts (none
+// where null), and the toggles of its report and bundle sections, disabled
+// while a search shows both.
+function sectionsMetaTemplate(team, findings, reports, bundles, showReports, showBundles) {
+  const toggle = (section, count, shown) => html`<button type="button" data-team-section=${team ? section : nothing} data-workspace-section=${team ? nothing : section}
+    aria-expanded=${String(shown)} ?disabled=${searchActive}>${plural(count, section.slice(0, -1))}</button>`
+  return html`<div class="workspace-meta">
+      ${findings === null ? nothing : html`<span class="workspace-findings">${plural(findings, 'finding')}</span>`}
+      <span class="workspace-sections" role="group" aria-label=${team ? 'Team files' : 'Workspace files'}>
+        ${toggle('reports', reports, showReports)}
+        ${bundles > 0 ? toggle('bundles', bundles, showBundles) : nothing}
+      </span>
+    </div>`
+}
+
 // The collapsed sidebar shows teams (managed) or workspaces alone: each as its
 // icon over two letters, opening it as its row does, and current while anything
 // of it is open.
-function railItemTemplate(name, icon, current, open) {
-  return html`<li><button type="button" class=${current ? 'rail-item current' : 'rail-item'} aria-label=${name} aria-current=${current ? 'true' : nothing}
-    data-tooltip=${name} @click=${open}>${icon}<span aria-hidden="true">${railLetters(name)}</span></button></li>`
-}
-
-function teamRailTemplate() {
-  return repeat(state.managedTeams ?? [], t => t.id, t => railItemTemplate(t.name, TEAM_ICON,
-    teamIsCurrent(t) || (t.reports ?? []).some(r => teamReportIsCurrent(t, r)) || (t.bundles ?? []).some(b => teamBundleIsCurrent(t, b)),
-    () => void switchToManagedTeam(t)))
-}
-
-function workspaceRailTemplate(workspaces) {
-  return repeat(workspaces, w => w.id, w => railItemTemplate(w.name, WORKSPACE_ICON,
-    workspaceIsCurrent(w) || w.reports.some(r => reportRowIsCurrent(r, w.id)) || w.bundles.some(integrity => bundleRowIsCurrent(integrity, w.id)),
-    () => openWorkspace(w.id)))
-}
-
-function renderRail(label, template) {
+function renderRail(label, items, icon, isCurrent, open) {
   const rail = root.querySelector('#sidebar-rail')
-  if (!rail) return
   rail.setAttribute('aria-label', label)
-  litRender(template, rail)
+  litRender(repeat(items, (item) => item.id, (item) => {
+    const current = isCurrent(item)
+    return html`<li><button type="button" class=${current ? 'rail-item current' : 'rail-item'} aria-label=${item.name} aria-current=${current ? 'true' : nothing}
+    data-tooltip=${item.name} @click=${() => open(item)}>${icon}<span aria-hidden="true">${railLetters(item.name)}</span></button></li>`
+  }), rail)
 }
 
 function teamIsCurrent(team) {
@@ -295,14 +279,6 @@ function teamBundleTemplate(team, bundle) {
   </li>`
 }
 
-// The always-expanded category of bundles no workspace claims: a label, and
-// the unfiled-bundle drop target (as `data-default-reports` is for reports).
-function bundlesHeaderTemplate() {
-  return html`<li class="file-group-header bundles-header" data-default-bundles="true">
-    <span class="group-label">Bundles</span>
-  </li>`
-}
-
 function bundleRowIsCurrent(integrity, workspaceId) {
   return state.selectedBundle === integrity && state.currentView === 'bundles'
     && workspaceId === state.selectedBundleWorkspace
@@ -311,15 +287,15 @@ function bundleRowIsCurrent(integrity, workspaceId) {
 // A bundle row: indented (and a drop target for its workspace, like a report
 // row) under a workspace, flush under Bundles. Its SRI integrity is too long
 // to show, so the tooltip tells two same-named bundles apart.
-function bundleItemTemplate(bundle, opts = {}) {
+function bundleItemTemplate(bundle, workspaceId = null) {
   const { integrity, name } = bundle
-  const isCurrent = bundleRowIsCurrent(integrity, opts.workspaceId ?? null)
-  const indented = opts.workspaceId != null
+  const isCurrent = bundleRowIsCurrent(integrity, workspaceId)
+  const indented = workspaceId != null
   const cls = `file-item bundle-item${indented ? ' indented' : ''}${isCurrent ? ' current' : ''}`
   return html`<li
     class=${cls}
     data-bundle-integrity=${integrity}
-    data-workspace-id=${opts.workspaceId ?? nothing}
+    data-workspace-id=${workspaceId ?? nothing}
     draggable="true"
   ><button type="button" class="file-name" data-tooltip=${`${name}\n${integrity}`}>${BUNDLE_ICON}<span class="file-label">${name}</span></button></li>`
 }
@@ -343,34 +319,15 @@ function workspaceIsCurrent(w) {
     && ['findings', 'files', 'workspace-reports', 'workspace-bundles'].includes(state.currentView)
 }
 
-// A workspace's row opens every report in it as one merged view. Its label
-// is a `.textContent` binding, not a child interpolation: the dblclick
-// rename swaps an <input> into it, which would wipe a child part's markers
-// and crash Lit's next `_commitText`. The hover actions — share by link,
-// export, leave (this browser only; peers and the server's chain keep it) —
-// have no greyed-out delete beside Leave, which would read as the same thing.
-function workspaceItemTemplate(w, { app, compact, reports, bundles, showReports, showBundles }) {
-  const isCurrent = workspaceIsCurrent(w)
-  const cls = `file-item workspace-item${isCurrent ? ' current' : ''}`
-  return html`<li class=${cls} data-workspace-id=${w.id}>
-    <div class="workspace-heading">
-      <button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button>
-      <button type="button" class="workspace-share" data-action="share-workspace" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button>
-      <button type="button" class="workspace-export" data-action="export-workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>
-      <button type="button" class="workspace-leave" data-action="leave-workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>
-    </div>
-    ${compact ? html`<div class="workspace-meta">
-      ${app?.appMode ? html`<span class="workspace-findings">${plural(app.appFindings, 'finding')}</span>` : nothing}
-      <span class="workspace-sections" role="group" aria-label="Workspace files">
-        <button type="button" data-workspace-section="reports" aria-expanded=${String(showReports)} ?disabled=${searchActive}>${plural(reports, 'report')}</button>
-        ${bundles > 0 ? html`<button type="button" data-workspace-section="bundles" aria-expanded=${String(showBundles)} ?disabled=${searchActive}>${plural(bundles, 'bundle')}</button>` : nothing}
-      </span>
-    </div>` : nothing}
-  </li>`
-}
-
-// A workspace and, unless compact and collapsed, its members. Searched,
-// members filter too; a missing bundle has no name to match, so hides.
+// A workspace's row, which opens every report in it as one merged view, and,
+// unless compact and collapsed, its members. Searched, members filter too; a
+// missing bundle has no name to match, so hides. Links files sit in the
+// Reports section but don't count as reports. The row's label is a
+// `.textContent` binding, not a child interpolation: the dblclick rename
+// swaps an <input> into it, which would wipe a child part's markers and crash
+// Lit's next `_commitText`. The hover actions — share by link, export, leave
+// (this browser only; peers and the server's chain keep it) — have no
+// greyed-out delete beside Leave, which would read as the same thing.
 function workspaceTemplate(w, nameSet, bundleByIntegrity) {
   const reports = w.reports.filter((r) => matchesSearch(r))
   const presentReports = reports.filter((r) => nameSet.has(r)).toSorted(byReportName)
@@ -379,17 +336,22 @@ function workspaceTemplate(w, nameSet, bundleByIntegrity) {
   const missingBundles = searchQuery ? [] : w.bundles.filter((integ) => !bundleByIntegrity.has(integ))
   const app = getLoadedWorkspaceAppMetadata(w) ?? getWorkspaceAppMetadata(w)
   const compact = app?.appMode ?? (getWorkspaceAppModeHint(w) === true)
-  const sections = expandedWorkspaceSections.get(w.id)
-  const showReports = !compact || searchActive || sections?.has('reports') === true
-  const showBundles = !compact || searchActive || sections?.has('bundles') === true
-  // Links files sit in the Reports section but don't count as reports.
+  const [showReports, showBundles] = shownSections(workspaceSections, w.id, compact)
   const reportCount = reports.filter(name => getKind(name) !== LINKS_KIND).length
   const bundleCount = presentBundles.length + missingBundles.length
   return html`
-        ${workspaceItemTemplate(w, { app, compact, reports: reportCount, bundles: bundleCount, showReports, showBundles })}
-        ${showReports ? html`${presentReports.map((r) => fileItemTemplate(r, { indented: true, workspaceId: w.id }))}${missingReports.map((r) => missingItemTemplate('report-missing', w.id, 'Report not on this device — it re-downloads automatically if a workspace member has uploaded it.', displayName(r)))}` : nothing}
-        ${showBundles ? html`${presentBundles.map((b) => bundleItemTemplate(b, { workspaceId: w.id }))}${missingBundles.map((integ) => missingItemTemplate('bundle-item bundle-missing', w.id, 'Bundle bytes not on this device — drop the matching bundle to attach.', `${integ.slice(0, 'sha512-'.length + 8)}…`, integ))}` : nothing}
-      `
+    <li class=${`file-item workspace-item${workspaceIsCurrent(w) ? ' current' : ''}`} data-workspace-id=${w.id}>
+      <div class="workspace-heading">
+        <button type="button" class="file-name">${WORKSPACE_ICON}<span class="file-label" .textContent=${w.name}></span></button>
+        <button type="button" class="workspace-share" data-action="share-workspace" aria-label="Share workspace by link">${WORKSPACE_SHARE_ICON}</button>
+        <button type="button" class="workspace-export" data-action="export-workspace" aria-label="Export workspace">${WORKSPACE_EXPORT_ICON}</button>
+        <button type="button" class="workspace-leave" data-action="leave-workspace" aria-label="Leave workspace">${WORKSPACE_LEAVE_ICON}</button>
+      </div>
+      ${compact ? sectionsMetaTemplate(false, app?.appMode ? app.appFindings : null, reportCount, bundleCount, showReports, showBundles) : nothing}
+    </li>
+    ${showReports ? html`${presentReports.map((r) => fileItemTemplate(r, w.id))}${missingReports.map((r) => missingItemTemplate('report-missing', w.id, 'Report not on this device — it re-downloads automatically if a workspace member has uploaded it.', displayName(r)))}` : nothing}
+    ${showBundles ? html`${presentBundles.map((b) => bundleItemTemplate(b, w.id))}${missingBundles.map((integ) => missingItemTemplate('bundle-item bundle-missing', w.id, 'Bundle bytes not on this device — drop the matching bundle to attach.', `${integ.slice(0, 'sha512-'.length + 8)}…`, integ))}` : nothing}
+  `
 }
 
 function matchesSearch(name) {
@@ -421,14 +383,14 @@ export async function renderSidebar({ revealSelection = false } = {}) {
     renderLandingWorkspaces([])
     if (!root) return
     litRender(html`${teamsSectionTemplate()}`, fileList)
-    renderRail('Teams', teamRailTemplate())
-    for (const selector of ['sidebar-view-button[kind="packages"]', 'sidebar-view-button[kind="repositories"]', '#storage-status']) setHidden(selector, true)
+    renderRail('Teams', state.managedTeams ?? [], TEAM_ICON, (t) => teamIsCurrent(t) || (t.reports ?? []).some(r => teamReportIsCurrent(t, r))
+      || (t.bundles ?? []).some(b => teamBundleIsCurrent(t, b)), (t) => void switchToManagedTeam(t))
+    for (const selector of [...VIEW_BUTTONS.map(([kind]) => `sidebar-view-button[kind="${kind}"]`), '#storage-status']) setHidden(selector, true)
     renderSyncStatus()
     return
   }
   teamSections.sync({ managedTeams: [] })
-  setHidden('sidebar-view-button[kind="packages"]', false)
-  setHidden('sidebar-view-button[kind="repositories"]', false)
+  for (const [kind] of VIEW_BUTTONS) setHidden(`sidebar-view-button[kind="${kind}"]`, false)
   // One-shot migration of `.deepseek` OPFS entries back to `.md`, cached
   // after the first call; awaited so the listing sees the rename.
   await migrateLegacyFilenames()
@@ -480,29 +442,31 @@ export async function renderSidebar({ revealSelection = false } = {}) {
   const unfiledBundles = bundleNames.filter(
     (b) => !claimedBundles.has(b.integrity) && matchesSearch(b.name),
   )
+  // Unfiled bundles sit under an always-expanded Bundles label, their drop
+  // target (as `data-default-reports` is for reports).
   litRender(html`
-    ${workspaceHeaderTemplate()}
+    <li class="file-group-header workspace-header"><span class="group-label">Workspaces</span><span class="workspace-header-actions"><button type="button" class="workspace-add" data-action="new-workspace" aria-label="Create a new workspace">${WORKSPACE_PLUS_ICON}</button></span></li>
     ${repeat(visibleWorkspaces, (w) => w.id, (w) => workspaceTemplate(w, nameSet, bundleByIntegrity))}
     ${GROUP_ORDER.map((g) => {
       const list = buckets.get(g).toSorted(byReportName)
       const isDefault = g === 'default'
-      if (list.length === 0 && !(isDefault && isDraggingReport)) return null
+      if (list.length === 0 && !(isDefault && dragging === REPORT_DT)) return null
       return html`
-        ${groupHeaderTemplate(GROUP_LABELS[g] ?? g, { dropTarget: isDefault })}
+        ${groupHeaderTemplate(GROUP_LABELS[g], isDefault)}
         ${list.map((n) => fileItemTemplate(n))}
       `
     })}
-    ${unfiledBundles.length > 0 || isDraggingBundle ? bundlesHeaderTemplate() : null}
+    ${unfiledBundles.length > 0 || dragging === BUNDLE_DT ? html`<li class="file-group-header bundles-header" data-default-bundles="true">
+    <span class="group-label">Bundles</span>
+  </li>` : null}
     ${repeat(unfiledBundles, (b) => b.integrity, (b) => bundleItemTemplate(b))}
   `, fileList)
-  renderRail('Workspaces', workspaceRailTemplate(workspaces))
+  renderRail('Workspaces', workspaces, WORKSPACE_ICON, (w) => workspaceIsCurrent(w) || w.reports.some(r => reportRowIsCurrent(r, w.id))
+    || w.bundles.some(integrity => bundleRowIsCurrent(integrity, w.id)), (w) => openWorkspace(w.id))
   // The Packages / Repositories buttons highlight themselves from state, but
   // their counts live in module Maps no observer sees: pushed here, and 0
   // hides the button.
-  const pkgBtn = root.querySelector('sidebar-view-button[kind="packages"]')
-  if (pkgBtn) pkgBtn.count = getPackagesIndex().size
-  const repoBtn = root.querySelector('sidebar-view-button[kind="repositories"]')
-  if (repoBtn) repoBtn.count = getRepositoriesIndex().size
+  for (const [kind, index] of VIEW_BUTTONS) root.querySelector(`sidebar-view-button[kind="${kind}"]`).count = index().size
   // The sync button shows once a workspace exists.
   renderSyncStatus()
   // Fill missing counts in the background, the badges streaming in.
@@ -654,10 +618,11 @@ const USER_MENU_ACTIONS = {
 // selector is the target's `closest` running. Rows inside another row's
 // element (a workspace's actions, a team's section toggles) come first.
 const SIDEBAR_CLICKS = [
-  ['[data-team-section]', async (el) => {
+  ['[data-team-section], [data-workspace-section]', async (el) => {
     if (searchActive || el.disabled) return
-    const id = el.closest('[data-team-id]')?.dataset.teamId
-    if (id) teamSections.toggle(id, el.dataset.teamSection)
+    const team = el.dataset.teamSection !== undefined
+    const id = team ? el.closest('[data-team-id]')?.dataset.teamId : el.closest('[data-workspace-id]')?.dataset.workspaceId
+    if (id) (team ? teamSections : workspaceSections).toggle(id, team ? el.dataset.teamSection : el.dataset.workspaceSection)
     await renderSidebar()
   }],
   // Anywhere on a team row but its buttons (its name's opens it itself)
@@ -665,15 +630,6 @@ const SIDEBAR_CLICKS = [
   ['.file-item.team-item[data-team-id]', (el, e) => {
     const team = e.target.closest('button') ? null : state.managedTeams.find(t => t.id === el.dataset.teamId)
     if (team) void switchToManagedTeam(team)
-  }],
-  ['[data-workspace-section]', async (el) => {
-    if (searchActive || el.disabled) return
-    const id = el.closest('[data-workspace-id]')?.dataset.workspaceId
-    if (!id) return
-    const expanded = expandedWorkspaceSections.get(id) ?? new Set()
-    toggleIn(expanded, el.dataset.workspaceSection)
-    expandedWorkspaceSections.set(id, expanded)
-    await renderSidebar()
   }],
   ['[data-action="toggle-client-mode"]', () => switchClientMode()],
   // The brand drops back to the welcome screen: only the in-memory selection
@@ -1132,22 +1088,20 @@ function onSidebarDragstart(e) {
   }
   const bundle = row.matches('[data-bundle-integrity]')
   const id = bundle ? row.dataset.bundleIntegrity : row.dataset.file
+  dragging = bundle ? BUNDLE_DT : REPORT_DT
   e.dataTransfer.effectAllowed = 'move'
-  e.dataTransfer.setData(bundle ? BUNDLE_DT : REPORT_DT, id)
+  e.dataTransfer.setData(dragging, id)
   e.dataTransfer.setData(SOURCE_WS_DT, row.dataset.workspaceId ?? '')
   e.dataTransfer.setData('text/plain', id)
   row.classList.add('dragging')
-  if (bundle) isDraggingBundle = true
-  else isDraggingReport = true
   renderSidebar()
 }
 
 function onSidebarDragend() {
   for (const el of root.querySelectorAll('.dragging')) el.classList.remove('dragging')
   clearDragOver()
-  if (isDraggingReport || isDraggingBundle) {
-    isDraggingReport = false
-    isDraggingBundle = false
+  if (dragging) {
+    dragging = null
     renderSidebar()
   }
 }
